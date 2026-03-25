@@ -56,9 +56,12 @@ internal fun AudioSelectionOverlay(
     audioAmplificationDb: Int,
     isAmplificationAvailable: Boolean,
     persistAmplification: Boolean,
+    centerMixLevelDb: Int,
+    isCenterMixAvailable: Boolean,
     onTrackSelected: (Int) -> Unit,
     onAmplificationChange: (Int) -> Unit,
     onPersistAmplificationChange: (Boolean) -> Unit,
+    onCenterMixLevelChange: (Int) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -66,10 +69,23 @@ internal fun AudioSelectionOverlay(
     val minusFocusRequester = remember { FocusRequester() }
     val plusFocusRequester = remember { FocusRequester() }
     val persistFocusRequester = remember { FocusRequester() }
+    val centerMinusFocusRequester = remember { FocusRequester() }
+    val centerPlusFocusRequester = remember { FocusRequester() }
     val listState = rememberLazyListState()
     val currentDb = audioAmplificationDb.coerceIn(AUDIO_AMPLIFICATION_MIN_DB, AUDIO_AMPLIFICATION_MAX_DB)
     val canDecrease = isAmplificationAvailable && currentDb > AUDIO_AMPLIFICATION_MIN_DB
     val canIncrease = isAmplificationAvailable && currentDb < AUDIO_AMPLIFICATION_MAX_DB
+    val currentCenterMixDb = centerMixLevelDb.coerceIn(CENTER_MIX_LEVEL_MIN_DB, CENTER_MIX_LEVEL_MAX_DB)
+    val canDecreaseCenterMix = isCenterMixAvailable && currentCenterMixDb > CENTER_MIX_LEVEL_MIN_DB
+    val canIncreaseCenterMix = isCenterMixAvailable && currentCenterMixDb < CENTER_MIX_LEVEL_MAX_DB
+    val primaryControlsFocusRequester = when {
+        canDecrease -> minusFocusRequester
+        canIncrease -> plusFocusRequester
+        isAmplificationAvailable -> persistFocusRequester
+        canDecreaseCenterMix -> centerMinusFocusRequester
+        canIncreaseCenterMix -> centerPlusFocusRequester
+        else -> persistFocusRequester
+    }
 
     var lastFocusedAudioIndex by rememberSaveable { mutableStateOf<Int?>(null) }
 
@@ -83,12 +99,7 @@ internal fun AudioSelectionOverlay(
             runCatching { tracksFocusRequester.requestFocus() }
         } else {
             delay(120)
-            val initialMixFocusRequester = when {
-                canDecrease -> minusFocusRequester
-                canIncrease -> plusFocusRequester
-                else -> persistFocusRequester
-            }
-            runCatching { initialMixFocusRequester.requestFocus() }
+            runCatching { primaryControlsFocusRequester.requestFocus() }
         }
     }
 
@@ -124,11 +135,7 @@ internal fun AudioSelectionOverlay(
                         selectedIndex = selectedIndex,
                         listState = listState,
                         initialFocusRequester = tracksFocusRequester,
-                        rightFocusRequester = when {
-                            canDecrease -> minusFocusRequester
-                            canIncrease -> plusFocusRequester
-                            else -> persistFocusRequester
-                        },
+                        rightFocusRequester = primaryControlsFocusRequester,
                         onTrackFocused = { lastFocusedAudioIndex = it },
                         onTrackSelected = onTrackSelected
                     )
@@ -144,6 +151,14 @@ internal fun AudioSelectionOverlay(
                         leftFocusRequester = tracksFocusRequester,
                         onAmplificationChange = onAmplificationChange,
                         onPersistAmplificationChange = onPersistAmplificationChange
+                    )
+                    CenterMixContent(
+                        centerMixLevelDb = centerMixLevelDb,
+                        isCenterMixAvailable = isCenterMixAvailable,
+                        minusFocusRequester = centerMinusFocusRequester,
+                        plusFocusRequester = centerPlusFocusRequester,
+                        leftFocusRequester = tracksFocusRequester,
+                        onCenterMixLevelChange = onCenterMixLevelChange
                     )
                 }
             }
@@ -410,6 +425,82 @@ private fun AudioMixContent(
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (persistAmplification) NuvioColors.OnSecondary else Color.White,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+            )
+        }
+
+        Text(
+            text = helperText,
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.66f)
+        )
+    }
+}
+
+@Composable
+private fun CenterMixContent(
+    centerMixLevelDb: Int,
+    isCenterMixAvailable: Boolean,
+    minusFocusRequester: FocusRequester,
+    plusFocusRequester: FocusRequester,
+    leftFocusRequester: FocusRequester,
+    onCenterMixLevelChange: (Int) -> Unit
+) {
+    val currentDb = centerMixLevelDb.coerceIn(CENTER_MIX_LEVEL_MIN_DB, CENTER_MIX_LEVEL_MAX_DB)
+    val canDecrease = isCenterMixAvailable && currentDb > CENTER_MIX_LEVEL_MIN_DB
+    val canIncrease = isCenterMixAvailable && currentDb < CENTER_MIX_LEVEL_MAX_DB
+    val helperText = if (isCenterMixAvailable) {
+        stringResource(R.string.audio_center_mix_help)
+    } else {
+        stringResource(R.string.audio_center_mix_unavailable)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.audio_center_mix_label),
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White.copy(alpha = 0.92f)
+        )
+
+        Text(
+            text = stringResource(R.string.audio_center_mix_value_db, currentDb),
+            style = MaterialTheme.typography.headlineSmall,
+            color = Color.White
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            MixStepCard(
+                icon = Icons.Default.Remove,
+                enabled = canDecrease,
+                focusRequester = minusFocusRequester,
+                leftFocusRequester = leftFocusRequester,
+                rightFocusRequester = plusFocusRequester,
+                onClick = {
+                    val nextDb = currentDb - 1
+                    onCenterMixLevelChange(nextDb)
+                    if (nextDb <= CENTER_MIX_LEVEL_MIN_DB && canIncrease) {
+                        runCatching { plusFocusRequester.requestFocus() }
+                    }
+                }
+            )
+            MixStepCard(
+                icon = Icons.Default.Add,
+                enabled = canIncrease,
+                focusRequester = plusFocusRequester,
+                leftFocusRequester = if (canDecrease) minusFocusRequester else leftFocusRequester,
+                onClick = {
+                    val nextDb = currentDb + 1
+                    onCenterMixLevelChange(nextDb)
+                    if (nextDb >= CENTER_MIX_LEVEL_MAX_DB && canDecrease) {
+                        runCatching { minusFocusRequester.requestFocus() }
+                    }
+                }
             )
         }
 

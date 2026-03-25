@@ -15,6 +15,8 @@ import kotlinx.coroutines.launch
 
 internal const val AUDIO_AMPLIFICATION_MIN_DB = 0
 internal const val AUDIO_AMPLIFICATION_MAX_DB = 10
+internal const val CENTER_MIX_LEVEL_MIN_DB = -10
+internal const val CENTER_MIX_LEVEL_MAX_DB = 30
 
 internal fun PlayerRuntimeController.applyAudioAmplification(db: Int) {
     val clampedDb = db.coerceIn(AUDIO_AMPLIFICATION_MIN_DB, AUDIO_AMPLIFICATION_MAX_DB)
@@ -24,6 +26,26 @@ internal fun PlayerRuntimeController.applyAudioAmplification(db: Int) {
             audioAmplificationDb = clampedDb,
             isAudioAmplificationAvailable = true
         )
+    }
+}
+
+internal fun PlayerRuntimeController.applyCenterMixLevel(db: Int) {
+    val clampedDb = db.coerceIn(CENTER_MIX_LEVEL_MIN_DB, CENTER_MIX_LEVEL_MAX_DB)
+    ffmpegAudioRenderer?.setCenterMixLevelDb(clampedDb)
+    _uiState.update { state ->
+        state.copy(centerMixLevelDb = clampedDb)
+    }
+}
+
+internal fun PlayerRuntimeController.updateCenterMixAvailability(
+    audioTracks: List<TrackInfo> = _uiState.value.audioTracks,
+    selectedAudioIndex: Int = _uiState.value.selectedAudioTrackIndex
+) {
+    val selectedTrack = audioTracks.getOrNull(selectedAudioIndex)
+    val isAvailable =
+        ffmpegAudioRenderer?.isCenterMixActive() == true && (selectedTrack?.channelCount ?: 0) > 2
+    _uiState.update { state ->
+        state.copy(isCenterMixAvailable = isAvailable)
     }
 }
 
@@ -509,6 +531,9 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                     dbToPersist = if (event.enabled) currentDb else null
                 )
             }
+        }
+        is PlayerEvent.OnSetCenterMixLevelDb -> {
+            applyCenterMixLevel(event.db)
         }
         is PlayerEvent.OnSelectSubtitleTrack -> {
             autoSubtitleSelected = true

@@ -152,6 +152,32 @@ object AudioLanguageOption {
     const val DEVICE = "device"    // Use device locale
 }
 
+enum class AudioOutputChannels(
+    val settingValue: String,
+    val displayLabel: String,
+    val channelCount: Int,
+    val ffmpegLayoutName: String
+) {
+    CHANNELS_2_0("2.0", "2.0", 2, "stereo"),
+    CHANNELS_2_1("2.1", "2.1", 3, "2.1"),
+    CHANNELS_3_0("3.0", "3.0", 3, "3.0"),
+    CHANNELS_3_1("3.1", "3.1", 4, "3.1"),
+    CHANNELS_4_0("4.0", "4.0", 4, "4.0"),
+    CHANNELS_4_1("4.1", "4.1", 5, "4.1"),
+    CHANNELS_5_0("5.0", "5.0", 5, "5.0"),
+    CHANNELS_5_1("5.1", "5.1", 6, "5.1"),
+    CHANNELS_7_0("7.0", "7.0", 7, "7.0"),
+    CHANNELS_7_1("7.1", "7.1", 8, "7.1");
+
+    companion object {
+        val default = CHANNELS_7_1
+
+        fun fromSettingValue(value: String?): AudioOutputChannels {
+            return entries.firstOrNull { it.settingValue == value } ?: default
+        }
+    }
+}
+
 /**
  * Data class representing player settings
  */
@@ -163,6 +189,7 @@ data class PlayerSettings(
     val bufferSettings: BufferSettings = BufferSettings(),
     // Audio settings
     val decoderPriority: Int = 1, // EXTENSION_RENDERER_MODE_ON (0=off, 1=on, 2=prefer)
+    val audioOutputChannels: AudioOutputChannels = AudioOutputChannels.default,
     val tunnelingEnabled: Boolean = false,
     val skipSilence: Boolean = false,
     val audioAmplificationDb: Int = 0,
@@ -275,6 +302,7 @@ class PlayerSettingsDataStore @Inject constructor(
 
     // Audio settings keys
     private val decoderPriorityKey = intPreferencesKey("decoder_priority")
+    private val audioOutputChannelsKey = stringPreferencesKey("audio_output_channels")
     private val tunnelingEnabledKey = booleanPreferencesKey("tunneling_enabled")
     private val skipSilenceKey = booleanPreferencesKey("skip_silence")
     private val audioAmplificationDbKey = intPreferencesKey("audio_amplification_db")
@@ -413,6 +441,9 @@ class PlayerSettingsDataStore @Inject constructor(
                     try { LibassRenderType.valueOf(it) } catch (e: Exception) { LibassRenderType.OVERLAY_OPEN_GL }
                 } ?: LibassRenderType.OVERLAY_OPEN_GL,
                 decoderPriority = prefs[decoderPriorityKey] ?: 1,
+                audioOutputChannels = AudioOutputChannels.fromSettingValue(
+                    prefs[audioOutputChannelsKey]
+                ),
                 tunnelingEnabled = prefs[tunnelingEnabledKey] ?: false,
                 skipSilence = prefs[skipSilenceKey] ?: false,
                 audioAmplificationDb = (prefs[audioAmplificationDbKey] ?: 0).coerceIn(
@@ -534,6 +565,12 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setDecoderPriority(priority: Int) {
         store().edit { prefs ->
             prefs[decoderPriorityKey] = priority.coerceIn(0, 2)
+        }
+    }
+
+    suspend fun setAudioOutputChannels(channels: AudioOutputChannels) {
+        store().edit { prefs ->
+            prefs[audioOutputChannelsKey] = channels.settingValue
         }
     }
 

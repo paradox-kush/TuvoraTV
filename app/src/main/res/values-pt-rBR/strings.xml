@@ -318,6 +318,8 @@
     <string name="audio_skip_silence_sub">Pular partes silenciosas durante a reprodução</string>
     <string name="audio_advanced_section">Áudio Avançado</string>
     <string name="audio_advanced_warning">Estas opções podem causar problemas em alguns aparelhos. Altere apenas se souber o que está fazendo.</string>
+    <string name="audio_number_of_channels">Número de canais</string>
+    <string name="audio_number_of_channels_desc">Define a disposição de caixas usada no downmix do FFmpeg.</string>
     <string name="audio_decoder_device_only">Apenas decodificadores do dispositivo</string>
     <string name="audio_decoder_prefer_device">Preferir decodificadores do dispositivo</string>
     <string name="audio_decoder_prefer_app">Preferir decodificadores do app (FFmpeg)</string>
@@ -834,6 +836,10 @@
     <string name="audio_mix_range">Faixa: %1$d dB a %2$d dB</string>
     <string name="audio_mix_range_saved">Faixa: %1$d dB a %2$d dB (salvo)</string>
     <string name="audio_mix_unavailable">Amplificação não disponível neste dispositivo</string>
+    <string name="audio_center_mix_label">Downmix: Nível de Mixagem do Centro</string>
+    <string name="audio_center_mix_value_db">%1$d dB</string>
+    <string name="audio_center_mix_help">Nível de mixagem do centro em dB relativo ao metadata ou ao padrão (-3 dB)</string>
+    <string name="audio_center_mix_unavailable">A mixagem do centro só está disponível quando o FFmpeg está realmente fazendo downmix porque o Número de canais é inferior ao da faixa. Se necessário, defina a prioridade do decoder de áudio para Preferir app.</string>
 
     <!-- SubtitleDialog / SubtitleStyleSidePanel -->
     <string name="subtitle_dialog_title">Legendas</string>

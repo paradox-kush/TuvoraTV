@@ -318,6 +318,8 @@
     <string name="audio_skip_silence_sub">Skip silent portions of audio during playback</string>
     <string name="audio_advanced_section">Advanced Audio</string>
     <string name="audio_advanced_warning">These settings may cause issues on some devices. Change only if you know what you\'re doing.</string>
+    <string name="audio_number_of_channels">Number of channels</string>
+    <string name="audio_number_of_channels_desc">Sets the speaker layout used for FFmpeg downmix.</string>
     <string name="audio_decoder_device_only">Device decoders only</string>
     <string name="audio_decoder_prefer_device">Prefer device decoders</string>
     <string name="audio_decoder_prefer_app">Prefer app decoders (FFmpeg)</string>
@@ -836,6 +838,10 @@
     <string name="audio_mix_range">Range: %1$d dB to %2$d dB</string>
     <string name="audio_mix_range_saved">Range: %1$d dB to %2$d dB (saved)</string>
     <string name="audio_mix_unavailable">Amplification is not available on this device</string>
+    <string name="audio_center_mix_label">Downmix: Center Mix Level</string>
+    <string name="audio_center_mix_value_db">%1$d dB</string>
+    <string name="audio_center_mix_help">Center Mix Level in dB relative to metadata or default (-3 dB)</string>
+    <string name="audio_center_mix_unavailable">Center mix is only available when FFmpeg is actively downmixing because Number of channels is lower than the stream. If needed, set Audio decoder priority to Prefer app.</string>
 
     <!-- SubtitleDialog / SubtitleStyleSidePanel -->
     <string name="subtitle_dialog_title">Subtitles</string>

@@ -284,11 +284,17 @@ dependencies {
     // Local AAR libraries from forked ExoPlayer (matching Just Player setup):
     // - lib-exoplayer-release.aar    — Custom forked ExoPlayer core (replaces media3-exoplayer)
     // - lib-ui-release.aar           — Custom forked ExoPlayer UI
-    // - lib-decoder-ffmpeg-release.aar — FFmpeg audio decoders (vorbis,opus,flac,alac,pcm,mp3,amr,aac,ac3,eac3,dca,mlp,truehd)
     // - lib-decoder-av1-release.aar  — AV1 software video decoder (libgav1)
     // - lib-decoder-iamf-release.aar — IAMF immersive audio decoder
     // - lib-decoder-mpegh-release.aar — MPEG-H 3D audio decoder
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("lib-*.aar"))))
+    implementation(files(
+        "libs/lib-exoplayer-release.aar",
+        "libs/lib-ui-release.aar",
+        "libs/lib-decoder-av1-release.aar",
+        "libs/lib-decoder-iamf-release.aar",
+        "libs/lib-decoder-mpegh-release.aar"
+    ))
+    implementation(project(":kodi-decoder-ffmpeg"))
 
     // libass-android for ASS/SSA subtitle support (from Maven Central)
     implementation("io.github.peerless2012:ass-media:0.4.0-beta01")

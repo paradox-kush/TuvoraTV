@@ -33,6 +33,8 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
     nextEpisodeAutoPlayJob = null
     _exoPlayer?.release()
     _exoPlayer = null
+    ffmpegAudioRenderer = null
+    updateCenterMixAvailability()
 }
 
 internal fun PlayerRuntimeController.notifyAudioSessionUpdate(active: Boolean) {

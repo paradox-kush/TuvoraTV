@@ -170,6 +170,7 @@ internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
             selectedSubtitleTrackIndex = selectedSubtitleIndex
         )
     }
+    updateCenterMixAvailability(audioTracks, selectedAudioIndex)
     applyPersistedTrackPreference(
         audioTracks = audioTracks,
         subtitleTracks = subtitleTracks

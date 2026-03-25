@@ -11,11 +11,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.ForwardingRenderer
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -172,7 +174,17 @@ internal fun PlayerRuntimeController.initializePlayer(url: String, headers: Map<
             val renderersFactory = SubtitleOffsetRenderersFactory(
                 context = context,
                 subtitleDelayUsProvider = subtitleDelayUs::get,
-                gainAudioProcessor = gainAudioProcessor
+                gainAudioProcessor = gainAudioProcessor,
+                audioOutputChannels = playerSettings.audioOutputChannels,
+                onFfmpegAudioRendererChanged = { renderer ->
+                    ffmpegAudioRenderer = renderer
+                    renderer?.setAudioOutputChannels(
+                        playerSettings.audioOutputChannels.ffmpegLayoutName,
+                        playerSettings.audioOutputChannels.channelCount
+                    )
+                    applyCenterMixLevel(_uiState.value.centerMixLevelDb)
+                    updateCenterMixAvailability()
+                }
             ).setExtensionRendererMode(playerSettings.decoderPriority)
                 .setMapDV7ToHevc(playerSettings.mapDV7ToHevc)
 
@@ -234,6 +246,7 @@ internal fun PlayerRuntimeController.initializePlayer(url: String, headers: Map<
                 }
 
                 applyAudioAmplification(_uiState.value.audioAmplificationDb)
+                applyCenterMixLevel(_uiState.value.centerMixLevelDb)
 
                 
                 notifyAudioSessionUpdate(true)
@@ -268,6 +281,7 @@ internal fun PlayerRuntimeController.initializePlayer(url: String, headers: Map<
                                 duration = playerDuration.coerceAtLeast(0L)
                             )
                         }
+                        updateCenterMixAvailability()
 
                         if (playbackState == Player.STATE_BUFFERING && !hasRenderedFirstFrame) {
                             _uiState.update { state ->
@@ -341,6 +355,7 @@ internal fun PlayerRuntimeController.initializePlayer(url: String, headers: Map<
 
                     override fun onRenderedFirstFrame() {
                         hasRenderedFirstFrame = true
+                        updateCenterMixAvailability()
                         _uiState.update { it.copy(showLoadingOverlay = false) }
                     }
 
@@ -566,7 +581,9 @@ internal fun PlayerRuntimeController.resetLoadingOverlayForNewStream() {
 private class SubtitleOffsetRenderersFactory(
     context: Context,
     private val subtitleDelayUsProvider: () -> Long,
-    private val gainAudioProcessor: GainAudioProcessor
+    private val gainAudioProcessor: GainAudioProcessor,
+    private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
+    private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit
 ) : DefaultRenderersFactory(context) {
 
     override fun buildAudioSink(
@@ -594,6 +611,35 @@ private class SubtitleOffsetRenderersFactory(
         for (index in startIndex until out.size) {
             out[index] = SubtitleOffsetRenderer(out[index], subtitleDelayUsProvider)
         }
+    }
+
+    override fun buildAudioRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        audioSink: AudioSink,
+        eventHandler: android.os.Handler,
+        eventListener: AudioRendererEventListener,
+        out: ArrayList<Renderer>
+    ) {
+        super.buildAudioRenderers(
+            context,
+            extensionRendererMode,
+            mediaCodecSelector,
+            enableDecoderFallback,
+            audioSink,
+            eventHandler,
+            eventListener,
+            out
+        )
+        out.filterIsInstance<FfmpegAudioRenderer>().forEach { renderer ->
+            renderer.setAudioOutputChannels(
+                audioOutputChannels.ffmpegLayoutName,
+                audioOutputChannels.channelCount
+            )
+        }
+        onFfmpegAudioRendererChanged(out.filterIsInstance<FfmpegAudioRenderer>().firstOrNull())
     }
 }
 
