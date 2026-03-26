@@ -52,6 +52,7 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
   private volatile int userCenterMixLevelDb;
   @Nullable private volatile String requestedOutputLayoutName;
   private volatile int requestedOutputChannelCount;
+  private volatile int requestedOutputSampleRate;
   private volatile boolean downmixNormalizationEnabled;
   @Nullable private volatile FfmpegAudioDecoder activeDecoder;
   private volatile boolean rendererEnabled;
@@ -132,8 +133,11 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
           : C.FORMAT_UNSUPPORTED_DRM;
     }
     int outputChannelCount = resolveOutputChannelCount(format.channelCount);
+    boolean isDownmixActive = outputChannelCount < format.channelCount;
+    int outputSampleRate =
+        isDownmixActive ? resolveOutputSampleRate(format.sampleRate) : format.sampleRate;
     boolean supportsConfiguredOutput =
-        sinkSupportsFormat(format, C.ENCODING_PCM_FLOAT, outputChannelCount);
+        sinkSupportsFormat(C.ENCODING_PCM_FLOAT, outputChannelCount, outputSampleRate);
     if (!supportsConfiguredOutput) {
       return C.FORMAT_UNSUPPORTED_SUBTYPE;
     }
@@ -155,10 +159,13 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
     int initialInputBufferSize =
         format.maxInputSize != Format.NO_VALUE ? format.maxInputSize : DEFAULT_INPUT_BUFFER_SIZE;
     int outputChannelCount = resolveOutputChannelCount(format.channelCount);
+    boolean isDownmixActive = outputChannelCount < format.channelCount;
+    int outputSampleRate =
+        isDownmixActive ? resolveOutputSampleRate(format.sampleRate) : format.sampleRate;
     @Nullable
     String outputLayoutName =
-        outputChannelCount < format.channelCount ? requestedOutputLayoutName : null;
-    downmixActive = outputChannelCount < format.channelCount;
+        isDownmixActive ? requestedOutputLayoutName : null;
+    downmixActive = isDownmixActive;
     FfmpegAudioDecoder decoder =
         new FfmpegAudioDecoder(
             format,
@@ -166,6 +173,7 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
             NUM_BUFFERS,
             initialInputBufferSize,
             outputChannelCount,
+            outputSampleRate,
             outputLayoutName);
     decoder.setUserCenterMixLevelDb(userCenterMixLevelDb);
     decoder.setDownmixNormalizationEnabled(downmixNormalizationEnabled);
@@ -200,6 +208,11 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
     requestedOutputChannelCount = outputChannelCount;
   }
 
+  /** Sets the desired FFmpeg output sample rate used for explicit downmix/resample decisions. */
+  public void setAudioOutputSampleRate(int outputSampleRate) {
+    requestedOutputSampleRate = outputSampleRate;
+  }
+
   /** Sets whether downmix normalization should be enabled. */
   public void setDownmixNormalizationEnabled(boolean downmixNormalizationEnabled) {
     this.downmixNormalizationEnabled = downmixNormalizationEnabled;
@@ -224,11 +237,11 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
    * from the decoder for the given input format and requested output encoding.
    */
   private boolean sinkSupportsFormat(
-      Format inputFormat, @C.PcmEncoding int pcmEncoding, int channelCount) {
-    if (channelCount <= 0 || inputFormat.sampleRate <= 0) {
+      @C.PcmEncoding int pcmEncoding, int channelCount, int sampleRate) {
+    if (channelCount <= 0 || sampleRate <= 0) {
       return false;
     }
-    return sinkSupportsFormat(Util.getPcmFormat(pcmEncoding, channelCount, inputFormat.sampleRate));
+    return sinkSupportsFormat(Util.getPcmFormat(pcmEncoding, channelCount, sampleRate));
   }
 
   private int resolveOutputChannelCount(int inputChannelCount) {
@@ -240,5 +253,16 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
       return inputChannelCount;
     }
     return configuredChannelCount;
+  }
+
+  private int resolveOutputSampleRate(int inputSampleRate) {
+    if (inputSampleRate <= 0) {
+      return inputSampleRate;
+    }
+    int configuredSampleRate = requestedOutputSampleRate;
+    if (configuredSampleRate <= 0) {
+      return inputSampleRate;
+    }
+    return configuredSampleRate;
   }
 }

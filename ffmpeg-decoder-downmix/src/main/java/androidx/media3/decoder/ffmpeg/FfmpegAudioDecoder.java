@@ -53,6 +53,7 @@ import java.util.List;
   @Nullable private final byte[] extraData;
   private volatile int userCenterMixLevelDb;
   private volatile boolean downmixNormalizationEnabled;
+  private int outputSampleRate;
   private int outputBufferSize;
 
   private long nativeContext; // May be reassigned on resetting the codec.
@@ -66,6 +67,7 @@ import java.util.List;
       int numOutputBuffers,
       int initialInputBufferSize,
       int outputChannelCount,
+      int outputSampleRate,
       @Nullable String requestedOutputLayoutName)
       throws FfmpegDecoderException {
     super(new DecoderInputBuffer[numInputBuffers], new SimpleDecoderOutputBuffer[numOutputBuffers]);
@@ -76,6 +78,7 @@ import java.util.List;
     codecName = checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
     extraData = getExtraData(format.sampleMimeType, format.initializationData);
     outputBufferSize = INITIAL_OUTPUT_BUFFER_SIZE_FLOAT;
+    this.outputSampleRate = outputSampleRate > 0 ? outputSampleRate : format.sampleRate;
     nativeContext =
         ffmpegInitialize(
             codecName,
@@ -83,6 +86,7 @@ import java.util.List;
             format.sampleRate,
             format.channelCount,
             outputChannelCount,
+            outputSampleRate,
             requestedOutputLayoutName);
     if (nativeContext == 0) {
       throw new FfmpegDecoderException("Initialization failed.");
@@ -151,6 +155,9 @@ import java.util.List;
     if (!hasOutputFormat) {
       channelCount = ffmpegGetChannelCount(nativeContext);
       sampleRate = ffmpegGetSampleRate(nativeContext);
+      if (sampleRate <= 0) {
+        sampleRate = outputSampleRate;
+      }
       if (sampleRate == 0 && "alac".equals(codecName)) {
         checkNotNull(extraData);
         // ALAC decoder did not set the sample rate in earlier versions of FFmpeg. See
@@ -328,6 +335,7 @@ import java.util.List;
       int rawSampleRate,
       int rawChannelCount,
       int outputChannelCount,
+      int outputSampleRate,
       @Nullable String requestedOutputLayoutName);
 
   private native int ffmpegDecode(

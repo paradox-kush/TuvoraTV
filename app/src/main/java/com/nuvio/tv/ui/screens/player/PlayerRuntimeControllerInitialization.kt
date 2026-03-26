@@ -2,6 +2,8 @@ package com.nuvio.tv.ui.screens.player
 
 import android.content.Context
 import android.content.res.Resources
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.Build
 import android.util.Log
 import android.view.accessibility.CaptioningManager
@@ -181,6 +183,7 @@ internal fun PlayerRuntimeController.initializePlayer(url: String, headers: Map<
                 onFfmpegAudioRendererChanged = { renderer ->
                     ffmpegAudioRenderer = renderer
                     renderer?.applyDownmixSettings(
+                        context = context,
                         downmixEnabled = playerSettings.downmixEnabled,
                         audioOutputChannels = playerSettings.audioOutputChannels,
                         downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix
@@ -640,6 +643,7 @@ private class SubtitleOffsetRenderersFactory(
         )
         out.filterIsInstance<FfmpegAudioRenderer>().forEach { renderer ->
             renderer.applyDownmixSettings(
+                context = context,
                 downmixEnabled = downmixEnabled,
                 audioOutputChannels = audioOutputChannels,
                 downmixNormalizationEnabled = downmixNormalizationEnabled
@@ -650,20 +654,37 @@ private class SubtitleOffsetRenderersFactory(
 }
 
 private fun FfmpegAudioRenderer.applyDownmixSettings(
+    context: Context,
     downmixEnabled: Boolean,
     audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     downmixNormalizationEnabled: Boolean
 ) {
     if (downmixEnabled) {
+        setAudioOutputSampleRate(resolvePreferredAudioOutputSampleRate(context))
         setAudioOutputChannels(
             audioOutputChannels.ffmpegLayoutName,
             audioOutputChannels.channelCount
         )
         setDownmixNormalizationEnabled(downmixNormalizationEnabled)
     } else {
+        setAudioOutputSampleRate(0)
         setAudioOutputChannels(null, 0)
         setDownmixNormalizationEnabled(false)
     }
+}
+
+private fun resolvePreferredAudioOutputSampleRate(context: Context): Int {
+    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    val propertyRate = audioManager
+        ?.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
+        ?.toIntOrNull()
+        ?: 0
+    if (propertyRate > 0) {
+        return propertyRate
+    }
+
+    val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
+    return nativeRate.takeIf { it > 0 } ?: 0
 }
 
 private class SubtitleOffsetRenderer(
