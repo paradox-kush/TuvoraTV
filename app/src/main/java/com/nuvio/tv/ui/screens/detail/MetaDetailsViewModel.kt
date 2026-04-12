@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.network.NetworkResult
+import com.nuvio.tv.core.sync.AnimeTrackerFanoutService
 import com.nuvio.tv.core.tmdb.TmdbMetadataService
 import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
@@ -82,6 +83,7 @@ class MetaDetailsViewModel @Inject constructor(
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
     private val playerSettingsDataStore: PlayerSettingsDataStore,
     private val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
+    private val animeTrackerFanoutService: AnimeTrackerFanoutService,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
     private val itemId: String = savedStateHandle["itemId"] ?: ""
@@ -1664,6 +1666,19 @@ class MetaDetailsViewModel @Inject constructor(
                 it.copy(episodeWatchedPendingKeys = it.episodeWatchedPendingKeys - pendingKeys)
             }
             showMessage(context.getString(R.string.detail_marked_episodes_watched, unwatched.size))
+
+            // Fan out the same season-mark to connected anime trackers. Resolution
+            // short-circuits for non-anime content, so this is cheap for live-action.
+            val parsed = parseContentIds(_effectiveContentId.value)
+            val episodeCount = episodes.size
+            runCatching {
+                animeTrackerFanoutService.markSeasonWatched(
+                    imdbId = parsed.imdb ?: meta.imdbId,
+                    tmdbId = parsed.tmdb,
+                    season = season,
+                    episodeCount = episodeCount
+                )
+            }.onFailure { Log.w(TAG, "anime fanout (season $season) threw: ${it.message}") }
         }
     }
 

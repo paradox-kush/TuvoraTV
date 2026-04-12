@@ -343,6 +343,45 @@ internal fun PlayerRuntimeController.emitCompletionScrobbleStop(progressPercent:
     if (progressPercent < 80f || hasSentCompletionScrobbleForCurrentItem) return
     hasSentCompletionScrobbleForCurrentItem = true
     emitScrobbleStop(progressPercent = progressPercent)
+    fanoutAnimeTrackerProgress()
+}
+
+/**
+ * Called once per episode at the same moment the Trakt scrobble-stop fires
+ * (≥80% watched). Resolves the currently-playing item to MAL/AniList/Kitsu
+ * ids and fans out a "watched" write to each connected tracker. Non-anime
+ * content short-circuits inside [AnimeTrackerFanoutService] via the mapping
+ * resolver so live-action shows incur at most one cheap PlexAniBridge lookup.
+ */
+private fun PlayerRuntimeController.fanoutAnimeTrackerProgress() {
+    val rawContentId = contentId ?: return
+    val parsed = parseContentIds(rawContentId)
+    val normalizedType = contentType?.lowercase()
+    val currentMappingKey = currentEpisodeMappingCacheKey()
+    val mappedEpisode = if (currentTraktEpisodeMappingKey == currentMappingKey) currentTraktEpisodeMapping else null
+    val effectiveSeason = mappedEpisode?.season ?: currentSeason
+    val effectiveEpisode = mappedEpisode?.episode ?: currentEpisode
+    scope.launch {
+        try {
+            if (normalizedType in listOf("series", "tv")) {
+                val s = effectiveSeason ?: return@launch
+                val e = effectiveEpisode ?: return@launch
+                animeTrackerFanoutService.markEpisodeWatched(
+                    imdbId = parsed.imdb,
+                    tmdbId = parsed.tmdb,
+                    season = s,
+                    episode = e
+                )
+            } else {
+                animeTrackerFanoutService.markMovieWatched(
+                    imdbId = parsed.imdb,
+                    tmdbId = parsed.tmdb
+                )
+            }
+        } catch (t: Throwable) {
+            Log.w("AnimeFanoutPlayer", "anime fanout threw: ${t.message}")
+        }
+    }
 }
 
 internal fun PlayerRuntimeController.emitStopScrobbleForCurrentProgress() {

@@ -16,7 +16,16 @@ import com.nuvio.tv.data.remote.api.ImdbTapframeApi
 import com.nuvio.tv.data.remote.api.MDBListApi
 import com.nuvio.tv.data.remote.api.ParentalGuideApi
 import com.nuvio.tv.data.remote.api.SeriesGraphApi
+import com.nuvio.tv.core.anime.AnimeMappingsApi
+import com.nuvio.tv.data.remote.api.AniListApi
+import com.nuvio.tv.data.remote.api.KitsuApi
+import com.nuvio.tv.data.remote.api.MalApi
 import com.nuvio.tv.data.remote.api.TmdbApi
+import com.nuvio.tv.data.repository.AniListAuthService
+import com.nuvio.tv.data.repository.KitsuAuthService
+import com.nuvio.tv.data.repository.MalAuthService
+import dagger.Lazy
+import kotlinx.coroutines.runBlocking
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import dagger.Module
@@ -250,6 +259,139 @@ object NetworkModule {
     @Singleton
     fun provideArmApi(@Named("arm") retrofit: Retrofit): ArmApi =
         retrofit.create(ArmApi::class.java)
+
+    // --- Anime Mappings (PlexAniBridge-Mappings consolidated JSON) ---
+
+    @Provides
+    @Singleton
+    @Named("animeMappings")
+    fun provideAnimeMappingsRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
+        Retrofit.Builder()
+            // base url is a placeholder — calls use @Url with the full raw.githubusercontent path
+            .baseUrl("https://raw.githubusercontent.com/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+
+    @Provides
+    @Singleton
+    fun provideAnimeMappingsApi(@Named("animeMappings") retrofit: Retrofit): AnimeMappingsApi =
+        retrofit.create(AnimeMappingsApi::class.java)
+
+    // --- MyAnimeList (API v2) --- //
+    // The interceptor blocks briefly in runBlocking to fetch a valid token.
+    // Tracker traffic is low-volume (<5 req/min peak), so this is cheaper than
+    // plumbing a custom authenticator and matches how the existing Trakt
+    // interceptor attaches static headers synchronously.
+
+    @Provides
+    @Singleton
+    @Named("mal")
+    fun provideMalOkHttpClient(
+        okHttpClient: OkHttpClient,
+        malAuth: Lazy<MalAuthService>
+    ): OkHttpClient = okHttpClient.newBuilder()
+        .addInterceptor { chain ->
+            val token = runBlocking { malAuth.get().getValidAccessToken() }
+            val request = chain.request().newBuilder()
+                .header("Accept", "application/json")
+                .apply { if (!token.isNullOrBlank()) header("Authorization", "Bearer $token") }
+                .build()
+            chain.proceed(request)
+        }
+        .build()
+
+    @Provides
+    @Singleton
+    @Named("mal")
+    fun provideMalRetrofit(
+        @Named("mal") okHttpClient: OkHttpClient,
+        moshi: Moshi
+    ): Retrofit = Retrofit.Builder()
+        .baseUrl("https://api.myanimelist.net/v2/")
+        .client(okHttpClient)
+        .addConverterFactory(MoshiConverterFactory.create(moshi))
+        .build()
+
+    @Provides
+    @Singleton
+    fun provideMalApi(@Named("mal") retrofit: Retrofit): MalApi =
+        retrofit.create(MalApi::class.java)
+
+    // --- AniList (GraphQL) --- //
+
+    @Provides
+    @Singleton
+    @Named("anilist")
+    fun provideAniListOkHttpClient(
+        okHttpClient: OkHttpClient,
+        anilistAuth: Lazy<AniListAuthService>
+    ): OkHttpClient = okHttpClient.newBuilder()
+        .addInterceptor { chain ->
+            val token = runBlocking { anilistAuth.get().getValidAccessToken() }
+            val request = chain.request().newBuilder()
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .apply { if (!token.isNullOrBlank()) header("Authorization", "Bearer $token") }
+                .build()
+            chain.proceed(request)
+        }
+        .build()
+
+    @Provides
+    @Singleton
+    @Named("anilist")
+    fun provideAniListRetrofit(
+        @Named("anilist") okHttpClient: OkHttpClient,
+        moshi: Moshi
+    ): Retrofit = Retrofit.Builder()
+        // Base URL is the full graphql endpoint; @POST(".") targets it directly.
+        .baseUrl("https://graphql.anilist.co/")
+        .client(okHttpClient)
+        .addConverterFactory(MoshiConverterFactory.create(moshi))
+        .build()
+
+    @Provides
+    @Singleton
+    fun provideAniListApi(@Named("anilist") retrofit: Retrofit): AniListApi =
+        retrofit.create(AniListApi::class.java)
+
+    // --- Kitsu (JSON:API) --- //
+
+    @Provides
+    @Singleton
+    @Named("kitsu")
+    fun provideKitsuOkHttpClient(
+        okHttpClient: OkHttpClient,
+        kitsuAuth: Lazy<KitsuAuthService>
+    ): OkHttpClient = okHttpClient.newBuilder()
+        .addInterceptor { chain ->
+            val token = runBlocking { kitsuAuth.get().getValidAccessToken() }
+            val request = chain.request().newBuilder()
+                .header("Accept", "application/vnd.api+json")
+                .header("Content-Type", "application/vnd.api+json")
+                .apply { if (!token.isNullOrBlank()) header("Authorization", "Bearer $token") }
+                .build()
+            chain.proceed(request)
+        }
+        .build()
+
+    @Provides
+    @Singleton
+    @Named("kitsu")
+    fun provideKitsuRetrofit(
+        @Named("kitsu") okHttpClient: OkHttpClient,
+        moshi: Moshi
+    ): Retrofit = Retrofit.Builder()
+        .baseUrl("https://kitsu.io/api/edge/")
+        .client(okHttpClient)
+        .addConverterFactory(MoshiConverterFactory.create(moshi))
+        .build()
+
+    @Provides
+    @Singleton
+    fun provideKitsuApi(@Named("kitsu") retrofit: Retrofit): KitsuApi =
+        retrofit.create(KitsuApi::class.java)
 
     @Provides
     @Singleton

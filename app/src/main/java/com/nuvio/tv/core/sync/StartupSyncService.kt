@@ -1,15 +1,25 @@
 package com.nuvio.tv.core.sync
 
 import android.util.Log
+import com.nuvio.tv.core.anime.EpisodeOffsetMapper
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.profile.ProfileManager
+import com.nuvio.tv.data.local.AniListAuthDataStore
+import com.nuvio.tv.data.local.AniListSettingsDataStore
+import com.nuvio.tv.data.local.KitsuAuthDataStore
+import com.nuvio.tv.data.local.KitsuSettingsDataStore
 import com.nuvio.tv.data.local.LibraryPreferences
+import com.nuvio.tv.data.local.MalAuthDataStore
+import com.nuvio.tv.data.local.MalSettingsDataStore
 import com.nuvio.tv.data.local.TraktAuthDataStore
 import com.nuvio.tv.data.local.WatchProgressPreferences
 import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.repository.AddonRepositoryImpl
+import com.nuvio.tv.data.repository.AniListListService
+import com.nuvio.tv.data.repository.KitsuListService
 import com.nuvio.tv.data.repository.LibraryRepositoryImpl
+import com.nuvio.tv.data.repository.MalListService
 import com.nuvio.tv.data.repository.WatchProgressRepositoryImpl
 import com.nuvio.tv.domain.model.AuthState
 import kotlinx.coroutines.CoroutineScope
@@ -44,7 +54,17 @@ class StartupSyncService @Inject constructor(
     private val watchProgressPreferences: WatchProgressPreferences,
     private val libraryPreferences: LibraryPreferences,
     private val watchedItemsPreferences: WatchedItemsPreferences,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val episodeOffsetMapper: EpisodeOffsetMapper,
+    private val malAuthStore: MalAuthDataStore,
+    private val malSettings: MalSettingsDataStore,
+    private val malList: MalListService,
+    private val aniListAuthStore: AniListAuthDataStore,
+    private val aniListSettings: AniListSettingsDataStore,
+    private val aniListList: AniListListService,
+    private val kitsuAuthStore: KitsuAuthDataStore,
+    private val kitsuSettings: KitsuSettingsDataStore,
+    private val kitsuList: KitsuListService
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startupPullJob: Job? = null
@@ -171,6 +191,51 @@ class StartupSyncService @Inject constructor(
             }
         }
         return true
+    }
+
+    /**
+     * Fire-and-forget warm-up for anime tracker caches on startup. Runs in a
+     * child coroutine of [scope] so the main sync chain isn't blocked by slow
+     * third-party APIs (MAL/AniList/Kitsu are typically 200-500 ms each; the
+     * PlexAniBridge JSON download is ~2 MB).
+     *
+     * Each tracker only refreshes the statuses the user has enabled as home
+     * rows — there's no point pulling the full library if nothing renders it.
+     */
+    private suspend fun primeAnimeTrackerCaches() {
+        try {
+            episodeOffsetMapper.warmIfStale()
+        } catch (e: Exception) {
+            Log.w(TAG, "EpisodeOffsetMapper warm failed", e)
+        }
+        runCatching {
+            if (malAuthStore.isAuthenticated.first()) {
+                val enabled = malSettings.settings.first().enabledStatuses
+                enabled.forEach { status ->
+                    runCatching { malList.refresh(status) }
+                        .onFailure { Log.w(TAG, "MAL refresh status=$status failed: ${it.message}") }
+                }
+            }
+        }
+        runCatching {
+            if (aniListAuthStore.isAuthenticated.first()) {
+                val enabled = aniListSettings.settings.first().enabledStatuses
+                if (enabled.isNotEmpty()) {
+                    // AniList pulls all statuses in one call.
+                    runCatching { aniListList.refreshAll() }
+                        .onFailure { Log.w(TAG, "AniList refresh failed: ${it.message}") }
+                }
+            }
+        }
+        runCatching {
+            if (kitsuAuthStore.isAuthenticated.first()) {
+                val enabled = kitsuSettings.settings.first().enabledStatuses
+                enabled.forEach { status ->
+                    runCatching { kitsuList.refresh(status) }
+                        .onFailure { Log.w(TAG, "Kitsu refresh status=$status failed: ${it.message}") }
+                }
+            }
+        }
     }
 
     private suspend fun pullRemoteData(includeProfileSettings: Boolean): Result<Unit> {
@@ -319,6 +384,13 @@ class StartupSyncService @Inject constructor(
             } else {
                 Log.d(TAG, "Skipping watch progress & library sync (Trakt connected)")
             }
+
+            // Anime tracker startup: pre-warm the PlexAniBridge mapping file (used
+            // by the fanout service for absolute-numbered shows) and refresh the
+            // home-row caches for each enabled status on each connected tracker.
+            // All fire-and-forget — failures never block the main sync.
+            scope.launch { primeAnimeTrackerCaches() }
+
             return Result.success(Unit)
         } catch (e: Exception) {
             pluginManager.isSyncingFromRemote = false

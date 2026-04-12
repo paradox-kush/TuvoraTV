@@ -76,7 +76,10 @@ private enum class IntegrationSettingsSection {
     Hub,
     Tmdb,
     MdbList,
-    AnimeSkip
+    AnimeSkip,
+    Mal,
+    AniList,
+    Kitsu
 }
 
 internal enum class SettingsSectionDestination {
@@ -225,6 +228,9 @@ fun SettingsScreen(
     val integrationTmdbFocusRequester = remember { FocusRequester() }
     val integrationMdbListFocusRequester = remember { FocusRequester() }
     val integrationAnimeSkipFocusRequester = remember { FocusRequester() }
+    val integrationMalFocusRequester = remember { FocusRequester() }
+    val integrationAniListFocusRequester = remember { FocusRequester() }
+    val integrationKitsuFocusRequester = remember { FocusRequester() }
     var integrationSection by remember { mutableStateOf(IntegrationSettingsSection.Hub) }
     var pendingContentFocusCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var pendingContentFocusRequestId by remember { mutableLongStateOf(0L) }
@@ -413,6 +419,9 @@ fun SettingsScreen(
                             tmdbFocusRequester = integrationTmdbFocusRequester,
                             mdbListFocusRequester = integrationMdbListFocusRequester,
                             animeSkipFocusRequester = integrationAnimeSkipFocusRequester,
+                            malFocusRequester = integrationMalFocusRequester,
+                            aniListFocusRequester = integrationAniListFocusRequester,
+                            kitsuFocusRequester = integrationKitsuFocusRequester,
                             autoFocusEnabled = allowDetailAutofocus
                         )
                         SettingsCategory.ABOUT -> AboutSettingsContent(
@@ -500,6 +509,9 @@ private fun IntegrationSettingsContent(
     tmdbFocusRequester: FocusRequester,
     mdbListFocusRequester: FocusRequester,
     animeSkipFocusRequester: FocusRequester,
+    malFocusRequester: FocusRequester,
+    aniListFocusRequester: FocusRequester,
+    kitsuFocusRequester: FocusRequester,
     autoFocusEnabled: Boolean
 ) {
     BackHandler(enabled = selectedSection != IntegrationSettingsSection.Hub) {
@@ -514,6 +526,9 @@ private fun IntegrationSettingsContent(
             IntegrationSettingsSection.Tmdb -> tmdbFocusRequester
             IntegrationSettingsSection.MdbList -> mdbListFocusRequester
             IntegrationSettingsSection.AnimeSkip -> animeSkipFocusRequester
+            IntegrationSettingsSection.Mal -> malFocusRequester
+            IntegrationSettingsSection.AniList -> aniListFocusRequester
+            IntegrationSettingsSection.Kitsu -> kitsuFocusRequester
         }
         runCatching { requester.requestFocus() }
     }
@@ -559,6 +574,27 @@ private fun IntegrationSettingsContent(
                                 onClick = { onSelectSection(IntegrationSettingsSection.AnimeSkip) }
                             )
                         }
+                        item(key = "integration_hub_mal") {
+                            SettingsActionRow(
+                                title = "MyAnimeList",
+                                subtitle = "Sync anime lists and progress with MyAnimeList",
+                                onClick = { onSelectSection(IntegrationSettingsSection.Mal) }
+                            )
+                        }
+                        item(key = "integration_hub_anilist") {
+                            SettingsActionRow(
+                                title = "AniList",
+                                subtitle = "Sync anime lists and progress with AniList",
+                                onClick = { onSelectSection(IntegrationSettingsSection.AniList) }
+                            )
+                        }
+                        item(key = "integration_hub_kitsu") {
+                            SettingsActionRow(
+                                title = "Kitsu",
+                                subtitle = "Sync anime lists and progress with Kitsu",
+                                onClick = { onSelectSection(IntegrationSettingsSection.Kitsu) }
+                            )
+                        }
                     }
                 }
             }
@@ -579,6 +615,24 @@ private fun IntegrationSettingsContent(
         IntegrationSettingsSection.AnimeSkip -> {
             AnimeSkipSettingsContent(
                 initialFocusRequester = animeSkipFocusRequester
+            )
+        }
+
+        IntegrationSettingsSection.Mal -> {
+            com.nuvio.tv.ui.screens.settings.tracker.MalSettingsContent(
+                initialFocusRequester = malFocusRequester
+            )
+        }
+
+        IntegrationSettingsSection.AniList -> {
+            com.nuvio.tv.ui.screens.settings.tracker.AniListSettingsContent(
+                initialFocusRequester = aniListFocusRequester
+            )
+        }
+
+        IntegrationSettingsSection.Kitsu -> {
+            com.nuvio.tv.ui.screens.settings.tracker.KitsuSettingsContent(
+                initialFocusRequester = kitsuFocusRequester
             )
         }
     }

@@ -80,7 +80,21 @@ interface ArmApi {
     @GET("imdb")
     suspend fun resolveImdbToAll(
         @Query("id") imdbId: String,
-        @Query("include") include: String = "myanimelist,anilist,kitsu"
+        @Query("include") include: String = "myanimelist,anilist,kitsu,anidb,thetvdb,themoviedb"
+    ): Response<List<ArmEntry>>
+
+    // /themoviedb?id=...  → List<ArmEntry> (one per anime season/cour mapped to this TMDB show)
+    @GET("themoviedb")
+    suspend fun resolveTmdbToAll(
+        @Query("id") tmdbId: Int,
+        @Query("include") include: String = "myanimelist,anilist,kitsu,anidb,thetvdb,imdb"
+    ): Response<List<ArmEntry>>
+
+    // /thetvdb?id=...  → List<ArmEntry> (one per season)
+    @GET("thetvdb")
+    suspend fun resolveTvdbToAll(
+        @Query("id") tvdbId: Int,
+        @Query("include") include: String = "myanimelist,anilist,kitsu,anidb,themoviedb,imdb"
     ): Response<List<ArmEntry>>
 
     // /ids?source=myanimelist&id=...&include=anilist  → single ArmEntry
@@ -97,6 +111,22 @@ interface ArmApi {
         @Query("source") source: String = "myanimelist",
         @Query("id") malId: String,
         @Query("include") include: String = "imdb"
+    ): Response<ArmEntry>
+
+    // /ids?source=myanimelist&id=...&include=...  → single ArmEntry with all IDs
+    @GET("ids")
+    suspend fun resolveMalToAll(
+        @Query("source") source: String = "myanimelist",
+        @Query("id") malId: String,
+        @Query("include") include: String = "anilist,kitsu,anidb,thetvdb,themoviedb,imdb"
+    ): Response<ArmEntry>
+
+    // /ids?source=anilist&id=...  → single ArmEntry with all IDs
+    @GET("ids")
+    suspend fun resolveAnilistToAll(
+        @Query("source") source: String = "anilist",
+        @Query("id") anilistId: String,
+        @Query("include") include: String = "myanimelist,kitsu,anidb,thetvdb,themoviedb,imdb"
     ): Response<ArmEntry>
 
     // /ids?source=kitsu&id=...&include=myanimelist  → single ArmEntry
@@ -122,6 +152,14 @@ interface ArmApi {
         @Query("id") kitsuId: String,
         @Query("include") include: String = "imdb"
     ): Response<ArmEntry>
+
+    // /ids?source=kitsu&id=...&include=...  → single ArmEntry with all IDs
+    @GET("ids")
+    suspend fun resolveKitsuToAll(
+        @Query("source") source: String = "kitsu",
+        @Query("id") kitsuId: String,
+        @Query("include") include: String = "myanimelist,anilist,anidb,thetvdb,themoviedb,imdb"
+    ): Response<ArmEntry>
 }
 
 @JsonClass(generateAdapter = true)
@@ -129,6 +167,9 @@ data class ArmEntry(
     @Json(name = "myanimelist") val myanimelist: Int? = null,
     @Json(name = "anilist") val anilist: Int? = null,
     @Json(name = "kitsu") val kitsu: Int? = null,
+    @Json(name = "anidb") val anidb: Int? = null,
+    @Json(name = "thetvdb") val thetvdb: Int? = null,
+    @Json(name = "themoviedb") val themoviedb: Int? = null,
     @Json(name = "imdb") val imdb: String? = null
 )
 

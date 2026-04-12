@@ -78,6 +78,33 @@ data class TvLoginExchangeResult(
     @SerialName("expires_in") val expiresIn: Long? = null
 )
 
+// --- Anime tracker phone-pair login (MAL / AniList / Kitsu) --- //
+
+@Serializable
+data class TrackerTvLoginStartResult(
+    val code: String,
+    @SerialName("web_url") val webUrl: String,
+    @SerialName("expires_at") val expiresAt: String,
+    @SerialName("poll_interval_seconds") val pollIntervalSeconds: Int = 3
+)
+
+/**
+ * Poll result from `poll_tracker_tv_login_session`. When the phone completes
+ * OAuth and the edge function stashes tokens, status flips from "pending" to
+ * "ready" and the token fields are populated. The tokens come straight from
+ * the tracker's OAuth server — not Supabase — so they're opaque strings.
+ */
+@Serializable
+data class TrackerTvLoginPollResult(
+    val status: String, // "pending" | "ready" | "expired"
+    @SerialName("access_token") val accessToken: String? = null,
+    @SerialName("refresh_token") val refreshToken: String? = null,
+    @SerialName("expires_in") val expiresIn: Long? = null,
+    @SerialName("user_id") val userId: String? = null,
+    val username: String? = null,
+    @SerialName("poll_interval_seconds") val pollIntervalSeconds: Int? = null
+)
+
 @Serializable
 data class SupabaseWatchProgress(
     val id: String? = null,

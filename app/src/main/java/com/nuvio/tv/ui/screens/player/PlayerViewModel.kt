@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.core.plugin.PluginManager
+import com.nuvio.tv.core.sync.AnimeTrackerFanoutService
 import com.nuvio.tv.core.torrent.TorrentService
 import com.nuvio.tv.core.torrent.TorrentSettings
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
@@ -38,6 +39,7 @@ class PlayerViewModel @Inject constructor(
     private val parentalGuideRepository: ParentalGuideRepository,
     private val traktScrobbleService: TraktScrobbleService,
     private val traktEpisodeMappingService: TraktEpisodeMappingService,
+    private val animeTrackerFanoutService: AnimeTrackerFanoutService,
     private val skipIntroRepository: SkipIntroRepository,
     private val playerSettingsDataStore: PlayerSettingsDataStore,
     private val streamLinkCacheDataStore: StreamLinkCacheDataStore,
@@ -63,6 +65,7 @@ class PlayerViewModel @Inject constructor(
         parentalGuideRepository = parentalGuideRepository,
         traktScrobbleService = traktScrobbleService,
         traktEpisodeMappingService = traktEpisodeMappingService,
+        animeTrackerFanoutService = animeTrackerFanoutService,
         skipIntroRepository = skipIntroRepository,
         playerSettingsDataStore = playerSettingsDataStore,
         streamLinkCacheDataStore = streamLinkCacheDataStore,

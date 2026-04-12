@@ -7,6 +7,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.nuvio.tv.core.plugin.PluginManager
+import com.nuvio.tv.core.sync.AnimeTrackerFanoutService
 import com.nuvio.tv.core.torrent.TorrentService
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
@@ -50,6 +51,7 @@ class PlayerRuntimeController(
     internal val parentalGuideRepository: ParentalGuideRepository,
     internal val traktScrobbleService: TraktScrobbleService,
     internal val traktEpisodeMappingService: TraktEpisodeMappingService,
+    internal val animeTrackerFanoutService: AnimeTrackerFanoutService,
     internal val skipIntroRepository: SkipIntroRepository,
     internal val playerSettingsDataStore: PlayerSettingsDataStore,
     internal val streamLinkCacheDataStore: StreamLinkCacheDataStore,
