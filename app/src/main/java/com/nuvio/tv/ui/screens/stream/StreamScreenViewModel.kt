@@ -41,6 +41,7 @@ import javax.inject.Inject
 private const val TAG = "StreamScreenViewModel"
 private const val EMBEDDED_STREAM_GROUP_NAME = "Embedded Streams"
 private const val EMBEDDED_STREAM_FALLBACK_NAME = "Embed Stream"
+private const val DIRECT_AUTOPLAY_HARD_TIMEOUT_MS = 45_000L
 
 @HiltViewModel
 class StreamScreenViewModel @Inject constructor(
@@ -320,7 +321,12 @@ class StreamScreenViewModel @Inject constructor(
                             existing = _uiState.value.sourceChips,
                             succeededNames = orderedAddonStreams.map { it.addonName }
                         ),
-                        autoPlayStream = selectedAutoPlayStream,
+                        // Preserve an already-resolved stream: the post-collect
+                        // "isAllLoaded=true" pass re-runs the selector with
+                        // shouldAutoSelect=false once a target is resolved, and
+                        // would otherwise clobber the real pick with null before
+                        // Compose observes it.
+                        autoPlayStream = selectedAutoPlayStream ?: it.autoPlayStream,
                         error = null,
                         showDirectAutoPlayOverlay = if (directAutoPlayFlowEnabledForSession) {
                             true
@@ -430,6 +436,37 @@ class StreamScreenViewModel @Inject constructor(
             if (!autoSelectTriggered && lastSuccessData != null) {
                 autoSelectTriggered = true
                 applySuccess(lastSuccessData!!, isAllLoaded = true)
+            }
+
+            // Hard wall-clock fallback: if the upstream stream flow never terminates
+            // (e.g. a scraper hangs and keeps the plugin channelFlow open), the direct
+            // autoplay overlay would otherwise stay visible indefinitely. Force a
+            // teardown so the user lands in the manual stream list with whatever
+            // results have already arrived.
+            if (directFlowActive) {
+                delay(DIRECT_AUTOPLAY_HARD_TIMEOUT_MS)
+                if (directAutoPlayFlowEnabledForSession && !resolvedAutoPlayTarget) {
+                    Log.w(TAG, "Direct autoplay hard timeout reached; falling back to manual selection")
+                    lastSuccessData?.let {
+                        if (!autoSelectTriggered) {
+                            autoSelectTriggered = true
+                            applySuccess(it, isAllLoaded = true)
+                        }
+                    }
+                    if (!resolvedAutoPlayTarget) {
+                        directAutoPlayFlowEnabledForSession = false
+                        updateUiStateIfChanged {
+                            it.copy(
+                                isLoading = false,
+                                isDirectAutoPlayFlow = false,
+                                showDirectAutoPlayOverlay = false,
+                                directAutoPlayMessage = null
+                            )
+                        }
+                        streamLoadInner.cancel()
+                        markRemainingSourceChipsAsError()
+                    }
+                }
             }
         }
     }
