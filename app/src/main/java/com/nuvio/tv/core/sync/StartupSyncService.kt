@@ -20,6 +20,8 @@ import com.nuvio.tv.data.repository.AniListListService
 import com.nuvio.tv.data.repository.KitsuListService
 import com.nuvio.tv.data.repository.LibraryRepositoryImpl
 import com.nuvio.tv.data.repository.MalListService
+import com.nuvio.tv.data.repository.TrackerSettingsSyncService
+import com.nuvio.tv.data.repository.TrackerTokenSyncService
 import com.nuvio.tv.data.repository.WatchProgressRepositoryImpl
 import com.nuvio.tv.domain.model.AuthState
 import kotlinx.coroutines.CoroutineScope
@@ -66,7 +68,9 @@ class StartupSyncService @Inject constructor(
     private val aniListList: AniListListService,
     private val kitsuAuthStore: KitsuAuthDataStore,
     private val kitsuSettings: KitsuSettingsDataStore,
-    private val kitsuList: KitsuListService
+    private val kitsuList: KitsuListService,
+    private val trackerTokenSync: TrackerTokenSyncService,
+    private val trackerSettingsSync: TrackerSettingsSyncService
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startupPullJob: Job? = null
@@ -210,6 +214,13 @@ class StartupSyncService @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "EpisodeOffsetMapper warm failed", e)
         }
+        // Pull tracker tokens first so per-tracker list refreshes below can
+        // actually authenticate. Settings pull follows so the `enabled`
+        // statuses we iterate are the latest cross-device view.
+        runCatching { trackerTokenSync.pullTokensForActiveProfile() }
+            .onFailure { Log.w(TAG, "tracker token sync pull failed: ${it.message}") }
+        runCatching { trackerSettingsSync.pullSettingsForActiveProfile() }
+            .onFailure { Log.w(TAG, "tracker settings sync pull failed: ${it.message}") }
         runCatching {
             if (malAuthStore.isAuthenticated.first()) {
                 val enabled = malSettings.settings.first().enabledStatuses

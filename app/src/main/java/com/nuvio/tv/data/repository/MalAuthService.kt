@@ -31,7 +31,8 @@ class MalAuthService @Inject constructor(
     private val dataStore: MalAuthDataStore,
     private val tvLogin: TrackerTvLoginService,
     private val okHttpClient: OkHttpClient,
-    private val moshi: Moshi
+    private val moshi: Moshi,
+    private val tokenSync: dagger.Lazy<TrackerTokenSyncService>
 ) {
     private val refreshMutex = Mutex()
     private val tokenAdapter = moshi.adapter(MalTokenResponseDto::class.java)
@@ -72,6 +73,17 @@ class MalAuthService @Inject constructor(
                 dataStore.saveTokens(access, refresh, expiresIn)
                 dataStore.saveUser(userId = poll.userId, username = poll.username)
                 dataStore.clearSession()
+                // Mirror tokens to Supabase so other devices pick them up on their next sync.
+                runCatching {
+                    tokenSync.get().pushTokens(
+                        tracker = TrackerTokenSyncService.TRACKER_MAL,
+                        accessToken = access,
+                        refreshToken = refresh,
+                        expiresInSeconds = expiresIn,
+                        trackerUserId = poll.userId,
+                        trackerUsername = poll.username
+                    )
+                }.onFailure { Log.w(TAG, "token sync push (phone-pair) failed: ${it.message}") }
                 TrackerPhoneLoginPoll.Success(username = poll.username)
             }
             "expired" -> {
@@ -83,8 +95,11 @@ class MalAuthService @Inject constructor(
     }
 
     suspend fun revokeAndLogout() {
-        // MAL has no token revocation endpoint — just clear local state.
+        // MAL has no token revocation endpoint — just clear local state,
+        // then remove the synced row so other devices disconnect too.
         dataStore.clearAuth()
+        runCatching { tokenSync.get().clearTokens(TrackerTokenSyncService.TRACKER_MAL) }
+            .onFailure { Log.w(TAG, "token sync clear failed: ${it.message}") }
     }
 
     // --- Debug-only local auth (no Supabase required) --- //
@@ -149,6 +164,16 @@ class MalAuthService @Inject constructor(
                         ?: return@withContext Result.failure(IllegalStateException("Malformed MAL token response"))
                     dataStore.saveTokens(token.accessToken, token.refreshToken, token.expiresIn)
                     pendingPkceVerifier = null
+                    runCatching {
+                        tokenSync.get().pushTokens(
+                            tracker = TrackerTokenSyncService.TRACKER_MAL,
+                            accessToken = token.accessToken,
+                            refreshToken = token.refreshToken,
+                            expiresInSeconds = token.expiresIn,
+                            trackerUserId = null,
+                            trackerUsername = null
+                        )
+                    }.onFailure { Log.w(TAG, "token sync push (debug) failed: ${it.message}") }
                 }
                 // Look up username so the UI can confirm sign-in. Non-fatal on failure.
                 val username = runCatching {
@@ -240,6 +265,18 @@ class MalAuthService @Inject constructor(
                         refreshToken = token.refreshToken,
                         expiresInSeconds = token.expiresIn
                     )
+                    // Push the rotated tokens to Supabase so other devices
+                    // stay in sync without needing to refresh independently.
+                    runCatching {
+                        tokenSync.get().pushTokens(
+                            tracker = TrackerTokenSyncService.TRACKER_MAL,
+                            accessToken = token.accessToken,
+                            refreshToken = token.refreshToken,
+                            expiresInSeconds = token.expiresIn,
+                            trackerUserId = null,
+                            trackerUsername = null
+                        )
+                    }.onFailure { Log.w(TAG, "token sync push (refresh) failed: ${it.message}") }
                     token.accessToken
                 }
             } catch (e: Exception) {

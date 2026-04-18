@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.repository
 
+import android.util.Log
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.data.local.AniListAuthDataStore
 import com.nuvio.tv.data.remote.supabase.TrackerTvLoginService
@@ -20,7 +21,8 @@ import javax.inject.Singleton
 @Singleton
 class AniListAuthService @Inject constructor(
     private val dataStore: AniListAuthDataStore,
-    private val tvLogin: TrackerTvLoginService
+    private val tvLogin: TrackerTvLoginService,
+    private val tokenSync: dagger.Lazy<TrackerTokenSyncService>
 ) {
     private var deviceNonce: String? = null
 
@@ -60,6 +62,16 @@ class AniListAuthService @Inject constructor(
                 dataStore.saveToken(access, expiresIn)
                 dataStore.saveUser(userId = poll.userId, username = poll.username)
                 dataStore.clearSession()
+                runCatching {
+                    tokenSync.get().pushTokens(
+                        tracker = TrackerTokenSyncService.TRACKER_ANILIST,
+                        accessToken = access,
+                        refreshToken = null,
+                        expiresInSeconds = expiresIn,
+                        trackerUserId = poll.userId,
+                        trackerUsername = poll.username
+                    )
+                }.onFailure { Log.w(TAG, "token sync push (phone-pair) failed: ${it.message}") }
                 TrackerPhoneLoginPoll.Success(username = poll.username)
             }
             "expired" -> {
@@ -72,6 +84,8 @@ class AniListAuthService @Inject constructor(
 
     suspend fun revokeAndLogout() {
         dataStore.clearAuth()
+        runCatching { tokenSync.get().clearTokens(TrackerTokenSyncService.TRACKER_ANILIST) }
+            .onFailure { Log.w(TAG, "token sync clear failed: ${it.message}") }
     }
 
     // --- Debug-only local auth (no Supabase required) --- //
@@ -97,7 +111,16 @@ class AniListAuthService @Inject constructor(
         if (trimmed.isBlank()) return Result.failure(IllegalArgumentException("Empty token"))
         val lifetimeSeconds = 365L * 24 * 60 * 60
         dataStore.saveToken(trimmed, lifetimeSeconds)
-        // Viewer lookup happens lazily on first use; not critical to block save here.
+        runCatching {
+            tokenSync.get().pushTokens(
+                tracker = TrackerTokenSyncService.TRACKER_ANILIST,
+                accessToken = trimmed,
+                refreshToken = null,
+                expiresInSeconds = lifetimeSeconds,
+                trackerUserId = null,
+                trackerUsername = null
+            )
+        }.onFailure { Log.w(TAG, "token sync push (debug) failed: ${it.message}") }
         return Result.success(null)
     }
 
@@ -113,6 +136,7 @@ class AniListAuthService @Inject constructor(
         try { Instant.parse(iso).toEpochMilli() } catch (_: DateTimeParseException) { null }
 
     companion object {
+        private const val TAG = "AniListAuthService"
         private const val DEFAULT_LIFETIME_SECONDS = 365L * 24 * 60 * 60
     }
 }

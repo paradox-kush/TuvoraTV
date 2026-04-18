@@ -67,4 +67,16 @@ class AniListSettingsDataStore @Inject constructor(
     suspend fun setSendProgress(enabled: Boolean) {
         store().edit { p -> p[sendProgressKey] = enabled }
     }
+
+    suspend fun replaceAll(
+        enabledStatuses: Set<TrackerListStatus>,
+        rowOrder: List<TrackerListStatus>,
+        sendProgress: Boolean
+    ) {
+        store().edit { p ->
+            p[enabledStatusesKey] = enabledStatuses.map { it.name }.toSet()
+            p[rowOrderKey] = rowOrder.joinToString(",") { it.name }
+            p[sendProgressKey] = sendProgress
+        }
+    }
 }

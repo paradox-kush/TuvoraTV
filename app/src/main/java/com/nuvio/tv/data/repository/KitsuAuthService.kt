@@ -30,7 +30,8 @@ class KitsuAuthService @Inject constructor(
     private val dataStore: KitsuAuthDataStore,
     private val tvLogin: TrackerTvLoginService,
     private val okHttpClient: OkHttpClient,
-    private val moshi: Moshi
+    private val moshi: Moshi,
+    private val tokenSync: dagger.Lazy<TrackerTokenSyncService>
 ) {
     private val refreshMutex = Mutex()
     private val tokenAdapter = moshi.adapter(KitsuTokenResponseDto::class.java)
@@ -71,6 +72,16 @@ class KitsuAuthService @Inject constructor(
                 dataStore.saveTokens(access, refresh, expiresIn)
                 dataStore.saveUser(userId = poll.userId, username = poll.username)
                 dataStore.clearSession()
+                runCatching {
+                    tokenSync.get().pushTokens(
+                        tracker = TrackerTokenSyncService.TRACKER_KITSU,
+                        accessToken = access,
+                        refreshToken = refresh,
+                        expiresInSeconds = expiresIn,
+                        trackerUserId = poll.userId,
+                        trackerUsername = poll.username
+                    )
+                }.onFailure { Log.w(TAG, "token sync push (phone-pair) failed: ${it.message}") }
                 TrackerPhoneLoginPoll.Success(username = poll.username)
             }
             "expired" -> {
@@ -83,6 +94,8 @@ class KitsuAuthService @Inject constructor(
 
     suspend fun revokeAndLogout() {
         dataStore.clearAuth()
+        runCatching { tokenSync.get().clearTokens(TrackerTokenSyncService.TRACKER_KITSU) }
+            .onFailure { Log.w(TAG, "token sync clear failed: ${it.message}") }
     }
 
     // --- Debug-only local auth (no Supabase required) --- //
@@ -111,6 +124,16 @@ class KitsuAuthService @Inject constructor(
                         ?: return@withContext Result.failure(IllegalStateException("Malformed Kitsu token response"))
                     dataStore.saveTokens(token.accessToken, token.refreshToken, token.expiresIn)
                     Log.i(TAG, "kitsu password grant ok")
+                    runCatching {
+                        tokenSync.get().pushTokens(
+                            tracker = TrackerTokenSyncService.TRACKER_KITSU,
+                            accessToken = token.accessToken,
+                            refreshToken = token.refreshToken,
+                            expiresInSeconds = token.expiresIn,
+                            trackerUserId = null,
+                            trackerUsername = null
+                        )
+                    }.onFailure { Log.w(TAG, "token sync push (debug) failed: ${it.message}") }
                 }
                 Result.success(Unit)
             } catch (e: Exception) {
@@ -161,6 +184,16 @@ class KitsuAuthService @Inject constructor(
                         refreshToken = token.refreshToken,
                         expiresInSeconds = token.expiresIn
                     )
+                    runCatching {
+                        tokenSync.get().pushTokens(
+                            tracker = TrackerTokenSyncService.TRACKER_KITSU,
+                            accessToken = token.accessToken,
+                            refreshToken = token.refreshToken,
+                            expiresInSeconds = token.expiresIn,
+                            trackerUserId = null,
+                            trackerUsername = null
+                        )
+                    }.onFailure { Log.w(TAG, "token sync push (refresh) failed: ${it.message}") }
                     token.accessToken
                 }
             } catch (e: Exception) {
