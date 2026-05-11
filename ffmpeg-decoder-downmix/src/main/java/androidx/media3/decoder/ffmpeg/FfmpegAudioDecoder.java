@@ -37,11 +37,11 @@ import androidx.media3.decoder.SimpleDecoderOutputBuffer;
 import java.nio.ByteBuffer;
 import java.util.List;
 
-/** FFmpeg audio decoder that keeps decoded/downmixed PCM in float until the audio sink. */
+/** FFmpeg audio decoder with optional float output for active FFmpeg downmixing. */
 /* package */ final class FfmpegAudioDecoder
     extends SimpleDecoder<DecoderInputBuffer, SimpleDecoderOutputBuffer, FfmpegDecoderException> {
 
-  private static final int INITIAL_OUTPUT_BUFFER_SIZE_FLOAT = 65535 * 2;
+  private static final int INITIAL_OUTPUT_BUFFER_SIZE = 65535 * 2;
 
   private static final int AUDIO_DECODER_ERROR_INVALID_DATA = -1;
   private static final int AUDIO_DECODER_ERROR_OTHER = -2;
@@ -51,10 +51,10 @@ import java.util.List;
   private static final int FLAC_METADATA_TYPE_STREAM_INFO = 0;
   private static final int FLAC_METADATA_BLOCK_HEADER_SIZE = 4;
   private static final int FLAC_STREAM_INFO_DATA_SIZE = 34;
-  private static final @C.PcmEncoding int OUTPUT_ENCODING = C.ENCODING_PCM_FLOAT;
 
   private final String codecName;
   @Nullable private final byte[] extraData;
+  private final @C.PcmEncoding int outputEncoding;
   private volatile int userCenterMixLevelDb;
   private volatile boolean downmixNormalizationEnabled;
   private int outputBufferSize;
@@ -70,7 +70,8 @@ import java.util.List;
       int numOutputBuffers,
       int initialInputBufferSize,
       int outputChannelCount,
-      @Nullable String requestedOutputLayoutName)
+      @Nullable String requestedOutputLayoutName,
+      @C.PcmEncoding int outputEncoding)
       throws FfmpegDecoderException {
     super(new DecoderInputBuffer[numInputBuffers], new SimpleDecoderOutputBuffer[numOutputBuffers]);
     if (!FfmpegLibrary.isAvailable()) {
@@ -79,7 +80,8 @@ import java.util.List;
     checkNotNull(format.sampleMimeType);
     codecName = checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
     extraData = getExtraData(format.sampleMimeType, format.initializationData);
-    outputBufferSize = INITIAL_OUTPUT_BUFFER_SIZE_FLOAT;
+    this.outputEncoding = outputEncoding;
+    outputBufferSize = INITIAL_OUTPUT_BUFFER_SIZE;
     nativeContext =
         ffmpegInitialize(
             codecName,
@@ -87,7 +89,8 @@ import java.util.List;
             format.sampleRate,
             format.channelCount,
             outputChannelCount,
-            requestedOutputLayoutName);
+            requestedOutputLayoutName,
+            outputEncoding == C.ENCODING_PCM_FLOAT);
     if (nativeContext == 0) {
       throw new FfmpegDecoderException("Initialization failed.");
     }
@@ -200,7 +203,7 @@ import java.util.List;
 
   /** Returns the encoding of output audio. */
   public @C.PcmEncoding int getEncoding() {
-    return OUTPUT_ENCODING;
+    return outputEncoding;
   }
 
   /** Sets the center-mix offset in dB relative to stream metadata or the default (-3 dB). */
@@ -332,7 +335,8 @@ import java.util.List;
       int rawSampleRate,
       int rawChannelCount,
       int outputChannelCount,
-      @Nullable String requestedOutputLayoutName);
+      @Nullable String requestedOutputLayoutName,
+      boolean outputFloat);
 
   private native int ffmpegDecode(
       long context,

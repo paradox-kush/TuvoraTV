@@ -136,8 +136,11 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
           : C.FORMAT_UNSUPPORTED_DRM;
     }
     int outputChannelCount = resolveOutputChannelCount(format.channelCount);
+    boolean shouldRequestDownmix = shouldRequestDownmix(format.channelCount, outputChannelCount);
+    @C.PcmEncoding int outputEncoding =
+        shouldRequestDownmix ? C.ENCODING_PCM_FLOAT : C.ENCODING_PCM_16BIT;
     boolean supportsConfiguredOutput =
-        sinkSupportsFormat(format, C.ENCODING_PCM_FLOAT, outputChannelCount);
+        sinkSupportsFormat(format, outputEncoding, outputChannelCount);
     if (!supportsConfiguredOutput) {
       return C.FORMAT_UNSUPPORTED_SUBTYPE;
     }
@@ -159,7 +162,9 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
     int initialInputBufferSize =
         format.maxInputSize != Format.NO_VALUE ? format.maxInputSize : DEFAULT_INPUT_BUFFER_SIZE;
     int outputChannelCount = resolveOutputChannelCount(format.channelCount);
-    boolean shouldRequestDownmix = requestedOutputChannelCount > 0 && outputChannelCount < format.channelCount;
+    boolean shouldRequestDownmix = shouldRequestDownmix(format.channelCount, outputChannelCount);
+    @C.PcmEncoding int outputEncoding =
+        shouldRequestDownmix ? C.ENCODING_PCM_FLOAT : C.ENCODING_PCM_16BIT;
     @Nullable
     String outputLayoutName = shouldRequestDownmix ? requestedOutputLayoutName : null;
     int nativeOutputChannelCount = shouldRequestDownmix ? outputChannelCount : 0;
@@ -171,7 +176,8 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
             NUM_BUFFERS,
             initialInputBufferSize,
             nativeOutputChannelCount,
-            outputLayoutName);
+            outputLayoutName,
+            outputEncoding);
     decoder.setUserCenterMixLevelDb(userCenterMixLevelDb);
     decoder.setDownmixNormalizationEnabled(downmixNormalizationEnabled);
     activeDecoder = decoder;
@@ -245,5 +251,9 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
       return inputChannelCount;
     }
     return configuredChannelCount;
+  }
+
+  private boolean shouldRequestDownmix(int inputChannelCount, int outputChannelCount) {
+    return requestedOutputChannelCount > 0 && outputChannelCount < inputChannelCount;
   }
 }

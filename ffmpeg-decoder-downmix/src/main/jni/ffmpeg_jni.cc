@@ -72,7 +72,9 @@ extern "C" {
 
 #define ERROR_STRING_BUFFER_LENGTH 256
 
-// Output format corresponding to AudioFormat.ENCODING_PCM_FLOAT.
+// Output formats corresponding to Android PCM encodings. Downmix-off uses
+// 16-bit PCM to keep behavior aligned with the standard Media3 FFmpeg decoder.
+static const AVSampleFormat OUTPUT_FORMAT_PCM_16BIT = AV_SAMPLE_FMT_S16;
 static const AVSampleFormat OUTPUT_FORMAT_PCM_FLOAT = AV_SAMPLE_FMT_FLT;
 // Default center level when no downmix metadata is present (-3 dB).
 static const double DEFAULT_CENTER_MIX_LEVEL = M_SQRT1_2;
@@ -111,7 +113,8 @@ DecoderContext* createContext(JNIEnv* env, const AVCodec* codec,
                               jbyteArray extraData,
                               jint rawSampleRate, jint rawChannelCount,
                               jint outputChannelCount,
-                              jstring requestedOutputLayoutName);
+                              jstring requestedOutputLayoutName,
+                              jboolean outputFloat);
 
 struct GrowOutputBufferCallback {
   uint8_t* operator()(int requiredSize) const;
@@ -212,7 +215,8 @@ AUDIO_DECODER_FUNC(jlong, ffmpegInitialize, jstring codecName,
                    jbyteArray extraData,
                    jint rawSampleRate, jint rawChannelCount,
                    jint outputChannelCount,
-                   jstring requestedOutputLayoutName) {
+                   jstring requestedOutputLayoutName,
+                   jboolean outputFloat) {
   const AVCodec* codec = getCodecByName(env, codecName);
   if (!codec) {
     LOGE("Codec not found.");
@@ -220,7 +224,7 @@ AUDIO_DECODER_FUNC(jlong, ffmpegInitialize, jstring codecName,
   }
   return (jlong)createContext(env, codec, extraData, rawSampleRate,
                               rawChannelCount, outputChannelCount,
-                              requestedOutputLayoutName);
+                              requestedOutputLayoutName, outputFloat);
 }
 
 AUDIO_DECODER_FUNC(jint, ffmpegDecode, jlong context, jobject inputData,
@@ -307,6 +311,8 @@ AUDIO_DECODER_FUNC(jlong, ffmpegReset, jlong jContext, jbyteArray extraData) {
   AVCodecID codecId = codecContext->codec_id;
   if (codecId == AV_CODEC_ID_TRUEHD) {
     jint outputChannelCount = decoderContext->requested_output_channel_count;
+    jboolean outputFloat =
+        decoderContext->output_sample_format == OUTPUT_FORMAT_PCM_FLOAT;
     jstring requestedOutputLayoutName = NULL;
     if (decoderContext->requested_output_layout_name) {
       requestedOutputLayoutName =
@@ -322,7 +328,8 @@ AUDIO_DECODER_FUNC(jlong, ffmpegReset, jlong jContext, jbyteArray extraData) {
                                          /* rawSampleRate= */ -1,
                                          /* rawChannelCount= */ -1,
                                          outputChannelCount,
-                                         requestedOutputLayoutName);
+                                         requestedOutputLayoutName,
+                                         outputFloat);
     if (requestedOutputLayoutName) {
       env->DeleteLocalRef(requestedOutputLayoutName);
     }
@@ -354,7 +361,8 @@ DecoderContext* createContext(JNIEnv* env, const AVCodec* codec,
                               jbyteArray extraData,
                               jint rawSampleRate, jint rawChannelCount,
                               jint outputChannelCount,
-                              jstring requestedOutputLayoutName) {
+                              jstring requestedOutputLayoutName,
+                              jboolean outputFloat) {
   DecoderContext* decoderContext =
       static_cast<DecoderContext*>(calloc(1, sizeof(DecoderContext)));
   if (!decoderContext) {
@@ -370,7 +378,8 @@ DecoderContext* createContext(JNIEnv* env, const AVCodec* codec,
   }
 
   decoderContext->codec_context = codecContext;
-  decoderContext->output_sample_format = OUTPUT_FORMAT_PCM_FLOAT;
+  decoderContext->output_sample_format =
+      outputFloat ? OUTPUT_FORMAT_PCM_FLOAT : OUTPUT_FORMAT_PCM_16BIT;
   decoderContext->requested_output_channel_count = outputChannelCount;
   if (requestedOutputLayoutName) {
     const char* outputLayoutNameChars =
