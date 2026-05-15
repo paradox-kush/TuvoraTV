@@ -67,11 +67,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.progressBarRangeInfo
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import com.nuvio.tv.R
 import androidx.compose.ui.text.input.KeyboardType
 import android.view.KeyEvent
@@ -741,16 +736,6 @@ internal fun SliderSettingsItem(
     val lastIndex = values.lastIndex
     val progress = if (lastIndex > 0) index.toFloat() / lastIndex.toFloat() else 0f
 
-    val accessibilityModifier = Modifier.semantics {
-        contentDescription = title
-        stateDescription = valueText
-        progressBarRangeInfo = ProgressBarRangeInfo(
-            current = index.toFloat(),
-            range = 0f..lastIndex.toFloat(),
-            steps = (lastIndex - 1).coerceAtLeast(0)
-        )
-    }
-
     SliderSettingsItemLayout(
         icon = icon,
         title = title,
@@ -769,7 +754,6 @@ internal fun SliderSettingsItem(
             if (newValue != selected) onValueChange(newValue)
         },
         onFocused = onFocused,
-        extraModifier = accessibilityModifier,
     )
 }
 

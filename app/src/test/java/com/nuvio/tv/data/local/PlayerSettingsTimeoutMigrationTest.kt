@@ -37,9 +37,7 @@ class PlayerSettingsTimeoutMigrationTest {
     }
 
     @Test
-    fun `unknown value 12 snaps to nearest allowed - ties favor lower (10)`() {
-        // 12 is equidistant from 10 and 15; minBy returns the first match.
-        // 10 appears before 15 in STREAM_AUTOPLAY_TIMEOUT_VALUES, so we get 10.
+    fun `unknown value 12 snaps down to 10 (closer than 15)`() {
         assertEquals(10, PlayerSettings.applyLegacyTimeoutSentinelMigration(12))
     }
 
