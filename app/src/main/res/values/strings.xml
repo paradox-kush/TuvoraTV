@@ -484,6 +484,7 @@
     <string name="settings_tmdb_subtitle">Metadata enrichment controls</string>
     <string name="settings_mdblist_subtitle">External ratings providers</string>
     <string name="settings_animeskip_subtitle">Anime intro/outro skip timestamps</string>
+    <string name="settings_debrid_subtitle">Direct debrid playback</string>
 
     <!-- PlaybackSettingsScreen -->
     <string name="playback_title">Playback Settings</string>
@@ -868,6 +869,34 @@
     <string name="mdblist_not_set">Not set</string>
     <string name="mdblist_invalid_api_key">Invalid MDBList API key</string>
 
+    <string name="debrid_title">Debrid</string>
+    <string name="debrid_subtitle">Configure Direct Debrid playback resolution</string>
+    <string name="debrid_enable_title">Enable Direct Debrid</string>
+    <string name="debrid_enable_subtitle">Use cached debrid results and resolve playback locally</string>
+    <string name="debrid_provider_title">Provider</string>
+    <string name="debrid_provider_subtitle">Additional providers will be added later</string>
+    <string name="debrid_provider_torbox">TorBox</string>
+    <string name="debrid_provider_available">TorBox, Real-Debrid</string>
+    <string name="debrid_api_key_title">TorBox API Key</string>
+    <string name="debrid_api_key_subtitle">Required for local TorBox link resolution</string>
+    <string name="debrid_dialog_title">TorBox API Key</string>
+    <string name="debrid_dialog_subtitle">Enter your TorBox API key for Direct Debrid</string>
+    <string name="debrid_dialog_placeholder">Enter TorBox API key</string>
+    <string name="debrid_real_debrid_api_key_title">Real-Debrid API Token</string>
+    <string name="debrid_real_debrid_api_key_subtitle">Required for local Real-Debrid link resolution</string>
+    <string name="debrid_real_debrid_dialog_title">Real-Debrid API Token</string>
+    <string name="debrid_real_debrid_dialog_subtitle">Enter your Real-Debrid API token for Direct Debrid</string>
+    <string name="debrid_real_debrid_dialog_placeholder">Enter Real-Debrid API token</string>
+    <string name="debrid_not_set">Not set</string>
+    <string name="debrid_invalid_torbox_api_key">Invalid TorBox API key</string>
+    <string name="debrid_invalid_real_debrid_api_key">Invalid Real-Debrid API token</string>
+    <string name="debrid_formatter_title">Stream Formatter</string>
+    <string name="debrid_formatter_subtitle">Customize Direct Debrid stream names and descriptions from your phone</string>
+    <string name="debrid_formatter_configure">Open Editor</string>
+    <string name="debrid_formatter_reset_title">Reset Stream Formatter</string>
+    <string name="debrid_formatter_reset_subtitle">Restore the default Direct Debrid stream layout</string>
+    <string name="debrid_formatter_qr_instruction">Scan this QR code on your phone to edit Direct Debrid stream formatting</string>
+
     <!-- Anime-Skip -->
     <string name="animeskip_title">Anime Skip</string>
     <string name="animeskip_subtitle">Configure your Anime Skip Client ID for anime intro/outro skipping</string>
@@ -1158,6 +1187,10 @@
     <string name="stream_no_streams">No streams found</string>
     <string name="stream_no_streams_hint">Try installing more addons to find streams</string>
     <string name="stream_finding_source">Finding stream source</string>
+    <string name="debrid_resolving_stream">Resolving debrid stream</string>
+    <string name="debrid_stale_stream">This cached debrid stream is no longer available. Refreshing streams.</string>
+    <string name="debrid_missing_api_key">Add your debrid API key in Settings to use Direct Debrid.</string>
+    <string name="debrid_resolution_failed">Could not resolve this debrid stream.</string>
     <string name="stream_type_torrent">Torrent</string>
     <string name="stream_type_youtube">YouTube</string>
     <string name="p2p_consent_title">P2P Streaming</string>

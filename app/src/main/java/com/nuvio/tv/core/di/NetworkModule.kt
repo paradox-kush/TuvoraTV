@@ -7,6 +7,7 @@ import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.data.remote.api.AniSkipApi
 import com.nuvio.tv.data.remote.api.AnimeSkipApi
 import com.nuvio.tv.data.remote.api.ArmApi
+import com.nuvio.tv.data.remote.api.DirectDebridStreamApi
 import com.nuvio.tv.data.remote.api.DonationsApi
 import com.nuvio.tv.data.remote.api.GitHubReleaseApi
 import com.nuvio.tv.data.remote.api.TraktApi
@@ -15,9 +16,11 @@ import com.nuvio.tv.data.remote.api.IntroDbApi
 import com.nuvio.tv.data.remote.api.ImdbTapframeApi
 import com.nuvio.tv.data.remote.api.MDBListApi
 import com.nuvio.tv.data.remote.api.ParentalGuideApi
+import com.nuvio.tv.data.remote.api.RealDebridApi
 import com.nuvio.tv.data.remote.api.SeriesGraphApi
 import com.nuvio.tv.data.remote.api.SponsorsApi
 import com.nuvio.tv.data.remote.api.TmdbApi
+import com.nuvio.tv.data.remote.api.TorboxApi
 import com.nuvio.tv.data.remote.api.UniqueContributionsApi
 import com.nuvio.tv.LocaleCache
 import com.squareup.moshi.Moshi
@@ -133,6 +136,24 @@ object NetworkModule {
 
     @Provides
     @Singleton
+    @Named("directDebrid")
+    fun provideDirectDebridOkHttpClient(): OkHttpClient =
+        OkHttpClient.Builder()
+            .dns(IPv4FirstDns())
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                val version = BuildConfig.VERSION_NAME.ifBlank { "dev" }
+                val request = chain.request().newBuilder()
+                    .header("User-Agent", "Nuvio/$version")
+                    .header("Accept-Language", buildAcceptLanguageHeader())
+                    .build()
+                chain.proceed(request)
+            }
+            .build()
+
+    @Provides
+    @Singleton
     @Named("trakt")
     fun provideTraktOkHttpClient(
         okHttpClient: OkHttpClient
@@ -203,6 +224,19 @@ object NetworkModule {
 
     @Provides
     @Singleton
+    @Named("directDebrid")
+    fun provideDirectDebridRetrofit(
+        @Named("directDebrid") okHttpClient: OkHttpClient,
+        moshi: Moshi
+    ): Retrofit =
+        Retrofit.Builder()
+            .baseUrl("https://placeholder.nuvio.tv/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+
+    @Provides
+    @Singleton
     @Named("tmdb")
     fun provideTmdbRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
         Retrofit.Builder()
@@ -228,6 +262,47 @@ object NetworkModule {
     @Singleton
     fun provideAddonApi(retrofit: Retrofit): AddonApi =
         retrofit.create(AddonApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideDirectDebridStreamApi(@Named("directDebrid") retrofit: Retrofit): DirectDebridStreamApi =
+        retrofit.create(DirectDebridStreamApi::class.java)
+
+    @Provides
+    @Singleton
+    @Named("torbox")
+    fun provideTorboxRetrofit(
+        @Named("directDebrid") okHttpClient: OkHttpClient,
+        moshi: Moshi
+    ): Retrofit =
+        Retrofit.Builder()
+            .baseUrl("https://api.torbox.app/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+
+    @Provides
+    @Singleton
+    fun provideTorboxApi(@Named("torbox") retrofit: Retrofit): TorboxApi =
+        retrofit.create(TorboxApi::class.java)
+
+    @Provides
+    @Singleton
+    @Named("realdebrid")
+    fun provideRealDebridRetrofit(
+        @Named("directDebrid") okHttpClient: OkHttpClient,
+        moshi: Moshi
+    ): Retrofit =
+        Retrofit.Builder()
+            .baseUrl("https://api.real-debrid.com/rest/1.0/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+
+    @Provides
+    @Singleton
+    fun provideRealDebridApi(@Named("realdebrid") retrofit: Retrofit): RealDebridApi =
+        retrofit.create(RealDebridApi::class.java)
 
     @Provides
     @Singleton

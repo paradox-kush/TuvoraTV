@@ -5,6 +5,7 @@ package com.nuvio.tv.ui.screens.stream
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -126,6 +127,7 @@ fun StreamScreen(
     var showP2pConsentDialog by remember { mutableStateOf(false) }
     var pendingTorrentPlaybackInfo by remember { mutableStateOf<StreamPlaybackInfo?>(null) }
     val p2pEnabled by viewModel.p2pEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val scope = rememberCoroutineScope()
 
     fun openExternalInBrowser(playbackInfo: StreamPlaybackInfo): Boolean {
         if (!playbackInfo.isExternal) return false
@@ -202,13 +204,23 @@ fun StreamScreen(
 
     LaunchedEffect(uiState.autoPlayStream) {
         val stream = uiState.autoPlayStream ?: return@LaunchedEffect
-        val playbackInfo = viewModel.getStreamForPlayback(stream)
+        val playbackInfo = viewModel.resolveStreamForPlayback(stream)
+        if (playbackInfo == null) {
+            viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
+            return@LaunchedEffect
+        }
         // Torrent streams have url == null but carry an infoHash; navigation
         // builds a torrent:// sentinel URL downstream.
         if (playbackInfo.url != null || (playbackInfo.isTorrent && playbackInfo.infoHash != null)) {
             viewModel.awaitStreamLinkCacheSave()
             routeAutoPlay(playbackInfo)
         }
+    }
+
+    LaunchedEffect(uiState.playbackErrorMessage) {
+        val message = uiState.playbackErrorMessage ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        viewModel.onPlaybackErrorShown()
     }
 
     LaunchedEffect(uiState.autoPlayPlaybackInfo) {
@@ -254,7 +266,7 @@ fun StreamScreen(
                 logoUrl = uiState.logo,
                 title = uiState.title,
                 message = if (uiState.directAutoPlayMessage != null) {
-                    stringResource(R.string.stream_finding_source)
+                    uiState.directAutoPlayMessage
                 } else {
                     null
                 },
@@ -300,10 +312,14 @@ fun StreamScreen(
                         if (currentIndex >= 0) {
                             focusedStreamIndex = currentIndex
                         }
-                        val playbackInfo = viewModel.getStreamForPlayback(stream)
-                        pendingRestoreOnResume = true
-                        viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
-                        routePlayback(playbackInfo)
+                        scope.coroutineLaunch {
+                            val playbackInfo = viewModel.resolveStreamForPlayback(stream)
+                            if (playbackInfo != null) {
+                                pendingRestoreOnResume = true
+                                viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
+                                routePlayback(playbackInfo)
+                            }
+                        }
                     },
                     focusedStreamIndex = focusedStreamIndex,
                     shouldRestoreFocusedStream = restoreFocusedStream,
