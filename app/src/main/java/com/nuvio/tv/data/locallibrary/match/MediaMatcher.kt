@@ -70,9 +70,10 @@ class MediaMatcher @Inject constructor(
             val candidates = searchCandidates(parsedTitle, year, type, language)
             val best = scoreAndPickBest(candidates, parsedTitle, year)
             if (best == null || best.second < AUTO_MATCH_THRESHOLD) {
-                Log.d(TAG, "No match for '${item.fileName}' (best score: ${best?.second})")
+                Log.i(TAG, "No match for '${item.fileName}' parsedTitle='$parsedTitle' year=$year type=$type bestScore=${best?.second} bestCandidate=${best?.first?.title ?: best?.first?.name}")
                 return@withContext null
             }
+            Log.i(TAG, "Matched '${item.fileName}' -> tmdbId=${best.first.id} (${best.first.title ?: best.first.name}) score=${best.second}")
             val match = LocalMatch(
                 itemKey = item.itemKey,
                 tmdbId = best.first.id,
@@ -168,10 +169,7 @@ class MediaMatcher @Inject constructor(
         val originalTitle = (result.originalTitle ?: result.originalName ?: "").lowercase()
         val q = query.lowercase()
 
-        val titleSim = max(
-            normalizedLevenshtein(q, title),
-            normalizedLevenshtein(q, originalTitle)
-        )
+        val titleSim = max(titleSimilarity(q, title), titleSimilarity(q, originalTitle))
 
         val resultYear = (result.releaseDate ?: result.firstAirDate)
             ?.take(4)
@@ -188,6 +186,38 @@ class MediaMatcher @Inject constructor(
         val popularityScore = (ln(1.0 + popularity) / ln(101.0)).coerceIn(0.0, 1.0).toFloat()
 
         return titleSim * 0.6f + yearScore * 0.3f + popularityScore * 0.1f
+    }
+
+    /**
+     * Title similarity combining three signals so we don't reject candidates
+     * whose canonical title is just shorter than the filename (e.g. TMDB has
+     * "F1" but the release is named "F1 The Movie"). Returns the strongest of:
+     *  - normalized Levenshtein over the full strings,
+     *  - token-set Jaccard,
+     *  - a subset bonus when one title's tokens are entirely contained in the
+     *    other's — the dominant case for noisy release-group filenames.
+     */
+    private fun titleSimilarity(query: String, candidate: String): Float {
+        if (query.isBlank() || candidate.isBlank()) return 0f
+        if (query == candidate) return 1f
+        val qTokens = query.split(' ').filter { it.isNotBlank() }.toSet()
+        val cTokens = candidate.split(' ').filter { it.isNotBlank() }.toSet()
+        if (qTokens.isEmpty() || cTokens.isEmpty()) {
+            return normalizedLevenshtein(query, candidate)
+        }
+        val intersection = qTokens.intersect(cTokens).size.toFloat()
+        val union = qTokens.union(cTokens).size.toFloat()
+        val jaccard = if (union > 0f) intersection / union else 0f
+        val subsetBonus = when {
+            qTokens.containsAll(cTokens) && cTokens.containsAll(qTokens) -> 1f
+            qTokens.containsAll(cTokens) || cTokens.containsAll(qTokens) -> {
+                val ratio = min(qTokens.size, cTokens.size).toFloat() /
+                    max(qTokens.size, cTokens.size).toFloat()
+                max(ratio, 0.7f)
+            }
+            else -> 0f
+        }
+        return max(max(normalizedLevenshtein(query, candidate), jaccard), subsetBonus)
     }
 
     private fun normalizedLevenshtein(a: String, b: String): Float {

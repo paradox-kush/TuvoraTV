@@ -10,7 +10,6 @@ import androidx.media3.datasource.DataSpec
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
-import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
@@ -18,6 +17,7 @@ import com.hierynomus.smbj.share.DiskShare
 import com.hierynomus.smbj.share.File as SmbFile
 import com.nuvio.tv.data.locallibrary.LocalLibraryCredentialStore
 import com.nuvio.tv.data.locallibrary.LocalLibraryCredentialStore.Field
+import com.nuvio.tv.data.locallibrary.source.SmbClientFactory
 import com.nuvio.tv.data.locallibrary.source.SmbSource.SmbLocation
 import com.nuvio.tv.data.local.LocalLibraryPreferences
 import com.nuvio.tv.domain.model.locallibrary.LocalLibrarySourceConfig
@@ -61,7 +61,7 @@ class SmbDataSource(
             )
 
         try {
-            val client = SMBClient()
+            val client = SmbClientFactory.newClient()
             val conn = client.connect(location.host).also { connection = it }
             val sess = conn.authenticate(authContextFor(sourceConfig.id)).also { session = it }
             val sh = sess.connectShare(location.share) as? DiskShare

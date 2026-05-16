@@ -454,9 +454,10 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(subtitle: Subtitle) {
         pendingAddonSubtitleTrackId = addonTrackId
         pendingAudioSelectionAfterSubtitleRefresh =
             captureCurrentAudioSelectionForSubtitleRefresh(player)
-        val subtitleConfigurations = (_uiState.value.addonSubtitles + subtitle)
+        val addonConfigurations = (_uiState.value.addonSubtitles + subtitle)
             .distinctBy { "${it.id}|${it.url}" }
             .map(::toSubtitleConfiguration)
+        val subtitleConfigurations = addonConfigurations + buildExternalSubtitleConfigurations()
         Log.d(
             PlayerRuntimeController.TAG,
             "Selecting ADDON subtitle with media refresh addon=${subtitle.addonName} id=${subtitle.id} " +

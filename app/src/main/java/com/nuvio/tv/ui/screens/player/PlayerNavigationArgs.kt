@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
 import androidx.lifecycle.SavedStateHandle
+import com.nuvio.tv.domain.model.ExternalSubtitle
 import org.json.JSONArray
 import java.net.URLDecoder
 
@@ -31,8 +32,40 @@ internal data class PlayerNavigationArgs(
     val infoHash: String?,
     val fileIdx: Int?,
     val sourcesJson: String?,
-    val contentLanguage: String?
+    val contentLanguage: String?,
+    val externalSubtitlesJson: String?
 ) {
+    val externalSubtitles: List<ExternalSubtitle>
+        get() {
+            val json = externalSubtitlesJson ?: return emptyList()
+            return try {
+                val arr = JSONArray(json)
+                (0 until arr.length()).mapNotNull { i ->
+                    val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val url = obj.optString("url").takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    val headersObj = obj.optJSONObject("headers")
+                    val headers: Map<String, String> = if (headersObj == null) emptyMap() else {
+                        buildMap {
+                            headersObj.keys().forEach { key ->
+                                headersObj.optString(key).takeIf { it.isNotBlank() }?.let { put(key, it) }
+                            }
+                        }
+                    }
+                    ExternalSubtitle(
+                        url = url,
+                        displayName = obj.optString("displayName").ifBlank { url.substringAfterLast('/') },
+                        language = obj.optString("language").takeIf { it.isNotBlank() },
+                        mimeType = obj.optString("mimeType").ifBlank { "application/x-subrip" },
+                        isForced = obj.optBoolean("isForced", false),
+                        headers = headers
+                    )
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
     val torrentTrackers: List<String>
         get() {
             val json = sourcesJson ?: return emptyList()
@@ -86,7 +119,8 @@ internal data class PlayerNavigationArgs(
                 infoHash = savedStateHandle.get<String>("infoHash")?.takeIf { it.isNotEmpty() },
                 fileIdx = savedStateHandle.get<String>("fileIdx")?.toIntOrNull(),
                 sourcesJson = decodedOrNull("sources"),
-                contentLanguage = decodedOrNull("contentLanguage")
+                contentLanguage = decodedOrNull("contentLanguage"),
+                externalSubtitlesJson = decodedOrNull("externalSubtitles")
             )
         }
     }

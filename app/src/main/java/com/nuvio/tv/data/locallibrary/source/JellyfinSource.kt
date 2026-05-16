@@ -1,15 +1,26 @@
 package com.nuvio.tv.data.locallibrary.source
 
 import android.util.Log
+import androidx.media3.common.MimeTypes
 import com.nuvio.tv.data.locallibrary.LocalLibraryCredentialStore
 import com.nuvio.tv.data.locallibrary.LocalLibraryCredentialStore.Field
 import com.nuvio.tv.data.remote.api.JellyfinApi
 import com.nuvio.tv.data.remote.api.JellyfinAuthRequest
+import com.nuvio.tv.data.remote.api.JellyfinDeviceProfile
+import com.nuvio.tv.data.remote.api.JellyfinDirectPlayProfile
 import com.nuvio.tv.data.remote.api.JellyfinItem
+import com.nuvio.tv.data.remote.api.JellyfinMediaStream
+import com.nuvio.tv.data.remote.api.JellyfinPlaybackInfoRequest
+import com.nuvio.tv.data.remote.api.JellyfinPlaybackMediaSource
+import com.nuvio.tv.data.remote.api.JellyfinSubtitleProfile
+import com.nuvio.tv.data.remote.api.JellyfinTranscodingProfile
 import com.nuvio.tv.domain.model.ContentType
+import com.nuvio.tv.domain.model.locallibrary.ExternalSubtitleFile
 import com.nuvio.tv.domain.model.locallibrary.LocalLibrarySourceConfig
 import com.nuvio.tv.domain.model.locallibrary.ResolvedStream
 import com.nuvio.tv.domain.model.locallibrary.ScannedItem
+import com.nuvio.tv.ui.screens.player.PlayerSubtitleUtils
+import java.util.Locale
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -60,15 +71,230 @@ class JellyfinSource(
         val auth = ensureAuth() ?: return null
         val jellyfinItemId = item.sourceItemId ?: item.relativePath
         val base = config.urlOrPath.trimEnd('/')
-        val url = "$base/Videos/$jellyfinItemId/stream?api_key=${auth.token}&static=true"
+        val playSessionId = UUID.randomUUID().toString().replace("-", "")
+        val negotiated = negotiatePlayback(auth, jellyfinItemId, base, playSessionId)
+        val url = negotiated?.url ?: run {
+            Log.w(TAG, "PlaybackInfo failed for $jellyfinItemId; falling back to legacy static stream")
+            "$base/Videos/$jellyfinItemId/stream?api_key=${auth.token}&static=true&PlaySessionId=$playSessionId"
+        }
         return ResolvedStream(
             url = url,
             headers = emptyMap(),
-            scheme = "https".takeIf { url.startsWith("https") } ?: "http",
+            scheme = if (url.startsWith("https")) "https" else "http",
             sizeBytes = item.sizeBytes,
-            durationMs = item.durationMs
+            durationMs = item.durationMs,
+            subtitles = negotiated?.subtitles.orEmpty()
         )
     }
+
+    private data class Negotiated(val url: String, val subtitles: List<ExternalSubtitleFile>)
+
+    private suspend fun negotiatePlayback(
+        auth: Auth,
+        itemId: String,
+        base: String,
+        playSessionId: String
+    ): Negotiated? = runCatching {
+        val resp = api.getPlaybackInfo(
+            authHeader = authHeader(auth.token),
+            itemId = itemId,
+            userId = auth.userId,
+            body = JellyfinPlaybackInfoRequest(
+                userId = auth.userId,
+                deviceProfile = buildDeviceProfile()
+            )
+        )
+        if (!resp.isSuccessful) {
+            Log.w(TAG, "PlaybackInfo HTTP ${resp.code()} for $itemId")
+            return@runCatching null
+        }
+        val body = resp.body() ?: return@runCatching null
+        val source = body.mediaSources?.firstOrNull() ?: return@runCatching null
+        Log.d(
+            TAG,
+            "PlaybackInfo for $itemId: container=${source.container} " +
+                "supportsDirectPlay=${source.supportsDirectPlay} " +
+                "supportsDirectStream=${source.supportsDirectStream} " +
+                "supportsTranscoding=${source.supportsTranscoding} " +
+                "transcodingUrl=${source.transcodingUrl != null} " +
+                "videoCodecs=${source.mediaStreams?.filter { it.type == "Video" }?.map { it.codec }} " +
+                "audioCodecs=${source.mediaStreams?.filter { it.type == "Audio" }?.map { it.codec }}"
+        )
+        val sessionId = body.playSessionId?.takeIf { it.isNotBlank() } ?: playSessionId
+        val (url, method) = chooseUrl(source, auth.token, base, itemId, sessionId)
+            ?: return@runCatching null
+        Log.d(TAG, "Jellyfin chose $method for $itemId: $url")
+        val subtitles = extractExternalSubtitles(source, auth.token, base, itemId)
+        if (subtitles.isNotEmpty()) {
+            Log.i(TAG, "Jellyfin exposed ${subtitles.size} external subtitle(s) for $itemId")
+        }
+        Negotiated(url = url, subtitles = subtitles)
+    }.onFailure { Log.w(TAG, "PlaybackInfo call failed for $itemId", it) }.getOrNull()
+
+    private fun extractExternalSubtitles(
+        source: JellyfinPlaybackMediaSource,
+        token: String,
+        base: String,
+        itemId: String
+    ): List<ExternalSubtitleFile> {
+        val streams = source.mediaStreams.orEmpty()
+        val mediaSourceId = source.id ?: itemId
+        return streams.mapNotNull { stream ->
+            if (!stream.type.equals("Subtitle", ignoreCase = true)) return@mapNotNull null
+            val isExternal = stream.isExternal ||
+                stream.deliveryMethod.equals("External", ignoreCase = true)
+            if (!isExternal) return@mapNotNull null
+            val codec = stream.codec?.lowercase(Locale.ROOT) ?: return@mapNotNull null
+            val mime = subtitleMimeForCodec(codec) ?: return@mapNotNull null
+            val index = stream.index ?: return@mapNotNull null
+
+            val url = buildSubtitleUrl(stream, base, itemId, mediaSourceId, index, codec, token)
+                ?: return@mapNotNull null
+
+            val language = stream.language
+                ?.takeIf { it.isNotBlank() }
+                ?.let { PlayerSubtitleUtils.normalizeLanguage(it)?.tag ?: PlayerSubtitleUtils.normalizeLanguageCode(it) }
+                ?.takeIf { it.isNotBlank() }
+
+            val displayName = listOf(stream.displayTitle, stream.title)
+                .firstOrNull { !it.isNullOrBlank() }
+                ?: language
+                ?: "Subtitle"
+
+            ExternalSubtitleFile(
+                url = url,
+                displayName = displayName,
+                language = language,
+                mimeType = mime,
+                isForced = stream.isForced,
+                source = ExternalSubtitleFile.Source.JELLYFIN
+            )
+        }
+    }
+
+    private fun buildSubtitleUrl(
+        stream: JellyfinMediaStream,
+        base: String,
+        itemId: String,
+        mediaSourceId: String,
+        index: Int,
+        codec: String,
+        token: String
+    ): String? {
+        val delivery = stream.deliveryUrl?.takeIf { it.isNotBlank() }
+        if (delivery != null) {
+            val absolute = if (delivery.startsWith("http")) delivery else base + (if (delivery.startsWith("/")) delivery else "/$delivery")
+            return appendApiKey(absolute, token)
+        }
+        return "$base/Videos/$itemId/$mediaSourceId/Subtitles/$index/0/Stream.$codec?api_key=$token"
+    }
+
+    private fun appendApiKey(url: String, token: String): String {
+        if (url.contains("api_key=")) return url
+        val sep = if (url.contains('?')) '&' else '?'
+        return "$url${sep}api_key=$token"
+    }
+
+    private fun subtitleMimeForCodec(codec: String): String? = when (codec) {
+        "srt", "subrip" -> MimeTypes.APPLICATION_SUBRIP
+        "vtt", "webvtt" -> MimeTypes.TEXT_VTT
+        "ass", "ssa" -> MimeTypes.TEXT_SSA
+        else -> null
+    }
+
+    /**
+     * Picks the playback URL based on what the server reports it can do.
+     *
+     * Direct Play (Static=true) is byte-range seekable. Transcoding via HLS is segment-seekable.
+     * We deliberately do NOT use Direct Stream (Static=false) — Jellyfin's remux output isn't
+     * byte-range seekable, which breaks ExoPlayer scrubbing. Containers that ExoPlayer can play
+     * are restricted via the DeviceProfile so MKV/AVI/etc. land on HLS transcode instead.
+     */
+    private fun chooseUrl(
+        source: JellyfinPlaybackMediaSource,
+        token: String,
+        base: String,
+        itemId: String,
+        playSessionId: String
+    ): Pair<String, String>? {
+        val mediaSourceId = source.id ?: itemId
+        val container = source.container?.substringBefore(',')?.trim()?.takeIf { it.isNotBlank() } ?: "mp4"
+        if (source.supportsDirectPlay) {
+            val url = buildString {
+                append("$base/Videos/$itemId/stream.$container")
+                append("?api_key=$token")
+                append("&Static=true")
+                append("&MediaSourceId=$mediaSourceId")
+                append("&PlaySessionId=$playSessionId")
+            }
+            return url to "DirectPlay"
+        }
+        if (source.transcodingUrl != null) {
+            val trUrl = source.transcodingUrl
+            val absolute = if (trUrl.startsWith("http")) trUrl else base + trUrl
+            val withSession = if (absolute.contains("PlaySessionId=")) absolute
+            else if (absolute.contains("?")) "$absolute&PlaySessionId=$playSessionId"
+            else "$absolute?PlaySessionId=$playSessionId"
+            val withAuth = if (withSession.contains("api_key=")) withSession
+            else "$withSession&api_key=$token"
+            return withAuth to "Transcode"
+        }
+        return null
+    }
+
+    private fun buildDeviceProfile(): JellyfinDeviceProfile = JellyfinDeviceProfile(
+        // Advertise the containers/codecs ExoPlayer + bundled FFmpeg/AV1 decoders handle
+        // so Jellyfin serves the raw file (Static=true) whenever possible. Real-time HLS
+        // transcode causes video to lag behind audio; Direct Play avoids that and matches
+        // what the official Jellyfin players do for compatible files.
+        directPlayProfiles = listOf(
+            JellyfinDirectPlayProfile(
+                container = "mp4,m4v",
+                videoCodec = "h264,hevc,mpeg4,av1",
+                audioCodec = "aac,ac3,eac3,mp3,opus,flac,alac"
+            ),
+            JellyfinDirectPlayProfile(
+                container = "mkv",
+                videoCodec = "h264,hevc,vp8,vp9,av1,mpeg4",
+                audioCodec = "aac,ac3,eac3,mp3,opus,vorbis,flac,dca,truehd,mlp,pcm"
+            ),
+            JellyfinDirectPlayProfile(
+                container = "webm",
+                videoCodec = "vp8,vp9,av1",
+                audioCodec = "opus,vorbis"
+            ),
+            JellyfinDirectPlayProfile(
+                container = "mov",
+                videoCodec = "h264,hevc,mpeg4",
+                audioCodec = "aac,ac3,eac3,mp3,alac,pcm"
+            ),
+            JellyfinDirectPlayProfile(
+                container = "ts,m2ts",
+                videoCodec = "h264,hevc",
+                audioCodec = "aac,ac3,eac3,mp3,dca,truehd"
+            )
+        ),
+        transcodingProfiles = listOf(
+            JellyfinTranscodingProfile(
+                container = "ts",
+                videoCodec = "h264,hevc",
+                audioCodec = "aac,ac3,eac3,mp3"
+            ),
+            JellyfinTranscodingProfile(
+                container = "mp4",
+                videoCodec = "h264,hevc",
+                audioCodec = "aac,ac3,eac3,mp3"
+            )
+        ),
+        subtitleProfiles = listOf(
+            JellyfinSubtitleProfile(format = "srt", method = "External"),
+            JellyfinSubtitleProfile(format = "vtt", method = "External"),
+            JellyfinSubtitleProfile(format = "ass", method = "External"),
+            JellyfinSubtitleProfile(format = "ssa", method = "External"),
+            JellyfinSubtitleProfile(format = "pgssub", method = "Embed"),
+            JellyfinSubtitleProfile(format = "subrip", method = "Embed")
+        )
+    )
 
     override suspend fun testConnection(): Result<Unit> = runCatching {
         val resp = api.publicInfo()

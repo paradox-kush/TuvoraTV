@@ -745,7 +745,8 @@ class StreamScreenViewModel @Inject constructor(
             streamDescription = stream.description,
             fileIdx = stream.fileIdx,
             sources = stream.sources,
-            contentLanguage = contentLanguage
+            contentLanguage = contentLanguage,
+            externalSubtitles = stream.externalSubtitles
         )
 
         val url = playbackInfo.url
@@ -815,5 +816,6 @@ data class StreamPlaybackInfo(
     val streamDescription: String? = null,
     val fileIdx: Int? = null,
     val sources: List<String>? = null,
-    val contentLanguage: String? = null
+    val contentLanguage: String? = null,
+    val externalSubtitles: List<com.nuvio.tv.domain.model.ExternalSubtitle> = emptyList()
 )

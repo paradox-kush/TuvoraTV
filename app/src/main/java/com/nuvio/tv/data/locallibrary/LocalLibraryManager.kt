@@ -105,7 +105,9 @@ class LocalLibraryManager @Inject constructor(
         val test = source.testConnection()
         if (test.isFailure) {
             credentialStore.clearSource(id)
-            return Result.failure(test.exceptionOrNull() ?: IllegalStateException("SMB test failed"))
+            val cause = test.exceptionOrNull() ?: IllegalStateException("SMB test failed")
+            Log.e(TAG, "addSmb test failed for $url", cause)
+            return Result.failure(cause)
         }
         preferences.upsert(config)
         kickoffScan(config)
@@ -174,7 +176,9 @@ class LocalLibraryManager @Inject constructor(
                 urlOrPath = url
             )
             val source = sourceFactory.create(transientConfig)
-            source.testConnection()
+            source.testConnection().also { result ->
+                result.exceptionOrNull()?.let { Log.e(TAG, "testSmb failed for $url", it) }
+            }
         } finally {
             credentialStore.clearSource(transientId)
         }
@@ -222,6 +226,7 @@ class LocalLibraryManager @Inject constructor(
     }
 
     private suspend fun runScan(config: LocalLibrarySourceConfig) {
+        Log.i(TAG, "runScan start sourceId=${config.id} kind=${config.kind} url=${config.urlOrPath}")
         _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Scanning(0))
         val source = sourceFactory.create(config)
         val collected = mutableListOf<ScannedItem>()
@@ -232,16 +237,20 @@ class LocalLibraryManager @Inject constructor(
             _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Failed(t.message ?: "Scan failed"))
             return
         }
+        Log.i(TAG, "runScan scanned sourceId=${config.id} items=${collected.size}")
         index.replace(config.id, collected)
         _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Matching(0, collected.size))
 
+        var matched = 0
         collected.forEachIndexed { i, item ->
             runCatching { matcher.match(item) }
+                .onSuccess { if (it != null) matched++ }
                 .onFailure { Log.w(TAG, "Match failed for ${item.itemKey}", it) }
             if (i % 25 == 0 || i == collected.lastIndex) {
                 _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Matching(i + 1, collected.size))
             }
         }
+        Log.i(TAG, "runScan complete sourceId=${config.id} scanned=${collected.size} matched=$matched")
         preferences.setScanResult(config.id, collected.size, System.currentTimeMillis())
         metaRepository.clearCache()
         _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Idle(collected.size))

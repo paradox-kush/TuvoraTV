@@ -527,7 +527,8 @@ fun NuvioNavHost(
                                 infoHash = effectiveInfoHash,
                                 fileIdx = effectiveFileIdx,
                                 sources = playbackInfo.sources,
-                                contentLanguage = playbackInfo.contentLanguage
+                                contentLanguage = playbackInfo.contentLanguage,
+                                externalSubtitles = playbackInfo.externalSubtitles
                             )
                         )
                     }
@@ -569,7 +570,8 @@ fun NuvioNavHost(
                                 infoHash = effectiveInfoHash,
                                 fileIdx = effectiveFileIdx,
                                 sources = playbackInfo.sources,
-                                contentLanguage = playbackInfo.contentLanguage
+                                contentLanguage = playbackInfo.contentLanguage,
+                                externalSubtitles = playbackInfo.externalSubtitles
                             )
                         ) {
                             popUpTo(Screen.Stream.route) { inclusive = true }
@@ -705,6 +707,11 @@ fun NuvioNavHost(
                     defaultValue = null
                 },
                 navArgument("contentLanguage") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("externalSubtitles") {
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null

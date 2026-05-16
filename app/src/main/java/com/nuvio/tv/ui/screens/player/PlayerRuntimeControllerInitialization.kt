@@ -888,9 +888,58 @@ internal fun PlayerRuntimeController.applyStartupSubtitlePreparation(
 internal fun PlayerRuntimeController.buildStartupSubtitleConfigurations(
     startupSubtitlePreparation: StartupSubtitlePreparation
 ): List<androidx.media3.common.MediaItem.SubtitleConfiguration> {
-    return startupSubtitlePreparation.attachedSubtitles
+    val addonConfigs = startupSubtitlePreparation.attachedSubtitles
         .distinctBy { "${it.id}|${it.url}" }
         .map(::toSubtitleConfiguration)
+    val externalConfigs = buildExternalSubtitleConfigurations()
+    return addonConfigs + externalConfigs
+}
+
+internal fun PlayerRuntimeController.buildExternalSubtitleConfigurations():
+    List<androidx.media3.common.MediaItem.SubtitleConfiguration> {
+    val externals = navigationArgs.externalSubtitles
+    if (externals.isEmpty()) return emptyList()
+
+    val style = _uiState.value.subtitleStyle
+    val preferred = PlayerSubtitleUtils.normalizeLanguageCode(style.preferredLanguage)
+    val secondary = style.secondaryPreferredLanguage
+        ?.takeIf { it.isNotBlank() }
+        ?.let { PlayerSubtitleUtils.normalizeLanguageCode(it) }
+    val preferredTargets = listOfNotNull(
+        preferred.takeIf { it.isNotBlank() && it != "none" },
+        secondary
+    )
+
+    val filtered = if (style.showOnlyPreferredLanguages && preferredTargets.isNotEmpty()) {
+        externals.filter { sub ->
+            preferredTargets.any { target -> PlayerSubtitleUtils.matchesLanguageCode(sub.language, target) }
+        }
+    } else {
+        externals
+    }
+
+    return filtered.mapIndexed { index, sub ->
+        val isPreferred = preferredTargets.any { target ->
+            PlayerSubtitleUtils.matchesLanguageCode(sub.language, target)
+        }
+        val flags = when {
+            sub.isForced -> C.SELECTION_FLAG_FORCED
+            isPreferred -> C.SELECTION_FLAG_DEFAULT
+            else -> 0
+        }
+        val normalizedLang = sub.language
+            ?.let { PlayerSubtitleUtils.normalizeLanguageCode(it) }
+            ?.takeIf { it.isNotBlank() }
+        androidx.media3.common.MediaItem.SubtitleConfiguration.Builder(
+            android.net.Uri.parse(sub.url)
+        )
+            .setId("local_sub:$index:${sub.url.hashCode()}")
+            .apply { normalizedLang?.let { setLanguage(it) } }
+            .setMimeType(sub.mimeType)
+            .setLabel(sub.displayName)
+            .setSelectionFlags(flags)
+            .build()
+    }
 }
 
 internal fun PlayerRuntimeController.resetLoadingOverlayForNewStream() {

@@ -13,6 +13,7 @@ import com.nuvio.tv.domain.model.AddonResource
 import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.ContentType
+import com.nuvio.tv.domain.model.ExternalSubtitle
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
@@ -143,7 +144,17 @@ class LocalLibraryGatewayImpl @Inject constructor(
                     )
                 } else null,
                 addonName = ADDON_NAME,
-                addonLogo = null
+                addonLogo = null,
+                externalSubtitles = resolved.subtitles.map { sub ->
+                    ExternalSubtitle(
+                        url = sub.url,
+                        displayName = sub.displayName,
+                        language = sub.language,
+                        mimeType = sub.mimeType,
+                        isForced = sub.isForced,
+                        headers = sub.headers
+                    )
+                }
             )
         }
         return NetworkResult.Success(streams)

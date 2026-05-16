@@ -113,6 +113,9 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
         view.applyAspectMode(_uiState.value.aspectMode)
         view.setPaused(false)
         applyPendingMpvSeekIfNeeded(view)
+        navigationArgs.externalSubtitles.forEach { sub ->
+            view.addExternalSubtitle(url = sub.url, title = sub.displayName, language = sub.language)
+        }
 
         hasRenderedFirstFrame = false
         _uiState.update {

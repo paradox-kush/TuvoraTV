@@ -370,6 +370,37 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Registers an external subtitle without forcing it to be selected.
+     * Track selection is left to mpv's slang preference (set via
+     * [applySubtitleLanguagePreferences]), so the preferred-language track wins
+     * even when several externals are added at startup.
+     */
+    fun addExternalSubtitle(
+        url: String,
+        title: String? = null,
+        language: String? = null
+    ): Boolean {
+        if (!initialized) return false
+        if (url.isBlank()) return false
+        return runCatching {
+            val safeTitle = title?.takeIf { it.isNotBlank() }
+            val safeLanguage = language?.takeIf { it.isNotBlank() }
+            when {
+                safeTitle != null && safeLanguage != null ->
+                    mpv.command("sub-add", url, "auto", safeTitle, safeLanguage)
+                safeTitle != null ->
+                    mpv.command("sub-add", url, "auto", safeTitle)
+                else ->
+                    mpv.command("sub-add", url, "auto")
+            }
+            true
+        }.getOrElse {
+            Log.w(TAG, "Failed to add external subtitle: ${it.message}")
+            false
+        }
+    }
+
     fun applySubtitleLanguagePreferences(preferred: String, secondary: String?) {
         if (!initialized) return
         val languages = listOfNotNull(
