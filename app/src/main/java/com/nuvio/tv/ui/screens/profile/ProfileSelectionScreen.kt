@@ -96,6 +96,7 @@ import com.nuvio.tv.ui.components.AvatarPickerGrid
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.components.ProfileAvatarCircle
 import com.nuvio.tv.ui.theme.NuvioColors
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import kotlinx.coroutines.delay
 
 private object ProfileSelectionSpacing {
@@ -812,6 +813,7 @@ private fun ProfileCard(
 ) {
     var isFocused by remember { mutableStateOf(false) }
     var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
     val interactionSource = remember { MutableInteractionSource() }
     val focusProgress by animateFloatAsState(
         targetValue = if (isFocused) 1f else 0f,
@@ -865,16 +867,20 @@ private fun ProfileCard(
                         onLongPress()
                         return@onPreviewKeyEvent true
                     }
-                    val isLongPress = native.isLongPress || native.repeatCount > 0
-                    if (isLongPress && isProfileSelectKey(native.keyCode)) {
+                }
+                if (longPressKeyTracker.handle(native, ::isProfileSelectKey) {
                         longPressTriggered = true
                         onLongPress()
-                        return@onPreviewKeyEvent true
                     }
+                ) {
+                    if (native.action == AndroidKeyEvent.ACTION_UP) {
+                        longPressTriggered = false
+                    }
+                    return@onPreviewKeyEvent true
                 }
                 if (native.action == AndroidKeyEvent.ACTION_UP &&
                     longPressTriggered &&
-                    isProfileSelectKey(native.keyCode)
+                    (isProfileSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU)
                 ) {
                     longPressTriggered = false
                     return@onPreviewKeyEvent true

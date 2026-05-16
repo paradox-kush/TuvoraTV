@@ -90,6 +90,7 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
 import com.nuvio.tv.ui.util.localizeEpisodeTitle
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 
 private const val EPISODE_CARD_CONTENT_TYPE = "episode_card"
 private const val EPISODE_SCROLL_REPEAT_THROTTLE_MS = 80L
@@ -162,6 +163,7 @@ fun SeasonTabs(
             val isSelected = season == selectedSeason
             var isFocused by remember { mutableStateOf(false) }
             var longPressTriggered by remember { mutableStateOf(false) }
+            val longPressKeyTracker = rememberLongPressKeyTracker()
 
             Card(
                 onClick = {
@@ -196,16 +198,20 @@ fun SeasonTabs(
                                 onSeasonLongPress(season)
                                 return@onPreviewKeyEvent true
                             }
-                            val isLongPress = native.isLongPress || native.repeatCount > 0
-                            if (isLongPress && isSelectKey(native.keyCode)) {
+                        }
+                        if (longPressKeyTracker.handle(native, ::isSelectKey) {
                                 longPressTriggered = true
                                 onSeasonLongPress(season)
-                                return@onPreviewKeyEvent true
                             }
+                        ) {
+                            if (native.action == AndroidKeyEvent.ACTION_UP) {
+                                longPressTriggered = false
+                            }
+                            return@onPreviewKeyEvent true
                         }
                         if (native.action == AndroidKeyEvent.ACTION_UP &&
                             longPressTriggered &&
-                            isSelectKey(native.keyCode)
+                            (isSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU)
                         ) {
                             longPressTriggered = false
                             return@onPreviewKeyEvent true
@@ -469,6 +475,7 @@ private fun EpisodeCard(
     }
     var isFocused by isFocusedState
     var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
     val shape = remember(cardMetrics.cornerRadius) { RoundedCornerShape(cardMetrics.cornerRadius) }
     val thumbnailWidthPx = remember(cardMetrics.cardWidth, density) {
         with(density) { cardMetrics.cardWidth.roundToPx() }
@@ -585,16 +592,20 @@ private fun EpisodeCard(
                         onLongPress()
                         return@onPreviewKeyEvent true
                     }
-                    val isLongPress = native.isLongPress || native.repeatCount > 0
-                    if (isLongPress && isSelectKey(native.keyCode)) {
+                }
+                if (longPressKeyTracker.handle(native, ::isSelectKey) {
                         longPressTriggered = true
                         onLongPress()
-                        return@onPreviewKeyEvent true
                     }
+                ) {
+                    if (native.action == AndroidKeyEvent.ACTION_UP) {
+                        longPressTriggered = false
+                    }
+                    return@onPreviewKeyEvent true
                 }
                 if (native.action == AndroidKeyEvent.ACTION_UP &&
                     longPressTriggered &&
-                    isSelectKey(native.keyCode)
+                    (isSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU)
                 ) {
                     longPressTriggered = false
                     return@onPreviewKeyEvent true
