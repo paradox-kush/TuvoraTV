@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.LocaleCache
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
+import com.nuvio.tv.core.recommendations.TvRecommendationManager
 import com.nuvio.tv.core.tmdb.TmdbMetadataService
 import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.local.AuthSessionNoticeDataStore
@@ -77,7 +78,8 @@ class HomeViewModel @Inject constructor(
     internal val watchedItemsPreferences: WatchedItemsPreferences,
     internal val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
     internal val cwEnrichmentCache: ContinueWatchingEnrichmentCache,
-    private val profileManager: com.nuvio.tv.core.profile.ProfileManager
+    private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
+    internal val tvRecommendationManager: TvRecommendationManager
 ) : ViewModel() {
     companion object {
         internal const val TAG = "HomeViewModel"
@@ -274,6 +276,15 @@ class HomeViewModel @Inject constructor(
             observeProgressSourceChanges()
             observeCollections()
             observeInstalledAddons()
+
+            viewModelScope.launch {
+                _uiState
+                    .map { it.continueWatchingItems }
+                    .distinctUntilChanged()
+                    .collect { items ->
+                        runCatching { tvRecommendationManager.updateWatchNextFromCwItems(items) }
+                    }
+            }
 
             // Clear CW state when profile changes so items don't leak between profiles.
             var previousProfileId = profileManager.activeProfileId.value

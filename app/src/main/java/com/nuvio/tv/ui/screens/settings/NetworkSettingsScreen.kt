@@ -291,7 +291,7 @@ fun AdvancedSettingsContent(
                 SettingsActionRow(
                     title = stringResource(R.string.experience_mode_switch_to_essential),
                     subtitle = stringResource(R.string.experience_mode_switch_to_essential_subtitle),
-                    value = stringResource(R.string.experience_mode_essential),
+                    value = stringResource(R.string.experience_mode_advanced),
                     onClick = { showExperienceModeConfirmation = true }
                 )
             }

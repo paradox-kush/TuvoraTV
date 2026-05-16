@@ -7,7 +7,9 @@ import com.nuvio.tv.data.local.CachedNextUpItem
 import com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.TraktSettingsDataStore
+import com.nuvio.tv.core.recommendations.TvRecommendationManager
 import com.nuvio.tv.domain.model.WatchProgress
+import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +25,6 @@ import javax.inject.Singleton
 
 private const val TAG = "TvChannelSync"
 private const val DEBOUNCE_MS = 2_000L
-private const val MAX_CHANNEL_ROWS = 20
 
 /**
  * Keeps the Android TV "Continue Watching" preview channel in sync with the app's
@@ -44,6 +45,7 @@ class AndroidTvChannelSyncService @Inject constructor(
     private val cwEnrichmentCache: ContinueWatchingEnrichmentCache,
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
     private val traktSettingsDataStore: TraktSettingsDataStore,
+    private val tvRecommendationManager: TvRecommendationManager
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -56,10 +58,6 @@ class AndroidTvChannelSyncService @Inject constructor(
         TvChannelRefreshJobService.schedulePeriodic(context)
 
         scope.launch {
-            // Clear stale programs from previous app sessions. The channel will be
-            // repopulated once the CW pipeline writes fresh data to the cache.
-            manager.clearAll()
-
             // Observe cache snapshot updates and settings changes to trigger reconciliation.
             // snapshotVersion bumps every time the CW pipeline writes new data to disk cache.
             // We drop the initial value (0) to avoid reconciling with stale disk cache before
@@ -104,7 +102,23 @@ class AndroidTvChannelSyncService @Inject constructor(
             "Reconciling from cache: ${channelItems.size} items " +
                 "(${inProgressItems.size} in-progress, ${nextUpItems.size} next-up raw)"
         )
-        manager.reconcile(channelItems.take(MAX_CHANNEL_ROWS))
+        manager.reconcile(channelItems)
+
+        val cutoffMs = if (resolvedSettings.daysCap == TraktSettingsDataStore.CONTINUE_WATCHING_DAYS_CAP_ALL) {
+            null
+        } else {
+            val windowMs = resolvedSettings.daysCap.toLong() * 24L * 60L * 60L * 1000L
+            System.currentTimeMillis() - windowMs
+        }
+        val watchNextInProgress = inProgressItems
+            .filter { cutoffMs == null || it.lastWatched >= cutoffMs }
+
+        runCatching {
+            val cwItems = watchNextInProgress.map {
+                ContinueWatchingItem.InProgress(it.toWatchProgress(resolvedSettings.useEpisodeThumbnails))
+            }
+            tvRecommendationManager.updateWatchNextFromCwItems(cwItems)
+        }
     }
 
     /**
