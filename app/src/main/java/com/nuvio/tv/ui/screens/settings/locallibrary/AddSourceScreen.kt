@@ -177,7 +177,20 @@ private fun JellyfinForm(
             Button(
                 onClick = { viewModel.discoverJellyfin() },
                 enabled = !scanning && !submitting,
-                colors = ButtonDefaults.colors(containerColor = NuvioColors.Background)
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.Background,
+                    contentColor = NuvioColors.TextPrimary,
+                    focusedContainerColor = NuvioColors.Background,
+                    focusedContentColor = NuvioColors.TextPrimary
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(50)),
+                scale = ButtonDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(2.dp, NuvioColors.FocusRing),
+                        shape = RoundedCornerShape(50)
+                    )
+                )
             ) {
                 Text(
                     text = if (scanning) "Scanning network…" else "Auto-detect server",
@@ -197,7 +210,20 @@ private fun JellyfinForm(
                     viewModel.addJellyfin(displayName, url, username, password)
                 },
                 enabled = canSubmit && !submitting && !scanning,
-                colors = ButtonDefaults.colors(containerColor = NuvioColors.FocusRing)
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.FocusRing,
+                    contentColor = Color.Black,
+                    focusedContainerColor = NuvioColors.FocusRing,
+                    focusedContentColor = Color.Black
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(50)),
+                scale = ButtonDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(2.dp, NuvioColors.TextPrimary),
+                        shape = RoundedCornerShape(50)
+                    )
+                )
             ) {
                 Text(
                     text = if (submitting) "Testing connection…" else "Test & Save",
@@ -280,7 +306,20 @@ private fun SmbForm(
                     )
                 },
                 enabled = canSubmit && !submitting,
-                colors = ButtonDefaults.colors(containerColor = NuvioColors.FocusRing)
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.FocusRing,
+                    contentColor = Color.Black,
+                    focusedContainerColor = NuvioColors.FocusRing,
+                    focusedContentColor = Color.Black
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(50)),
+                scale = ButtonDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(2.dp, NuvioColors.TextPrimary),
+                        shape = RoundedCornerShape(50)
+                    )
+                )
             ) {
                 Text(
                     text = if (submitting) "Testing connection…" else "Test & Save",
@@ -323,7 +362,20 @@ private fun LocalFileForm(
             TextRow(label = "Display name", value = displayName, onValueChange = { displayName = it })
             Button(
                 onClick = { launcher.launch(null) },
-                colors = ButtonDefaults.colors(containerColor = NuvioColors.Background)
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.Background,
+                    contentColor = NuvioColors.TextPrimary,
+                    focusedContainerColor = NuvioColors.Background,
+                    focusedContentColor = NuvioColors.TextPrimary
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(50)),
+                scale = ButtonDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(2.dp, NuvioColors.FocusRing),
+                        shape = RoundedCornerShape(50)
+                    )
+                )
             ) { Text(if (pickedUri == null) "Choose folder…" else "Folder selected", color = NuvioColors.TextPrimary) }
             if (pickedUri != null) {
                 Text(
@@ -337,7 +389,20 @@ private fun LocalFileForm(
             Button(
                 onClick = { pickedUri?.let { viewModel.addLocalFile(displayName, it.toString()) } },
                 enabled = pickedUri != null,
-                colors = ButtonDefaults.colors(containerColor = NuvioColors.FocusRing)
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.FocusRing,
+                    contentColor = Color.Black,
+                    focusedContainerColor = NuvioColors.FocusRing,
+                    focusedContentColor = Color.Black
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(50)),
+                scale = ButtonDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(2.dp, NuvioColors.TextPrimary),
+                        shape = RoundedCornerShape(50)
+                    )
+                )
             ) { Text("Test & Save", color = Color.Black) }
             ResultBanner(addResult)
         }

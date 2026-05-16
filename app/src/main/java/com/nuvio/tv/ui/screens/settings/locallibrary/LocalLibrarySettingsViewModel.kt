@@ -127,6 +127,8 @@ class LocalLibrarySettingsViewModel @Inject constructor(
 
     fun rescan(sourceId: String) = manager.rescan(sourceId)
 
+    fun rescanAllSources() = manager.rescanAll()
+
     fun setEnabled(sourceId: String, enabled: Boolean) {
         viewModelScope.launch { manager.setEnabled(sourceId, enabled) }
     }

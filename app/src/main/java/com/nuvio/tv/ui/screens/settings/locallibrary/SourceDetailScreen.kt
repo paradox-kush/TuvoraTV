@@ -2,10 +2,12 @@
 
 package com.nuvio.tv.ui.screens.settings.locallibrary
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -13,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Border
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -80,18 +83,57 @@ fun SourceDetailScreen(
         ) {
             Button(
                 onClick = { viewModel.rescan(sourceId) },
-                colors = ButtonDefaults.colors(containerColor = NuvioColors.FocusRing)
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.FocusRing,
+                    contentColor = Color.Black,
+                    focusedContainerColor = NuvioColors.FocusRing,
+                    focusedContentColor = Color.Black
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(50)),
+                scale = ButtonDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(2.dp, NuvioColors.TextPrimary),
+                        shape = RoundedCornerShape(50)
+                    )
+                )
             ) { Text("Rescan now", color = Color.Black) }
             Button(
                 onClick = { onNavigateToManualMatch(sourceId) },
-                colors = ButtonDefaults.colors(containerColor = NuvioColors.Background)
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.Background,
+                    contentColor = NuvioColors.TextPrimary,
+                    focusedContainerColor = NuvioColors.Background,
+                    focusedContentColor = NuvioColors.TextPrimary
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(50)),
+                scale = ButtonDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(2.dp, NuvioColors.FocusRing),
+                        shape = RoundedCornerShape(50)
+                    )
+                )
             ) { Text("Manual match", color = NuvioColors.TextPrimary) }
             Button(
                 onClick = {
                     viewModel.removeSource(sourceId)
                     onBackPress()
                 },
-                colors = ButtonDefaults.colors(containerColor = NuvioColors.Background)
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.Background,
+                    contentColor = Color(0xFFFF6B6B),
+                    focusedContainerColor = NuvioColors.Background,
+                    focusedContentColor = Color(0xFFFF6B6B)
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(50)),
+                scale = ButtonDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(2.dp, NuvioColors.FocusRing),
+                        shape = RoundedCornerShape(50)
+                    )
+                )
             ) { Text("Remove source", color = Color(0xFFFF6B6B)) }
         }
     }

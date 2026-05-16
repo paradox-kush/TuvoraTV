@@ -39,13 +39,18 @@ fun LocalLibrarySettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     SettingsStandaloneScaffold(
-        title = "Local Library",
+        title = "Local sources",
         subtitle = "Connect Jellyfin servers, SMB shares, or on-device folders."
     ) {
         SettingsDetailHeader(
             title = "Sources",
             subtitle = "Each source is scanned and matched to TMDB so it appears alongside addon content."
         )
+
+        val anyScanning = state.progress.values.any {
+            it is LocalLibraryManager.ScanProgress.Scanning ||
+                it is LocalLibraryManager.ScanProgress.Matching
+        }
 
         SettingsGroupCard(
             modifier = Modifier
@@ -56,6 +61,14 @@ fun LocalLibrarySettingsScreen(
                 subtitle = "Jellyfin / SMB share / On-device folder",
                 value = null,
                 onClick = onNavigateToAddSource
+            )
+            SettingsActionRow(
+                title = "Rescan all sources",
+                subtitle = if (anyScanning) "Scanning in progress…"
+                    else "Re-index every configured source",
+                value = null,
+                enabled = state.sources.isNotEmpty() && !anyScanning,
+                onClick = { viewModel.rescanAllSources() }
             )
         }
 

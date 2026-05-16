@@ -207,6 +207,13 @@ class LocalLibraryManager @Inject constructor(
         }
     }
 
+    /** Rescan every configured source. Scans serialize via [rescanMutex]. */
+    fun rescanAll() {
+        scope.launch {
+            preferences.sources.first().forEach { kickoffScan(it) }
+        }
+    }
+
     /** Returns scanned items in the index that don't yet have a TMDB match. */
     suspend fun unmatchedItems(sourceId: String): List<ScannedItem> {
         val items = index.load(sourceId)
