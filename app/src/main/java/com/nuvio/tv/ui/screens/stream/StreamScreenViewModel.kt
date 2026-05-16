@@ -195,6 +195,17 @@ class StreamScreenViewModel @Inject constructor(
                     playerPreference = playerSettings.playerPreference,
                     streamAutoPlayMode = playerSettings.streamAutoPlayMode
                 )
+                // In MANUAL mode, still enable direct auto-play if a persisted
+                // binge group exists - same behavior as playNextEpisode in the player.
+                if (!directAutoPlayFlowEnabledForSession &&
+                    playerSettings.playerPreference == PlayerPreference.INTERNAL &&
+                    playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode
+                ) {
+                    val hasBingeGroup = contentId?.let { bingeGroupCacheDataStore.get(it) } != null
+                    if (hasBingeGroup) {
+                        directAutoPlayFlowEnabledForSession = true
+                    }
+                }
                 directAutoPlayModeInitializedForSession = true
             }
 
