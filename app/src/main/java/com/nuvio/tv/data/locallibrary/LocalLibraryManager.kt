@@ -67,7 +67,7 @@ class LocalLibraryManager @Inject constructor(
         url: String,
         username: String,
         password: String
-    ): Result<LocalLibrarySourceConfig> {
+    ): Result<LocalLibrarySourceConfig> = runCatching {
         val id = generateSourceId()
         val config = LocalLibrarySourceConfig(
             id = id,
@@ -77,12 +77,12 @@ class LocalLibraryManager @Inject constructor(
             params = if (username.isNotBlank()) mapOf("username" to username) else emptyMap()
         )
         val source = sourceFactory.create(config) as com.nuvio.tv.data.locallibrary.source.JellyfinSource
-        val auth = source.authenticate(username, password)
-            ?: return Result.failure(IllegalStateException("Jellyfin authentication failed"))
+        source.authenticate(username, password)
+            ?: throw IllegalStateException("Jellyfin authentication failed")
         preferences.upsert(config)
         kickoffScan(config)
-        return Result.success(config)
-    }
+        config
+    }.onFailure { Log.e(TAG, "addJellyfin failed for $url", it) }
 
     suspend fun addSmb(
         displayName: String,
@@ -92,32 +92,34 @@ class LocalLibraryManager @Inject constructor(
         domain: String?
     ): Result<LocalLibrarySourceConfig> {
         val id = generateSourceId()
-        val config = LocalLibrarySourceConfig(
-            id = id,
-            displayName = displayName,
-            kind = com.nuvio.tv.domain.model.locallibrary.SourceKind.SMB,
-            urlOrPath = url
-        )
-        if (!username.isNullOrBlank()) credentialStore.putSecret(id, LocalLibraryCredentialStore.Field.SMB_USERNAME, username)
-        if (!password.isNullOrBlank()) credentialStore.putSecret(id, LocalLibraryCredentialStore.Field.SMB_PASSWORD, password)
-        if (!domain.isNullOrBlank()) credentialStore.putSecret(id, LocalLibraryCredentialStore.Field.SMB_DOMAIN, domain)
-        val source = sourceFactory.create(config)
-        val test = source.testConnection()
-        if (test.isFailure) {
+        return runCatching {
+            val config = LocalLibrarySourceConfig(
+                id = id,
+                displayName = displayName,
+                kind = com.nuvio.tv.domain.model.locallibrary.SourceKind.SMB,
+                urlOrPath = url
+            )
+            if (!username.isNullOrBlank()) credentialStore.putSecret(id, LocalLibraryCredentialStore.Field.SMB_USERNAME, username)
+            if (!password.isNullOrBlank()) credentialStore.putSecret(id, LocalLibraryCredentialStore.Field.SMB_PASSWORD, password)
+            if (!domain.isNullOrBlank()) credentialStore.putSecret(id, LocalLibraryCredentialStore.Field.SMB_DOMAIN, domain)
+            val source = sourceFactory.create(config)
+            val test = source.testConnection()
+            if (test.isFailure) {
+                throw test.exceptionOrNull() ?: IllegalStateException("SMB test failed")
+            }
+            preferences.upsert(config)
+            kickoffScan(config)
+            config
+        }.onFailure {
             credentialStore.clearSource(id)
-            val cause = test.exceptionOrNull() ?: IllegalStateException("SMB test failed")
-            Log.e(TAG, "addSmb test failed for $url", cause)
-            return Result.failure(cause)
+            Log.e(TAG, "addSmb failed for $url", it)
         }
-        preferences.upsert(config)
-        kickoffScan(config)
-        return Result.success(config)
     }
 
     suspend fun addLocalFile(
         displayName: String,
         treeUri: String
-    ): Result<LocalLibrarySourceConfig> {
+    ): Result<LocalLibrarySourceConfig> = runCatching {
         val id = generateSourceId()
         val config = LocalLibrarySourceConfig(
             id = id,
@@ -128,12 +130,12 @@ class LocalLibraryManager @Inject constructor(
         val source = sourceFactory.create(config)
         val test = source.testConnection()
         if (test.isFailure) {
-            return Result.failure(test.exceptionOrNull() ?: IllegalStateException("Folder not accessible"))
+            throw test.exceptionOrNull() ?: IllegalStateException("Folder not accessible")
         }
         preferences.upsert(config)
         kickoffScan(config)
-        return Result.success(config)
-    }
+        config
+    }.onFailure { Log.e(TAG, "addLocalFile failed for $treeUri", it) }
 
     /**
      * Verifies a Jellyfin URL + credentials without persisting anything. Used

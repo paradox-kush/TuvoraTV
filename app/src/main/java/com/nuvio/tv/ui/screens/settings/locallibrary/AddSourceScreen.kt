@@ -102,7 +102,7 @@ fun AddSourceScreen(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             BackendChip("Jellyfin", selected == SourceKind.JELLYFIN) { selected = SourceKind.JELLYFIN }
-            BackendChip("SMB / CIFS", selected == SourceKind.SMB) { selected = SourceKind.SMB }
+            BackendChip("SMB", selected == SourceKind.SMB) { selected = SourceKind.SMB }
             BackendChip("On-device", selected == SourceKind.LOCAL_FILE) { selected = SourceKind.LOCAL_FILE }
         }
 
@@ -269,7 +269,10 @@ private fun SmbForm(
     var password by remember { mutableStateOf("") }
     var domain by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
-    val canSubmit = url.startsWith("smb://") || url.startsWith("//")
+    val canSubmit = run {
+        val cleaned = url.removePrefix("smb://").removePrefix("//").trim('/')
+        cleaned.split('/').filter { it.isNotBlank() }.size >= 2
+    }
 
     LaunchedEffect(addResult) {
         if (addResult != null) submitting = false
