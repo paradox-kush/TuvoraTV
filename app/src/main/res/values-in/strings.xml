@@ -261,7 +261,7 @@
     <string name="tmdb_error_missing_collection_id">ID koleksi TMDB tidak ada</string>
     <string name="tmdb_error_missing_person_id">ID orang TMDB tidak ada</string>
     <string name="tmdb_error_person_credits_not_found">Kredit orang TMDB tidak ditemukan</string>
-    <string name="tmdb_error_discover_no_data">TMDB discover tidak menyediakan data</string>
+    <string name="tmdb_error_discover_no_data">Penemuan TMDB tidak memperoleh data</string>
     <string name="tmdb_entity_empty_title">Tidak ada judul ditemukan</string>
     <string name="tmdb_entity_empty_subtitle">TMDB saat ini tidak memiliki judul yang bisa dijelajahi untuk pilihan ini.</string>
     <string name="episodes_unavailable">Tidak Tersedia</string>
@@ -293,7 +293,7 @@
     <!-- AppLanguage -->
     <string name="appearance_language">Bahasa Aplikasi</string>
     <string name="appearance_language_subtitle">Ganti bahasa sistem</string>
-    <string name="appearance_language_system">Default sistem</string>
+    <string name="appearance_language_system">Bawaan sistem</string>
     <string name="appearance_language_dialog_title">Pilih Bahasa</string>
     <string name="appearance_language_restart_hint">Restart aplikasi untuk menerapkan perubahan bahasa.</string>
 
@@ -307,13 +307,13 @@
     <string name="appearance_subtitle">Pilih tema warna, font, dan bahasa</string>
     <string name="appearance_color_theme">Tema Warna</string>
     <string name="appearance_color_theme_subtitle">Pilih warna aksen yang digunakan di seluruh aplikasi</string>
-    <string name="theme_color_crimson">Merah Tua</string>
+    <string name="theme_color_crimson">Delima</string>
     <string name="theme_color_ocean">Samudra</string>
-    <string name="theme_color_violet">Ungu</string>
+    <string name="theme_color_violet">Lavender</string>
     <string name="theme_color_emerald">Zamrud</string>
-    <string name="theme_color_amber">Kuning Keemasan</string>
-    <string name="theme_color_rose">Merah Mawar</string>
-    <string name="theme_color_white">Putih</string>
+    <string name="theme_color_amber">Amber</string>
+    <string name="theme_color_rose">Mawar</string>
+    <string name="theme_color_white">Melati</string>
     <string name="appearance_amoled_mode">Mode AMOLED</string>
     <string name="appearance_amoled_mode_subtitle">Gunakan hitam pekat untuk latar belakang aplikasi</string>
     <string name="appearance_amoled_surfaces_mode">Permukaan Hitam Pekat</string>
@@ -393,7 +393,7 @@
     <string name="stream_auto_play_smart_match">Pencocokan cerdas</string>
     <string name="essential_subtitle_language">Bahasa subtitle</string>
     <string name="essential_audio_language">Bahasa audio</string>
-    <string name="audio_lang_media_default">Default media</string>
+    <string name="audio_lang_media_default">Bawaan media</string>
     <string name="essential_playback_header_title">Pemutaran</string>
     <string name="essential_playback_header_subtitle">Preferensi pemutaran, subtitle, audio, dan P2P sederhana.</string>
     <string name="essential_stream_selection_subtitle">Pilih secara manual atau putar otomatis stream yang pertama tersedia.</string>
@@ -595,7 +595,7 @@
     <string name="audio_autoplay_trailers_sub">Putar trailer secara otomatis di layar detail setelah periode tidak aktif</string>
     <string name="audio_trailer_delay">Jeda Trailer</string>
     <string name="audio_section">Audio</string>
-    <string name="audio_lang_default">Default (file media)</string>
+    <string name="audio_lang_default">Bawaan (file media)</string>
     <string name="audio_lang_device">Bahasa perangkat</string>
     <string name="audio_lang_original">Bahasa asli</string>
     <string name="audio_lang_original_hint">Memerlukan pengayaan TMDB untuk diaktifkan</string>
@@ -616,7 +616,7 @@
     <string name="audio_mpv_hwdec_title">Dekoding Hardware (Hanya MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Pilih cara libmpv menggunakan dekoder hardware.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Lama (direct → copy)</string>
-    <string name="audio_mpv_hwdec_legacy_direct_copy_desc">Perilaku default sebelumnya: coba hardware langsung dulu, lalu copy-back.</string>
+    <string name="audio_mpv_hwdec_legacy_direct_copy_desc">Perilaku bawaan sebelumnya: coba hardware langsung dulu, lalu copy-back.</string>
     <string name="audio_mpv_hwdec_auto_safe">Otomatis (auto-safe)</string>
     <string name="audio_mpv_hwdec_auto_safe_desc">Mode otomatis lebih aman dengan fallback saat beberapa dekoder hardware gagal.</string>
     <string name="audio_mpv_hwdec_hardware_copy">Hardware (copy) (mediacodec-copy)</string>
@@ -663,10 +663,10 @@
     <string name="sub_mode_effects_canvas_sub">Dukungan animasi menggunakan efek Media3 dengan rendering Canvas.</string>
     <string name="sub_mode_standard">Cue Standar</string>
     <string name="sub_mode_standard_sub">Rendering subtitle dasar tanpa dukungan animasi. Paling kompatibel.</string>
-    <string name="sub_org_none">Tidak ada (urutan default)</string>
+    <string name="sub_org_none">Tidak ada (urutan bawaan)</string>
     <string name="sub_org_by_lang">Per bahasa</string>
     <string name="sub_org_by_addon">Per addon</string>
-    <string name="sub_org_none_desc">Tampilkan subtitle sesuai urutan hasil addon default.</string>
+    <string name="sub_org_none_desc">Tampilkan subtitle sesuai urutan hasil addon bawaan.</string>
     <string name="sub_org_by_lang_desc">Kelompokkan subtitle berdasarkan bahasa.</string>
     <string name="sub_org_by_addon_desc">Kelompokkan subtitle berdasarkan sumber addon.</string>
     <string name="sub_startup_mode_title">Pemuatan Subtitle Addon</string>
@@ -692,7 +692,7 @@
     <string name="autoplay_stream_selection">Pemilihan Stream Otomatis</string>
     <string name="autoplay_next_episode">Putar Otomatis Episode Berikutnya</string>
     <string name="autoplay_next_episode_sub">Mulai episode berikutnya secara otomatis saat prompt muncul.</string>
-    <string name="autoplay_prefer_binge_group">Utamakan Grup Binge (Episode Berikutnya)</string>
+    <string name="autoplay_prefer_binge_group">Utamakan Grup Maraton (Episode Berikutnya)</string>
     <string name="autoplay_prefer_binge_group_sub">Coba profil sumber yang sama terlebih dahulu (addon/grup kualitas yang sama) sebelum aturan putar otomatis normal.</string>
     <string name="autoplay_threshold_pct">Persentase</string>
     <string name="autoplay_threshold_min">Menit sebelum akhir</string>
@@ -748,7 +748,7 @@
     <string name="layout_section_content">Konten Beranda</string>
     <string name="layout_section_content_desc">Kontrol apa yang muncul di beranda dan pencarian.</string>
     <string name="layout_collapse_sidebar">Ciutkan Bilah Sisi</string>
-    <string name="layout_collapse_sidebar_sub">Sembunyikan bilah sisi secara default; tampilkan saat difokuskan.</string>
+    <string name="layout_collapse_sidebar_sub">Setelan bawaan membunyikan bilah sisi; tampilkan saat difokuskan.</string>
     <string name="layout_modern_sidebar">Bilah Sisi Modern</string>
     <string name="layout_modern_sidebar_sub">Aktifkan navigasi bilah sisi mengambang.</string>
     <string name="layout_modern_sidebar_blur">Blur Bilah Sisi Modern</string>
@@ -759,14 +759,14 @@
     <string name="layout_classic_focus_gradient_sub">Padukan warna gambar visual ke sisi kanan beranda Klasik.</string>
     <string name="layout_show_hero">Tampilkan Bagian Hero</string>
     <string name="layout_show_hero_sub">Tampilkan carousel hero di bagian atas beranda.</string>
-    <string name="layout_show_discover">Tampilkan/Sembunyikan Discover</string>
-    <string name="layout_show_discover_sub">Menambahkan bagian Discover untuk penelusuran.</string>
-    <string name="layout_discover_location_action">Lokasi Discover</string>
-    <string name="layout_discover_location_dialog_title">Lokasi Discover</string>
+    <string name="layout_show_discover">Tampilkan/Sembunyikan Penemuan`</string>
+    <string name="layout_show_discover_sub">Menambahkan bagian Penemuan untuk penelusuran.</string>
+    <string name="layout_discover_location_action">Lokasi Penemuan</string>
+    <string name="layout_discover_location_dialog_title">Lokasi Penemuan</string>
     <string name="layout_discover_location_in_search">Tampilkan di Pencarian</string>
-    <string name="layout_discover_location_in_search_desc">Discover muncul di dalam tab Pencarian.</string>
+    <string name="layout_discover_location_in_search_desc">Penemuan muncul di dalam tab Pencarian.</string>
     <string name="layout_discover_location_in_sidebar">Tampilkan di Panel Sisi</string>
-    <string name="layout_discover_location_in_sidebar_desc">Discover mendapat item tersendiri di panel sisi.</string>
+    <string name="layout_discover_location_in_sidebar_desc">Penemuan mendapat item tersendiri di panel sisi.</string>
     <string name="layout_poster_labels">Tampilkan Label Poster</string>
     <string name="layout_poster_labels_sub">Tampilkan judul di bawah poster di baris, grid, dan lihat-semua.</string>
     <string name="layout_addon_name">Tampilkan Nama Addon</string>
@@ -780,7 +780,7 @@
     <string name="layout_section_continue_watching">Lanjutkan Menonton</string>
     <string name="layout_section_continue_watching_desc">Pengaturan untuk bagian Lanjutkan Menonton.</string>
     <string name="layout_use_episode_thumbnails_cw">Gunakan Thumbnail Episode di Lanjutkan Menonton</string>
-    <string name="layout_use_episode_thumbnails_cw_sub">Gunakan thumbnail episode sebagai gambar default. Saat dinonaktifkan, menggunakan backdrop.</string>
+    <string name="layout_use_episode_thumbnails_cw_sub">Gunakan thumbnail episode sebagai gambar bawaan. Saat dinonaktifkan, menggunakan backdrop.</string>
     <string name="layout_blur_unwatched">Blur Episode Belum Ditonton</string>
     <string name="layout_blur_unwatched_sub">Blur thumbnail episode hingga ditonton untuk menghindari spoiler.</string>
     <string name="layout_blur_cw_next_up">Blur Belum Ditonton di Lanjutkan Menonton</string>
@@ -791,7 +791,7 @@
     <string name="layout_show_unaired_next_up_sub">Sertakan episode mendatang di Lanjutkan Menonton sebelum ditayangkan.</string>
     <string name="layout_cw_sort_mode">Urutan Sortir</string>
     <string name="layout_cw_sort_mode_sub">Cara item Lanjutkan Menonton disusun</string>
-    <string name="layout_cw_sort_default">Default</string>
+    <string name="layout_cw_sort_default">Bawaan</string>
     <string name="layout_cw_sort_default_desc">Urutkan semua item berdasarkan terbaru</string>
     <string name="layout_cw_sort_streaming">Gaya Streaming</string>
     <string name="layout_cw_sort_streaming_desc">Item yang sudah dirilis lebih dulu, yang akan datang di akhir</string>
@@ -837,7 +837,7 @@
     <string name="layout_preset_pill">Pil</string>
     <string name="layout_card_width">Lebar</string>
     <string name="layout_card_radius">Radius Sudut</string>
-    <string name="layout_reset_default">Setel Ulang ke Default</string>
+    <string name="layout_reset_default">Setelan Bawaan</string>
     <string name="layout_custom">Kustom</string>
 
 
@@ -851,7 +851,7 @@
     <string name="mdblist_trakt_title">Trakt</string>
     <string name="mdblist_trakt_subtitle">Tampilkan skor Trakt</string>
     <string name="mdblist_imdb_title">IMDb</string>
-    <string name="mdblist_imdb_subtitle">Tampilkan skor IMDb (dan sembunyikan baris IMDb default saat tersedia)</string>
+    <string name="mdblist_imdb_subtitle">Tampilkan skor IMDb (dan sembunyikan baris IMDb bawaan saat tersedia)</string>
     <string name="mdblist_tmdb_title">TMDB</string>
     <string name="mdblist_tmdb_subtitle">Tampilkan skor TMDB</string>
     <string name="mdblist_letterboxd_title">Letterboxd</string>
@@ -1295,7 +1295,7 @@
     <string name="subtitle_no_addon">Tidak ada subtitle addon tersedia</string>
     <string name="subtitle_text_color">Warna Teks</string>
     <string name="subtitle_outline_color">Warna Garis Tepi</string>
-    <string name="subtitle_reset_defaults">Setel Ulang Default</string>
+    <string name="subtitle_reset_defaults">Setelan Bawaan</string>
     <string name="subtitle_tab_builtin">Bawaan</string>
     <string name="subtitle_tab_addons">Addon</string>
     <string name="subtitle_tab_languages">Bahasa</string>
@@ -1322,7 +1322,7 @@
     <string name="subtitle_style_text_opacity">Transparansi Teks</string>
     <string name="subtitle_style_outline">Garis Tepi</string>
     <string name="subtitle_style_bottom_offset">Batas Bawah</string>
-    <string name="subtitle_style_defaults">Default</string>
+    <string name="subtitle_style_defaults">Setelan Bawaan</string>
     <string name="subtitle_style_on">Aktif</string>
     <string name="subtitle_style_off">Nonaktif</string>
     <string name="panel_failed_load_streams">Gagal memuat stream</string>
@@ -1362,7 +1362,7 @@
     <string name="search_placeholder">Cari film &amp; serial</string>
     <string name="search_start_title">Mulai Mencari</string>
     <string name="search_start_subtitle">Masukkan setidaknya 2 karakter</string>
-    <string name="search_start_subtitle_no_discover">Discover dinonaktifkan. Masukkan setidaknya 2 karakter</string>
+    <string name="search_start_subtitle_no_discover">Penemuan dinonaktifkan. Masukkan setidaknya 2 karakter</string>
     <string name="search_recent_title">Pencarian terbaru</string>
     <string name="search_recent_clear">Hapus riwayat</string>
     <string name="search_voice_no_speech">Tidak ada ucapan terdeteksi. Coba lagi.</string>
@@ -1583,16 +1583,16 @@
     <string name="ratings_season_summary">Musim %1$d - %2$d episode</string>
 
     <!-- SearchDiscoverSection -->
-    <string name="discover_title">Temukan</string>
+    <string name="discover_title">Penemuan</string>
     <string name="discover_load_more">Muat lebih banyak</string>
     <string name="discover_loading">Memuat...</string>
     <string name="discover_filter_type">Tipe</string>
     <string name="discover_filter_catalog">Katalog</string>
     <string name="discover_filter_genre">Genre</string>
     <string name="discover_select_catalog">Pilih</string>
-    <string name="discover_genre_default">Default</string>
+    <string name="discover_genre_default">Setelan Bawaan</string>
     <string name="discover_empty_no_catalog_title">Pilih katalog</string>
-    <string name="discover_empty_no_catalog_subtitle">Pilih katalog temukan untuk dijelajahi</string>
+    <string name="discover_empty_no_catalog_subtitle">Pilih katalog penemuan untuk dijelajahi</string>
     <string name="discover_empty_no_content_title">Tidak ada konten ditemukan</string>
     <string name="discover_empty_no_content_subtitle">Coba genre atau katalog yang berbeda</string>
 
@@ -1617,7 +1617,7 @@
 
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Beranda</string>
-    <string name="nav_discover">Temukan</string>
+    <string name="nav_discover">Penemuan</string>
     <string name="nav_search">Pencarian</string>
     <string name="nav_library">Pustaka</string>
     <string name="nav_addons">Addon</string>
@@ -1663,8 +1663,8 @@
     <!-- Search -->
     <string name="search_no_results_title">Tidak Ada Hasil</string>
     <string name="search_no_results_subtitle">Coba cari dengan kata kunci yang berbeda</string>
-    <string name="discover_disabled_title">Discover dinonaktifkan</string>
-    <string name="discover_disabled_subtitle">Aktifkan Discover di pengaturan Tata Letak</string>
+    <string name="discover_disabled_title">Penemuan dinonaktifkan</string>
+    <string name="discover_disabled_subtitle">Aktifkan Penemuan di pengaturan Tata Letak</string>
 
     <!-- Library -->
     <string name="library_list_create_dialog_title">Buat Daftar</string>
@@ -1777,7 +1777,7 @@
     <string name="cd_trakt_logo">Logo Trakt</string>
     <string name="cd_trakt_qr">QR aktivasi Trakt</string>
     <string name="cd_imdb">IMDb</string>
-    <string name="cd_open_discover">Buka temukan</string>
+    <string name="cd_open_discover">Buka penemuan</string>
     <string name="cd_voice_search">Pencarian suara</string>
     <string name="cd_donation_qr">Kode QR donasi</string>
     <string name="cd_contributor_qr">Kode QR dukungan kontributor</string>
@@ -1901,7 +1901,7 @@
     <string name="collections_editor_tmdb_default_list">Daftar TMDB</string>
     <string name="collections_editor_tmdb_default_production">Produksi TMDB</string>
     <string name="collections_editor_tmdb_default_network">Jaringan TMDB</string>
-    <string name="collections_editor_tmdb_default_discover">Discover TMDB</string>
+    <string name="collections_editor_tmdb_default_discover">Penemuan TMDB</string>
     <string name="collections_editor_tmdb_movie_collection">Koleksi Film TMDB</string>
     <string name="collections_editor_tmdb_mode_presets">Preset</string>
     <string name="collections_editor_tmdb_mode_public_list">Daftar Publik</string>
