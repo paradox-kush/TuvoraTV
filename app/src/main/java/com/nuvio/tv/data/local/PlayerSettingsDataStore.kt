@@ -180,6 +180,7 @@ data class PlayerSettings(
     val pauseOverlayEnabled: Boolean = true,
     val osdClockEnabled: Boolean = true,
     val skipIntroEnabled: Boolean = true,
+    val parentalGuideEnabled: Boolean = true,
     val autoSkipSegmentTypes: Set<AutoSkipSegmentType> = emptySet(),
     // Dolby Vision Profile 7 → HEVC fallback (requires forked ExoPlayer)
     val mapDV7ToHevc: Boolean = false,
@@ -356,6 +357,7 @@ class PlayerSettingsDataStore @Inject constructor(
     private val pauseOverlayEnabledKey = booleanPreferencesKey("pause_overlay_enabled")
     private val osdClockEnabledKey = booleanPreferencesKey("osd_clock_enabled")
     private val skipIntroEnabledKey = booleanPreferencesKey("skip_intro_enabled")
+    private val parentalGuideEnabledKey = booleanPreferencesKey("parental_guide_enabled")
     private val autoSkipSegmentTypesKey = stringSetPreferencesKey("auto_skip_segment_types")
     private val mapDV7ToHevcKey = booleanPreferencesKey("map_dv7_to_hevc")
     private val mpvHardwareDecodeModeKey = stringPreferencesKey("mpv_hardware_decode_mode")
@@ -533,6 +535,7 @@ class PlayerSettingsDataStore @Inject constructor(
                 pauseOverlayEnabled = prefs[pauseOverlayEnabledKey] ?: true,
                 osdClockEnabled = prefs[osdClockEnabledKey] ?: true,
                 skipIntroEnabled = prefs[skipIntroEnabledKey] ?: true,
+                parentalGuideEnabled = prefs[parentalGuideEnabledKey] ?: true,
                 autoSkipSegmentTypes = prefs[autoSkipSegmentTypesKey]
                     ?.mapNotNull(AutoSkipSegmentType::fromStoredValue)
                     ?.toSet()
@@ -748,6 +751,12 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setSkipIntroEnabled(enabled: Boolean) {
         store().edit { prefs ->
             prefs[skipIntroEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setParentalGuideEnabled(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[parentalGuideEnabledKey] = enabled
         }
     }
 

@@ -412,6 +412,7 @@ internal fun PlayerRuntimeController.initializePlayer(
 
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (isReleasingPlayer) return
                         val playerDuration = duration
                         if (playerDuration > lastKnownDuration) {
                             lastKnownDuration = playerDuration

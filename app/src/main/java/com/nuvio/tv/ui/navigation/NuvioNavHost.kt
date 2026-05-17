@@ -848,12 +848,69 @@ fun NuvioNavHost(
                                 detailEntry.savedStateHandle["heroRestoreToken"] = token
                                 navController.popBackStack(Screen.Detail.route, inclusive = false)
                             } else {
-                                navController.popBackStack(Screen.Stream.route, inclusive = true)
+                                val contentId = args?.getString("contentId").orEmpty()
+                                val contentType = args?.getString("contentType").orEmpty()
+                                val returnToHomeOnBack = args?.getString("returnToHomeOnBack")
+                                    ?.toBooleanStrictOrNull() == true
+                                if (contentId.isNotBlank()) {
+                                    navController.navigate(
+                                        Screen.Detail.createRoute(
+                                            itemId = contentId,
+                                            itemType = contentType,
+                                            addonBaseUrl = null,
+                                            returnToHomeOnBack = returnToHomeOnBack
+                                        )
+                                    ) {
+                                        popUpTo(Screen.Player.route) { inclusive = true }
+                                        launchSingleTop = true
+                                    }
+                                } else {
+                                    val poppedToStream = navController.popBackStack(Screen.Stream.route, inclusive = true)
+                                    if (!poppedToStream) {
+                                        navController.popBackStack()
+                                    }
+                                }
                             }
                         } else {
-                            val poppedToDetail = navController.popBackStack(Screen.Detail.route, inclusive = false)
-                            if (!poppedToDetail) {
-                                navController.popBackStack(Screen.Stream.route, inclusive = true)
+                            val contentId = args?.getString("contentId").orEmpty()
+                            val contentType = args?.getString("contentType").orEmpty()
+                            val returnToHomeOnBack = args?.getString("returnToHomeOnBack")
+                                ?.toBooleanStrictOrNull() == true
+                            val focusSeason = args?.getString("season")?.toIntOrNull()
+                            val focusEpisode = args?.getString("episode")?.toIntOrNull()
+                            if (contentId.isNotBlank()) {
+                                val detailEntry = navController.currentBackStack.value
+                                    .lastOrNull {
+                                        val itemId = it.arguments?.getString("itemId").orEmpty()
+                                        val itemType = it.arguments?.getString("itemType").orEmpty()
+                                        it.destination.route?.startsWith("detail/") == true &&
+                                            itemId == contentId &&
+                                            (itemType.isBlank() || contentType.isBlank() || itemType.equals(contentType, ignoreCase = true))
+                                    }
+                                if (detailEntry != null) {
+                                    detailEntry.savedStateHandle["returnFocusSeason"] = focusSeason
+                                    detailEntry.savedStateHandle["returnFocusEpisode"] = focusEpisode
+                                    navController.popBackStack(Screen.Detail.route, inclusive = false)
+                                } else {
+                                    navController.navigate(
+                                        Screen.Detail.createRoute(
+                                            itemId = contentId,
+                                            itemType = contentType,
+                                            addonBaseUrl = null,
+                                            returnFocusSeason = focusSeason,
+                                            returnFocusEpisode = focusEpisode,
+                                            returnToHomeOnBack = returnToHomeOnBack
+                                        )
+                                    ) {
+                                        popUpTo(Screen.Player.route) { inclusive = true }
+                                        launchSingleTop = true
+                                    }
+                                }
+                            } else {
+                                val poppedToStream = navController.popBackStack(Screen.Stream.route, inclusive = true)
+                                if (!poppedToStream) {
+                                    navController.popBackStack()
+                                }
                             }
                         }
                     }

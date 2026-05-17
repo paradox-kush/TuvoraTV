@@ -136,6 +136,7 @@ internal fun PlaybackSettingsSections(
     onSetPauseOverlayEnabled: (Boolean) -> Unit,
     onSetOsdClockEnabled: (Boolean) -> Unit,
     onSetSkipIntroEnabled: (Boolean) -> Unit,
+    onSetParentalGuideEnabled: (Boolean) -> Unit,
     onSetAutoSkipSegmentTypeEnabled: (AutoSkipSegmentType, Boolean) -> Unit,
     onSetFrameRateMatchingMode: (FrameRateMatchingMode) -> Unit,
     onSetResolutionMatchingEnabled: (Boolean) -> Unit,
@@ -336,6 +337,18 @@ internal fun PlaybackSettingsSections(
                     subtitle = stringResource(R.string.playback_skip_intro_sub),
                     isChecked = playerSettings.skipIntroEnabled,
                     onCheckedChange = onSetSkipIntroEnabled,
+                    onFocused = { focusedSection = PlaybackSection.GENERAL },
+                    enabled = !generalUi.isExternalPlayer
+                )
+            }
+
+            item(key = "general_parental_guide") {
+                ToggleSettingsItem(
+                    icon = Icons.Default.Info,
+                    title = stringResource(R.string.playback_parental_guide),
+                    subtitle = stringResource(R.string.playback_parental_guide_sub),
+                    isChecked = playerSettings.parentalGuideEnabled,
+                    onCheckedChange = onSetParentalGuideEnabled,
                     onFocused = { focusedSection = PlaybackSection.GENERAL },
                     enabled = !generalUi.isExternalPlayer
                 )

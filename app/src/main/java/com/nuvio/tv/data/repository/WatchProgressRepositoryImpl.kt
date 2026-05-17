@@ -109,11 +109,14 @@ class WatchProgressRepositoryImpl @Inject constructor(
                 if (isSyncingFromRemote || !hasCompletedInitialPull || !authManager.isAuthenticated) continue
                 watchProgressSyncService.pullFromRemote()
                     .onSuccess { entries ->
-                        watchProgressPreferences.mergeRemoteEntries(
+                        val hadUnsynced = watchProgressPreferences.mergeRemoteEntries(
                             entries.toMap(),
                             lastSuccessfulPushMs = watchProgressSyncService.lastSuccessfulPushMs
                         )
                         Log.d(TAG, "Periodic Nuvio Sync pull: merged ${entries.size} entries")
+                        if (hadUnsynced) {
+                            watchProgressSyncService.pushToRemote()
+                        }
                     }
                     .onFailure { Log.w(TAG, "Periodic Nuvio Sync pull failed", it) }
             }

@@ -129,6 +129,10 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setSkipIntroEnabled(enabled)
     }
 
+    suspend fun setParentalGuideEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setParentalGuideEnabled(enabled)
+    }
+
     suspend fun setAutoSkipSegmentTypeEnabled(segmentType: AutoSkipSegmentType, enabled: Boolean) {
         playerSettingsDataStore.setAutoSkipSegmentTypeEnabled(segmentType, enabled)
     }

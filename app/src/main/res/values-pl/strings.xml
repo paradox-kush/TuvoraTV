@@ -175,6 +175,8 @@
     <string name="playback_osd_clock">Zegar OSD</string>
     <string name="playback_skip_intro">Pomiń intro</string>
     <string name="playback_skip_intro_sub">Używaj introdb.app do wykrywania intro i podsumowań.</string>
+    <string name="playback_parental_guide">Ostrzeżenie o charakterze treści</string>
+    <string name="playback_parental_guide_sub">Pokaż ostrzeżenie o nagości, przemocy i wulgarności na początku odtwarzania.</string>
     <string name="playback_auto_frame_rate">Auto częstotliwość odświeżania</string>
     <string name="playback_section_player">Odtwarzacz i wybór źródła</string>
     <string name="playback_section_player_desc">Preferencje odtwarzacza, auto-play i filtrowanie źródeł.</string>
@@ -798,6 +800,10 @@
     <string name="next_episode_finding_source">Szukanie źródła…</string>
     <string name="next_episode_playing_via">Odtwarzanie przez %1$s za %2$ds</string>
     <string name="next_episode_play">Odtwórz</string>
+    <string name="player_next_episode_prompt_title">Kontynuować oglądanie?</string>
+    <string name="player_next_episode_prompt_message">Czy chcesz odtworzyć następny odcinek?</string>
+    <string name="player_next_episode_prompt_yes">Tak</string>
+    <string name="player_next_episode_prompt_no">Nie, wróć do szczegółów</string>
     <string name="next_episode_unaired">Niewyemitowany</string>
     <string name="next_episode_not_aired_yet">Następny odcinek nie został jeszcze wyemitowany</string>
     <string name="skip_intro">Pomiń czołówkę</string>
@@ -913,6 +919,10 @@
     <string name="plugin_providers_section">Dostawcy (%1$d)</string>
     <string name="plugin_title">Wtyczki</string>
     <string name="plugin_subtitle">Zarządzaj lokalnymi scraperami i dostawcami</string>
+    <string name="plugin_enable_plugins_title">Włącz dostawców wtyczek globalnie</string>
+    <string name="plugin_enable_plugins_subtitle">Używaj dostawców wtyczek podczas wyszukiwania strumieni</string>
+    <string name="plugin_group_by_repository_title">Grupuj dostawców wtyczek wg repozytorium</string>
+    <string name="plugin_group_by_repository_subtitle">W Strumieniach pokazuj jednego dostawcę na repozytorium zamiast jednego na źródło</string>
     <string name="plugin_add_repository">Dodaj repozytorium</string>
     <string name="plugin_add_btn">Dodaj</string>
     <string name="plugin_manage_from_phone_title">Zarządzaj z telefonu</string>
@@ -1143,6 +1153,7 @@
     <string name="tmdb_entity_rail_popular">Popularne</string>
     <string name="tmdb_entity_rail_top_rated">Najwyżej oceniane</string>
     <string name="tmdb_entity_rail_recent">Ostatnie</string>
+    <string name="tmdb_entity_rail_most_voted">Najwięcej głosów</string>
     <string name="tmdb_entity_empty_title">Nie znaleziono tytułów</string>
     <string name="tmdb_entity_empty_subtitle">TMDB nie ma obecnie przeglądanych tytułów dla tego wyboru.</string>
 
@@ -1459,6 +1470,9 @@
 
     <!-- Collection Management -->
     <string name="collections_header">Kolekcje</string>
+    <string name="collections_delete_confirm_title">Usunąć kolekcję?</string>
+    <string name="collections_delete_confirm">Usuń</string>
+    <string name="collections_delete_confirm_subtitle">Spowoduje to trwałe usunięcie \"%1$s\". Tej operacji nie można cofnąć.</string>
     <string name="collections_empty">Brak kolekcji. Utwórz jedną, aby uporządkować katalogi.</string>
     <string name="collections_new">Nowa kolekcja</string>
     <string name="collections_import">Importuj</string>
@@ -1710,6 +1724,8 @@
     <string name="collection_editor_choice_both">Oba</string>
     <string name="collection_editor_folder_count_one">%1$d element</string>
     <string name="collection_editor_folder_count_other">%1$d elementów</string>
+    <string name="collections_editor_delete_folder_title">Usunąć folder?</string>
+    <string name="collections_editor_delete_folder_subtitle">Spowoduje to trwałe usunięcie \"%1$s\" i jego zawartości.</string>
     <string name="collection_editor_remove_cd">Usuń</string>
     <string name="collection_editor_resolved_trakt_list">Rozwiązana lista Trakt</string>
     <string name="collection_editor_trakt_name_placeholder">Weekend Watch, Award Winners</string>
@@ -1784,6 +1800,13 @@
     <string name="collections_editor_tmdb_rating_max_placeholder">10</string>
     <string name="collections_editor_tmdb_rating_min_placeholder">7.0</string>
     <string name="collections_editor_tmdb_tv_title_placeholder">Best Action Movies, Korean Dramas, 2024 Animation</string>
+    <string name="collections_editor_tmdb_watch_region">Region oglądania</string>
+    <string name="collections_editor_tmdb_watch_region_helper">Kod kraju ISO 3166-1, w którym tytuł jest dostępny. Przykład: US, GB.</string>
+    <string name="collections_editor_tmdb_quick_watch_regions">Szybki wybór regionu</string>
+    <string name="collections_editor_tmdb_watch_providers">ID dostawców oglądania</string>
+    <string name="collections_editor_tmdb_watch_providers_helper">Użyj ID dostawców TMDB. Oddziel przecinkami dla AND lub pionowymi kreskami dla OR.</string>
+    <string name="collections_editor_tmdb_watch_providers_placeholder">8|337|350</string>
+    <string name="collections_editor_tmdb_quick_watch_providers">Szybki wybór platformy</string>
     <string name="collections_editor_tmdb_votes_min_placeholder">100</string>
     <string name="collections_editor_tmdb_year_placeholder">2024</string>
     <string name="collections_editor_trakt_ascending">Rosnąco</string>

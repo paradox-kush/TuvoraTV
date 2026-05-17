@@ -608,7 +608,10 @@ class AccountViewModel @Inject constructor(
                 watchProgressRepository.isSyncingFromRemote = true
                 val remoteEntries = watchProgressSyncService.pullFromRemote().getOrElse { throw it }
                 Log.d("AccountViewModel", "pullRemoteData: pulled ${remoteEntries.size} watch progress entries")
-                watchProgressPreferences.replaceWithRemoteEntries(remoteEntries.toMap())
+                watchProgressPreferences.mergeRemoteEntries(
+                    remoteEntries.toMap(),
+                    lastSuccessfulPushMs = watchProgressSyncService.lastSuccessfulPushMs
+                )
                 Log.d("AccountViewModel", "pullRemoteData: reconciled local watch progress with ${remoteEntries.size} remote entries")
                 watchProgressRepository.isSyncingFromRemote = false
 
@@ -633,8 +636,11 @@ class AccountViewModel @Inject constructor(
                 watchProgressRepository.isSyncingFromRemote = true
                 val remoteEntries = watchProgressSyncService.pullFromRemote().getOrElse { throw it }
                 Log.d("AccountViewModel", "pullRemoteData: pulled ${remoteEntries.size} watch progress entries in Trakt mode")
-                watchProgressPreferences.replaceWithRemoteEntries(remoteEntries.toMap())
-                Log.d("AccountViewModel", "pullRemoteData: replaced local watch progress with ${remoteEntries.size} remote entries")
+                watchProgressPreferences.mergeRemoteEntries(
+                    remoteEntries.toMap(),
+                    lastSuccessfulPushMs = watchProgressSyncService.lastSuccessfulPushMs
+                )
+                Log.d("AccountViewModel", "pullRemoteData: merged local watch progress with ${remoteEntries.size} remote entries")
                 watchProgressRepository.isSyncingFromRemote = false
 
                 val remoteWatchedItems = watchedItemsSyncService.pullFromRemote().getOrElse { throw it }

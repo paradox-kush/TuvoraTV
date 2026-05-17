@@ -154,8 +154,8 @@ fun PlayerScreen(
     var subtitleDelayAutoSyncFocused by remember { mutableStateOf(false) }
     var subtitleTimingConsumeNextConfirmKeyUp by remember { mutableStateOf(false) }
     val exitPlayer: () -> Unit = {
-        viewModel.stopAndRelease()
         val timeline = viewModel.playbackTimeline.value
+        viewModel.stopAndRelease()
         val completed = timeline.duration > 0L &&
             (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD
         onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, uiState.streamAutoPlayMode != StreamAutoPlayMode.MANUAL, completed)
@@ -911,8 +911,8 @@ fun PlayerScreen(
                     val url = viewModel.getCurrentStreamUrl()
                     val title = uiState.title
                     val headers = viewModel.getCurrentHeaders()
-                    viewModel.stopAndRelease()
                     val timeline = viewModel.playbackTimeline.value
+                    viewModel.stopAndRelease()
                     val completed = timeline.duration > 0L &&
                         (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD
                     onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, uiState.streamAutoPlayMode != StreamAutoPlayMode.MANUAL, completed)
