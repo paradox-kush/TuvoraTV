@@ -7,7 +7,6 @@ import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
 import android.util.Log
-import com.nuvio.tv.domain.repository.WatchProgressRepository
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -16,21 +15,20 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.dropWhile
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TAG = "TvChannelSync"
 private const val JOB_ID_PERIODIC = 10_010
 private const val JOB_ID_IMMEDIATE = 10_011
 private const val PERIODIC_INTERVAL_MS = 15 * 60_000L  // 15 minutes (JobScheduler OS minimum)
-private const val MAX_CHANNEL_ROWS = 20
 
 /**
  * Background job that keeps the Continue Watching preview channel in sync when the app
- * is not in the foreground. Scheduled as a periodic job so progress from other devices
- * (e.g. phone) appears without requiring the TV app to be opened.
+ * is not in the foreground. Reads from the CW enrichment cache on disk, which is
+ * populated by the HomeViewModel CW pipeline during normal app usage.
+ *
+ * This ensures the launcher channel stays up-to-date even when the app is backgrounded,
+ * using the same enriched data and settings-aware filtering as the in-app UI.
  *
  * Dependencies are obtained via Hilt EntryPoint since JobService is not a supported
  * Hilt injection target.
@@ -40,7 +38,7 @@ class TvChannelRefreshJobService : JobService() {
     @EntryPoint
     @InstallIn(SingletonComponent::class)
     interface TvChannelJobEntryPoint {
-        fun watchProgressRepository(): WatchProgressRepository
+        fun channelSyncService(): AndroidTvChannelSyncService
         fun channelManager(): AndroidTvChannelManager
     }
 
@@ -50,26 +48,22 @@ class TvChannelRefreshJobService : JobService() {
         val entryPoint = EntryPointAccessors.fromApplication(
             applicationContext, TvChannelJobEntryPoint::class.java
         )
-        val repo = entryPoint.watchProgressRepository()
+        val syncService = entryPoint.channelSyncService()
         val manager = entryPoint.channelManager()
+
+        if (!manager.isSupported()) {
+            jobFinished(params, false)
+            return false
+        }
 
         jobScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         jobScope!!.launch {
             try {
-                // Wait for continue watching to emit a non-empty list. Trakt has an 8s grace
-                // period before its flow produces data; give it 25s total.
-                val items = withTimeoutOrNull(25_000L) {
-                    repo.continueWatching
-                        .dropWhile { it.isEmpty() }
-                        .first()
-                } ?: emptyList()
-
-                if (items.isNotEmpty()) {
-                    Log.d(TAG, "Background job reconciling ${items.size} items")
-                    manager.reconcile(items.take(MAX_CHANNEL_ROWS))
-                } else {
-                    Log.d(TAG, "Background job: no items to reconcile (timeout or empty)")
-                }
+                // Read from CW enrichment cache and reconcile with current settings.
+                // The cache is on disk so it's available even when the app hasn't been
+                // in the foreground recently.
+                syncService.reconcileFromCache()
+                Log.d(TAG, "Background job: reconciled from CW cache")
             } catch (e: Exception) {
                 Log.w(TAG, "Background job reconcile failed", e)
             } finally {

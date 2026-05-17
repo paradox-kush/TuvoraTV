@@ -383,7 +383,7 @@
     <string name="advanced_clear_cw_cache_done">Η προσωρινή μνήμη καθαρίστηκε</string>
     <string name="advanced_remember_last_profile">Απομνημόνευση τελευταίου προφίλ</string>
     <string name="advanced_remember_last_profile_subtitle">Απομνημόνευση του τελευταίου επιλεγμένου προφίλ κατά την εκκίνηση</string>
-    <string name="settings_debug">Debug</string>
+    <string name="settings_debug">Αποσφαλμάτωση</string>
     <string name="settings_debug_subtitle">Εργαλεία προγραμματιστή και σημαίες χαρακτηριστικών</string>
     <string name="settings_plugins_section_subtitle">Διαχείριση αποθετηρίων, παρόχων και καταστάσεων πρόσθετων</string>
     <string name="settings_account_section_subtitle">Κατάσταση λογαριασμού και συγχρονισμού</string>
@@ -526,7 +526,7 @@
     <string name="audio_dv_sub">Αντιστοίχιση Dolby Vision Profile 7 σε standard HEVC για συσκευές χωρίς υποστήριξη υλικού DV</string>
     <string name="audio_mpv_hwdec_title">Αποκωδικοποίηση υλικού (μόνο MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Επιλέξτε πώς θα χρησιμοποιεί το libmpv τους αποκωδικοποιητές υλικού.</string>
-    <string name="audio_mpv_hwdec_legacy_direct_copy">Legacy (direct -&gt; copy)</string>
+    <string name="audio_mpv_hwdec_legacy_direct_copy">Παλαιό (direct -&gt; copy)</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy_desc">Προηγούμενη προεπιλεγμένη συμπεριφορά: δοκιμή πρώτα direct hardware και μετά copy-back.</string>
     <string name="audio_mpv_hwdec_auto_safe">Αυτόματο (auto-safe)</string>
     <string name="audio_mpv_hwdec_auto_safe_desc">Ασφαλέστερη αυτόματη λειτουργία με fallback όταν αποτυγχάνουν ορισμένοι αποκωδικοποιητές υλικού.</string>
@@ -568,11 +568,11 @@
     <string name="sub_mode_overlay_gl">Overlay OpenGL (Συνιστάται)</string>
     <string name="sub_mode_overlay_gl_sub">Καλύτερη ποιότητα με υποστήριξη HDR. Απόδοση υπότιτλων σε ξεχωριστό νήμα.</string>
     <string name="sub_mode_overlay_canvas">Overlay Canvas</string>
-    <string name="sub_mode_effects_gl">Effects OpenGL</string>
+    <string name="sub_mode_effects_gl">Εφέ OpenGL</string>
     <string name="sub_mode_effects_gl_sub">Υποστήριξη κινούμενων σχεδίων με Media3 effects. Ταχύτερο από Canvas.</string>
-    <string name="sub_mode_effects_canvas">Effects Canvas</string>
+    <string name="sub_mode_effects_canvas">Εφέ Canvas</string>
     <string name="sub_mode_effects_canvas_sub">Υποστήριξη κινούμενων σχεδίων με Media3 effects και απόδοση Canvas.</string>
-    <string name="sub_mode_standard">Standard Cues</string>
+    <string name="sub_mode_standard">Τυπικοί Υπότιτλοι</string>
     <string name="sub_mode_standard_sub">Βασική απόδοση υπότιτλων χωρίς υποστήριξη κινούμενων σχεδίων. Πιο συμβατό.</string>
     <string name="sub_org_none">Κανένα (προεπιλεγμένη σειρά)</string>
     <string name="sub_org_by_lang">Ανά γλώσσα</string>
@@ -863,7 +863,7 @@
     <string name="trakt_days_format">%1$d ημέρες</string>
 
     <!-- DebugSettingsScreen -->
-    <string name="debug_title">Debug</string>
+    <string name="debug_title">Αποσφαλμάτωση</string>
     <string name="debug_subtitle">Εργαλεία προγραμματιστή και σημαίες χαρακτηριστικών (μόνο σε debug builds)</string>
     <string name="debug_section_popup">Δοκιμές Popup / Διαλόγων</string>
     <string name="debug_playback_error_title">Οθόνη σφάλματος αναπαραγωγής</string>
@@ -876,7 +876,7 @@
     <string name="debug_section_account">Λογαριασμός</string>
     <string name="debug_manual_signin_title">Χειροκίνητη σύνδεση</string>
     <string name="debug_manual_signin_subtitle">Σύνδεση με email και κωδικό πρόσβασης (Supabase auth)</string>
-    <string name="debug_email_placeholder">Email</string>
+    <string name="debug_email_placeholder">Ηλεκτρονικό ταχυδρομείο</string>
     <string name="debug_password_placeholder">Κωδικός πρόσβασης</string>
     <string name="debug_signing_in">Σύνδεση…</string>
     <string name="debug_sign_in">Σύνδεση</string>
@@ -918,10 +918,10 @@
     <string name="profile_avatar_focus_hint">Εστιάστε σε ένα avatar για να δείτε το όνομά του</string>
     <string name="profile_avatar_category_all">Όλα</string>
     <string name="profile_avatar_category_anime">Anime</string>
-    <string name="profile_avatar_category_animation">Animation</string>
+    <string name="profile_avatar_category_animation">Κινούμενα σχέδια</string>
     <string name="profile_avatar_category_movie">Ταινία</string>
     <string name="profile_avatar_category_tv">TV</string>
-    <string name="profile_avatar_category_gaming">Gaming</string>
+    <string name="profile_avatar_category_gaming">Παιχνίδια</string>
     <string name="profile_add_new">Προσθήκη προφίλ</string>
     <string name="profile_cancel">Ακύρωση</string>
     <string name="profile_save">Αποθήκευση</string>
@@ -1280,7 +1280,7 @@
     <string name="library_delete_title">Διαγραφή αυτής της λίστας;</string>
     <string name="library_delete_subtitle">Αυτό θα διαγράψει τη λίστα και όλα τα στοιχεία της από το Trakt.</string>
     <string name="library_delete_confirm">Διαγραφή</string>
-    <string name="library_source_local">LOCAL</string>
+    <string name="library_source_local">ΤΟΠΙΚΗ</string>
     <string name="library_source_nuvio">NUVIO</string>
     <string name="library_source_trakt">TRAKT</string>
     <string name="library_syncing_library">Συγχρονισμός βιβλιοθήκης…</string>
@@ -1421,7 +1421,7 @@
     <string name="ratings_season_summary">Σεζόν %1$d - %2$d επεισόδια</string>
 
     <!-- SearchDiscoverSection -->
-    <string name="discover_title">Discover</string>
+    <string name="discover_title">Ανακάλυψη</string>
     <string name="discover_load_more">Φόρτωση περισσότερων</string>
     <string name="discover_loading">Φόρτωση…</string>
     <string name="discover_filter_type">Τύπος</string>
@@ -1451,13 +1451,13 @@
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">Το passthrough ήχου (TrueHD, DTS, AC-3 κ.λπ.) είναι αυτόματο. Όταν συνδέεστε σε συμβατό AV receiver ή soundbar μέσω HDMI, ο lossless ήχος αποστέλλεται ως έχει χωρίς αποκωδικοποίηση.</string>
-    <string name="audio_dv_title">DV7 - HEVC Fallback</string>
+    <string name="audio_dv_title">DV7 - Εναλλακτική HEVC</string>
 
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Αρχική</string>
     <string name="nav_movies">Ταινίες</string>
     <string name="nav_series">Σειρές</string>
-    <string name="nav_discover">Discover</string>
+    <string name="nav_discover">Ανακάλυψη</string>
     <string name="nav_search">Αναζήτηση</string>
     <string name="nav_library">Βιβλιοθήκη</string>
     <string name="nav_addons">Πρόσθετα</string>
@@ -1738,7 +1738,7 @@
     <string name="collections_editor_tmdb_default_list">Λίστα TMDB</string>
     <string name="collections_editor_tmdb_default_production">Παραγωγή TMDB</string>
     <string name="collections_editor_tmdb_default_network">Δίκτυο TMDB</string>
-    <string name="collections_editor_tmdb_default_discover">Discover TMDB</string>
+    <string name="collections_editor_tmdb_default_discover">Ανακάλυψη TMDB</string>
     <string name="collections_editor_tmdb_movie_collection">Συλλογή ταινιών TMDB</string>
     <string name="collections_editor_tmdb_mode_presets">Προεπιλογές</string>
     <string name="collections_editor_tmdb_mode_public_list">Δημόσια λίστα</string>
@@ -1868,7 +1868,7 @@
     <string name="collection_editor_choice_both">Και τα δύο</string>
     <string name="collection_editor_resolved_trakt_list">Επιλυμένη λίστα Trakt</string>
     <string name="collection_editor_trakt_search_placeholder">Αναζήτηση τίτλου, URL Trakt ή ID λίστας</string>
-    <string name="collection_editor_trakt_name_placeholder">Weekend Watch, Award Winners</string>
+    <string name="collection_editor_trakt_name_placeholder">Παρακολούθηση Σαββατοκύριακου, Νικητές βραβείων</string>
     <string name="collection_editor_folder_count_one">%1$d στοιχείο</string>
     <string name="collection_editor_folder_count_other">%1$d στοιχεία</string>
     <string name="collections_editor_tmdb_movie_title_placeholder">Ταινίες Marvel, Netflix Originals, Pixar</string>
@@ -1905,7 +1905,7 @@
     <string name="search_recent_title">Πρόσφατες αναζητήσεις</string>
     <string name="search_recent_clear">Εκκαθάριση ιστορικού</string>
     <string name="library_error_list_name_required">Το όνομα λίστας είναι υποχρεωτικό</string>
-    <string name="library_watchlist">Watchlist</string>
+    <string name="library_watchlist">Λίστα παρακολούθησης</string>
     <string name="library_empty_trakt_not_auth_title">Το Trakt δεν είναι συνδεδεμένο</string>
     <string name="library_empty_trakt_not_auth_subtitle">Συνδέστε τον λογαριασμό Trakt στις Ρυθμίσεις για να δείτε τη βιβλιοθήκη Trakt</string>
     <string name="profile_edit_header">Επεξεργασία προφίλ</string>

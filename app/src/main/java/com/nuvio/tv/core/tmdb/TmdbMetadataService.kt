@@ -3,6 +3,9 @@ package com.nuvio.tv.core.tmdb
 import android.util.Log
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.data.remote.api.TmdbApi
+import com.nuvio.tv.data.remote.api.TmdbCastMember
+import com.nuvio.tv.data.remote.api.TmdbCreditsResponse
+import com.nuvio.tv.data.remote.api.TmdbCrewMember
 import com.nuvio.tv.data.remote.api.TmdbDiscoverResult
 import com.nuvio.tv.data.remote.api.TmdbEpisode
 import com.nuvio.tv.data.remote.api.TmdbImage
@@ -94,9 +97,35 @@ class TmdbMetadataService(
                     }
                     val creditsDeferred = async {
                         when (tmdbType) {
-                            "tv" -> tmdbApi.getTvCredits(numericId, TMDB_API_KEY, normalizedLanguage)
-                            else -> tmdbApi.getMovieCredits(numericId, TMDB_API_KEY, normalizedLanguage)
-                        }.body()
+                            "tv" -> {
+                                val aggregate = tmdbApi.getTvAggregateCredits(numericId, TMDB_API_KEY, normalizedLanguage).body()
+                                // Map aggregate credits to standard format for unified processing
+                                aggregate?.let { agg ->
+                                    TmdbCreditsResponse(
+                                        cast = agg.cast?.map { member ->
+                                            TmdbCastMember(
+                                                id = member.id,
+                                                name = member.name,
+                                                character = member.roles?.firstOrNull()?.character,
+                                                profilePath = member.profilePath
+                                            )
+                                        },
+                                        crew = agg.crew?.flatMap { member ->
+                                            member.jobs?.map { job ->
+                                                TmdbCrewMember(
+                                                    id = member.id,
+                                                    name = member.name,
+                                                    job = job.job,
+                                                    department = member.department,
+                                                    profilePath = member.profilePath
+                                                )
+                                            } ?: emptyList()
+                                        }
+                                    )
+                                }
+                            }
+                            else -> tmdbApi.getMovieCredits(numericId, TMDB_API_KEY, normalizedLanguage).body()
+                        }
                     }
                     val imagesDeferred = async {
                         when (tmdbType) {

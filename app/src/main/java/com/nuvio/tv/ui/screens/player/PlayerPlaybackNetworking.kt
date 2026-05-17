@@ -50,7 +50,33 @@ internal object PlayerPlaybackNetworking {
 
     @OptIn(UnstableApi::class)
     fun createHttpDataSourceFactory(defaultHeaders: Map<String, String> = emptyMap()): DataSource.Factory {
-        return OkHttpDataSource.Factory(playbackHttpClient).apply {
+        val client = if (defaultHeaders.any { it.key.equals("Authorization", ignoreCase = true) }) {
+            // OkHttp strips the Authorization header on cross-host redirects.
+            // WebDAV servers behind reverse proxies commonly redirect to a
+            // different host/port, causing auth to be lost. A network
+            // interceptor ensures the header is always present on every
+            // outgoing request — same behavior as mpv/curl.
+            val authValue = defaultHeaders.entries
+                .first { it.key.equals("Authorization", ignoreCase = true) }
+                .value
+            playbackHttpClient.newBuilder()
+                .addNetworkInterceptor { chain ->
+                    val request = chain.request()
+                    if (request.header("Authorization") == null) {
+                        chain.proceed(
+                            request.newBuilder()
+                                .header("Authorization", authValue)
+                                .build()
+                        )
+                    } else {
+                        chain.proceed(request)
+                    }
+                }
+                .build()
+        } else {
+            playbackHttpClient
+        }
+        return OkHttpDataSource.Factory(client).apply {
             setDefaultRequestProperties(defaultHeaders)
             setUserAgent(PlayerMediaSourceFactory.DEFAULT_USER_AGENT)
         }

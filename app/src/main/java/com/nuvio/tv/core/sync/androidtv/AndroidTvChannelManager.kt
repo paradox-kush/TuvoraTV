@@ -49,14 +49,25 @@ class AndroidTvChannelManager @Inject constructor(
                 prefs.clearChannelId()
             }
 
-            // Reuse an orphaned channel row from a previous install / data-clear.
-            // The TV provider auto-scopes channel queries to the calling app's package,
-            // and rejects any explicit selection clause with SecurityException.
             val orphan = context.contentResolver.query(
                 TvContractCompat.Channels.CONTENT_URI,
-                arrayOf(TvContractCompat.Channels._ID),
+                arrayOf(
+                    TvContractCompat.Channels._ID,
+                    TvContractCompat.Channels.COLUMN_INTERNAL_PROVIDER_ID
+                ),
                 null, null, null
-            )?.use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+            )?.use { c ->
+                val idIdx = c.getColumnIndex(TvContractCompat.Channels._ID)
+                val providerIdx = c.getColumnIndex(TvContractCompat.Channels.COLUMN_INTERNAL_PROVIDER_ID)
+                if (idIdx < 0 || providerIdx < 0) return@use null
+                while (c.moveToNext()) {
+                    val providerId = c.getString(providerIdx)
+                    if (providerId != null && providerId.startsWith(context.packageName)) {
+                        return@use c.getLong(idIdx)
+                    }
+                }
+                null
+            }
             if (orphan != null) {
                 Log.d(TAG, "Reusing orphaned channel $orphan")
                 prefs.setChannelId(orphan)

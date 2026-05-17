@@ -68,7 +68,6 @@ object StreamAutoPlaySelector {
             }
         }
         if (candidateStreams.isEmpty()) return null
-        if (mode == StreamAutoPlayMode.MANUAL) return null
 
         val targetBingeGroup = preferredBingeGroup?.trim().orEmpty()
         if (preferBingeGroupInSelection && targetBingeGroup.isNotEmpty()) {
@@ -81,6 +80,8 @@ object StreamAutoPlaySelector {
             // return null so the caller shows the stream picker instead.
             if (bingeGroupOnly) return null
         }
+
+        if (mode == StreamAutoPlayMode.MANUAL) return null
 
         return when (mode) {
             StreamAutoPlayMode.MANUAL -> null

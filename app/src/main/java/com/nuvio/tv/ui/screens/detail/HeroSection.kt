@@ -76,6 +76,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.painter.Painter
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import java.util.Locale
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -346,6 +347,7 @@ private fun PlayButton(
     onFocusRestored: () -> Unit = {}
 ) {
     var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
 
     LaunchedEffect(restoreFocusToken) {
         if (restoreFocusToken > 0 && focusRequester != null) {
@@ -381,23 +383,21 @@ private fun PlayButton(
                         onLongPress()
                         return@onPreviewKeyEvent true
                     }
-
-                    val isSelectKey = native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER
-                    if ((native.isLongPress || native.repeatCount > 0) && isSelectKey) {
+                }
+                if (onLongPress != null &&
+                    longPressKeyTracker.handle(native, ::isSelectKey) {
                         longPressTriggered = true
                         onLongPress()
-                        return@onPreviewKeyEvent true
                     }
+                ) {
+                    if (native.action == AndroidKeyEvent.ACTION_UP) {
+                        longPressTriggered = false
+                    }
+                    return@onPreviewKeyEvent true
                 }
 
                 if (native.action == AndroidKeyEvent.ACTION_UP && longPressTriggered) {
-                    val isSelectKey = native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_MENU
-                    if (isSelectKey) {
+                    if (isSelectOrMenuKey(native.keyCode)) {
                         longPressTriggered = false
                         return@onPreviewKeyEvent true
                     }
@@ -496,6 +496,7 @@ private fun ActionIconButton(
     onFocused: () -> Unit = {}
 ) {
     var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
 
     IconButton(
         onClick = {
@@ -519,23 +520,21 @@ private fun ActionIconButton(
                         onLongPress()
                         return@onPreviewKeyEvent true
                     }
-
-                    val isSelectKey = native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER
-                    if ((native.isLongPress || native.repeatCount > 0) && isSelectKey) {
+                }
+                if (onLongPress != null &&
+                    longPressKeyTracker.handle(native, ::isSelectKey) {
                         longPressTriggered = true
                         onLongPress()
-                        return@onPreviewKeyEvent true
                     }
+                ) {
+                    if (native.action == AndroidKeyEvent.ACTION_UP) {
+                        longPressTriggered = false
+                    }
+                    return@onPreviewKeyEvent true
                 }
 
                 if (native.action == AndroidKeyEvent.ACTION_UP && longPressTriggered) {
-                    val isSelectKey = native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
-                        native.keyCode == AndroidKeyEvent.KEYCODE_MENU
-                    if (isSelectKey) {
+                    if (isSelectOrMenuKey(native.keyCode)) {
                         longPressTriggered = false
                         return@onPreviewKeyEvent true
                     }
@@ -910,6 +909,16 @@ private fun MDBListRatingsRow(ratings: MDBListRatings) {
             }
         }
     }
+}
+
+private fun isSelectKey(keyCode: Int): Boolean {
+    return keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+        keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+        keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER
+}
+
+private fun isSelectOrMenuKey(keyCode: Int): Boolean {
+    return isSelectKey(keyCode) || keyCode == AndroidKeyEvent.KEYCODE_MENU
 }
 
 private fun formatMDBListRating(provider: String, rating: Double): String {

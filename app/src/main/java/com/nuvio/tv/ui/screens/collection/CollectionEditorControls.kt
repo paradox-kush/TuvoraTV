@@ -213,6 +213,7 @@ fun tmdbSourceSubtitle(source: TmdbCollectionSource): String {
         TmdbCollectionSort.ORIGINAL.value -> stringResource(R.string.collections_editor_sort_original)
         TmdbCollectionSort.POPULAR_DESC.value -> stringResource(R.string.tmdb_entity_rail_popular)
         TmdbCollectionSort.VOTE_AVERAGE_DESC.value -> stringResource(R.string.tmdb_entity_rail_top_rated)
+        TmdbCollectionSort.VOTE_COUNT_DESC.value -> stringResource(R.string.tmdb_entity_rail_most_voted)
         TmdbCollectionSort.RELEASE_DATE_DESC.value,
         TmdbCollectionSort.FIRST_AIR_DATE_DESC.value -> stringResource(R.string.tmdb_entity_rail_recent)
         else -> source.sortBy

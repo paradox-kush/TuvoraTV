@@ -254,11 +254,13 @@ internal fun PlayerRuntimeController.maybeAdjustLibassPipelineForTracks(tracks: 
     if (hasAssSsaTrack) {
         hasDetectedAssSsaTrackForCurrentStream = true
     }
-    // Keep libass sticky only after we have actually detected ASS/SSA for this stream.
-    // This avoids startup ping-pong but does not keep libass on for streams that never
-    // expose ASS/SSA tracks.
+    // Only rebuild to ENABLE libass when ASS/SSA tracks are detected but libass
+    // is not active. Never rebuild to disable libass - keeping the libass pipeline
+    // active when no ASS tracks are should be harmless (standard subtitles still
+    // render normally - but this may change colors - need confimration)
     val desiredUseLibass = requestedUseLibassByUser && hasDetectedAssSsaTrackForCurrentStream
     if (desiredUseLibass == activePlayerUsesLibass) return
+    if (!desiredUseLibass) return // don't rebuild just to remove libass
 
     val player = _exoPlayer ?: return
     val resumePosition = player.currentPosition.takeIf { it > 0L }

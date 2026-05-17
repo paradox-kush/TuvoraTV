@@ -114,7 +114,7 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
 
         val installedAddons = addonRepository.getInstalledAddons().first()
         val installedAddonOrder = installedAddons.map { it.displayName }
-        updateSourceChipsForFetchStart(type, installedAddons)
+        updateSourceChipsForFetchStart(type, vid, installedAddons)
 
         streamRepository.getStreamsFromAllAddons(
             type = type,
@@ -198,10 +198,11 @@ internal fun PlayerRuntimeController.filterSourceStreamsByAddon(addonName: Strin
 
 private suspend fun PlayerRuntimeController.updateSourceChipsForFetchStart(
     type: String,
+    videoId: String,
     installedAddons: List<com.nuvio.tv.domain.model.Addon>
 ) {
     val addonNames = installedAddons
-        .filter { it.supportsStreamResourceForChip(type) }
+        .filter { it.supportsStreamResourceForChip(type, videoId) }
         .map { it.displayName }
 
     val pluginNames = try {
@@ -289,10 +290,15 @@ private fun PlayerRuntimeController.markRemainingSourceChipsAsError() {
     }
 }
 
-private fun com.nuvio.tv.domain.model.Addon.supportsStreamResourceForChip(type: String): Boolean {
+private fun com.nuvio.tv.domain.model.Addon.supportsStreamResourceForChip(type: String, videoId: String): Boolean {
     return resources.any { resource ->
         resource.name == "stream" &&
-            (resource.types.isEmpty() || resource.types.any { it.equals(type, ignoreCase = true) })
+            (resource.types.isEmpty() || resource.types.any { it.equals(type, ignoreCase = true) }) &&
+            run {
+                val prefixes = resource.idPrefixes?.takeIf { it.isNotEmpty() }
+                    ?: idPrefixes.takeIf { it.isNotEmpty() }
+                prefixes == null || prefixes.any { prefix -> videoId.startsWith(prefix) }
+            }
     }
 }
 
@@ -866,6 +872,7 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
             skipIntervalDismissed = false,
             postPlayMode = null,
             postPlayDismissedForCurrentEpisode = false,
+            playbackEnded = false,
         )
     }
     showStreamSourceIndicator(stream)
@@ -951,6 +958,7 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
             skipIntervalDismissed = false,
             postPlayMode = null,
             postPlayDismissedForCurrentEpisode = false,
+            playbackEnded = false,
         )
     }
     showStreamSourceIndicator(stream)
@@ -1187,6 +1195,7 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
                     it.copy(
                         postPlayMode = null,
                         postPlayDismissedForCurrentEpisode = true,
+                        playbackEnded = false,
                     )
                 }
                 switchToEpisodeStream(

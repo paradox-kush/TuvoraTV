@@ -288,11 +288,12 @@ fun CatalogRowSection(
                     rowItemFocusKey(index, item)
                 ) { FocusRequester() }
 
+                val isPlaceholder = item.id.startsWith("__placeholder_")
                 val onItemClickStable = remember(item.id, catalogRow.addonBaseUrl) {
-                    { latestOnItemClick(item.id, item.apiType, catalogRow.addonBaseUrl) }
+                    { if (!isPlaceholder) latestOnItemClick(item.id, item.apiType, catalogRow.addonBaseUrl) }
                 }
                 val onItemLongPressStable = remember(item.id, catalogRow.addonBaseUrl) {
-                    { latestOnItemLongPress(item, catalogRow.addonBaseUrl) }
+                    { if (!isPlaceholder) latestOnItemLongPress(item, catalogRow.addonBaseUrl) }
                 }
                 val onFocusStable = remember(index) {
                     { focusedItem: MetaPreview ->

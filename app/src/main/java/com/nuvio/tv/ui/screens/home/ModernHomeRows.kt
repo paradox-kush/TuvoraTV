@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -116,6 +117,7 @@ import com.nuvio.tv.ui.util.recompositionHighlighter
 import com.nuvio.tv.ui.util.StableMap
 import com.nuvio.tv.ui.util.StableRef
 import com.nuvio.tv.ui.util.asStable
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.debounce
 
@@ -373,11 +375,15 @@ private fun ModernCatalogRowItem(
             latestOnFocused()
             item.metaPreview?.let { latestOnItemFocus(it) }
             when (payload) {
-                is ModernPayload.Catalog -> onNavigateToDetail(
-                    payload.itemId,
-                    payload.itemType,
-                    payload.addonBaseUrl
-                )
+                is ModernPayload.Catalog -> {
+                    if (!payload.itemId.startsWith("__placeholder_")) {
+                        onNavigateToDetail(
+                            payload.itemId,
+                            payload.itemType,
+                            payload.addonBaseUrl
+                        )
+                    }
+                }
                 is ModernPayload.CollectionFolder -> onNavigateToFolderDetail(
                     payload.collectionId,
                     payload.folderId
@@ -729,6 +735,50 @@ internal fun ModernRowSection(
             }
         }
 
+        // When a poster in this row expands, ensure it scrolls fully into view.
+        var isExpansionScrollActive by remember { mutableStateOf(false) }
+        val expandedCardWidthPx = with(density) {
+            if (useLandscapePosters) {
+                landscapeCatalogCardWidth.roundToPx()
+            } else {
+                (portraitCatalogCardHeight * (16f / 9f)).roundToPx()
+            }
+        }
+        LaunchedEffect(expandedCatalogFocusKey.value, row.key, effectiveExpandEnabled, rowItemCount) {
+            if (!effectiveExpandEnabled) return@LaunchedEffect
+            val expandedKey = expandedCatalogFocusKey.value ?: return@LaunchedEffect
+            val lastIndex = row.items.list.lastIndex
+            if (lastIndex < 0) return@LaunchedEffect
+            // Find the index of the expanded item in this row
+            val expandedIndex = row.items.list.indexOfFirst { item ->
+                when (val p = item.payload) {
+                    is ModernPayload.Catalog -> p.focusKey == expandedKey
+                    is ModernPayload.CollectionFolder -> p.focusKey == expandedKey
+                    else -> false
+                }
+            }
+            if (expandedIndex < 0) return@LaunchedEffect
+            // Only act on the last two items in the row
+            if (expandedIndex < lastIndex - 1) return@LaunchedEffect
+            // Small delay so the item is still in visible layout info
+            delay(50)
+            // Calculate overshoot using the known final expanded width rather than
+            // the mid-animation layout size which underestimates the trailing edge.
+            val layoutInfo = rowListState.layoutInfo
+            val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == expandedIndex }
+                ?: return@LaunchedEffect
+            val viewportEnd = layoutInfo.viewportEndOffset
+            val itemEndExpanded = itemInfo.offset + expandedCardWidthPx
+            if (itemEndExpanded > viewportEnd) {
+                // Scroll just enough to reveal the trailing edge plus a small margin.
+                // Flag prevents isBackdropExpandedLambda from collapsing during this scroll.
+                val overshoot = itemEndExpanded - viewportEnd + with(density) { 15.dp.roundToPx() }
+                isExpansionScrollActive = true
+                rowListState.animateScrollBy(overshoot.toFloat())
+                isExpansionScrollActive = false
+            }
+        }
+
         CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalBringIntoViewSpec) {
             val usesPlaceholderShimmer = row.isLoading &&
                 row.items.list.firstOrNull()?.imageUrl?.startsWith("placeholder://") == true
@@ -837,7 +887,8 @@ internal fun ModernRowSection(
                                 expandedFocusKey
                             ) {
                                 {
-                                    effectiveExpandEnabled && !isRowScrollingState.value &&
+                                    effectiveExpandEnabled &&
+                                        (!isRowScrollingState.value || isExpansionScrollActive) &&
                                         expandedCatalogFocusKey.value == expandedFocusKey
                                 }
                             }
@@ -1075,6 +1126,7 @@ private fun ModernCarouselCard(
             !effectiveLogoUrl.isNullOrBlank() &&
             !landscapeLogoLoadFailed
     var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
     val backgroundCardColor = NuvioColors.BackgroundCard
     val focusRingColor = NuvioColors.FocusRing
     val titleMedium = MaterialTheme.typography.titleMedium
@@ -1149,16 +1201,20 @@ private fun ModernCarouselCard(
                             onLongPress()
                             return@onPreviewKeyEvent true
                         }
-                        val isLongPress = native.isLongPress || native.repeatCount > 0
-                        if (isLongPress && isSelectKey(native.keyCode)) {
+                    }
+                    if (longPressKeyTracker.handle(native, ::isSelectKey) {
                             longPressTriggered = true
                             onLongPress()
-                            return@onPreviewKeyEvent true
                         }
+                    ) {
+                        if (native.action == AndroidKeyEvent.ACTION_UP) {
+                            longPressTriggered = false
+                        }
+                        return@onPreviewKeyEvent true
                     }
                     if (native.action == AndroidKeyEvent.ACTION_UP &&
                         longPressTriggered &&
-                        isSelectKey(native.keyCode)
+                        (isSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU)
                     ) {
                         longPressTriggered = false
                         return@onPreviewKeyEvent true

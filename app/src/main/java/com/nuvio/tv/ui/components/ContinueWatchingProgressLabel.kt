@@ -11,7 +11,18 @@ internal fun formatContinueWatchingProgressLabel(
     hoursMinLeftLabel: String,
     minLeftLabel: String
 ): String {
-    if (progress.duration <= 0L) {
+    val effectiveDuration = progress.duration
+    val effectivePosition = if (progress.position > 0L) {
+        progress.position
+    } else if (effectiveDuration > 0L && progress.progressPercent != null) {
+        // Trakt provides only a percentage without position/duration from playback.
+        // Derive position from the explicit percent so remaining time is correct.
+        (effectiveDuration * (progress.progressPercent / 100f)).toLong()
+    } else {
+        0L
+    }
+
+    if (effectiveDuration <= 0L) {
         val percentWatched = (progress.progressPercentage * 100f)
             .roundToInt()
             .coerceIn(0, 100)
@@ -22,7 +33,8 @@ internal fun formatContinueWatchingProgressLabel(
         }
     }
 
-    val totalMinutes = TimeUnit.MILLISECONDS.toMinutes(progress.remainingTime)
+    val remainingMs = (effectiveDuration - effectivePosition).coerceAtLeast(0)
+    val totalMinutes = TimeUnit.MILLISECONDS.toMinutes(remainingMs)
     val hours = totalMinutes / 60
     val minutes = totalMinutes % 60
 

@@ -60,6 +60,7 @@ fun SkipIntroButton(
     interval: SkipInterval?,
     dismissed: Boolean,
     controlsVisible: Boolean,
+    suppressFocus: Boolean = false,
     onSkip: () -> Unit,
     onDismiss: () -> Unit,
     onHideControls: (() -> Unit)? = null,
@@ -124,8 +125,9 @@ fun SkipIntroButton(
     LaunchedEffect(isVisible) { onVisibilityChanged(isVisible) }
 
     // Request focus when becoming visible or when controls hide
-    LaunchedEffect(isVisible, controlsVisible) {
-        if (isVisible && !controlsVisible) {
+    // but not when the next episode card has priority
+    LaunchedEffect(isVisible, controlsVisible, suppressFocus) {
+        if (isVisible && !controlsVisible && !suppressFocus) {
             try { activeFocusRequester.requestFocus() } catch (_: Exception) {}
         }
     }

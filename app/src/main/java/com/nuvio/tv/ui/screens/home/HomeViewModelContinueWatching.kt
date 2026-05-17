@@ -581,7 +581,7 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                                 val freshIds = partialNextUpItems.map { it.info.contentId }.toSet()
                                 val cachedPartialNextUp = partialNextUpItems.map { nextUp ->
                                     val cached = cachedEnrichmentFromNextUp[nextUp.info.contentId]
-                                    if (cached != null) {
+                                    if (cached != null && cached.season == nextUp.info.season && cached.episode == nextUp.info.episode) {
                                         nextUp.copy(info = nextUp.info.copy(
                                             thumbnail = cached.thumbnail ?: nextUp.info.thumbnail,
                                             backdrop = cached.backdrop ?: nextUp.info.backdrop,
@@ -1001,7 +1001,7 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                         inProgressItems = inProgressOnly,
                         nextUpItems = finalNextUpItems.map { nextUp ->
                             val cached = cachedEnrichmentFromNextUp[nextUp.info.contentId]
-                            if (cached != null) {
+                            if (cached != null && cached.season == nextUp.info.season && cached.episode == nextUp.info.episode) {
                                 nextUp.copy(info = nextUp.info.copy(
                                     thumbnail = cached.thumbnail ?: nextUp.info.thumbnail,
                                     backdrop = cached.backdrop ?: nextUp.info.backdrop,

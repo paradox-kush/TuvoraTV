@@ -184,7 +184,7 @@ class TmdbCollectionSourceResolverTest {
         var capturedCompanies: String? = null
         coEvery {
             api.discoverMovies(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         } answers {
             capturedCompanies = arg(4)

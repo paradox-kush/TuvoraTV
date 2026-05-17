@@ -65,9 +65,9 @@ class StreamRepositoryImpl @Inject constructor(
         try {
             val addons = addonRepository.getInstalledAddons().first()
             
-            // Filter addons that support streams for this type
+            // Filter addons that support streams for this type and id
             val streamAddons = addons.filter { addon ->
-                addon.supportsStreamResource(type)
+                addon.supportsStreamResource(type, videoId)
             }
 
             // Convert IMDB ID to TMDB ID if needed for plugins
@@ -454,12 +454,20 @@ class StreamRepositoryImpl @Inject constructor(
     }
 
     /**
-     * Check if addon supports stream resource for the given type
+     * Check if addon supports stream resource for the given type and video id.
+     * Respects the resource-level idPrefixes declared in the addon manifest,
+     * falling back to the top-level addon idPrefixes if the resource doesn't
+     * declare its own.
      */
-    private fun Addon.supportsStreamResource(type: String): Boolean {
+    private fun Addon.supportsStreamResource(type: String, videoId: String): Boolean {
         return resources.any { resource ->
-            resource.name == "stream" && 
-            (resource.types.isEmpty() || resource.types.contains(type))
+            resource.name == "stream" &&
+            (resource.types.isEmpty() || resource.types.contains(type)) &&
+            run {
+                val prefixes = resource.idPrefixes?.takeIf { it.isNotEmpty() }
+                    ?: idPrefixes.takeIf { it.isNotEmpty() }
+                prefixes == null || prefixes.any { prefix -> videoId.startsWith(prefix) }
+            }
         }
     }
 

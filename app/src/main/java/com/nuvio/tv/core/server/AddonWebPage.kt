@@ -1208,6 +1208,7 @@ var i18n = {
   series: '${context.getString(R.string.type_series).replace("'", "\\'")}',
   popular: '${context.getString(R.string.tmdb_entity_rail_popular).replace("'", "\\'")}',
   topRated: '${context.getString(R.string.tmdb_entity_rail_top_rated).replace("'", "\\'")}',
+  mostVoted: '${context.getString(R.string.tmdb_entity_rail_most_voted).replace("'", "\\'")}',
   recent: '${context.getString(R.string.tmdb_entity_rail_recent).replace("'", "\\'")}',
   tmdbQuickGenres: '${context.getString(R.string.collections_editor_tmdb_quick_genres).replace("'", "\\'")}',
   tmdbQuickLanguages: '${context.getString(R.string.collections_editor_tmdb_quick_languages).replace("'", "\\'")}',
@@ -1227,6 +1228,10 @@ var i18n = {
   tmdbCompanies: '${context.getString(R.string.collections_editor_tmdb_companies).replace("'", "\\'")}',
   tmdbNetworks: '${context.getString(R.string.collections_editor_tmdb_networks).replace("'", "\\'")}',
   tmdbYear: '${context.getString(R.string.collections_editor_tmdb_year).replace("'", "\\'")}',
+  tmdbWatchProviders: '${context.getString(R.string.collections_editor_tmdb_watch_providers).replace("'", "\\'")}',
+  tmdbWatchRegion: '${context.getString(R.string.collections_editor_tmdb_watch_region).replace("'", "\\'")}',
+  tmdbQuickWatchProviders: '${context.getString(R.string.collections_editor_tmdb_quick_watch_providers).replace("'", "\\'")}',
+  tmdbQuickWatchRegions: '${context.getString(R.string.collections_editor_tmdb_quick_watch_regions).replace("'", "\\'")}',
   addFolder: '${context.getString(R.string.collections_editor_add_folder).replace("'", "\\'")}',
   newFolder: '${jsString(R.string.collections_editor_new_folder)}',
   folders: '${context.getString(R.string.collections_editor_folders).replace("'", "\\'")}',
@@ -2628,6 +2633,7 @@ function typeLabel(value) {
 function sortLabel(value) {
   if (value === 'original') return i18n.sortOriginal;
   if (value === 'vote_average.desc') return i18n.topRated;
+  if (value === 'vote_count.desc') return i18n.mostVoted;
   if (value === 'primary_release_date.desc' || value === 'first_air_date.desc') return i18n.recent;
   return i18n.popular;
 }
@@ -2653,7 +2659,9 @@ function tmdbFiltersFromInputs(ci, fi) {
     withKeywords: value('tmdb-keywords'),
     withCompanies: value('tmdb-companies'),
     withNetworks: value('tmdb-networks'),
-    year: numberValue('tmdb-year')
+    year: numberValue('tmdb-year'),
+    watchRegion: value('tmdb-watch-region'),
+    withWatchProviders: value('tmdb-watch-providers')
   };
 }
 
@@ -2715,6 +2723,7 @@ function tmdbBuilderHtml(ci, fi, folder) {
     ((mode === 'LIST' || mode === 'COLLECTION') ? '<option value="original" selected>' + escapeHtml(i18n.sortOriginal) + '</option>' : '') +
     (mode === 'COLLECTION' ? '' : '<option value="popularity.desc"' + (defaultSort === 'popularity.desc' ? ' selected' : '') + '>' + escapeHtml(i18n.popular) + '</option>') +
     '<option value="vote_average.desc">' + escapeHtml(i18n.topRated) + '</option>' +
+    '<option value="vote_count.desc">' + escapeHtml(i18n.mostVoted) + '</option>' +
     '<option value="' + (mode === 'NETWORK' ? 'first_air_date.desc' : 'primary_release_date.desc') + '">' + escapeHtml(i18n.recent) + '</option>' +
   '</select>';
   if (mode === 'DISCOVER') {
@@ -2730,7 +2739,9 @@ function tmdbBuilderHtml(ci, fi, folder) {
       '<input id="tmdb-keywords-' + ci + '-' + fi + '" placeholder="' + escapeAttr(i18n.tmdbKeywords) + '">' +
       '<input id="tmdb-companies-' + ci + '-' + fi + '" placeholder="' + escapeAttr(i18n.tmdbCompanies) + '">' +
       '<input id="tmdb-networks-' + ci + '-' + fi + '" placeholder="' + escapeAttr(i18n.tmdbNetworks) + '">' +
-      '<input id="tmdb-year-' + ci + '-' + fi + '" type="number" min="1900" max="2100" inputmode="numeric" placeholder="' + escapeAttr(i18n.tmdbYear) + '">';
+      '<input id="tmdb-year-' + ci + '-' + fi + '" type="number" min="1900" max="2100" inputmode="numeric" placeholder="' + escapeAttr(i18n.tmdbYear) + '">' +
+      '<input id="tmdb-watch-providers-' + ci + '-' + fi + '" placeholder="' + escapeAttr(i18n.tmdbWatchProviders) + '">' +
+      '<input id="tmdb-watch-region-' + ci + '-' + fi + '" placeholder="' + escapeAttr(i18n.tmdbWatchRegion) + '">';
   }
   html += '<button class="btn tmdb-source-wide" onclick="addTmdbSource(' + ci + ',' + fi + ')" style="padding:0.6rem;font-size:0.8rem">' + i18n.addTmdb + '</button>' +
     '</div>' +
@@ -2808,6 +2819,20 @@ function tmdbQuickChipsHtml(ci, fi) {
     ['Disney+', 'tmdb-networks', '2739'],
     ['Prime Video', 'tmdb-networks', '1024'],
     ['Hulu', 'tmdb-networks', '453']
+  ], ci, fi) +
+  tmdbChipGroupHtml(i18n.tmdbQuickWatchProviders, [
+    ['Netflix', 'tmdb-watch-providers', '8'],
+    ['Prime Video', 'tmdb-watch-providers', '119'],
+    ['Disney+', 'tmdb-watch-providers', '337'],
+    ['Apple TV+', 'tmdb-watch-providers', '350'],
+    ['Hulu', 'tmdb-watch-providers', '15']
+  ], ci, fi) +
+  tmdbChipGroupHtml(i18n.tmdbQuickWatchRegions, [
+    ['US', 'tmdb-watch-region', 'US'],
+    ['UK', 'tmdb-watch-region', 'GB'],
+    ['Canada', 'tmdb-watch-region', 'CA'],
+    ['Australia', 'tmdb-watch-region', 'AU'],
+    ['Germany', 'tmdb-watch-region', 'DE']
   ], ci, fi);
 }
 

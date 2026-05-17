@@ -59,6 +59,7 @@ enum class TmdbCollectionSort(val value: String) {
     ORIGINAL("original"),
     POPULAR_DESC("popularity.desc"),
     VOTE_AVERAGE_DESC("vote_average.desc"),
+    VOTE_COUNT_DESC("vote_count.desc"),
     RELEASE_DATE_DESC("primary_release_date.desc"),
     FIRST_AIR_DATE_DESC("first_air_date.desc")
 }
@@ -106,7 +107,9 @@ data class TmdbCollectionFilters(
     val withKeywords: String? = null,
     val withCompanies: String? = null,
     val withNetworks: String? = null,
-    val year: Int? = null
+    val year: Int? = null,
+    val watchRegion: String? = null,
+    val withWatchProviders: String? = null
 )
 
 @Immutable

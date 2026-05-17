@@ -574,7 +574,7 @@ private fun EssentialAdvancedSettingsContent(
             SettingsActionRow(
                 title = stringResource(R.string.experience_mode_switch_to_advanced),
                 subtitle = stringResource(R.string.experience_mode_switch_to_advanced_subtitle),
-                value = stringResource(R.string.settings_advanced),
+                value = stringResource(R.string.experience_mode_essential),
                 onClick = { showConfirmation = true },
                 modifier = if (initialFocusRequester != null) {
                     Modifier.focusRequester(initialFocusRequester)

@@ -53,6 +53,7 @@ import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.ui.theme.NuvioColors
 import androidx.compose.ui.platform.LocalContext
 import com.nuvio.tv.ui.util.recompositionHighlighter
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -81,6 +82,7 @@ fun GridContentCard(
     val requestHeightPx = remember(density, posterCardStyle.height) { with(density) { posterCardStyle.height.roundToPx() } }
     var isFocused by remember { mutableStateOf(false) }
     var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
 
 
     Column(
@@ -129,16 +131,21 @@ fun GridContentCard(
                             onLongPress()
                             return@onPreviewKeyEvent true
                         }
-                        val isLongPress = native.isLongPress || native.repeatCount > 0
-                        if (isLongPress && isSelectKey(native.keyCode)) {
+                    }
+                    if (onLongPress != null &&
+                        longPressKeyTracker.handle(native, ::isSelectKey) {
                             longPressTriggered = true
                             onLongPress()
-                            return@onPreviewKeyEvent true
                         }
+                    ) {
+                        if (native.action == AndroidKeyEvent.ACTION_UP) {
+                            longPressTriggered = false
+                        }
+                        return@onPreviewKeyEvent true
                     }
                     if (native.action == AndroidKeyEvent.ACTION_UP &&
                         longPressTriggered &&
-                        isSelectKey(native.keyCode)
+                        (isSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU)
                     ) {
                         longPressTriggered = false
                         return@onPreviewKeyEvent true

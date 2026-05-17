@@ -759,7 +759,9 @@ class AddonManagerViewModel @Inject constructor(
                                         withKeywords = source.filters.withKeywords,
                                         withCompanies = source.filters.withCompanies,
                                         withNetworks = source.filters.withNetworks,
-                                        year = source.filters.year
+                                        year = source.filters.year,
+                                        watchRegion = source.filters.watchRegion,
+                                        withWatchProviders = source.filters.withWatchProviders
                                     )
                                 )
                                 is TraktCollectionSource -> CollectionSourceInfo(

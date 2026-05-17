@@ -87,6 +87,10 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
     private val _cacheCleared = kotlinx.coroutines.flow.MutableStateFlow(0)
     val cacheCleared: kotlinx.coroutines.flow.StateFlow<Int> = _cacheCleared
 
+    /** Incremented on every successful snapshot write; channel sync observes this. */
+    private val _snapshotVersion = kotlinx.coroutines.flow.MutableStateFlow(0)
+    val snapshotVersion: kotlinx.coroutines.flow.StateFlow<Int> = _snapshotVersion
+
     // --- Next Up snapshot cache ---
 
     private fun nextUpFile(): File {
@@ -126,6 +130,7 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
                 atomicWrite(file, gson.toJson(items))
                 lastNextUpWriteMs = System.currentTimeMillis()
                 lastNextUpHash = contentHash
+                _snapshotVersion.value++
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to write next-up cache: ${e.message}")
             }
@@ -171,6 +176,7 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
                 atomicWrite(file, gson.toJson(items))
                 lastInProgressWriteMs = System.currentTimeMillis()
                 lastInProgressHash = contentHash
+                _snapshotVersion.value++
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to write in-progress cache: ${e.message}")
             }

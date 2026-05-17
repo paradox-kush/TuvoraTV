@@ -133,6 +133,8 @@ fun SearchScreen(
     var discoverFocusedItemIndex by rememberSaveable { mutableStateOf(0) }
     var restoreDiscoverFocus by rememberSaveable { mutableStateOf(false) }
     var pendingDiscoverRestoreOnResume by rememberSaveable { mutableStateOf(false) }
+    val restoringSearchFocus = remember { mutableStateOf(viewModel.hasSavedSearchFocus) }
+    val didRestoreSearchFocus = remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
     val onVoiceQueryResultState = rememberUpdatedState<(String) -> Unit> { recognized ->
@@ -285,6 +287,7 @@ fun SearchScreen(
     val searchRowFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val searchRowEntryFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val searchRowFocusedItemIndex = remember { mutableMapOf<String, Int>() }
+    var lastFocusedRowKey by remember { mutableStateOf(viewModel.savedFocusRowKey) }
 
     // Clean up stale keys when the catalog rows change.
     val visibleRowKeys = remember(uiState.catalogRows) {
@@ -415,6 +418,7 @@ fun SearchScreen(
     }
 
     LaunchedEffect(Unit) {
+        if (viewModel.hasSavedSearchFocus) return@LaunchedEffect
         repeat(2) { withFrameNanos { } }
         runCatching { topInputFocusRequester.requestFocus() }
     }
@@ -440,6 +444,10 @@ fun SearchScreen(
                 if (latestPendingDiscoverRestore) {
                     restoreDiscoverFocus = true
                     pendingDiscoverRestoreOnResume = false
+                } else if (viewModel.hasSavedSearchFocus || didRestoreSearchFocus.value) {
+                    // Returning from details — don't steal focus, CatalogRowSection
+                    // already restored it or will restore it via focusedItemIndex.
+                    didRestoreSearchFocus.value = false
                 } else if (!latestShouldKeepSearchFocus) {
                     coroutineScope.launch {
                         repeat(2) { withFrameNanos { } }
@@ -643,7 +651,13 @@ fun SearchScreen(
                                 catalogRow.items.firstOrNull()?.id?.startsWith("__placeholder_") == true
                             val hasEnoughForSeeAll = !isPlaceholder && catalogRow.items.size >= 15
 
-                            val listState = searchRowStates.getOrPut(catalogKey) { LazyListState() }
+                            val listState = searchRowStates.getOrPut(catalogKey) {
+                                val saved = viewModel.savedRowScrollPositions[catalogKey]
+                                LazyListState(
+                                    firstVisibleItemIndex = saved?.first ?: 0,
+                                    firstVisibleItemScrollOffset = saved?.second ?: 0
+                                )
+                            }
                             val rowFocusRequester = searchRowFocusRequesters.getOrPut(catalogKey) { FocusRequester() }
                             val entryFocusRequester = searchRowEntryFocusRequesters.getOrPut(catalogKey) { FocusRequester() }
 
@@ -657,22 +671,45 @@ fun SearchScreen(
                                 rowFocusRequester = rowFocusRequester,
                                 entryFocusRequester = entryFocusRequester,
                                 listState = listState,
-                                restorerFocusedIndex = searchRowFocusedItemIndex[catalogKey] ?: -1,
+                                restorerFocusedIndex = if (restoringSearchFocus.value && catalogKey == viewModel.savedFocusRowKey) {
+                                    viewModel.savedFocusItemIndex
+                                } else {
+                                    searchRowFocusedItemIndex[catalogKey] ?: -1
+                                },
                                 isItemWatched = { item ->
                                     val isSeries = item.apiType.equals("series", ignoreCase = true) || item.apiType.equals("tv", ignoreCase = true)
                                     if (isSeries) item.id in watchedSeriesIds else item.id in watchedMovieIds
                                 },
-                                focusedItemIndex = if (focusResults && index == 0) 0 else -1,
+                                focusedItemIndex = when {
+                                    restoringSearchFocus.value && catalogKey == viewModel.savedFocusRowKey ->
+                                        viewModel.savedFocusItemIndex
+                                    focusResults && index == 0 -> 0
+                                    else -> -1
+                                },
                                 onItemFocused = { itemIndex ->
                                     if (focusResults) {
                                         focusResults = false
+                                    }
+                                    if (restoringSearchFocus.value) {
+                                        restoringSearchFocus.value = false
+                                        didRestoreSearchFocus.value = true
+                                        viewModel.hasSavedSearchFocus = false
                                     }
                                     // User manually navigated to a row — cancel any
                                     // pending auto-focus so it doesn't steal focus later.
                                     pendingFocusMoveToResultsQuery = null
                                     searchRowFocusedItemIndex[catalogKey] = itemIndex
+                                    lastFocusedRowKey = catalogKey
                                 },
                                 onItemClick = { id, type, addonBaseUrl ->
+                                    lastFocusedRowKey = catalogKey
+                                    // Save focus state to ViewModel before navigating
+                                    viewModel.savedFocusRowKey = catalogKey
+                                    viewModel.savedFocusItemIndex = searchRowFocusedItemIndex[catalogKey] ?: 0
+                                    viewModel.savedRowScrollPositions = searchRowStates.mapValues {
+                                        it.value.firstVisibleItemIndex to it.value.firstVisibleItemScrollOffset
+                                    }
+                                    viewModel.hasSavedSearchFocus = true
                                     onNavigateToDetail(id, type, addonBaseUrl)
                                 },
                                 onItemLongPress = { item, addonBaseUrl ->

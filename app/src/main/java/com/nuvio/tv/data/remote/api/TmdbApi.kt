@@ -70,6 +70,13 @@ interface TmdbApi {
         @Query("language") language: String? = null
     ): Response<TmdbCreditsResponse>
 
+    @GET("tv/{tv_id}/aggregate_credits")
+    suspend fun getTvAggregateCredits(
+        @Path("tv_id") tvId: Int,
+        @Query("api_key") apiKey: String,
+        @Query("language") language: String? = null
+    ): Response<TmdbAggregateCreditsResponse>
+
     @GET("movie/{movie_id}/images")
     suspend fun getMovieImages(
         @Path("movie_id") movieId: Int,
@@ -169,7 +176,10 @@ interface TmdbApi {
         @Query("with_original_language") withOriginalLanguage: String? = null,
         @Query("with_origin_country") withOriginCountry: String? = null,
         @Query("with_keywords") withKeywords: String? = null,
-        @Query("year") year: Int? = null
+        @Query("year") year: Int? = null,
+        @Query("watch_region") watchRegion: String? = null,
+        @Query("with_watch_providers") withWatchProviders: String? = null,
+        @Query("with_watch_monetization_types") withWatchMonetizationTypes: String? = null
     ): Response<TmdbDiscoverResponse>
 
     @GET("discover/tv")
@@ -190,7 +200,10 @@ interface TmdbApi {
         @Query("with_origin_country") withOriginCountry: String? = null,
         @Query("with_keywords") withKeywords: String? = null,
         @Query("first_air_date_year") firstAirDateYear: Int? = null,
-        @Query("with_status") withStatus: String? = null
+        @Query("with_status") withStatus: String? = null,
+        @Query("watch_region") watchRegion: String? = null,
+        @Query("with_watch_providers") withWatchProviders: String? = null,
+        @Query("with_watch_monetization_types") withWatchMonetizationTypes: String? = null
     ): Response<TmdbDiscoverResponse>
 
     @GET("list/{list_id}")
@@ -363,6 +376,43 @@ data class TmdbNetwork(
 data class TmdbCreditsResponse(
     @Json(name = "cast") val cast: List<TmdbCastMember>? = null,
     @Json(name = "crew") val crew: List<TmdbCrewMember>? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class TmdbAggregateCreditsResponse(
+    @Json(name = "cast") val cast: List<TmdbAggregateCastMember>? = null,
+    @Json(name = "crew") val crew: List<TmdbAggregateCrewMember>? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class TmdbAggregateCastMember(
+    @Json(name = "id") val id: Int? = null,
+    @Json(name = "name") val name: String? = null,
+    @Json(name = "roles") val roles: List<TmdbAggregateRole>? = null,
+    @Json(name = "profile_path") val profilePath: String? = null,
+    @Json(name = "total_episode_count") val totalEpisodeCount: Int? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class TmdbAggregateRole(
+    @Json(name = "character") val character: String? = null,
+    @Json(name = "episode_count") val episodeCount: Int? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class TmdbAggregateCrewMember(
+    @Json(name = "id") val id: Int? = null,
+    @Json(name = "name") val name: String? = null,
+    @Json(name = "jobs") val jobs: List<TmdbAggregateJob>? = null,
+    @Json(name = "profile_path") val profilePath: String? = null,
+    @Json(name = "department") val department: String? = null,
+    @Json(name = "total_episode_count") val totalEpisodeCount: Int? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class TmdbAggregateJob(
+    @Json(name = "job") val job: String? = null,
+    @Json(name = "episode_count") val episodeCount: Int? = null
 )
 
 @JsonClass(generateAdapter = true)

@@ -2200,9 +2200,9 @@ class MetaDetailsViewModel @Inject constructor(
         suppressSeasonAutoSwitch = true
         viewModelScope.launch {
             val episodes = if (meta.apiType.equals("other", ignoreCase = true)) {
-                _uiState.value.episodesForSeason.filter { it.season != null && it.season < targetSeason && it.episode != null }
+                _uiState.value.episodesForSeason.filter { it.season != null && it.season < targetSeason && it.season > 0 && it.episode != null }
             } else {
-                meta.videos.filter { it.season != null && it.season < targetSeason && it.episode != null }
+                meta.videos.filter { it.season != null && it.season < targetSeason && it.season > 0 && it.episode != null }
             }
             val unwatched = episodes.filter { video ->
                 val s = video.season!!

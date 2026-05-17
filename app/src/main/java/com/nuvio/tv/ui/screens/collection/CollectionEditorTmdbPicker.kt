@@ -586,6 +586,44 @@ private fun TmdbDiscoverForm(
         ) {
             onFiltersChange(filters.copy(year = it.toIntOrNull()))
         }
+        TmdbQuickChips(
+            label = stringResource(R.string.collections_editor_tmdb_quick_watch_providers),
+            chips = listOf(
+                "Netflix" to "8",
+                "Prime Video" to "119",
+                "Disney+" to "337",
+                "Apple TV+" to "350",
+                "Hulu" to "15"
+            ),
+            onSelect = { onFiltersChange(filters.copy(withWatchProviders = it)) }
+        )
+        TmdbFilterField(
+            label = stringResource(R.string.collections_editor_tmdb_watch_providers),
+            helper = stringResource(R.string.collections_editor_tmdb_watch_providers_helper),
+            placeholder = stringResource(R.string.collections_editor_tmdb_watch_providers_placeholder),
+            value = filters.withWatchProviders
+        ) {
+            onFiltersChange(filters.copy(withWatchProviders = it.ifBlank { null }))
+        }
+        TmdbQuickChips(
+            label = stringResource(R.string.collections_editor_tmdb_quick_watch_regions),
+            chips = listOf(
+                stringResource(R.string.collections_editor_country_us) to "US",
+                stringResource(R.string.collections_editor_country_uk) to "GB",
+                "Canada" to "CA",
+                "Australia" to "AU",
+                "Germany" to "DE"
+            ),
+            onSelect = { onFiltersChange(filters.copy(watchRegion = it)) }
+        )
+        TmdbFilterField(
+            label = stringResource(R.string.collections_editor_tmdb_watch_region),
+            helper = stringResource(R.string.collections_editor_tmdb_watch_region_helper),
+            placeholder = "US",
+            value = filters.watchRegion
+        ) {
+            onFiltersChange(filters.copy(watchRegion = it.ifBlank { null }))
+        }
         TmdbActionButtons(onSearch = null, onAdd = onAdd, addLabel = actionLabel)
     }
 }
@@ -806,6 +844,7 @@ fun TmdbMediaSortControls(
                     if (showOriginalSort) add(TmdbCollectionSort.ORIGINAL.value to stringResource(R.string.collections_editor_sort_original))
                     if (showPopularSort) add(TmdbCollectionSort.POPULAR_DESC.value to stringResource(R.string.tmdb_entity_rail_popular))
                     add(TmdbCollectionSort.VOTE_AVERAGE_DESC.value to stringResource(R.string.tmdb_entity_rail_top_rated))
+                    add(TmdbCollectionSort.VOTE_COUNT_DESC.value to stringResource(R.string.tmdb_entity_rail_most_voted))
                     add(
                         if (mediaType == TmdbCollectionMediaType.TV && !bothSelected) {
                             TmdbCollectionSort.FIRST_AIR_DATE_DESC.value to stringResource(R.string.tmdb_entity_rail_recent)

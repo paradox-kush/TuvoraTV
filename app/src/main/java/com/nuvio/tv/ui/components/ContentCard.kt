@@ -73,6 +73,7 @@ import coil3.request.crossfade
 import com.nuvio.tv.ui.util.recompositionHighlighter
 import com.nuvio.tv.ui.screens.home.LocalFastScrollActive
 import com.nuvio.tv.ui.theme.ThemeColors
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import kotlinx.coroutines.delay
 
 /**
@@ -126,6 +127,7 @@ fun ContentCard(
 
     var isFocused by remember { mutableStateOf(false) }
     var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
     var interactionNonce by remember { mutableIntStateOf(0) }
     var isBackdropExpanded by remember { mutableStateOf(false) }
     var trailerFirstFrameRendered by remember(trailerPreviewUrl) { mutableStateOf(false) }
@@ -324,17 +326,22 @@ fun ContentCard(
                                 onLongPress()
                                 return@onPreviewKeyEvent true
                             }
-                            val isLongPress = native.isLongPress || native.repeatCount > 0
-                            if (isLongPress && isSelectKey(native.keyCode)) {
-                                longPressTriggered = true
-                                onLongPress()
-                                return@onPreviewKeyEvent true
-                            }
                         }
+                    }
+                    if (onLongPress != null &&
+                        longPressKeyTracker.handle(native, ::isSelectKey) {
+                            longPressTriggered = true
+                            onLongPress()
+                        }
+                    ) {
+                        if (native.action == AndroidKeyEvent.ACTION_UP) {
+                            longPressTriggered = false
+                        }
+                        return@onPreviewKeyEvent true
                     }
                     if (native.action == AndroidKeyEvent.ACTION_UP &&
                         longPressTriggered &&
-                        isSelectKey(native.keyCode)
+                        (isSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU)
                     ) {
                         longPressTriggered = false
                         return@onPreviewKeyEvent true

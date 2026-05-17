@@ -101,7 +101,9 @@ data class TmdbFiltersInfo(
     val withKeywords: String? = null,
     val withCompanies: String? = null,
     val withNetworks: String? = null,
-    val year: Int? = null
+    val year: Int? = null,
+    val watchRegion: String? = null,
+    val withWatchProviders: String? = null
 )
 
 data class TmdbSourceMetadataRequest(

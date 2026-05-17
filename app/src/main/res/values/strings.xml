@@ -251,6 +251,14 @@
     <string name="tmdb_entity_rail_popular">Popular</string>
     <string name="tmdb_entity_rail_top_rated">Top Rated</string>
     <string name="tmdb_entity_rail_recent">Recent</string>
+    <string name="tmdb_entity_rail_most_voted">Most Voted</string>
+    <string name="collections_editor_tmdb_watch_region">Watch region</string>
+    <string name="collections_editor_tmdb_watch_region_helper">ISO 3166-1 country code where the title is available. Example: US, GB.</string>
+    <string name="collections_editor_tmdb_quick_watch_regions">Quick watch regions</string>
+    <string name="collections_editor_tmdb_watch_providers">Watch provider IDs</string>
+    <string name="collections_editor_tmdb_watch_providers_helper">Use TMDB watch provider IDs. Separate multiple with commas for AND, or pipes for OR.</string>
+    <string name="collections_editor_tmdb_watch_providers_placeholder">8|337|350</string>
+    <string name="collections_editor_tmdb_quick_watch_providers">Quick watch providers</string>
     <string name="tmdb_error_load_source">Could not load TMDB source</string>
     <string name="tmdb_error_list_not_found">TMDB list not found</string>
     <string name="tmdb_error_collection_not_found">TMDB collection not found</string>
@@ -1382,6 +1390,10 @@
     <string name="next_episode_finding_source">Finding source…</string>
     <string name="next_episode_playing_via">Playing via %1$s in %2$ds</string>
     <string name="next_episode_play">Play</string>
+    <string name="player_next_episode_prompt_title">Continue watching?</string>
+    <string name="player_next_episode_prompt_message">Do you want to play the next episode?</string>
+    <string name="player_next_episode_prompt_yes">Yes</string>
+    <string name="player_next_episode_prompt_no">No, return to details</string>
     <string name="next_episode_unaired">Unaired</string>
     <string name="next_episode_not_aired_yet">Next episode hasn\'t aired yet</string>
     <string name="still_watching_title">Are you still watching?</string>

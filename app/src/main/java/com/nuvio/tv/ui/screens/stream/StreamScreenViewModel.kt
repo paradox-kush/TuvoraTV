@@ -202,6 +202,17 @@ class StreamScreenViewModel @Inject constructor(
                     playerPreference = playerSettings.playerPreference,
                     streamAutoPlayMode = playerSettings.streamAutoPlayMode
                 )
+                // In MANUAL mode, still enable direct auto-play if a persisted
+                // binge group exists - same behavior as playNextEpisode in the player.
+                if (!directAutoPlayFlowEnabledForSession &&
+                    playerSettings.playerPreference == PlayerPreference.INTERNAL &&
+                    playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode
+                ) {
+                    val hasBingeGroup = contentId?.let { bingeGroupCacheDataStore.get(it) } != null
+                    if (hasBingeGroup) {
+                        directAutoPlayFlowEnabledForSession = true
+                    }
+                }
                 directAutoPlayModeInitializedForSession = true
             }
 
@@ -667,7 +678,12 @@ class StreamScreenViewModel @Inject constructor(
     private fun com.nuvio.tv.domain.model.Addon.supportsStreamResourceForChip(type: String): Boolean {
         return resources.any { resource ->
             resource.name == "stream" &&
-                (resource.types.isEmpty() || resource.types.any { it.equals(type, ignoreCase = true) })
+                (resource.types.isEmpty() || resource.types.any { it.equals(type, ignoreCase = true) }) &&
+                run {
+                    val prefixes = resource.idPrefixes?.takeIf { it.isNotEmpty() }
+                        ?: idPrefixes.takeIf { it.isNotEmpty() }
+                    prefixes == null || prefixes.any { prefix -> videoId.startsWith(prefix) }
+                }
         }
     }
 
