@@ -381,7 +381,7 @@ class MainActivity : ComponentActivity() {
                 CompositionLocalProvider(
                     LocalBringIntoViewSpec provides bringIntoViewSpec,
                     LocalFastHorizontalNavigationEnabled provides mainUiPrefs.fastHorizontalNavigationEnabled,
-                    LocalRecompositionHighlighterEnabled provides mainUiPrefs.composeHighlighterEnabled,
+                    LocalRecompositionHighlighterEnabled provides (BuildConfig.IS_DEBUG_BUILD && mainUiPrefs.composeHighlighterEnabled),
                     com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool
                 ) {
                 Surface(
