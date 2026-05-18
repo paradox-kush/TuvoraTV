@@ -548,6 +548,8 @@
     <string name="playback_osd_clock">Jam OSD</string>
     <string name="playback_skip_intro">Lewati Intro</string>
     <string name="playback_skip_intro_sub">Gunakan introdb.app untuk mendeteksi intro dan rekap.</string>
+    <string name="playback_parental_guide">Peringatan Konten</string>
+    <string name="playback_parental_guide_sub">Tampilkan peringatan bimbingan orang tua saat pemutaran dimulai.</string>
     <string name="playback_auto_skip_segments">Lewati Otomatis</string>
     <string name="playback_auto_skip_segments_sub">Pilih segmen mana yang dilewati secara otomatis.</string>
     <string name="auto_skip_intro">Intro / Pembuka</string>
