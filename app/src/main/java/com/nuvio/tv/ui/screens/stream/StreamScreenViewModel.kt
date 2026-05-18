@@ -207,7 +207,8 @@ class StreamScreenViewModel @Inject constructor(
                 // binge group exists - same behavior as playNextEpisode in the player.
                 if (!directAutoPlayFlowEnabledForSession &&
                     playerSettings.playerPreference == PlayerPreference.INTERNAL &&
-                    playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode
+                    playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode &&
+                    playerSettings.streamAutoPlayReuseBingeGroup
                 ) {
                     val hasBingeGroup = contentId?.let { bingeGroupCacheDataStore.get(it) } != null
                     if (hasBingeGroup) {
@@ -294,7 +295,8 @@ class StreamScreenViewModel @Inject constructor(
             val installedAddonOrder = installedAddons.map { it.displayName }
             val directDebridSourceNames = directDebridStreamSource.sourceNames()
             val directDebridAvailable = directDebridSourceNames.isNotEmpty()
-            val persistedBingeGroup = if (playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode) {
+            val persistedBingeGroup = if (playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode &&
+                playerSettings.streamAutoPlayReuseBingeGroup) {
                 contentId?.let { bingeGroupCacheDataStore.get(it) }
             } else null
 

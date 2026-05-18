@@ -241,6 +241,11 @@ fun PlaybackSettingsContent(
                         viewModel.setStreamAutoPlayPreferBingeGroupForNextEpisode(enabled)
                     }
                 },
+                onSetStreamAutoPlayReuseBingeGroup = { enabled ->
+                    coroutineScope.launch {
+                        viewModel.setStreamAutoPlayReuseBingeGroup(enabled)
+                    }
+                },
                 onSetAutoSwitchInternalPlayerOnError = { enabled ->
                     coroutineScope.launch { viewModel.setAutoSwitchInternalPlayerOnError(enabled) }
                 },
