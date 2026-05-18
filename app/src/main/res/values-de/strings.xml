@@ -1059,7 +1059,7 @@
     <string name="plugin_test_results">Testergebnisse (%1$d Streams)</string>
 
     <!-- ProfileSelectionScreen -->
-    <string name="profile_selection_title">Wer schaut zu?</string>
+    <string name="profile_selection_title">Wer schaut?</string>
     <string name="profile_selection_subtitle">Wählen Sie ein Profil aus, um fortzufahren</string>
     <string name="profile_selection_hint">Zum Verwalten des Profils gedrückt halten</string>
     <string name="profile_selection_empty">Keine Profile gefunden</string>
