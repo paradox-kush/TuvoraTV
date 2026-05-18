@@ -156,4 +156,17 @@ class PlayerViewModel @Inject constructor(
         trailerPlayerPool.reclaim()
         super.onCleared()
     }
+
+    /**
+     * Save watch progress returned by an external player after "Open in External Player".
+     * Uses the controller's current content metadata (contentId, season, episode, etc.)
+     * which are still available since the controller hasn't been cleared yet.
+     */
+    fun saveExternalPlayerProgress(positionMs: Long, durationMs: Long?) {
+        val effectiveDuration = durationMs ?: controller.playbackTimeline.value.duration
+        controller.saveWatchProgressInternal(
+            position = positionMs,
+            duration = effectiveDuration
+        )
+    }
 }
