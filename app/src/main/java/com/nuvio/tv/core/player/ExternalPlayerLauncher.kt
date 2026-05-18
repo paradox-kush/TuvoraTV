@@ -8,11 +8,16 @@ import com.nuvio.tv.R
 
 object ExternalPlayerLauncher {
 
+    /**
+     * Fire-and-forget launch of an external player.
+     * Used as a fallback when ActivityResultLauncher is not available (e.g. non-Activity context).
+     */
     fun launch(
         context: Context,
         url: String,
         title: String? = null,
-        headers: Map<String, String>? = null
+        headers: Map<String, String>? = null,
+        resumePositionMs: Long = 0L
     ): Boolean {
         return try {
             val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -30,6 +35,11 @@ object ExternalPlayerLauncher {
                     }
                 }
 
+                if (resumePositionMs > 0L) {
+                    putExtra("position", resumePositionMs.toInt())
+                    putExtra("from_start", false)
+                }
+
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
 
@@ -44,4 +54,21 @@ object ExternalPlayerLauncher {
             false
         }
     }
+
+    /**
+     * Create an [ExternalPlayerInput] for use with [ExternalPlayerResultContract].
+     * Prefer this over [launch] when you have an Activity context and want to receive
+     * playback progress back from the external player.
+     */
+    fun createInput(
+        url: String,
+        title: String? = null,
+        headers: Map<String, String>? = null,
+        resumePositionMs: Long = 0L
+    ): ExternalPlayerInput = ExternalPlayerInput(
+        url = url,
+        title = title,
+        headers = headers,
+        resumePositionMs = resumePositionMs
+    )
 }
