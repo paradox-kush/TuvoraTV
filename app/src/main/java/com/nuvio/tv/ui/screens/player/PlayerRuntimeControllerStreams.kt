@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.player
 import android.content.Intent
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
+import com.nuvio.tv.core.debrid.DirectDebridPlayableResult
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.player.StreamAutoPlaySelector
 import com.nuvio.tv.data.local.PlayerSettings
@@ -501,6 +502,26 @@ internal fun PlayerRuntimeController.switchToSourceStream(stream: Stream) {
 
     val url = stream.getStreamUrl()
     if (url.isNullOrBlank()) {
+        if (stream.isDirectDebrid()) {
+            debridResolveJob?.cancel()
+            _uiState.update { it.copy(isLoadingSourceStreams = true, sourceStreamsError = null) }
+            debridResolveJob = scope.launch {
+                val resolved = resolveDirectDebridStreamIfNeeded(stream, currentSeason, currentEpisode)
+                if (resolved != null && !resolved.getStreamUrl().isNullOrBlank()) {
+                    debridResolveJob = null
+                    switchToSourceStream(resolved)
+                } else {
+                    debridResolveJob = null
+                    _uiState.update {
+                        it.copy(
+                            isLoadingSourceStreams = false,
+                            sourceStreamsError = context.getString(com.nuvio.tv.R.string.player_stream_error_invalid_url)
+                        )
+                    }
+                }
+            }
+            return
+        }
         _uiState.update { it.copy(sourceStreamsError = context.getString(com.nuvio.tv.R.string.player_stream_error_invalid_url)) }
         return
     }
@@ -797,6 +818,28 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
 
     val url = stream.getStreamUrl()
     if (url.isNullOrBlank()) {
+        if (stream.isDirectDebrid()) {
+            val resolveSeason = forcedTargetVideo?.season ?: _uiState.value.episodeStreamsSeason ?: currentSeason
+            val resolveEpisode = forcedTargetVideo?.episode ?: _uiState.value.episodeStreamsEpisode ?: currentEpisode
+            debridResolveJob?.cancel()
+            _uiState.update { it.copy(isLoadingEpisodeStreams = true, episodeStreamsError = null) }
+            debridResolveJob = scope.launch {
+                val resolved = resolveDirectDebridStreamIfNeeded(stream, resolveSeason, resolveEpisode)
+                if (resolved != null && !resolved.getStreamUrl().isNullOrBlank()) {
+                    debridResolveJob = null
+                    switchToEpisodeStream(resolved, forcedTargetVideo, isAutoPlay)
+                } else {
+                    debridResolveJob = null
+                    _uiState.update {
+                        it.copy(
+                            isLoadingEpisodeStreams = false,
+                            episodeStreamsError = context.getString(com.nuvio.tv.R.string.player_stream_error_invalid_url)
+                        )
+                    }
+                }
+            }
+            return
+        }
         _uiState.update { it.copy(episodeStreamsError = context.getString(com.nuvio.tv.R.string.player_stream_error_invalid_url)) }
         return
     }
@@ -995,6 +1038,20 @@ internal fun PlayerRuntimeController.showEpisodeStreamPicker(video: Video, force
     loadStreamsForEpisode(video = video, forceRefresh = forceRefresh)
 }
 
+internal suspend fun PlayerRuntimeController.resolveDirectDebridStreamIfNeeded(
+    stream: Stream,
+    season: Int?,
+    episode: Int?
+): Stream? {
+    if (!stream.isDirectDebrid() || stream.getStreamUrl() != null) return stream
+    return when (val result = directDebridResolver.resolveToPlayableStream(stream, season, episode)) {
+        is DirectDebridPlayableResult.Success -> result.stream
+        DirectDebridPlayableResult.MissingApiKey,
+        DirectDebridPlayableResult.Stale,
+        DirectDebridPlayableResult.Error -> null
+    }
+}
+
 internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = false) {
     val nextVideo = nextEpisodeVideo ?: return
     val type = contentType ?: return
@@ -1174,7 +1231,9 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
                 }
             }
 
-            val streamToPlay = selectedStream
+            val streamToPlay = selectedStream?.let {
+                resolveDirectDebridStreamIfNeeded(it, nextVideo.season, nextVideo.episode)
+            }
             if (streamToPlay != null) {
                 val sourceName = (streamToPlay.name?.takeIf { it.isNotBlank() } ?: streamToPlay.addonName).trim()
                 for (remaining in 3 downTo 1) {
@@ -1213,7 +1272,7 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
                 }
                 showEpisodeStreamPicker(
                     video = nextVideo,
-                    forceRefresh = lastError != null
+                    forceRefresh = lastError != null || selectedStream != null
                 )
             }
         } catch (e: CancellationException) {
