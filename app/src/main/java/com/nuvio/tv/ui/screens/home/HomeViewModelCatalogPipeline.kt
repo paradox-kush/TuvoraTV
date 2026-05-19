@@ -680,14 +680,15 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
 
     heroItemOrder = baseHeroItems.map { it.id }
 
-    val computedHomeRows = buildList {
-        val displayRowsByKey = displayRows.associateBy { "${it.addonId}_${it.apiType}_${it.catalogId}" }
-        // Build a lookup of placeholder descriptors by key for lazy catalogs
-        val placeholdersByKey = synchronized(catalogStateLock) {
-            placeholderDescriptors.associateBy { it.catalogKey }
-        }
-        collectionsCache.forEach { collection ->
-            val key = "collection_${collection.id}"
+    val (computedHomeRows, nextGridItems) = withContext(Dispatchers.Default) {
+        val computedHomeRows = buildList {
+            val displayRowsByKey = displayRows.associateBy { "${it.addonId}_${it.apiType}_${it.catalogId}" }
+            // Build a lookup of placeholder descriptors by key for lazy catalogs
+            val placeholdersByKey = synchronized(catalogStateLock) {
+                placeholderDescriptors.associateBy { it.catalogKey }
+            }
+            collectionsCache.forEach { collection ->
+                val key = "collection_${collection.id}"
             if (collection.pinToTop && key !in disabledHomeCatalogKeys) {
                 add(HomeRow.CollectionRow(collection))
             }
@@ -822,6 +823,9 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
         }.let { replaceGridHeroItemsPipeline(it, baseHeroItems) }
     } else {
         currentGridItems
+    }
+
+        computedHomeRows to nextGridItems
     }
 
     // Clear any stale error when content is now available (e.g., hero
