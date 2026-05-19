@@ -160,6 +160,7 @@
     <string name="settings_integrations_section_subtitle">Zarządzaj dostępnymi integracjami</string>
     <string name="settings_tmdb_subtitle">Kontrolki wzbogacania metadanych</string>
     <string name="settings_mdblist_subtitle">Zewnętrzni dostawcy ocen</string>
+    <string name="settings_debrid_subtitle">Eksperymentalne źródła z kont chmurowych</string>
 
     <!-- PlaybackSettingsScreen -->
     <string name="playback_title">Ustawienia odtwarzania</string>
@@ -255,6 +256,16 @@
     <string name="audio_decoder_prefer_device_desc">Używaj dekoderów sprzętowych gdy dostępne, w przeciwnym razie FFmpeg. Zalecane dla większości urządzeń.</string>
     <string name="audio_decoder_prefer_app_desc">Używaj dekoderów FFmpeg gdy dostępne. Lepsza obsługa formatów, ale wyższe użycie CPU.</string>
     <string name="audio_decoder_controls">Kontroluje czy używane są dekodery sprzętowe czy programowe (FFmpeg) dla audio i wideo</string>
+    <string name="audio_enable_downmix_title">Włącz downmix</string>
+    <string name="audio_enable_downmix_subtitle">Używa ścieżki downmix FFmpeg. Po wyłączeniu audio podąża za poprzednią ścieżką Android/urządzenia.</string>
+    <string name="audio_maintain_original_audio_on_downmix_title">Zachowaj oryginalne audio przy downmix</string>
+    <string name="audio_maintain_original_audio_on_downmix_subtitle">Po wyłączeniu normalizacja downmix może zmniejszyć ogólną głośność.</string>
+    <string name="audio_number_of_channels">Liczba kanałów</string>
+    <string name="audio_number_of_channels_desc">Ustawia układ głośników używany do downmix FFmpeg.</string>
+    <string name="audio_center_mix_label">Downmix: Poziom miksu centralnego</string>
+    <string name="audio_center_mix_value_db">%1$d dB</string>
+    <string name="audio_center_mix_help">Poziom miksu centralnego w dB względem metadanych lub domyślnego (-3 dB)</string>
+    <string name="audio_center_mix_unavailable">Miks centralny jest dostępny tylko gdy downmix FFmpeg jest aktywny.</string>
 
     <!-- PlaybackSubtitleSettings -->
     <string name="sub_section">Napisy</string>
@@ -321,6 +332,8 @@
     <string name="autoplay_next_episode_sub">Automatycznie rozpocznij następny odcinek gdy pojawi się monit.</string>
     <string name="autoplay_prefer_binge_group">Preferuj grupę Binge (następny odcinek)</string>
     <string name="autoplay_prefer_binge_group_sub">Najpierw spróbuj tego samego profilu źródła przed normalnymi regułami auto-odtwarzania.</string>
+    <string name="autoplay_reuse_binge_group">Ponownie użyj grupy Binge</string>
+    <string name="autoplay_reuse_binge_group_sub">Zapamiętaj i ponownie użyj ostatniej grupy binge między sesjami (Kontynuuj oglądanie, Szczegóły itp.).</string>
     <string name="autoplay_threshold_pct">Procent</string>
     <string name="autoplay_threshold_min">Minut przed końcem</string>
     <string name="autoplay_threshold_mode">Określanie progu następnego odcinka</string>
@@ -2260,4 +2273,77 @@
 
     <string name="profile_pin_saved_for_profile">PIN zapisany dla %1$s.</string>
     <string name="profile_pin_lock_removed_for_profile">Blokada PIN usunięta dla %1$s.</string>
+
+    <!-- Debrid -->
+    <string name="debrid_title">Debrid</string>
+    <string name="debrid_subtitle">Eksperymentalne źródła z kont chmurowych</string>
+    <string name="debrid_experimental_notice">Obsługa Debrid jest eksperymentalna i może zostać zachowana, zmieniona lub usunięta w przyszłości.</string>
+    <string name="debrid_enable_title">Włącz źródła</string>
+    <string name="debrid_enable_subtitle">Pokazuj odtwarzalne wyniki z połączonych kont.</string>
+    <string name="debrid_add_key_first">Najpierw dodaj klucz API.</string>
+    <string name="debrid_section_account">Konto</string>
+    <string name="debrid_section_instant_playback">Natychmiastowe odtwarzanie</string>
+    <string name="debrid_section_filters">Filtry i sortowanie</string>
+    <string name="debrid_section_formatting">Ustawienia webowe</string>
+    <string name="debrid_provider_title">Dostawca</string>
+    <string name="debrid_provider_subtitle">Dodatkowi dostawcy zostaną dodani później</string>
+    <string name="debrid_provider_torbox">Torbox</string>
+    <string name="debrid_provider_available">Torbox</string>
+    <string name="debrid_api_key_title">Torbox</string>
+    <string name="debrid_api_key_subtitle">Połącz swoje konto Torbox.</string>
+    <string name="debrid_dialog_title">Klucz API Torbox</string>
+    <string name="debrid_dialog_subtitle">Wprowadź swój klucz API Torbox.</string>
+    <string name="debrid_dialog_placeholder">Wprowadź klucz API Torbox</string>
+    <string name="debrid_real_debrid_api_key_title">Token API Real-Debrid</string>
+    <string name="debrid_real_debrid_api_key_subtitle">Wymagany do lokalnego rozwiązywania linków Real-Debrid</string>
+    <string name="debrid_real_debrid_dialog_title">Token API Real-Debrid</string>
+    <string name="debrid_real_debrid_dialog_subtitle">Wprowadź token API Real-Debrid dla Direct Debrid</string>
+    <string name="debrid_real_debrid_dialog_placeholder">Wprowadź token API Real-Debrid</string>
+    <string name="debrid_not_set">Nie ustawiono</string>
+    <string name="debrid_invalid_torbox_api_key">Nie udało się zweryfikować tego klucza API.</string>
+    <string name="debrid_invalid_real_debrid_api_key">Nie udało się zweryfikować tego klucza API.</string>
+    <string name="debrid_prepare_instant_playback">Przygotuj linki</string>
+    <string name="debrid_prepare_instant_playback_description">Rozwiąż pierwsze źródła przed rozpoczęciem odtwarzania.</string>
+    <string name="debrid_prepare_stream_count">Źródła do przygotowania</string>
+    <string name="debrid_prepare_count_one">1 źródło</string>
+    <string name="debrid_prepare_count_many">%1$d źródeł</string>
+    <string name="debrid_stream_max_results_title">Maks. wyników</string>
+    <string name="debrid_stream_max_results_subtitle">Ogranicz liczbę wyświetlanych źródeł Direct Debrid.</string>
+    <string name="debrid_stream_max_results_all">Wszystkie strumienie</string>
+    <string name="debrid_stream_max_results_count">%1$d strumieni</string>
+    <string name="debrid_stream_sort_title">Sortuj strumienie</string>
+    <string name="debrid_stream_sort_subtitle">Wybierz kolejność źródeł Direct Debrid.</string>
+    <string name="debrid_stream_sort_default">Domyślne</string>
+    <string name="debrid_stream_sort_quality">Jakość, najwyższa najpierw</string>
+    <string name="debrid_stream_sort_size_desc">Rozmiar, największy najpierw</string>
+    <string name="debrid_stream_sort_size_asc">Rozmiar, najmniejszy najpierw</string>
+    <string name="debrid_stream_min_quality_title">Minimalna jakość</string>
+    <string name="debrid_stream_min_quality_subtitle">Ukryj źródła poniżej wybranej rozdzielczości.</string>
+    <string name="debrid_stream_min_quality_any">Dowolna jakość</string>
+    <string name="debrid_stream_min_quality_720">720p i wyżej</string>
+    <string name="debrid_stream_min_quality_1080">1080p i wyżej</string>
+    <string name="debrid_stream_min_quality_2160">Tylko 4K</string>
+    <string name="debrid_stream_dolby_vision_title">Dolby Vision</string>
+    <string name="debrid_stream_dolby_vision_subtitle">Pokaż, ukryj lub wymagaj źródeł Dolby Vision.</string>
+    <string name="debrid_stream_hdr_title">HDR</string>
+    <string name="debrid_stream_hdr_subtitle">Pokaż, ukryj lub wymagaj źródeł HDR.</string>
+    <string name="debrid_stream_feature_any">Dowolne</string>
+    <string name="debrid_stream_feature_exclude">Ukryj</string>
+    <string name="debrid_stream_feature_only">Tylko</string>
+    <string name="debrid_stream_codec_title">Kodek</string>
+    <string name="debrid_stream_codec_subtitle">Filtruj źródła według kodeka wideo.</string>
+    <string name="debrid_stream_codec_any">Dowolny kodek</string>
+    <string name="debrid_stream_codec_h264">H.264 / AVC</string>
+    <string name="debrid_stream_codec_hevc">HEVC / H.265</string>
+    <string name="debrid_stream_codec_av1">AV1</string>
+    <string name="debrid_formatter_title">Edytor webowy</string>
+    <string name="debrid_formatter_subtitle">Konfiguruj wyświetlanie, filtry i sortowanie źródeł z innego urządzenia.</string>
+    <string name="debrid_formatter_configure">Otwórz edytor webowy</string>
+    <string name="debrid_formatter_reset_title">Resetuj formatowanie</string>
+    <string name="debrid_formatter_reset_subtitle">Przywróć domyślne formatowanie źródeł.</string>
+    <string name="debrid_formatter_qr_instruction">Zeskanuj ten kod QR telefonem, aby skonfigurować ustawienia źródeł Debrid.</string>
+    <string name="debrid_resolving_stream">Rozwiązywanie strumienia debrid</string>
+    <string name="debrid_stale_stream">Ten wynik Debrid wygasł. Odświeżanie strumieni.</string>
+    <string name="debrid_missing_api_key">Dodaj klucz API Debrid w Ustawieniach.</string>
+    <string name="debrid_resolution_failed">Nie udało się rozwiązać tego strumienia Debrid.</string>
 </resources>

@@ -906,13 +906,12 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
         }
         is PlayerRuntimeController.RememberedSubtitleSelection.Addon -> {
             val state = _uiState.value
+            // Only restore addon subtitle on exact match (same addon + same track ID).
+            // Looser matches (same addon + same language, or any addon + same language)
+            // should NOT override the normal auto-selection logic which prefers embedded
+            // tracks over addon subtitles.
             val addonMatch = state.addonSubtitles.firstOrNull { subtitle ->
                 subtitle.addonName == subtitleSelection.addonName && subtitle.id == subtitleSelection.id
-            } ?: state.addonSubtitles.firstOrNull { subtitle ->
-                subtitle.addonName == subtitleSelection.addonName &&
-                    PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, subtitleSelection.language)
-            } ?: state.addonSubtitles.firstOrNull { subtitle ->
-                PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, subtitleSelection.language)
             }
             if (addonMatch != null) {
                 logSwitchTrace(
@@ -945,9 +944,12 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
             } else {
                 logSwitchTrace(
                     stage = "restore-subtitle-addon",
-                    message = "result=no-match targetAddonId=${subtitleSelection.id} targetLang=${subtitleSelection.language} " +
-                        "addonPool=${state.addonSubtitles.size}"
+                    message = "result=no-exact-match targetAddonId=${subtitleSelection.id} targetLang=${subtitleSelection.language} " +
+                        "addonPool=${state.addonSubtitles.size}, falling back to auto-selection"
                 )
+                // Clear the persisted subtitle preference so tryAutoSelectPreferredSubtitleFromAvailableTracks
+                // can run its normal logic (prefer embedded over addon).
+                updatedPending = updatedPending.copy(subtitle = null)
             }
         }
     }
@@ -1689,6 +1691,17 @@ internal fun PlayerRuntimeController.applySubtitlePreferences(preferred: String,
             }
             builder.setPreferredTextLanguage(preferred)
         }
+
+        // Update forced flag handling: when forced subtitles are disabled,
+        // tell ExoPlayer to ignore SELECTION_FLAG_FORCED.
+        val useForcedSubtitles = _uiState.value.subtitleStyle.useForcedSubtitles
+        val currentFlags = player.trackSelectionParameters.ignoredTextSelectionFlags
+        val newFlags = if (!useForcedSubtitles) {
+            currentFlags or C.SELECTION_FLAG_FORCED
+        } else {
+            currentFlags and C.SELECTION_FLAG_FORCED.inv()
+        }
+        builder.setIgnoredTextSelectionFlags(newFlags)
 
         player.trackSelectionParameters = builder.build()
     }

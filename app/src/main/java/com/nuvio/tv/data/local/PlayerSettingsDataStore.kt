@@ -232,6 +232,7 @@ data class PlayerSettings(
     val streamAutoPlayRegex: String = "",
     val streamAutoPlayNextEpisodeEnabled: Boolean = false,
     val streamAutoPlayPreferBingeGroupForNextEpisode: Boolean = true,
+    val streamAutoPlayReuseBingeGroup: Boolean = true,
     val streamAutoPlayTimeoutSeconds: Int = 3,
     val stillWatchingEnabled: Boolean = false,
     val stillWatchingEpisodeThreshold: Int = DEFAULT_STILL_WATCHING_EPISODE_THRESHOLD,
@@ -416,6 +417,7 @@ class PlayerSettingsDataStore @Inject constructor(
     private val streamAutoPlayRegexKey = stringPreferencesKey("stream_auto_play_regex")
     private val streamAutoPlayNextEpisodeEnabledKey = booleanPreferencesKey("stream_auto_play_next_episode_enabled")
     private val streamAutoPlayPreferBingeGroupForNextEpisodeKey = booleanPreferencesKey("stream_auto_play_prefer_bingegroup_next_episode")
+    private val streamAutoPlayReuseBingeGroupKey = booleanPreferencesKey("stream_auto_play_reuse_binge_group")
     private val streamAutoPlayTimeoutSecondsKey = intPreferencesKey("stream_auto_play_timeout_seconds")
     private val stillWatchingEnabledKey = booleanPreferencesKey("still_watching_enabled")
     private val stillWatchingEpisodeThresholdKey = intPreferencesKey("still_watching_episode_threshold")
@@ -624,6 +626,8 @@ class PlayerSettingsDataStore @Inject constructor(
                 streamAutoPlayNextEpisodeEnabled = prefs[streamAutoPlayNextEpisodeEnabledKey] ?: false,
                 streamAutoPlayPreferBingeGroupForNextEpisode =
                     prefs[streamAutoPlayPreferBingeGroupForNextEpisodeKey] ?: true,
+                streamAutoPlayReuseBingeGroup =
+                    prefs[streamAutoPlayReuseBingeGroupKey] ?: true,
                 streamAutoPlayTimeoutSeconds = PlayerSettings.applyLegacyTimeoutSentinelMigration(
                     prefs[streamAutoPlayTimeoutSecondsKey]
                 ),
@@ -942,6 +946,12 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setStreamAutoPlayPreferBingeGroupForNextEpisode(enabled: Boolean) {
         store().edit { prefs ->
             prefs[streamAutoPlayPreferBingeGroupForNextEpisodeKey] = enabled
+        }
+    }
+
+    suspend fun setStreamAutoPlayReuseBingeGroup(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[streamAutoPlayReuseBingeGroupKey] = enabled
         }
     }
 

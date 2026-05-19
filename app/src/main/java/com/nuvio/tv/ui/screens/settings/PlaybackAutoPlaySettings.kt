@@ -83,6 +83,7 @@ internal fun LazyListScope.autoPlaySettingsItems(
     onShowReuseLastLinkCacheDialog: () -> Unit,
     onSetStreamAutoPlayNextEpisodeEnabled: (Boolean) -> Unit,
     onSetStreamAutoPlayPreferBingeGroupForNextEpisode: (Boolean) -> Unit,
+    onSetStreamAutoPlayReuseBingeGroup: (Boolean) -> Unit,
     onSetNextEpisodeThresholdPercent: (Float) -> Unit,
     onSetNextEpisodeThresholdMinutesBeforeEnd: (Float) -> Unit,
     onSetStreamAutoPlayTimeoutSeconds: (Int) -> Unit,
@@ -209,6 +210,19 @@ internal fun LazyListScope.autoPlaySettingsItems(
             onCheckedChange = onSetStreamAutoPlayPreferBingeGroupForNextEpisode,
             onFocused = onItemFocused
         )
+    }
+
+    if (playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode) {
+        item(key = "autoplay_reuse_binge_group") {
+            ToggleSettingsItem(
+                icon = Icons.Default.Tune,
+                title = stringResource(R.string.autoplay_reuse_binge_group),
+                subtitle = stringResource(R.string.autoplay_reuse_binge_group_sub),
+                isChecked = playerSettings.streamAutoPlayReuseBingeGroup,
+                onCheckedChange = onSetStreamAutoPlayReuseBingeGroup,
+                onFocused = onItemFocused
+            )
+        }
     }
 
     item(key = "autoplay_threshold_mode") {

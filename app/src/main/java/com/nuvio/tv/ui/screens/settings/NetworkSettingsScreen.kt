@@ -338,18 +338,6 @@ fun AdvancedSettingsContent(
                         )
                     }
                 )
-                SettingsToggleRow(
-                    title = stringResource(R.string.advanced_memory_only_vertical_scroll),
-                    subtitle = stringResource(R.string.advanced_memory_only_vertical_scroll_subtitle),
-                    checked = uiState.memoryOnlyVerticalScroll,
-                    onToggle = {
-                        viewModel.onEvent(
-                            AdvancedSettingsEvent.SetMemoryOnlyVerticalScroll(
-                                !uiState.memoryOnlyVerticalScroll
-                            )
-                        )
-                    }
-                )
                 val profileManager = remember {
                     dagger.hilt.android.EntryPointAccessors.fromApplication(
                         context.applicationContext,

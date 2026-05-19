@@ -301,6 +301,10 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setStreamAutoPlayPreferBingeGroupForNextEpisode(enabled)
     }
 
+    suspend fun setStreamAutoPlayReuseBingeGroup(enabled: Boolean) {
+        playerSettingsDataStore.setStreamAutoPlayReuseBingeGroup(enabled)
+    }
+
     suspend fun setStreamAutoPlayTimeoutSeconds(seconds: Int) {
         playerSettingsDataStore.setStreamAutoPlayTimeoutSeconds(seconds)
     }

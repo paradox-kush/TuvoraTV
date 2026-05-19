@@ -78,10 +78,6 @@ class WatchProgressSyncService @Inject constructor(
 
     suspend fun deleteFromRemote(keys: Collection<String>): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (!shouldUseSupabaseWatchProgressSync()) {
-                return@withContext Result.success(Unit)
-            }
-
             val distinctKeys = keys
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
@@ -110,15 +106,11 @@ class WatchProgressSyncService @Inject constructor(
 
     /**
      * Push all local watch progress to Supabase via RPC.
-     * Skips if Trakt is connected (Trakt handles progress when active).
+     * Always syncs regardless of CW source — both Trakt and Nuvio Sync
+     * should have up-to-date progress data.
      */
     suspend fun pushToRemote(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (!shouldUseSupabaseWatchProgressSync()) {
-                Log.d(TAG, "Using Trakt watch progress, skipping watch progress push")
-                return@withContext Result.success(Unit)
-            }
-
             val rawEntries = watchProgressPreferences.getAllRawEntries()
             val entries = canonicalizeForRemote(rawEntries).filterValues { progress ->
                 !(progress.position <= 1L && progress.duration <= 1L && progress.duration > 0L)
@@ -163,12 +155,6 @@ class WatchProgressSyncService @Inject constructor(
     
     suspend fun pushSingleToRemote(key: String, progress: WatchProgress): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (!shouldUseSupabaseWatchProgressSync()) {
-                Log.d(TAG, "Using Trakt watch progress, skipping single watch progress push")
-                return@withContext Result.success(Unit)
-            }
-
-           
             val profileId = profileManager.activeProfileId.value
             val params = buildJsonObject {
                 put("p_entries", buildJsonArray {

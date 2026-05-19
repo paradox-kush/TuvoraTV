@@ -271,6 +271,16 @@ internal fun PlayerRuntimeController.initializePlayer(
                         )
                     }
                 }
+                // When forced subtitles are disabled, tell ExoPlayer to ignore
+                // SELECTION_FLAG_FORCED so it won't auto-select forced tracks.
+                if (!playerSettings.subtitleStyle.useForcedSubtitles) {
+                    val currentFlags = parameters.ignoredTextSelectionFlags
+                    setParameters(
+                        buildUponParameters().setIgnoredTextSelectionFlags(
+                            currentFlags or C.SELECTION_FLAG_FORCED
+                        )
+                    )
+                }
             }
 
             

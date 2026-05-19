@@ -73,11 +73,6 @@ class WatchedItemsSyncService @Inject constructor(
 
     suspend fun pushToRemote(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (!shouldUseSupabaseWatchProgressSync()) {
-                Log.d(TAG, "Using Trakt watch progress, skipping watched items push")
-                return@withContext Result.success(Unit)
-            }
-
             val items = watchedItemsPreferences.getAllItems()
             Log.d(TAG, "pushToRemote: ${items.size} watched items to push")
 
@@ -165,10 +160,6 @@ class WatchedItemsSyncService @Inject constructor(
         episode: Int?
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (!shouldUseSupabaseWatchProgressSync()) {
-                return@withContext Result.success(Unit)
-            }
-
             val profileId = profileManager.activeProfileId.value
             val params = buildJsonObject {
                 put("p_profile_id", profileId)
@@ -197,9 +188,6 @@ class WatchedItemsSyncService @Inject constructor(
         episodes: List<Pair<Int, Int>>
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (!shouldUseSupabaseWatchProgressSync()) {
-                return@withContext Result.success(Unit)
-            }
             if (episodes.isEmpty()) return@withContext Result.success(Unit)
 
             val profileId = profileManager.activeProfileId.value
