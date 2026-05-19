@@ -1673,7 +1673,7 @@
     <string name="account_enter_sync_desc">Verbinde dieses Gerät mit einem anderen via Sync-Code.</string>
     <string name="account_signed_in_as">Einloggen als</string>
     <string name="account_generate_sync_signed_in_desc">Code erstellen damit andere Geräte sich mit diesem Konto synchronisieren können.</string>
-    <string name="account_unknown_device">Unbekanntes Gerät/string>
+    <string name="account_unknown_device">Unbekanntes Gerät</string>
 
     <!-- Sync screens -->
     <string name="sync_claim_linking">Verbinde\u2026</string>
@@ -1842,7 +1842,6 @@
     <string name="collections_paste_hint">Paste collections JSON here…</string>
     <string name="collections_file_description">Reads nuvio-collections.json from the Downloads folder.</string>
     <string name="collections_load_file">Load File</string>
-    <string name="playback_player_auto">Automatisch (Am besten für Inhalt)</string>
     <string name="collections_fetch_url">Fetch URL</string>
     <string name="collections_fetching">Fetching…</string>
     <string name="collections_valid_json">Valid JSON</string>
@@ -2051,7 +2050,6 @@
     <string name="collections_editor_genre_required">Genre required</string>
     <string name="collections_editor_genre_optional">Genre filter available</string>
     <string name="collections_card_title">Collections</string>
-    <string name="playback_player_auto_desc">ExoPlayer für Filme &amp; Serien · MPV für Anime</string>
     <string name="collections_tab_all">All</string>
     <string name="collections_tab_combined">Combined</string>
     <string name="collection_editor_remove_cd">Remove</string>
