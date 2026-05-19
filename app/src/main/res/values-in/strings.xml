@@ -497,6 +497,7 @@
     <string name="settings_tmdb_subtitle">Kontrol pengayaan metadata</string>
     <string name="settings_mdblist_subtitle">Penyedia rating eksternal</string>
     <string name="settings_animeskip_subtitle">Cap waktu lewati intro/outro anime</string>
+    <string name="settings_debrid_subtitle">Sumber akun cloud eksperimental</string>
 
     <!-- PlaybackSettingsScreen -->
     <string name="playback_title">Pengaturan Pemutaran</string>
@@ -553,6 +554,8 @@
     <string name="playback_osd_clock">Jam OSD</string>
     <string name="playback_skip_intro">Lewati Intro</string>
     <string name="playback_skip_intro_sub">Gunakan introdb.app untuk mendeteksi intro dan rekap.</string>
+    <string name="playback_parental_guide">Peringatan Konten</string>
+    <string name="playback_parental_guide_sub">Tampilkan bimbingan orang tua ketika pemutaran dimulai.</string>
     <string name="playback_auto_skip_segments">Lewati Otomatis</string>
     <string name="playback_auto_skip_segments_sub">Pilih segmen mana yang dilewati secara otomatis.</string>
     <string name="auto_skip_intro">Intro / Pembuka</string>
@@ -619,11 +622,15 @@
     <string name="audio_remember_delay_per_device_sub">Simpan dan pulihkan penundaan audio dalam pemutar untuk rute output audio saat ini</string>
     <string name="audio_advanced_section">Audio Lanjutan</string>
     <string name="audio_advanced_warning">Pengaturan ini mungkin menyebabkan masalah di beberapa perangkat. Ubah hanya jika Anda tahu apa yang Anda lakukan.</string>
+    <string name="audio_number_of_channels">Jumlah saluran</string>
+    <string name="audio_number_of_channels_desc">Atur tata letak speaker untuk downmix FFmpeg.</string>
     <string name="audio_decoder_device_only">Hanya dekoder perangkat</string>
     <string name="audio_decoder_prefer_device">Utamakan dekoder perangkat</string>
     <string name="audio_decoder_prefer_app">Utamakan dekoder aplikasi (FFmpeg)</string>
     <string name="audio_decoder_priority">Prioritas Dekoder</string>
-    <string name="audio_tunneled">Pemutaran Terowongan</string>
+    <string name="audio_enable_downmix_title">Aktifkan downmix</string>
+    <string name="audio_enable_downmix_subtitle">Menggunakan jalur downmix FFmpeg. Jika dinonaktifkan, audio akan mengikuti jalur Android/perangkat sebelumnya.</string>
+    <string name="audio_tunneled">Tunneled Playback</string>
     <string name="audio_tunneled_sub">Sinkronisasi audio/video tingkat hardware. Mungkin meningkatkan pemutaran di beberapa perangkat Android TV</string>
     <string name="audio_dv_sub">Petakan Dolby Vision Profil 7 ke HEVC standar untuk perangkat tanpa dukungan hardware DV</string>
     <string name="audio_mpv_hwdec_title">Dekoding Hardware (Hanya MPV)</string>
@@ -880,6 +887,74 @@
     <string name="mdblist_dialog_placeholder">Masukkan kunci API MDBList</string>
     <string name="mdblist_not_set">Tidak diatur</string>
     <string name="mdblist_invalid_api_key">Kunci API MDBList tidak valid</string>
+
+    <string name="debrid_title">Debrid</string>
+    <string name="debrid_subtitle">Sumber akun cloud eksperimental</string>
+    <string name="debrid_experimental_notice">Dukungan Debrid bersifat eksperimental dan dapat dipertahankan, diubah, atau dihapus di sewaktu-waktu.</string>
+    <string name="debrid_enable_title">Aktifkan sumber</string>
+    <string name="debrid_enable_subtitle">Tampilkan hasil dari akun yang terhubung.</string>
+    <string name="debrid_add_key_first">Tambahkan API Key terlebih dahulu.</string>
+    <string name="debrid_section_account">Akun</string>
+    <string name="debrid_section_instant_playback">Pemutaran Instan</string>
+    <string name="debrid_section_filters">Filter &amp; Pengurutan</string>
+    <string name="debrid_section_formatting">Pengaturan Web</string>
+    <string name="debrid_provider_title">Penyedia Layanan</string>
+    <string name="debrid_provider_subtitle">Penyedia layanan lain akan ditambahkan kemudian</string>
+    <string name="debrid_provider_torbox">Torbox</string>
+    <string name="debrid_provider_available">Torbox</string>
+    <string name="debrid_api_key_title">Torbox</string>
+    <string name="debrid_api_key_subtitle">Hubungkan akun Torbox Anda.</string>
+    <string name="debrid_dialog_title">Torbox API Key</string>
+    <string name="debrid_dialog_subtitle">Masukkan Torbox API Key Anda.</string>
+    <string name="debrid_dialog_placeholder">Masukkan Torbox API Key</string>
+    <string name="debrid_real_debrid_api_key_title">Real-Debrid API Token</string>
+    <string name="debrid_real_debrid_api_key_subtitle">Diperlukan untuk mengurai tautan Real-Debrid lokal</string>
+    <string name="debrid_real_debrid_dialog_title">Real-Debrid API Token</string>
+    <string name="debrid_real_debrid_dialog_subtitle">Masukkan Real-Debrid API token untuk Direct Debrid</string>
+    <string name="debrid_real_debrid_dialog_placeholder">Masukkan Real-Debrid API token</string>
+    <string name="debrid_not_set">Belum diatur</string>
+    <string name="debrid_invalid_torbox_api_key">Tidak dapat memvalidasi kunci API ini.</string>
+    <string name="debrid_invalid_real_debrid_api_key">Tidak dapat memvalidasi token API ini.</string>
+    <string name="debrid_prepare_instant_playback">Menyiapkan tautan</string>
+    <string name="debrid_prepare_instant_playback_description">Mengurai sumber pertama sebelum pemutaran dimulai.</string>
+    <string name="debrid_prepare_stream_count">Sumber yang akan disiapkan</string>
+    <string name="debrid_prepare_count_one">1 sumber</string>
+    <string name="debrid_prepare_count_many">%1$d sumber</string>
+    <string name="debrid_stream_max_results_title">Hasil maksimal</string>
+    <string name="debrid_stream_max_results_subtitle">Batasi jumlah sumber Direct Debrid yang muncul.</string>
+    <string name="debrid_stream_max_results_all">Semua stream</string>
+    <string name="debrid_stream_max_results_count">%1$d stream</string>
+    <string name="debrid_stream_sort_title">Urutkan stream</string>
+    <string name="debrid_stream_sort_subtitle">Pilih bagaimana sumber Direct Debrid diurutkan.</string>
+    <string name="debrid_stream_sort_default">Setelan Bawaan</string>
+    <string name="debrid_stream_sort_quality">Kualitas, dari yang tertinggi</string>
+    <string name="debrid_stream_sort_size_desc">Ukuran, dari yang terbesar</string>
+    <string name="debrid_stream_sort_size_asc">Ukuran, dari yang terkecil</string>
+    <string name="debrid_stream_min_quality_title">Kualitas minimal</string>
+    <string name="debrid_stream_min_quality_subtitle">Sembunyikan hasil di bawah resolusi yang dipilih.</string>
+    <string name="debrid_stream_min_quality_any">Semua kualitas</string>
+    <string name="debrid_stream_min_quality_720">720p dan ke atas</string>
+    <string name="debrid_stream_min_quality_1080">1080p dan ke atas</string>
+    <string name="debrid_stream_min_quality_2160">Hanya 4K</string>
+    <string name="debrid_stream_dolby_vision_title">Dolby Vision</string>
+    <string name="debrid_stream_dolby_vision_subtitle">Tampilkan, sembunyikan, atau wajibkan hasil dengan Dolby Vision.</string>
+    <string name="debrid_stream_hdr_title">HDR</string>
+    <string name="debrid_stream_hdr_subtitle">Tampilkan, sembunyikan, atau wajibkan hasil dengan HDR.</string>
+    <string name="debrid_stream_feature_any">Semuanya</string>
+    <string name="debrid_stream_feature_exclude">Sembunyikan</string>
+    <string name="debrid_stream_feature_only">Hanya</string>
+    <string name="debrid_stream_codec_title">Codec</string>
+    <string name="debrid_stream_codec_subtitle">Filter hasil berdasarkan codec video.</string>
+    <string name="debrid_stream_codec_any">Semua codec</string>
+    <string name="debrid_stream_codec_h264">H.264 / AVC</string>
+    <string name="debrid_stream_codec_hevc">HEVC / H.265</string>
+    <string name="debrid_stream_codec_av1">AV1</string>
+    <string name="debrid_formatter_title">Editor Web</string>
+    <string name="debrid_formatter_subtitle">Konfigurasikan tampilan sumber, filter, dan pengurutan dari perangkat lain.</string>
+    <string name="debrid_formatter_configure">Buka editor web</string>
+    <string name="debrid_formatter_reset_title">Atur ulang format</string>
+    <string name="debrid_formatter_reset_subtitle">Kembalikan format ke setelan bawaan.</string>
+    <string name="debrid_formatter_qr_instruction">Pindai kode QR ini di ponsel Anda untuk mengonfigurasi pengaturan sumber Debrid.</string>
 
     <!-- Anime-Skip -->
     <string name="animeskip_title">Anime Skip</string>
@@ -1171,6 +1246,10 @@
     <string name="stream_no_streams">Tidak ada stream ditemukan</string>
     <string name="stream_no_streams_hint">Coba pasang lebih banyak addon untuk menemukan stream</string>
     <string name="stream_finding_source">Mencari sumber stream</string>
+    <string name="debrid_resolving_stream">Mengurai stream debrid</string>
+    <string name="debrid_stale_stream">Hasil Debrid ini telah kedaluwarsa. Muat ulang stream.</string>
+    <string name="debrid_missing_api_key">Tambahkan kunci API Debrid di Pengaturan.</string>
+    <string name="debrid_resolution_failed">Tidak dapat mengurai stream Debrid ini.</string>
     <string name="stream_type_torrent">Torrent</string>
     <string name="stream_type_youtube">YouTube</string>
     <string name="p2p_consent_title">Streaming P2P</string>
@@ -1283,7 +1362,7 @@
     <string name="player_aspect_fit_width">Sesuaikan Lebar</string>
     <string name="player_aspect_fit_height">Sesuaikan Tinggi</string>
     <string name="player_aspect_crop">Potong</string>
-    <string name="player_aspect_tunneling_unavailable">Tidak tersedia selama pemutaran terowongan</string>
+    <string name="player_aspect_tunneling_unavailable">Tidak tersedia selama pemutaran melalui tunnel</string>
     <string name="player_aspect_mode_slight_zoom">Zoom Sedikit</string>
     <string name="player_aspect_mode_cinema_zoom">Zoom Sinema</string>
 
@@ -1300,6 +1379,12 @@
     <string name="audio_mix_range">Rentang: %1$d dB hingga %2$d dB</string>
     <string name="audio_mix_range_saved">Rentang: %1$d dB hingga %2$d dB (disimpan)</string>
     <string name="audio_mix_unavailable">Amplifikasi tidak tersedia di perangkat ini</string>
+    <string name="audio_center_mix_label">Downmix: Tingkat Center Mix</string>
+    <string name="audio_center_mix_value_db">%1$d dB</string>
+    <string name="audio_center_mix_help">Tingkat Center Mix dalam dB relatif terhadap metadata atau default (-3 dB)</string>
+    <string name="audio_center_mix_unavailable">Center Mix hanya tersedia saat downmix FFmpeg aktif.</string>
+    <string name="audio_maintain_original_audio_on_downmix_title">Pertahankan audio asli saat downmix</string>
+    <string name="audio_maintain_original_audio_on_downmix_subtitle">Jika dinonaktifkan, normalisasi downmix dapat menurunkan volume keseluruhan.</string>
 
     <!-- SubtitleDialog / SubtitleStyleSidePanel -->
     <string name="subtitle_dialog_title">Subtitle</string>
