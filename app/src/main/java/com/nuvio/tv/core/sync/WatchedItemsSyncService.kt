@@ -75,7 +75,20 @@ class WatchedItemsSyncService @Inject constructor(
         try {
             val items = watchedItemsPreferences.getAllItems()
             Log.d(TAG, "pushToRemote: ${items.size} watched items to push")
+            pushItemsToRemote(items, updateLastSuccessfulPush = true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to push watched items to remote", e)
+            Result.failure(e)
+        }
+    }
 
+    suspend fun pushItemsToRemote(
+        items: Collection<WatchedItem>,
+        updateLastSuccessfulPush: Boolean = false
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            if (items.isEmpty()) return@withContext Result.success(Unit)
+            Log.d(TAG, "pushItemsToRemote: ${items.size} watched items to push")
             val profileId = profileManager.activeProfileId.value
             val params = buildJsonObject {
                 put("p_items", buildJsonArray {
@@ -99,10 +112,12 @@ class WatchedItemsSyncService @Inject constructor(
             }
 
             Log.d(TAG, "Pushed ${items.size} watched items to remote for profile $profileId")
-            markPushSucceeded()
+            if (updateLastSuccessfulPush) {
+                markPushSucceeded()
+            }
             Result.success(Unit)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to push watched items to remote", e)
+            Log.e(TAG, "Failed to push watched item batch to remote", e)
             Result.failure(e)
         }
     }

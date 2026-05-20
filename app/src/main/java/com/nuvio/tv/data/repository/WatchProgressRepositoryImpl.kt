@@ -87,6 +87,8 @@ class WatchProgressRepositoryImpl @Inject constructor(
     private val hydratedProgressIds = mutableSetOf<String>()
     private var syncJob: Job? = null
     private var watchedItemsSyncJob: Job? = null
+    private val pendingWatchedItemsLock = Any()
+    private val pendingWatchedItems = linkedMapOf<WatchedItemSyncKey, WatchedItem>()
     var isSyncingFromRemote = false
     var hasCompletedInitialPull = false
     var hasCompletedInitialWatchedItemsPull = false
@@ -111,14 +113,21 @@ class WatchProgressRepositoryImpl @Inject constructor(
                 // Capture profile ID at the start of the sync cycle to prevent
                 // race conditions if the user switches profiles mid-operation.
                 val profileId = profileManager.activeProfileId.value
-                watchProgressSyncService.pullFromRemote(profileId)
+                val sinceLastWatched = watchProgressPreferences.getAllRawEntries(profileId)
+                    .values
+                    .maxOfOrNull { progress -> progress.lastWatched }
+                watchProgressSyncService.pullFromRemote(
+                    profileId = profileId,
+                    sinceLastWatched = sinceLastWatched
+                )
                     .onSuccess { entries ->
                         val hadUnsynced = watchProgressPreferences.mergeRemoteEntries(
                             entries.toMap(),
                             lastSuccessfulPushMs = watchProgressSyncService.lastSuccessfulPushMs,
-                            profileId = profileId
+                            profileId = profileId,
+                            removeMissingRemoteEntries = false
                         )
-                        Log.d(TAG, "Periodic Nuvio Sync pull: merged ${entries.size} entries for profile $profileId")
+                        Log.d(TAG, "Periodic Nuvio Sync pull: merged ${entries.size} entries for profile $profileId sinceLastWatched=$sinceLastWatched")
                         if (hadUnsynced) {
                             watchProgressSyncService.pushToRemote(profileId)
                         }
@@ -144,15 +153,27 @@ class WatchProgressRepositoryImpl @Inject constructor(
         }
     }
 
-    private fun triggerWatchedItemsSync() {
+    private fun triggerWatchedItemsSync(items: Collection<WatchedItem>) {
+        if (items.isEmpty()) return
         if (isSyncingFromRemote) return
         if (!hasCompletedInitialWatchedItemsPull) return
         if (!authManager.isAuthenticated) return
+        synchronized(pendingWatchedItemsLock) {
+            items.forEach { item ->
+                pendingWatchedItems[item.syncKey()] = item
+            }
+        }
         watchedItemsSyncJob?.cancel()
         watchedItemsSyncJob = syncScope.launch {
             delay(2000)
+            val batch = synchronized(pendingWatchedItemsLock) {
+                pendingWatchedItems.values.toList().also {
+                    pendingWatchedItems.clear()
+                }
+            }
+            if (batch.isEmpty()) return@launch
             withContext(NonCancellable) {
-                watchedItemsSyncService.pushToRemote()
+                watchedItemsSyncService.pushItemsToRemote(batch)
             }
         }
     }
@@ -689,16 +710,11 @@ class WatchProgressRepositoryImpl @Inject constructor(
             traktProgressService.applyOptimisticProgress(progress)
             watchProgressPreferences.saveProgress(progress)
             if (progress.isCompleted()) {
-                watchedItemsPreferences.markAsWatched(
-                    WatchedItem(
-                        contentId = progress.contentId,
-                        contentType = progress.contentType,
-                        title = progress.name,
-                        season = progress.season,
-                        episode = progress.episode,
-                        watchedAt = System.currentTimeMillis()
-                    )
-                )
+                val watchedItem = progress.toWatchedItem()
+                watchedItemsPreferences.markAsWatched(watchedItem)
+                if (syncRemote && authManager.isAuthenticated) {
+                    triggerWatchedItemsSync(listOf(watchedItem))
+                }
             }
             // Mirror to Nuvio Sync so data is ready if user switches source later.
             if (syncRemote && authManager.isAuthenticated) {
@@ -707,9 +723,6 @@ class WatchProgressRepositoryImpl @Inject constructor(
                         .onFailure { error ->
                             Log.w(TAG, "Failed single progress push (Trakt mirror); falling back to full sync next cycle", error)
                         }
-                }
-                if (progress.isCompleted()) {
-                    triggerWatchedItemsSync()
                 }
             }
             return
@@ -726,17 +739,11 @@ class WatchProgressRepositoryImpl @Inject constructor(
         }
 
         if (progress.isCompleted()) {
-            watchedItemsPreferences.markAsWatched(
-                WatchedItem(
-                    contentId = progress.contentId,
-                    contentType = progress.contentType,
-                    title = progress.name,
-                    season = progress.season,
-                    episode = progress.episode,
-                    watchedAt = System.currentTimeMillis()
-                )
-            )
-            triggerWatchedItemsSync()
+            val watchedItem = progress.toWatchedItem()
+            watchedItemsPreferences.markAsWatched(watchedItem)
+            if (syncRemote && authManager.isAuthenticated) {
+                triggerWatchedItemsSync(listOf(watchedItem))
+            }
         }
     }
 
@@ -762,24 +769,14 @@ class WatchProgressRepositoryImpl @Inject constructor(
             triggerRemoteSync()
         }
 
-        var completedSaved = false
-        progressList
+        val completedWatchedItems = progressList
             .filter { it.isCompleted() }
-            .forEach { progress ->
-                watchedItemsPreferences.markAsWatched(
-                    WatchedItem(
-                        contentId = progress.contentId,
-                        contentType = progress.contentType,
-                        title = progress.name,
-                        season = progress.season,
-                        episode = progress.episode,
-                        watchedAt = System.currentTimeMillis()
-                    )
-                )
-                completedSaved = true
+            .map { progress -> progress.toWatchedItem() }
+        if (completedWatchedItems.isNotEmpty()) {
+            watchedItemsPreferences.markAsWatchedBatch(completedWatchedItems)
+            if (syncRemote && authManager.isAuthenticated) {
+                triggerWatchedItemsSync(completedWatchedItems)
             }
-        if (completedSaved) {
-            triggerWatchedItemsSync()
         }
     }
 
@@ -836,7 +833,6 @@ class WatchProgressRepositoryImpl @Inject constructor(
                 }
         }
         triggerRemoteSync()
-        triggerWatchedItemsSync()
     }
 
     override suspend fun removeFromHistoryBatch(
@@ -881,7 +877,6 @@ class WatchProgressRepositoryImpl @Inject constructor(
                     }
             }
             triggerRemoteSync()
-            triggerWatchedItemsSync()
         }
     }
 
@@ -906,16 +901,8 @@ class WatchProgressRepositoryImpl @Inject constructor(
             traktProgressService.applyOptimisticProgress(completed)
             // Save to local stores first so Nuvio Sync has the data even if Trakt fails.
             watchProgressPreferences.markAsCompleted(progress)
-            watchedItemsPreferences.markAsWatched(
-                WatchedItem(
-                    contentId = progress.contentId,
-                    contentType = progress.contentType,
-                    title = progress.name,
-                    season = progress.season,
-                    episode = progress.episode,
-                    watchedAt = now
-                )
-            )
+            val watchedItem = progress.toWatchedItem(watchedAt = now)
+            watchedItemsPreferences.markAsWatched(watchedItem)
             runCatching {
                 traktProgressService.markAsWatched(
                     progress = completed,
@@ -932,20 +919,12 @@ class WatchProgressRepositoryImpl @Inject constructor(
             }
             // Mirror to Nuvio Sync so data is ready if user switches source later.
             triggerRemoteSync()
-            triggerWatchedItemsSync()
+            triggerWatchedItemsSync(listOf(watchedItem))
             return
         }
         watchProgressPreferences.markAsCompleted(progress)
-        watchedItemsPreferences.markAsWatched(
-            WatchedItem(
-                contentId = progress.contentId,
-                contentType = progress.contentType,
-                title = progress.name,
-                season = progress.season,
-                episode = progress.episode,
-                watchedAt = System.currentTimeMillis()
-            )
-        )
+        val watchedItem = progress.toWatchedItem()
+        watchedItemsPreferences.markAsWatched(watchedItem)
         if (hasEffectiveTraktConnection) {
             val now = System.currentTimeMillis()
             val duration = progress.duration.takeIf { it > 0L } ?: 1L
@@ -967,7 +946,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             }
         }
         triggerRemoteSync()
-        triggerWatchedItemsSync()
+        triggerWatchedItemsSync(listOf(watchedItem))
     }
 
     override suspend fun markAsCompletedBatch(progressList: List<WatchProgress>) {
@@ -1008,35 +987,17 @@ class WatchProgressRepositoryImpl @Inject constructor(
             }
             // Also save locally for offline access
             watchProgressPreferences.markAsCompletedBatch(progressList)
-            val watchedItems = progressList.map { progress ->
-                WatchedItem(
-                    contentId = progress.contentId,
-                    contentType = progress.contentType,
-                    title = progress.name,
-                    season = progress.season,
-                    episode = progress.episode,
-                    watchedAt = now
-                )
-            }
+            val watchedItems = progressList.map { progress -> progress.toWatchedItem(watchedAt = now) }
             watchedItemsPreferences.markAsWatchedBatch(watchedItems)
             // Mirror to Nuvio Sync so data is ready if user switches source later.
             triggerRemoteSync()
-            triggerWatchedItemsSync()
+            triggerWatchedItemsSync(watchedItems)
             return
         }
 
         // Nuvio sync is primary — batch local save first
         watchProgressPreferences.markAsCompletedBatch(progressList)
-        val watchedItems = progressList.map { progress ->
-            WatchedItem(
-                contentId = progress.contentId,
-                contentType = progress.contentType,
-                title = progress.name,
-                season = progress.season,
-                episode = progress.episode,
-                watchedAt = now
-            )
-        }
+        val watchedItems = progressList.map { progress -> progress.toWatchedItem(watchedAt = now) }
         watchedItemsPreferences.markAsWatchedBatch(watchedItems)
 
         // Mirror to Trakt if connected (same as single markAsCompleted)
@@ -1050,8 +1011,27 @@ class WatchProgressRepositoryImpl @Inject constructor(
         }
 
         triggerRemoteSync()
-        triggerWatchedItemsSync()
+        triggerWatchedItemsSync(watchedItems)
     }
+
+    private fun WatchProgress.toWatchedItem(watchedAt: Long = System.currentTimeMillis()): WatchedItem =
+        WatchedItem(
+            contentId = contentId,
+            contentType = contentType,
+            title = name,
+            season = season,
+            episode = episode,
+            watchedAt = watchedAt
+        )
+
+    private fun WatchedItem.syncKey(): WatchedItemSyncKey =
+        WatchedItemSyncKey(contentId, season, episode)
+
+    private data class WatchedItemSyncKey(
+        val contentId: String,
+        val season: Int?,
+        val episode: Int?
+    )
 
     override suspend fun clearAll() {
         if (shouldUseTraktProgress()) {
