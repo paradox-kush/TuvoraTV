@@ -12,10 +12,14 @@ import com.nuvio.tv.core.profile.ProfileManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import javax.inject.Inject
@@ -355,6 +359,7 @@ enum class LibassRenderType {
     OVERLAY_OPEN_GL    // Overlay OpenGL rendering (supports HDR, recommended)
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
 class PlayerSettingsDataStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
@@ -557,7 +562,8 @@ class PlayerSettingsDataStore @Inject constructor(
      * Flow of current player settings
      */
     val playerSettings: Flow<PlayerSettings> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { prefs ->
+        factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
+    }.map { prefs ->
             PlayerSettings(
                 playerPreference = prefs[playerPreferenceKey]?.let {
                     runCatching { PlayerPreference.valueOf(it) }.getOrDefault(PlayerPreference.INTERNAL)
@@ -699,26 +705,25 @@ class PlayerSettingsDataStore @Inject constructor(
                 )
             )
         }
-    }
 
     /**
      * Flow for just the libass toggle
      */
     val useLibass: Flow<Boolean> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { prefs ->
-            prefs[useLibassKey] ?: false
-        }
+        factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
+    }.map { prefs ->
+        prefs[useLibassKey] ?: false
     }
 
     /**
      * Flow for the libass render type
      */
     val libassRenderType: Flow<LibassRenderType> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { prefs ->
-            prefs[libassRenderTypeKey]?.let {
-                try { LibassRenderType.valueOf(it) } catch (e: Exception) { LibassRenderType.OVERLAY_OPEN_GL }
-            } ?: LibassRenderType.OVERLAY_OPEN_GL
-        }
+        factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
+    }.map { prefs ->
+        prefs[libassRenderTypeKey]?.let {
+            try { LibassRenderType.valueOf(it) } catch (e: Exception) { LibassRenderType.OVERLAY_OPEN_GL }
+        } ?: LibassRenderType.OVERLAY_OPEN_GL
     }
 
     // Player preference setter
