@@ -600,6 +600,8 @@
     <string name="autoplay_next_episode_sub">Démarrer automatiquement l’épisode suivant quand l’invite apparaît.</string>
     <string name="autoplay_prefer_binge_group">Préférer le groupe Binge (épisode suivant)</string>
     <string name="autoplay_prefer_binge_group_sub">Essayer d’abord le même profil de source (même addon/groupe de qualité) avant les règles normales de lecture automatique.</string>
+    <string name="autoplay_reuse_binge_group">Réutiliser le groupe Binge</string>
+    <string name="autoplay_reuse_binge_group_sub">Mémoriser et réutiliser le dernier groupe Binge entre les sessions (Continuer à regarder, Détails, etc.).</string>
     <string name="autoplay_threshold_pct">Pourcentage</string>
     <string name="autoplay_threshold_min">Minutes avant la fin</string>
     <string name="autoplay_threshold_mode">Mode du seuil de l’épisode suivant</string>
@@ -2376,6 +2378,7 @@
     <string name="debrid_prepare_instant_playback">Préparer les liens</string>
     <string name="debrid_prepare_instant_playback_description">Résoudre les premières sources avant le début de la lecture.</string>
     <string name="debrid_prepare_stream_count">Sources à préparer</string>
+    <string name="debrid_prepare_stream_count_warning">Utilise une valeur la plus faible possible. Les services Debrid peuvent limiter le nombre de liens résolus sur une période donnée. Ouvrir un film ou un épisode peut compter pour ces limites même sans appuyer sur Lecture, car les liens sont préparés à l’avance.</string>
     <string name="debrid_prepare_count_one">1 source</string>
     <string name="debrid_prepare_count_many">%1$d sources</string>
     <string name="debrid_stream_max_results_title">Résultats max</string>
