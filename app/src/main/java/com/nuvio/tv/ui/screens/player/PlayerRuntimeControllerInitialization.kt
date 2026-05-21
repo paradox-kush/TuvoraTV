@@ -513,6 +513,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                             saveWatchProgress()
                             resetPostPlayStateAfterPlaybackEnded()
                         }
+
+                        refreshStableProgressResetGate()
                     }
 
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -536,9 +538,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                             if (playbackState != Player.STATE_BUFFERING) {
                                 emitStopScrobbleForCurrentProgress()
                             }
-                            
+
                             saveWatchProgress()
                         }
+                        refreshStableProgressResetGate()
                     }
 
                     override fun onTracksChanged(tracks: Tracks) {
@@ -554,7 +557,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                             playWhenReady = true
                             play()
                         }
-                        resetErrorRetryState()
+                        refreshStableProgressResetGate()
                         // Restore speed after PCM fallback: audio sink is already
                         // configured in PCM mode and won't revert to passthrough.
                         if (hasTriedAudioPcmFallback) {
@@ -577,6 +580,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         if (isReleasingPlayer && error.errorCode == PlaybackException.ERROR_CODE_TIMEOUT) {
                             return
                         }
+                        cancelStableProgressReset()
                         val detailedError = error.toDisplayMessage(context)
 
                         // If the codec crashed while the app is in the background (e.g. another
