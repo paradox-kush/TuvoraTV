@@ -392,13 +392,17 @@ internal fun PlayerRuntimeController.buildScrobbleItem(): TraktScrobbleItem? {
 
 internal fun PlayerRuntimeController.emitScrobbleStart() {
     if (isShortPlaceholderStream()) return
-    val item = currentScrobbleItem ?: buildScrobbleItem().also { currentScrobbleItem = it }
-    if (item == null) return
     if (hasRequestedScrobbleStartForCurrentItem) return
 
     hasRequestedScrobbleStartForCurrentItem = true
     val requestGeneration = ++scrobbleStartRequestGeneration
     scope.launch {
+        // Wait for the episode mapping to finish (with its own timeout) so that
+        // the scrobble start is sent with the correct season/episode number.
+        traktMappingJob?.join()
+        refreshScrobbleItem()
+        val item = currentScrobbleItem ?: return@launch
+        if (requestGeneration != scrobbleStartRequestGeneration || !hasRequestedScrobbleStartForCurrentItem) return@launch
         val progressPercent = currentPlaybackProgressPercent()
         traktScrobbleService.scrobbleStart(
             item = item,
