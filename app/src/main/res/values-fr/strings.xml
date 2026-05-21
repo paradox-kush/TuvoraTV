@@ -2336,7 +2336,7 @@
 
     <!-- Audio&#160;: downmix FFmpeg -->
     <string name="audio_enable_downmix_title">Activer le downmix</string>
-    <string name="audio_enable_downmix_subtitle">Utilise le chemin de downmix FFmpeg. Désactivé, l’audio suit le chemin Android/appareil précédent.</string>
+    <string name="audio_enable_downmix_subtitle">Utilise le chemin de downmix FFmpeg. Quand il est désactivé, l’audio suit le chemin Android/appareil précédent.</string>
     <string name="audio_number_of_channels">Nombre de canaux</string>
     <string name="audio_number_of_channels_desc">Définit la disposition des haut-parleurs utilisée pour le downmix FFmpeg.</string>
     <string name="audio_center_mix_label">Downmix&#160;: niveau du canal central</string>
@@ -2344,7 +2344,7 @@
     <string name="audio_center_mix_help">Niveau du canal central en dB par rapport aux métadonnées ou à la valeur par défaut (-3 dB)</string>
     <string name="audio_center_mix_unavailable">Le mixage du canal central n’est disponible que lorsque le downmix FFmpeg est actif.</string>
     <string name="audio_maintain_original_audio_on_downmix_title">Conserver l’audio d’origine lors du downmix</string>
-    <string name="audio_maintain_original_audio_on_downmix_subtitle">Désactivé, la normalisation du downmix peut réduire le volume global.</string>
+    <string name="audio_maintain_original_audio_on_downmix_subtitle">Quand il est désactivé, la normalisation du downmix peut réduire le volume global.</string>
 
     <!-- Debrid&#160;: intégration de comptes cloud (expérimental) -->
     <string name="settings_debrid_subtitle">Sources de comptes cloud expérimentales</string>
@@ -2378,7 +2378,7 @@
     <string name="debrid_prepare_instant_playback">Préparer les liens</string>
     <string name="debrid_prepare_instant_playback_description">Résoudre les premières sources avant le début de la lecture.</string>
     <string name="debrid_prepare_stream_count">Sources à préparer</string>
-    <string name="debrid_prepare_stream_count_warning">Utilise une valeur la plus faible possible. Les services Debrid peuvent limiter le nombre de liens résolus sur une période donnée. Ouvrir un film ou un épisode peut compter pour ces limites même sans appuyer sur Lecture, car les liens sont préparés à l’avance.</string>
+    <string name="debrid_prepare_stream_count_warning">Utilise une valeur plus faible si possible. Les services Debrid peuvent limiter le nombre de liens résolus sur une période donnée. Ouvrir un film ou un épisode peut compter dans ces limites même sans appuyer sur Lecture, car les liens sont préparés à l’avance.</string>
     <string name="debrid_prepare_count_one">1 source</string>
     <string name="debrid_prepare_count_many">%1$d sources</string>
     <string name="debrid_stream_max_results_title">Résultats max</string>
