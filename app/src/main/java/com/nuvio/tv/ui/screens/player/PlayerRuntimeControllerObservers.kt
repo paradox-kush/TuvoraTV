@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 internal data class SubtitleFetchRequest(
@@ -500,7 +501,9 @@ internal fun PlayerRuntimeController.fetchSkipIntervals(id: String?, season: Int
         if (skipIntroFetchedKey == key) return
         skipIntroFetchedKey = key
         scope.launch {
-            skipIntervals = skipIntroRepository.getSkipIntervalsForMal(malId, malEpisode)
+            skipIntervals = withTimeoutOrNull(15_000L) {
+                skipIntroRepository.getSkipIntervalsForMal(malId, malEpisode)
+            } ?: emptyList()
         }
         return
     }
@@ -514,7 +517,9 @@ internal fun PlayerRuntimeController.fetchSkipIntervals(id: String?, season: Int
         if (skipIntroFetchedKey == key) return
         skipIntroFetchedKey = key
         scope.launch {
-            skipIntervals = skipIntroRepository.getSkipIntervalsForKitsu(kitsuId, kitsuEpisode)
+            skipIntervals = withTimeoutOrNull(15_000L) {
+                skipIntroRepository.getSkipIntervalsForKitsu(kitsuId, kitsuEpisode)
+            } ?: emptyList()
         }
         return
     }
@@ -527,8 +532,9 @@ internal fun PlayerRuntimeController.fetchSkipIntervals(id: String?, season: Int
     skipIntroFetchedKey = key
 
     scope.launch {
-        val intervals = skipIntroRepository.getSkipIntervals(imdbId, season, episode)
-        skipIntervals = intervals
+        skipIntervals = withTimeoutOrNull(15_000L) {
+            skipIntroRepository.getSkipIntervals(imdbId, season, episode)
+        } ?: emptyList()
     }
 }
 

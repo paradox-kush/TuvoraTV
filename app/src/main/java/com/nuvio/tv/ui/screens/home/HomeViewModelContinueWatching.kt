@@ -475,8 +475,11 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                     // Drop if the series no longer has any watched-episode seeds
                     // (e.g. user unmarked all episodes as watched).
                     if (snapshot.hasLoadedRemoteProgress && cached.contentId !in activeSeedContentIds) return@mapNotNull null
-                    // Skip fully-watched shows (badge confirms all episodes seen)
-                    if (cached.contentId in fullyWatchedSeriesIds.fullyWatchedSeriesIds.value) return@mapNotNull null
+                    // Skip fully-watched shows unless the cached item itself is an
+                    // unaired upcoming episode (new season in 7-day window).
+                    if (cached.contentId in fullyWatchedSeriesIds.fullyWatchedSeriesIds.value) {
+                        if (cached.hasAired) return@mapNotNull null
+                    }
                     val currentSeed = currentSeedByContentId[cached.contentId]
                     if (currentSeed != null && cached.seedSeason != null && cached.seedEpisode != null) {
                         val (curSeason, curEpisode) = currentSeed
@@ -1408,8 +1411,13 @@ private suspend fun HomeViewModel.buildLightweightNextUpItems(
                 }
                 val fullyWatched = fullyWatchedSeriesIds.fullyWatchedSeriesIds.value
                 if (progress.contentId in fullyWatched) {
-                    logNextUpDecision("drop contentId=${progress.contentId} name=${progress.name} reason=fully-watched-badge")
-                    return@withPermit
+                    // buildNextUpItem succeeded, meaning there IS a next episode
+                    // (possibly unaired in 7-day window). Allow it through — the
+                    // badge stays on the poster but the item appears in CW.
+                    if (nextUp.info.hasAired) {
+                        logNextUpDecision("drop contentId=${progress.contentId} name=${progress.name} reason=fully-watched-badge")
+                        return@withPermit
+                    }
                 }
                 val shouldPublish: Boolean
                 val partialItems = mergeMutex.withLock {

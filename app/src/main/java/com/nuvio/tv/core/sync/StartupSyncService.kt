@@ -13,6 +13,7 @@ import com.nuvio.tv.data.repository.AddonRepositoryImpl
 import com.nuvio.tv.data.repository.LibraryRepositoryImpl
 import com.nuvio.tv.data.repository.WatchProgressRepositoryImpl
 import com.nuvio.tv.domain.model.AuthState
+import com.nuvio.tv.domain.model.LibrarySourceMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +46,7 @@ class StartupSyncService @Inject constructor(
     private val watchProgressRepository: WatchProgressRepositoryImpl,
     private val libraryRepository: LibraryRepositoryImpl,
     private val traktAuthDataStore: TraktAuthDataStore,
+    private val traktSettingsDataStore: com.nuvio.tv.data.local.TraktSettingsDataStore,
     private val watchProgressPreferences: WatchProgressPreferences,
     private val libraryPreferences: LibraryPreferences,
     private val watchedItemsPreferences: WatchedItemsPreferences,
@@ -237,7 +239,32 @@ class StartupSyncService @Inject constructor(
 
             // Run independent syncs in parallel to reduce total startup time.
             // Plugins, addons, collections, and home catalog settings don't depend on each other.
+            // Library pull is included here because it's lightweight and critical for UX —
+            // users see an empty library screen until it completes.
             coroutineScope {
+                val libraryJob = async {
+                    val librarySource = traktSettingsDataStore.librarySourceMode.first()
+                    val isTraktLibrary = librarySource == LibrarySourceMode.TRAKT &&
+                        traktAuthDataStore.isEffectivelyAuthenticated.first()
+                    if (!isTraktLibrary) {
+                        libraryRepository.isSyncingFromRemote = true
+                        try {
+                            val remoteLibraryItems = librarySyncService.pullFromRemote().getOrElse { throw it }
+                            Log.d(TAG, "Pulled ${remoteLibraryItems.size} library items from remote")
+                            libraryPreferences.mergeRemoteItems(remoteLibraryItems)
+                            libraryRepository.hasCompletedInitialPull = true
+                            Log.d(TAG, "Reconciled local library with ${remoteLibraryItems.size} remote items")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to pull library, continuing with other syncs", e)
+                            libraryRepository.hasCompletedInitialPull = true
+                        } finally {
+                            libraryRepository.isSyncingFromRemote = false
+                        }
+                    } else {
+                        libraryRepository.hasCompletedInitialPull = true
+                    }
+                }
+
                 val pluginJob = async {
                     pluginManager.isSyncingFromRemote = true
                     try {
@@ -303,6 +330,7 @@ class StartupSyncService @Inject constructor(
                 addonJob.await()
                 collectionJob.await()
                 homeCatalogJob.await()
+                libraryJob.await()
             }
 
             val isTraktConnected = traktAuthDataStore.isEffectivelyAuthenticated.first()
@@ -314,22 +342,6 @@ class StartupSyncService @Inject constructor(
                 "Watch progress sync: isTraktConnected=$isTraktConnected shouldUseSupabaseWatchProgressSync=$shouldUseSupabaseWatchProgressSync"
             )
             if (!isTraktConnected) {
-                // Pull library and watched items first — these are lightweight and critical.
-                // Watch progress is pulled last because the table is large and may time out;
-                // a failure there must not block the other syncs.
-
-                libraryRepository.isSyncingFromRemote = true
-                try {
-                    val remoteLibraryItems = librarySyncService.pullFromRemote().getOrElse { throw it }
-                    Log.d(TAG, "Pulled ${remoteLibraryItems.size} library items from remote")
-                    libraryPreferences.mergeRemoteItems(remoteLibraryItems)
-                    libraryRepository.hasCompletedInitialPull = true
-                    Log.d(TAG, "Reconciled local library with ${remoteLibraryItems.size} remote items")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to pull library, continuing with other syncs", e)
-                } finally {
-                    libraryRepository.isSyncingFromRemote = false
-                }
 
                 try {
                     val remoteWatchedItems = watchedItemsSyncService.pullFromRemote().getOrElse { throw it }

@@ -1360,7 +1360,13 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
 
             val timeoutMs = timeoutSeconds * 1_000L
             if (PlayerSettings.isBoundedTimeout(timeoutSeconds)) {
-                delay(timeoutMs)
+                // Wait for timeout, but break early if an early binge group match is found.
+                val pollIntervalMs = 200L
+                var waited = 0L
+                while (waited < timeoutMs && !autoSelectTriggered) {
+                    delay(pollIntervalMs)
+                    waited += pollIntervalMs
+                }
                 timeoutElapsed = true
                 if (!autoSelectTriggered && lastSuccessData != null) {
                     val candidate = trySelectStream(lastSuccessData!!)
