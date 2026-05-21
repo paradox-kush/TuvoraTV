@@ -146,16 +146,16 @@
     <string name="cw_new_episode">New Episode</string>
     <string name="cw_new_season">New Season</string>
     <string name="cw_resume">Resume</string>
-    <string name="cw_percent_watched">%1$d%% watched</string>
+    <string name="cw_percent_watched">%1$d%% Watched</string>
     <string name="cw_hours_min_left">%1$dh %2$dm left</string>
-    <string name="cw_min_left">%1$dm left</string>
-    <string name="cw_almost_done">Almost done</string>
+    <string name="cw_min_left">%1$dm Left</string>
+    <string name="cw_almost_done">Almost Done</string>
     <string name="cw_airs_date">Airs %1$s</string>
-    <string name="cw_airs_today">Airs today</string>
-    <string name="cw_airs_tomorrow">Airs tomorrow</string>
+    <string name="cw_airs_today">Airs Today</string>
+    <string name="cw_airs_tomorrow">Airs Tomorrow</string>
     <plurals name="cw_airs_in_days">
-        <item quantity="one">Airs in %d day</item>
-        <item quantity="other">Airs in %d days</item>
+        <item quantity="one">Airs in %d Day</item>
+        <item quantity="other">Airs in %d Days</item>
     </plurals>
     <string name="cw_action_go_to_details">Go to details</string>
     <string name="cw_action_start_from_beginning">Start from beginning</string>
