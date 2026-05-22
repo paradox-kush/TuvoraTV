@@ -326,38 +326,65 @@ class MainActivity : ComponentActivity() {
             }
 
             val mainUiPrefsFlow = remember(themeDataStore, layoutPreferenceDataStore, experienceModeDataStore) {
-                combine(
+                // Group flows into two batches to reduce intermediate flow allocations.
+                // Each batch uses a single combine() instead of chaining .combine() calls,
+                // which avoids N intermediate flow objects and redundant emissions on startup.
+                val themeAndExperienceFlow = combine(
                     themeDataStore.selectedTheme,
                     themeDataStore.selectedFont,
-                    layoutPreferenceDataStore.hasChosenLayout,
-                    layoutPreferenceDataStore.sidebarCollapsedByDefault,
-                    layoutPreferenceDataStore.modernSidebarEnabled,
-                ) { theme, font, hasChosenLayout, sidebarCollapsed, modernSidebarEnabled ->
+                    themeDataStore.amoledMode,
+                    themeDataStore.amoledSurfacesMode,
+                    experienceModeDataStore.mode,
+                ) { theme, font, amoledMode, amoledSurfacesMode, experienceMode ->
                     MainUiPrefs(
                         theme = theme,
                         font = font,
+                        amoledMode = amoledMode,
+                        amoledSurfacesMode = amoledSurfacesMode,
+                        experienceMode = experienceMode,
+                        experienceModeLoaded = true,
+                    )
+                }
+                val layoutAndFeaturesFlow = combine(
+                    layoutPreferenceDataStore.hasChosenLayout,
+                    layoutPreferenceDataStore.sidebarCollapsedByDefault,
+                    layoutPreferenceDataStore.modernSidebarEnabled,
+                    layoutPreferenceDataStore.modernSidebarBlurEnabled,
+                    layoutPreferenceDataStore.discoverLocation,
+                ) { hasChosenLayout, sidebarCollapsed, modernSidebarEnabled, modernSidebarBlurPref, discoverLocation ->
+                    MainUiPrefs(
                         hasChosenLayout = hasChosenLayout,
                         sidebarCollapsed = sidebarCollapsed,
                         modernSidebarEnabled = modernSidebarEnabled,
+                        modernSidebarBlurPref = modernSidebarBlurPref,
+                        discoverLocation = discoverLocation,
                     )
-                }.combine(experienceModeDataStore.mode) { prefs, experienceMode ->
-                    prefs.copy(experienceMode = experienceMode, experienceModeLoaded = true)
-                }.combine(experienceModeDataStore.addonSetupSkipped) { prefs, addonSetupSkipped ->
-                    prefs.copy(addonSetupSkipped = addonSetupSkipped)
-                }.combine(themeDataStore.amoledMode) { prefs, amoledMode ->
-                    prefs.copy(amoledMode = amoledMode)
-                }.combine(themeDataStore.amoledSurfacesMode) { prefs, amoledSurfacesMode ->
-                    prefs.copy(amoledSurfacesMode = amoledSurfacesMode)
-                }.combine(layoutPreferenceDataStore.modernSidebarBlurEnabled) { prefs, modernSidebarBlurPref ->
-                    prefs.copy(modernSidebarBlurPref = modernSidebarBlurPref)
-                }.combine(layoutPreferenceDataStore.discoverLocation) { prefs, discoverLocation ->
-                    prefs.copy(discoverLocation = discoverLocation)
-                }.combine(layoutPreferenceDataStore.smoothBringIntoViewEnabled) { prefs, smoothBringIntoViewEnabled ->
-                    prefs.copy(smoothBringIntoViewEnabled = smoothBringIntoViewEnabled)
-                }.combine(layoutPreferenceDataStore.fastHorizontalNavigationEnabled) { prefs, fastHorizontalNavigationEnabled ->
-                    prefs.copy(fastHorizontalNavigationEnabled = fastHorizontalNavigationEnabled)
-                }.combine(layoutPreferenceDataStore.composeHighlighterEnabled) { prefs, composeHighlighterEnabled ->
-                    prefs.copy(composeHighlighterEnabled = composeHighlighterEnabled)
+                }
+                val extraFeaturesFlow = combine(
+                    experienceModeDataStore.addonSetupSkipped,
+                    layoutPreferenceDataStore.smoothBringIntoViewEnabled,
+                    layoutPreferenceDataStore.fastHorizontalNavigationEnabled,
+                    layoutPreferenceDataStore.composeHighlighterEnabled,
+                ) { addonSetupSkipped, smoothBringIntoView, fastHorizontalNav, composeHighlighter ->
+                    MainUiPrefs(
+                        addonSetupSkipped = addonSetupSkipped,
+                        smoothBringIntoViewEnabled = smoothBringIntoView,
+                        fastHorizontalNavigationEnabled = fastHorizontalNav,
+                        composeHighlighterEnabled = composeHighlighter,
+                    )
+                }
+                combine(themeAndExperienceFlow, layoutAndFeaturesFlow, extraFeaturesFlow) { themePrefs, layoutPrefs, extraPrefs ->
+                    themePrefs.copy(
+                        hasChosenLayout = layoutPrefs.hasChosenLayout,
+                        sidebarCollapsed = layoutPrefs.sidebarCollapsed,
+                        modernSidebarEnabled = layoutPrefs.modernSidebarEnabled,
+                        modernSidebarBlurPref = layoutPrefs.modernSidebarBlurPref,
+                        discoverLocation = layoutPrefs.discoverLocation,
+                        addonSetupSkipped = extraPrefs.addonSetupSkipped,
+                        smoothBringIntoViewEnabled = extraPrefs.smoothBringIntoViewEnabled,
+                        fastHorizontalNavigationEnabled = extraPrefs.fastHorizontalNavigationEnabled,
+                        composeHighlighterEnabled = extraPrefs.composeHighlighterEnabled,
+                    )
                 }
             }
             val mainUiPrefs by mainUiPrefsFlow.collectAsState(initial = MainUiPrefs(hasChosenLayout = null))

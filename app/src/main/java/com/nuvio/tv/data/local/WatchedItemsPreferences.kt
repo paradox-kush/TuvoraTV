@@ -49,7 +49,7 @@ class WatchedItemsPreferences @Inject constructor(
             raw.mapNotNull { json ->
                 runCatching { gson.fromJson(json, WatchedItem::class.java) }.getOrNull()
             }
-        }.flowOn(Dispatchers.Default)
+        }.flowOn(Dispatchers.IO) 
     }
 
     fun isWatched(contentId: String, season: Int? = null, episode: Int? = null): Flow<Boolean> {
@@ -163,9 +163,13 @@ class WatchedItemsPreferences @Inject constructor(
         }
     }
 
-    suspend fun replaceWithRemoteItems(remoteItems: List<WatchedItem>, lastSuccessfulPushMs: Long = 0L): Boolean {
+    suspend fun replaceWithRemoteItems(
+        remoteItems: List<WatchedItem>,
+        lastSuccessfulPushMs: Long = 0L,
+        profileId: Int = profileManager.activeProfileId.value
+    ): Boolean {
         var preservedLocalItems = false
-        store().edit { preferences ->
+        store(profileId).edit { preferences ->
             val current = preferences[watchedItemsKey] ?: emptySet()
             if (remoteItems.isEmpty() && current.isNotEmpty()) {
                 Log.w(TAG, "replaceWithRemoteItems: remote list empty while local has ${current.size} entries; preserving local watched items")

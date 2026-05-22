@@ -536,6 +536,9 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                         }
                     }
                     _initialCwResolved.value = true
+                    // Yield after large state update to let the UI thread process
+                    // the recomposition before we continue with heavy next-up work.
+                    kotlinx.coroutines.yield()
                     debug.recordInitialRendered(
                         count = initialItems.size,
                         elapsedMs = SystemClock.elapsedRealtime() - cycleStartMs
