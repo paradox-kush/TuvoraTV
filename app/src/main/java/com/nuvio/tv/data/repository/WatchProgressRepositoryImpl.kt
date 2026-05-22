@@ -491,7 +491,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
                                     progressPercent = 100f
                                 )
                             }
-                    }.flowOn(Dispatchers.Default)
+                    }.flowOn(Dispatchers.IO) 
                 }
             }
             .distinctUntilChanged()

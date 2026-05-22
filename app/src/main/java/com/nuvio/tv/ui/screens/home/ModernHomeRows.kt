@@ -1069,10 +1069,10 @@ private fun ModernCarouselCard(
         cardWidth
     }
     val requestWidthPx = remember(maxRequestCardWidth, density) {
-        with(density) { maxRequestCardWidth.roundToPx() }
+        with(density) { maxRequestCardWidth.roundToPx() }.coerceAtLeast(1)
     }
     val requestHeightPx = remember(cardHeight, density) {
-        with(density) { cardHeight.roundToPx() }
+        with(density) { cardHeight.roundToPx() }.coerceAtLeast(1)
     }
 
     val imageModel = remember(context, imageUrl, requestWidthPx, requestHeightPx) {
@@ -1087,10 +1087,10 @@ private fun ModernCarouselCard(
     }
     val logoHeight = cardHeight * 0.34f
     val logoHeightPx = remember(logoHeight, density) {
-        with(density) { logoHeight.roundToPx() }
+        with(density) { logoHeight.roundToPx() }.coerceAtLeast(1)
     }
     val maxLogoWidthPx = remember(maxRequestCardWidth, density) {
-        with(density) { (maxRequestCardWidth * 0.62f).roundToPx() }
+        with(density) { (maxRequestCardWidth * 0.62f).roundToPx() }.coerceAtLeast(1)
     }
 
     val logoModel = remember(context, effectiveLogoUrl, maxLogoWidthPx, logoHeightPx) {

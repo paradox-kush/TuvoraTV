@@ -390,10 +390,10 @@ fun ContinueWatchingCard(
     }
     val density = LocalDensity.current
     val requestWidthPx = remember(cardWidth, density) {
-        with(density) { cardWidth.roundToPx() }
+        with(density) { cardWidth.roundToPx() }.coerceAtLeast(1)
     }
     val requestHeightPx = remember(imageHeight, density) {
-        with(density) { imageHeight.roundToPx() }
+        with(density) { imageHeight.roundToPx() }.coerceAtLeast(1)
     }
     val shouldBlur = blurUnwatchedEpisodes && useEpisodeThumbnails && nextUp != null
     val imageRequest = remember(effectiveImageModel, requestWidthPx, requestHeightPx, shouldBlur) {

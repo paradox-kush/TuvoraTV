@@ -122,14 +122,14 @@ class WatchedItemsSyncService @Inject constructor(
         }
     }
 
-    suspend fun pullFromRemote(): Result<List<WatchedItem>> = withContext(Dispatchers.IO) {
+    suspend fun pullFromRemote(
+        profileId: Int = profileManager.activeProfileId.value
+    ): Result<List<WatchedItem>> = withContext(Dispatchers.IO) {
         try {
             if (!shouldUseSupabaseWatchProgressSync()) {
                 Log.d(TAG, "Using Trakt watch progress, skipping watched items pull")
                 return@withContext Result.success(emptyList())
             }
-
-            val profileId = profileManager.activeProfileId.value
             val allItems = mutableListOf<WatchedItem>()
             var page = 1
 

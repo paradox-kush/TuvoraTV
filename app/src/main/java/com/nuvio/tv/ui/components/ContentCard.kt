@@ -225,10 +225,10 @@ fun ContentCard(
             baseCardWidth
         }
         val requestWidthPx = remember(maxRequestCardWidth, density) {
-            with(density) { maxRequestCardWidth.roundToPx() }
+            with(density) { maxRequestCardWidth.roundToPx() }.coerceAtLeast(1)
         }
         val requestHeightPx = remember(baseCardHeight, density) {
-            with(density) { baseCardHeight.roundToPx() }
+            with(density) { baseCardHeight.roundToPx() }.coerceAtLeast(1)
         }
 
         val imageUrl = if (focusedPosterBackdropExpandEnabled && isBackdropExpanded) {

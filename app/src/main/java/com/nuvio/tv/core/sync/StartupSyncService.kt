@@ -344,11 +344,12 @@ class StartupSyncService @Inject constructor(
             if (!isTraktConnected) {
 
                 try {
-                    val remoteWatchedItems = watchedItemsSyncService.pullFromRemote().getOrElse { throw it }
+                    val remoteWatchedItems = watchedItemsSyncService.pullFromRemote(profileId).getOrElse { throw it }
                     Log.d(TAG, "Pulled ${remoteWatchedItems.size} watched items from remote")
                     val hadUnsyncedItems = watchedItemsPreferences.replaceWithRemoteItems(
                         remoteWatchedItems,
-                        lastSuccessfulPushMs = watchedItemsSyncService.lastSuccessfulPushMs
+                        lastSuccessfulPushMs = watchedItemsSyncService.lastSuccessfulPushMs,
+                        profileId = profileId
                     )
                     watchProgressRepository.hasCompletedInitialWatchedItemsPull = true
                     Log.d(TAG, "Reconciled local watched items with ${remoteWatchedItems.size} remote items")
@@ -384,11 +385,12 @@ class StartupSyncService @Inject constructor(
                 // Mark initial pull as complete so that library push operations can proceed
                 libraryRepository.hasCompletedInitialPull = true
                 try {
-                    val remoteWatchedItems = watchedItemsSyncService.pullFromRemote().getOrElse { throw it }
+                    val remoteWatchedItems = watchedItemsSyncService.pullFromRemote(profileId).getOrElse { throw it }
                     Log.d(TAG, "Pulled ${remoteWatchedItems.size} watched items from remote")
                     val hadUnsyncedItems = watchedItemsPreferences.replaceWithRemoteItems(
                         remoteWatchedItems,
-                        lastSuccessfulPushMs = watchedItemsSyncService.lastSuccessfulPushMs
+                        lastSuccessfulPushMs = watchedItemsSyncService.lastSuccessfulPushMs,
+                        profileId = profileId
                     )
                     watchProgressRepository.hasCompletedInitialWatchedItemsPull = true
                     Log.d(TAG, "Reconciled local watched items with ${remoteWatchedItems.size} remote items")
