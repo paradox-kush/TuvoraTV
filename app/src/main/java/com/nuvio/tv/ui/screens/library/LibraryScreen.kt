@@ -428,7 +428,8 @@ fun LibraryScreen(
                     EmptyScreenState(
                         title = stringResource(R.string.cloud_library_disabled_title),
                         subtitle = stringResource(R.string.cloud_library_disabled_message),
-                        icon = Icons.Default.BookmarkBorder
+                        icon = Icons.Default.BookmarkBorder,
+                        height = 260.dp
                     )
                 }
             } else if (!uiState.cloudLibrary.hasConnectedProvider) {
@@ -436,7 +437,8 @@ fun LibraryScreen(
                     EmptyScreenState(
                         title = stringResource(R.string.cloud_library_connect_title),
                         subtitle = stringResource(R.string.cloud_library_connect_message),
-                        icon = Icons.Default.BookmarkBorder
+                        icon = Icons.Default.BookmarkBorder,
+                        height = 260.dp
                     )
                 }
             } else if (uiState.visibleCloudItems.isEmpty()) {
@@ -444,12 +446,17 @@ fun LibraryScreen(
                     EmptyScreenState(
                         title = stringResource(R.string.cloud_library_empty_title),
                         subtitle = stringResource(R.string.cloud_library_empty_message),
-                        icon = Icons.Default.BookmarkBorder
+                        icon = Icons.Default.BookmarkBorder,
+                        height = 260.dp
                     )
                 }
             }
 
-            items(uiState.visibleCloudItems, key = { it.stableKey }) { item ->
+            items(
+                items = uiState.visibleCloudItems,
+                key = { it.stableKey },
+                span = { GridItemSpan(maxLineSpan) }
+            ) { item ->
                 CloudLibraryCard(
                     item = item,
                     isResolving = uiState.resolvingCloudFileKey?.startsWith(item.stableKey) == true,
@@ -674,7 +681,7 @@ private fun CloudLibraryLoadingState() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(360.dp),
+            .height(260.dp),
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -695,54 +702,80 @@ private fun CloudLibraryCard(
     isResolving: Boolean,
     onClick: () -> Unit
 ) {
+    val fileLine = cloudLibraryFileLine(item)
     Card(
         onClick = { if (!isResolving) onClick() },
         modifier = Modifier.fillMaxWidth(),
-        shape = CardDefaults.shape(RoundedCornerShape(12.dp)),
+        shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
         colors = CardDefaults.colors(
             containerColor = NuvioColors.BackgroundCard,
             focusedContainerColor = NuvioColors.FocusBackground
         ),
         border = CardDefaults.border(
-            border = Border(border = BorderStroke(1.dp, NuvioColors.Border), shape = RoundedCornerShape(12.dp)),
-            focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))
+            border = Border(border = BorderStroke(1.dp, NuvioColors.Border), shape = RoundedCornerShape(10.dp)),
+            focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(10.dp))
         ),
         scale = CardDefaults.scale(focusedScale = 1.02f)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
             Text(
                 text = item.name,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = NuvioColors.TextPrimary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                fontWeight = FontWeight.SemiBold
             )
-            Text(
-                text = cloudLibraryMetadata(item),
-                style = MaterialTheme.typography.bodySmall,
-                color = NuvioColors.TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = if (item.playableFiles.isEmpty()) {
-                    stringResource(R.string.cloud_library_no_playable_files)
-                } else {
-                    stringResource(R.string.cloud_library_playable_file_count, item.playableFiles.size)
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = if (item.playableFiles.isEmpty()) NuvioColors.TextTertiary else NuvioColors.Primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            fileLine?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioColors.TextSecondary
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = cloudLibraryMetadata(item),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NuvioColors.TextTertiary
+                )
+                Text(
+                    text = if (isResolving) {
+                        stringResource(R.string.cloud_library_opening)
+                    } else {
+                        cloudLibraryPlayableLabel(item)
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (item.playableFiles.isEmpty()) NuvioColors.TextTertiary else NuvioColors.Primary
+                )
+            }
         }
     }
 }
+
+@Composable
+private fun cloudLibraryFileLine(item: CloudLibraryItem): String? =
+    when (val count = item.playableFiles.size) {
+        0 -> stringResource(R.string.cloud_library_no_playable_files)
+        1 -> item.playableFiles.first().name.takeIf { it != item.name }
+        else -> stringResource(R.string.cloud_library_playable_file_count, count)
+    }
+
+@Composable
+private fun cloudLibraryPlayableLabel(item: CloudLibraryItem): String =
+    when (val count = item.playableFiles.size) {
+        0 -> stringResource(R.string.cloud_library_no_playable_files)
+        1 -> stringResource(R.string.cloud_library_one_playable_file)
+        else -> stringResource(R.string.cloud_library_playable_file_count, count)
+    }
 
 @Composable
 private fun cloudLibraryMetadata(item: CloudLibraryItem): String {
@@ -779,7 +812,7 @@ private fun CloudFilePickerDialog(
         onDismiss = onDismiss,
         title = stringResource(R.string.cloud_library_file_picker_title),
         subtitle = item.name,
-        width = 620.dp,
+        width = 860.dp,
         suppressFirstKeyUp = false
     ) {
         LazyColumn(
@@ -800,31 +833,24 @@ private fun CloudFilePickerDialog(
                     shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
                     scale = CardDefaults.scale(focusedScale = 1f)
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(14.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
+                        Text(
+                            text = file.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = NuvioColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        formatCloudSize(file.sizeBytes)?.let { size ->
                             Text(
-                                text = file.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = NuvioColors.TextPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = size,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = NuvioColors.TextSecondary
                             )
-                            formatCloudSize(file.sizeBytes)?.let { size ->
-                                Text(
-                                    text = size,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = NuvioColors.TextSecondary
-                                )
-                            }
                         }
                         Text(
                             text = stringResource(R.string.cloud_library_play_file),

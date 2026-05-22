@@ -777,7 +777,7 @@ class LibraryViewModel @Inject constructor(
         } else {
             providerFiltered
         }
-        val visible = typeFiltered.sortedBy { it.name.lowercase(Locale.ROOT) }
+        val visible = typeFiltered
         val providerCounts = allCloudItems
             .groupBy { it.providerId to it.providerName }
             .map { (provider, items) -> FilterOption(key = provider.first, label = provider.second, count = items.size) }
@@ -785,7 +785,7 @@ class LibraryViewModel @Inject constructor(
         val typeCounts = providerFiltered
             .groupBy { it.type }
             .map { (type, items) -> FilterOption(key = type.name, label = cloudTypeLabel(type), count = items.size) }
-            .sortedBy { it.label.lowercase(Locale.ROOT) }
+            .sortedBy { option -> CloudLibraryItemType.valueOf(option.key).ordinal }
         val validProvider = selectedCloudProviderId?.takeIf { providerId -> providerCounts.any { it.key == providerId } }
         val validType = selectedCloudType?.takeIf { type -> typeCounts.any { it.key == type.name } }
         return copy(

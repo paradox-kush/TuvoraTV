@@ -1587,6 +1587,8 @@
     <string name="cloud_library_no_files_message">This item does not expose a playable video file.</string>
     <string name="cloud_library_no_files_title">No playable files</string>
     <string name="cloud_library_no_playable_files">No playable files</string>
+    <string name="cloud_library_one_playable_file">1 playable file</string>
+    <string name="cloud_library_opening">Opening\u2026</string>
     <string name="cloud_library_play_failed">Couldn\'t play this cloud file.</string>
     <string name="cloud_library_play_file">Play file</string>
     <string name="cloud_library_playable_file_count">%1$d playable files</string>
