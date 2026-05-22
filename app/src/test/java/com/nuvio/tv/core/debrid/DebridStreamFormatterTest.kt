@@ -42,7 +42,7 @@ class DebridStreamFormatterTest {
 
         val formatted = formatter.format(stream, DebridSettings())
 
-        assertEquals("Direct TB Instant", formatted.name)
+        assertEquals("FHD TB Instant", formatted.name)
         assertTrue(formatted.description.orEmpty().contains("Ready (TB)"))
         assertTrue(formatted.description.orEmpty().contains("Movie.2026.1080p.mkv"))
     }

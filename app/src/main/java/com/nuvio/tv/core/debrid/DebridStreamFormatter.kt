@@ -1,6 +1,9 @@
 package com.nuvio.tv.core.debrid
 
 import com.nuvio.tv.domain.model.DebridSettings
+import com.nuvio.tv.domain.model.DebridStreamEncode
+import com.nuvio.tv.domain.model.DebridStreamQuality
+import com.nuvio.tv.domain.model.DebridStreamResolution
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.StreamClientResolve
 import com.nuvio.tv.domain.model.StreamClientResolveParsed
@@ -14,7 +17,7 @@ class DebridStreamFormatter @Inject constructor(
 ) {
     fun format(stream: Stream, settings: DebridSettings): Stream {
         if (!stream.isManagedDebridForFormatting()) return stream
-        val values = buildValues(stream)
+        val values = buildValues(stream, settings)
         val formattedName = engine.render(settings.streamNameTemplate, values)
             .lineSequence()
             .joinToString(" ") { it.trim() }
@@ -33,10 +36,11 @@ class DebridStreamFormatter @Inject constructor(
         )
     }
 
-    private fun buildValues(stream: Stream): Map<String, Any?> {
+    private fun buildValues(stream: Stream, settings: DebridSettings): Map<String, Any?> {
         val resolve = stream.clientResolve
         val raw = resolve?.stream?.raw
         val parsed = raw?.parsed
+        val facts = DirectDebridStreamFilter.facts(stream, settings)
         val season = resolve?.season
         val episode = resolve?.episode
         val seasons = parsed?.seasons.orEmpty()
@@ -44,7 +48,10 @@ class DebridStreamFormatter @Inject constructor(
         val visualTags = buildList {
             addAll(parsed?.hdr.orEmpty())
             parsed?.bitDepth?.takeIf { it.isNotBlank() }?.let { add(it) }
-        }
+        }.ifEmpty { facts.visualTags.labelsExcludingUnknown { it.label } }
+        val audioTags = parsed?.audio.orEmpty().ifEmpty { facts.audioTags.labelsExcludingUnknown { it.label } }
+        val audioChannels = parsed?.channels.orEmpty().ifEmpty { facts.audioChannels.labelsExcludingUnknown { it.label } }
+        val languages = parsed?.languages.orEmpty().ifEmpty { facts.languages.map { it.code }.filterNot { it == "unknown" } }
         val edition = parsed?.edition ?: buildEdition(parsed)
 
         return linkedMapOf(
@@ -57,17 +64,17 @@ class DebridStreamFormatter @Inject constructor(
             "stream.seasonEpisode" to buildSeasonEpisodeList(season, episode, seasons, episodes),
             "stream.formattedEpisodes" to formatEpisodes(episodes),
             "stream.formattedSeasons" to formatSeasons(seasons),
-            "stream.resolution" to parsed?.resolution,
+            "stream.resolution" to (parsed?.resolution ?: facts.resolution.labelUnlessUnknown()),
             "stream.library" to false,
-            "stream.quality" to parsed?.quality,
+            "stream.quality" to (parsed?.quality ?: facts.quality.labelUnlessUnknown()),
             "stream.visualTags" to visualTags,
-            "stream.audioTags" to parsed?.audio.orEmpty(),
-            "stream.audioChannels" to parsed?.channels.orEmpty(),
-            "stream.languages" to parsed?.languages.orEmpty(),
-            "stream.languageEmojis" to parsed?.languages.orEmpty().map { languageEmoji(it) },
+            "stream.audioTags" to audioTags,
+            "stream.audioChannels" to audioChannels,
+            "stream.languages" to languages,
+            "stream.languageEmojis" to languages.map { languageEmoji(it) },
             "stream.size" to (raw?.size ?: stream.behaviorHints?.videoSize ?: stream.debridCacheStatus?.cachedSize),
             "stream.folderSize" to raw?.folderSize,
-            "stream.encode" to parsed?.codec?.uppercase(),
+            "stream.encode" to (parsed?.codec?.uppercase() ?: facts.encode.labelUnlessUnknown()),
             "stream.indexer" to (raw?.indexer ?: raw?.tracker),
             "stream.network" to (parsed?.network ?: raw?.network),
             "stream.releaseGroup" to parsed?.group,
@@ -148,6 +155,18 @@ class DebridStreamFormatter @Inject constructor(
     }
 
     private fun Int.twoDigits(): String = toString().padStart(2, '0')
+
+    private fun DebridStreamResolution.labelUnlessUnknown(): String? =
+        label.takeUnless { this == DebridStreamResolution.UNKNOWN }
+
+    private fun DebridStreamQuality.labelUnlessUnknown(): String? =
+        label.takeUnless { this == DebridStreamQuality.UNKNOWN }
+
+    private fun DebridStreamEncode.labelUnlessUnknown(): String? =
+        label.takeUnless { this == DebridStreamEncode.UNKNOWN }
+
+    private fun <T> List<T>.labelsExcludingUnknown(label: (T) -> String): List<String> =
+        map(label).filterNot { it.equals("Unknown", ignoreCase = true) }
 
     private fun languageEmoji(language: String): String {
         return when (language.lowercase()) {

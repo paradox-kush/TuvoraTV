@@ -64,6 +64,9 @@ object DirectDebridStreamFilter {
             .map { it.first }
     }
 
+    fun facts(stream: Stream, settings: DebridSettings): StreamFacts =
+        streamFacts(stream, effectivePreferences(settings))
+
     private fun effectivePreferences(settings: DebridSettings): DebridStreamPreferences {
         val default = DebridStreamPreferences()
         if (settings.streamPreferences != default) return settings.streamPreferences
@@ -401,7 +404,7 @@ object DirectDebridStreamFilter {
 
     private fun Int.gigabytes(): Long = this * 1_000_000_000L
 
-    private data class StreamFacts(
+    data class StreamFacts(
         val resolution: DebridStreamResolution,
         val quality: DebridStreamQuality,
         val visualTags: List<DebridStreamVisualTag>,
