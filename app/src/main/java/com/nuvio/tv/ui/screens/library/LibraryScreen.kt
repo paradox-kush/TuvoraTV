@@ -145,7 +145,7 @@ fun LibraryScreen(
     val firstVisiblePosterKey = visibleItemKeys.firstOrNull()
     val posterCardStyle = PosterCardDefaults.Style
 
-    LaunchedEffect(viewMode) {
+    LaunchedEffect(viewMode, uiState.cloudLibrary.isEnabled, uiState.cloudLibrary.isLoaded, uiState.cloudLibrarySettingsVersion) {
         if (viewMode == LibraryViewMode.Cloud) {
             viewModel.ensureCloudLibraryLoaded()
         }

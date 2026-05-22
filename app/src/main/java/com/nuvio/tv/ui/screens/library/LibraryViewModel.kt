@@ -10,6 +10,10 @@ import com.nuvio.tv.core.cloud.CloudLibraryPlaybackInfo
 import com.nuvio.tv.core.cloud.CloudLibraryPlaybackResult
 import com.nuvio.tv.core.cloud.CloudLibraryRepository
 import com.nuvio.tv.core.cloud.CloudLibraryUiState
+import com.nuvio.tv.core.debrid.DebridProviderCapability
+import com.nuvio.tv.core.debrid.DebridProviders
+import com.nuvio.tv.core.debrid.supports
+import com.nuvio.tv.data.local.DebridSettingsDataStore
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.LibraryPreferences
 import com.nuvio.tv.data.local.TraktAuthDataStore
@@ -23,6 +27,7 @@ import com.nuvio.tv.domain.repository.LibraryRepository
 import android.content.Context
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +35,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import com.nuvio.tv.R
@@ -92,6 +99,7 @@ data class LibraryUiState(
     val selectedCloudProviderId: String? = null,
     val selectedCloudType: CloudLibraryItemType? = null,
     val resolvingCloudFileKey: String? = null,
+    val cloudLibrarySettingsVersion: Long = 0L,
     val listTabs: List<LibraryListTab> = emptyList(),
     val availableTypeTabs: List<LibraryTypeTab> = emptyList(),
     val availableSortOptions: List<LibrarySortOption> = emptyList(),
@@ -121,6 +129,7 @@ data class LibraryUiState(
 class LibraryViewModel @Inject constructor(
     private val libraryRepository: LibraryRepository,
     private val cloudLibraryRepository: CloudLibraryRepository,
+    private val debridSettingsDataStore: DebridSettingsDataStore,
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
     private val libraryPreferences: LibraryPreferences,
     private val authManager: AuthManager,
@@ -139,11 +148,13 @@ class LibraryViewModel @Inject constructor(
     val watchedSeriesIds: StateFlow<Set<String>> = watchedSeriesStateHolder.fullyWatchedSeriesIds
 
     private var messageClearJob: Job? = null
+    private var cloudRefreshJob: Job? = null
 
     init {
         posterOptions.bind(viewModelScope)
         observeLayoutPreferences()
         observeLibraryData()
+        observeCloudLibrarySettings()
         viewModelScope.launch {
             watchProgressRepository.observeWatchedMovieIds()
                 .collect { ids -> _watchedMovieIds.value = ids }
@@ -203,7 +214,7 @@ class LibraryViewModel @Inject constructor(
     fun refreshCloudLibrary() {
         val current = _uiState.value.cloudLibrary
         if (current.isRefreshing) return
-        viewModelScope.launch {
+        cloudRefreshJob = viewModelScope.launch {
             _uiState.update { state ->
                 state.copy(
                     cloudLibrary = state.cloudLibrary.copy(
@@ -219,6 +230,7 @@ class LibraryViewModel @Inject constructor(
                     state.copy(cloudLibrary = refreshed).withVisibleCloudItems()
                 }
             }.onFailure { error ->
+                if (error is CancellationException) return@launch
                 setError(error.message ?: context.getString(R.string.cloud_library_play_failed))
                 _uiState.update { state ->
                     state.copy(cloudLibrary = state.cloudLibrary.copy(isLoaded = true, isRefreshing = false)).withVisibleCloudItems()
@@ -552,6 +564,66 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
+    private fun observeCloudLibrarySettings() {
+        viewModelScope.launch {
+            debridSettingsDataStore.settings
+                .map { settings ->
+                    CloudLibrarySettingsSnapshot(
+                        enabled = settings.cloudLibraryEnabled,
+                        connectionKeys = DebridProviders.configuredServices(settings)
+                            .filter { credential -> credential.provider.supports(DebridProviderCapability.CloudLibrary) }
+                            .map { credential -> "${credential.provider.id}:${credential.apiKey}" }
+                    )
+                }
+                .distinctUntilChanged()
+                .collectLatest { snapshot ->
+                    if (!snapshot.enabled) {
+                        cloudRefreshJob?.cancel()
+                        _uiState.update { state ->
+                            state.copy(
+                                cloudLibrary = CloudLibraryUiState(isLoaded = true, isEnabled = false),
+                                visibleCloudItems = emptyList(),
+                                availableCloudProviders = emptyList(),
+                                availableCloudTypes = emptyList(),
+                                selectedCloudProviderId = null,
+                                selectedCloudType = null,
+                                resolvingCloudFileKey = null,
+                                cloudLibrarySettingsVersion = state.cloudLibrarySettingsVersion + 1L
+                            )
+                        }
+                    } else if (snapshot.connectionKeys.isEmpty()) {
+                        cloudRefreshJob?.cancel()
+                        _uiState.update { state ->
+                            state.copy(
+                                cloudLibrary = CloudLibraryUiState(isLoaded = true, isEnabled = true),
+                                visibleCloudItems = emptyList(),
+                                availableCloudProviders = emptyList(),
+                                availableCloudTypes = emptyList(),
+                                selectedCloudProviderId = null,
+                                selectedCloudType = null,
+                                resolvingCloudFileKey = null,
+                                cloudLibrarySettingsVersion = state.cloudLibrarySettingsVersion + 1L
+                            )
+                        }
+                    } else {
+                        cloudRefreshJob?.cancel()
+                        _uiState.update { state ->
+                            state.copy(
+                                cloudLibrary = CloudLibraryUiState(isLoaded = false, isEnabled = true),
+                                visibleCloudItems = emptyList(),
+                                availableCloudProviders = emptyList(),
+                                availableCloudTypes = emptyList(),
+                                selectedCloudProviderId = null,
+                                selectedCloudType = null,
+                                resolvingCloudFileKey = null,
+                                cloudLibrarySettingsVersion = state.cloudLibrarySettingsVersion + 1L
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
     private data class DataBundle(
         val sourceMode: LibrarySourceMode,
         val isSyncing: Boolean,
@@ -560,6 +632,11 @@ class LibraryViewModel @Inject constructor(
         val persistedSortKey: String?,
         val authState: AuthState,
         val isTraktAuthenticated: Boolean
+    )
+
+    private data class CloudLibrarySettingsSnapshot(
+        val enabled: Boolean,
+        val connectionKeys: List<String>
     )
 
     private fun reorderSelectedList(moveUp: Boolean) {
