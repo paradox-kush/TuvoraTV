@@ -9,10 +9,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -20,12 +23,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -33,10 +38,14 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -49,6 +58,11 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
+import com.nuvio.tv.core.debrid.DebridDeviceAuthorization
+import com.nuvio.tv.core.debrid.DebridDeviceAuthorizationTokenResult
+import com.nuvio.tv.core.debrid.DebridProvider
+import com.nuvio.tv.core.debrid.DebridProviderAuthMethod
+import com.nuvio.tv.core.debrid.DebridProviders
 import com.nuvio.tv.domain.model.DebridStreamAudioChannel
 import com.nuvio.tv.domain.model.DebridStreamAudioTag
 import com.nuvio.tv.domain.model.DebridStreamEncode
@@ -63,6 +77,8 @@ import com.nuvio.tv.domain.model.DebridStreamVisualTag
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.screens.addon.QrCodeOverlay
 import com.nuvio.tv.ui.theme.NuvioColors
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 @Composable
 fun DebridSettingsContent(
@@ -70,10 +86,13 @@ fun DebridSettingsContent(
     initialFocusRequester: FocusRequester? = null
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var activeApiKeyDialog by remember { mutableStateOf<DebridApiKeyDialogProvider?>(null) }
+    var activeApiKeyDialog by remember { mutableStateOf<String?>(null) }
+    var activeDeviceAuthDialog by remember { mutableStateOf<String?>(null) }
     var activeStreamPicker by remember { mutableStateOf<DebridStreamPicker?>(null) }
+    var showResolverPicker by remember { mutableStateOf(false) }
     var showPrepareCountDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val activeResolverProvider = uiState.activeResolverProvider
 
     LaunchedEffect(uiState.serverError) {
         val error = uiState.serverError ?: return@LaunchedEffect
@@ -105,12 +124,12 @@ fun DebridSettingsContent(
                         DebridInfoText(text = stringResource(R.string.debrid_experimental_notice))
                     }
 
-                    item(key = "debrid_enabled") {
+                    item(key = "debrid_cloud_library") {
                         SettingsToggleRow(
-                            title = stringResource(R.string.debrid_enable_title),
-                            subtitle = stringResource(R.string.debrid_enable_subtitle),
-                            checked = uiState.enabled && uiState.hasAnyApiKey,
-                            onToggle = { viewModel.onEvent(DebridSettingsEvent.ToggleEnabled(!uiState.enabled)) },
+                            title = stringResource(R.string.debrid_cloud_library),
+                            subtitle = stringResource(R.string.debrid_cloud_library_description),
+                            checked = uiState.canUseCloudLibrary,
+                            onToggle = { viewModel.setCloudLibraryEnabled(!uiState.cloudLibraryEnabled) },
                             modifier = Modifier
                                 .padding(top = 2.dp)
                                 .then(
@@ -120,11 +139,33 @@ fun DebridSettingsContent(
                                         Modifier
                                     }
                                 ),
-                            enabled = uiState.hasAnyApiKey
+                            enabled = uiState.hasCloudLibraryProvider
                         )
                     }
 
-                    if (!uiState.hasAnyApiKey) {
+                    item(key = "debrid_enabled") {
+                        SettingsToggleRow(
+                            title = stringResource(R.string.debrid_enable_title),
+                            subtitle = stringResource(R.string.debrid_enable_subtitle),
+                            checked = uiState.canResolvePlayableLinks,
+                            onToggle = { viewModel.onEvent(DebridSettingsEvent.ToggleEnabled(!uiState.enabled)) },
+                            enabled = uiState.hasResolverProvider
+                        )
+                    }
+
+                    if (uiState.canResolvePlayableLinks && uiState.resolverProviders.size > 1 && activeResolverProvider != null) {
+                        item(key = "debrid_resolve_with") {
+                            SettingsActionRow(
+                                title = stringResource(R.string.debrid_resolve_with),
+                                subtitle = stringResource(R.string.debrid_resolve_with_description),
+                                value = activeResolverProvider.displayName,
+                                onClick = { showResolverPicker = true },
+                                enabled = true
+                            )
+                        }
+                    }
+
+                    if (!uiState.hasResolverProvider) {
                         item(key = "debrid_add_key_first") {
                             DebridInfoText(text = stringResource(R.string.debrid_add_key_first))
                         }
@@ -134,40 +175,58 @@ fun DebridSettingsContent(
                         DebridSectionLabel(text = stringResource(R.string.debrid_section_account))
                     }
 
-                    item(key = "debrid_torbox_api_key") {
-                        SettingsActionRow(
-                            title = stringResource(R.string.debrid_api_key_title),
-                            subtitle = stringResource(R.string.debrid_api_key_subtitle),
-                            value = maskDebridApiKey(uiState.torboxApiKey, stringResource(R.string.debrid_not_set)),
-                            onClick = { activeApiKeyDialog = DebridApiKeyDialogProvider.TORBOX },
-                            enabled = true
-                        )
-                    }
-
-                    item(key = "debrid_instant_section") {
-                        DebridSectionLabel(text = stringResource(R.string.debrid_section_instant_playback))
-                    }
-
-                    item(key = "debrid_prepare_links") {
-                        val prepareEnabled = uiState.enabled && uiState.instantPlaybackPreparationLimit > 0
-                        SettingsToggleRow(
-                            title = stringResource(R.string.debrid_prepare_instant_playback),
-                            subtitle = stringResource(R.string.debrid_prepare_instant_playback_description),
-                            checked = prepareEnabled,
-                            onToggle = { viewModel.setInstantPlaybackPreparationEnabled(!prepareEnabled) },
-                            enabled = uiState.enabled && uiState.hasAnyApiKey
-                        )
-                    }
-
-                    if (uiState.enabled && uiState.instantPlaybackPreparationLimit > 0) {
-                        item(key = "debrid_prepare_count") {
+                    DebridProviders.visible().forEach { provider ->
+                        item(key = "debrid_${provider.id}_api_key") {
                             SettingsActionRow(
-                                title = stringResource(R.string.debrid_prepare_stream_count),
-                                subtitle = null,
-                                value = prepareCountLabel(uiState.instantPlaybackPreparationLimit),
-                                onClick = { showPrepareCountDialog = true },
+                                title = provider.displayName,
+                                subtitle = if (provider.authMethod == DebridProviderAuthMethod.DeviceCode) {
+                                    stringResource(R.string.debrid_provider_device_description, provider.displayName)
+                                } else {
+                                    stringResource(R.string.debrid_provider_description, provider.displayName)
+                                },
+                                value = providerCredentialStatus(
+                                    provider = provider,
+                                    credential = uiState.apiKeyFor(provider.id),
+                                    notSetLabel = stringResource(R.string.debrid_not_set),
+                                    connectedLabel = stringResource(R.string.debrid_connected)
+                                ),
+                                onClick = {
+                                    when (provider.authMethod) {
+                                        DebridProviderAuthMethod.DeviceCode -> activeDeviceAuthDialog = provider.id
+                                        DebridProviderAuthMethod.ApiKey -> activeApiKeyDialog = provider.id
+                                    }
+                                },
                                 enabled = true
                             )
+                        }
+                    }
+
+                    if (uiState.canResolvePlayableLinks) {
+                        item(key = "debrid_instant_section") {
+                            DebridSectionLabel(text = stringResource(R.string.debrid_section_instant_playback))
+                        }
+
+                        item(key = "debrid_prepare_links") {
+                            val prepareEnabled = uiState.instantPlaybackPreparationLimit > 0
+                            SettingsToggleRow(
+                                title = stringResource(R.string.debrid_prepare_instant_playback),
+                                subtitle = stringResource(R.string.debrid_prepare_instant_playback_description),
+                                checked = prepareEnabled,
+                                onToggle = { viewModel.setInstantPlaybackPreparationEnabled(!prepareEnabled) },
+                                enabled = true
+                            )
+                        }
+
+                        if (uiState.instantPlaybackPreparationLimit > 0) {
+                            item(key = "debrid_prepare_count") {
+                                SettingsActionRow(
+                                    title = stringResource(R.string.debrid_prepare_stream_count),
+                                    subtitle = null,
+                                    value = prepareCountLabel(uiState.instantPlaybackPreparationLimit),
+                                    onClick = { showPrepareCountDialog = true },
+                                    enabled = true
+                                )
+                            }
                         }
                     }
 
@@ -195,69 +254,71 @@ fun DebridSettingsContent(
                         )
                     }
 
-                    item(key = "debrid_filters_section") {
-                        DebridSectionLabel(text = stringResource(R.string.debrid_section_filters))
-                    }
+                    if (uiState.canResolvePlayableLinks) {
+                        item(key = "debrid_filters_section") {
+                            DebridSectionLabel(text = stringResource(R.string.debrid_section_filters))
+                        }
 
-                    item(key = "debrid_max_results") {
-                        SettingsActionRow(
-                            title = stringResource(R.string.debrid_stream_max_results_title),
-                            subtitle = stringResource(R.string.debrid_stream_max_results_subtitle),
-                            value = streamMaxResultsLabel(uiState.streamPreferences.maxResults),
-                            onClick = { activeStreamPicker = DebridStreamPicker.MAX_RESULTS },
-                            enabled = uiState.enabled
-                        )
-                    }
-
-                    item(key = "debrid_sort_mode") {
-                        SettingsActionRow(
-                            title = stringResource(R.string.debrid_stream_sort_title),
-                            subtitle = stringResource(R.string.debrid_stream_sort_subtitle),
-                            value = sortProfileLabel(uiState.streamPreferences.sortCriteria),
-                            onClick = { activeStreamPicker = DebridStreamPicker.SORT_MODE },
-                            enabled = uiState.enabled
-                        )
-                    }
-
-                    item(key = "debrid_per_resolution_limit") {
-                        SettingsActionRow(
-                            title = "Per resolution limit",
-                            subtitle = "Cap repeated 2160p, 1080p, 720p results after sorting.",
-                            value = streamMaxResultsLabel(uiState.streamPreferences.maxPerResolution),
-                            onClick = { activeStreamPicker = DebridStreamPicker.MAX_PER_RESOLUTION },
-                            enabled = uiState.enabled
-                        )
-                    }
-
-                    item(key = "debrid_per_quality_limit") {
-                        SettingsActionRow(
-                            title = "Per quality limit",
-                            subtitle = "Cap repeated BluRay, WEB-DL, REMUX results after sorting.",
-                            value = streamMaxResultsLabel(uiState.streamPreferences.maxPerQuality),
-                            onClick = { activeStreamPicker = DebridStreamPicker.MAX_PER_QUALITY },
-                            enabled = uiState.enabled
-                        )
-                    }
-
-                    item(key = "debrid_size_range") {
-                        SettingsActionRow(
-                            title = "Size range",
-                            subtitle = "Filter streams by file size.",
-                            value = sizeRangeLabel(uiState.streamPreferences),
-                            onClick = { activeStreamPicker = DebridStreamPicker.SIZE_RANGE },
-                            enabled = uiState.enabled
-                        )
-                    }
-
-                    debridRuleRows(uiState.streamPreferences) { picker, title, subtitle, value ->
-                        item(key = "debrid_rule_${picker.name}") {
+                        item(key = "debrid_max_results") {
                             SettingsActionRow(
-                                title = title,
-                                subtitle = subtitle,
-                                value = value,
-                                onClick = { activeStreamPicker = picker },
-                                enabled = uiState.enabled
+                                title = stringResource(R.string.debrid_stream_max_results_title),
+                                subtitle = stringResource(R.string.debrid_stream_max_results_subtitle),
+                                value = streamMaxResultsLabel(uiState.streamPreferences.maxResults),
+                                onClick = { activeStreamPicker = DebridStreamPicker.MAX_RESULTS },
+                                enabled = true
                             )
+                        }
+
+                        item(key = "debrid_sort_mode") {
+                            SettingsActionRow(
+                                title = stringResource(R.string.debrid_stream_sort_title),
+                                subtitle = stringResource(R.string.debrid_stream_sort_subtitle),
+                                value = sortProfileLabel(uiState.streamPreferences.sortCriteria),
+                                onClick = { activeStreamPicker = DebridStreamPicker.SORT_MODE },
+                                enabled = true
+                            )
+                        }
+
+                        item(key = "debrid_per_resolution_limit") {
+                            SettingsActionRow(
+                                title = "Per resolution limit",
+                                subtitle = "Cap repeated 2160p, 1080p, 720p results after sorting.",
+                                value = streamMaxResultsLabel(uiState.streamPreferences.maxPerResolution),
+                                onClick = { activeStreamPicker = DebridStreamPicker.MAX_PER_RESOLUTION },
+                                enabled = true
+                            )
+                        }
+
+                        item(key = "debrid_per_quality_limit") {
+                            SettingsActionRow(
+                                title = "Per quality limit",
+                                subtitle = "Cap repeated BluRay, WEB-DL, REMUX results after sorting.",
+                                value = streamMaxResultsLabel(uiState.streamPreferences.maxPerQuality),
+                                onClick = { activeStreamPicker = DebridStreamPicker.MAX_PER_QUALITY },
+                                enabled = true
+                            )
+                        }
+
+                        item(key = "debrid_size_range") {
+                            SettingsActionRow(
+                                title = "Size range",
+                                subtitle = "Filter streams by file size.",
+                                value = sizeRangeLabel(uiState.streamPreferences),
+                                onClick = { activeStreamPicker = DebridStreamPicker.SIZE_RANGE },
+                                enabled = true
+                            )
+                        }
+
+                        debridRuleRows(uiState.streamPreferences) { picker, title, subtitle, value ->
+                            item(key = "debrid_rule_${picker.name}") {
+                                SettingsActionRow(
+                                    title = title,
+                                    subtitle = subtitle,
+                                    value = value,
+                                    onClick = { activeStreamPicker = picker },
+                                    enabled = true
+                                )
+                            }
                         }
                     }
                 }
@@ -266,23 +327,48 @@ fun DebridSettingsContent(
         }
     }
 
-    activeApiKeyDialog?.let { provider ->
-        when (provider) {
-            DebridApiKeyDialogProvider.TORBOX -> DebridApiKeyDialog(
-                title = stringResource(R.string.debrid_dialog_title),
-                subtitle = stringResource(R.string.debrid_dialog_subtitle),
-                placeholder = stringResource(R.string.debrid_dialog_placeholder),
-                currentValue = uiState.torboxApiKey,
+    activeApiKeyDialog?.let { providerId ->
+        DebridProviders.byId(providerId)?.let { provider ->
+            DebridApiKeyDialog(
+                title = stringResource(R.string.debrid_api_key_dialog_title, provider.displayName),
+                subtitle = stringResource(R.string.debrid_api_key_dialog_subtitle, provider.displayName),
+                placeholder = stringResource(R.string.debrid_api_key_dialog_placeholder, provider.displayName),
+                currentValue = uiState.apiKeyFor(provider.id),
                 viewModel = viewModel,
-                onSave = { value, onSaved -> viewModel.validateAndSaveTorboxApiKey(value, onSaved) },
+                onSave = { value, onSaved -> viewModel.validateAndSaveProviderApiKey(provider.id, value, onSaved) },
                 onSaved = { activeApiKeyDialog = null },
                 onClear = {
-                    viewModel.validateAndSaveTorboxApiKey("") {}
+                    viewModel.validateAndSaveProviderApiKey(provider.id, "") {}
                     activeApiKeyDialog = null
                 },
                 onDismiss = { activeApiKeyDialog = null }
             )
         }
+    }
+
+    activeDeviceAuthDialog?.let { providerId ->
+        DebridProviders.byId(providerId)?.let { provider ->
+            DebridDeviceAuthDialog(
+                provider = provider,
+                currentValue = uiState.apiKeyFor(provider.id),
+                viewModel = viewModel,
+                onConnected = { token -> viewModel.saveProviderCredential(provider.id, token) },
+                onDisconnect = { viewModel.saveProviderCredential(provider.id, "") },
+                onDismiss = { activeDeviceAuthDialog = null }
+            )
+        }
+    }
+
+    if (showResolverPicker) {
+        DebridResolverProviderDialog(
+            providers = uiState.resolverProviders,
+            selectedProviderId = uiState.activeResolverProvider?.id,
+            onSelected = { providerId ->
+                viewModel.setPreferredResolverProviderId(providerId)
+                showResolverPicker = false
+            },
+            onDismiss = { showResolverPicker = false }
+        )
     }
 
     when (activeStreamPicker) {
@@ -653,6 +739,29 @@ private fun DebridPrepareCountDialog(
 }
 
 @Composable
+private fun DebridResolverProviderDialog(
+    providers: List<DebridProvider>,
+    selectedProviderId: String?,
+    onSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val selected = selectedProviderId ?: providers.firstOrNull()?.id.orEmpty()
+
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.debrid_resolve_with),
+        subtitle = stringResource(R.string.debrid_resolve_with_description),
+        options = providers.map { provider ->
+            SettingsPickerOption(provider.id, provider.displayName)
+        },
+        selectedValue = selected,
+        onOptionSelected = onSelected,
+        onDismiss = onDismiss,
+        width = 420.dp,
+        maxHeight = 280.dp
+    )
+}
+
+@Composable
 private fun DebridMaxResultsDialog(
     selectedValue: Int,
     onSelected: (Int) -> Unit,
@@ -940,6 +1049,253 @@ private enum class DebridSortProfile {
 }
 
 @Composable
+private fun DebridDeviceAuthDialog(
+    provider: DebridProvider,
+    currentValue: String,
+    viewModel: DebridSettingsViewModel,
+    onConnected: (String) -> Unit,
+    onDisconnect: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val uriHandler = LocalUriHandler.current
+    val clipboardManager = LocalClipboardManager.current
+    val isConnected = currentValue.isNotBlank()
+    var restartNonce by remember(provider.id) { mutableStateOf(0) }
+    var session by remember(provider.id, restartNonce, isConnected) { mutableStateOf<DebridDeviceAuthorization?>(null) }
+    var isStarting by remember(provider.id, restartNonce, isConnected) { mutableStateOf(!isConnected) }
+    var isPolling by remember(provider.id, restartNonce, isConnected) { mutableStateOf(false) }
+    var statusMessage by remember(provider.id, restartNonce, isConnected) { mutableStateOf<String?>(null) }
+
+    val startingMessage = stringResource(R.string.debrid_device_auth_starting)
+    val waitingMessage = stringResource(R.string.debrid_device_auth_waiting)
+    val failedMessage = stringResource(R.string.debrid_device_auth_failed)
+    val missingConfigurationMessage = stringResource(R.string.debrid_device_auth_missing_configuration)
+    val expiredMessage = stringResource(R.string.debrid_device_auth_expired)
+    val codeCopiedMessage = stringResource(R.string.debrid_device_auth_code_copied)
+
+    LaunchedEffect(provider.id, restartNonce, isConnected) {
+        if (isConnected) {
+            isStarting = false
+            isPolling = false
+            statusMessage = null
+            session = null
+            return@LaunchedEffect
+        }
+        isStarting = true
+        isPolling = false
+        statusMessage = null
+        val startResult = runCatching {
+            viewModel.startDeviceAuthorization(provider.id)
+        }.onFailure { error ->
+            if (error is CancellationException) throw error
+        }
+        session = startResult.getOrNull()
+        isStarting = false
+        statusMessage = if (session == null) {
+            startResult.exceptionOrNull()?.message?.takeIf { it.contains("PREMIUMIZE_CLIENT_ID") }
+                ?.let { missingConfigurationMessage }
+                ?: failedMessage
+        } else {
+            waitingMessage
+        }
+    }
+
+    LaunchedEffect(session?.deviceCode, restartNonce, isConnected) {
+        if (isConnected) return@LaunchedEffect
+        val activeSession = session ?: return@LaunchedEffect
+        while (true) {
+            delay(activeSession.intervalSeconds.coerceAtLeast(1) * 1_000L)
+            isPolling = true
+            val result = runCatching {
+                viewModel.redeemDeviceAuthorization(provider.id, activeSession.deviceCode)
+            }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                if (error.isCancelledHttpRequest()) {
+                    DebridDeviceAuthorizationTokenResult.Pending
+                } else {
+                    DebridDeviceAuthorizationTokenResult.Failed(null)
+                }
+            }
+            isPolling = false
+            when (result) {
+                is DebridDeviceAuthorizationTokenResult.Authorized -> {
+                    onConnected(result.accessToken)
+                    onDismiss()
+                    return@LaunchedEffect
+                }
+                DebridDeviceAuthorizationTokenResult.Pending -> {
+                    statusMessage = waitingMessage
+                }
+                DebridDeviceAuthorizationTokenResult.Expired -> {
+                    statusMessage = expiredMessage
+                    return@LaunchedEffect
+                }
+                is DebridDeviceAuthorizationTokenResult.Failed -> {
+                    statusMessage = result.message.toDeviceAuthStatusMessage(failedMessage)
+                    return@LaunchedEffect
+                }
+                DebridDeviceAuthorizationTokenResult.Unsupported -> {
+                    statusMessage = failedMessage
+                    return@LaunchedEffect
+                }
+            }
+        }
+    }
+
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = stringResource(
+            if (isConnected) R.string.debrid_disconnect_provider else R.string.debrid_connect_provider,
+            provider.displayName
+        ),
+        width = 620.dp,
+        suppressFirstKeyUp = false
+    ) {
+        if (isConnected) {
+            Text(
+                text = stringResource(R.string.debrid_device_auth_connected, provider.displayName),
+                style = MaterialTheme.typography.bodyMedium,
+                color = NuvioColors.TextSecondary
+            )
+        } else if (isStarting) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                Text(
+                    text = startingMessage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioColors.TextSecondary
+                )
+            }
+        } else {
+            session?.let { activeSession ->
+                Text(
+                    text = stringResource(R.string.debrid_device_auth_instructions),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioColors.TextSecondary
+                )
+                Card(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(activeSession.userCode))
+                        statusMessage = codeCopiedMessage
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.colors(
+                        containerColor = NuvioColors.Background,
+                        focusedContainerColor = NuvioColors.FocusBackground
+                    ),
+                    border = CardDefaults.border(
+                        focusedBorder = Border(
+                            border = BorderStroke(2.dp, NuvioColors.FocusRing),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                    ),
+                    shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
+                    scale = CardDefaults.scale(focusedScale = 1f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = activeSession.userCode,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = NuvioColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = activeSession.friendlyVerificationUrl,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NuvioColors.Primary
+                        )
+                    }
+                }
+            }
+            statusMessage?.let { message ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isPolling) {
+                        CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    }
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (message == failedMessage || message == expiredMessage || message == missingConfigurationMessage) {
+                            NuvioColors.Error
+                        } else {
+                            NuvioColors.TextSecondary
+                        }
+                    )
+                }
+            }
+        }
+
+        SettingsDialogActionRow {
+            SettingsDialogActionButton(
+                text = stringResource(R.string.action_cancel),
+                onClick = onDismiss
+            )
+            if (isConnected) {
+                SettingsDialogActionButton(
+                    text = stringResource(R.string.debrid_disconnect),
+                    onClick = {
+                        onDisconnect()
+                        onDismiss()
+                    },
+                    primary = true
+                )
+            }
+            if (!isConnected && !isStarting && session == null) {
+                SettingsDialogActionButton(
+                    text = stringResource(R.string.action_retry),
+                    onClick = { restartNonce += 1 }
+                )
+            }
+            if (!isConnected) {
+                session?.let { activeSession ->
+                    SettingsDialogActionButton(
+                        text = stringResource(R.string.debrid_device_auth_open),
+                        onClick = {
+                            runCatching { uriHandler.openUri(activeSession.verificationUrl) }
+                                .onFailure { statusMessage = failedMessage }
+                        },
+                        primary = true,
+                        enabled = !isStarting
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun Throwable.isCancelledHttpRequest(): Boolean {
+    val text = listOfNotNull(message, toString())
+        .joinToString(" ")
+        .lowercase()
+    return "code=-999" in text ||
+        ("nsurlerrordomain" in text && ("cancelled" in text || "canceled" in text))
+}
+
+private fun String?.toDeviceAuthStatusMessage(fallback: String): String {
+    val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return fallback
+    val lower = value.lowercase()
+    return if (
+        value.length > 180 ||
+        "exception in http request" in lower ||
+        "nsurlerrordomain" in lower ||
+        "userinfo=" in lower
+    ) {
+        fallback
+    } else {
+        value
+    }
+}
+
+@Composable
 private fun DebridApiKeyDialog(
     title: String,
     subtitle: String,
@@ -1070,9 +1426,16 @@ private fun maskDebridApiKey(key: String, notSetLabel: String): String {
     return if (trimmed.length <= 4) "****" else "******${trimmed.takeLast(4)}"
 }
 
-private enum class DebridApiKeyDialogProvider {
-    TORBOX
-}
+private fun providerCredentialStatus(
+    provider: DebridProvider,
+    credential: String,
+    notSetLabel: String,
+    connectedLabel: String
+): String =
+    when (provider.authMethod) {
+        DebridProviderAuthMethod.DeviceCode -> if (credential.isBlank()) notSetLabel else connectedLabel
+        DebridProviderAuthMethod.ApiKey -> maskDebridApiKey(credential, notSetLabel)
+    }
 
 private enum class DebridStreamPicker {
     MAX_RESULTS,

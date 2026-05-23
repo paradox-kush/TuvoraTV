@@ -1055,19 +1055,6 @@ private fun StreamCard(
                     }
                 }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (stream.isTorrent()) {
-                        StreamTypeChip(text = stringResource(R.string.stream_type_torrent), color = NuvioColors.Secondary)
-                    }
-                    if (stream.isYouTube()) {
-                        StreamTypeChip(text = stringResource(R.string.stream_type_youtube), color = Color(0xFFFF0000))
-                    }
-                    if (stream.isExternal()) {
-                        StreamTypeChip(text = stringResource(R.string.stream_type_external), color = NuvioColors.Primary)
-                    }
-                }
             }
 
             Column(
@@ -1094,25 +1081,6 @@ private fun StreamCard(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun StreamTypeChip(
-    text: String,
-    color: Color
-) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(color.copy(alpha = 0.2f))
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            color = color
-        )
     }
 }
 

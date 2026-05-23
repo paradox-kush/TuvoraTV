@@ -201,10 +201,10 @@ private fun HeroCarouselSlide(
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val requestWidthPx = remember(configuration.screenWidthDp, density) {
-        with(density) { configuration.screenWidthDp.dp.roundToPx() }
+        with(density) { configuration.screenWidthDp.dp.roundToPx() }.coerceAtLeast(1)
     }
-    val requestHeightPx = remember(density) { with(density) { 400.dp.roundToPx() } }
-    val logoRequestHeightPx = remember(density) { with(density) { 80.dp.roundToPx() } }
+    val requestHeightPx = remember(density) { with(density) { 400.dp.roundToPx() }.coerceAtLeast(1) }
+    val logoRequestHeightPx = remember(density) { with(density) { 80.dp.roundToPx() }.coerceAtLeast(1) }
 
     val backdropUrl = item.backdropUrl
     val backgroundModel = remember(context, backdropUrl, requestWidthPx, requestHeightPx) {

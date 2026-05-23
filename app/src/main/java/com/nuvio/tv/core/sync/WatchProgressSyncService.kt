@@ -210,7 +210,9 @@ class WatchProgressSyncService @Inject constructor(
      *   prevent race conditions when the active profile changes mid-operation.
      */
     suspend fun pullFromRemote(
-        profileId: Int = profileManager.activeProfileId.value
+        profileId: Int = profileManager.activeProfileId.value,
+        sinceLastWatched: Long? = null,
+        limit: Int? = null
     ): Result<List<Pair<String, WatchProgress>>> = withContext(Dispatchers.IO) {
         try {
             if (!shouldUseSupabaseWatchProgressSync()) {
@@ -220,13 +222,19 @@ class WatchProgressSyncService @Inject constructor(
 
             val params = buildJsonObject {
                 put("p_profile_id", profileId)
+                if (sinceLastWatched != null) {
+                    put("p_since_last_watched", sinceLastWatched)
+                }
+                if (limit != null) {
+                    put("p_limit", limit)
+                }
             }
             val response = withJwtRefreshRetry {
                 postgrest.rpc("sync_pull_watch_progress", params)
             }
             val remote = response.decodeList<SupabaseWatchProgress>()
 
-            Log.d(TAG, "pullFromRemote: fetched ${remote.size} entries from Supabase via RPC for profile $profileId")
+            Log.d(TAG, "pullFromRemote: fetched ${remote.size} entries from Supabase via RPC for profile $profileId sinceLastWatched=$sinceLastWatched")
             remote.forEach { entry ->
                 Log.d(TAG, "  pull entry: key=${entry.progressKey} contentId=${entry.contentId} type=${entry.contentType} pos=${entry.position} dur=${entry.duration} lastWatched=${entry.lastWatched}")
             }

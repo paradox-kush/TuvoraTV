@@ -9,7 +9,6 @@ import com.nuvio.tv.R
 import com.nuvio.tv.core.debrid.DirectDebridResolveResult
 import com.nuvio.tv.core.debrid.DirectDebridResolver
 import com.nuvio.tv.core.debrid.DirectDebridStreamPreparer
-import com.nuvio.tv.core.debrid.DirectDebridStreamSource
 import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.torrent.TorrentSettings
@@ -24,6 +23,8 @@ import com.nuvio.tv.data.local.BingeGroupCacheDataStore
 import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.Stream
+import com.nuvio.tv.domain.model.StreamDebridCacheState
+import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.domain.repository.StreamRepository
@@ -60,7 +61,6 @@ class StreamScreenViewModel @Inject constructor(
     private val streamLinkCacheDataStore: StreamLinkCacheDataStore,
     private val bingeGroupCacheDataStore: BingeGroupCacheDataStore,
     private val torrentSettings: TorrentSettings,
-    private val directDebridStreamSource: DirectDebridStreamSource,
     private val directDebridResolver: DirectDebridResolver,
     private val directDebridStreamPreparer: DirectDebridStreamPreparer,
     savedStateHandle: SavedStateHandle
@@ -291,10 +291,10 @@ class StreamScreenViewModel @Inject constructor(
                 )
             }
 
-            val installedAddons = addonRepository.getInstalledAddons().first()
+            val installedAddons = addonRepository.getInstalledAddons().first().enabledAddons()
             val installedAddonOrder = installedAddons.map { it.displayName }
-            val directDebridSourceNames = directDebridStreamSource.sourceNames()
-            val directDebridAvailable = directDebridSourceNames.isNotEmpty()
+            val directDebridSourceNames = emptyList<String>()
+            val directDebridAvailable = false
             val persistedBingeGroup = if (playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode &&
                 playerSettings.streamAutoPlayReuseBingeGroup) {
                 contentId?.let { bingeGroupCacheDataStore.get(it) }
@@ -399,7 +399,7 @@ class StreamScreenViewModel @Inject constructor(
             val isUnlimitedTimeout = playerSettings.streamAutoPlayTimeoutSeconds == PlayerSettings.STREAM_AUTOPLAY_TIMEOUT_UNLIMITED
 
             fun launchDirectDebridPreparationIfNeeded(streamGroups: List<AddonStreams>) {
-                if (debridPreparationLaunched || streamGroups.none { group -> group.streams.any { it.isDirectDebrid() && it.getStreamUrl() == null } }) {
+                if (debridPreparationLaunched || streamGroups.none { group -> group.streams.any { it.isReadyForDebridPreparation() } }) {
                     return
                 }
                 debridPreparationLaunched = true
@@ -863,7 +863,7 @@ class StreamScreenViewModel @Inject constructor(
     }
 
     suspend fun resolveStreamForPlayback(stream: Stream): StreamPlaybackInfo? {
-        if (!stream.isDirectDebrid()) {
+        if (!directDebridResolver.shouldResolveToPlayableStream(stream)) {
             return getStreamForPlayback(stream)
         }
 
@@ -896,6 +896,10 @@ class StreamScreenViewModel @Inject constructor(
             }
             DirectDebridResolveResult.MissingApiKey -> {
                 showDirectDebridPlaybackError(context.getString(R.string.debrid_missing_api_key), refreshStreams = false)
+                null
+            }
+            DirectDebridResolveResult.NotCached -> {
+                showDirectDebridPlaybackError(context.getString(R.string.debrid_not_cached), refreshStreams = false)
                 null
             }
             DirectDebridResolveResult.Stale -> {
@@ -1034,3 +1038,7 @@ data class StreamPlaybackInfo(
     val sources: List<String>? = null,
     val contentLanguage: String? = null
 )
+
+private fun Stream.isReadyForDebridPreparation(): Boolean =
+    getStreamUrl() == null &&
+        (isDirectDebrid() || (needsLocalDebridResolve() && debridCacheStatus?.state == StreamDebridCacheState.CACHED))

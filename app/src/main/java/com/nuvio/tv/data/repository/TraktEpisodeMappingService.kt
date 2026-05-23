@@ -28,6 +28,9 @@ class TraktEpisodeMappingService @Inject constructor(
         private const val TAG = "TraktEpMapSvc"
     }
 
+    internal suspend fun isTraktAuthenticated(): Boolean =
+        traktAuthService.getCurrentAuthState().isAuthenticated
+
     private val cacheMutex = Mutex()
     private val mappingCache = mutableMapOf<String, EpisodeMappingEntry>()
     private val addonEpisodesCache = mutableMapOf<String, List<EpisodeMappingEntry>>()
@@ -77,6 +80,8 @@ class TraktEpisodeMappingService @Inject constructor(
         episode: Int?,
         episodeTitle: String? = null
     ): EpisodeMappingEntry? {
+        if (!traktAuthService.getCurrentAuthState().isAuthenticated) return null
+
         val requestedSeason = season ?: return null
         val requestedEpisode = episode ?: return null
         val resolvedContentId = contentId?.takeIf { it.isNotBlank() } ?: return null
@@ -152,6 +157,8 @@ class TraktEpisodeMappingService @Inject constructor(
         episode: Int?,
         episodeTitle: String? = null
     ): EpisodeMappingEntry? {
+        if (!traktAuthService.getCurrentAuthState().isAuthenticated) return null
+
         val key = cacheKey(contentId, contentType, videoId, season, episode) ?: return null
         cacheMutex.withLock {
             mappingCache[key]?.let { return it }

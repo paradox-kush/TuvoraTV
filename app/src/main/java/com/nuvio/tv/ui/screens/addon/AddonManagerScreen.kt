@@ -81,6 +81,8 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
+import androidx.tv.material3.Switch
+import androidx.tv.material3.SwitchDefaults
 import androidx.tv.material3.Text
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.CatalogDescriptor
@@ -139,7 +141,7 @@ fun AddonManagerScreen(
     var isEditing by remember { mutableStateOf(false) }
     val hasHomeVisibleCatalogs = remember(uiState.installedAddons) {
         uiState.installedAddons.any { addon ->
-            addon.catalogs.any { catalog -> !catalog.isSearchOnlyCatalog() }
+            addon.enabled && addon.catalogs.any { catalog -> !catalog.isSearchOnlyCatalog() }
         }
     }
     val manageFromPhoneSubtitle = if (webConfigMode == com.nuvio.tv.core.server.AddonWebConfigMode.COLLECTIONS_ONLY) {
@@ -437,6 +439,7 @@ fun AddonManagerScreen(
                         onMoveUp = { viewModel.moveAddonUp(addon.baseUrl) },
                         onMoveDown = { viewModel.moveAddonDown(addon.baseUrl) },
                         onRemove = { viewModel.removeAddon(addon.baseUrl) },
+                        onEnabledChange = { enabled -> viewModel.setAddonEnabled(addon.baseUrl, enabled) },
                         isReadOnly = viewModel.isReadOnly,
                         showReorder = !isEssential
                     )
@@ -1168,6 +1171,7 @@ private fun AddonCard(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onRemove: () -> Unit,
+    onEnabledChange: (Boolean) -> Unit,
     isReadOnly: Boolean = false,
     showReorder: Boolean = true
 ) {
@@ -1208,6 +1212,7 @@ private fun AddonCard(
                 onMoveUp = onMoveUp,
                 onMoveDown = onMoveDown,
                 onRemove = onRemove,
+                onEnabledChange = onEnabledChange,
                 showReorder = showReorder
             )
         }
@@ -1224,6 +1229,7 @@ private fun AddonCardContent(
     onMoveUp: () -> Unit = {},
     onMoveDown: () -> Unit = {},
     onRemove: () -> Unit = {},
+    onEnabledChange: (Boolean) -> Unit = {},
     showReorder: Boolean = true
 ) {
     Column(modifier = Modifier.padding(20.dp)) {
@@ -1238,17 +1244,39 @@ private fun AddonCardContent(
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = NuvioColors.TextPrimary
                 )
-                Text(
-                    text = "v${addon.version}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = NuvioColors.TextSecondary
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (addon.version.isNotBlank()) {
+                        Text(
+                            text = "v${addon.version}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NuvioColors.TextSecondary
+                        )
+                    }
+                    if (!addon.enabled) {
+                        Text(
+                            text = stringResource(R.string.addons_badge_disabled),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NuvioColors.TextSecondary
+                        )
+                    }
+                }
             }
             if (!isReadOnly) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Switch(
+                        checked = addon.enabled,
+                        onCheckedChange = onEnabledChange,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = NuvioColors.Secondary,
+                            checkedTrackColor = NuvioColors.Secondary.copy(alpha = 0.3f)
+                        )
+                    )
                     if (showReorder) {
                         Button(
                             onClick = onMoveUp,

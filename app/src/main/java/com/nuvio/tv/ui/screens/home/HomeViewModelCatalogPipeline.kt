@@ -9,6 +9,7 @@ import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.HomeLayout
+import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.model.skipStep
 import com.nuvio.tv.domain.model.supportsExtra
 import kotlinx.coroutines.Dispatchers
@@ -118,7 +119,8 @@ internal fun HomeViewModel.observeInstalledAddonsPipeline() {
     viewModelScope.launch {
         addonRepository.getInstalledAddons()
             .distinctUntilChanged()
-            .collectLatest { addons ->
+            .collectLatest { installedAddons ->
+                val addons = installedAddons.enabledAddons()
                 addonsCache = addons
                 loadAllCatalogsPipeline(addons)
             }

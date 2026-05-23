@@ -87,6 +87,7 @@ class TorboxDirectDebridResolver @Inject constructor(
     private fun Response<com.nuvio.tv.data.remote.dto.TorboxEnvelopeDto<TorboxCreateTorrentDataDto>>.toFailureForCreate(): DirectDebridResolveResult {
         return when (code()) {
             401, 403 -> DirectDebridResolveResult.Error
+            409 -> DirectDebridResolveResult.NotCached
             else -> DirectDebridResolveResult.Stale
         }
     }
@@ -118,6 +119,7 @@ sealed class DirectDebridResolveResult {
     ) : DirectDebridResolveResult()
 
     data object MissingApiKey : DirectDebridResolveResult()
+    data object NotCached : DirectDebridResolveResult()
     data object Stale : DirectDebridResolveResult()
     data object Error : DirectDebridResolveResult()
 }

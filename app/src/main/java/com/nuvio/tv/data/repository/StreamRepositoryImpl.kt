@@ -3,10 +3,10 @@ package com.nuvio.tv.data.repository
 import android.content.Context
 import android.util.Log
 import com.nuvio.tv.R
-import com.nuvio.tv.core.debrid.DirectDebridStreamFetchResult
-import com.nuvio.tv.core.debrid.DirectDebridStreamSource
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
+import com.nuvio.tv.core.debrid.DebridStreamPresentation
+import com.nuvio.tv.core.debrid.LocalDebridAvailabilityService
 import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.mapper.toDomain
@@ -19,6 +19,7 @@ import com.nuvio.tv.domain.model.ProxyHeaders
 import com.nuvio.tv.domain.model.ScraperInfo
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.StreamBehaviorHints
+import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.StreamRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -41,7 +42,8 @@ class StreamRepositoryImpl @Inject constructor(
     private val addonRepository: AddonRepository,
     private val pluginManager: PluginManager,
     private val tmdbService: TmdbService,
-    private val directDebridStreamSource: DirectDebridStreamSource
+    private val debridStreamPresentation: DebridStreamPresentation,
+    private val localDebridAvailabilityService: LocalDebridAvailabilityService
 ) : StreamRepository {
     private enum class StreamFailureKind {
         MISSING,
@@ -63,7 +65,7 @@ class StreamRepositoryImpl @Inject constructor(
         emit(NetworkResult.Loading)
 
         try {
-            val addons = addonRepository.getInstalledAddons().first()
+            val addons = addonRepository.getInstalledAddons().first().enabledAddons()
             
             // Filter addons that support streams for this type and id
             val streamAddons = addons.filter { addon ->
@@ -73,10 +75,7 @@ class StreamRepositoryImpl @Inject constructor(
             // Convert IMDB ID to TMDB ID if needed for plugins
             val tmdbId = tmdbService.ensureTmdbId(videoId, type)
             Log.d(TAG, "Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)")
-            val directDebridSourceNames = directDebridStreamSource.sourceNames()
-            val directDebridEnabled = directDebridSourceNames.isNotEmpty()
-            val attemptedAddonNames = streamAddons.map { it.displayName } +
-                directDebridSourceNames
+            val attemptedAddonNames = streamAddons.map { it.displayName }
             val attemptedFailures = java.util.Collections.synchronizedList(
                 mutableListOf<StreamAttemptFailure>()
             )
@@ -90,8 +89,7 @@ class StreamRepositoryImpl @Inject constructor(
                 
                 // Track number of pending jobs
                 val totalJobs = streamAddons.size +
-                    (if (tmdbId != null) 1 else 0) +
-                    (if (directDebridEnabled) 1 else 0)
+                    (if (tmdbId != null) 1 else 0)
                 var completedJobs = 0
 
                 // Launch addon jobs
@@ -175,45 +173,6 @@ class StreamRepositoryImpl @Inject constructor(
                     }
                 }
 
-                if (directDebridEnabled) {
-                    launch {
-                        try {
-                            when (val result = directDebridStreamSource.fetchStreams(type, videoId)) {
-                                is DirectDebridStreamFetchResult.Success -> result.streams.forEach {
-                                    resultChannel.send(it)
-                                }
-                                is DirectDebridStreamFetchResult.Error -> addDirectDebridFailures(
-                                    attemptedFailures = attemptedFailures,
-                                    sourceNames = directDebridSourceNames,
-                                    kind = StreamFailureKind.REQUEST_FAILED,
-                                    detail = result.message
-                                )
-                                DirectDebridStreamFetchResult.Empty -> addDirectDebridFailures(
-                                    attemptedFailures = attemptedFailures,
-                                    sourceNames = directDebridSourceNames,
-                                    kind = StreamFailureKind.MISSING,
-                                    detail = context.getString(com.nuvio.tv.R.string.stream_error_detail_no_streams_for_id)
-                                )
-                                DirectDebridStreamFetchResult.Disabled -> Unit
-                            }
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            Log.e(TAG, "Direct debrid stream fetch failed: ${e.message}")
-                            addDirectDebridFailures(
-                                attemptedFailures = attemptedFailures,
-                                sourceNames = directDebridSourceNames,
-                                kind = StreamFailureKind.REQUEST_FAILED,
-                                detail = e.message ?: context.getString(com.nuvio.tv.R.string.stream_error_detail_addon_request_failed)
-                            )
-                        } finally {
-                            completedJobs++
-                            if (completedJobs >= totalJobs) {
-                                resultChannel.close()
-                            }
-                        }
-                    }
-                }
-
                 // Handle case where there are no jobs
                 if (totalJobs == 0) {
                     resultChannel.close()
@@ -221,17 +180,17 @@ class StreamRepositoryImpl @Inject constructor(
 
                 // Emit results as they arrive
                 for (result in resultChannel) {
-                    val existingIndex = accumulatedResults.indexOfFirst { it.addonName == result.addonName }
-                    if (existingIndex >= 0) {
-                        val existing = accumulatedResults[existingIndex]
-                        accumulatedResults[existingIndex] = existing.copy(
-                            streams = (existing.streams + result.streams).distinctBy { it.dedupKey() }
-                        )
-                    } else {
-                        accumulatedResults.add(result)
-                    }
+                    val checkingResult = localDebridAvailabilityService.markChecking(listOf(result)).firstOrNull() ?: result
+                    mergePresentedResult(accumulatedResults, checkingResult)
                     emit(NetworkResult.Success(accumulatedResults.toList()))
-                    Log.d(TAG, "Emitted ${accumulatedResults.size} addon(s), latest: ${result.addonName} with ${result.streams.size} streams")
+                    Log.d(TAG, "Emitted ${accumulatedResults.size} addon(s), latest: ${checkingResult.addonName} with ${checkingResult.streams.size} streams")
+
+                    val checkedResult = localDebridAvailabilityService.annotateCachedAvailability(listOf(checkingResult)).firstOrNull() ?: checkingResult
+                    if (checkedResult != checkingResult) {
+                        mergePresentedResult(accumulatedResults, checkedResult)
+                        emit(NetworkResult.Success(accumulatedResults.toList()))
+                        Log.d(TAG, "Emitted debrid cache status for ${checkedResult.addonName} with ${checkedResult.streams.size} streams")
+                    }
                 }
             }
 
@@ -256,19 +215,30 @@ class StreamRepositoryImpl @Inject constructor(
         }
     }
 
-    private fun addDirectDebridFailures(
-        attemptedFailures: MutableList<StreamAttemptFailure>,
-        sourceNames: List<String>,
-        kind: StreamFailureKind,
-        detail: String
+    private suspend fun mergePresentedResult(
+        accumulatedResults: MutableList<AddonStreams>,
+        result: AddonStreams
     ) {
-        sourceNames.forEach { sourceName ->
-            attemptedFailures += StreamAttemptFailure(
-                addonName = sourceName,
-                kind = kind,
-                detail = detail
+        val existingIndex = accumulatedResults.indexOfFirst { it.addonName == result.addonName }
+        if (existingIndex >= 0) {
+            val existing = accumulatedResults[existingIndex]
+            val merged = existing.copy(
+                streams = mergeStreams(existing.streams, result.streams)
+            )
+            accumulatedResults[existingIndex] = debridStreamPresentation.apply(listOf(merged))
+                .firstOrNull() ?: merged
+        } else {
+            accumulatedResults.add(
+                debridStreamPresentation.apply(listOf(result)).firstOrNull() ?: result
             )
         }
+    }
+
+    private fun mergeStreams(existing: List<Stream>, incoming: List<Stream>): List<Stream> {
+        val streamsByKey = LinkedHashMap<String, Stream>()
+        existing.forEach { stream -> streamsByKey[stream.dedupKey()] = stream }
+        incoming.forEach { stream -> streamsByKey[stream.dedupKey()] = stream }
+        return streamsByKey.values.toList()
     }
 
     /**
@@ -377,7 +347,7 @@ class StreamRepositoryImpl @Inject constructor(
     }
 
     private fun Stream.dedupKey(): String =
-        infoHash?.lowercase()
+        infoHash?.lowercase()?.let { hash -> "$hash:${fileIdx ?: ""}" }
             ?: clientResolve?.infoHash?.lowercase()?.let { hash -> "$hash:${clientResolve.fileIdx}" }
             ?: url
             ?: externalUrl

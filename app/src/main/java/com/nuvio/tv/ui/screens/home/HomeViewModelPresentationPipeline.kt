@@ -292,6 +292,9 @@ internal fun HomeViewModel.observeModernHomePresentationPipeline() {
                             state.copy(modernHomePresentation = warmStartPresentation)
                         }
                     }
+                    // Yield to allow the UI to render the warm-start rows before
+                    // building the full presentation, reducing jank on gate release.
+                    kotlinx.coroutines.yield()
                 }
 
                 val presentation = withContext(Dispatchers.Default) {

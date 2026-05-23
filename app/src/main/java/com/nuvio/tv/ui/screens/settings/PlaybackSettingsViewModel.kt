@@ -20,6 +20,7 @@ import com.nuvio.tv.data.local.TrailerSettings
 import com.nuvio.tv.data.local.TrailerSettingsDataStore
 import com.nuvio.tv.core.torrent.TorrentSettings
 import com.nuvio.tv.core.torrent.TorrentSettingsData
+import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.repository.AddonRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
@@ -44,6 +45,7 @@ class PlaybackSettingsViewModel @Inject constructor(
     fun setHideTorrentStats(enabled: Boolean) = torrentSettings.setHideTorrentStats(enabled)
     val installedAddonNames: Flow<List<String>> = addonRepository.getInstalledAddons().map { addons ->
         addons
+            .enabledAddons()
             .filter { addon ->
                 addon.resources.any { resource ->
                     resource.name.equals("stream", ignoreCase = true)

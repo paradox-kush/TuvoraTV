@@ -362,6 +362,7 @@ class PlayerRuntimeController(
     internal var errorRetryCount: Int = 0
     internal var consecutiveAutoPlayCount: Int = 0
     internal var errorRetryJob: Job? = null
+    internal var stableProgressResetJob: Job? = null
     internal var currentScrobbleItem: TraktScrobbleItem? = null
     internal var currentTraktEpisodeMapping: EpisodeMappingEntry? = null
     internal var currentTraktEpisodeMappingKey: String? = null
@@ -369,6 +370,7 @@ class PlayerRuntimeController(
     internal var hasRequestedScrobbleStartForCurrentItem: Boolean = false
     internal var scrobbleStartRequestGeneration: Long = 0L
     internal var playbackPreparationJob: Job? = null
+    internal var traktMappingJob: Job? = null
     internal var hasSentCompletionScrobbleForCurrentItem: Boolean = false
     internal var requestedUseLibassByUser: Boolean = false
     internal var libassPipelineOverrideForCurrentStream: Boolean? = null

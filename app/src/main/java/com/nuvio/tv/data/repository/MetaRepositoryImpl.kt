@@ -9,6 +9,7 @@ import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.AddonResource
+import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.R
@@ -112,7 +113,7 @@ class MetaRepositoryImpl @Inject constructor(
 
         emit(NetworkResult.Loading)
 
-        val addons = addonRepository.getInstalledAddons().first()
+        val addons = addonRepository.getInstalledAddons().first().enabledAddons()
 
         val requestedType = type.trim()
         val inferredType = inferCanonicalType(requestedType, id)
@@ -253,7 +254,7 @@ class MetaRepositoryImpl @Inject constructor(
 
         emit(NetworkResult.Loading)
 
-        val addons = addonRepository.getInstalledAddons().first()
+        val addons = addonRepository.getInstalledAddons().first().enabledAddons()
         val requestedType = type.trim()
         val inferredType = inferCanonicalType(requestedType, id)
         val candidate = selectPrimaryMetaCandidate(

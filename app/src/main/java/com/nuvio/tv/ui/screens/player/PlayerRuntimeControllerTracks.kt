@@ -942,14 +942,32 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                     )
                 }
             } else {
-                logSwitchTrace(
-                    stage = "restore-subtitle-addon",
-                    message = "result=no-exact-match targetAddonId=${subtitleSelection.id} targetLang=${subtitleSelection.language} " +
-                        "addonPool=${state.addonSubtitles.size}, falling back to auto-selection"
-                )
-                // Clear the persisted subtitle preference so tryAutoSelectPreferredSubtitleFromAvailableTracks
-                // can run its normal logic (prefer embedded over addon).
-                updatedPending = updatedPending.copy(subtitle = null)
+                val addonSubtitlesStillLoading = state.isLoadingAddonSubtitles || state.addonSubtitles.isEmpty()
+                if (addonSubtitlesStillLoading) {
+                    // Addon subtitles haven't loaded yet — keep the preference
+                    // so it can be restored once they arrive. Block auto-selection
+                    // to prevent internal tracks from overriding the user's choice.
+                    logSwitchTrace(
+                        stage = "restore-subtitle-addon",
+                        message = "result=defer targetAddonId=${subtitleSelection.id} targetLang=${subtitleSelection.language} " +
+                            "addonPool=${state.addonSubtitles.size} isLoadingAddonSubtitles=${state.isLoadingAddonSubtitles}"
+                    )
+                    autoSubtitleSelected = true
+                    subtitleAddonRestoredByPersistedPreference = true
+                } else {
+                    logSwitchTrace(
+                        stage = "restore-subtitle-addon",
+                        message = "result=no-exact-match targetAddonId=${subtitleSelection.id} targetLang=${subtitleSelection.language} " +
+                            "addonPool=${state.addonSubtitles.size}, falling back to auto-selection"
+                    )
+                    // Clear the persisted subtitle preference so tryAutoSelectPreferredSubtitleFromAvailableTracks
+                    // can run its normal logic (prefer embedded over addon).
+                    updatedPending = updatedPending.copy(subtitle = null)
+                    // Reset auto-select flag in case it was set during the defer
+                    // phase — allows tryAutoSelect to pick an embedded track.
+                    autoSubtitleSelected = false
+                    subtitleAddonRestoredByPersistedPreference = false
+                }
             }
         }
     }

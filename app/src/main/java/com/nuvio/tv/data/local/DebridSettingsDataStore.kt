@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.gson.Gson
+import com.nuvio.tv.core.debrid.DebridProviders
 import com.nuvio.tv.core.debrid.DebridStreamFormatterDefaults
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.domain.model.DebridSettings
@@ -42,8 +43,11 @@ class DebridSettingsDataStore @Inject constructor(
         factory.get(profileId, FEATURE)
 
     private val enabledKey = booleanPreferencesKey("debrid_enabled")
+    private val cloudLibraryEnabledKey = booleanPreferencesKey("cloud_library_enabled")
     private val torboxApiKeyKey = stringPreferencesKey("torbox_api_key")
+    private val premiumizeApiKeyKey = stringPreferencesKey("premiumize_api_key")
     private val realDebridApiKeyKey = stringPreferencesKey("real_debrid_api_key")
+    private val preferredResolverProviderIdKey = stringPreferencesKey("preferred_resolver_provider_id")
     private val instantPlaybackPreparationLimitKey = intPreferencesKey("instant_playback_preparation_limit")
     private val streamMaxResultsKey = intPreferencesKey("stream_max_results")
     private val streamSortModeKey = stringPreferencesKey("stream_sort_mode")
@@ -59,8 +63,16 @@ class DebridSettingsDataStore @Inject constructor(
         factory.get(pid, FEATURE).data.map { prefs ->
             DebridSettings(
                 enabled = prefs[enabledKey] ?: false,
+                cloudLibraryEnabled = prefs[cloudLibraryEnabledKey] ?: true,
                 torboxApiKey = prefs[torboxApiKeyKey] ?: "",
+                premiumizeApiKey = prefs[premiumizeApiKeyKey] ?: "",
                 realDebridApiKey = prefs[realDebridApiKeyKey] ?: "",
+                preferredResolverProviderId = preferredResolverProviderId(
+                    stored = prefs[preferredResolverProviderIdKey],
+                    torboxApiKey = prefs[torboxApiKeyKey] ?: "",
+                    premiumizeApiKey = prefs[premiumizeApiKeyKey] ?: "",
+                    realDebridApiKey = prefs[realDebridApiKeyKey] ?: ""
+                ),
                 instantPlaybackPreparationLimit = normalizeDebridInstantPlaybackPreparationLimit(
                     prefs[instantPlaybackPreparationLimitKey] ?: 0
                 ),
@@ -106,18 +118,43 @@ class DebridSettingsDataStore @Inject constructor(
         store().edit { it[enabledKey] = enabled }
     }
 
-    suspend fun setTorboxApiKey(apiKey: String) {
+    suspend fun setCloudLibraryEnabled(enabled: Boolean) {
+        store().edit { it[cloudLibraryEnabledKey] = enabled }
+    }
+
+    suspend fun setPreferredResolverProviderId(providerId: String) {
+        val normalized = DebridProviders.byId(providerId)?.id.orEmpty()
+        store().edit { it[preferredResolverProviderIdKey] = normalized }
+    }
+
+    suspend fun setProviderApiKey(providerId: String, apiKey: String) {
+        val provider = DebridProviders.byId(providerId) ?: return
         val normalized = apiKey.trim()
-        store().edit {
-            it[torboxApiKeyKey] = normalized
-            if (normalized.isBlank()) {
-                it[enabledKey] = false
+        store().edit { prefs ->
+            providerKey(provider.id)?.let { key -> prefs[key] = normalized }
+            if (normalized.isBlank() && !hasAnyVisibleApiKeyAfter(prefs, provider.id)) {
+                prefs[enabledKey] = false
             }
+            val preferred = preferredResolverProviderId(
+                stored = prefs[preferredResolverProviderIdKey],
+                torboxApiKey = prefs[torboxApiKeyKey] ?: "",
+                premiumizeApiKey = prefs[premiumizeApiKeyKey] ?: "",
+                realDebridApiKey = prefs[realDebridApiKeyKey] ?: ""
+            )
+            prefs[preferredResolverProviderIdKey] = preferred
         }
     }
 
+    suspend fun setTorboxApiKey(apiKey: String) {
+        setProviderApiKey(DebridProviders.TORBOX_ID, apiKey)
+    }
+
+    suspend fun setPremiumizeApiKey(apiKey: String) {
+        setProviderApiKey(DebridProviders.PREMIUMIZE_ID, apiKey)
+    }
+
     suspend fun setRealDebridApiKey(apiKey: String) {
-        store().edit { it[realDebridApiKeyKey] = apiKey.trim() }
+        setProviderApiKey(DebridProviders.REAL_DEBRID_ID, apiKey)
     }
 
     suspend fun setInstantPlaybackPreparationLimit(limit: Int) {
@@ -238,6 +275,42 @@ class DebridSettingsDataStore @Inject constructor(
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String?, default: T): T {
         return runCatching { enumValueOf<T>(value.orEmpty()) }.getOrDefault(default)
+    }
+
+    private fun providerKey(providerId: String) = when (providerId) {
+        DebridProviders.TORBOX_ID -> torboxApiKeyKey
+        DebridProviders.PREMIUMIZE_ID -> premiumizeApiKeyKey
+        DebridProviders.REAL_DEBRID_ID -> realDebridApiKeyKey
+        else -> null
+    }
+
+    private fun hasAnyVisibleApiKeyAfter(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        updatedProviderId: String
+    ): Boolean {
+        return DebridProviders.visible().any { provider ->
+            val key = providerKey(provider.id) ?: return@any false
+            provider.id != updatedProviderId && !prefs[key].isNullOrBlank()
+        }
+    }
+
+    private fun preferredResolverProviderId(
+        stored: String?,
+        torboxApiKey: String,
+        premiumizeApiKey: String,
+        realDebridApiKey: String
+    ): String {
+        val connected = listOf(
+            DebridProviders.TORBOX_ID to torboxApiKey,
+            DebridProviders.PREMIUMIZE_ID to premiumizeApiKey,
+            DebridProviders.REAL_DEBRID_ID to realDebridApiKey
+        ).mapNotNull { (id, key) ->
+            DebridProviders.byId(id)
+                ?.takeIf { provider -> provider.visibleInUi && key.isNotBlank() }
+                ?.id
+        }
+        val normalizedStored = DebridProviders.byId(stored)?.id
+        return connected.firstOrNull { it == normalizedStored } ?: connected.firstOrNull().orEmpty()
     }
 
     private fun parseStreamPreferences(value: String?): DebridStreamPreferences? {

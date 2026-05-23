@@ -55,7 +55,7 @@ object DirectDebridStreamFilter {
         return DebridProviders.all().any { addonName == DebridProviders.instantName(it.id) }
     }
 
-    private fun applyPreferences(streams: List<Stream>, settings: DebridSettings): List<Stream> {
+    fun applyPreferences(streams: List<Stream>, settings: DebridSettings): List<Stream> {
         val preferences = effectivePreferences(settings)
         return streams.map { it to streamFacts(it, preferences) }
             .filter { (_, facts) -> facts.matchesFilters(preferences) }
@@ -63,6 +63,9 @@ object DirectDebridStreamFilter {
             .let { sorted -> applyLimits(sorted, preferences) }
             .map { it.first }
     }
+
+    fun facts(stream: Stream, settings: DebridSettings): StreamFacts =
+        streamFacts(stream, effectivePreferences(settings))
 
     private fun effectivePreferences(settings: DebridSettings): DebridStreamPreferences {
         val default = DebridStreamPreferences()
@@ -368,7 +371,9 @@ object DirectDebridStreamFilter {
     }
 
     private fun streamSize(stream: Stream): Long? {
-        return stream.clientResolve?.stream?.raw?.size ?: stream.behaviorHints?.videoSize
+        return stream.clientResolve?.stream?.raw?.size
+            ?: stream.behaviorHints?.videoSize
+            ?: stream.debridCacheStatus?.cachedSize
     }
 
     private fun streamSearchText(stream: Stream): String {
@@ -384,6 +389,7 @@ object DirectDebridStreamFilter {
             resolve?.filename,
             raw?.torrentName,
             raw?.filename,
+            stream.debridCacheStatus?.cachedName,
             parsed?.resolution,
             parsed?.quality,
             parsed?.codec,
@@ -398,7 +404,7 @@ object DirectDebridStreamFilter {
 
     private fun Int.gigabytes(): Long = this * 1_000_000_000L
 
-    private data class StreamFacts(
+    data class StreamFacts(
         val resolution: DebridStreamResolution,
         val quality: DebridStreamQuality,
         val visualTags: List<DebridStreamVisualTag>,

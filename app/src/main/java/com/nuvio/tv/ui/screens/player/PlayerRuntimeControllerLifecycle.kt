@@ -37,6 +37,8 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
     subtitleAutoSyncLoadJob?.cancel()
     playbackPreparationJob?.cancel()
     playbackPreparationJob = null
+    traktMappingJob?.cancel()
+    traktMappingJob = null
     delayMpvResumeSeekUntilVideoTrack = false
     nextEpisodeAutoPlayJob?.cancel()
     nextEpisodeAutoPlayJob = null
@@ -46,6 +48,8 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
     stillWatchingPromptJob = null
     errorRetryJob?.cancel()
     errorRetryJob = null
+    stableProgressResetJob?.cancel()
+    stableProgressResetJob = null
     releaseMpvPlayer()
     _exoPlayer?.let { player ->
         runCatching { player.playWhenReady = false }

@@ -386,7 +386,7 @@ class DebridStreamTemplateEngine @Inject constructor() {
             unitIndex++
         }
         val signed = if (value < 0) -current else current
-        return if (signed >= 10 || signed % 1.0 == 0.0) {
+        return if (signed % 1.0 == 0.0) {
             "${signed.toLong()} ${units[unitIndex]}"
         } else {
             String.format(Locale.US, "%.1f %s", signed, units[unitIndex])

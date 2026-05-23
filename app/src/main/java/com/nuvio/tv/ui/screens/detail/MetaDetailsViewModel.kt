@@ -4,7 +4,6 @@ import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.nuvio.tv.core.debrid.DirectDebridStreamSource
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.tmdb.TmdbMetadataService
@@ -90,7 +89,6 @@ class MetaDetailsViewModel @Inject constructor(
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
     private val playerSettingsDataStore: PlayerSettingsDataStore,
     private val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
-    private val directDebridStreamSource: DirectDebridStreamSource,
     val posterOptions: com.nuvio.tv.ui.components.posteroptions.PosterOptionsController,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -260,8 +258,7 @@ class MetaDetailsViewModel @Inject constructor(
         }
     }
 
-    private fun updateNextToWatch(nextToWatch: NextToWatch, metaForPreload: Meta? = null) {
-        preloadDebridStreams(metaForPreload ?: _uiState.value.meta, nextToWatch)
+    private fun updateNextToWatch(nextToWatch: NextToWatch) {
         _uiState.update { state ->
             if (state.nextToWatch == nextToWatch) return@update state
             val nextSeason = nextToWatch.nextSeason
@@ -281,18 +278,6 @@ class MetaDetailsViewModel @Inject constructor(
                 state.copy(nextToWatch = nextToWatch)
             }
         }
-    }
-
-    private fun preloadDebridStreams(meta: Meta?, nextToWatch: NextToWatch) {
-        val targetMeta = meta ?: return
-        val type = targetMeta.apiType.takeIf { it.isNotBlank() } ?: return
-        val isSeries = type.equals("series", ignoreCase = true) || type.equals("tv", ignoreCase = true)
-        val videoId = if (isSeries) {
-            nextToWatch.nextVideoId
-        } else {
-            targetMeta.id
-        }?.takeIf { it.isNotBlank() } ?: return
-        directDebridStreamSource.preloadStreams(type, videoId)
     }
 
     private fun observeTrailerAutoplaySettings() {
@@ -836,7 +821,7 @@ class MetaDetailsViewModel @Inject constructor(
             .getWatchedEpisodesForContent(_effectiveContentId.value)
             .first()
         val precomputedNextToWatch = computeNextToWatch(enriched, progressMap, watchedEpisodes)
-        updateNextToWatch(precomputedNextToWatch, enriched)
+        updateNextToWatch(precomputedNextToWatch)
 
         applyMeta(enriched)
         // Episode ratings and MDBList are independent — launch both without waiting.
@@ -1585,7 +1570,7 @@ class MetaDetailsViewModel @Inject constructor(
 
         nextToWatchJob = viewModelScope.launch {
             val nextToWatch = computeNextToWatch(meta, progressMap, watchedEpisodes)
-            updateNextToWatch(nextToWatch, meta)
+            updateNextToWatch(nextToWatch)
         }
     }
 

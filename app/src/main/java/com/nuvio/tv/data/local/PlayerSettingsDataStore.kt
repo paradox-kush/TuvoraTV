@@ -12,9 +12,12 @@ import com.nuvio.tv.core.profile.ProfileManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import javax.inject.Inject
@@ -354,6 +357,7 @@ enum class LibassRenderType {
     OVERLAY_OPEN_GL    // Overlay OpenGL rendering (supports HDR, recommended)
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
 class PlayerSettingsDataStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
@@ -461,86 +465,92 @@ class PlayerSettingsDataStore @Inject constructor(
 
     init {
         ioScope.launch {
-            store().edit { prefs ->
-                val loadControlMigrated = prefs[migrationLoadControlDefaultsAlignedDoneKey] ?: false
-                if (!loadControlMigrated) {
-                    val currentMin = prefs[minBufferMsKey]
-                    val currentMax = prefs[maxBufferMsKey]
+            profileManager.activeProfileId.collect { pid ->
+                migrateProfile(pid)
+            }
+        }
+    }
 
-                    val legacyDefaultsDetected = (currentMin == null && currentMax == null) ||
-                        (currentMin == 15_000 && currentMax == 25_000)
+    private suspend fun migrateProfile(profileId: Int) {
+        factory.get(profileId, FEATURE).edit { prefs ->
+            val loadControlMigrated = prefs[migrationLoadControlDefaultsAlignedDoneKey] ?: false
+            if (!loadControlMigrated) {
+                val currentMin = prefs[minBufferMsKey]
+                val currentMax = prefs[maxBufferMsKey]
 
-                    if (legacyDefaultsDetected) {
-                        prefs[minBufferMsKey] = 50_000
-                        prefs[maxBufferMsKey] = 50_000
-                    }
+                val legacyDefaultsDetected = (currentMin == null && currentMax == null) ||
+                    (currentMin == 15_000 && currentMax == 25_000)
 
-                    prefs[migrationLoadControlDefaultsAlignedDoneKey] = true
+                if (legacyDefaultsDetected) {
+                    prefs[minBufferMsKey] = 50_000
+                    prefs[maxBufferMsKey] = 50_000
                 }
 
-                val min = prefs[minBufferMsKey]
-                val max = prefs[maxBufferMsKey]
-                if (min != null && max != null && max < min) {
-                    prefs[maxBufferMsKey] = min
-                }
+                prefs[migrationLoadControlDefaultsAlignedDoneKey] = true
+            }
 
-                val preferredAudioLanguage = prefs[preferredAudioLanguageKey]
-                if (preferredAudioLanguage != null) {
-                    val normalizedPreferredAudioLanguage =
-                        normalizeSelectableLanguageCode(preferredAudioLanguage)
-                    if (normalizedPreferredAudioLanguage != preferredAudioLanguage) {
-                        prefs[preferredAudioLanguageKey] = normalizedPreferredAudioLanguage
-                    }
-                }
+            val min = prefs[minBufferMsKey]
+            val max = prefs[maxBufferMsKey]
+            if (min != null && max != null && max < min) {
+                prefs[maxBufferMsKey] = min
+            }
 
-                val secondaryPreferredAudioLanguage = prefs[secondaryPreferredAudioLanguageKey]
-                if (secondaryPreferredAudioLanguage != null) {
-                    val normalizedSecondaryPreferredAudioLanguage =
-                        normalizeSecondaryAudioLanguageCode(secondaryPreferredAudioLanguage)
-                    if (normalizedSecondaryPreferredAudioLanguage != secondaryPreferredAudioLanguage) {
-                        if (normalizedSecondaryPreferredAudioLanguage != null) {
-                            prefs[secondaryPreferredAudioLanguageKey] = normalizedSecondaryPreferredAudioLanguage
-                        } else {
-                            prefs.remove(secondaryPreferredAudioLanguageKey)
-                        }
-                    }
+            val preferredAudioLanguage = prefs[preferredAudioLanguageKey]
+            if (preferredAudioLanguage != null) {
+                val normalizedPreferredAudioLanguage =
+                    normalizeSelectableLanguageCode(preferredAudioLanguage)
+                if (normalizedPreferredAudioLanguage != preferredAudioLanguage) {
+                    prefs[preferredAudioLanguageKey] = normalizedPreferredAudioLanguage
                 }
+            }
 
-                val preferredSubtitleLanguage = prefs[subtitlePreferredLanguageKey]
-                if (preferredSubtitleLanguage != null) {
-                    val normalizedPreferredSubtitleLanguage =
-                        normalizeSelectableLanguageCode(preferredSubtitleLanguage)
-                    if (normalizedPreferredSubtitleLanguage != preferredSubtitleLanguage) {
-                        prefs[subtitlePreferredLanguageKey] = normalizedPreferredSubtitleLanguage
+            val secondaryPreferredAudioLanguage = prefs[secondaryPreferredAudioLanguageKey]
+            if (secondaryPreferredAudioLanguage != null) {
+                val normalizedSecondaryPreferredAudioLanguage =
+                    normalizeSecondaryAudioLanguageCode(secondaryPreferredAudioLanguage)
+                if (normalizedSecondaryPreferredAudioLanguage != secondaryPreferredAudioLanguage) {
+                    if (normalizedSecondaryPreferredAudioLanguage != null) {
+                        prefs[secondaryPreferredAudioLanguageKey] = normalizedSecondaryPreferredAudioLanguage
+                    } else {
+                        prefs.remove(secondaryPreferredAudioLanguageKey)
                     }
                 }
+            }
 
-                val secondarySubtitleLanguage = prefs[subtitleSecondaryLanguageKey]
-                if (secondarySubtitleLanguage != null) {
-                    val normalizedSecondarySubtitleLanguage =
-                        normalizeSelectableLanguageCode(secondarySubtitleLanguage)
-                    if (normalizedSecondarySubtitleLanguage != secondarySubtitleLanguage) {
-                        prefs[subtitleSecondaryLanguageKey] = normalizedSecondarySubtitleLanguage
-                    }
-                }
-
+            val preferredSubtitleLanguage = prefs[subtitlePreferredLanguageKey]
+            if (preferredSubtitleLanguage != null) {
                 val normalizedPreferredSubtitleLanguage =
-                    preferredSubtitleLanguage?.let(::normalizeSelectableLanguageCode)
+                    normalizeSelectableLanguageCode(preferredSubtitleLanguage)
+                if (normalizedPreferredSubtitleLanguage != preferredSubtitleLanguage) {
+                    prefs[subtitlePreferredLanguageKey] = normalizedPreferredSubtitleLanguage
+                }
+            }
+
+            val secondarySubtitleLanguage = prefs[subtitleSecondaryLanguageKey]
+            if (secondarySubtitleLanguage != null) {
                 val normalizedSecondarySubtitleLanguage =
-                    secondarySubtitleLanguage?.let(::normalizeSelectableLanguageCode)
-                when {
-                    normalizedPreferredSubtitleLanguage == SUBTITLE_LANGUAGE_FORCED -> {
-                        prefs[subtitleUseForcedSubtitlesKey] = true
-                        val migratedPreferred = normalizedSecondarySubtitleLanguage
-                            ?.takeUnless { it == SUBTITLE_LANGUAGE_FORCED || it == "none" }
-                            ?: "en"
-                        prefs[subtitlePreferredLanguageKey] = migratedPreferred
-                        prefs.remove(subtitleSecondaryLanguageKey)
-                    }
-                    normalizedSecondarySubtitleLanguage == SUBTITLE_LANGUAGE_FORCED -> {
-                        prefs[subtitleUseForcedSubtitlesKey] = true
-                        prefs.remove(subtitleSecondaryLanguageKey)
-                    }
+                    normalizeSelectableLanguageCode(secondarySubtitleLanguage)
+                if (normalizedSecondarySubtitleLanguage != secondarySubtitleLanguage) {
+                    prefs[subtitleSecondaryLanguageKey] = normalizedSecondarySubtitleLanguage
+                }
+            }
+
+            val normalizedPreferredSubtitleLanguage =
+                preferredSubtitleLanguage?.let(::normalizeSelectableLanguageCode)
+            val normalizedSecondarySubtitleLanguage =
+                secondarySubtitleLanguage?.let(::normalizeSelectableLanguageCode)
+            when {
+                normalizedPreferredSubtitleLanguage == SUBTITLE_LANGUAGE_FORCED -> {
+                    prefs[subtitleUseForcedSubtitlesKey] = true
+                    val migratedPreferred = normalizedSecondarySubtitleLanguage
+                        ?.takeUnless { it == SUBTITLE_LANGUAGE_FORCED || it == "none" }
+                        ?: "en"
+                    prefs[subtitlePreferredLanguageKey] = migratedPreferred
+                    prefs.remove(subtitleSecondaryLanguageKey)
+                }
+                normalizedSecondarySubtitleLanguage == SUBTITLE_LANGUAGE_FORCED -> {
+                    prefs[subtitleUseForcedSubtitlesKey] = true
+                    prefs.remove(subtitleSecondaryLanguageKey)
                 }
             }
         }
@@ -550,7 +560,8 @@ class PlayerSettingsDataStore @Inject constructor(
      * Flow of current player settings
      */
     val playerSettings: Flow<PlayerSettings> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { prefs ->
+        factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
+    }.map { prefs ->
             PlayerSettings(
                 playerPreference = prefs[playerPreferenceKey]?.let {
                     runCatching { PlayerPreference.valueOf(it) }.getOrDefault(PlayerPreference.INTERNAL)
@@ -646,13 +657,13 @@ class PlayerSettingsDataStore @Inject constructor(
                         ?: prefs[nextEpisodeThresholdPercentLegacyKey]?.toFloat()
                         ?: 99f,
                     min = 97f,
-                    max = 99.5f
+                    max = 100f
                 ),
                 nextEpisodeThresholdMinutesBeforeEnd = normalizeHalfStep(
                     value = prefs[nextEpisodeThresholdMinutesBeforeEndKey]
                         ?: prefs[nextEpisodeThresholdMinutesBeforeEndLegacyKey]?.toFloat()
                         ?: 2f,
-                    min = 1f,
+                    min = 0f,
                     max = 3.5f
                 ),
                 streamReuseLastLinkEnabled = prefs[streamReuseLastLinkEnabledKey] ?: false,
@@ -692,26 +703,25 @@ class PlayerSettingsDataStore @Inject constructor(
                 )
             )
         }
-    }
 
     /**
      * Flow for just the libass toggle
      */
     val useLibass: Flow<Boolean> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { prefs ->
-            prefs[useLibassKey] ?: false
-        }
+        factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
+    }.map { prefs ->
+        prefs[useLibassKey] ?: false
     }
 
     /**
      * Flow for the libass render type
      */
     val libassRenderType: Flow<LibassRenderType> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { prefs ->
-            prefs[libassRenderTypeKey]?.let {
-                try { LibassRenderType.valueOf(it) } catch (e: Exception) { LibassRenderType.OVERLAY_OPEN_GL }
-            } ?: LibassRenderType.OVERLAY_OPEN_GL
-        }
+        factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
+    }.map { prefs ->
+        prefs[libassRenderTypeKey]?.let {
+            try { LibassRenderType.valueOf(it) } catch (e: Exception) { LibassRenderType.OVERLAY_OPEN_GL }
+        } ?: LibassRenderType.OVERLAY_OPEN_GL
     }
 
     // Player preference setter
@@ -987,7 +997,7 @@ class PlayerSettingsDataStore @Inject constructor(
             prefs[nextEpisodeThresholdPercentKey] = normalizeHalfStep(
                 value = percent,
                 min = 97f,
-                max = 99.5f
+                max = 100f
             )
         }
     }
@@ -996,7 +1006,7 @@ class PlayerSettingsDataStore @Inject constructor(
         store().edit { prefs ->
             prefs[nextEpisodeThresholdMinutesBeforeEndKey] = normalizeHalfStep(
                 value = minutes,
-                min = 1f,
+                min = 0f,
                 max = 3.5f
             )
         }

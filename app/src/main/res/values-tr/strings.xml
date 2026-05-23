@@ -1119,6 +1119,7 @@
     <string name="addon_installed_section">Kurulu</string>
     <string name="addon_empty">Kurulu eklenti bulunamadı. Başlamak için bir tane ekleyin.</string>
     <string name="addon_remove">Kaldır</string>
+    <string name="addons_badge_disabled">Kapalı</string>
     <string name="addon_manage_from_phone_title">Telefondan Yönet</string>
     <string name="addon_manage_from_phone_subtitle">Telefondan eklentileri ve ana sayfa kataloglarını yönetmek için QR kodunu tayın</string>
     <string name="addon_manage_addons_only_from_phone_subtitle">Eklenti yüklemek veya kaldırmak için telefonunuzdan QR kodu tarayın</string>

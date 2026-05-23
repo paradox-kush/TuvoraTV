@@ -22,19 +22,32 @@ data class Stream(
     val sources: List<String>? = null,
     val quality: String? = null,
     val qualityValue: Int = -1,
-    val clientResolve: StreamClientResolve? = null
+    val clientResolve: StreamClientResolve? = null,
+    val debridCacheStatus: StreamDebridCacheStatus? = null
 ) {
     /**
      * Returns the primary stream source URL
      */
-    fun getStreamUrl(): String? = url ?: externalUrl
+    fun getStreamUrl(): String? =
+        listOfNotNull(url, externalUrl)
+            .firstOrNull { !it.isMagnetLink() }
+
+    fun torrentMagnetUri(): String? =
+        listOfNotNull(url, externalUrl)
+            .firstOrNull { it.isMagnetLink() }
 
     /**
      * Returns true if this is a torrent-only stream (no HTTP URL available).
      * When both infoHash and url are present (e.g. debrid cached torrents),
      * the HTTP url is preferred and this returns false.
      */
-    fun isTorrent(): Boolean = !isDirectDebrid() && infoHash != null && url.isNullOrBlank()
+    fun isTorrent(): Boolean =
+        !isDirectDebrid() &&
+            getStreamUrl().isNullOrBlank() &&
+            (!infoHash.isNullOrBlank() || !torrentMagnetUri().isNullOrBlank())
+
+    fun needsLocalDebridResolve(): Boolean =
+        isTorrent() && getStreamUrl().isNullOrBlank()
 
     fun isDirectDebrid(): Boolean {
         val resolve = clientResolve ?: return false
@@ -51,7 +64,7 @@ data class Stream(
     /**
      * Returns true if this is an external URL (opens in browser)
      */
-    fun isExternal(): Boolean = externalUrl != null && url == null
+    fun isExternal(): Boolean = externalUrl != null && url == null && !externalUrl.isMagnetLink()
 
     /**
      * Returns a display name for the stream
@@ -84,6 +97,22 @@ data class Stream(
             append(occurrence)
         }
     }
+}
+
+@Immutable
+data class StreamDebridCacheStatus(
+    val providerId: String,
+    val providerName: String,
+    val state: StreamDebridCacheState,
+    val cachedName: String? = null,
+    val cachedSize: Long? = null
+)
+
+enum class StreamDebridCacheState {
+    CHECKING,
+    CACHED,
+    NOT_CACHED,
+    UNKNOWN
 }
 
 @Immutable
@@ -176,3 +205,6 @@ data class AddonStreams(
     val addonLogo: String?,
     val streams: List<Stream>
 )
+
+private fun String?.isMagnetLink(): Boolean =
+    this?.trimStart()?.startsWith("magnet:", ignoreCase = true) == true

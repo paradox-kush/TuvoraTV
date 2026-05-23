@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -143,7 +144,8 @@ fun TraktScreen(
             runCatching { QrCodeGenerator.generate("https://trakt.tv/activate/$it", 420) }.getOrNull()
         }
     }
-    val traktLogoPainter = rememberRawSvgPainter(R.raw.trakt_tv_favicon)
+    val traktLogoSize = 96.dp
+    val traktLogoPainter = rememberRawSvgPainter(R.raw.trakt_tv_favicon, traktLogoSize)
 
     Row(
         modifier = Modifier
@@ -160,7 +162,7 @@ fun TraktScreen(
             Image(
                 painter = traktLogoPainter,
                 contentDescription = stringResource(R.string.cd_trakt_logo),
-                modifier = Modifier.size(96.dp),
+                modifier = Modifier.size(traktLogoSize),
                 contentScale = ContentScale.Fit
             )
             Spacer(modifier = Modifier.height(24.dp))
@@ -609,10 +611,10 @@ private fun TraktStatItem(
 }
 
 @Composable
-private fun rememberRawSvgPainter(@RawRes iconRes: Int): Painter {
+private fun rememberRawSvgPainter(@RawRes iconRes: Int, targetSize: Dp): Painter {
     val context = LocalContext.current
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val sizePx = with(density) { 24.dp.roundToPx() }
+    val sizePx = with(density) { targetSize.roundToPx() }
     val request = remember(iconRes, context, sizePx) {
         ImageRequest.Builder(context)
             .data(iconRes)
