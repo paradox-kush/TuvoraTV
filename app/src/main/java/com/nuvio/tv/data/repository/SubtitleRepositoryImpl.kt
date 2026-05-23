@@ -193,7 +193,9 @@ class SubtitleRepositoryImpl @Inject constructor(
         
         videoHash?.let { params.add("videoHash=$it") }
         videoSize?.let { params.add("videoSize=$it") }
-        filename?.let { params.add("filename=$it") }
+        filename?.let {
+            params.add("filename=${java.net.URLEncoder.encode(it, "UTF-8")}")
+        }
         
         return if (params.isNotEmpty()) {
             params.joinToString("&")
