@@ -943,7 +943,6 @@
     <string name="debrid_prepare_instant_playback">Menyiapkan tautan</string>
     <string name="debrid_prepare_instant_playback_description">Siapkan sumber video sebelum mulai pemutaran dimulai.</string>
     <string name="debrid_prepare_stream_count">Jumlah sumber yang disiapkan</string>
-    <string name="settings_debrid_prepare_stream_count_warning">Gunakan jumlah sekecil mungkin. Penyedia layanan Debrid bisa saja membatasi seberapa banyak tautan yang dapat diurai dalam jangka waktu tertentu. Membuka film atau episode serial dihitung dalam batas tersebut meskipun Anda tidak menonton, karena tautan tetap disiapkan terlebih dahulu.</string>
     <string name="debrid_prepare_count_one">1 sumber</string>
     <string name="debrid_prepare_count_many">%1$d sumber</string>
     <string name="debrid_stream_max_results_title">Hasil maksimal</string>
