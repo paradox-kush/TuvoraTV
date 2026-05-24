@@ -830,10 +830,15 @@ fun ModernHomeContent(
             val latestLiveForStable = liveHeroSceneState.value
             if (!verticalRowListState.isScrollInProgress &&
                 !isRapidHorizontalNav.value &&
-                latestLiveForStable.preview?.title?.isNotBlank() == true &&
-                !latestLiveForStable.enrichmentActive &&
-                stableHeroSceneStateRef.value?.preview != latestLiveForStable.preview) {
-                stableHeroSceneStateRef.value = latestLiveForStable
+                !latestLiveForStable.enrichmentActive
+            ) {
+                val hasNewPreview = latestLiveForStable.preview?.title?.isNotBlank() == true &&
+                    stableHeroSceneStateRef.value?.preview != latestLiveForStable.preview
+                val hasNewBackdrop = latestLiveForStable.heroBackdrop != null &&
+                    stableHeroSceneStateRef.value?.heroBackdrop != latestLiveForStable.heroBackdrop
+                if (hasNewPreview || hasNewBackdrop) {
+                    stableHeroSceneStateRef.value = latestLiveForStable
+                }
             }
 
             val isFullScreenState = remember {

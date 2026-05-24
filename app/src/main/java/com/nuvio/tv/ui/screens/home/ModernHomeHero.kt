@@ -125,14 +125,11 @@ internal fun ModernHeroMediaLayer(
 
     // Backdrop URL is managed upstream (heroSceneStateLambda freezes it
     // during rapid nav / scroll). Only update when enrichment is not active
-    val currentBackdrop by remember { derivedStateOf {
-        val backdrop = heroBackdrop()
-        val enriching = enrichmentActive()
-        if (enriching) null else backdrop
-    } }
+    val rawBackdrop by remember { derivedStateOf { heroBackdrop() } }
+    val enriching by remember { derivedStateOf { enrichmentActive() } }
     var displayedBackdrop by remember { mutableStateOf(HeroBackdropState.lastDisplayedUrl ?: heroBackdrop()) }
-    if (currentBackdrop != null && currentBackdrop != displayedBackdrop) {
-        displayedBackdrop = currentBackdrop
+    if (rawBackdrop != null && rawBackdrop != displayedBackdrop && !enriching) {
+        displayedBackdrop = rawBackdrop!!
     }
     val imageModel = remember(
         localContext,
