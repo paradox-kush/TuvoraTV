@@ -943,6 +943,7 @@
     <string name="debrid_prepare_instant_playback">Menyiapkan tautan</string>
     <string name="debrid_prepare_instant_playback_description">Siapkan sumber video sebelum mulai pemutaran dimulai.</string>
     <string name="debrid_prepare_stream_count">Jumlah sumber yang disiapkan</string>
+    <string name="debrid_prepare_stream_count_warning">Gunakan jumlah sekecil mungkin. Penyedia layanan Debrid bisa saja membatasi seberapa banyak tautan yang dapat diurai dalam jangka waktu tertentu. Membuka film atau episode serial dihitung dalam batas tersebut meskipun Anda tidak menonton, karena tautan tetap disiapkan terlebih dahulu.</string>
     <string name="debrid_prepare_count_one">1 sumber</string>
     <string name="debrid_prepare_count_many">%1$d sumber</string>
     <string name="debrid_stream_max_results_title">Hasil maksimal</string>
@@ -974,6 +975,39 @@
     <string name="debrid_stream_codec_h264">H.264 / AVC</string>
     <string name="debrid_stream_codec_hevc">HEVC / H.265</string>
     <string name="debrid_stream_codec_av1">AV1</string>
+
+    <!-- Debrid stream filter dialogs (per-resolution / quality / size / multi-choice pickers) -->
+    <string name="debrid_stream_per_resolution_limit_title">Limit per resolusi</string>
+    <string name="debrid_stream_per_resolution_limit_subtitle">Batasi hasil 2160p, 1080p, 720p yang berulang setelah diurutkan.</string>
+    <string name="debrid_stream_per_quality_limit_title">Limit per kualitas</string>
+    <string name="debrid_stream_per_quality_limit_subtitle">Batas hasil BluRay, WEB-DL, REMUX yang berulang setelah diurutkan.</string>
+    <string name="debrid_stream_size_range_title">Rentang ukuran file</string>
+    <string name="debrid_stream_size_range_subtitle">Filter berdasarkan ukuran file</string>
+    <string name="debrid_stream_resolutions_preferred">Preferensi Resolusi</string>
+    <string name="debrid_stream_resolutions_required">Resolusi wajib</string>
+    <string name="debrid_stream_resolutions_excluded">Resolusi dikecualikan</string>
+    <string name="debrid_stream_qualities_preferred">Preferensi kualitas</string>
+    <string name="debrid_stream_qualities_required">Kualitas wajib</string>
+    <string name="debrid_stream_qualities_excluded">Kualitas dikecualikan</string>
+    <string name="debrid_stream_visual_tags_preferred">Preferensi label visual</string>
+    <string name="debrid_stream_visual_tags_required">Label visual wajib</string>
+    <string name="debrid_stream_visual_tags_excluded">Label visual dikecualikan</string>
+    <string name="debrid_stream_audio_tags_preferred">Preferensi label audio</string>
+    <string name="debrid_stream_audio_tags_required">Label auido wajib</string>
+    <string name="debrid_stream_audio_tags_excluded">Label audio dikecualikan</string>
+    <string name="debrid_stream_channels_preferred">Preferensi saluran audio</string>
+    <string name="debrid_stream_channels_required">Saluran audio wajib</string>
+    <string name="debrid_stream_channels_excluded">Saluran audio dikecualikan</string>
+    <string name="debrid_stream_encodes_preferred">Preferensi video codec</string>
+    <string name="debrid_stream_encodes_required">Codec wajib</string>
+    <string name="debrid_stream_encodes_excluded">Codec dikecualikan</string>
+    <string name="debrid_stream_languages_preferred">Preferensi bahasa</string>
+    <string name="debrid_stream_languages_required">Bahasa wajib</string>
+    <string name="debrid_stream_languages_excluded">Bahasa dikecualikan</string>
+    <string name="debrid_stream_release_groups_required">Grup rilis wajib</string>
+    <string name="debrid_stream_release_groups_excluded">Grup rilis dikeciualikan</string>
+    <string name="debrid_stream_release_groups_input_subtitle">Masukkan satu grup per baris.</string>
+
     <string name="debrid_formatter_title">Editor Web</string>
     <string name="debrid_formatter_subtitle">Konfigurasikan tampilan sumber, filter, dan pengurutan dari perangkat lain.</string>
     <string name="debrid_formatter_configure">Buka editor web</string>
