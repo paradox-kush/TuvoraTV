@@ -180,12 +180,15 @@ class StreamScreenViewModel @Inject constructor(
                 }
                 autoPlayHandledForSession = true
                 directAutoPlayFlowEnabledForSession = false
+                // Don't dismiss overlay if external player is active - it should
+                // stay visible until user returns from external player.
+                val keepOverlay = externalPlaybackTracker.isTracking
                 updateUiStateIfChanged {
                     it.copy(
                         autoPlayStream = null,
                         autoPlayPlaybackInfo = null,
                         isDirectAutoPlayFlow = false,
-                        showDirectAutoPlayOverlay = false,
+                        showDirectAutoPlayOverlay = if (keepOverlay) true else false,
                         directAutoPlayMessage = null
                     )
                 }
@@ -219,7 +222,6 @@ class StreamScreenViewModel @Inject constructor(
                 // In MANUAL mode, still enable direct auto-play if a persisted
                 // binge group exists - same behavior as playNextEpisode in the player.
                 if (!directAutoPlayFlowEnabledForSession &&
-                    playerSettings.playerPreference == PlayerPreference.INTERNAL &&
                     playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode &&
                     playerSettings.streamAutoPlayReuseBingeGroup
                 ) {
@@ -261,6 +263,7 @@ class StreamScreenViewModel @Inject constructor(
                     autoPlayHandledForSession = true
                     resolvedAutoPlayTarget = true
                     val isCachedTorrent = cached.infoHash != null
+                    val showOverlay = playerSettings.playerPreference == PlayerPreference.EXTERNAL
                     updateUiStateIfChanged {
                         it.copy(
                             autoPlayPlaybackInfo = StreamPlaybackInfo(
@@ -290,7 +293,9 @@ class StreamScreenViewModel @Inject constructor(
                                 fileIdx = cached.fileIdx,
                                 sources = cached.sources,
                                 contentLanguage = contentLanguage
-                            )
+                            ),
+                            showDirectAutoPlayOverlay = showOverlay || it.showDirectAutoPlayOverlay,
+                            isDirectAutoPlayFlow = showOverlay || it.isDirectAutoPlayFlow
                         )
                     }
                 }
@@ -372,7 +377,7 @@ class StreamScreenViewModel @Inject constructor(
                         // Compose observes it.
                         autoPlayStream = selectedAutoPlayStream ?: it.autoPlayStream,
                         error = null,
-                        showDirectAutoPlayOverlay = if (directAutoPlayFlowEnabledForSession) {
+                        showDirectAutoPlayOverlay = if (directAutoPlayFlowEnabledForSession || it.autoPlayPlaybackInfo != null) {
                             true
                         } else {
                             false
@@ -910,13 +915,7 @@ class StreamScreenViewModel @Inject constructor(
         val basePlaybackInfo = getStreamForPlayback(stream)
         return when (val result = directDebridResolver.resolve(stream, season, episode)) {
             is DirectDebridResolveResult.Success -> {
-                updateUiStateIfChanged {
-                    it.copy(
-                        showDirectAutoPlayOverlay = false,
-                        directAutoPlayMessage = null
-                    )
-                }
-                basePlaybackInfo.copy(
+                val resolved = basePlaybackInfo.copy(
                     url = result.url,
                     isExternal = false,
                     isTorrent = false,
@@ -925,6 +924,22 @@ class StreamScreenViewModel @Inject constructor(
                     filename = result.filename ?: basePlaybackInfo.filename,
                     videoSize = result.videoSize ?: basePlaybackInfo.videoSize
                 )
+                // Save resolved URL to cache for reuse last link
+                if (!result.url.isNullOrBlank()) {
+                    pendingCacheSaveJob = viewModelScope.launch {
+                        streamLinkCacheDataStore.save(
+                            contentKey = streamCacheKey,
+                            url = result.url,
+                            streamName = resolved.streamName,
+                            headers = null,
+                            filename = resolved.filename,
+                            videoHash = resolved.videoHash,
+                            videoSize = resolved.videoSize,
+                            bingeGroup = resolved.bingeGroup
+                        )
+                    }
+                }
+                resolved
             }
             DirectDebridResolveResult.MissingApiKey -> {
                 showDirectDebridPlaybackError(context.getString(R.string.debrid_missing_api_key), refreshStreams = false)
@@ -947,6 +962,29 @@ class StreamScreenViewModel @Inject constructor(
 
     fun onPlaybackErrorShown() {
         updateUiStateIfChanged { it.copy(playbackErrorMessage = null) }
+    }
+
+    /**
+     * Returns true if an external player is currently active (launched but not yet returned).
+     * Used to keep the overlay visible while external player is on screen.
+     */
+    fun isExternalPlayerActive(): Boolean = externalPlaybackTracker.isTracking
+
+    fun isExternalPlayerAutoLaunch(): Boolean = externalPlaybackTracker.isAutoLaunch
+
+    /** Set to true when external player is launched, reset on stop. */
+    private var externalPlayerLaunched = false
+
+    fun stopExternalPlayerTracking() {
+        if (!externalPlayerLaunched) return
+        externalPlayerLaunched = false
+        externalPlaybackTracker.stopTracking()
+        updateUiStateIfChanged {
+            it.copy(
+                showDirectAutoPlayOverlay = false,
+                directAutoPlayMessage = null
+            )
+        }
     }
 
     private fun showDirectDebridPlaybackError(message: String, refreshStreams: Boolean) {
@@ -1014,12 +1052,14 @@ class StreamScreenViewModel @Inject constructor(
                     videoSize = playbackInfo.videoSize,
                     bingeGroup = playbackInfo.bingeGroup
                 )
-                // Persist binge group per-content for cross-episode reuse.
-                val bg = playbackInfo.bingeGroup
-                val cid = playbackInfo.contentId
-                if (bg != null && !cid.isNullOrBlank()) {
-                    bingeGroupCacheDataStore.save(cid, bg)
-                }
+            }
+        }
+        // Persist binge group per-content for cross-episode reuse (independent of URL).
+        val bg = playbackInfo.bingeGroup
+        val cid = playbackInfo.contentId
+        if (bg != null && !cid.isNullOrBlank()) {
+            viewModelScope.launch {
+                bingeGroupCacheDataStore.save(cid, bg)
             }
         }
 
@@ -1061,9 +1101,18 @@ class StreamScreenViewModel @Inject constructor(
     fun launchExternalPlayer(
         playbackInfo: StreamPlaybackInfo,
         url: String,
-        resumePositionMs: Long,
+        resumePositionMs: Long = 0L,
+        autoLaunch: Boolean = false,
         context: android.content.Context
     ) {
+        updateUiStateIfChanged {
+            it.copy(
+                showDirectAutoPlayOverlay = true,
+                directAutoPlayMessage = null
+            )
+        }
+        externalPlayerLaunched = true
+
         val contentId = playbackInfo.contentId ?: videoId.substringBefore(":")
         val metadata = com.nuvio.tv.core.player.ExternalPlaybackMetadata(
             contentId = contentId,
@@ -1084,6 +1133,7 @@ class StreamScreenViewModel @Inject constructor(
             title = playbackInfo.title,
             headers = playbackInfo.headers,
             resumePositionMs = resumePositionMs,
+            autoLaunch = autoLaunch,
             context = context
         )
     }

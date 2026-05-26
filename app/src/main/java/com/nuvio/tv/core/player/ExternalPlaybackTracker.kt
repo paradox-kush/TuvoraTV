@@ -78,14 +78,26 @@ class ExternalPlaybackTracker @Inject constructor(
     var pendingMetadata: ExternalPlaybackMetadata? = null
         private set
 
+    /** True when the external player was launched automatically (not by manual stream click). */
+    var isAutoLaunch: Boolean = false
+        private set
+
     val isTracking: Boolean get() = pendingMetadata != null
 
     /**
      * Called before launching an external player. Stores metadata and starts keep-alive service.
      */
-    fun startTracking(metadata: ExternalPlaybackMetadata) {
+    fun startTracking(metadata: ExternalPlaybackMetadata, autoLaunch: Boolean = false) {
         pendingMetadata = metadata
-        ExternalPlaybackKeepAliveService.start(appContext)
+        isAutoLaunch = autoLaunch
+
+        // Start foreground service only on Zidoo 
+        // If other devices will kill our process,
+        // we can enable this for them as well
+        if (ZidooPlayerMonitor.isZidooDevice()) {
+            ExternalPlaybackKeepAliveService.start(appContext)
+        }
+
         Log.d(TAG, "Started tracking: content=${metadata.contentId}, video=${metadata.videoId}")
 
         // On Zidoo devices, start REST API polling
@@ -97,12 +109,13 @@ class ExternalPlaybackTracker @Inject constructor(
     /**
      * Launch external player with progress tracking.
      * Uses the Activity-level launcher for ActivityResult, or fire-and-forget on Zidoo.
+     * If resumePositionMs is 0, fetches the saved position from the repository.
      *
      * @param metadata Content metadata for progress saving
      * @param url Stream URL to play
      * @param title Display title
      * @param headers HTTP headers for the stream
-     * @param resumePositionMs Position to resume from (ms)
+     * @param resumePositionMs Position to resume from (ms), 0 to auto-fetch
      * @param context Fallback context for fire-and-forget launch
      */
     fun launchPlayer(
@@ -111,9 +124,29 @@ class ExternalPlaybackTracker @Inject constructor(
         title: String?,
         headers: Map<String, String>?,
         resumePositionMs: Long = 0L,
+        autoLaunch: Boolean = false,
         context: Context
     ) {
-        startTracking(metadata)
+        startTracking(metadata, autoLaunch = autoLaunch)
+
+        // Fetch resume position if not provided, then launch
+        if (resumePositionMs > 0L) {
+            doLaunch(url, title, headers, resumePositionMs, context)
+        } else {
+            scope.launch {
+                val position = getResumePosition(metadata)
+                doLaunch(url, title, headers, position, context)
+            }
+        }
+    }
+
+    private fun doLaunch(
+        url: String,
+        title: String?,
+        headers: Map<String, String>?,
+        resumePositionMs: Long,
+        context: Context
+    ) {
 
         val input = ExternalPlayerInput(
             url = url,
@@ -192,7 +225,10 @@ class ExternalPlaybackTracker @Inject constructor(
         zidooMonitorJob?.cancel()
         zidooMonitorJob = null
         pendingMetadata = null
-        ExternalPlaybackKeepAliveService.stop(appContext)
+        isAutoLaunch = false
+        if (ZidooPlayerMonitor.isZidooDevice()) {
+            ExternalPlaybackKeepAliveService.stop(appContext)
+        }
         Log.d(TAG, "Stopped tracking")
     }
 

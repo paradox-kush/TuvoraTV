@@ -13,11 +13,12 @@ import androidx.core.app.NotificationCompat
 import com.nuvio.tv.R
 
 /**
- * Lightweight foreground service that prevents the system from killing Nuvio
- * while an external video player is active.
+ * Foreground service that prevents the system from killing Nuvio while an
+ * external video player is active.
  *
- * The service shows a minimal silent notification and stops itself when
- * [stop] is called or after a safety timeout.
+ *
+ * IMPORTANT: startForeground() must be called immediately in onStartCommand()
+ * to avoid ForegroundServiceDidNotStartInTime crashes on Android 8+.
  */
 class ExternalPlaybackKeepAliveService : Service() {
 
@@ -42,9 +43,13 @@ class ExternalPlaybackKeepAliveService : Service() {
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, ExternalPlaybackKeepAliveService::class.java)
-            context.stopService(intent)
-            Log.d(TAG, "Service stop requested")
+            try {
+                val intent = Intent(context, ExternalPlaybackKeepAliveService::class.java)
+                context.stopService(intent)
+                Log.d(TAG, "Service stop requested")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to stop keep-alive service", e)
+            }
         }
     }
 
@@ -60,13 +65,19 @@ class ExternalPlaybackKeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        startForeground(NOTIFICATION_ID, buildNotification())
+
         // Safety timeout - auto-stop after 8 hours in case stop() is never called
         handler.removeCallbacks(timeoutRunnable)
         handler.postDelayed(timeoutRunnable, MAX_ALIVE_MS)
         Log.d(TAG, "Foreground service started")
-        return START_NOT_STICKY
+
+        return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.d(TAG, "Task removed, keeping service alive")
     }
 
     override fun onDestroy() {
