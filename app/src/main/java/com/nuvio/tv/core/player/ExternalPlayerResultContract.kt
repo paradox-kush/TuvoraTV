@@ -7,13 +7,23 @@ import android.net.Uri
 import androidx.activity.result.contract.ActivityResultContract
 
 /**
+ * Subtitle data to pass to an external player.
+ */
+data class SubtitleInput(
+    val url: String,
+    val name: String,
+    val lang: String
+)
+
+/**
  * Input data for launching an external video player.
  */
 data class ExternalPlayerInput(
     val url: String,
     val title: String? = null,
     val headers: Map<String, String>? = null,
-    val resumePositionMs: Long = 0L
+    val resumePositionMs: Long = 0L,
+    val subtitles: List<SubtitleInput>? = null
 )
 
 /**
@@ -45,6 +55,7 @@ class ExternalPlayerResultContract : ActivityResultContract<ExternalPlayerInput,
             input.title?.let {
                 putExtra("title", it)
                 putExtra(Intent.EXTRA_TITLE, it)
+                putExtra("forcename", it) // Vimu Player
             }
 
             input.headers?.let { hdrs ->
@@ -54,15 +65,40 @@ class ExternalPlayerResultContract : ActivityResultContract<ExternalPlayerInput,
                 }
             }
 
-            // Resume position — supported by MX Player, VLC, Just Player, mpv-android
+            // Resume position — supported by MX Player, VLC, Just Player, mpv-android, Vimu
             if (input.resumePositionMs > 0L) {
                 putExtra("position", input.resumePositionMs.toInt())  // MX Player / Just Player / mpv (Int ms)
+                putExtra("startfrom", input.resumePositionMs.toInt()) // Vimu Player (Int ms)
                 putExtra("from_start", false)                         // VLC: don't force start from beginning
             }
 
             // Request that the player returns result with position/duration.
             // Required by MX Player; harmless for other players.
             putExtra("return_result", true)
+
+            // Subtitle extras for external players
+            val subs = input.subtitles
+            if (!subs.isNullOrEmpty()) {
+                val subtitleUris = subs.map { Uri.parse(it.url) }.toTypedArray()
+                val subtitleNames = subs.map { it.name }.toTypedArray()
+                val subtitleFilenames = subs.map { "${it.lang}_${it.name}.srt" }.toTypedArray()
+
+                // MX Player / mpv-android / Nova
+                putExtra("subs", subtitleUris)
+                putExtra("subs.name", subtitleNames)
+                putExtra("subs.filename", subtitleFilenames)
+                putExtra("subs.enable", arrayOf(Uri.parse(subs.first().url)))
+
+                // Just Player
+                putExtra("subtitle_uri", subtitleUris)
+                putExtra("subtitle_name", subtitleNames)
+
+                // VLC (single subtitle — use first one)
+                putExtra("subtitles_location", Uri.parse(subs.first().url))
+
+                // Vimu Player
+                putExtra("forcedsrt", subs.first().url)
+            }
 
             // Do NOT add FLAG_ACTIVITY_NEW_TASK — it prevents receiving the result.
         }

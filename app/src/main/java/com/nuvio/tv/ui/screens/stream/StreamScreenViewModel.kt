@@ -77,6 +77,7 @@ class StreamScreenViewModel @Inject constructor(
     private val directDebridResolver: DirectDebridResolver,
     private val directDebridStreamPreparer: DirectDebridStreamPreparer,
     private val externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker,
+    private val subtitleRepository: com.nuvio.tv.domain.repository.SubtitleRepository,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
     private var autoPlayHandledForSession = false
@@ -978,11 +979,11 @@ class StreamScreenViewModel @Inject constructor(
 
     fun stopExternalPlayerTracking() {
         if (!externalPlayerLaunched) return
-        // Ignore if called within 500ms of launch - this is a spurious ON_RESUME
-        // from DisposableEffect registration, not a real return from external player.
-        if (System.currentTimeMillis() - externalPlayerLaunchTimeMs < 500L) {
-            return
-        }
+        // Ignore if called during subtitle fetch (MAX_VALUE) or within 500ms of
+        // actual player launch — this is a spurious ON_RESUME from DisposableEffect
+        // registration, not a real return from external player.
+        if (externalPlayerLaunchTimeMs == Long.MAX_VALUE) return
+        if (System.currentTimeMillis() - externalPlayerLaunchTimeMs < 500L) return
         externalPlayerLaunched = false
         externalPlayerLaunchTimeMs = 0L
         externalPlaybackTracker.stopTracking()
@@ -1105,8 +1106,11 @@ class StreamScreenViewModel @Inject constructor(
      * Launch external player via the centralized [ExternalPlaybackTracker].
      * Handles metadata, keep-alive service, Zidoo polling, and ActivityResult - all
      * independently of composable lifecycle.
+     *
+     * If "Forward subtitles to external player" is enabled, fetches subtitles in
+     * preferred language before launching (with overlay feedback).
      */
-    fun launchExternalPlayer(
+    suspend fun launchExternalPlayer(
         playbackInfo: StreamPlaybackInfo,
         url: String,
         resumePositionMs: Long = 0L,
@@ -1121,7 +1125,9 @@ class StreamScreenViewModel @Inject constructor(
             )
         }
         externalPlayerLaunched = true
-        externalPlayerLaunchTimeMs = System.currentTimeMillis()
+        // Block stopExternalPlayerTracking during subtitle fetch and player launch.
+        // Will be set to real timestamp right before the player intent is sent.
+        externalPlayerLaunchTimeMs = Long.MAX_VALUE
 
         val contentId = playbackInfo.contentId ?: videoId.substringBefore(":")
         val metadata = com.nuvio.tv.core.player.ExternalPlaybackMetadata(
@@ -1137,15 +1143,101 @@ class StreamScreenViewModel @Inject constructor(
             episodeTitle = playbackInfo.episodeTitle,
             year = playbackInfo.year
         )
+
+        val settings = playerSettingsDataStore.playerSettings.first()
+        val subtitleInputs = if (settings.externalPlayerForwardSubtitles) {
+            fetchSubtitlesForExternalPlayer(metadata, playbackInfo, settings)
+        } else {
+            null
+        }
+
+        // Set timestamp right before actual launch so the 500ms guard
+        // protects against spurious ON_RESUME after the player intent is sent.
+        externalPlayerLaunchTimeMs = System.currentTimeMillis()
+
         externalPlaybackTracker.launchPlayer(
             metadata = metadata,
             url = url,
             title = playbackInfo.title,
             headers = playbackInfo.headers,
             resumePositionMs = resumePositionMs,
+            subtitles = subtitleInputs,
             autoLaunch = autoLaunch,
             context = context
         )
+    }
+
+    /**
+     * Fetch subtitles in preferred language for external player.
+     * Shows "Loading subtitles..." on overlay during fetch.
+     * Returns null on failure (player launches without subtitles).
+     */
+    private suspend fun fetchSubtitlesForExternalPlayer(
+        metadata: com.nuvio.tv.core.player.ExternalPlaybackMetadata,
+        playbackInfo: StreamPlaybackInfo,
+        settings: PlayerSettings
+    ): List<com.nuvio.tv.core.player.SubtitleInput>? {
+        val preferred = settings.subtitleStyle.preferredLanguage.trim().lowercase()
+        if (preferred == "none") return null
+
+        val preferredLanguages = listOfNotNull(
+            preferred,
+            settings.subtitleStyle.secondaryPreferredLanguage?.trim()?.lowercase()
+                ?.takeIf { it != "none" && it.isNotBlank() }
+        ).distinct()
+
+        if (preferredLanguages.isEmpty()) return null
+
+        updateUiStateIfChanged {
+            it.copy(directAutoPlayMessage = context.getString(R.string.subtitle_loading_addon))
+        }
+
+        return try {
+            val allSubtitles = subtitleRepository.getSubtitles(
+                type = metadata.contentType,
+                id = metadata.contentId,
+                videoId = metadata.videoId,
+                videoHash = playbackInfo.videoHash,
+                videoSize = playbackInfo.videoSize,
+                filename = playbackInfo.filename,
+                onProgress = { completed, total, addonName ->
+                    val msg = if (completed == 0) {
+                        context.getString(R.string.player_loading_subtitles_from, total)
+                    } else if (addonName != null) {
+                        context.getString(R.string.player_loading_subtitles_addon, addonName, completed, total)
+                    } else {
+                        context.getString(R.string.player_loading_subtitles_progress, completed, total)
+                    }
+                    updateUiStateIfChanged { it.copy(directAutoPlayMessage = msg) }
+                }
+            )
+
+            // Filter to preferred languages only
+            val filtered = allSubtitles.filter { subtitle ->
+                preferredLanguages.any { lang ->
+                    com.nuvio.tv.ui.screens.player.PlayerSubtitleUtils.matchesLanguageCode(
+                        subtitle.lang, lang
+                    )
+                }
+            }
+
+            if (filtered.isEmpty()) {
+                Log.d(TAG, "No subtitles found for preferred languages: $preferredLanguages")
+                null
+            } else {
+                Log.d(TAG, "Found ${filtered.size} subtitles for external player")
+                filtered.map { subtitle ->
+                    com.nuvio.tv.core.player.SubtitleInput(
+                        url = subtitle.url,
+                        name = "${subtitle.getDisplayLanguage()} - ${subtitle.addonName}",
+                        lang = subtitle.lang
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fetch subtitles for external player", e)
+            null
+        }
     }
 
     /**

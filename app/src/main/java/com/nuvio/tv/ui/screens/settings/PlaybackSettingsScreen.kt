@@ -249,6 +249,9 @@ fun PlaybackSettingsContent(
                 onSetAutoSwitchInternalPlayerOnError = { enabled ->
                     coroutineScope.launch { viewModel.setAutoSwitchInternalPlayerOnError(enabled) }
                 },
+                onSetExternalPlayerForwardSubtitles = { enabled ->
+                    coroutineScope.launch { viewModel.setExternalPlayerForwardSubtitles(enabled) }
+                },
                 onSetNextEpisodeThresholdPercent = { percent ->
                     coroutineScope.launch { viewModel.setNextEpisodeThresholdPercent(percent) }
                 },

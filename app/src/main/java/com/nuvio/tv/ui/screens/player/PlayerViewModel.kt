@@ -196,12 +196,28 @@ class PlayerViewModel @Inject constructor(
             episodeTitle = controller.currentEpisodeTitle,
             year = controller.year
         )
+
+        // Pass already-loaded addon subtitles if forward setting is enabled
+        val subtitleInputs = if (controller.uiState.value.subtitleStyle.preferredLanguage.trim().lowercase() != "none") {
+            val addonSubtitles = controller.uiState.value.addonSubtitles
+            if (addonSubtitles.isNotEmpty()) {
+                addonSubtitles.map {
+                    com.nuvio.tv.core.player.SubtitleInput(
+                        url = it.url,
+                        name = "${it.getDisplayLanguage()} - ${it.addonName}",
+                        lang = it.lang
+                    )
+                }
+            } else null
+        } else null
+
         externalPlaybackTracker.launchPlayer(
             metadata = metadata,
             url = url,
             title = controller.contentName ?: controller.title,
             headers = controller.getCurrentHeaders(),
             resumePositionMs = resumePositionMs,
+            subtitles = subtitleInputs,
             context = activityContext
         )
     }

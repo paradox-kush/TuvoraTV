@@ -132,11 +132,13 @@ fun StreamScreen(
 
     fun launchExternalPlayer(playbackInfo: StreamPlaybackInfo) {
         val url = playbackInfo.url ?: return
-        viewModel.launchExternalPlayer(
-            playbackInfo = playbackInfo,
-            url = url,
-            context = context
-        )
+        scope.coroutineLaunch {
+            viewModel.launchExternalPlayer(
+                playbackInfo = playbackInfo,
+                url = url,
+                context = context
+            )
+        }
     }
 
     fun openExternalInBrowser(playbackInfo: StreamPlaybackInfo): Boolean {
@@ -198,18 +200,18 @@ fun StreamScreen(
             when (playerPreference) {
                 PlayerPreference.EXTERNAL -> {
                     playbackInfo.url?.let { url ->
-                        viewModel.launchExternalPlayer(
-                            playbackInfo = playbackInfo,
-                            url = url,
-                            autoLaunch = true,
-                            context = context
-                        )
-                    }
-                    // Delay pop so external player appears on top
-                    scope.coroutineLaunch {
-                        coroutineDelay(1000)
-                        viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
-                        onBackPress()
+                        scope.coroutineLaunch {
+                            viewModel.launchExternalPlayer(
+                                playbackInfo = playbackInfo,
+                                url = url,
+                                autoLaunch = true,
+                                context = context
+                            )
+                            // Delay pop so external player appears on top
+                            coroutineDelay(1000)
+                            viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
+                            onBackPress()
+                        }
                     }
                 }
                 PlayerPreference.ASK_EVERY_TIME -> {

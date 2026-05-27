@@ -124,6 +124,7 @@ class ExternalPlaybackTracker @Inject constructor(
         title: String?,
         headers: Map<String, String>?,
         resumePositionMs: Long = 0L,
+        subtitles: List<SubtitleInput>? = null,
         autoLaunch: Boolean = false,
         context: Context
     ) {
@@ -131,11 +132,11 @@ class ExternalPlaybackTracker @Inject constructor(
 
         // Fetch resume position if not provided, then launch
         if (resumePositionMs > 0L) {
-            doLaunch(url, title, headers, resumePositionMs, context)
+            doLaunch(url, title, headers, resumePositionMs, subtitles, context)
         } else {
             scope.launch {
                 val position = getResumePosition(metadata)
-                doLaunch(url, title, headers, position, context)
+                doLaunch(url, title, headers, position, subtitles, context)
             }
         }
     }
@@ -145,6 +146,7 @@ class ExternalPlaybackTracker @Inject constructor(
         title: String?,
         headers: Map<String, String>?,
         resumePositionMs: Long,
+        subtitles: List<SubtitleInput>?,
         context: Context
     ) {
 
@@ -152,7 +154,8 @@ class ExternalPlaybackTracker @Inject constructor(
             url = url,
             title = title,
             headers = headers,
-            resumePositionMs = resumePositionMs
+            resumePositionMs = resumePositionMs,
+            subtitles = subtitles
         )
 
         if (ZidooPlayerMonitor.isZidooDevice()) {
@@ -162,7 +165,8 @@ class ExternalPlaybackTracker @Inject constructor(
                 url = url,
                 title = title,
                 headers = headers,
-                resumePositionMs = resumePositionMs
+                resumePositionMs = resumePositionMs,
+                subtitles = subtitles
             )
         } else {
             // Use Activity-level launcher for ActivityResult
@@ -177,7 +181,8 @@ class ExternalPlaybackTracker @Inject constructor(
                         url = url,
                         title = title,
                         headers = headers,
-                        resumePositionMs = resumePositionMs
+                        resumePositionMs = resumePositionMs,
+                        subtitles = subtitles
                     )
                 }
             } else {
@@ -187,7 +192,8 @@ class ExternalPlaybackTracker @Inject constructor(
                     url = url,
                     title = title,
                     headers = headers,
-                    resumePositionMs = resumePositionMs
+                    resumePositionMs = resumePositionMs,
+                    subtitles = subtitles
                 )
             }
         }
