@@ -38,7 +38,7 @@ data class TorboxTorrentFileDto(
     @Json(name = "mimetype") val mimeType: String? = null,
     @Json(name = "size") val size: Long? = null
 ) {
-    fun displayName(): String = listOfNotNull(name, shortName, absolutePath)
+    fun displayName(): String = listOfNotNull(shortName, name?.substringAfterLast('/'), absolutePath?.substringAfterLast('/'))
         .firstOrNull { it.isNotBlank() }
         .orEmpty()
 }
