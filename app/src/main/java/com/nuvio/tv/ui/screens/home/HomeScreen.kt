@@ -423,7 +423,8 @@ fun HomeScreen(
         val statusKey = homeItemStatusKey(item.id, item.apiType)
         val isMovie = item.apiType.equals("movie", ignoreCase = true)
         val isSeries = item.apiType.equals("series", ignoreCase = true) ||
-            item.apiType.equals("tv", ignoreCase = true)
+            item.apiType.equals("tv", ignoreCase = true) ||
+            item.apiType.equals("anime", ignoreCase = true)
         HomePosterOptionsDialog(
             title = item.name,
             isInLibrary = uiState.posterLibraryMembership[statusKey] == true,

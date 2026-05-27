@@ -153,12 +153,10 @@
     <string name="cw_airs_date">Emitido a %1$s</string>
     <string name="cw_airs_today">Emitido Hoje</string>
     <string name="cw_airs_tomorrow">Emitido Amanhã</string>
-    <choose>
-        <plurals name="cw_airs_in_days">
-            <item quantity="one">Emitido em %d dia</item>
-            <item quantity="other">Emitido em %d dias</item>
-        </plurals>
-    </choose>
+    <plurals name="cw_airs_in_days">
+        <item quantity="one">Emitido em %d dia</item>
+        <item quantity="other">Emitido em %d dias</item>
+    </plurals>
     <string name="cw_action_go_to_details">Ir para os detalhes</string>
     <string name="cw_action_start_from_beginning">Começar do início</string>
     <string name="cw_action_remove">Remover</string>
