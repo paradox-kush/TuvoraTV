@@ -557,19 +557,29 @@ private fun PlayerRuntimeController.findLanguageFallbackTrackIndex(
                     trackLang.startsWith("$targetLang-") ||
                     trackLang.startsWith("${targetLang}_"))
         }
-        if (langCandidates.size <= 1) {
-            langCandidates.firstOrNull() ?: -1
+
+        // If the remembered track was forced, only consider forced candidates.
+        // This prevents restoring a non-forced subtitle when the user had a forced
+        // track selected (e.g. switching episodes where the new one lacks forced subs).
+        val filteredCandidates = if (target.isForcedHint == true) {
+            langCandidates.filter { index -> tracks[index].isForced }
+        } else {
+            langCandidates
+        }
+
+        if (filteredCandidates.size <= 1) {
+            filteredCandidates.firstOrNull() ?: -1
         } else {
             // Multiple tracks with the same base language — prefer the one
             // whose detected variant matches the remembered selection.
-            langCandidates.firstOrNull { index ->
+            filteredCandidates.firstOrNull { index ->
                 val trackVariant = PlayerSubtitleUtils.detectTrackLanguageVariant(
                     language = tracks[index].language,
                     name = tracks[index].name,
                     trackId = tracks[index].trackId
                 )
                 trackVariant == targetVariant
-            } ?: langCandidates.first()
+            } ?: filteredCandidates.first()
         }
     } else {
         -1
