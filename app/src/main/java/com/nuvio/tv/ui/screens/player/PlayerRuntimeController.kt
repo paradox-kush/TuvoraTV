@@ -3,11 +3,14 @@ package com.nuvio.tv.ui.screens.player
 import android.app.Activity
 import android.content.Context
 import android.media.AudioDeviceCallback
+import android.media.audiofx.LoudnessEnhancer
 import android.util.Log
 import androidx.lifecycle.SavedStateHandle
+import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
+import com.nuvio.tv.core.player.BitrateAwareLoadControl
 import com.nuvio.tv.core.debrid.DirectDebridResolver
 import com.nuvio.tv.core.debrid.DirectDebridStreamPreparer
 import com.nuvio.tv.core.plugin.PluginManager
@@ -36,6 +39,9 @@ import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.domain.repository.StreamRepository
 import com.nuvio.tv.domain.repository.WatchProgressRepository
+import com.nuvio.tv.data.repository.extractYear
+import com.nuvio.tv.data.repository.parseContentIds
+import com.nuvio.tv.data.repository.toTraktIds
 import androidx.media3.session.MediaSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -84,6 +90,12 @@ class PlayerRuntimeController(
         internal const val SWITCH_TRACE_TAG = "SwitchTrace"
         internal const val SWITCH_TRACE_ENABLED = false
         internal const val TRACK_FRAME_RATE_GRACE_MS = 1500L
+        internal const val FIRST_FRAME_TIMEOUT_MS = 12_000L
+        // Stall watchdog: re-seeks past the buffered edge if bufferedPosition stops
+        // advancing during STATE_BUFFERING. Fires before OkHttp's readTimeout.
+        internal const val STALL_WATCHDOG_THRESHOLD_MS = 15_000L
+        internal const val STALL_WATCHDOG_POLL_INTERVAL_MS = 1_000L
+        internal const val MAX_TIMEOUT_RECOVERY_ATTEMPTS = 2
         internal const val ADDON_SUBTITLE_TRACK_ID_PREFIX = "nuvio-addon-sub:"
     }
 
@@ -147,7 +159,9 @@ class PlayerRuntimeController(
     internal val initialSeason: Int? = navigationArgs.initialSeason
     internal val initialEpisode: Int? = navigationArgs.initialEpisode
     internal val initialEpisodeTitle: String? = navigationArgs.initialEpisodeTitle
-    internal val mediaSourceFactory = PlayerMediaSourceFactory()
+    internal val rememberedAudioLanguage: String? = navigationArgs.rememberedAudioLanguage
+    internal val rememberedAudioName: String? = navigationArgs.rememberedAudioName
+    internal val mediaSourceFactory = PlayerMediaSourceFactory(context.applicationContext)
 
     internal var currentVideoHash: String? = navigationArgs.videoHash
     internal var currentVideoSize: Long? = navigationArgs.videoSize
@@ -221,12 +235,14 @@ class PlayerRuntimeController(
 
     internal fun updatePlaybackTimeline(
         currentPosition: Long = _playbackTimeline.value.currentPosition,
-        duration: Long = _playbackTimeline.value.duration
+        duration: Long = _playbackTimeline.value.duration,
+        bufferedPosition: Long = _playbackTimeline.value.bufferedPosition
     ) {
         _playbackTimeline.update {
             it.copy(
                 currentPosition = currentPosition.coerceAtLeast(0L),
-                duration = duration.coerceAtLeast(0L)
+                duration = duration.coerceAtLeast(0L),
+                bufferedPosition = bufferedPosition.coerceAtLeast(0L)
             )
         }
     }
@@ -241,6 +257,9 @@ class PlayerRuntimeController(
     internal var playbackSpeedAwareAudioSink: PlaybackSpeedAwareAudioSink? = null
 
     internal var progressJob: Job? = null
+    internal var vodTelemetryJob: Job? = null
+    internal var firstFrameWatchdogJob: Job? = null
+    internal var stallWatchdogJob: Job? = null
     internal var hideControlsJob: Job? = null
     internal var hideSeekOverlayJob: Job? = null
     internal var watchProgressSaveJob: Job? = null
@@ -260,16 +279,28 @@ class PlayerRuntimeController(
     internal var sourceStreamsCacheRequestKey: String? = null
     internal var hostActivityRef: WeakReference<Activity>? = null
     internal var initialPlaybackStarted: Boolean = false
-    
-    
+
     internal var lastSavedPosition: Long = 0L
-    internal val saveThresholdMs = 5000L 
+    internal val saveThresholdMs = 5000L
     internal var lastKnownDuration: Long = 0L
 
-    
     internal var playbackStartedForParentalGuide = false
     internal var hasRenderedFirstFrame = false
     internal var shouldEnforceAutoplayOnFirstReady = true
+
+    // ── Buffer/rebuffer telemetry (per playback; reset in initializePlayer) ──
+    /** Count of rebuffers (STATE_BUFFERING entered after the first frame). */
+    internal var rebufferCount: Int = 0
+    /** Total time (ms) spent rebuffering after the first frame. */
+    internal var rebufferTotalMs: Long = 0L
+    /** Wall-clock ms when the current post-first-frame rebuffer started, 0 if not rebuffering. */
+    internal var rebufferStartedAtMs: Long = 0L
+    /** Back buffer (ms) currently in force, after the first-frame DV7/low-RAM resolution. */
+    internal var effectiveBackBufferDurationMs: Int = 0
+    /** Custom LoadControl for this playback (null when using stock); used to resolve the back buffer at first frame. */
+    internal var currentBitrateAwareLoadControl: BitrateAwareLoadControl? = null
+    /** Back buffer (ms) the user configured, captured at build to restore once DV7 status is known. */
+    internal var configuredBackBufferMs: Int = 0
     internal var metaVideos: List<Video> = emptyList()
     internal var metaGenres: List<String> = emptyList()
     internal var metaCountry: String? = null
@@ -280,7 +311,6 @@ class PlayerRuntimeController(
     internal var pendingBackgroundCrashRecovery: Boolean = false
     internal var backgroundCrashSavedPositionMs: Long = 0L
 
-    
     internal var skipIntervals: List<SkipInterval> = emptyList()
     internal var skipIntroEnabled: Boolean = true
     internal var parentalGuideEnabled: Boolean = false
@@ -326,6 +356,7 @@ class PlayerRuntimeController(
     internal var mpvHardwareDecodeModeSetting: MpvHardwareDecodeMode = MpvHardwareDecodeMode.AUTO_SAFE
     internal var mpvPreferredAudioLanguages: List<String> = emptyList()
     internal var currentStreamBingeGroup: String? = navigationArgs.bingeGroup
+    internal var hasAppliedRememberedAudioSelection: Boolean = false
     internal var hasInitializedAudioAmplificationForSession: Boolean = false
     internal var hasInitializedCenterMixForSession: Boolean = false
     internal var rememberAudioDelayPerDeviceEnabled: Boolean = false
@@ -333,8 +364,16 @@ class PlayerRuntimeController(
     internal var audioOutputRouteCallback: AudioDeviceCallback? = null
 
     internal var lastBufferLogTimeMs: Long = 0L
-    
+    internal var lastVodTelemetryRefreshTimeMs: Long = 0L
+    internal var cachedVodCacheLogState: String = "vod=warming"
+    internal var bufferLogsEnabled: Boolean = false
+    internal var lastProgressUiUpdateUptimeMs: Long = 0L
+    internal var lastSkipIntervalEvaluationUptimeMs: Long = 0L
+    internal var lastNextEpisodeEvaluationUptimeMs: Long = 0L
+    internal var bufferLogJob: Job? = null
+
     internal val gainAudioProcessor = GainAudioProcessor()
+    internal var loudnessEnhancer: LoudnessEnhancer? = null
     internal var trackSelector: DefaultTrackSelector? = null
     internal var currentMediaSession: MediaSession? = null
     internal var ffmpegAudioRenderer: FfmpegAudioRenderer? = null
@@ -359,10 +398,41 @@ class PlayerRuntimeController(
     internal var hasTriedDv7HevcFallback: Boolean = false
     internal var forceDv7ToHevc: Boolean = false
     internal var startupRetryCount: Int = 0
+    internal var hasRetriedCurrentStreamAfterUnexpectedNpe: Boolean = false
+    internal var hasRetriedCurrentStreamAfterMediaPeriodHolderCrash: Boolean = false
+    internal var timeoutRecoveryAttempts: Int = 0
     internal var errorRetryCount: Int = 0
     internal var consecutiveAutoPlayCount: Int = 0
     internal var errorRetryJob: Job? = null
     internal var stableProgressResetJob: Job? = null
+
+    internal val dv7ToHevcForcedStreamUrls: MutableSet<String> = mutableSetOf()
+    // Streams where manual Convert-to-DV8.1 mode 2 failed to play, so the next
+    // attempt is forced to libdovi mode 1 before falling back to HDR10 base layer.
+    internal val dv7Mode1ForcedStreamUrls: MutableSet<String> = mutableSetOf()
+    internal val vc1SoftwarePreferredStreamUrls: MutableSet<String> = mutableSetOf()
+    internal val vc1TrackSelectionBypassStreamUrls: MutableSet<String> = mutableSetOf()
+    internal val safeAudioForcedStreamUrls: MutableSet<String> = mutableSetOf()
+    internal val audioDisabledForcedStreamUrls: MutableSet<String> = mutableSetOf()
+    internal var isMapDv7ToHevcActiveForCurrentPlayback: Boolean = false
+    internal var isManualDv81Mode2ActiveForCurrentPlayback: Boolean = false
+    internal var isExperimentalDv7ToDv81ActiveForCurrentPlayback: Boolean = false
+    internal var isVc1SoftwareFallbackActiveForCurrentPlayback: Boolean = false
+    internal var isVc1TrackSelectionBypassActiveForCurrentPlayback: Boolean = false
+    internal var isSafeAudioModeActiveForCurrentPlayback: Boolean = false
+    internal var isAudioDisabledForCurrentPlayback: Boolean = false
+    internal var hasAttemptedDv7ToDv81ForCurrentPlayback: Boolean = false
+    internal var dv7ToDv81BridgeVersionForCurrentPlayback: String? = null
+    internal var dv7ToDv81LastProbeReasonForCurrentPlayback: String? = null
+
+    internal var playerInitializationStartedAtMs: Long = 0L
+    internal var pendingSeekTelemetryRequestedAtMs: Long = 0L
+    internal var pendingSeekTelemetryTargetMs: Long = -1L
+    internal var pendingSeekTelemetryReadyAtMs: Long = 0L
+    internal var pendingSeekTelemetryReadyLatencyMs: Long = -1L
+    internal var pendingSeekTelemetryAwaitingFirstFrame: Boolean = false
+    internal var pendingSeekTelemetryReadyAssumed: Boolean = false
+
     internal var currentScrobbleItem: TraktScrobbleItem? = null
     internal var currentTraktEpisodeMapping: EpisodeMappingEntry? = null
     internal var currentTraktEpisodeMappingKey: String? = null
@@ -372,6 +442,7 @@ class PlayerRuntimeController(
     internal var playbackPreparationJob: Job? = null
     internal var traktMappingJob: Job? = null
     internal var hasSentCompletionScrobbleForCurrentItem: Boolean = false
+
     internal var requestedUseLibassByUser: Boolean = false
     internal var libassPipelineOverrideForCurrentStream: Boolean? = null
     internal var activePlayerUsesLibass: Boolean = false
@@ -392,6 +463,17 @@ class PlayerRuntimeController(
                 }
             }.getOrNull()?.takeIf { it.isNotEmpty() }
         }
+
+    internal var currentStreamHasVideoTrack: Boolean = false
+    internal var currentVideoTrackIsLikelyVc1: Boolean = false
+    internal var currentVideoTrackMimeType: String? = null
+    internal var currentVideoTrackCodecs: String? = null
+    internal var currentVideoTrackWidth: Int = 0
+    internal var currentVideoTrackHeight: Int = 0
+    internal var currentVideoTrackColorTransfer: Int? = null
+    internal var currentVideoTrackSelected: Boolean = false
+    internal var currentVideoTrackBestSupport: Int = C.FORMAT_UNSUPPORTED_TYPE
+    internal var lastLoggedVideoTrackSignature: String? = null
 
     internal var episodeStreamsJob: Job? = null
     internal var episodeStreamsCacheRequestKey: String? = null
@@ -423,13 +505,47 @@ class PlayerRuntimeController(
             }
         }
     }
-    
 
     fun onCleared() {
         releasePlayer()
         stopTorrentStream()
+        vodTelemetryJob?.cancel()
         mediaSourceFactory.shutdown()
         sourceChipErrorDismissJob?.cancel()
+    }
+
+    // --- HELPER METHODS MOVED INSIDE THE CLASS ---
+
+
+
+    internal fun refreshScrobbleItem() {
+        val rawContentId = contentId ?: return
+        val parsedIds = parseContentIds(rawContentId)
+        val ids = toTraktIds(parsedIds)
+        val parsedYear = extractYear(year)
+        val normalizedType = contentType?.lowercase()
+
+        val isEpisode = normalizedType in listOf("series", "tv") &&
+                currentSeason != null && currentEpisode != null
+
+        currentScrobbleItem = if (isEpisode) {
+            TraktScrobbleItem.Episode(
+                showTitle = contentName ?: title,
+                showYear = parsedYear,
+                showIds = ids,
+                season = currentSeason ?: return,
+                number = currentEpisode ?: return,
+                episodeTitle = currentEpisodeTitle
+            )
+        } else {
+            TraktScrobbleItem.Movie(
+                title = contentName ?: title,
+                year = parsedYear,
+                ids = ids
+            )
+        }
+        hasSentScrobbleStartForCurrentItem = false
+        hasSentCompletionScrobbleForCurrentItem = false
     }
 }
 

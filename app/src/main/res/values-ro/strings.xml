@@ -209,7 +209,6 @@
     <string name="audio_decoder_priority">Prioritate decodor</string>
     <string name="audio_tunneled">Redare prin tunel</string>
     <string name="audio_tunneled_sub">Sincronizare audio/video la nivel hardware. Poate îmbunătăți redarea pe unele dispozitive Android TV</string>
-    <string name="audio_dv_sub">Mapează Dolby Vision Profil 7 la HEVC standard pentru dispozitivele fără suport hardware DV</string>
     <string name="audio_decoder_device_only_desc">Folosește doar decodoarele hardware încorporate. Cele mai compatibile, dar s-ar putea să nu suporte toate formatele.</string>
     <string name="audio_decoder_prefer_device_desc">Folosește decodoarele hardware când sunt disponibile, revine la FFmpeg dacă nu. Recomandat pentru majoritatea dispozitivelor.</string>
     <string name="audio_decoder_prefer_app_desc">Folosește decodoarele FFmpeg când sunt disponibile. Compatibilitate mai bună a formatelor, dar consumă mai mult CPU.</string>
@@ -838,7 +837,6 @@
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">Passthrough audio (TrueHD, DTS, AC-3, etc.) este automat. Când este conectat la un receptor AV compatibil sau soundbar prin HDMI, audio lossless este trimis așa cum este, fără decodare.</string>
-    <string name="audio_dv_title">DV7 - HEVC rezervă</string>
 
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Acasă</string>

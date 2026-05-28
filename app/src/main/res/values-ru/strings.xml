@@ -409,7 +409,6 @@
     <string name="audio_decoder_priority">Приоритет декодеров</string>
     <string name="audio_tunneled">Туннельное воспроизведение</string>
     <string name="audio_tunneled_sub">Аппаратная синхронизация аудио/видео. Может улучшить воспроизведение на некоторых устройствах Android TV</string>
-    <string name="audio_dv_sub">Преобразование профиля Dolby Vision 7 в стандартный HEVC для устройств без аппаратной поддержки DV</string>
     <string name="audio_mpv_hwdec_title">Аппаратное декодирование (только MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Выберите, как libmpv должен использовать аппаратные декодеры.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Устаревшее (прямое -&gt; копирование)</string>

@@ -1,10 +1,13 @@
 package com.nuvio.tv.ui.screens.player
 
+import android.net.Uri
 import android.util.Log
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.media3.common.util.Util
 import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.core.player.FrameRateUtils
 import com.nuvio.tv.data.local.AVAILABLE_SUBTITLE_LANGUAGES
@@ -20,26 +23,45 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import com.nuvio.tv.ui.util.languageCodeToName
 
+@UnstableApi
 internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
     logSwitchTrace(
         stage = "exo-tracks-update-start",
         message = "groupCount=${tracks.groups.size} uiAudioIndex=${_uiState.value.selectedAudioTrackIndex} " +
-            "uiSubtitleIndex=${_uiState.value.selectedSubtitleTrackIndex}"
+                "uiSubtitleIndex=${_uiState.value.selectedSubtitleTrackIndex}"
     )
     val audioTracks = mutableListOf<TrackInfo>()
     val subtitleTracks = mutableListOf<TrackInfo>()
     var selectedAudioIndex = -1
     var selectedSubtitleIndex = -1
 
+    var hasVideoTrack = false
+    var firstVideoFormat: Format? = null
+    var selectedVideoFormat: Format? = null
+    var bestVideoTrackSupport = C.FORMAT_UNSUPPORTED_TYPE
+    var selectedVideoTrackSupport = C.FORMAT_UNSUPPORTED_TYPE
+
     tracks.groups.forEachIndexed { groupIndex, trackGroup ->
         val trackType = trackGroup.type
-        
+
         when (trackType) {
             C.TRACK_TYPE_VIDEO -> {
+                if (trackGroup.length > 0) {
+                    hasVideoTrack = true
+                    if (firstVideoFormat == null) {
+                        firstVideoFormat = trackGroup.getTrackFormat(0)
+                    }
+                }
 
                 for (i in 0 until trackGroup.length) {
+                    val support = trackGroup.getTrackSupport(i)
+                    if (formatSupportRank(support) > formatSupportRank(bestVideoTrackSupport)) {
+                        bestVideoTrackSupport = support
+                    }
                     if (trackGroup.isTrackSelected(i)) {
                         val format = trackGroup.getTrackFormat(i)
+                        selectedVideoFormat = format
+                        selectedVideoTrackSupport = support
                         if (format.frameRate > 0f) {
                             val raw = format.frameRate
                             val snapped = FrameRateUtils.snapToStandardRate(raw)
@@ -71,7 +93,6 @@ internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
                     val isSelected = trackGroup.isTrackSelected(i)
                     if (isSelected) selectedAudioIndex = audioTracks.size
 
-                    
                     val codecName = CustomDefaultTrackNameProvider.formatNameFromMime(format.sampleMimeType)
                     val channelLayout = CustomDefaultTrackNameProvider.getChannelLayoutName(
                         format.channelCount
@@ -104,7 +125,7 @@ internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
                     if (format.id?.contains(PlayerRuntimeController.ADDON_SUBTITLE_TRACK_ID_PREFIX) == true) continue
                     val isSelected = trackGroup.isTrackSelected(i)
                     if (isSelected) selectedSubtitleIndex = subtitleTracks.size
-                    
+
                     val hasForcedFlag = (format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0
                     val trackTexts = listOfNotNull(format.label, format.language, format.id)
                     val nameHintForced = trackTexts.any { it.contains("forced", ignoreCase = true) }
@@ -128,12 +149,92 @@ internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
         }
     }
 
+    currentStreamHasVideoTrack = hasVideoTrack
+    val effectiveVideoFormat = selectedVideoFormat ?: firstVideoFormat
+    if (effectiveVideoFormat != null) {
+        currentVideoTrackMimeType = effectiveVideoFormat.sampleMimeType
+        currentVideoTrackCodecs = effectiveVideoFormat.codecs
+        currentVideoTrackWidth = effectiveVideoFormat.width.coerceAtLeast(0)
+        currentVideoTrackHeight = effectiveVideoFormat.height.coerceAtLeast(0)
+        currentVideoTrackColorTransfer = effectiveVideoFormat.colorInfo?.colorTransfer
+        currentVideoTrackSelected = selectedVideoFormat != null
+        currentVideoTrackBestSupport = if (selectedVideoFormat != null) {
+            selectedVideoTrackSupport
+        } else {
+            bestVideoTrackSupport
+        }
+        currentVideoTrackIsLikelyVc1 = isLikelyVc1VideoFormat(
+            sampleMimeType = effectiveVideoFormat.sampleMimeType,
+            codecs = effectiveVideoFormat.codecs,
+            label = effectiveVideoFormat.label
+        )
+        val videoTrackSignature = buildString {
+            append(currentVideoTrackMimeType ?: "unknown")
+            append('|')
+            append(currentVideoTrackCodecs ?: "unknown")
+            append('|')
+            append(currentVideoTrackWidth)
+            append('x')
+            append(currentVideoTrackHeight)
+            append("|vc1=")
+            append(currentVideoTrackIsLikelyVc1)
+            append("|selected=")
+            append(currentVideoTrackSelected)
+            append("|support=")
+            append(Util.getFormatSupportString(currentVideoTrackBestSupport))
+            append("|vc1Fallback=")
+            append(isVc1SoftwareFallbackActiveForCurrentPlayback)
+            append("|vc1TrackBypass=")
+            append(isVc1TrackSelectionBypassActiveForCurrentPlayback)
+        }
+        if (videoTrackSignature != lastLoggedVideoTrackSignature) {
+            lastLoggedVideoTrackSignature = videoTrackSignature
+            Log.i(
+                PlayerRuntimeController.TAG,
+                "VIDEO_TRACK: mime=${currentVideoTrackMimeType ?: "unknown"} " +
+                        "codecs=${currentVideoTrackCodecs ?: "unknown"} " +
+                        "size=${currentVideoTrackWidth}x${currentVideoTrackHeight} " +
+                        "vc1=$currentVideoTrackIsLikelyVc1 " +
+                        "selected=$currentVideoTrackSelected " +
+                        "support=${Util.getFormatSupportString(currentVideoTrackBestSupport)} " +
+                        "vc1FallbackActive=$isVc1SoftwareFallbackActiveForCurrentPlayback " +
+                        "vc1TrackBypassActive=$isVc1TrackSelectionBypassActiveForCurrentPlayback"
+            )
+        }
+        if (currentVideoTrackIsLikelyVc1 &&
+            !currentVideoTrackSelected &&
+            isVc1SoftwareFallbackActiveForCurrentPlayback &&
+            !isVc1TrackSelectionBypassActiveForCurrentPlayback
+        ) {
+            val currentPosition = _exoPlayer?.currentPosition ?: 0L
+            vc1TrackSelectionBypassStreamUrls.add(currentStreamUrl)
+            Log.w(
+                PlayerRuntimeController.TAG,
+                "VIDEO_TRACK: VC-1 track present but unselected after software-preferred retry, " +
+                        "forcing track-selection bypass support=${Util.getFormatSupportString(currentVideoTrackBestSupport)} " +
+                        "host=${Uri.parse(currentStreamUrl).host ?: "unknown"} positionMs=$currentPosition"
+            )
+            retryCurrentStreamWithVc1TrackSelectionBypass(currentPosition)
+            return
+        }
+    } else {
+        currentVideoTrackMimeType = null
+        currentVideoTrackCodecs = null
+        currentVideoTrackWidth = 0
+        currentVideoTrackHeight = 0
+        currentVideoTrackColorTransfer = null
+        currentVideoTrackSelected = false
+        currentVideoTrackBestSupport = C.FORMAT_UNSUPPORTED_TYPE
+        currentVideoTrackIsLikelyVc1 = false
+        lastLoggedVideoTrackSignature = null
+    }
+
     hasScannedTextTracksOnce = true
     Log.d(
         PlayerRuntimeController.TAG,
         "TRACKS updated: internalSubs=${subtitleTracks.size}, selectedInternalIndex=$selectedSubtitleIndex, " +
-            "selectedAddon=${_uiState.value.selectedAddonSubtitle?.lang}, " +
-            "pendingAddonLang=$pendingAddonSubtitleLanguage, pendingAddonTrackId=$pendingAddonSubtitleTrackId"
+                "selectedAddon=${_uiState.value.selectedAddonSubtitle?.lang}, " +
+                "pendingAddonLang=$pendingAddonSubtitleLanguage, pendingAddonTrackId=$pendingAddonSubtitleTrackId"
     )
 
     val pendingAddonTrackId = pendingAddonSubtitleTrackId
@@ -184,7 +285,7 @@ internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
     logSwitchTrace(
         stage = "exo-tracks-update-end",
         message = "audioCount=${audioTracks.size} subtitleCount=${subtitleTracks.size} " +
-            "selectedAudioIndex=$selectedAudioIndex selectedSubtitleIndex=$selectedSubtitleIndex"
+                "selectedAudioIndex=$selectedAudioIndex selectedSubtitleIndex=$selectedSubtitleIndex"
     )
     rememberEffectiveExoSubtitleSelectionForEngineSwitch(
         subtitleTracks = subtitleTracks,
@@ -194,8 +295,46 @@ internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
         audioTracks = audioTracks,
         subtitleTracks = subtitleTracks
     )
+    if (currentStreamHasVideoTrack) {
+        maybeScheduleFirstFrameWatchdog()
+    } else {
+        cancelFirstFrameWatchdog()
+    }
     tryAutoSelectPreferredSubtitleFromAvailableTracks()
     maybeAdjustLibassPipelineForTracks(tracks)
+}
+
+private fun isLikelyVc1VideoFormat(
+    sampleMimeType: String?,
+    codecs: String?,
+    label: String?
+): Boolean {
+    // MIME type check — this is the authoritative signal
+    if (sampleMimeType?.equals(MimeTypes.VIDEO_VC1, ignoreCase = true) == true) {
+        return true
+    }
+
+    val haystack = listOfNotNull(codecs, label)
+        .joinToString(" ")
+        .lowercase(Locale.ROOT)
+
+    // Explicit VC1 codec identifiers only — no bare "vc1" substring match
+    // to avoid matching "avc1" (H.264) or "hvc1" (HEVC)
+    return haystack.contains("wvc1") ||
+            haystack.contains("vc-1") ||
+            haystack.contains("wmv3") ||
+            // Match "vc1" only as a whole token (bounded by non-alphanumeric or start/end)
+            Regex("(?<![a-z0-9])vc1(?![a-z0-9])").containsMatchIn(haystack)
+}
+
+private fun formatSupportRank(@C.FormatSupport formatSupport: Int): Int {
+    return when (formatSupport) {
+        C.FORMAT_HANDLED -> 4
+        C.FORMAT_EXCEEDS_CAPABILITIES -> 3
+        C.FORMAT_UNSUPPORTED_DRM -> 2
+        C.FORMAT_UNSUPPORTED_SUBTYPE -> 1
+        else -> 0
+    }
 }
 
 private fun PlayerRuntimeController.rememberEffectiveExoSubtitleSelectionForEngineSwitch(
@@ -255,13 +394,16 @@ internal fun PlayerRuntimeController.maybeAdjustLibassPipelineForTracks(tracks: 
     if (hasAssSsaTrack) {
         hasDetectedAssSsaTrackForCurrentStream = true
     }
-    // Only rebuild to ENABLE libass when ASS/SSA tracks are detected but libass
-    // is not active. Never rebuild to disable libass - keeping the libass pipeline
-    // active when no ASS tracks are should be harmless (standard subtitles still
-    // render normally - but this may change colors - need confimration)
+    // Don't rebuild just to drop libass, except when it's holding the MKV extractor on a DV7
+    // file with no ASS track and blocking conversion; then drop it so the DV extractor runs.
     val desiredUseLibass = requestedUseLibassByUser && hasDetectedAssSsaTrackForCurrentStream
     if (desiredUseLibass == activePlayerUsesLibass) return
-    if (!desiredUseLibass) return // don't rebuild just to remove libass
+    if (!desiredUseLibass) {
+        val libassBlockingDvConvert = activePlayerUsesLibass &&
+                isExperimentalDv7ToDv81ActiveForCurrentPlayback &&
+                tracks.hasDolbyVisionProfile7VideoTrack()
+        if (!libassBlockingDvConvert) return
+    }
 
     val player = _exoPlayer ?: return
     val resumePosition = player.currentPosition.takeIf { it > 0L }
@@ -294,11 +436,26 @@ private fun Tracks.hasAssSsaTextTrack(): Boolean {
                 ?.map { it.trim().lowercase(Locale.US) }
                 ?.any { codec ->
                     codec == MimeTypes.TEXT_SSA ||
-                        codec == "s_text/ass" ||
-                        codec == "s_text/ssa" ||
-                        codec.endsWith("/x-ssa")
+                            codec == "s_text/ass" ||
+                            codec == "s_text/ssa" ||
+                            codec.endsWith("/x-ssa")
                 } == true
             if (hasAssCodec) return true
+        }
+    }
+    return false
+}
+
+// Profile 7 only: it's the profile AUTO conversion rewrites. DV5/DV8 don't convert, so they
+// shouldn't trigger a libass-drop reload.
+private val DV_PROFILE_7_CODEC = Regex("^(dvhe|dvh1|dvav|dva1)\\.0?7\\.")
+
+private fun Tracks.hasDolbyVisionProfile7VideoTrack(): Boolean {
+    groups.forEach { trackGroup ->
+        if (trackGroup.type != C.TRACK_TYPE_VIDEO) return@forEach
+        for (index in 0 until trackGroup.length) {
+            val codec = trackGroup.getTrackFormat(index).codecs?.lowercase(Locale.US).orEmpty()
+            if (DV_PROFILE_7_CODEC.containsMatchIn(codec)) return true
         }
     }
     return false
@@ -330,10 +487,10 @@ internal fun PlayerRuntimeController.maybeRestorePendingAudioSelectionAfterSubti
     fun languageMatches(trackLanguage: String?): Boolean {
         val trackLang = normalizeTrackMatchValue(trackLanguage)
         return !targetLang.isNullOrBlank() &&
-            !trackLang.isNullOrBlank() &&
-            (trackLang == targetLang ||
-                trackLang.startsWith("$targetLang-") ||
-                trackLang.startsWith("${targetLang}_"))
+                !trackLang.isNullOrBlank() &&
+                (trackLang == targetLang ||
+                        trackLang.startsWith("$targetLang-") ||
+                        trackLang.startsWith("${targetLang}_"))
     }
 
     val exactNameIndex = if (!targetName.isNullOrBlank()) {
@@ -455,14 +612,14 @@ internal fun PlayerRuntimeController.findMatchingTrackIndexForEngineSwitchToMpv(
     logSwitchTrace(
         stage = "track-match-switch",
         message = "result=language-fallback index=$fallbackIndex sourceEngine=$sourceEngine " +
-            "target=${describeRememberedTrackForSwitchTrace(target)}"
+                "target=${describeRememberedTrackForSwitchTrace(target)}"
     )
     return fallbackIndex
 }
 
 private fun PlayerRuntimeController.describeTrackInfoForRestoreLog(track: TrackInfo): String {
     return "index=${track.index} lang=${track.language} name=${track.name} id=${track.trackId} " +
-        "forced=${track.isForced} selected=${track.isSelected}"
+            "forced=${track.isForced} selected=${track.isSelected}"
 }
 
 private fun PlayerRuntimeController.describeTrackCandidatesForRestoreLog(
@@ -478,8 +635,8 @@ private fun PlayerRuntimeController.describeRememberedTrackForSwitchTrace(
 ): String {
     if (selection == null) return "none"
     return "lang=${selection.language} name=${selection.name} trackId=${selection.trackId} " +
-        "indexHint=${selection.indexHint} languageIndexHint=${selection.languageIndexHint} " +
-        "forcedHint=${selection.isForcedHint}"
+            "indexHint=${selection.indexHint} languageIndexHint=${selection.languageIndexHint} " +
+            "forcedHint=${selection.isForcedHint}"
 }
 
 private fun PlayerRuntimeController.describeRememberedSubtitleForSwitchTrace(
@@ -506,9 +663,9 @@ private fun PlayerRuntimeController.findStrictMatchingTrackIndex(
     val exactTrackIdIndex = if (!targetTrackId.isNullOrBlank()) {
         tracks.indexOfFirst { track ->
             normalizeTrackMatchValue(track.trackId) == targetTrackId &&
-                (targetLang.isNullOrBlank() || normalizeTrackMatchValue(track.language) == targetLang) &&
-                (targetName.isNullOrBlank() || normalizeTrackMatchValue(track.name) == targetName ||
-                    normalizeTrackMatchValue(track.name)?.contains(targetName) == true)
+                    (targetLang.isNullOrBlank() || normalizeTrackMatchValue(track.language) == targetLang) &&
+                    (targetName.isNullOrBlank() || normalizeTrackMatchValue(track.name) == targetName ||
+                            normalizeTrackMatchValue(track.name)?.contains(targetName) == true)
         }
     } else {
         -1
@@ -518,7 +675,7 @@ private fun PlayerRuntimeController.findStrictMatchingTrackIndex(
     val exactNameIndex = if (!targetName.isNullOrBlank()) {
         tracks.indexOfFirst { track ->
             normalizeTrackMatchValue(track.name) == targetName &&
-                (targetLang.isNullOrBlank() || normalizeTrackMatchValue(track.language) == targetLang)
+                    (targetLang.isNullOrBlank() || normalizeTrackMatchValue(track.language) == targetLang)
         }
     } else {
         -1
@@ -528,7 +685,7 @@ private fun PlayerRuntimeController.findStrictMatchingTrackIndex(
     val nameContainsIndex = if (!targetName.isNullOrBlank()) {
         tracks.indexOfFirst { track ->
             normalizeTrackMatchValue(track.name)?.contains(targetName) == true &&
-                (targetLang.isNullOrBlank() || normalizeTrackMatchValue(track.language) == targetLang)
+                    (targetLang.isNullOrBlank() || normalizeTrackMatchValue(track.language) == targetLang)
         }
     } else {
         -1
@@ -553,15 +710,13 @@ private fun PlayerRuntimeController.findLanguageFallbackTrackIndex(
         val langCandidates = tracks.indices.filter { index ->
             val trackLang = normalizeTrackMatchValue(tracks[index].language)
             !trackLang.isNullOrBlank() &&
-                (trackLang == targetLang ||
-                    trackLang.startsWith("$targetLang-") ||
-                    trackLang.startsWith("${targetLang}_"))
+                    (trackLang == targetLang ||
+                            trackLang.startsWith("$targetLang-") ||
+                            trackLang.startsWith("${targetLang}_"))
         }
         if (langCandidates.size <= 1) {
             langCandidates.firstOrNull() ?: -1
         } else {
-            // Multiple tracks with the same base language — prefer the one
-            // whose detected variant matches the remembered selection.
             langCandidates.firstOrNull { index ->
                 val trackVariant = PlayerSubtitleUtils.detectTrackLanguageVariant(
                     language = tracks[index].language,
@@ -598,12 +753,12 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
     val baseCandidates = tracks.indices.filter { index ->
         val track = tracks[index]
         target.language.isNullOrBlank() ||
-            PlayerSubtitleUtils.matchesLanguageCode(track.language, target.language) ||
-            PlayerSubtitleUtils.detectTrackLanguageVariant(
-                language = track.language,
-                name = track.name,
-                trackId = track.trackId
-            ) == targetVariant
+                PlayerSubtitleUtils.matchesLanguageCode(track.language, target.language) ||
+                PlayerSubtitleUtils.detectTrackLanguageVariant(
+                    language = track.language,
+                    name = track.name,
+                    trackId = track.trackId
+                ) == targetVariant
     }
     val sparseCandidates = if (sparseMetadata) {
         if (targetForced == null) {
@@ -621,7 +776,7 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
             logSwitchTrace(
                 stage = "track-match-hint",
                 message = "result=indexHint-from-sparse index=$indexHint " +
-                    "indexHint=$indexHint languageIndexHint=$languageIndexHint targetForced=$targetForced"
+                        "indexHint=$indexHint languageIndexHint=$languageIndexHint targetForced=$targetForced"
             )
             return indexHint
         }
@@ -630,14 +785,14 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
             logSwitchTrace(
                 stage = "track-match-hint",
                 message = "result=languageIndexHint-from-sparse index=$resolved " +
-                    "indexHint=$indexHint languageIndexHint=$languageIndexHint targetForced=$targetForced"
+                        "indexHint=$indexHint languageIndexHint=$languageIndexHint targetForced=$targetForced"
             )
             return resolved
         }
         logSwitchTrace(
             stage = "track-match-hint",
             message = "result=-1 reason=empty-base-and-no-sparse-match indexHint=$indexHint languageIndexHint=$languageIndexHint " +
-                "targetForced=$targetForced sparseMetadata=$sparseMetadata"
+                    "targetForced=$targetForced sparseMetadata=$sparseMetadata"
         )
         return -1
     }
@@ -653,7 +808,7 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
         logSwitchTrace(
             stage = "track-match-hint",
             message = "result=indexHint-preferred index=$indexHint indexHint=$indexHint languageIndexHint=$languageIndexHint " +
-                "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
+                    "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
         )
         return indexHint
     }
@@ -662,7 +817,7 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
         logSwitchTrace(
             stage = "track-match-hint",
             message = "result=languageIndexHint-preferred index=$resolved indexHint=$indexHint languageIndexHint=$languageIndexHint " +
-                "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
+                    "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
         )
         return resolved
     }
@@ -670,7 +825,7 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
         logSwitchTrace(
             stage = "track-match-hint",
             message = "result=indexHint-base index=$indexHint indexHint=$indexHint languageIndexHint=$languageIndexHint " +
-                "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
+                    "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
         )
         return indexHint
     }
@@ -678,7 +833,7 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
         logSwitchTrace(
             stage = "track-match-hint",
             message = "result=indexHint-sparse index=$indexHint indexHint=$indexHint languageIndexHint=$languageIndexHint " +
-                "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
+                    "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
         )
         return indexHint
     }
@@ -687,7 +842,7 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
         logSwitchTrace(
             stage = "track-match-hint",
             message = "result=languageIndexHint-sparse index=$resolved indexHint=$indexHint languageIndexHint=$languageIndexHint " +
-                "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
+                    "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates sparseMetadata=$sparseMetadata"
         )
         return resolved
     }
@@ -695,8 +850,8 @@ private fun PlayerRuntimeController.findEngineSwitchHintTrackIndex(
     logSwitchTrace(
         stage = "track-match-hint",
         message = "result=-1 reason=no-hint-match indexHint=$indexHint languageIndexHint=$languageIndexHint " +
-            "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates " +
-            "sparseCandidates=$sparseCandidates sparseMetadata=$sparseMetadata"
+                "targetForced=$targetForced baseCandidates=$baseCandidates preferredCandidates=$preferredCandidates " +
+                "sparseCandidates=$sparseCandidates sparseMetadata=$sparseMetadata"
     )
     return -1
 }
@@ -708,11 +863,11 @@ private fun PlayerRuntimeController.hasSparseMpvSubtitleMetadataForEngineSwitch(
     val sparseCount = tracks.count { track ->
         val normalizedName = normalizeTrackMatchValue(track.name)
         track.language.isNullOrBlank() &&
-            (
-                normalizedName.isNullOrBlank() ||
-                    normalizedName == "subtitle" ||
-                    normalizedName.startsWith("subtitle ")
-                )
+                (
+                        normalizedName.isNullOrBlank() ||
+                                normalizedName == "subtitle" ||
+                                normalizedName.startsWith("subtitle ")
+                        )
     }
     return sparseCount > 0 && sparseCount * 2 >= tracks.size
 }
@@ -735,10 +890,10 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
     logSwitchTrace(
         stage = "restore-enter",
         message = "usingSwitchPending=$usingSwitchPending switchPending=${switchPending != null} persisted=${persistedTrackPreference != null} " +
-            "audioTracks=${audioTracks.size} subtitleTracks=${subtitleTracks.size} " +
-            "uiAudioIndex=${_uiState.value.selectedAudioTrackIndex} uiSubtitleIndex=${_uiState.value.selectedSubtitleTrackIndex} " +
-            "pendingAudio=${describeRememberedTrackForSwitchTrace(pendingCandidate?.audio)} " +
-            "pendingSubtitle=${describeRememberedSubtitleForSwitchTrace(pendingCandidate?.subtitle)}"
+                "audioTracks=${audioTracks.size} subtitleTracks=${subtitleTracks.size} " +
+                "uiAudioIndex=${_uiState.value.selectedAudioTrackIndex} uiSubtitleIndex=${_uiState.value.selectedSubtitleTrackIndex} " +
+                "pendingAudio=${describeRememberedTrackForSwitchTrace(pendingCandidate?.audio)} " +
+                "pendingSubtitle=${describeRememberedSubtitleForSwitchTrace(pendingCandidate?.subtitle)}"
     )
     val pending: PlayerRuntimeController.TrackPreference = pendingCandidate ?: run {
         logSwitchTrace(
@@ -766,8 +921,8 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                 logSwitchTrace(
                     stage = "restore-audio",
                     message = "result=match index=$index alreadySelected=$alreadySelected " +
-                        "target=${describeRememberedTrackForSwitchTrace(audioSelection)} " +
-                        "matched=${audioTracks.getOrNull(index)?.let { describeTrackInfoForRestoreLog(it) }}"
+                            "target=${describeRememberedTrackForSwitchTrace(audioSelection)} " +
+                            "matched=${audioTracks.getOrNull(index)?.let { describeTrackInfoForRestoreLog(it) }}"
                 )
                 if (!alreadySelected) {
                     Log.d(PlayerRuntimeController.TAG, "TRACK_PREF restore: audio index=$index lang=${audioTracks[index].language} name=${audioTracks[index].name}")
@@ -781,7 +936,7 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                 logSwitchTrace(
                     stage = "restore-audio",
                     message = "result=no-match target=${describeRememberedTrackForSwitchTrace(audioSelection)} " +
-                        "candidates=${describeTrackCandidatesForRestoreLog(audioTracks)}"
+                            "candidates=${describeTrackCandidatesForRestoreLog(audioTracks)}"
                 )
                 Log.d(PlayerRuntimeController.TAG, "TRACK_PREF restore: audio no match for lang=${audioSelection.language} name=${audioSelection.name}, clearing")
                 updatedPending = updatedPending.copy(audio = null)
@@ -831,14 +986,14 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                 logSwitchTrace(
                     stage = "restore-subtitle-internal",
                     message = "mode=${if (usingSwitchPending && switchSourceEngine != null) "switch-hint-aware" else "regular"} " +
-                        "sourceEngine=$switchSourceEngine resultIndex=$index target=${describeRememberedTrackForSwitchTrace(subtitleSelection.track)}"
+                            "sourceEngine=$switchSourceEngine resultIndex=$index target=${describeRememberedTrackForSwitchTrace(subtitleSelection.track)}"
                 )
                 if (index >= 0) {
                     val alreadySelected = subtitleTracks.getOrNull(index)?.isSelected == true
                     logSwitchTrace(
                         stage = "restore-subtitle-internal-match",
                         message = "index=$index alreadySelected=$alreadySelected " +
-                            "matched=${subtitleTracks.getOrNull(index)?.let { describeTrackInfoForRestoreLog(it) }}"
+                                "matched=${subtitleTracks.getOrNull(index)?.let { describeTrackInfoForRestoreLog(it) }}"
                     )
                     if (!alreadySelected) {
                         Log.d(PlayerRuntimeController.TAG, "TRACK_PREF restore: internal subtitle index=$index (re-applying)")
@@ -852,16 +1007,15 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                     }
                 } else {
                     val shouldDeferSwitchRestore = usingSwitchPending &&
-                        switchSourceEngine == InternalPlayerEngine.EXOPLAYER &&
-                        isUsingMpvEngine() &&
-                        hasSparseMpvSubtitleMetadataForEngineSwitch(subtitleTracks)
+                            switchSourceEngine == InternalPlayerEngine.EXOPLAYER &&
+                            isUsingMpvEngine() &&
+                            hasSparseMpvSubtitleMetadataForEngineSwitch(subtitleTracks)
                     logSwitchTrace(
                         stage = "restore-subtitle-internal-no-match",
                         message = "shouldDeferSwitchRestore=$shouldDeferSwitchRestore " +
-                            "target=${describeRememberedTrackForSwitchTrace(subtitleSelection.track)} " +
-                            "candidates=${describeTrackCandidatesForRestoreLog(subtitleTracks)}"
+                                "target=${describeRememberedTrackForSwitchTrace(subtitleSelection.track)} " +
+                                "candidates=${describeTrackCandidatesForRestoreLog(subtitleTracks)}"
                     )
-                    // No internal track matches — try addon fallback with the same language variant.
                     val resolvedVariant = PlayerSubtitleUtils.detectTrackLanguageVariant(
                         language = subtitleSelection.track.language,
                         name = subtitleSelection.track.name,
@@ -878,20 +1032,20 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                             PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, resolvedVariant)
                         }
                         if (addonFallback != null) {
-                        logSwitchTrace(
-                            stage = "restore-subtitle-internal-fallback-addon",
-                            message = "addonId=${addonFallback.id} addonLang=${addonFallback.lang} variant=$resolvedVariant"
-                        )
-                        Log.d(
-                            PlayerRuntimeController.TAG,
-                            "TRACK_PREF restore: internal no match, falling back to addon lang=${addonFallback.lang} variant=$resolvedVariant"
-                        )
-                        autoSubtitleSelected = true
-                        subtitleAddonRestoredByPersistedPreference = true
-                        pendingRestoredAddonSubtitle = addonFallback
-                        selectAddonSubtitle(addonFallback)
-                        updatedAddonSubtitle = addonFallback
-                        updatedPending = updatedPending.copy(subtitle = null)
+                            logSwitchTrace(
+                                stage = "restore-subtitle-internal-fallback-addon",
+                                message = "addonId=${addonFallback.id} addonLang=${addonFallback.lang} variant=$resolvedVariant"
+                            )
+                            Log.d(
+                                PlayerRuntimeController.TAG,
+                                "TRACK_PREF restore: internal no match, falling back to addon lang=${addonFallback.lang} variant=$resolvedVariant"
+                            )
+                            autoSubtitleSelected = true
+                            subtitleAddonRestoredByPersistedPreference = true
+                            pendingRestoredAddonSubtitle = addonFallback
+                            selectAddonSubtitle(addonFallback)
+                            updatedAddonSubtitle = addonFallback
+                            updatedPending = updatedPending.copy(subtitle = null)
                         } else {
                             logSwitchTrace(
                                 stage = "restore-subtitle-internal-no-match",
@@ -931,14 +1085,14 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                     usingSwitchPending && isUsingMpvEngine()
                 val addonSelectedInMpv =
                     !shouldKeepPendingUntilMpvConfirmsSelection ||
-                        isMpvAddonSubtitleTrackActive(addonMatch)
+                            isMpvAddonSubtitleTrackActive(addonMatch)
                 if (addonSelectedInMpv) {
                     updatedPending = updatedPending.copy(subtitle = null)
                 } else {
                     logSwitchTrace(
                         stage = "restore-subtitle-addon",
                         message = "result=defer-clear reason=mpv-addon-not-active-yet " +
-                            "addonId=${addonMatch.id} addonLang=${addonMatch.lang}"
+                                "addonId=${addonMatch.id} addonLang=${addonMatch.lang}"
                     )
                 }
             } else {
@@ -983,7 +1137,7 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
         logSwitchTrace(
             stage = "restore-exit-switch",
             message = "remainingAudio=${describeRememberedTrackForSwitchTrace(normalizedPending?.audio)} " +
-                "remainingSubtitle=${describeRememberedSubtitleForSwitchTrace(normalizedPending?.subtitle)}"
+                    "remainingSubtitle=${describeRememberedSubtitleForSwitchTrace(normalizedPending?.subtitle)}"
         )
         pendingEngineSwitchTrackPreference = normalizedPending?.let { preference ->
             PlayerRuntimeController.PendingEngineSwitchTrackPreference(
@@ -996,7 +1150,7 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
         logSwitchTrace(
             stage = "restore-exit-persisted",
             message = "remainingAudio=${describeRememberedTrackForSwitchTrace(normalizedPending?.audio)} " +
-                "remainingSubtitle=${describeRememberedSubtitleForSwitchTrace(normalizedPending?.subtitle)}"
+                    "remainingSubtitle=${describeRememberedSubtitleForSwitchTrace(normalizedPending?.subtitle)}"
         )
         persistedTrackPreference = normalizedPending
     }
@@ -1288,14 +1442,14 @@ internal fun PlayerRuntimeController.findBrazilianPortugueseInGenericPtTracks(
 
     val brazilianNonForced = genericPtIndexes.filter { index ->
         !subtitleTracks[index].isForced &&
-            subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.BRAZILIAN_TAGS) &&
-            !subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.EUROPEAN_PT_TAGS)
+                subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.BRAZILIAN_TAGS) &&
+                !subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.EUROPEAN_PT_TAGS)
     }
     if (brazilianNonForced.isNotEmpty()) return brazilianNonForced.first()
 
     return genericPtIndexes.firstOrNull { index ->
         subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.BRAZILIAN_TAGS) &&
-            !subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.EUROPEAN_PT_TAGS)
+                !subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.EUROPEAN_PT_TAGS)
     } ?: genericPtIndexes.firstOrNull { index ->
         subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.BRAZILIAN_TAGS)
     } ?: -1
@@ -1339,14 +1493,14 @@ internal fun PlayerRuntimeController.findLatinoSpanishInGenericEsTracks(
 
     val latinoNonForced = genericEsIndexes.filter { index ->
         !subtitleTracks[index].isForced &&
-            subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.LATINO_TAGS) &&
-            !subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.CASTILIAN_TAGS)
+                subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.LATINO_TAGS) &&
+                !subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.CASTILIAN_TAGS)
     }
     if (latinoNonForced.isNotEmpty()) return latinoNonForced.first()
 
     return genericEsIndexes.firstOrNull { index ->
         subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.LATINO_TAGS) &&
-            !subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.CASTILIAN_TAGS)
+                !subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.CASTILIAN_TAGS)
     } ?: genericEsIndexes.firstOrNull { index ->
         subtitleHasAnyTag(subtitleTracks[index], PlayerSubtitleUtils.LATINO_TAGS)
     } ?: -1
@@ -1469,10 +1623,8 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
         val matchedTargetPosition = targets.indexOfFirst { target ->
             val normalizedTarget = PlayerSubtitleUtils.normalizeLanguageCode(target)
             trackVariant == normalizedTarget ||
-                PlayerSubtitleUtils.matchesLanguageCode(trackVariant, target)
+                    PlayerSubtitleUtils.matchesLanguageCode(trackVariant, target)
         }
-        // If the match is only for a secondary (non-primary) target and addon subtitles haven't
-        // loaded yet, defer - a primary addon subtitle may still arrive.
         val addonSubtitlesLoaded = !state.isLoadingAddonSubtitles
         if (matchedTargetPosition > 0 && !addonSubtitlesLoaded) {
             Log.d(
@@ -1585,7 +1737,7 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
                 Log.d(
                     PlayerRuntimeController.TAG,
                     "AUTO_SUB addon fallback: target=$target matched addon lang=${match.lang} id=${match.id} " +
-                        "(addons=${state.addonSubtitles.size}, targets=$targets)"
+                            "(addons=${state.addonSubtitles.size}, targets=$targets)"
                 )
                 return@run match
             }
@@ -1630,7 +1782,7 @@ internal fun PlayerRuntimeController.startFrameRateProbe(
             if (!isActive) return@launch
             val stateSnapshot = withContext(Dispatchers.Main) { _uiState.value }
             val trackAlreadySet = stateSnapshot.detectedFrameRateSource == FrameRateSource.TRACK &&
-                stateSnapshot.detectedFrameRate > 0f
+                    stateSnapshot.detectedFrameRate > 0f
             if (trackAlreadySet) {
                 if (!allowAmbiguousTrackOverride) return@launch
 
@@ -1656,7 +1808,7 @@ internal fun PlayerRuntimeController.startFrameRateProbe(
                     val state = _uiState.value
                     val shouldApplyInitial = state.detectedFrameRate <= 0f
                     val shouldOverrideAmbiguousTrack = allowAmbiguousTrackOverride &&
-                        PlayerFrameRateHeuristics.shouldProbeOverrideTrack(state, detection)
+                            PlayerFrameRateHeuristics.shouldProbeOverrideTrack(state, detection)
 
                     if (shouldApplyInitial || shouldOverrideAmbiguousTrack) {
                         _uiState.update {
@@ -1702,8 +1854,8 @@ internal fun PlayerRuntimeController.applySubtitlePreferences(preferred: String,
             builder.setPreferredTextLanguage(null)
         } else {
             val userDisabledSubtitles = autoSubtitleSelected &&
-                _uiState.value.selectedSubtitleTrackIndex == -1 &&
-                _uiState.value.selectedAddonSubtitle == null
+                    _uiState.value.selectedSubtitleTrackIndex == -1 &&
+                    _uiState.value.selectedAddonSubtitle == null
             if (!userDisabledSubtitles) {
                 builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             }

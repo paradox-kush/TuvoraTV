@@ -518,7 +518,6 @@
     <string name="audio_decoder_priority">Priorité du décodeur</string>
     <string name="audio_tunneled">Lecture tunnelisée</string>
     <string name="audio_tunneled_sub">Synchronisation audio/vidéo au niveau matériel. Peut améliorer la lecture sur certains appareils Android TV</string>
-    <string name="audio_dv_sub">Convertir le Dolby Vision profil 7 en HEVC standard pour les appareils sans prise en charge matérielle du DV</string>
     <string name="audio_mpv_hwdec_title">Décodage matériel (MPV uniquement)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Choisis comment libmpv doit utiliser les décodeurs matériels.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Ancien mode (direct -&gt; copy)</string>

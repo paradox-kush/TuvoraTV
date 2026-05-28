@@ -201,7 +201,9 @@ data class PlayerUiState(
 
 data class PlaybackTimelineState(
     val currentPosition: Long = 0L,
-    val duration: Long = 0L
+    val duration: Long = 0L,
+    /** Position (ms) up to which the player has buffered ahead of the playhead. */
+    val bufferedPosition: Long = 0L
 )
 
 data class TrackInfo(

@@ -415,7 +415,6 @@
     <string name="audio_decoder_priority">أولوية فك التشفير</string>
     <string name="audio_tunneled">Tunneled Playback</string>
     <string name="audio_tunneled_sub">Hardware-level audio/video sync. May improve playback on some Android TV devices</string>
-    <string name="audio_dv_sub">Map Dolby Vision Profile 7 to standard HEVC for devices without DV hardware support</string>
     <string name="audio_decoder_device_only_desc">Only use built-in hardware decoders. Most compatible but may not support all formats.</string>
     <string name="audio_decoder_prefer_device_desc">Use hardware decoders when available, fall back to FFmpeg. Recommended for most devices.</string>
     <string name="audio_decoder_prefer_app_desc">Use FFmpeg decoders when available. Better format support but higher CPU usage.</string>
@@ -1300,8 +1299,6 @@
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">تمرير الصوت (TrueHD, DTS, AC-3، إلخ) تلقائي. عند التوصيل بمستقبل AV أو مكبر صوت متوافق عبر HDMI، يتم إرسال الصوت دون فك تشفيره.</string>
-    <string name="audio_dv_title">DV7 - تراجع لـ HEVC</string>
-
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">الرئيسية</string>
     <string name="nav_discover">استكشاف</string>

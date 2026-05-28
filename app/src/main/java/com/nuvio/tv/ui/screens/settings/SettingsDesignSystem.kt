@@ -475,7 +475,8 @@ internal fun SettingsActionRow(
     enabled: Boolean = true,
     trailingIcon: ImageVector = Icons.Default.ChevronRight,
     titleTrailingIcon: ImageVector? = null,
-    titleTrailingIconTint: Color = NuvioColors.TextPrimary
+    titleTrailingIconTint: Color = NuvioColors.TextPrimary,
+    leadingIcon: ImageVector? = null
 ) {
     val contentAlpha = if (enabled) 1f else 0.4f
     var isFocused by remember { mutableStateOf(false) }
@@ -512,6 +513,15 @@ internal fun SettingsActionRow(
                 .padding(horizontal = 18.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (leadingIcon != null) {
+                Icon(
+                    imageVector = leadingIcon,
+                    contentDescription = null,
+                    tint = NuvioColors.TextPrimary.copy(alpha = contentAlpha),
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(

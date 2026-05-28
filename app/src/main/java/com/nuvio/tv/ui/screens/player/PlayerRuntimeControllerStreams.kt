@@ -20,6 +20,7 @@ import com.nuvio.tv.ui.components.SourceChipStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -592,12 +593,18 @@ internal fun PlayerRuntimeController.switchToSourceStream(stream: Stream) {
         headers = newHeaders
     )
     persistSelectedStreamForReuse(stream = stream, url = url, headers = newHeaders)
+
+    // Reset stream-state error flags for the new stream.
     hasRetriedCurrentStreamAfter416 = false
     resetErrorRetryState()
+    hasRetriedCurrentStreamAfterUnexpectedNpe = false
+    hasRetriedCurrentStreamAfterMediaPeriodHolderCrash = false
     subtitleDisabledByPersistedPreference = false
     subtitleAddonRestoredByPersistedPreference = false
     pendingRestoredAddonSubtitle = null
     lastSavedPosition = 0L
+    _exoPlayer?.stop()
+    resetLoadingOverlayForNewStream()
 
     _uiState.update {
         it.copy(
@@ -618,11 +625,38 @@ internal fun PlayerRuntimeController.switchToSourceStream(stream: Stream) {
     showStreamSourceIndicator(stream)
     resetPostPlayOverlayState(clearEpisode = false)
 
-    preparePlaybackBeforeStart(
-        url = url,
-        headers = newHeaders,
-        loadSavedProgress = true
-    )
+    _exoPlayer?.let { player ->
+        scope.launch {
+            try {
+                val playerSettings = playerSettingsDataStore.playerSettings.first()
+                runAfrPreflightIfEnabled(
+                    url = url,
+                    headers = newHeaders,
+                    frameRateMatchingMode = playerSettings.frameRateMatchingMode,
+                    resolutionMatchingEnabled = playerSettings.resolutionMatchingEnabled
+                )
+                player.setMediaSource(
+                    mediaSourceFactory.createMediaSource(
+                        context = context,
+                        url = url,
+                        headers = newHeaders,
+                        filename = currentFilename,
+                        responseHeaders = currentStreamResponseHeaders,
+                        mimeTypeOverride = currentStreamMimeType,
+                        audioDelayUsProvider = audioDelayUs::get
+                    )
+                )
+                player.playWhenReady = true
+                player.prepare()
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message ?: "Failed to play selected stream") }
+            }
+        }
+    } ?: run {
+        initializePlayer(url, newHeaders)
+    }
+
+    loadSavedProgressFor(currentSeason, currentEpisode)
 }
 
 internal fun PlayerRuntimeController.dismissEpisodesPanel() {
@@ -1058,8 +1092,18 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     val targetVideo = forcedTargetVideo
         ?: _uiState.value.episodes.firstOrNull { it.id == _uiState.value.episodeStreamsForVideoId }
 
-    resetLoadingOverlayForNewStream()
-    releasePlayer(flushPlaybackState = false)
+    currentStreamUrl = url
+    currentHeaders = newHeaders
+    currentStreamBingeGroup = stream.behaviorHints?.bingeGroup
+    currentVideoHash = stream.behaviorHints?.videoHash
+    currentVideoSize = stream.behaviorHints?.videoSize
+    currentFilename = stream.behaviorHints?.filename
+        ?: url.substringBefore('?').substringAfterLast('/', "")
+            .takeIf { it.isNotBlank() && it.contains('.') }
+    pendingAddonSubtitleLanguage = null
+    pendingAddonSubtitleTrackId = null
+    pendingAudioSelectionAfterSubtitleRefresh = null
+    attachedAddonSubtitleKeys = emptySet()
 
     applySelectedStreamState(
         stream = stream,
@@ -1158,15 +1202,20 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
     subtitleDisabledByPersistedPreference = false
     subtitleAddonRestoredByPersistedPreference = false
     pendingRestoredAddonSubtitle = null
+    // Reset stream-state error flags for the new stream.
     hasRetriedCurrentStreamAfter416 = false
-    errorRetryCount = 0
+    hasRetriedCurrentStreamAfterUnexpectedNpe = false
+    hasRetriedCurrentStreamAfterMediaPeriodHolderCrash = false
+
     currentVideoId = targetVideo?.id ?: _uiState.value.episodeStreamsForVideoId ?: currentVideoId
     currentSeason = targetVideo?.season ?: _uiState.value.episodeStreamsSeason ?: currentSeason
     currentEpisode = targetVideo?.episode ?: _uiState.value.episodeStreamsEpisode ?: currentEpisode
     currentEpisodeTitle = targetVideo?.title ?: _uiState.value.episodeStreamsTitle ?: currentEpisodeTitle
-    currentTraktEpisodeMapping = null
-    currentTraktEpisodeMappingKey = null
+    refreshScrobbleItem()
+
     lastSavedPosition = 0L
+    _exoPlayer?.stop()
+    resetLoadingOverlayForNewStream()
 
     _uiState.update {
         it.copy(
@@ -1201,6 +1250,7 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
     showStreamSourceIndicator(stream)
     recomputeNextEpisode(resetVisibility = true)
     updateEpisodeDescription()
+    refreshSubtitlesForCurrentEpisode()
 
     playbackStartedForParentalGuide = false
     skipIntervals = emptyList()
