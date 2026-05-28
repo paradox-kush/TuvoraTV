@@ -633,7 +633,6 @@
     <string name="audio_enable_downmix_subtitle">Χρησιμοποιεί τη διαδρομή downmix FFmpeg. Όταν είναι απενεργοποιημένο, ο ήχος ακολουθεί την προηγούμενη διαδρομή Android/συσκευής.</string>
     <string name="audio_tunneled">Αναπαραγωγή tunneled</string>
     <string name="audio_tunneled_sub">Συγχρονισμός ήχου/βίντεο σε επίπεδο υλικού. Μπορεί να βελτιώσει την αναπαραγωγή σε ορισμένες συσκευές Android TV</string>
-    <string name="audio_dv_sub">Αντιστοίχιση Dolby Vision Profile 7 σε standard HEVC για συσκευές χωρίς υποστήριξη υλικού DV</string>
     <string name="audio_mpv_hwdec_title">Αποκωδικοποίηση υλικού (μόνο MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Επιλέξτε πώς θα χρησιμοποιεί το libmpv τους αποκωδικοποιητές υλικού.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Παλαιό (direct -&gt; copy)</string>

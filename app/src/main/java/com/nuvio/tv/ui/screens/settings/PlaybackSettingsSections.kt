@@ -5,6 +5,8 @@ package com.nuvio.tv.ui.screens.settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,9 +34,11 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,10 +48,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,11 +67,14 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.data.local.AddonSubtitleStartupMode
 import com.nuvio.tv.data.local.AudioOutputChannels
 import com.nuvio.tv.data.local.AutoSkipSegmentType
+import com.nuvio.tv.data.local.Dv7HandlingMode
 import com.nuvio.tv.data.local.FrameRateMatchingMode
 import com.nuvio.tv.data.local.InternalPlayerEngine
+import com.nuvio.tv.data.local.LibassRenderType
 import com.nuvio.tv.data.local.PlayerPreference
 import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.TrailerSettings
+import com.nuvio.tv.data.local.VodCacheSizeMode
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.theme.NuvioColors
 
@@ -78,7 +83,9 @@ private enum class PlaybackSection {
     STREAM_SELECTION,
     AUDIO_TRAILER,
     SUBTITLES,
-    P2P
+    P2P,
+    BUFFER_NETWORK,
+    DIAGNOSTICS
 }
 
 private data class PlaybackGeneralUi(
@@ -153,7 +160,9 @@ internal fun PlaybackSettingsSections(
     onSetSkipSilence: (Boolean) -> Unit,
     onSetRememberAudioDelayPerDevice: (Boolean) -> Unit,
     onSetTunnelingEnabled: (Boolean) -> Unit,
-    onSetMapDV7ToHevc: (Boolean) -> Unit,
+    onShowDv7HandlingModeDialog: () -> Unit,
+    onSetDv5ToDv81Enabled: (Boolean) -> Unit,
+    onSetDv7ToDv81PreserveMappingEnabled: (Boolean) -> Unit,
     onSetSubtitleSize: (Int) -> Unit,
     onSetSubtitleVerticalOffset: (Int) -> Unit,
     onSetSubtitleBold: (Boolean) -> Unit,
@@ -161,11 +170,29 @@ internal fun PlaybackSettingsSections(
     onSetSubtitleShowOnlyPreferredLanguages: (Boolean) -> Unit,
     onSetSubtitleOutlineEnabled: (Boolean) -> Unit,
     onSetUseLibass: (Boolean) -> Unit,
-    onSetLibassRenderType: (com.nuvio.tv.data.local.LibassRenderType) -> Unit,
+    onSetLibassRenderType: (LibassRenderType) -> Unit,
     p2pEnabled: Boolean = false,
     onSetP2pEnabled: (Boolean) -> Unit = {},
     hideTorrentStats: Boolean = false,
-    onSetHideTorrentStats: (Boolean) -> Unit = {}
+    onSetHideTorrentStats: (Boolean) -> Unit = {},
+    onSetBufferEngineEnabled: (Boolean) -> Unit,
+    onSetParallelNetworkEnabled: (Boolean) -> Unit,
+    onSetUseParallelConnections: (Boolean) -> Unit,
+    onSetParallelConnectionCount: (Int) -> Unit,
+    onSetParallelChunkSizeMb: (Int) -> Unit,
+    onSetBufferMinBufferMs: (Int) -> Unit,
+    onSetBufferMaxBufferMs: (Int) -> Unit,
+    onSetBufferForPlaybackMs: (Int) -> Unit,
+    onSetBufferForPlaybackAfterRebufferMs: (Int) -> Unit,
+    onSetBufferTargetSizeMb: (Int) -> Unit,
+    onSetBufferBackBufferDurationMs: (Int) -> Unit,
+    onSetAllowLargeTargetBuffer: (Boolean) -> Unit,
+    onSetBufferBudgetManaged: (Boolean) -> Unit,
+    onSetVodCacheEnabled: (Boolean) -> Unit,
+    onSetVodCacheSizeMode: (VodCacheSizeMode) -> Unit,
+    onSetVodCacheSizeMb: (Int) -> Unit,
+    onResetBufferSettingsToDefaults: () -> Unit,
+    onResetNetworkSettingsToDefaults: () -> Unit
 ) {
     var generalExpanded by rememberSaveable { mutableStateOf(false) }
     var afrExpanded by rememberSaveable { mutableStateOf(false) }
@@ -174,6 +201,7 @@ internal fun PlaybackSettingsSections(
     var audioTrailerExpanded by rememberSaveable { mutableStateOf(false) }
     var subtitlesExpanded by rememberSaveable { mutableStateOf(false) }
     var p2pExpanded by rememberSaveable { mutableStateOf(false) }
+    var bufferAndNetworkExpanded by rememberSaveable { mutableStateOf(false) }
 
     val defaultGeneralHeaderFocus = remember { FocusRequester() }
     val afrHeaderFocus = remember { FocusRequester() }
@@ -182,6 +210,7 @@ internal fun PlaybackSettingsSections(
     val audioTrailerHeaderFocus = remember { FocusRequester() }
     val subtitlesHeaderFocus = remember { FocusRequester() }
     val p2pHeaderFocus = remember { FocusRequester() }
+    val bufferAndNetworkHeaderFocus = remember { FocusRequester() }
     val generalHeaderFocus = initialFocusRequester ?: defaultGeneralHeaderFocus
 
     var focusedSection by remember { mutableStateOf<PlaybackSection?>(null) }
@@ -279,6 +308,11 @@ internal fun PlaybackSettingsSections(
     LaunchedEffect(p2pExpanded, focusedSection) {
         if (!p2pExpanded && focusedSection == PlaybackSection.P2P) {
             p2pHeaderFocus.requestFocus()
+        }
+    }
+    LaunchedEffect(bufferAndNetworkExpanded, focusedSection) {
+        if (!bufferAndNetworkExpanded && focusedSection == PlaybackSection.BUFFER_NETWORK) {
+            bufferAndNetworkHeaderFocus.requestFocus()
         }
     }
 
@@ -415,45 +449,6 @@ internal fun PlaybackSettingsSections(
                 }
             }
 
-            item(key = "general_afr_header") {
-                PlaybackSectionHeader(
-                    title = stringResource(R.string.playback_auto_frame_rate),
-                    description = generalUi.frameRateMatchingLabel,
-                    expanded = afrExpanded,
-                    onToggle = { afrExpanded = !afrExpanded },
-                    focusRequester = afrHeaderFocus,
-                    onFocused = { focusedSection = PlaybackSection.GENERAL },
-                    enabled = !generalUi.isExternalPlayer,
-                    showWarningIcon = showAfrWarning
-                )
-            }
-
-            if (afrExpanded) {
-                item(key = "general_afr_capability_warning") {
-                    AfrCapabilityWarningCard(
-                        snapshot = displayCapabilities,
-                        afrModeOn = playerSettings.frameRateMatchingMode != FrameRateMatchingMode.OFF,
-                        resolutionMatchingOn = playerSettings.resolutionMatchingEnabled,
-                        headerFocusRequester = afrHeaderFocus,
-                        onDisableAll = onDisableAfrAndResolution,
-                        onDisableAfrOnly = onDisableAfrOnly,
-                        onDisableResolutionOnly = onDisableResolutionOnly,
-                        onFocused = { focusedSection = PlaybackSection.GENERAL }
-                    )
-                }
-                item(key = "general_afr_options") {
-                    FrameRateMatchingModeOptions(
-                        selectedMode = playerSettings.frameRateMatchingMode,
-                        resolutionMatchingEnabled = playerSettings.resolutionMatchingEnabled,
-                        resolutionSwitchingSupported = !displayCapabilities.apiSupported ||
-                            displayCapabilities.supportsResolutionSwitching,
-                        onSelect = onSetFrameRateMatchingMode,
-                        onSetResolutionMatchingEnabled = onSetResolutionMatchingEnabled,
-                        onFocused = { focusedSection = PlaybackSection.GENERAL },
-                        enabled = !generalUi.isExternalPlayer
-                    )
-                }
-            }
         }
 
         playbackCollapsibleSection(
@@ -548,6 +543,7 @@ internal fun PlaybackSettingsSections(
                 onShowAudioOutputChannelsDialog = onShowAudioOutputChannelsDialog,
                 onShowDecoderPriorityDialog = onShowDecoderPriorityDialog,
                 onShowMpvHardwareDecodeModeDialog = onShowMpvHardwareDecodeModeDialog,
+                onShowDv7HandlingModeDialog = onShowDv7HandlingModeDialog,
                 onSetTrailerEnabled = onSetTrailerEnabled,
                 onSetTrailerDelaySeconds = onSetTrailerDelaySeconds,
                 onSetDownmixEnabled = onSetDownmixEnabled,
@@ -555,9 +551,52 @@ internal fun PlaybackSettingsSections(
                 onSetSkipSilence = onSetSkipSilence,
                 onSetRememberAudioDelayPerDevice = onSetRememberAudioDelayPerDevice,
                 onSetTunnelingEnabled = onSetTunnelingEnabled,
-                onSetMapDV7ToHevc = onSetMapDV7ToHevc,
+                onSetDv5ToDv81Enabled = onSetDv5ToDv81Enabled,
+                onSetDv7ToDv81PreserveMappingEnabled = onSetDv7ToDv81PreserveMappingEnabled,
                 onItemFocused = { focusedSection = PlaybackSection.AUDIO_TRAILER },
-                enabled = !generalUi.isExternalPlayer
+                enabled = !generalUi.isExternalPlayer,
+                videoExtraItems = {
+                    item(key = "general_afr_header") {
+                        PlaybackSectionHeader(
+                            title = stringResource(R.string.playback_auto_frame_rate),
+                            description = generalUi.frameRateMatchingLabel,
+                            expanded = afrExpanded,
+                            onToggle = { afrExpanded = !afrExpanded },
+                            focusRequester = afrHeaderFocus,
+                            onFocused = { focusedSection = PlaybackSection.AUDIO_TRAILER },
+                            enabled = !generalUi.isExternalPlayer,
+                            showWarningIcon = showAfrWarning,
+                            icon = Icons.Default.Speed
+                        )
+                    }
+
+                    if (afrExpanded) {
+                        item(key = "general_afr_capability_warning") {
+                            AfrCapabilityWarningCard(
+                                snapshot = displayCapabilities,
+                                afrModeOn = playerSettings.frameRateMatchingMode != FrameRateMatchingMode.OFF,
+                                resolutionMatchingOn = playerSettings.resolutionMatchingEnabled,
+                                headerFocusRequester = afrHeaderFocus,
+                                onDisableAll = onDisableAfrAndResolution,
+                                onDisableAfrOnly = onDisableAfrOnly,
+                                onDisableResolutionOnly = onDisableResolutionOnly,
+                                onFocused = { focusedSection = PlaybackSection.AUDIO_TRAILER }
+                            )
+                        }
+                        item(key = "general_afr_options") {
+                            FrameRateMatchingModeOptions(
+                                selectedMode = playerSettings.frameRateMatchingMode,
+                                resolutionMatchingEnabled = playerSettings.resolutionMatchingEnabled,
+                                resolutionSwitchingSupported = !displayCapabilities.apiSupported ||
+                                    displayCapabilities.supportsResolutionSwitching,
+                                onSelect = onSetFrameRateMatchingMode,
+                                onSetResolutionMatchingEnabled = onSetResolutionMatchingEnabled,
+                                onFocused = { focusedSection = PlaybackSection.AUDIO_TRAILER },
+                                enabled = !generalUi.isExternalPlayer
+                            )
+                        }
+                    }
+                }
             )
         }
 
@@ -621,6 +660,42 @@ internal fun PlaybackSettingsSections(
                 )
             }
         }
+
+        if (playerSettings.internalPlayerEngine == InternalPlayerEngine.EXOPLAYER ||
+            playerSettings.internalPlayerEngine == InternalPlayerEngine.AUTO) {
+            playbackCollapsibleSection(
+                keyPrefix = "buffer_network",
+                title = "Buffer & Network",
+                description = "How much content to keep in memory and how to fetch streams.",
+                expanded = bufferAndNetworkExpanded,
+                onToggle = { bufferAndNetworkExpanded = !bufferAndNetworkExpanded },
+                focusRequester = bufferAndNetworkHeaderFocus,
+                onHeaderFocused = { focusedSection = PlaybackSection.BUFFER_NETWORK }
+            ) {
+                bufferAndNetworkSettingsItems(
+                    playerSettings = playerSettings,
+                    onSetBufferEngineEnabled = onSetBufferEngineEnabled,
+                    onSetParallelNetworkEnabled = onSetParallelNetworkEnabled,
+                    onSetBufferMinBufferMs = onSetBufferMinBufferMs,
+                    onSetBufferMaxBufferMs = onSetBufferMaxBufferMs,
+                    onSetBufferForPlaybackMs = onSetBufferForPlaybackMs,
+                    onSetBufferForPlaybackAfterRebufferMs = onSetBufferForPlaybackAfterRebufferMs,
+                    onSetBufferTargetSizeMb = onSetBufferTargetSizeMb,
+                    onSetBufferBackBufferDurationMs = onSetBufferBackBufferDurationMs,
+                    onSetAllowLargeTargetBuffer = onSetAllowLargeTargetBuffer,
+                    onSetBufferBudgetManaged = onSetBufferBudgetManaged,
+                    onSetVodCacheEnabled = onSetVodCacheEnabled,
+                    onSetVodCacheSizeMode = onSetVodCacheSizeMode,
+                    onSetVodCacheSizeMb = onSetVodCacheSizeMb,
+                    onResetToDefaults = onResetBufferSettingsToDefaults,
+                    onSetUseParallelConnections = onSetUseParallelConnections,
+                    onSetParallelConnectionCount = onSetParallelConnectionCount,
+                    onSetParallelChunkSizeMb = onSetParallelChunkSizeMb,
+                    onResetNetworkToDefaults = onResetNetworkSettingsToDefaults
+                )
+            }
+        }
+
     }
         SettingsVerticalScrollIndicators(state = playbackListState)
     }
@@ -670,7 +745,8 @@ private fun PlaybackSectionHeader(
     focusRequester: FocusRequester,
     onFocused: () -> Unit,
     enabled: Boolean = true,
-    showWarningIcon: Boolean = false
+    showWarningIcon: Boolean = false,
+    icon: ImageVector? = null
 ) {
     SettingsActionRow(
         title = title,
@@ -684,7 +760,8 @@ private fun PlaybackSectionHeader(
         enabled = enabled,
         trailingIcon = if (expanded) Icons.Default.ExpandMore else Icons.Default.ChevronRight,
         titleTrailingIcon = if (showWarningIcon) Icons.Default.Warning else null,
-        titleTrailingIconTint = Color(0xFFFFB74D)
+        titleTrailingIconTint = Color(0xFFFFB74D),
+        leadingIcon = icon
     )
 }
 
@@ -894,6 +971,7 @@ internal fun PlaybackSettingsDialogsHost(
     showAudioOutputChannelsDialog: Boolean,
     showDecoderPriorityDialog: Boolean,
     showMpvHardwareDecodeModeDialog: Boolean,
+    showDv7HandlingModeDialog: Boolean,
     showStreamAutoPlayModeDialog: Boolean,
     showStreamAutoPlaySourceDialog: Boolean,
     showStreamAutoPlayAddonSelectionDialog: Boolean,
@@ -916,6 +994,7 @@ internal fun PlaybackSettingsDialogsHost(
     onSetAudioOutputChannels: (AudioOutputChannels) -> Unit,
     onSetDecoderPriority: (Int) -> Unit,
     onSetMpvHardwareDecodeMode: (com.nuvio.tv.data.local.MpvHardwareDecodeMode) -> Unit,
+    onSetDv7HandlingMode: (Dv7HandlingMode) -> Unit,
     onSetStreamAutoPlayMode: (com.nuvio.tv.data.local.StreamAutoPlayMode) -> Unit,
     onSetStreamAutoPlaySource: (com.nuvio.tv.data.local.StreamAutoPlaySource) -> Unit,
     onSetNextEpisodeThresholdMode: (com.nuvio.tv.data.local.NextEpisodeThresholdMode) -> Unit,
@@ -934,6 +1013,7 @@ internal fun PlaybackSettingsDialogsHost(
     onDismissAudioOutputChannelsDialog: () -> Unit,
     onDismissDecoderPriorityDialog: () -> Unit,
     onDismissMpvHardwareDecodeModeDialog: () -> Unit,
+    onDismissDv7HandlingModeDialog: () -> Unit,
     onDismissStreamAutoPlayModeDialog: () -> Unit,
     onDismissStreamAutoPlaySourceDialog: () -> Unit,
     onDismissStreamRegexDialog: () -> Unit,
@@ -992,21 +1072,25 @@ internal fun PlaybackSettingsDialogsHost(
         showAudioOutputChannelsDialog = showAudioOutputChannelsDialog,
         showDecoderPriorityDialog = showDecoderPriorityDialog,
         showMpvHardwareDecodeModeDialog = showMpvHardwareDecodeModeDialog,
+        showDv7HandlingModeDialog = showDv7HandlingModeDialog,
         selectedLanguage = playerSettings.preferredAudioLanguage,
         selectedSecondaryLanguage = playerSettings.secondaryPreferredAudioLanguage,
         selectedAudioOutputChannels = playerSettings.audioOutputChannels,
         selectedPriority = playerSettings.decoderPriority,
         selectedMpvHardwareDecodeMode = playerSettings.mpvHardwareDecodeMode,
+        selectedDv7HandlingMode = playerSettings.dv7HandlingMode,
         onSetPreferredAudioLanguage = onSetPreferredAudioLanguage,
         onSetSecondaryPreferredAudioLanguage = onSetSecondaryPreferredAudioLanguage,
         onSetAudioOutputChannels = onSetAudioOutputChannels,
         onSetDecoderPriority = onSetDecoderPriority,
         onSetMpvHardwareDecodeMode = onSetMpvHardwareDecodeMode,
+        onSetDv7HandlingMode = onSetDv7HandlingMode,
         onDismissAudioLanguageDialog = onDismissAudioLanguageDialog,
         onDismissSecondaryAudioLanguageDialog = onDismissSecondaryAudioLanguageDialog,
         onDismissAudioOutputChannelsDialog = onDismissAudioOutputChannelsDialog,
         onDismissDecoderPriorityDialog = onDismissDecoderPriorityDialog,
-        onDismissMpvHardwareDecodeModeDialog = onDismissMpvHardwareDecodeModeDialog
+        onDismissMpvHardwareDecodeModeDialog = onDismissMpvHardwareDecodeModeDialog,
+        onDismissDv7HandlingModeDialog = onDismissDv7HandlingModeDialog
     )
 
     AutoPlaySettingsDialogs(

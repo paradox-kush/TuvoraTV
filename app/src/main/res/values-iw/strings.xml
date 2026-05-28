@@ -1006,8 +1006,6 @@
     <string name="audio_advanced_section">שמע מתקדם</string>
     <string name="audio_advanced_warning">הגדרות אלה עלולות לגרום לבעיות בחלק מהמכשירים. שנה רק אם אתה יודע מה אתה עושה.</string>
     <string name="audio_passthrough_info">מעבר שמע (TrueHD, DTS, AC-3 וכו׳) הוא אוטומטי. כשמחובר למקלט AV תואם או soundbar דרך HDMI, שמע ללא אובדן נשלח כמות שהוא ללא פענוח.</string>
-    <string name="audio_dv_title">DV7 - נפילה ל-HEVC</string>
-    <string name="audio_dv_sub">ממפה Dolby Vision Profile 7 ל-HEVC סטנדרטי למכשירים ללא תמיכת DV חומרתית</string>
 
     <!-- Subtitles (advanced) -->
     <string name="sub_section">כתוביות</string>

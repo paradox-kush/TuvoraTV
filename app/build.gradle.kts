@@ -8,7 +8,26 @@
     alias(libs.plugins.kotlin.serialization)
 }
 
+import java.io.File
 import java.util.Properties
+
+fun parseBooleanProperty(value: String?): Boolean {
+    val normalized = value?.trim()?.lowercase() ?: return false
+    return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+}
+
+fun resolveProperty(dev: Properties, local: Properties, key: String, fallback: String = ""): String {
+    return dev.getProperty(key)?.trim()?.takeIf { it.isNotBlank() }
+        ?: local.getProperty(key)?.trim()?.takeIf { it.isNotBlank() }
+        ?: fallback
+}
+
+fun cmakePath(path: String): String {
+    if (path.isBlank()) return ""
+    val file = File(path)
+    val resolved = if (file.isAbsolute) file else rootProject.file(path)
+    return resolved.absolutePath.replace("\\", "/")
+}
 
 val localProperties = Properties().apply {
     val localPropertiesFile = rootProject.file("local.properties")
@@ -23,6 +42,19 @@ val devProperties = Properties().apply {
         load(devPropertiesFile.inputStream())
     }
 }
+
+val enableDoviNative = parseBooleanProperty(
+    resolveProperty(devProperties, localProperties, "DOVI_NATIVE_ENABLED")
+)
+val doviExtractorHookReady = parseBooleanProperty(
+    resolveProperty(devProperties, localProperties, "DOVI_EXTRACTOR_HOOK_READY")
+)
+val doviEnableRealLink = parseBooleanProperty(
+    resolveProperty(devProperties, localProperties, "DOVI_ENABLE_REAL_LINK")
+)
+val doviStaticLibPath = resolveProperty(devProperties, localProperties, "DOVI_LIBDOVI_STATIC_LIB")
+val doviIncludeDirPath = resolveProperty(devProperties, localProperties, "DOVI_LIBDOVI_INCLUDE_DIR")
+val doviPrebuiltRootPath = resolveProperty(devProperties, localProperties, "DOVI_LIBDOVI_PREBUILT_ROOT")
 
 fun env(name: String): String? = providers.environmentVariable(name).orNull
 
@@ -70,6 +102,20 @@ android {
         buildConfigField("String", "TRAKT_REDIRECT_URI", "\"${localProperties.getProperty("TRAKT_REDIRECT_URI", "urn:ietf:wg:oauth:2.0:oob")}\"")
         buildConfigField("String", "TMDB_API_KEY", "\"${localProperties.getProperty("TMDB_API_KEY", "")}\"")
         buildConfigField("String", "TV_LOGIN_WEB_BASE_URL", "\"${localProperties.getProperty("TV_LOGIN_WEB_BASE_URL", "https://app.nuvio.tv/tv-login")}\"")
+        buildConfigField("boolean", "DOVI_NATIVE_ENABLED", enableDoviNative.toString())
+        buildConfigField("boolean", "DOVI_EXTRACTOR_HOOK_READY", doviExtractorHookReady.toString())
+        if (enableDoviNative) {
+            externalNativeBuild {
+                cmake {
+                    arguments(
+                        "-DDOVI_ENABLE_LIBDOVI=${if (doviEnableRealLink) "ON" else "OFF"}",
+                        "-DDOVI_LIBDOVI_STATIC_LIB=${cmakePath(doviStaticLibPath)}",
+                        "-DDOVI_LIBDOVI_INCLUDE_DIR=${cmakePath(doviIncludeDirPath)}",
+                        "-DDOVI_LIBDOVI_PREBUILT_ROOT=${cmakePath(doviPrebuiltRootPath)}"
+                    )
+                }
+            }
+        }
         buildConfigField("String", "DONATIONS_BASE_URL", "\"${localProperties.getProperty("DONATIONS_BASE_URL", "")}\"")
         buildConfigField("String", "DONATIONS_DONATE_URL", "\"${localProperties.getProperty("DONATIONS_DONATE_URL", "")}\"")
         buildConfigField("String", "AVATAR_PUBLIC_BASE_URL", "\"${localProperties.getProperty("AVATAR_PUBLIC_BASE_URL", "")}\"")
@@ -97,6 +143,14 @@ android {
             buildConfigField("boolean", "FEATURE_IN_APP_UPDATES_ENABLED", "false")
             buildConfigField("boolean", "FEATURE_IN_APP_TRAILERS_ENABLED", "false")
             buildConfigField("boolean", "FEATURE_EXTERNAL_TRAILERS_ENABLED", "true")
+        }
+    }
+
+    if (enableDoviNative) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+            }
         }
     }
 
@@ -240,7 +294,8 @@ composeCompiler {
     stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose_stability_config.conf"))
 }
 
-// Globally exclude stock media3-exoplayer and media3-ui — replaced by forked local AARs
+// Globally exclude stock media3-exoplayer and media3-ui — replaced by the
+// prebuilt forked AARs (lib-exoplayer-release.aar / lib-ui-release.aar).
 configurations.all {
     exclude(group = "androidx.media3", module = "media3-exoplayer")
     exclude(group = "androidx.media3", module = "media3-ui")
@@ -259,6 +314,12 @@ baselineProfile {
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     val composeBom = platform("androidx.compose:compose-bom:2026.01.01")
+
+    // Source-retention nullness annotations (MonotonicNonNull / RequiresNonNull /
+    // EnsuresNonNull) used by the vendored Matroska extractor in
+    // com.nuvio.tv.core.player.dvmkv. Media3 keeps these compileOnly in its own
+    // build, so they aren't on our classpath via the prebuilt AARs.
+    compileOnly("org.checkerframework:checker-qual:3.43.0")
 
     baselineProfile(project(":baselineprofile"))
     implementation(libs.androidx.core.ktx)
@@ -310,9 +371,9 @@ dependencies {
     // ViewModel
     implementation(libs.lifecycle.viewmodel.compose)
 
-    // Media3 ExoPlayer — using custom forked ExoPlayer from local AARs (like Just Player)
-    // The forked lib-exoplayer-release.aar replaces stock media3-exoplayer (globally excluded above)
-    // lib-ui-release.aar replaces stock media3-ui (globally excluded above)
+    // Media3 core modules. media3-exoplayer and media3-ui are globally excluded
+    // (above) and replaced by the prebuilt forked AARs below; everything else is
+    // stock Maven.
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.exoplayer.smoothstreaming)
@@ -325,7 +386,6 @@ dependencies {
     implementation(libs.media3.container)
     implementation(libs.media3.extractor)
 
-    
     // Local AAR libraries from forked ExoPlayer (matching Just Player setup):
     // - lib-exoplayer-release.aar    — Custom forked ExoPlayer core (replaces media3-exoplayer)
     // - lib-ui-release.aar           — Custom forked ExoPlayer UI
@@ -391,7 +451,7 @@ dependencies {
 
     // Performance profiling
     implementation("androidx.metrics:metrics-performance:1.0.0-rc01")  // JankStats
-    debugImplementation("androidx.compose.runtime:runtime-tracing")     
+    debugImplementation("androidx.compose.runtime:runtime-tracing")
 
     add("fullImplementation", "org.webjars.npm:crypto-js:4.2.0")
 

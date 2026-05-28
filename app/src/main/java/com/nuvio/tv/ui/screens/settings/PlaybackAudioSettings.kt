@@ -54,6 +54,8 @@ import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.data.local.AVAILABLE_SUBTITLE_LANGUAGES
 import com.nuvio.tv.data.local.AudioLanguageOption
 import com.nuvio.tv.data.local.AudioOutputChannels
+import com.nuvio.tv.data.local.Dv7HandlingMode
+import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
 import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.TrailerSettings
@@ -69,6 +71,7 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
     onShowAudioOutputChannelsDialog: () -> Unit,
     onShowDecoderPriorityDialog: () -> Unit,
     onShowMpvHardwareDecodeModeDialog: () -> Unit,
+    onShowDv7HandlingModeDialog: () -> Unit,
     onSetTrailerEnabled: (Boolean) -> Unit,
     onSetTrailerDelaySeconds: (Int) -> Unit,
     onSetDownmixEnabled: (Boolean) -> Unit,
@@ -76,10 +79,17 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
     onSetSkipSilence: (Boolean) -> Unit,
     onSetRememberAudioDelayPerDevice: (Boolean) -> Unit,
     onSetTunnelingEnabled: (Boolean) -> Unit,
-    onSetMapDV7ToHevc: (Boolean) -> Unit,
+    onSetDv5ToDv81Enabled: (Boolean) -> Unit,
+    onSetDv7ToDv81PreserveMappingEnabled: (Boolean) -> Unit,
     onItemFocused: () -> Unit = {},
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    videoExtraItems: (LazyListScope.() -> Unit)? = null
 ) {
+    val isExoEngine = playerSettings.internalPlayerEngine == InternalPlayerEngine.EXOPLAYER ||
+            playerSettings.internalPlayerEngine == InternalPlayerEngine.AUTO
+    val isMpvEngine = playerSettings.internalPlayerEngine == InternalPlayerEngine.MVP_PLAYER ||
+            playerSettings.internalPlayerEngine == InternalPlayerEngine.AUTO
+
     if (AppFeaturePolicy.inAppTrailerPlaybackEnabled) {
         item(key = "audio_trailer_section_header") {
             Text(
@@ -120,6 +130,7 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
         }
     }
 
+    // ── Audio Section ──
     item(key = "audio_header") {
         Spacer(modifier = Modifier.height(16.dp))
         Text(
@@ -174,129 +185,180 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
         )
     }
 
-    item(key = "audio_skip_silence") {
-        ToggleSettingsItem(
-            icon = Icons.Default.Speed,
-            title = stringResource(R.string.audio_skip_silence),
-            subtitle = stringResource(R.string.audio_skip_silence_sub),
-            isChecked = playerSettings.skipSilence,
-            onCheckedChange = onSetSkipSilence,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
+    if (isExoEngine) {
+        item(key = "audio_skip_silence") {
+            ToggleSettingsItem(
+                icon = Icons.Default.Speed,
+                title = stringResource(R.string.audio_skip_silence),
+                subtitle = stringResource(R.string.audio_skip_silence_sub),
+                isChecked = playerSettings.skipSilence,
+                onCheckedChange = onSetSkipSilence,
+                onFocused = onItemFocused,
+                enabled = enabled
+            )
+        }
+
+        item(key = "audio_remember_delay_per_device") {
+            ToggleSettingsItem(
+                icon = Icons.Default.Timer,
+                title = stringResource(R.string.audio_remember_delay_per_device),
+                subtitle = stringResource(R.string.audio_remember_delay_per_device_sub),
+                isChecked = playerSettings.rememberAudioDelayPerDevice,
+                onCheckedChange = onSetRememberAudioDelayPerDevice,
+                onFocused = onItemFocused,
+                enabled = enabled
+            )
+        }
     }
 
-    item(key = "audio_remember_delay_per_device") {
-        ToggleSettingsItem(
-            icon = Icons.Default.Timer,
-            title = stringResource(R.string.audio_remember_delay_per_device),
-            subtitle = stringResource(R.string.audio_remember_delay_per_device_sub),
-            isChecked = playerSettings.rememberAudioDelayPerDevice,
-            onCheckedChange = onSetRememberAudioDelayPerDevice,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
+    if (isExoEngine) {
+        item(key = "audio_advanced_header") {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.audio_advanced_section),
+                style = MaterialTheme.typography.titleMedium,
+                color = NuvioColors.TextSecondary,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+        }
+
+        item(key = "audio_advanced_warning") {
+            Text(
+                text = stringResource(R.string.audio_advanced_warning),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFFF9800),
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+        }
+
+        item(key = "audio_decoder_priority") {
+            val decoderName = when (playerSettings.decoderPriority) {
+                0 -> stringResource(R.string.audio_decoder_device_only)
+                1 -> stringResource(R.string.audio_decoder_prefer_device)
+                2 -> stringResource(R.string.audio_decoder_prefer_app)
+                else -> stringResource(R.string.audio_decoder_prefer_device)
+            }
+
+            NavigationSettingsItem(
+                icon = Icons.Default.Tune,
+                title = stringResource(R.string.audio_decoder_priority),
+                subtitle = decoderName,
+                onClick = onShowDecoderPriorityDialog,
+                onFocused = onItemFocused,
+                enabled = enabled
+            )
+        }
+
+        item(key = "audio_enable_downmix") {
+            ToggleSettingsItem(
+                icon = Icons.Default.Tune,
+                title = stringResource(R.string.audio_enable_downmix_title),
+                subtitle = stringResource(R.string.audio_enable_downmix_subtitle),
+                isChecked = playerSettings.downmixEnabled,
+                onCheckedChange = onSetDownmixEnabled,
+                onFocused = onItemFocused,
+                enabled = enabled
+            )
+        }
+
+        if (playerSettings.downmixEnabled) {
+            item(key = "audio_number_of_channels") {
+                NavigationSettingsItem(
+                    icon = Icons.Default.VolumeUp,
+                    title = stringResource(R.string.audio_number_of_channels),
+                    subtitle = playerSettings.audioOutputChannels.displayLabel,
+                    onClick = onShowAudioOutputChannelsDialog,
+                    onFocused = onItemFocused,
+                    enabled = enabled
+                )
+            }
+
+            item(key = "audio_downmix_normalization") {
+                ToggleSettingsItem(
+                    icon = Icons.Default.Tune,
+                    title = stringResource(R.string.audio_maintain_original_audio_on_downmix_title),
+                    subtitle = stringResource(R.string.audio_maintain_original_audio_on_downmix_subtitle),
+                    isChecked = playerSettings.maintainOriginalAudioOnDownmix,
+                    onCheckedChange = onSetMaintainOriginalAudioOnDownmix,
+                    onFocused = onItemFocused,
+                    enabled = enabled
+                )
+            }
+        }
+
+        item(key = "audio_tunneled_playback") {
+            ToggleSettingsItem(
+                icon = Icons.Default.VolumeUp,
+                title = stringResource(R.string.audio_tunneled),
+                subtitle = stringResource(R.string.audio_tunneled_sub),
+                isChecked = playerSettings.tunnelingEnabled,
+                onCheckedChange = onSetTunnelingEnabled,
+                onFocused = onItemFocused,
+                enabled = enabled
+            )
+        }
     }
 
-    item(key = "audio_advanced_header") {
-        Spacer(modifier = Modifier.height(16.dp))
+    // ── Video & DV Settings ──
+    item(key = "video_header") {
         Text(
-            text = stringResource(R.string.audio_advanced_section),
+            text = stringResource(R.string.video_section),
             style = MaterialTheme.typography.titleMedium,
             color = NuvioColors.TextSecondary,
             modifier = Modifier.padding(vertical = 8.dp)
         )
     }
 
-    item(key = "audio_advanced_warning") {
-        Text(
-            text = stringResource(R.string.audio_advanced_warning),
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFFF9800),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-    }
+    videoExtraItems?.invoke(this)
 
-    item(key = "audio_decoder_priority") {
-        val decoderName = when (playerSettings.decoderPriority) {
-            0 -> stringResource(R.string.audio_decoder_device_only)
-            1 -> stringResource(R.string.audio_decoder_prefer_device)
-            2 -> stringResource(R.string.audio_decoder_prefer_app)
-            else -> stringResource(R.string.audio_decoder_prefer_device)
-        }
-
-        NavigationSettingsItem(
-            icon = Icons.Default.Tune,
-            title = stringResource(R.string.audio_decoder_priority),
-            subtitle = decoderName,
-            onClick = onShowDecoderPriorityDialog,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
-
-    item(key = "audio_enable_downmix") {
-        ToggleSettingsItem(
-            icon = Icons.Default.Tune,
-            title = stringResource(R.string.audio_enable_downmix_title),
-            subtitle = stringResource(R.string.audio_enable_downmix_subtitle),
-            isChecked = playerSettings.downmixEnabled,
-            onCheckedChange = onSetDownmixEnabled,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
-
-    if (playerSettings.downmixEnabled) {
-        item(key = "audio_number_of_channels") {
+    if (isExoEngine) {
+        item(key = "audio_dv7_handling_mode") {
+            val modeName = when (playerSettings.dv7HandlingMode) {
+                Dv7HandlingMode.AUTO -> stringResource(R.string.dv7_mode_auto)
+                Dv7HandlingMode.HDR10_BASE_LAYER -> stringResource(R.string.dv7_mode_hdr10_base_layer)
+                Dv7HandlingMode.DV81_LIBDOVI -> stringResource(R.string.dv7_mode_dv81_libdovi)
+                Dv7HandlingMode.OFF -> stringResource(R.string.dv7_mode_off)
+            }
             NavigationSettingsItem(
-                icon = Icons.Default.VolumeUp,
-                title = stringResource(R.string.audio_number_of_channels),
-                subtitle = playerSettings.audioOutputChannels.displayLabel,
-                onClick = onShowAudioOutputChannelsDialog,
+                icon = Icons.Default.Tune,
+                title = stringResource(R.string.dv7_handling_title),
+                subtitle = modeName,
+                onClick = onShowDv7HandlingModeDialog,
                 onFocused = onItemFocused,
                 enabled = enabled
             )
         }
-
-        item(key = "audio_downmix_normalization") {
+        item(key = "audio_dv7_preserve_mapping") {
             ToggleSettingsItem(
                 icon = Icons.Default.Tune,
-                title = stringResource(R.string.audio_maintain_original_audio_on_downmix_title),
-                subtitle = stringResource(R.string.audio_maintain_original_audio_on_downmix_subtitle),
-                isChecked = playerSettings.maintainOriginalAudioOnDownmix,
-                onCheckedChange = onSetMaintainOriginalAudioOnDownmix,
+                title = stringResource(R.string.audio_dv7_preserve_mapping_title),
+                subtitle = stringResource(R.string.audio_dv7_preserve_mapping_sub),
+                // Show off outside Convert to DV8.1 so a persisted value doesn't read as active.
+                isChecked = playerSettings.dv7ToDv81PreserveMappingEnabled &&
+                        playerSettings.dv7HandlingMode == Dv7HandlingMode.DV81_LIBDOVI,
+                onCheckedChange = onSetDv7ToDv81PreserveMappingEnabled,
                 onFocused = onItemFocused,
-                enabled = enabled
+                enabled = enabled && playerSettings.dv7HandlingMode == Dv7HandlingMode.DV81_LIBDOVI
+            )
+        }
+
+        item(key = "audio_dv5_to_dv81") {
+            ToggleSettingsItem(
+                icon = Icons.Default.Tune,
+                title = stringResource(R.string.audio_dv5_to_dv81_title),
+                subtitle = stringResource(R.string.audio_dv5_to_dv81_sub),
+                // Show off outside Convert to DV8.1 so a persisted value doesn't read as active.
+                isChecked = playerSettings.dv5ToDv81Enabled &&
+                        playerSettings.dv7HandlingMode == Dv7HandlingMode.DV81_LIBDOVI,
+                onCheckedChange = onSetDv5ToDv81Enabled,
+                onFocused = onItemFocused,
+                enabled = enabled && playerSettings.dv7HandlingMode == Dv7HandlingMode.DV81_LIBDOVI
             )
         }
     }
 
-    item(key = "audio_tunneled_playback") {
-        ToggleSettingsItem(
-            icon = Icons.Default.VolumeUp,
-            title = stringResource(R.string.audio_tunneled),
-            subtitle = stringResource(R.string.audio_tunneled_sub),
-            isChecked = playerSettings.tunnelingEnabled,
-            onCheckedChange = onSetTunnelingEnabled,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
-
-    item(key = "audio_dv7_hevc_fallback") {
-        ToggleSettingsItem(
-            icon = Icons.Default.Tune,
-            title = stringResource(R.string.audio_dv_title),
-            subtitle = stringResource(R.string.audio_dv_sub),
-            isChecked = playerSettings.mapDV7ToHevc,
-            onCheckedChange = onSetMapDV7ToHevc,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
-
-    item(key = "audio_mpv_hardware_decode_mode") {
+    if (isMpvEngine) {
+        item(key = "audio_mpv_hardware_decode_mode") {
         val hwDecodeModeName = when (playerSettings.mpvHardwareDecodeMode) {
             MpvHardwareDecodeMode.LEGACY_DIRECT_COPY -> stringResource(R.string.audio_mpv_hwdec_legacy_direct_copy)
             MpvHardwareDecodeMode.AUTO_SAFE -> stringResource(R.string.audio_mpv_hwdec_auto_safe)
@@ -313,6 +375,7 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
             onFocused = onItemFocused,
             enabled = enabled
         )
+        }
     }
 }
 
@@ -323,21 +386,25 @@ internal fun AudioSettingsDialogs(
     showAudioOutputChannelsDialog: Boolean,
     showDecoderPriorityDialog: Boolean,
     showMpvHardwareDecodeModeDialog: Boolean,
+    showDv7HandlingModeDialog: Boolean,
     selectedLanguage: String,
     selectedSecondaryLanguage: String?,
     selectedAudioOutputChannels: AudioOutputChannels,
     selectedPriority: Int,
     selectedMpvHardwareDecodeMode: MpvHardwareDecodeMode,
+    selectedDv7HandlingMode: Dv7HandlingMode,
     onSetPreferredAudioLanguage: (String) -> Unit,
     onSetSecondaryPreferredAudioLanguage: (String?) -> Unit,
     onSetAudioOutputChannels: (AudioOutputChannels) -> Unit,
     onSetDecoderPriority: (Int) -> Unit,
     onSetMpvHardwareDecodeMode: (MpvHardwareDecodeMode) -> Unit,
+    onSetDv7HandlingMode: (Dv7HandlingMode) -> Unit,
     onDismissAudioLanguageDialog: () -> Unit,
     onDismissSecondaryAudioLanguageDialog: () -> Unit,
     onDismissAudioOutputChannelsDialog: () -> Unit,
     onDismissDecoderPriorityDialog: () -> Unit,
-    onDismissMpvHardwareDecodeModeDialog: () -> Unit
+    onDismissMpvHardwareDecodeModeDialog: () -> Unit,
+    onDismissDv7HandlingModeDialog: () -> Unit
 ) {
     if (showAudioLanguageDialog) {
         AudioLanguageSelectionDialog(
@@ -393,6 +460,17 @@ internal fun AudioSettingsDialogs(
                 onDismissMpvHardwareDecodeModeDialog()
             },
             onDismiss = onDismissMpvHardwareDecodeModeDialog
+        )
+    }
+
+    if (showDv7HandlingModeDialog) {
+        Dv7HandlingModeDialog(
+            selectedMode = selectedDv7HandlingMode,
+            onModeSelected = {
+                onSetDv7HandlingMode(it)
+                onDismissDv7HandlingModeDialog()
+            },
+            onDismiss = onDismissDv7HandlingModeDialog
         )
     }
 }
@@ -556,7 +634,110 @@ private fun MpvHardwareDecodeModeDialog(
         maxHeight = 360.dp
     )
 }
+@Composable
+private fun Dv7HandlingModeDialog(
+    selectedMode: Dv7HandlingMode,
+    onModeSelected: (Dv7HandlingMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    val options = listOf(
+        Triple(
+            Dv7HandlingMode.AUTO,
+            stringResource(R.string.dv7_mode_auto),
+            stringResource(R.string.dv7_mode_auto_desc)
+        ),
+        Triple(
+            Dv7HandlingMode.HDR10_BASE_LAYER,
+            stringResource(R.string.dv7_mode_hdr10_base_layer),
+            stringResource(R.string.dv7_mode_hdr10_base_layer_desc)
+        ),
+        Triple(
+            Dv7HandlingMode.DV81_LIBDOVI,
+            stringResource(R.string.dv7_mode_dv81_libdovi),
+            stringResource(R.string.dv7_mode_dv81_libdovi_desc)
+        ),
+        Triple(
+            Dv7HandlingMode.OFF,
+            stringResource(R.string.dv7_mode_off),
+            stringResource(R.string.dv7_mode_off_desc)
+        )
+    )
 
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = stringResource(R.string.dv7_handling_title),
+        subtitle = stringResource(R.string.dv7_handling_dialog_subtitle),
+        width = 460.dp,
+        suppressFirstKeyUp = false
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 360.dp)
+        ) {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
+            ) {
+                items(
+                    count = options.size,
+                    key = { index -> options[index].first.name }
+                ) { index ->
+                    val (mode, title, description) = options[index]
+                    val isSelected = mode == selectedMode
+
+                    Card(
+                        onClick = { onModeSelected(mode) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (index == 0) Modifier.focusRequester(focusRequester) else Modifier),
+                        colors = CardDefaults.colors(
+                            containerColor = if (isSelected) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
+                            focusedContainerColor = NuvioColors.FocusBackground
+                        ),
+                        shape = CardDefaults.shape(shape = RoundedCornerShape(10.dp)),
+                        scale = CardDefaults.scale(focusedScale = 1f)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = title,
+                                    color = if (isSelected) NuvioColors.Primary else NuvioColors.TextPrimary,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = description,
+                                    color = NuvioColors.TextSecondary,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            if (isSelected) {
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = stringResource(R.string.cd_selected),
+                                    tint = NuvioColors.Primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 @Composable
 internal fun DecoderPriorityDialog(
     selectedPriority: Int,

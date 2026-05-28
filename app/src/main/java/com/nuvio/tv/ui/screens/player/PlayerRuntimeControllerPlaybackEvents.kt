@@ -196,7 +196,8 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                 val displayPosition = pendingPreviewSeekPosition ?: pos
                 updatePlaybackTimeline(
                     currentPosition = displayPosition,
-                    duration = playerDuration.coerceAtLeast(0L)
+                    duration = playerDuration.coerceAtLeast(0L),
+                    bufferedPosition = player.bufferedPosition.coerceAtLeast(displayPosition)
                 )
                 // Update torrent rebuffer progress from ExoPlayer's buffer state
                 if (isTorrentStream && _uiState.value.isBuffering && hasRenderedFirstFrame) {
