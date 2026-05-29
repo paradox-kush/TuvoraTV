@@ -628,7 +628,6 @@
     <string name="audio_enable_downmix_subtitle">FFmpeg downmix yolunu kullanır. Devre dışı bırakıldığında ses önceki Android/cihaz yolunu takip eder.</string>
     <string name="audio_tunneled">Tünelli Oynatma</string>
     <string name="audio_tunneled_sub">Donanım seviyesinde ses/video senkronizasyonu. Bazı Android TV cihazlarında performansı artırabilir</string>
-    <string name="audio_dv_sub">DV donanım desteği olmayan cihazlar için Dolby Vision Profil 7\'yi standart HEVC\'ye dönüştür</string>
     <string name="audio_mpv_hwdec_title">Donanım Kod Çözme (yalnızca MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">libmpv\'nin donanım kod çözücülerini nasıl kullanacağını seçin.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Eski mod (direct -&gt; copy)</string>
@@ -1761,7 +1760,6 @@
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">Yüksek kaliteli ses geçidi (TrueHD, DTS, AC-3) desteklenen HDMI veya uyumlu ses alıcı / arayüz bar donanımlarına bağlanıldığında yazılımın çözümüne bırakılmadan direkt doğrudan iletilir.</string>
-    <string name="audio_dv_title">DV7 - HEVC Geri Yansıması</string>
 
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Ana Menü</string>

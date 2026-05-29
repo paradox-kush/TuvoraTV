@@ -633,7 +633,6 @@
     <string name="audio_enable_downmix_subtitle">Utiliza a mixagem do FFmpeg. Se desativado, o áudio segue o caminho padrão do dispositivo/Android.</string>
     <string name="audio_tunneled">Reprodução tunneled</string>
     <string name="audio_tunneled_sub">Melhora a sincronização de áudio e vídeo usando o hardware.</string>
-    <string name="audio_dv_sub">Mapear Dolby Vision 7 para HEVC</string>
     <string name="audio_mpv_hwdec_title">Decodificação por hardware (MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Definir uso de decodificadores</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Legacy (direto → cópia)</string>
@@ -1718,7 +1717,6 @@
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">A passagem direta de áudio (passthrough) para TrueHD, DTS e AC-3 é automática. Se a sua Soundbar/Receiver for compatível, o áudio será enviado sem perdas e sem decodificação prévia.</string>
-    <string name="audio_dv_title">DV7 - Modo HEVC Alternativo</string>
 
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Início</string>

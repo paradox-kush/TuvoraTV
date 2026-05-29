@@ -633,7 +633,6 @@
     <string name="audio_enable_downmix_subtitle">Az FFmpeg lekeverési utat használja. Ha le van tiltva, a hang a korábbi Android/eszköz utat követi.</string>
     <string name="audio_tunneled">Alagutazott (tunneled) lejátszás</string>
     <string name="audio_tunneled_sub">Hang/videó szinkronizálása hardveres szinten. Javíthatja a lejátszást egyes Android TV eszközökön.</string>
-    <string name="audio_dv_sub">Dolby Vision Profile 7 leképzése szabványos HEVC-re a DV-t nem támogató eszközökön</string>
     <string name="audio_mpv_hwdec_title">Hardveres dekódolás (Csak MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Válaszd ki, hogyan használja a libmpv a hardveres dekódereket.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Hagyományos (közvetlen -&gt; másolás)</string>
@@ -1720,8 +1719,6 @@
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">A hangátvitel (passthrough – TrueHD, DTS, AC-3 stb.) automatikus. Kompatibilis erősítőhöz vagy soundbarhoz HDMI-n csatlakozva a veszteségmentes hang dekódolás nélkül továbbítódik.</string>
-    <string name="audio_dv_title">DV7 – HEVC tartalék (Fallback)</string>
-
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Kezdőlap</string>
     <string name="nav_discover">Felfedezés</string>

@@ -287,7 +287,10 @@ fun HomeViewModel.togglePosterSeriesWatched(item: MetaPreview) {
 
 private suspend fun HomeViewModel.markSeriesWatched(item: MetaPreview) {
     val episodes = fetchSeriesEpisodes(item).filter { it.season != null && it.episode != null && it.season != 0 }
-    if (episodes.isEmpty()) return
+    if (episodes.isEmpty()) {
+        watchProgressRepository.markAsCompleted(buildCompletedMovieProgress(item))
+        return
+    }
 
     val progressList = episodes.map { video ->
         WatchProgress(
@@ -312,7 +315,10 @@ private suspend fun HomeViewModel.markSeriesWatched(item: MetaPreview) {
 
 private suspend fun HomeViewModel.unmarkSeriesWatched(item: MetaPreview) {
     val episodes = fetchSeriesEpisodes(item).filter { it.season != null && it.episode != null && it.season != 0 }
-    if (episodes.isEmpty()) return
+    if (episodes.isEmpty()) {
+        watchProgressRepository.removeFromHistory(item.id, videoId = item.imdbId)
+        return
+    }
 
     val episodePairs = episodes.map { it.season!! to it.episode!! }
     watchProgressRepository.removeFromHistoryBatch(

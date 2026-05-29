@@ -43,8 +43,7 @@ fun NuvioDialog(
     suppressFirstKeyUp: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    var suppressNextKeyUp by remember { mutableStateOf(suppressFirstKeyUp) }
-    val openedAtMillis = remember { SystemClock.uptimeMillis() }
+    var isReady by remember { mutableStateOf(!suppressFirstKeyUp) }
     val maxDialogHeight = (LocalConfiguration.current.screenHeightDp.dp - 48.dp).coerceAtLeast(320.dp)
 
     Dialog(onDismissRequest = onDismiss) {
@@ -58,10 +57,12 @@ fun NuvioDialog(
                 .padding(24.dp)
                 .onPreviewKeyEvent { event ->
                     val native = event.nativeKeyEvent
-                    if (suppressNextKeyUp && native.action == AndroidKeyEvent.ACTION_UP) {
-                        if (isSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU) {
-                            suppressNextKeyUp = false
-                            return@onPreviewKeyEvent native.downTime <= openedAtMillis
+                    if (isSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU) {
+                        if (native.action == AndroidKeyEvent.ACTION_DOWN && native.repeatCount == 0) {
+                            isReady = true
+                        }
+                        if (!isReady) {
+                            return@onPreviewKeyEvent true
                         }
                     }
                     false

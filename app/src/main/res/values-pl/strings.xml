@@ -239,7 +239,6 @@
     <string name="audio_decoder_priority">Priorytet dekodera</string>
     <string name="audio_tunneled">Tunelowane odtwarzanie</string>
     <string name="audio_tunneled_sub">Synchronizacja audio/wideo na poziomie sprzętu. Może poprawić odtwarzanie na niektórych urządzeniach Android TV</string>
-    <string name="audio_dv_sub">Mapuj Dolby Vision Profil 7 na standardowy HEVC dla urządzeń bez obsługi DV</string>
     <string name="audio_mpv_hwdec_title">Dekodowanie sprzętowe (tylko MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Wybierz jak libmpv powinien używać dekoderów sprzętowych.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Starszy (direct -&gt; copy)</string>
@@ -1043,7 +1042,6 @@
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">Przepuszczanie audio (TrueHD, DTS, AC-3 itp.) jest automatyczne. Po podlaczeniu do kompatybilnego amplitunera lub soundbara przez HDMI, bezstratne audio jest przesylane bez dekodowania.</string>
-    <string name="audio_dv_title">DV7 - Fallback HEVC</string>
 
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Główna</string>

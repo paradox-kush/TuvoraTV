@@ -604,7 +604,6 @@
     <string name="audio_decoder_priority">Prioriteta dekoderja</string>
     <string name="audio_tunneled">Tunelirano predvajanje</string>
     <string name="audio_tunneled_sub">Strojna sinhronizacija zvoka/videa. Lahko izboljša predvajanje na nekaterih napravah Android TV</string>
-    <string name="audio_dv_sub">Preslikaj Dolby Vision Profile 7 v standardni HEVC za naprave brez strojne podpore DV</string>
     <string name="audio_mpv_hwdec_title">Strojno dekodiranje (samo MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Izberite, kako naj libmpv uporablja strojne dekoderje.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Podedovano (direct -&gt; copy)</string>
@@ -1559,6 +1558,7 @@
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">Prehod zvoka (TrueHD, DTS, AC-3 itd.) je samodejen. Ob povezavi z združljivim AV sprejemnikom ali zvočno vrstico prek HDMI se zvok brez izgub pošlje nespremenjen, brez dekodiranja.</string>
     <string name="audio_dv_title">DV7 - HEVC Rezerva</string>
+
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Domov</string>
     <string name="nav_discover">Odkrij</string>

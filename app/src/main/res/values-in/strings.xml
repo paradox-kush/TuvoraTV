@@ -633,7 +633,6 @@
     <string name="audio_enable_downmix_subtitle">Menggunakan jalur downmix FFmpeg. Jika dinonaktifkan, audio akan mengikuti jalur Android/perangkat sebelumnya.</string>
     <string name="audio_tunneled">Tunneled Playback</string>
     <string name="audio_tunneled_sub">Sinkronisasi audio/video tingkat hardware. Mungkin meningkatkan pemutaran di beberapa perangkat Android TV</string>
-    <string name="audio_dv_sub">Petakan Dolby Vision Profil 7 ke HEVC standar untuk perangkat tanpa dukungan hardware DV</string>
     <string name="audio_mpv_hwdec_title">Dekoding Hardware (Hanya MPV)</string>
     <string name="audio_mpv_hwdec_dialog_subtitle">Pilih cara libmpv menggunakan dekoder hardware.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">Lama (direct → copy)</string>
