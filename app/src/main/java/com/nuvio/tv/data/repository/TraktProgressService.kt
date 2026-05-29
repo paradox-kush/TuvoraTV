@@ -339,6 +339,21 @@ class TraktProgressService @Inject constructor(
         refreshSignals.emit(Unit)
     }
 
+    /** Full cache invalidation + refresh. Called on Activity cold-start (warm process). */
+    suspend fun invalidateAndRefresh() {
+        trace("invalidateAndRefresh: resetting fingerprints and caches")
+        lastKnownActivityFingerprint = null
+        lastKnownMoviesWatchedAt = null
+        lastKnownEpisodeActivityFingerprint = null
+        watchedMoviesStale = true
+        watchedShowSeedsStale = true
+        cachedMoviesPlayback = null
+        cachedEpisodesPlayback = null
+        forceRefreshUntilMs = System.currentTimeMillis() + 30_000L
+        lastManualRefreshSignalMs = 0L
+        refreshSignals.emit(Unit)
+    }
+
     suspend fun getCachedStats(forceRefresh: Boolean = false): TraktCachedStats? {
         val now = System.currentTimeMillis()
         cacheMutex.withLock {
@@ -753,6 +768,13 @@ class TraktProgressService @Inject constructor(
                 invalidateEpisodeProgressCache(effectiveProgress.contentId)
             }
             updateWatchedShowSeedOptimistically(effectiveProgress)
+        }
+        // Invalidate playback cache and remove completed item from CW immediately.
+        cachedMoviesPlayback = null
+        cachedEpisodesPlayback = null
+        val completedKey = progressKey(effectiveProgress)
+        remoteProgress.update { current ->
+            current.filter { progressKey(it) != completedKey }
         }
         refreshNow()
     }

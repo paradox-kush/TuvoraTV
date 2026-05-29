@@ -531,6 +531,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                         setParameters(buildUponParameters().setPreferredTextLanguage(locale.isO3Language))
                     }
                 }
+                // Forced mode: disable ExoPlayer auto text selection; our logic handles it.
+                if (playerSettings.subtitleStyle.useForcedSubtitles) {
+                    setParameters(buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true))
+                }
                 // When forced subtitles are disabled, tell ExoPlayer to ignore
                 // SELECTION_FLAG_FORCED so it won't auto-select forced tracks.
                 if (!playerSettings.subtitleStyle.useForcedSubtitles) {

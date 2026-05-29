@@ -714,17 +714,27 @@ private fun PlayerRuntimeController.findLanguageFallbackTrackIndex(
                             trackLang.startsWith("$targetLang-") ||
                             trackLang.startsWith("${targetLang}_"))
         }
-        if (langCandidates.size <= 1) {
-            langCandidates.firstOrNull() ?: -1
+
+        // If the remembered track was forced, only consider forced candidates.
+        // This prevents restoring a non-forced subtitle when the user had a forced
+        // track selected (e.g. switching episodes where the new one lacks forced subs).
+        val filteredCandidates = if (target.isForcedHint == true) {
+            langCandidates.filter { index -> tracks[index].isForced }
         } else {
-            langCandidates.firstOrNull { index ->
+            langCandidates
+        }
+
+        if (filteredCandidates.size <= 1) {
+            filteredCandidates.firstOrNull() ?: -1
+        } else {
+            filteredCandidates.firstOrNull { index ->
                 val trackVariant = PlayerSubtitleUtils.detectTrackLanguageVariant(
                     language = tracks[index].language,
                     name = tracks[index].name,
                     trackId = tracks[index].trackId
                 )
                 trackVariant == targetVariant
-            } ?: langCandidates.first()
+            } ?: filteredCandidates.first()
         }
     } else {
         -1
@@ -1669,6 +1679,14 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
             return
         }
         if (state.isLoadingAddonSubtitles) {
+            // Disable any non-forced subtitle ExoPlayer auto-selected while we wait.
+            val hasNonForcedSubtitleActive = state.selectedSubtitleTrackIndex >= 0 &&
+                state.subtitleTracks.getOrNull(state.selectedSubtitleTrackIndex)?.isForced != true
+            if (hasNonForcedSubtitleActive) {
+                Log.d(PlayerRuntimeController.TAG, "AUTO_SUB forced: disabling non-forced subtitle while addons load")
+                disableSubtitles()
+                _uiState.update { it.copy(selectedSubtitleTrackIndex = -1) }
+            }
             Log.d(PlayerRuntimeController.TAG, "AUTO_SUB defer forced: addon subtitles still loading")
             return
         }
@@ -1856,10 +1874,16 @@ internal fun PlayerRuntimeController.applySubtitlePreferences(preferred: String,
             val userDisabledSubtitles = autoSubtitleSelected &&
                     _uiState.value.selectedSubtitleTrackIndex == -1 &&
                     _uiState.value.selectedAddonSubtitle == null
-            if (!userDisabledSubtitles) {
+            // Suppress ExoPlayer auto-select when forced mode is active —
+            // our custom logic handles track selection.
+            val useForcedSubtitles = _uiState.value.subtitleStyle.useForcedSubtitles
+            val shouldSuppressExoAutoSelect = useForcedSubtitles && !autoSubtitleSelected
+            if (!userDisabledSubtitles && !shouldSuppressExoAutoSelect) {
                 builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             }
-            builder.setPreferredTextLanguage(preferred)
+            if (!shouldSuppressExoAutoSelect) {
+                builder.setPreferredTextLanguage(preferred)
+            }
         }
 
         // Update forced flag handling: when forced subtitles are disabled,

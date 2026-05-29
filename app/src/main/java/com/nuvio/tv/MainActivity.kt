@@ -229,6 +229,9 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var jankStats: JankStats
 
+    /** True until the first onResume after onCreate completes. */
+    private var isFirstResumeAfterCreate = false
+
     @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
     override fun attachBaseContext(newBase: Context) {
         val tag = LocaleCache.localeTag.takeIf { it != LocaleCache.UNSET }
@@ -251,6 +254,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        isFirstResumeAfterCreate = true
         window?.setBackgroundDrawable(null)
 
         PluginRuntimeHooks.onActivityCreate(this)
@@ -726,7 +730,12 @@ class MainActivity : ComponentActivity() {
         if (::jankStats.isInitialized) jankStats.isTrackingEnabled = true
         startupSyncService.requestSyncNow(includeProfileSettings = false)
         lifecycleScope.launch {
-            traktProgressService.refreshNow()
+            if (isFirstResumeAfterCreate) {
+                isFirstResumeAfterCreate = false
+                traktProgressService.invalidateAndRefresh()
+            } else {
+                traktProgressService.refreshNow()
+            }
         }
     }
 
