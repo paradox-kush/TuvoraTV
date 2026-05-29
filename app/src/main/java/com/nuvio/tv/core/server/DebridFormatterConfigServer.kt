@@ -86,8 +86,8 @@ class DebridFormatterConfigServer(
         val parsed = runCatching {
             gson.fromJson<Map<String, Any?>>(body, settingsMapType)
         }.getOrNull()
-        val nameTemplate = (parsed?.get("nameTemplate") as? String)?.takeIf { it.isNotBlank() }
-        val descriptionTemplate = (parsed?.get("descriptionTemplate") as? String)?.takeIf { it.isNotBlank() }
+        val nameTemplate = parsed?.get("nameTemplate") as? String
+        val descriptionTemplate = parsed?.get("descriptionTemplate") as? String
         val currentSettings = currentSettingsProvider()
         val streamPreferences = runCatching {
             gson.fromJson(gson.toJson(parsed?.get("streamPreferences")), DebridStreamPreferences::class.java)
