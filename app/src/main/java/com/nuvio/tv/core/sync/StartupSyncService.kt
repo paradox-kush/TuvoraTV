@@ -27,7 +27,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "StartupSyncService"
-private const val FORCE_RESYNC_MIN_INTERVAL_MS = 60_000L
+private const val FORCE_RESYNC_MIN_INTERVAL_MS = 30 * 60_000L
 
 @Singleton
 class StartupSyncService @Inject constructor(
