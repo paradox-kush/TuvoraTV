@@ -64,7 +64,8 @@ internal class DolbyVisionExtractorsFactory(
                 /* flags= */ 0,
                 DolbyVisionMatroskaTransformer(
                     config = if (config.active) config else DolbyVisionConversionConfig(active = false),
-                    stripRpuOnly = stripDvRpu && !config.active
+                    stripRpuOnly = stripDvRpu && !config.active,
+                    stripHdr10Plus = stripDvRpu && config.active   // strip HDR10+ when conversion is also active
                 )
             )
         }
@@ -212,7 +213,7 @@ private class DolbyVisionExtractorOutput(
         val track = delegate.track(id, type)
         return if (type == C.TRACK_TYPE_VIDEO) {
             when {
-                stripDvRpu -> DvRpuStrippingTrackOutput(track, nalFormat)
+                stripDvRpu -> Hdr10PlusStrippingTrackOutput(track, config, nalFormat)
                 else -> DolbyVisionTrackOutput(track, config, nalFormat)
             }
         } else {
@@ -557,20 +558,25 @@ private class DolbyVisionTrackOutput(
 }
 
 /**
- * A lightweight [TrackOutput] wrapper that strips Dolby Vision RPU NAL units
- * (type 62) from HEVC video samples before forwarding them to the delegate.
+ * Wraps [DolbyVisionTrackOutput] and strips HDR10+ SEI messages from each
+ * sample after DV7→8.1 conversion has already run.
  *
- * Used when [PlayerSettings.stripDvFromHdr10PlusFiles] is enabled to fix the
- * Fire TV black-screen bug on files tagged DOVIWithHDR10 / DOVIWithHDR10Plus.
- * Unlike [DolbyVisionTrackOutput] (which converts DV7 to 8.1), this simply
- * removes the RPU entirely so the decoder sees clean HDR10+ HEVC.
+ * This is the correct fix for Fire TV black screen on DV7+HDR10+ files:
+ *   1. DolbyVisionTrackOutput converts the DV7 RPU to DV8.1 via libdovi.
+ *   2. This wrapper then removes the HDR10+ SEI from the converted sample.
+ *   3. Fire TV MediaCodec receives a clean DV8.1 stream with no HDR10+ conflict.
  */
 @UnstableApi
-internal class DvRpuStrippingTrackOutput(
-    private val delegate: TrackOutput,
+internal class Hdr10PlusStrippingTrackOutput(
+    delegate: TrackOutput,
+    private val config: DolbyVisionConversionConfig,
     private val nalFormat: NalFormat
 ) : TrackOutput {
 
+    // The DV conversion TrackOutput — we sit on top of it
+    private val dvOutput = DolbyVisionTrackOutput(delegate, config, nalFormat)
+
+    // Buffer to accumulate sample data before stripping
     private var pendingBuf = ByteArray(0)
     private var pendingLen = 0
     private var inputScratch = ByteArray(0)
@@ -594,19 +600,11 @@ internal class DvRpuStrippingTrackOutput(
         }
     }
 
-    override fun durationUs(durationUs: Long) = delegate.durationUs(durationUs)
+    override fun durationUs(durationUs: Long) = dvOutput.durationUs(durationUs)
 
     override fun format(format: Format) {
         nalLengthFieldLength = parseNalLengthFieldLength(format)
-        // Rewrite the codec string: dvhe.08.xx → hvc1 (or leave as HEVC)
-        // so the decoder doesn't try to initialise a DV pipeline.
-        val stripped = stripDvCodecString(format.codecs)
-        val outFormat = if (stripped != null && stripped != format.codecs) {
-            format.buildUpon().setCodecs(stripped).build()
-        } else {
-            format
-        }
-        delegate.format(outFormat)
+        dvOutput.format(format)
     }
 
     @Throws(java.io.IOException::class)
@@ -620,7 +618,7 @@ internal class DvRpuStrippingTrackOutput(
         val read = input.read(inputScratch, 0, length)
         if (read == C.RESULT_END_OF_INPUT) {
             if (allowEndOfInput) return C.RESULT_END_OF_INPUT
-            throw java.io.EOFException()
+            throw EOFException()
         }
         if (read <= 0) return read
         if (sampleDataPart == TrackOutput.SAMPLE_DATA_PART_MAIN) {
@@ -629,14 +627,14 @@ internal class DvRpuStrippingTrackOutput(
             pendingLen += read
         } else {
             scratch.reset(inputScratch, read)
-            delegate.sampleData(scratch, read, sampleDataPart)
+            dvOutput.sampleData(scratch, read, sampleDataPart)
         }
         return read
     }
 
     override fun sampleData(data: ParsableByteArray, length: Int, sampleDataPart: Int) {
         if (sampleDataPart != TrackOutput.SAMPLE_DATA_PART_MAIN || length <= 0) {
-            delegate.sampleData(data, length, sampleDataPart)
+            dvOutput.sampleData(data, length, sampleDataPart)
             return
         }
         ensurePendingCapacity(length)
@@ -652,25 +650,29 @@ internal class DvRpuStrippingTrackOutput(
         cryptoData: TrackOutput.CryptoData?
     ) {
         if (pendingLen == 0) {
-            delegate.sampleMetadata(timeUs, flags, size, offset, cryptoData)
+            dvOutput.sampleMetadata(timeUs, flags, size, offset, cryptoData)
             return
         }
         val carrySize = offset.coerceIn(0, pendingLen)
         val sampleEnd = pendingLen - carrySize
 
+        // Strip HDR10+ SEI from the raw (pre-DV-conversion) sample.
+        // DolbyVisionTrackOutput will then convert the DV7 RPU in the
+        // already-HDR10+-stripped data.
         val stripped = when (nalFormat) {
-            NalFormat.ANNEX_B ->
-                HevcDvRpuStripper.stripRpuAnnexB(pendingBuf, sampleEnd)
             NalFormat.LENGTH_DELIMITED ->
-                HevcDvRpuStripper.stripRpuLengthDelimited(pendingBuf, sampleEnd, nalLengthFieldLength)
+                HevcHdr10PlusStripper.stripHdr10PlusLengthDelimited(pendingBuf, sampleEnd, nalLengthFieldLength)
+            NalFormat.ANNEX_B ->
+                HevcHdr10PlusStripper.stripHdr10PlusAnnexB(pendingBuf, sampleEnd)
         }
 
         val outputData = stripped ?: pendingBuf
         val outputLen = stripped?.size ?: sampleEnd
 
+        // Feed the HDR10+-stripped data into the DV conversion output
         scratch.reset(outputData, outputLen)
-        delegate.sampleData(scratch, outputLen)
-        delegate.sampleMetadata(timeUs, flags, outputLen, 0, cryptoData)
+        dvOutput.sampleData(scratch, outputLen)
+        dvOutput.sampleMetadata(timeUs, flags, outputLen, 0, cryptoData)
 
         if (carrySize > 0) {
             System.arraycopy(pendingBuf, sampleEnd, pendingBuf, 0, carrySize)
@@ -678,15 +680,7 @@ internal class DvRpuStrippingTrackOutput(
         pendingLen = carrySize
     }
 
-    internal companion object {
-        fun stripDvCodecString(codecs: String?): String? {
-            if (codecs.isNullOrBlank()) return null
-            // Replace dvhe/dvh1 codec identifiers with hvc1 to signal plain HEVC
-            return Regex("(?i)(dvhe|dvh1)\\.[0-9]+\\.[0-9]+")
-                .replace(codecs.trim()) { "hvc1.2.4.L153.B0" }
-                .takeIf { it != codecs }
-        }
-
+    private companion object {
         fun parseNalLengthFieldLength(format: Format): Int {
             val csd = format.initializationData.firstOrNull() ?: return 4
             if (csd.size <= 21) return 4

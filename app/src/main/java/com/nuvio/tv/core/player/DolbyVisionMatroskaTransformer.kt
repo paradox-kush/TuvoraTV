@@ -28,7 +28,8 @@ import java.io.ByteArrayOutputStream
 @UnstableApi
 internal class DolbyVisionMatroskaTransformer(
     private val config: DolbyVisionConversionConfig,
-    private val stripRpuOnly: Boolean = false
+    private val stripRpuOnly: Boolean = false,
+    private val stripHdr10Plus: Boolean = false
 ) : MatroskaExtractor.DolbyVisionSampleTransformer {
 
     private var lastTransformedLength = 0
@@ -85,15 +86,16 @@ internal class DolbyVisionMatroskaTransformer(
         // `blockAdditionalData` is the pending value produced by onDolbyVisionBlockAdditionalData
         // (already an 8.1 RPU). Re-running conversion is a no-op (libdovi returns null for non-DV7
         // input), so we fall back to the already-converted bytes.
-        val convertedBlockAdditional = convertRpuNal(blockAdditionalData, mode) ?: blockAdditionalData
-        if (!baseChanged) {
-            scratch.reset()
-            scratch.write(sample, 0, sampleLength)
-        }
-        return if (appendLengthDelimitedNalToScratch(convertedBlockAdditional, nalUnitLengthFieldLength)) {
+        val converted = if (appendLengthDelimitedNalToScratch(blockAdditionalData, nalUnitLengthFieldLength)) {
             finishScratch()
         } else {
             null
+        }
+        return if (converted != null && stripHdr10Plus) {
+            HevcHdr10PlusStripper.stripHdr10PlusLengthDelimited(converted, lastTransformedLength, nalUnitLengthFieldLength)
+                ?: converted
+        } else {
+            converted
         }
     }
 
@@ -107,7 +109,7 @@ internal class DolbyVisionMatroskaTransformer(
         dolbyVisionConfigBytes: ByteArray?
     ): String? {
         if (stripRpuOnly) {
-            return DvRpuStrippingTrackOutput.stripDvCodecString(codecs)
+            return normalizeDolbyVisionCodecString(codecs)
         }
         val profile = resolveProfile(codecs, dolbyVisionConfigBytes)
         if (!config.shouldConvert(profile)) return null
