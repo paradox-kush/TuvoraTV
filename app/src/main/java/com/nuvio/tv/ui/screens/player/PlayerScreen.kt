@@ -175,7 +175,8 @@ fun PlayerScreen(
     val shouldConfirmNextEpisodeOnEnd =
         uiState.playbackEnded &&
             uiState.error == null &&
-            uiState.streamAutoPlayMode != StreamAutoPlayMode.MANUAL &&
+            (uiState.streamAutoPlayMode != StreamAutoPlayMode.MANUAL ||
+                uiState.streamAutoPlayPreferBingeGroupForNextEpisode) &&
             !uiState.streamAutoPlayNextEpisodeEnabled &&
             nextEpisodeForEndPrompt != null
     val returnToDetailsFromEndPrompt = {

@@ -65,7 +65,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
     companion object {
         private const val TAG = "WatchProgressRepo"
         private const val OPTIMISTIC_NEXT_UP_SEED_WINDOW_MS = 3 * 60_000L
-        private const val NUVIO_SYNC_PERIODIC_INTERVAL_MS = 30 * 60_000L
+        private const val NUVIO_SYNC_PERIODIC_INTERVAL_MS = 15 * 60_000L
     }
 
     private data class EpisodeMetadata(
