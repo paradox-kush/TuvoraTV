@@ -55,8 +55,6 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 private const val TAG = "StreamScreenViewModel"
-private const val EMBEDDED_STREAM_GROUP_NAME = "Embedded Streams"
-private const val EMBEDDED_STREAM_FALLBACK_NAME = "Embed Stream"
 private const val DIRECT_AUTOPLAY_HARD_TIMEOUT_MS = 60_000L
 
 @HiltViewModel
@@ -86,6 +84,13 @@ class StreamScreenViewModel @Inject constructor(
     private var streamLoadJob: Job? = null
     private var sourceChipErrorDismissJob: Job? = null
     private var pendingCacheSaveJob: Job? = null
+
+    private val embeddedStreamGroupName: String by lazy {
+        context.getString(R.string.stream_embedded_group)
+    }
+    private val embeddedStreamFallbackName: String by lazy {
+        context.getString(R.string.stream_embedded_fallback_name)
+    }
 
     private val videoId: String = savedStateHandle["videoId"] ?: ""
     private val contentType: String = savedStateHandle["contentType"] ?: ""
@@ -815,14 +820,14 @@ class StreamScreenViewModel @Inject constructor(
 
         val streams = video.streams.map { stream ->
             stream.copy(
-                name = stream.name ?: stream.title ?: stream.description ?: EMBEDDED_STREAM_FALLBACK_NAME,
-                addonName = EMBEDDED_STREAM_GROUP_NAME,
+                name = stream.name ?: stream.title ?: stream.description ?: embeddedStreamFallbackName,
+                addonName = embeddedStreamGroupName,
                 addonLogo = null
             )
         }
 
         return AddonStreams(
-            addonName = EMBEDDED_STREAM_GROUP_NAME,
+            addonName = embeddedStreamGroupName,
             addonLogo = null,
             streams = streams
         )
