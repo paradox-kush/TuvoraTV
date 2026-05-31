@@ -229,12 +229,16 @@ class StreamRepositoryImpl @Inject constructor(
             )
         }
 
-        if (!videoId.startsWith("kitsu:", ignoreCase = true)) return null
+        if (!videoId.canRunLocalPlugins()) return null
 
         return PluginRequest(
-            id = cleanKitsuPluginId(videoId),
+            id = if (videoId.startsWith("kitsu:", ignoreCase = true)) {
+                cleanKitsuPluginId(videoId)
+            } else {
+                videoId
+            },
             mediaType = type.lowercase(),
-            source = "KITSU"
+            source = videoId.substringBefore(":").uppercase()
         )
     }
 
@@ -283,6 +287,12 @@ class StreamRepositoryImpl @Inject constructor(
     /**
      * Stream local plugin results - each scraper sends results individually
      */
+    private fun String.canRunLocalPlugins(): Boolean {
+        return startsWith("kitsu:", ignoreCase = true) ||
+            startsWith("anilist:", ignoreCase = true) ||
+            startsWith("mal:", ignoreCase = true)
+    }
+
     private suspend fun streamLocalPlugins(
         pluginId: String,
         mediaType: String,
