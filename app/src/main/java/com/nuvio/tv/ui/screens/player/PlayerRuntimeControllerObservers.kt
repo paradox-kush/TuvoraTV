@@ -336,7 +336,8 @@ internal fun PlayerRuntimeController.observeSubtitleSettings() {
             _uiState.update {
                 it.copy(
                     streamAutoPlayMode = settings.streamAutoPlayMode,
-                    streamAutoPlayNextEpisodeEnabled = settings.streamAutoPlayNextEpisodeEnabled
+                    streamAutoPlayNextEpisodeEnabled = settings.streamAutoPlayNextEpisodeEnabled,
+                    streamAutoPlayPreferBingeGroupForNextEpisode = settings.streamAutoPlayPreferBingeGroupForNextEpisode
                 )
             }
             streamAutoPlayPreferBingeGroupForNextEpisodeSetting =
