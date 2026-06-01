@@ -906,11 +906,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                             if (userPausedManually) schedulePauseOverlay() else cancelPauseOverlay()
                             stopProgressUpdates()
                             stopWatchProgressSaving()
-                            if (playbackState != Player.STATE_BUFFERING) {
+                            if (playbackState == Player.STATE_BUFFERING) {
+                                saveWatchProgressIfNeeded()
+                            } else {
                                 emitStopScrobbleForCurrentProgress()
+                                saveWatchProgress()
                             }
-
-                            saveWatchProgress()
                         }
                         refreshStableProgressResetGate()
                     }

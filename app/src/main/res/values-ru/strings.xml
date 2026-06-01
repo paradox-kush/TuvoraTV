@@ -2434,41 +2434,24 @@
     <string name="player_stream_error_invalid_url">Неверный URL потока</string>
     <string name="player_stream_error_missing_content_type">Отсутствует тип содержимого потока</string>
     <!-- Batch 12: meta/stream errors, trakt paginated, home poster, profile pin, trakt related/comments/library, debrid picker, debrid selection/size -->
-    <string name="meta_error_detail_not_found">Детали не найдены</string>
-    <string name="meta_error_detail_http">Не удалось загрузить детали (HTTP %1$d)</string>
-    <string name="meta_error_detail_failed">Не удалось загрузить детали</string>
-    <string name="meta_error_stream_error_detail">Не удалось загрузить детали для источника потока</string>
-    <string name="stream_error_detail_not_found">Детали потока не найдены</string>
-    <string name="stream_error_detail_http">Не удалось загрузить детали потока (HTTP %1$d)</string>
-    <string name="stream_error_detail_failed">Не удалось загрузить детали потока</string>
-    <string name="stream_error_fetch_failed">Не удалось загрузить потоки: %1$s</string>
-    <string name="trakt_library_error_paginated_fetch_failed">Не удалось загрузить список Trakt</string>
-    <string name="home_poster_lists_error_title">Не удалось загрузить каталоги главного экрана</string>
-    <string name="home_poster_lists_error_subtitle">Некоторые аддоны могут использоваться неправильно</string>
+    <string name="stream_error_fetch_failed">Не удалось загрузить потоки</string>
+    <string name="trakt_library_error_paginated_fetch_failed">Не удалось загрузить список Trakt (%1$d)</string>
     <string name="profile_pin_saved_for_profile">PIN сохранён для профиля \"%1$s\"</string>
     <string name="profile_pin_lock_removed_for_profile">Блокировка PIN снята с профиля \"%1$s\"</string>
     <string name="trakt_related_error_request_failed">Не удалось загрузить похожие</string>
     <string name="trakt_comments_error_request_failed">Не удалось загрузить комментарии</string>
     <string name="trakt_library_error_fetch_list_items">Не удалось загрузить элементы списка</string>
-    <string name="debrid_picker_title">Выбор Debrid-файла</string>
-    <string name="debrid_picker_subtitle">Доступные файлы из кэша debrid</string>
-    <string name="debrid_picker_loading">Загрузка debrid-файлов…</string>
-    <string name="debrid_picker_error">Не удалось загрузить debrid-файлы</string>
-    <string name="debrid_picker_empty">Debrid-файлы не найдены</string>
-    <string name="debrid_picker_file_size">%1$s</string>
-    <string name="debrid_picker_selected">Выбрано</string>
-    <string name="debrid_picker_select_file">Выбрать файл</string>
-    <string name="debrid_picker_playable_files">Воспроизводимые файлы</string>
-    <string name="debrid_picker_all_files">Все файлы</string>
-    <string name="debrid_picker_not_cached">Не закэшировано</string>
-    <string name="debrid_picker_cached">Закэшировано</string>
-    <string name="debrid_picker_quality_unknown">Неизвестное качество</string>
     <string name="debrid_selection_count_any">Любое количество</string>
-    <string name="debrid_selection_count_value">%1$d файл(ов)</string>
+    <plurals name="debrid_selection_count_value">
+        <item quantity="one">%d выбрано</item>
+        <item quantity="few">%d выбрано</item>
+        <item quantity="many">%d выбрано</item>
+        <item quantity="other">%d выбрано</item>
+    </plurals>
     <string name="debrid_size_range_any">Любой размер</string>
-    <string name="debrid_size_range_up_to">До %1$s</string>
-    <string name="debrid_size_range_min_plus">%1$s+</string>
-    <string name="debrid_size_range_min_max">%1$s – %2$s</string>
+    <string name="debrid_size_range_up_to">До %1$d ГБ</string>
+    <string name="debrid_size_range_min_plus">%1$d ГБ+</string>
+    <string name="debrid_size_range_min_max">%1$d–%2$d ГБ</string>
     <!-- Batch 13 (final): DV diagnostics, meta/stream addon errors, home poster errors, debrid picker filters, subtitle language unknown -->
     <string name="advanced_section_dv_diagnostics" translatable="false">DV Diagnostics</string>
     <string name="dv7_libdovi_mode_caption" translatable="false">Conversion mode (auto-selected, do not change unless instructed). Pick one to force it; None uses auto. Active only when DV7 Handling is Convert to DV8.1.</string>
