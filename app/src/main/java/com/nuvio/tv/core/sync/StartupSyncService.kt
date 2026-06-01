@@ -8,7 +8,6 @@ import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.LibraryPreferences
 import com.nuvio.tv.data.local.TraktAuthDataStore
 import com.nuvio.tv.data.local.WatchProgressPreferences
-import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.repository.AddonRepositoryImpl
 import com.nuvio.tv.data.repository.LibraryRepositoryImpl
 import com.nuvio.tv.data.repository.WatchProgressRepositoryImpl
@@ -49,7 +48,6 @@ class StartupSyncService @Inject constructor(
     private val traktSettingsDataStore: com.nuvio.tv.data.local.TraktSettingsDataStore,
     private val watchProgressPreferences: WatchProgressPreferences,
     private val libraryPreferences: LibraryPreferences,
-    private val watchedItemsPreferences: WatchedItemsPreferences,
     private val profileManager: ProfileManager
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -344,16 +342,13 @@ class StartupSyncService @Inject constructor(
             if (!isTraktConnected) {
 
                 try {
-                    val remoteWatchedItems = watchedItemsSyncService.pullFromRemote(profileId).getOrElse { throw it }
-                    Log.d(TAG, "Pulled ${remoteWatchedItems.size} watched items from remote")
-                    val hadUnsyncedItems = watchedItemsPreferences.replaceWithRemoteItems(
-                        remoteWatchedItems,
-                        lastSuccessfulPushMs = watchedItemsSyncService.lastSuccessfulPushMs,
-                        profileId = profileId
-                    )
+                    val watchedItemsResult = watchedItemsSyncService.syncDeltaFromRemote(profileId).getOrElse { throw it }
                     watchProgressRepository.hasCompletedInitialWatchedItemsPull = true
-                    Log.d(TAG, "Reconciled local watched items with ${remoteWatchedItems.size} remote items")
-                    if (hadUnsyncedItems) {
+                    Log.d(
+                        TAG,
+                        "Watched items sync applied ${watchedItemsResult.upsertedItems} upserts and ${watchedItemsResult.deletedItems} deletes (snapshot=${watchedItemsResult.usedSnapshot})"
+                    )
+                    if (watchedItemsResult.preservedLocalItems) {
                         Log.d(TAG, "Detected unsynced watched items, pushing to remote")
                         watchedItemsSyncService.pushToRemote()
                     }
@@ -385,16 +380,13 @@ class StartupSyncService @Inject constructor(
                 // Mark initial pull as complete so that library push operations can proceed
                 libraryRepository.hasCompletedInitialPull = true
                 try {
-                    val remoteWatchedItems = watchedItemsSyncService.pullFromRemote(profileId).getOrElse { throw it }
-                    Log.d(TAG, "Pulled ${remoteWatchedItems.size} watched items from remote")
-                    val hadUnsyncedItems = watchedItemsPreferences.replaceWithRemoteItems(
-                        remoteWatchedItems,
-                        lastSuccessfulPushMs = watchedItemsSyncService.lastSuccessfulPushMs,
-                        profileId = profileId
-                    )
+                    val watchedItemsResult = watchedItemsSyncService.syncDeltaFromRemote(profileId).getOrElse { throw it }
                     watchProgressRepository.hasCompletedInitialWatchedItemsPull = true
-                    Log.d(TAG, "Reconciled local watched items with ${remoteWatchedItems.size} remote items")
-                    if (hadUnsyncedItems) {
+                    Log.d(
+                        TAG,
+                        "Watched items sync applied ${watchedItemsResult.upsertedItems} upserts and ${watchedItemsResult.deletedItems} deletes in Trakt mode (snapshot=${watchedItemsResult.usedSnapshot})"
+                    )
+                    if (watchedItemsResult.preservedLocalItems) {
                         Log.d(TAG, "Detected unsynced watched items (Trakt mode), pushing to remote")
                         watchedItemsSyncService.pushToRemote()
                     }

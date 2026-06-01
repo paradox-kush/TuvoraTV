@@ -1,7 +1,9 @@
 package com.nuvio.tv.data.local
 
 import android.util.Log
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.nuvio.tv.core.profile.ProfileManager
 import com.google.gson.Gson
@@ -30,7 +32,9 @@ class WatchedItemsPreferences @Inject constructor(
 
     private val gson = Gson()
     private val watchedItemsKey = stringSetPreferencesKey("watched_items")
-    private val lastSuccessfulPushMsKey = androidx.datastore.preferences.core.longPreferencesKey("last_successful_watched_push_ms")
+    private val lastSuccessfulPushMsKey = longPreferencesKey("last_successful_watched_push_ms")
+    private val deltaCursorKey = longPreferencesKey("watched_items_delta_cursor")
+    private val deltaInitializedKey = booleanPreferencesKey("watched_items_delta_initialized")
 
     suspend fun getLastSuccessfulPushMs(): Long {
         val prefs = store().data.first()
@@ -40,6 +44,23 @@ class WatchedItemsPreferences @Inject constructor(
     suspend fun setLastSuccessfulPushMs(timestampMs: Long) {
         store().edit { prefs ->
             prefs[lastSuccessfulPushMsKey] = timestampMs
+        }
+    }
+
+    suspend fun getDeltaCursor(profileId: Int = profileManager.activeProfileId.value): Long {
+        val prefs = store(profileId).data.first()
+        return prefs[deltaCursorKey] ?: 0L
+    }
+
+    suspend fun isDeltaInitialized(profileId: Int = profileManager.activeProfileId.value): Boolean {
+        val prefs = store(profileId).data.first()
+        return prefs[deltaInitializedKey] ?: false
+    }
+
+    suspend fun setDeltaState(cursor: Long, initialized: Boolean = true, profileId: Int = profileManager.activeProfileId.value) {
+        store(profileId).edit { prefs ->
+            prefs[deltaCursorKey] = cursor.coerceAtLeast(0L)
+            prefs[deltaInitializedKey] = initialized
         }
     }
 
@@ -163,6 +184,32 @@ class WatchedItemsPreferences @Inject constructor(
         }
     }
 
+    suspend fun applyRemoteChanges(
+        upserts: List<WatchedItem>,
+        deletes: List<Triple<String, Int?, Int?>>,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
+        if (upserts.isEmpty() && deletes.isEmpty()) return
+        store(profileId).edit { preferences ->
+            val current = preferences[watchedItemsKey] ?: emptySet()
+            val itemsByKey = linkedMapOf<Triple<String, Int?, Int?>, WatchedItem>()
+            current.mapNotNull { json ->
+                runCatching { gson.fromJson(json, WatchedItem::class.java) }.getOrNull()
+            }.forEach { item ->
+                itemsByKey[Triple(item.contentId, item.season, item.episode)] = item
+            }
+            deletes.forEach { key ->
+                itemsByKey.remove(key)
+            }
+            upserts.forEach { item ->
+                itemsByKey[Triple(item.contentId, item.season, item.episode)] = item
+            }
+            preferences[watchedItemsKey] = itemsByKey.values
+                .map { gson.toJson(it) }
+                .toSet()
+        }
+    }
+
     suspend fun replaceWithRemoteItems(
         remoteItems: List<WatchedItem>,
         lastSuccessfulPushMs: Long = 0L,
@@ -205,6 +252,8 @@ class WatchedItemsPreferences @Inject constructor(
     suspend fun clearAll() {
         store().edit { preferences ->
             preferences.remove(watchedItemsKey)
+            preferences.remove(deltaCursorKey)
+            preferences.remove(deltaInitializedKey)
         }
     }
 }

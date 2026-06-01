@@ -8,6 +8,7 @@ import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressSource
 import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.remote.supabase.SupabaseWatchedItem
+import com.nuvio.tv.data.remote.supabase.SupabaseWatchedItemEvent
 import com.nuvio.tv.domain.model.WatchedItem
 import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,16 @@ import javax.inject.Singleton
 
 private const val TAG = "WatchedItemsSyncService"
 private const val WATCHED_ITEMS_PAGE_SIZE = 900
+private const val WATCHED_ITEMS_DELTA_PAGE_SIZE = 900
+private const val WATCHED_ITEM_EVENT_UPSERT = "upsert"
+private const val WATCHED_ITEM_EVENT_DELETE = "delete"
+
+data class WatchedItemsRemoteSyncResult(
+    val upsertedItems: Int,
+    val deletedItems: Int,
+    val usedSnapshot: Boolean,
+    val preservedLocalItems: Boolean
+)
 
 @Singleton
 class WatchedItemsSyncService @Inject constructor(
@@ -69,6 +80,26 @@ class WatchedItemsSyncService @Inject constructor(
         val hasEffectiveTraktConnection = traktAuthDataStore.isEffectivelyAuthenticated.first()
         val source = traktSettingsDataStore.watchProgressSource.first()
         return !(hasEffectiveTraktConnection && source == WatchProgressSource.TRAKT)
+    }
+
+    private suspend fun fetchDeltaCursor(profileId: Int): Long {
+        val params = buildJsonObject {
+            put("p_profile_id", profileId)
+        }
+        return withJwtRefreshRetry {
+            postgrest.rpc("sync_get_watched_items_delta_cursor", params).decodeAs<Long>()
+        }
+    }
+
+    private suspend fun pullDeltaPage(profileId: Int, cursor: Long): List<SupabaseWatchedItemEvent> {
+        val params = buildJsonObject {
+            put("p_profile_id", profileId)
+            put("p_since_event_id", cursor)
+            put("p_limit", WATCHED_ITEMS_DELTA_PAGE_SIZE)
+        }
+        return withJwtRefreshRetry {
+            postgrest.rpc("sync_pull_watched_items_delta", params).decodeList<SupabaseWatchedItemEvent>()
+        }
     }
 
     suspend fun pushToRemote(): Result<Unit> = withContext(Dispatchers.IO) {
@@ -165,6 +196,85 @@ class WatchedItemsSyncService @Inject constructor(
             Result.success(allItems)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to pull watched items from remote", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun syncDeltaFromRemote(
+        profileId: Int = profileManager.activeProfileId.value
+    ): Result<WatchedItemsRemoteSyncResult> = withContext(Dispatchers.IO) {
+        try {
+            if (!shouldUseSupabaseWatchProgressSync()) {
+                Log.d(TAG, "Using Trakt watch progress, skipping watched items delta pull")
+                return@withContext Result.success(WatchedItemsRemoteSyncResult(0, 0, usedSnapshot = false, preservedLocalItems = false))
+            }
+
+            if (!watchedItemsPreferences.isDeltaInitialized(profileId)) {
+                val cursorBeforeSnapshot = fetchDeltaCursor(profileId)
+                val remoteWatchedItems = pullFromRemote(profileId).getOrElse { throw it }
+                val hadUnsyncedItems = watchedItemsPreferences.replaceWithRemoteItems(
+                    remoteWatchedItems,
+                    lastSuccessfulPushMs = lastSuccessfulPushMs,
+                    profileId = profileId
+                )
+                watchedItemsPreferences.setDeltaState(cursorBeforeSnapshot, initialized = true, profileId = profileId)
+                Log.d(TAG, "syncDeltaFromRemote: initialized cursor $cursorBeforeSnapshot with ${remoteWatchedItems.size} snapshot items for profile $profileId")
+                return@withContext Result.success(
+                    WatchedItemsRemoteSyncResult(
+                        upsertedItems = remoteWatchedItems.size,
+                        deletedItems = 0,
+                        usedSnapshot = true,
+                        preservedLocalItems = hadUnsyncedItems
+                    )
+                )
+            }
+
+            var cursor = watchedItemsPreferences.getDeltaCursor(profileId)
+            var totalUpserts = 0
+            var totalDeletes = 0
+
+            while (true) {
+                val events = pullDeltaPage(profileId, cursor)
+                if (events.isEmpty()) break
+
+                val upserts = events
+                    .filter { it.operation.equals(WATCHED_ITEM_EVENT_UPSERT, ignoreCase = true) }
+                    .map { event ->
+                        WatchedItem(
+                            contentId = event.contentId,
+                            contentType = event.contentType,
+                            title = event.title,
+                            season = event.season,
+                            episode = event.episode,
+                            watchedAt = event.watchedAt
+                        )
+                    }
+                val deletes = events
+                    .filter { it.operation.equals(WATCHED_ITEM_EVENT_DELETE, ignoreCase = true) }
+                    .map { event ->
+                        Triple(event.contentId, event.season, event.episode)
+                    }
+
+                watchedItemsPreferences.applyRemoteChanges(upserts, deletes, profileId)
+                cursor = maxOf(cursor, events.maxOf { it.eventId })
+                watchedItemsPreferences.setDeltaState(cursor, initialized = true, profileId = profileId)
+                totalUpserts += upserts.size
+                totalDeletes += deletes.size
+
+                if (events.size < WATCHED_ITEMS_DELTA_PAGE_SIZE) break
+            }
+
+            Log.d(TAG, "syncDeltaFromRemote: applied $totalUpserts upserts and $totalDeletes deletes through cursor $cursor for profile $profileId")
+            Result.success(
+                WatchedItemsRemoteSyncResult(
+                    upsertedItems = totalUpserts,
+                    deletedItems = totalDeletes,
+                    usedSnapshot = false,
+                    preservedLocalItems = false
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to pull watched items delta from remote", e)
             Result.failure(e)
         }
     }

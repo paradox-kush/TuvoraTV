@@ -127,6 +127,18 @@ data class SupabaseWatchedItem(
 )
 
 @Serializable
+data class SupabaseWatchedItemEvent(
+    @SerialName("event_id") val eventId: Long,
+    val operation: String,
+    @SerialName("content_id") val contentId: String,
+    @SerialName("content_type") val contentType: String,
+    val title: String = "",
+    val season: Int? = null,
+    val episode: Int? = null,
+    @SerialName("watched_at") val watchedAt: Long
+)
+
+@Serializable
 data class SupabaseProfile(
     val id: String? = null,
     @SerialName("user_id") val userId: String? = null,
