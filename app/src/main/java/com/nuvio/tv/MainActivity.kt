@@ -745,7 +745,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (::jankStats.isInitialized) jankStats.isTrackingEnabled = true
-        startupSyncService.requestSyncNow(includeProfileSettings = false)
+        startupSyncService.requestForegroundSync()
         lifecycleScope.launch {
             if (isFirstResumeAfterCreate) {
                 isFirstResumeAfterCreate = false
