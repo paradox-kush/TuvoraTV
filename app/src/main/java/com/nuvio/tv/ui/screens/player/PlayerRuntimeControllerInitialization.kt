@@ -1053,6 +1053,22 @@ internal fun PlayerRuntimeController.initializePlayer(
                         }
                         cancelStableProgressReset()
 
+                        // If the codec crashed while the app is in the background (e.g. another
+                        // app reclaimed the hardware decoder), don't run the retry chain. Each
+                        // retry just re-acquires a decoder the foreground app immediately reclaims
+                        // again, burning the retry budget and landing on an unrecoverable
+                        // ERROR_CODE_DECODING_FAILED by the time the user returns. Save the
+                        // position, free the decoder, and rebuild paused on resume instead.
+                        if (isInBackground && isRetryablePlaybackError(error)) {
+                            backgroundCrashSavedPositionMs = currentPosition.takeIf { it > 0L } ?: 0L
+                            pendingBackgroundCrashRecovery = true
+                            errorRetryJob?.cancel()
+                            errorRetryJob = scope.launch {
+                                releasePlayer(flushPlaybackState = false)
+                            }
+                            return
+                        }
+
                         // Error handlers: DV codec failures, audio decoder issues, codec state errors.
                         if (error.isDolbyVisionDecoderFailure() && !isMapDv7ToHevcActiveForCurrentPlayback) {
                             // Manual Convert-to-DV8.1 mode 2 failed to decode: try
