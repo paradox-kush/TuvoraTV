@@ -307,6 +307,7 @@ fun StreamScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onEvent(StreamScreenEvent.OnResume)
                 // Always dismiss overlay and stop tracking on resume
                 // covers both ActivityResult path and fire-and-forget path.
                 viewModel.stopExternalPlayerTracking()

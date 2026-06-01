@@ -44,6 +44,7 @@ import com.nuvio.tv.data.repository.parseContentIds
 import com.nuvio.tv.data.repository.toTraktIds
 import androidx.media3.session.MediaSession
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -275,8 +276,11 @@ class PlayerRuntimeController(
     internal var debridResolveJob: Job? = null
     internal var stillWatchingPromptJob: Job? = null
     internal var sourceStreamsJob: Job? = null
+    internal var sourceStreamsScope: kotlinx.coroutines.CoroutineScope? = null
+    internal var episodeStreamsScope: kotlinx.coroutines.CoroutineScope? = null
     internal var sourceChipErrorDismissJob: Job? = null
     internal var sourceStreamsCacheRequestKey: String? = null
+    internal var sourceStreamsFetchCompleted: Boolean = false
     internal var hostActivityRef: WeakReference<Activity>? = null
     internal var initialPlaybackStarted: Boolean = false
 
@@ -512,6 +516,10 @@ class PlayerRuntimeController(
         vodTelemetryJob?.cancel()
         mediaSourceFactory.shutdown()
         sourceChipErrorDismissJob?.cancel()
+        sourceStreamsScope?.cancel()
+        sourceStreamsScope = null
+        episodeStreamsScope?.cancel()
+        episodeStreamsScope = null
     }
 
     // --- HELPER METHODS MOVED INSIDE THE CLASS ---

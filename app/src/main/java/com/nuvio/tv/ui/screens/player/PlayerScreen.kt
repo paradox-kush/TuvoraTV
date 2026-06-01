@@ -228,7 +228,11 @@ fun PlayerScreen(
         } else if (uiState.showSubtitleStylePanel) {
             viewModel.onEvent(PlayerEvent.OnDismissSubtitleStylePanel)
         } else if (uiState.showSourcesPanel) {
-            viewModel.onEvent(PlayerEvent.OnDismissSourcesPanel)
+            if (uiState.currentStreamUrl.isNullOrBlank()) {
+                exitPlayer()
+            } else {
+                viewModel.onEvent(PlayerEvent.OnDismissSourcesPanel)
+            }
         } else if (uiState.showEpisodesPanel) {
             if (uiState.showEpisodeStreams) {
                 viewModel.onEvent(PlayerEvent.OnBackFromEpisodeStreams)
@@ -1107,7 +1111,13 @@ fun PlayerScreen(
                 StreamSourcesSidePanel(
                     uiState = uiState,
                     streamsFocusRequester = sourceStreamsFocusRequester,
-                    onClose = { viewModel.onEvent(PlayerEvent.OnDismissSourcesPanel) },
+                    onClose = {
+                        if (uiState.currentStreamUrl.isNullOrBlank()) {
+                            exitPlayer()
+                        } else {
+                            viewModel.onEvent(PlayerEvent.OnDismissSourcesPanel)
+                        }
+                    },
                     onReload = { viewModel.onEvent(PlayerEvent.OnReloadSourceStreams) },
                     onAddonFilterSelected = { viewModel.onEvent(PlayerEvent.OnSourceAddonFilterSelected(it)) },
                     onStreamSelected = { viewModel.onEvent(PlayerEvent.OnSourceStreamSelected(it)) },
