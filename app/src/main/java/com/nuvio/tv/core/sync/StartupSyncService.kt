@@ -342,6 +342,7 @@ class StartupSyncService @Inject constructor(
             if (!isTraktConnected) {
 
                 try {
+                    Log.d(TAG, "Starting watched items delta sync for profile $profileId")
                     val watchedItemsResult = watchedItemsSyncService.syncDeltaFromRemote(profileId).getOrElse { throw it }
                     watchProgressRepository.hasCompletedInitialWatchedItemsPull = true
                     Log.d(
@@ -380,6 +381,7 @@ class StartupSyncService @Inject constructor(
                 // Mark initial pull as complete so that library push operations can proceed
                 libraryRepository.hasCompletedInitialPull = true
                 try {
+                    Log.d(TAG, "Starting watched items delta sync for profile $profileId while Trakt is connected")
                     val watchedItemsResult = watchedItemsSyncService.syncDeltaFromRemote(profileId).getOrElse { throw it }
                     watchProgressRepository.hasCompletedInitialWatchedItemsPull = true
                     Log.d(
@@ -414,7 +416,7 @@ class StartupSyncService @Inject constructor(
                 // Trakt is connected and not using Supabase for watch progress
                 // Mark library initial pull as complete so push operations can proceed
                 libraryRepository.hasCompletedInitialPull = true
-                Log.d(TAG, "Skipping watch progress & library sync (Trakt connected)")
+                Log.d(TAG, "Skipping Supabase watched items, watch progress, and library sync for profile $profileId because Trakt is connected and watch progress source is Trakt")
             }
             return Result.success(Unit)
         } catch (e: Exception) {

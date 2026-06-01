@@ -62,6 +62,7 @@ class WatchedItemsPreferences @Inject constructor(
             prefs[deltaCursorKey] = cursor.coerceAtLeast(0L)
             prefs[deltaInitializedKey] = initialized
         }
+        Log.d(TAG, "setDeltaState: profile=$profileId cursor=${cursor.coerceAtLeast(0L)} initialized=$initialized")
     }
 
     internal val allItems: Flow<List<WatchedItem>> = profileManager.activeProfileId.flatMapLatest { pid ->
@@ -189,9 +190,15 @@ class WatchedItemsPreferences @Inject constructor(
         deletes: List<Triple<String, Int?, Int?>>,
         profileId: Int = profileManager.activeProfileId.value
     ) {
-        if (upserts.isEmpty() && deletes.isEmpty()) return
+        if (upserts.isEmpty() && deletes.isEmpty()) {
+            Log.d(TAG, "applyRemoteChanges: no changes for profile $profileId")
+            return
+        }
+        var beforeCount = 0
+        var afterCount = 0
         store(profileId).edit { preferences ->
             val current = preferences[watchedItemsKey] ?: emptySet()
+            beforeCount = current.size
             val itemsByKey = linkedMapOf<Triple<String, Int?, Int?>, WatchedItem>()
             current.mapNotNull { json ->
                 runCatching { gson.fromJson(json, WatchedItem::class.java) }.getOrNull()
@@ -207,7 +214,9 @@ class WatchedItemsPreferences @Inject constructor(
             preferences[watchedItemsKey] = itemsByKey.values
                 .map { gson.toJson(it) }
                 .toSet()
+            afterCount = itemsByKey.size
         }
+        Log.d(TAG, "applyRemoteChanges: profile=$profileId before=$beforeCount after=$afterCount upserts=${upserts.size} deletes=${deletes.size}")
     }
 
     suspend fun replaceWithRemoteItems(
@@ -218,6 +227,7 @@ class WatchedItemsPreferences @Inject constructor(
         var preservedLocalItems = false
         store(profileId).edit { preferences ->
             val current = preferences[watchedItemsKey] ?: emptySet()
+            Log.d(TAG, "replaceWithRemoteItems: profile=$profileId current=${current.size} remote=${remoteItems.size} lastPush=$lastSuccessfulPushMs")
             if (remoteItems.isEmpty() && current.isNotEmpty()) {
                 Log.w(TAG, "replaceWithRemoteItems: remote list empty while local has ${current.size} entries; preserving local watched items")
                 return@edit
@@ -245,6 +255,7 @@ class WatchedItemsPreferences @Inject constructor(
             preferences[watchedItemsKey] = deduped.values
                 .map { gson.toJson(it) }
                 .toSet()
+            Log.d(TAG, "replaceWithRemoteItems: profile=$profileId stored=${deduped.size} preservedLocal=$preservedLocalItems")
         }
         return preservedLocalItems
     }

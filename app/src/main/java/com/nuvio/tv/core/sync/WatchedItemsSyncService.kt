@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
@@ -46,6 +48,8 @@ class WatchedItemsSyncService @Inject constructor(
     private val traktSettingsDataStore: TraktSettingsDataStore,
     private val profileManager: ProfileManager
 ) {
+    private val deltaSyncMutex = Mutex()
+
     /**
      * Timestamp of the last successful push to remote.
      * Used to protect local items created after this point from being
@@ -79,19 +83,25 @@ class WatchedItemsSyncService @Inject constructor(
     private suspend fun shouldUseSupabaseWatchProgressSync(): Boolean {
         val hasEffectiveTraktConnection = traktAuthDataStore.isEffectivelyAuthenticated.first()
         val source = traktSettingsDataStore.watchProgressSource.first()
-        return !(hasEffectiveTraktConnection && source == WatchProgressSource.TRAKT)
+        val shouldUseSupabase = !(hasEffectiveTraktConnection && source == WatchProgressSource.TRAKT)
+        Log.d(TAG, "shouldUseSupabaseWatchProgressSync: traktConnected=$hasEffectiveTraktConnection source=$source shouldUseSupabase=$shouldUseSupabase")
+        return shouldUseSupabase
     }
 
     private suspend fun fetchDeltaCursor(profileId: Int): Long {
+        Log.d(TAG, "fetchDeltaCursor: requesting cursor for profile $profileId")
         val params = buildJsonObject {
             put("p_profile_id", profileId)
         }
         return withJwtRefreshRetry {
             postgrest.rpc("sync_get_watched_items_delta_cursor", params).decodeAs<Long>()
+        }.also { cursor ->
+            Log.d(TAG, "fetchDeltaCursor: cursor=$cursor for profile $profileId")
         }
     }
 
     private suspend fun pullDeltaPage(profileId: Int, cursor: Long): List<SupabaseWatchedItemEvent> {
+        Log.d(TAG, "pullDeltaPage: requesting events after cursor $cursor for profile $profileId limit=$WATCHED_ITEMS_DELTA_PAGE_SIZE")
         val params = buildJsonObject {
             put("p_profile_id", profileId)
             put("p_since_event_id", cursor)
@@ -99,6 +109,12 @@ class WatchedItemsSyncService @Inject constructor(
         }
         return withJwtRefreshRetry {
             postgrest.rpc("sync_pull_watched_items_delta", params).decodeList<SupabaseWatchedItemEvent>()
+        }.also { events ->
+            val firstEvent = events.firstOrNull()?.eventId
+            val lastEvent = events.lastOrNull()?.eventId
+            val upserts = events.count { it.operation.equals(WATCHED_ITEM_EVENT_UPSERT, ignoreCase = true) }
+            val deletes = events.count { it.operation.equals(WATCHED_ITEM_EVENT_DELETE, ignoreCase = true) }
+            Log.d(TAG, "pullDeltaPage: received ${events.size} events for profile $profileId first=$firstEvent last=$lastEvent upserts=$upserts deletes=$deletes")
         }
     }
 
@@ -157,6 +173,7 @@ class WatchedItemsSyncService @Inject constructor(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<List<WatchedItem>> = withContext(Dispatchers.IO) {
         try {
+            Log.d(TAG, "pullFromRemote: starting full watched items snapshot for profile $profileId")
             if (!shouldUseSupabaseWatchProgressSync()) {
                 Log.d(TAG, "Using Trakt watch progress, skipping watched items pull")
                 return@withContext Result.success(emptyList())
@@ -203,23 +220,41 @@ class WatchedItemsSyncService @Inject constructor(
     suspend fun syncDeltaFromRemote(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<WatchedItemsRemoteSyncResult> = withContext(Dispatchers.IO) {
-        try {
+        deltaSyncMutex.withLock {
+            syncDeltaFromRemoteLocked(profileId)
+        }
+    }
+
+    private suspend fun syncDeltaFromRemoteLocked(
+        profileId: Int
+    ): Result<WatchedItemsRemoteSyncResult> {
+        return try {
+            val deltaInitialized = watchedItemsPreferences.isDeltaInitialized(profileId)
+            val deltaCursor = watchedItemsPreferences.getDeltaCursor(profileId)
+            val localCount = watchedItemsPreferences.getAllItems().size
+            Log.d(
+                TAG,
+                "syncDeltaFromRemote: start profile=$profileId localCount=$localCount deltaInitialized=$deltaInitialized cursor=$deltaCursor lastPush=$lastSuccessfulPushMs"
+            )
             if (!shouldUseSupabaseWatchProgressSync()) {
                 Log.d(TAG, "Using Trakt watch progress, skipping watched items delta pull")
-                return@withContext Result.success(WatchedItemsRemoteSyncResult(0, 0, usedSnapshot = false, preservedLocalItems = false))
+                return Result.success(WatchedItemsRemoteSyncResult(0, 0, usedSnapshot = false, preservedLocalItems = false))
             }
 
-            if (!watchedItemsPreferences.isDeltaInitialized(profileId)) {
+            if (!deltaInitialized) {
+                Log.d(TAG, "syncDeltaFromRemote: delta not initialized, taking one full snapshot for profile $profileId")
                 val cursorBeforeSnapshot = fetchDeltaCursor(profileId)
                 val remoteWatchedItems = pullFromRemote(profileId).getOrElse { throw it }
+                Log.d(TAG, "syncDeltaFromRemote: snapshot returned ${remoteWatchedItems.size} watched items for profile $profileId")
                 val hadUnsyncedItems = watchedItemsPreferences.replaceWithRemoteItems(
                     remoteWatchedItems,
                     lastSuccessfulPushMs = lastSuccessfulPushMs,
                     profileId = profileId
                 )
                 watchedItemsPreferences.setDeltaState(cursorBeforeSnapshot, initialized = true, profileId = profileId)
-                Log.d(TAG, "syncDeltaFromRemote: initialized cursor $cursorBeforeSnapshot with ${remoteWatchedItems.size} snapshot items for profile $profileId")
-                return@withContext Result.success(
+                val finalLocalCount = watchedItemsPreferences.getAllItems().size
+                Log.d(TAG, "syncDeltaFromRemote: initialized cursor $cursorBeforeSnapshot with ${remoteWatchedItems.size} snapshot items for profile $profileId finalLocalCount=$finalLocalCount preservedLocal=$hadUnsyncedItems")
+                return Result.success(
                     WatchedItemsRemoteSyncResult(
                         upsertedItems = remoteWatchedItems.size,
                         deletedItems = 0,
@@ -232,10 +267,15 @@ class WatchedItemsSyncService @Inject constructor(
             var cursor = watchedItemsPreferences.getDeltaCursor(profileId)
             var totalUpserts = 0
             var totalDeletes = 0
+            var page = 1
 
             while (true) {
+                Log.d(TAG, "syncDeltaFromRemote: pulling delta page $page from cursor $cursor for profile $profileId")
                 val events = pullDeltaPage(profileId, cursor)
-                if (events.isEmpty()) break
+                if (events.isEmpty()) {
+                    Log.d(TAG, "syncDeltaFromRemote: no watched item delta events for profile $profileId at cursor $cursor")
+                    break
+                }
 
                 val upserts = events
                     .filter { it.operation.equals(WATCHED_ITEM_EVENT_UPSERT, ignoreCase = true) }
@@ -260,11 +300,14 @@ class WatchedItemsSyncService @Inject constructor(
                 watchedItemsPreferences.setDeltaState(cursor, initialized = true, profileId = profileId)
                 totalUpserts += upserts.size
                 totalDeletes += deletes.size
+                Log.d(TAG, "syncDeltaFromRemote: applied page $page for profile $profileId newCursor=$cursor pageUpserts=${upserts.size} pageDeletes=${deletes.size}")
 
                 if (events.size < WATCHED_ITEMS_DELTA_PAGE_SIZE) break
+                page++
             }
 
-            Log.d(TAG, "syncDeltaFromRemote: applied $totalUpserts upserts and $totalDeletes deletes through cursor $cursor for profile $profileId")
+            val finalLocalCount = watchedItemsPreferences.getAllItems().size
+            Log.d(TAG, "syncDeltaFromRemote: finished profile=$profileId appliedUpserts=$totalUpserts appliedDeletes=$totalDeletes cursor=$cursor finalLocalCount=$finalLocalCount")
             Result.success(
                 WatchedItemsRemoteSyncResult(
                     upsertedItems = totalUpserts,
