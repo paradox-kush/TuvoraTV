@@ -14,6 +14,7 @@ import com.nuvio.tv.data.local.AudioDelayRouteDataStore
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
 import com.nuvio.tv.data.local.DeviceLocalPlayerPreferences
 import com.nuvio.tv.data.local.StreamLinkCacheDataStore
+import com.nuvio.tv.data.local.StreamBadgeSettingsDataStore
 import com.nuvio.tv.data.repository.ParentalGuideRepository
 import com.nuvio.tv.data.repository.SkipIntroRepository
 import com.nuvio.tv.data.repository.TraktEpisodeMappingService
@@ -46,6 +47,7 @@ class PlayerViewModel @Inject constructor(
     private val playerSettingsDataStore: PlayerSettingsDataStore,
     private val deviceLocalPlayerPreferences: DeviceLocalPlayerPreferences,
     private val streamLinkCacheDataStore: StreamLinkCacheDataStore,
+    private val streamBadgeSettingsDataStore: StreamBadgeSettingsDataStore,
     private val bingeGroupCacheDataStore: com.nuvio.tv.data.local.BingeGroupCacheDataStore,
     private val layoutPreferenceDataStore: com.nuvio.tv.data.local.LayoutPreferenceDataStore,
     private val watchedItemsPreferences: com.nuvio.tv.data.local.WatchedItemsPreferences,
@@ -84,6 +86,7 @@ class PlayerViewModel @Inject constructor(
         playerSettingsDataStore = playerSettingsDataStore,
         deviceLocalPlayerPreferences = deviceLocalPlayerPreferences,
         streamLinkCacheDataStore = streamLinkCacheDataStore,
+        streamBadgeSettingsDataStore = streamBadgeSettingsDataStore,
         bingeGroupCacheDataStore = bingeGroupCacheDataStore,
         layoutPreferenceDataStore = layoutPreferenceDataStore,
         watchedItemsPreferences = watchedItemsPreferences,

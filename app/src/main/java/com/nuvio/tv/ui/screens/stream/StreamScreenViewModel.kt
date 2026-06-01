@@ -14,10 +14,12 @@ import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.torrent.TorrentSettings
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.player.StreamAutoPlaySelector
+import com.nuvio.tv.core.streams.StreamBadgePresentation
 import com.nuvio.tv.data.local.PlayerPreference
 import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
 import com.nuvio.tv.data.local.StreamAutoPlayMode
+import com.nuvio.tv.data.local.StreamBadgeSettingsDataStore
 import com.nuvio.tv.data.local.StreamLinkCacheDataStore
 import com.nuvio.tv.data.local.BingeGroupCacheDataStore
 import com.nuvio.tv.domain.model.AddonStreams
@@ -68,6 +70,8 @@ class StreamScreenViewModel @Inject constructor(
     private val metaRepository: MetaRepository,
     private val playerSettingsDataStore: PlayerSettingsDataStore,
     private val streamLinkCacheDataStore: StreamLinkCacheDataStore,
+    private val streamBadgePresentation: StreamBadgePresentation,
+    streamBadgeSettingsDataStore: StreamBadgeSettingsDataStore,
     private val bingeGroupCacheDataStore: BingeGroupCacheDataStore,
     private val torrentSettings: TorrentSettings,
     private val watchProgressRepository: WatchProgressRepository,
@@ -137,6 +141,7 @@ class StreamScreenViewModel @Inject constructor(
         )
     )
     val uiState: StateFlow<StreamScreenUiState> = _uiState.asStateFlow()
+    val streamBadgeSettings = streamBadgeSettingsDataStore.settings
 
     val playerPreference = playerSettingsDataStore.playerSettings
         .map { it.playerPreference }
@@ -911,11 +916,12 @@ class StreamScreenViewModel @Inject constructor(
             )
         }
 
-        return AddonStreams(
+        val group = AddonStreams(
             addonName = embeddedStreamGroupName,
             addonLogo = null,
             streams = streams
         )
+        return streamBadgePresentation.apply(listOf(group)).firstOrNull() ?: group
     }
 
     private fun loadMissingMetaDetailsIfNeeded() {
