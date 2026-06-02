@@ -2452,7 +2452,6 @@
     <string name="trakt_library_error_fetch_list_items">Αποτυχία ανάκτησης στοιχείων λίστας</string>
 
     <!-- Missing Greek locale parity -->
-    <string name="advanced_section_dv_diagnostics" translatable="false">DV Diagnostics</string>
     <string name="playback_external_forward_subtitles">Προώθηση υποτίτλων σε εξωτερικό player</string>
     <string name="playback_external_forward_subtitles_sub">Ανάκτηση υποτίτλων στην προτιμώμενη γλώσσα σας από πρόσθετα και αποστολή τους στον εξωτερικό player.</string>
     <string name="video_section">Βίντεο</string>
@@ -2470,20 +2469,6 @@
     <string name="audio_dv5_to_dv81_sub">Σηματοδοτεί τις ροές Profile 5 ως Profile 8.1 για έξοδο συμβατή με HDR10. Βοηθά σε συσκευές χωρίς native αποκωδικοποιητή DV5.</string>
     <string name="audio_dv7_preserve_mapping_title">Διατήρηση χαρτογράφησης DV (DV7 σε DV8.1)</string>
     <string name="audio_dv7_preserve_mapping_sub">Διατηρεί το αρχικό tone-mapping του δημιουργού με κόστος ελαφρώς μεγαλύτερη επεξεργασία ανά καρέ.</string>
-    <string name="dv7_libdovi_mode_caption" translatable="false">Conversion mode (auto-selected, do not change unless instructed). Pick one to force it; None uses auto. Active only when DV7 Handling is Convert to DV8.1.</string>
-    <string name="dv7_libdovi_mode_row_title" translatable="false">Conversion mode</string>
-    <string name="dv7_libdovi_mode_none_title" translatable="false">None</string>
-    <string name="dv7_libdovi_mode_none_sub" translatable="false">No override. Uses the automatically selected conversion mode.</string>
-    <string name="dv7_libdovi_mode_0_title" translatable="false">Mode 0 — Copy (no convert)</string>
-    <string name="dv7_libdovi_mode_0_sub" translatable="false">Parse the RPU and write it back untouched. No profile conversion.</string>
-    <string name="dv7_libdovi_mode_1_title" translatable="false">Mode 1 — MEL</string>
-    <string name="dv7_libdovi_mode_1_sub" translatable="false">Convert the RPU to be MEL (Minimum Enhancement Layer) compatible.</string>
-    <string name="dv7_libdovi_mode_2_title" translatable="false">Mode 2 — 8.1 (no-op mapping)</string>
-    <string name="dv7_libdovi_mode_2_sub" translatable="false">Convert to profile 8.1 with luma and chroma mapping set to no-op. The standard conversion.</string>
-    <string name="dv7_libdovi_mode_3_title" translatable="false">Mode 3 — Profile 5 to 8.1</string>
-    <string name="dv7_libdovi_mode_3_sub" translatable="false">Convert Profile 5 (DV5) streams to Profile 8.1. Same conversion the Convert DV5 to DV8.1 toggle uses.</string>
-    <string name="dv7_libdovi_mode_4_title" translatable="false">Mode 4 — 8.4 (static)</string>
-    <string name="dv7_libdovi_mode_4_sub" translatable="false">Convert to static profile 8.4.</string>
     <string name="layout_section_streams">Ροές</string>
     <string name="layout_section_streams_desc">Ρυθμίσεις εμφάνισης για αποτελέσματα ροών και πάνελ πηγών του player.</string>
     <string name="debrid_stream_sort_original">Αρχική σειρά</string>
