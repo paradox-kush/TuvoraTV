@@ -626,7 +626,7 @@
     <string name="dv7_mode_auto">Auto (recommended)</string>
     <string name="dv7_mode_auto_desc">Detects your display and picks the best mode. If playback issues occur, try HDR10 base layer.</string>
     <string name="dv7_mode_hdr10_base_layer">HDR10 base layer</string>
-    <string name="dv7_mode_hdr10_base_layer_desc">Always strip Dolby Vision and play the HEVC HDR10 base layer.</string>
+    <string name="dv7_mode_hdr10_base_layer_desc">Ignore Dolby Vision enhancement data. Can help on devices that support HDR but struggle with DV Profile 7.</string>
     <string name="dv7_mode_dv81_libdovi">Convert to DV8.1</string>
     <string name="dv7_mode_dv81_libdovi_desc">Convert DV7 to single-layer DV8.1. Requires Dolby Vision display.</string>
     <string name="dv7_mode_off">Off (native)</string>
