@@ -65,7 +65,6 @@ internal class DolbyVisionExtractorsFactory(
                 DolbyVisionMatroskaTransformer(
                     config = if (config.active) config else DolbyVisionConversionConfig(active = false),
                     stripRpuOnly = stripDvRpu && !config.active,
-                    stripHdr10 = stripDvRpu && config.active
                 )
             )
         }
@@ -661,18 +660,9 @@ internal class Hdr10StrippingTrackOutput(
         val afterRpuData = afterRpuStrip ?: pendingBuf
         val afterRpuLen = afterRpuStrip?.size ?: sampleEnd
 
-        val afterHdr10Strip = when (nalFormat) {
-            NalFormat.LENGTH_DELIMITED ->
-                HevcHdr10Stripper.stripHdr10LengthDelimited(afterRpuData, afterRpuLen, nalLengthFieldLength)
-            NalFormat.ANNEX_B ->
-                HevcHdr10Stripper.stripHdr10AnnexB(afterRpuData, afterRpuLen)
-        }
-        val outputData = afterHdr10Strip ?: afterRpuData
-        val outputLen = afterHdr10Strip?.size ?: afterRpuLen
-
-        scratch.reset(outputData, outputLen)
-        delegate.sampleData(scratch, outputLen)
-        delegate.sampleMetadata(timeUs, flags, outputLen, 0, cryptoData)
+        scratch.reset(afterRpuData, afterRpuLen)
+        delegate.sampleData(scratch, afterRpuLen)
+        delegate.sampleMetadata(timeUs, flags, afterRpuLen, 0, cryptoData)
 
         if (carrySize > 0) {
             System.arraycopy(pendingBuf, sampleEnd, pendingBuf, 0, carrySize)
