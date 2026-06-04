@@ -74,7 +74,7 @@
     <string name="web_issue_plural">مشاكل</string>
     <string name="web_source_singular">مصدر</string>
     <string name="web_source_plural">مصادر</string>
-    <string name="web_source_added">تمت الاضافة</string>
+    <string name="web_source_added">تمت الإضافة</string>
     <string name="web_no_sources_added">لا يوجد مصادر مضافة بعد</string>
     <string name="web_import_select_file_first">إختر ملف أولًا</string>
     <string name="web_import_enter_url">ادخل رابط</string>
@@ -193,7 +193,7 @@
     <string name="episodes_mark_season_watched">تحديد الموسم كمشاهد</string>
     <string name="episodes_mark_season_unwatched">تحديد الموسم كغير مشاهد</string>
     <string name="episodes_mark_previous_watched">تحديد الحلقات السابقة في هذا الموسم كمشاهدة</string>
-    <string name="episodes_mark_previous_seasons_watched">تحديد المواسم الساقة كمشاهد</string>
+    <string name="episodes_mark_previous_seasons_watched">تحديد المواسم السابقة كمشاهد</string>
     <string name="episodes_play">تشغيل</string>
     <string name="episodes_open_comments">فتح تعليقات الحلقة</string>
     <string name="play_manually">تشغيل يدوي</string>
@@ -236,14 +236,14 @@
     <string name="detail_comments_mode_show">إظهار</string>
     <string name="detail_comments_mode_episode">حلقة</string>
     <string name="detail_comments_mode_episode_change">تغيير الحلقة (%1$s)</string>
-    <string name="detail_comments_episode_picker_title">اختر الحلقة</string>
+    <string name="detail_comments_episode_picker_title">إختر الحلقة</string>
     <string name="detail_comments_episode_picker_subtitle">إختر حلقة لمشاهدة مراجعات Trakt</string>
     <string name="detail_section_network">شبكة العرض</string>
     <string name="detail_section_production">جهة الإنتاج</string>
     <string name="detail_comments_empty">لا توجد مراجعات من Trakt متاحة بعد.</string>
     <string name="detail_comments_error">تعذر تحميل مراجعات Trakt في الوقت الحالي.</string>
-    <string name="detail_trailer_loading">جاري تحميل الاعلان...</string>
-    <string name="detail_trailer_error">تعذر تحميل الاعلان.</string>
+    <string name="detail_trailer_loading">جاري تحميل الإعلان...</string>
+    <string name="detail_trailer_error">تعذر تحميل الإعلان.</string>
     <string name="detail_comments_spoiler_hidden">مراجعة تحتوي على حرق للأحداث. اضغط موافق للإظهار.</string>
     <string name="detail_comments_reveal_spoiler">إظهار الحرق</string>
     <string name="detail_comments_reveal_spoiler_hint">اضغط موافق لإظهار حرق الأحداث.</string>
@@ -300,7 +300,7 @@
     <string name="movie_status_in_production">قيد الانتاج</string>
     <string name="movie_status_post_production">مابعد الانتاج</string>
     <string name="detail_lists_fallback">القوائم</string>
-    <string name="detail_lists_subtitle">اختر القوائم المراد إدراج هذا العمل بها.</string>
+    <string name="detail_lists_subtitle">إختر القوائم المراد إدراج هذا العمل بها.</string>
     <string name="action_save">حفظ</string>
     <string name="action_saving">جاري الحفظ…</string>
 
@@ -313,12 +313,12 @@
 
     <!-- Font -->
     <string name="appearance_font">خط التطبيق</string>
-    <string name="appearance_font_subtitle">اختر خطك المفضل</string>
+    <string name="appearance_font_subtitle">إختر خطك المفضل</string>
     <string name="appearance_font_dialog_title">اختيار الخط</string>
 
     <!-- ThemeSettingsScreen -->
     <string name="appearance_title">المظهر</string>
-    <string name="appearance_subtitle">اختر مظهر الألوان واللغة والخط</string>
+    <string name="appearance_subtitle">إختر مظهر الألوان واللغة والخط</string>
     <string name="appearance_color_theme">مظهر الألوان</string>
     <string name="appearance_color_theme_subtitle">حدد اللون العام المستخدم في كافة أنحاء التطبيق</string>
     <string name="theme_color_crimson">القرمزي</string>
@@ -333,7 +333,7 @@
     <string name="appearance_amoled_surfaces_mode">أسطح سوداء حالكة</string>
     <string name="appearance_amoled_surfaces_mode_subtitle">جعل البطاقات، والألواح، والحاويات باللون الأسود الحالك أيضاً</string>
     <string name="appearance_font_and_language">الخط واللغة</string>
-    <string name="appearance_font_and_language_subtitle">اختر نوع الخط واللغة المستخدمين في كافة أنحاء التطبيق</string>
+    <string name="appearance_font_and_language_subtitle">إختر نوع الخط واللغة المستخدمين في كافة أنحاء التطبيق</string>
     <string name="cd_selected">محدد</string>
 
     <!-- AboutScreen -->
@@ -393,7 +393,7 @@
     <string name="settings_advanced_subtitle">الأداء، التصفح، ذاكرة التخزين المؤقت، والتشخيصات</string>
     <string name="experience_mode_essential">أساسية</string>
     <string name="experience_mode_advanced">متقدمة</string>
-    <string name="experience_mode_choose_title">اختر مستوى إعدادات Nuvio</string>
+    <string name="experience_mode_choose_title">إختر مستوى إعدادات Nuvio</string>
     <string name="experience_mode_choose_subtitle">ابدأ ببساطة أو افتح جميع خيارات التخصيص. يمكنك التبديل في أي وقت.</string>
     <string name="experience_mode_essential_card_subtitle">إعداد مركز، الإضافات، أساسيات التشغيل، Trakt، وإعدادات الحساب.</string>
     <string name="experience_mode_advanced_card_subtitle">الإعدادات الكاملة، التحكم بالواجهة، ترتيب الفئات، المجموعات، الملحقات، والتشخيصات.</string>
@@ -410,7 +410,7 @@
     <string name="audio_lang_media_default">الافتراضي للوسائط</string>
     <string name="essential_playback_header_title">وسائط التشغيل</string>
     <string name="essential_playback_header_subtitle">تفضيلات التشغيل البسيطة، الترجمة، الصوت، ومصادر P2P.</string>
-    <string name="essential_stream_selection_subtitle">اختر يدوياً أو قم بتشغيل أول مصدر متاح تلقائياً.</string>
+    <string name="essential_stream_selection_subtitle">إختر يدوياً أو قم بتشغيل أول مصدر متاح تلقائياً.</string>
     <string name="essential_autoplay_next_episode">تشغيل الحلقة التالية تلقائياً</string>
     <string name="essential_autoplay_next_episode_subtitle">المتابعة إلى الحلقة التالية بعد انتهاء البث.</string>
     <string name="essential_p2p_streams">مصادر التورنت (P2P)</string>
@@ -556,7 +556,7 @@
     <string name="playback_parental_guide">تحذيرات المحتوى</string>
     <string name="playback_parental_guide_sub">عرض تصنيف المحتوى عند بدء التشغيل.</string>
     <string name="playback_auto_skip_segments">التخطي التلقائي</string>
-    <string name="playback_auto_skip_segments_sub">اختر الأجزاء التي تريد تخطيها تلقائياً.</string>
+    <string name="playback_auto_skip_segments_sub">إختر الأجزاء التي تريد تخطيها تلقائياً.</string>
     <string name="auto_skip_intro">المقدمة</string>
     <string name="auto_skip_intro_sub">تخطي شارات البداية تلقائياً.</string>
     <string name="auto_skip_recap">الملخص</string>
@@ -664,7 +664,7 @@
     <string name="dv7_libdovi_mode_4_title" translatable="false">Mode 4 — 8.4 (static)</string>
     <string name="dv7_libdovi_mode_4_sub" translatable="false">Convert to static profile 8.4.</string>
     <string name="audio_mpv_hwdec_title">فك التشفير العتادي (الجهاز) (MPV فقط)</string>
-    <string name="audio_mpv_hwdec_dialog_subtitle">اختر كيف ينبغي لـ libmpv استخدام أدوات فك التشفير بالجهاز.</string>
+    <string name="audio_mpv_hwdec_dialog_subtitle">إختر كيف ينبغي لـ libmpv استخدام أدوات فك التشفير بالجهاز.</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy">قديم (مباشر -&gt; نسخ)</string>
     <string name="audio_mpv_hwdec_legacy_direct_copy_desc">السلوك الافتراضي السابق: تجربة الفك بالعتاد أولاً، ثم النسخ العكسي.</string>
     <string name="audio_mpv_hwdec_auto_safe">تلقائي (آمن تلقائياً)</string>
@@ -790,13 +790,13 @@
     <string name="layout_grid_desc">تصفح كل شيء في شبكة رأسية مع قسم محتوى مميز</string>
     <string name="layout_modern_desc">قسم مميز ثابت مع صف نشط واحد لتصفح أسرع</string>
     <string name="layout_section_home">تنسيق الواجهة الرئيسية</string>
-    <string name="layout_section_home_desc">اختر تصميم القسم ومصدر المحتوى المميز.</string>
+    <string name="layout_section_home_desc">إختر تصميم القسم ومصدر المحتوى المميز.</string>
     <string name="layout_landscape_posters">بطاقات أفقية</string>
     <string name="layout_landscape_posters_sub">إظهار جزء من الصف السفلي في العرض الحديث.</string>
     <string name="layout_preview_row">إظهار صف المعاينة</string>
     <string name="layout_preview_row_sub">إظهار معاينة جزئية للصف السفلي في التنسيق الحديث.</string>
     <string name="layout_hero_catalogs">قوائم القسم المميز</string>
-    <string name="layout_hero_catalogs_sub">اختر قائمة واحدة أو أكثر لمحتوى القسم المميز.</string>
+    <string name="layout_hero_catalogs_sub">إختر قائمة واحدة أو أكثر لمحتوى القسم المميز.</string>
     <string name="layout_section_content">محتوى الرئيسية</string>
     <string name="layout_section_content_desc">التحكم في ما يظهر في الرئيسية والبحث.</string>
     <string name="layout_collapse_sidebar">طي الشريط الجانبي</string>
@@ -873,7 +873,7 @@
     <string name="layout_open">مفتوح</string>
     <string name="layout_closed">مغلق</string>
     <string name="layout_trailer_location">موقع تشغيل الإعلان في العرض الحديث</string>
-    <string name="layout_trailer_location_sub">اختر أين يتم تشغيل معاينة الإعلان في الواجهة الحديثة.</string>
+    <string name="layout_trailer_location_sub">إختر أين يتم تشغيل معاينة الإعلان في الواجهة الحديثة.</string>
     <string name="layout_trailer_expanded_card">البطاقة الممتدة</string>
     <string name="layout_trailer_hero_media">القسم المميز</string>
     <string name="layout_preset_compact">مدمج</string>
@@ -1090,7 +1090,7 @@
 
     <!-- TmdbSettingsScreen -->
     <string name="tmdb_title">اثراء بيانات TMDB</string>
-    <string name="tmdb_subtitle">اختر حقول البيانات الوصفية التي ستأتي من TMDB</string>
+    <string name="tmdb_subtitle">إختر حقول البيانات الوصفية التي ستأتي من TMDB</string>
     <string name="tmdb_enable_title">تفعيل تحسين TMDB</string>
     <string name="tmdb_enable_subtitle">استخدام TMDB كمصدر بيانات لتحسين معلومات الإضافات</string>
     <string name="tmdb_modern_home_title">تفعيل في الواجهة الحديثة</string>
@@ -1115,7 +1115,7 @@
     <string name="tmdb_networks_subtitle">القنوات مع الشعارات من TMDB</string>
     <string name="tmdb_episodes_title">الحلقات</string>
     <string name="tmdb_episodes_subtitle">عناوين الحلقات، الملخصات، الصور، ومدة العرض من TMDB</string>
-    <string name="tmdb_trailers_title">الاعلانات</string>
+    <string name="tmdb_trailers_title">الإعلانات</string>
     <string name="tmdb_trailers_subtitle">العروض الدعائية المقترحة من فيديوهات TMDB لقسم تفاصيل الإعلان</string>
     <string name="tmdb_more_like_this_title">مقترحات مشابهة</string>
     <string name="tmdb_more_like_this_subtitle">خلفيات توصيات TMDB في صفحة التفاصيل</string>
@@ -1145,15 +1145,15 @@
     <string name="trakt_login_instruction">اضغط تسجيل دخول لبدء مصادقة جهاز Trakt. سيظهر رمز QR هنا.</string>
     <string name="trakt_missing_credentials">بيانات TRAKT_CLIENT_ID / TRAKT_CLIENT_SECRET مفقودة في local.properties.</string>
     <string name="trakt_watch_progress_title">مستوى المشاهدة</string>
-    <string name="trakt_watch_progress_subtitle">اختر مصدر مستوى المشاهدة الذي يتحكم في الاستئناف ومتابعة المشاهدة</string>
+    <string name="trakt_watch_progress_subtitle">إختر مصدر مستوى المشاهدة الذي يتحكم في الاستئناف ومتابعة المشاهدة</string>
     <string name="trakt_watch_progress_dialog_title">مستوى المشاهدة</string>
-    <string name="trakt_watch_progress_dialog_subtitle">اختر ما إذا كان الاستئناف ومتابعة المشاهدة سيستخدم Trakt أم مزامنة Nuvio، بينما تظل سجلات Trakt مفعلة.</string>
+    <string name="trakt_watch_progress_dialog_subtitle">إختر ما إذا كان الاستئناف ومتابعة المشاهدة سيستخدم Trakt أم مزامنة Nuvio، بينما تظل سجلات Trakt مفعلة.</string>
     <string name="trakt_watch_progress_source_trakt">Trakt</string>
     <string name="trakt_watch_progress_source_nuvio">مزامنة Nuvio</string>
     <string name="trakt_library_source_title">مصدر المكتبة</string>
-    <string name="trakt_library_source_subtitle">اختر المكتبة المراد استخدامها لحفظ مجموعتك وعرضها</string>
+    <string name="trakt_library_source_subtitle">إختر المكتبة المراد استخدامها لحفظ مجموعتك وعرضها</string>
     <string name="trakt_library_source_dialog_title">مصدر المكتبة</string>
-    <string name="trakt_library_source_dialog_subtitle">اختر مكان حفظ عناصر مكتبتك وإدارتها</string>
+    <string name="trakt_library_source_dialog_subtitle">إختر مكان حفظ عناصر مكتبتك وإدارتها</string>
     <string name="trakt_library_source_trakt">Trakt</string>
     <string name="trakt_library_source_nuvio">مكتبة Nuvio</string>
     <string name="trakt_library_source_trakt_selected">تم اختيار مكتبة Trakt</string>
@@ -1173,11 +1173,11 @@
     <string name="trakt_comments_title">التعليقات</string>
     <string name="trakt_comments_subtitle">إظهار مراجعات Trakt في صفحات التفاصيل</string>
     <string name="trakt_comments_dialog_title">التعليقات</string>
-    <string name="trakt_comments_dialog_subtitle">اختر ما إذا كانت صفحات التفاصيل ستعرض مراجعات Trakt عند اتصال حسابك.</string>
+    <string name="trakt_comments_dialog_subtitle">إختر ما إذا كانت صفحات التفاصيل ستعرض مراجعات Trakt عند اتصال حسابك.</string>
     <string name="trakt_comments_now_shown">يتم الآن عرض مراجعات Trakt في صفحات التفاصيل</string>
     <string name="trakt_comments_now_hidden">تم الآن إخفاء مراجعات Trakt في صفحات التفاصيل</string>
     <string name="trakt_more_like_this_source_title">مصدر "مقترحات مشابهة"</string>
-    <string name="trakt_more_like_this_source_subtitle">اختر مصدر التوصيات في صفحات التفاصيل</string>
+    <string name="trakt_more_like_this_source_subtitle">إختر مصدر التوصيات في صفحات التفاصيل</string>
     <string name="trakt_more_like_this_source_dialog_title">مصدر "مقترحات مشابهة"</string>
     <string name="trakt_more_like_this_source_dialog_subtitle">حدد مصدر التوصيات المعروضة بصفحة التفاصيل.</string>
     <string name="trakt_more_like_this_source_trakt">Trakt</string>
@@ -1194,9 +1194,9 @@
     <string name="trakt_retry">إعادة المحاولة</string>
     <string name="trakt_back">رجوع</string>
     <string name="trakt_cw_window_title">نافذة متابعة المشاهدة</string>
-    <string name="trakt_cw_window_subtitle">اختر كمية نشاط Trakt التي تظهر في متابعة المشاهدة.</string>
+    <string name="trakt_cw_window_subtitle">إختر كمية نشاط Trakt التي تظهر في متابعة المشاهدة.</string>
     <string name="trakt_unaired_dialog_title">الحلقات التالية التي لم تعرض بعد</string>
-    <string name="trakt_unaired_dialog_subtitle">اختر ما إذا كان يجب تضمين الحلقات القادمة قبل إصدارها في متابعة المشاهدة.</string>
+    <string name="trakt_unaired_dialog_subtitle">إختر ما إذا كان يجب تضمين الحلقات القادمة قبل إصدارها في متابعة المشاهدة.</string>
     <string name="trakt_show_unaired">إظهار الحلقات التي لم تعرض</string>
     <string name="trakt_hide_unaired">إخفاء الحلقات التي لم تعرض</string>
     <string name="trakt_all_history">كل السجل</string>
@@ -1417,8 +1417,8 @@
     <string name="player_sync_line">مزامنة السطر</string>
     <string name="subtitle_timing_press_sync">اضغط "مزامنة" عند سماع النص.</string>
     <string name="subtitle_timing_sync_button">مزامنة</string>
-    <string name="subtitle_timing_select_addon_first">اختر ملف ترجمة من إضافة أولًا.</string>
-    <string name="subtitle_auto_sync_select_addon_track">اختر ملف ترجمة من إضافة للمزامنة التلقائية.</string>
+    <string name="subtitle_timing_select_addon_first">إختر ملف ترجمة من إضافة أولًا.</string>
+    <string name="subtitle_auto_sync_select_addon_track">إختر ملف ترجمة من إضافة للمزامنة التلقائية.</string>
     <string name="subtitle_auto_sync_applied">تم تطبيق المزامنة: %1$s</string>
     <string name="subtitle_timing_loading">جاري تحميل الترجمة…</string>
     <string name="subtitle_timing_no_lines_found">لم يتم العثور على أسطر ترجمة في هذا الوقت.</string>
@@ -1691,7 +1691,7 @@
     <string name="cloud_library_disabled_title">المكتبة السحابية معطلة</string>
     <string name="cloud_library_empty_message">لا توجد ملفات قابلة للتشغيل تطابق فلاتر البحث الحالية.</string>
     <string name="cloud_library_empty_title">لا يوجد شيء هنا بعد</string>
-    <string name="cloud_library_file_picker_title">اختر ملفاً لتشغيله</string>
+    <string name="cloud_library_file_picker_title">إختر ملفاً لتشغيله</string>
     <string name="cloud_library_load_failed">تعذر تحميل مكتبة %1$s السحابية</string>
     <string name="cloud_library_no_files_message">هذا العنصر لا يحتوي على ملف فيديو قابل للتشغيل.</string>
     <string name="cloud_library_no_files_title">لا توجد ملفات قابلة للتشغيل</string>
@@ -1703,8 +1703,8 @@
     <string name="cloud_library_playable_file_count">عدد الملفات القابلة للتشغيل: %1$d</string>
     <string name="cloud_library_provider_all">الكل</string>
     <string name="cloud_library_refresh">تحديث المكتبة السحابية</string>
-    <string name="cloud_library_select_provider">اختر المزود</string>
-    <string name="cloud_library_select_type">اختر النوع</string>
+    <string name="cloud_library_select_provider">إختر المزود</string>
+    <string name="cloud_library_select_type">إختر النوع</string>
     <string name="cloud_library_status_ready">جاهز للتشغيل</string>
     <string name="cloud_library_type_all">الكل</string>
     <string name="cloud_library_type_torrents">تورنت (Torrents)</string>
@@ -1765,7 +1765,7 @@
     <string name="sync_generate_code_label">رمز المزامنة الخاص بك</string>
     <string name="sync_generate_instruction">أدخل هذا الرمز ورمز الحماية الخاص بك على جهازك الآخر لربطهما.</string>
     <string name="sync_generate_done">تم</string>
-    <string name="sync_generate_pin_label">اختر رمز حماية (من 4 إلى 8 خانات)</string>
+    <string name="sync_generate_pin_label">إختر رمز حماية (من 4 إلى 8 خانات)</string>
     <string name="sync_generate_pin_placeholder">أدخل رمز الحماية</string>
     <string name="sync_generate_generating">جاري التوليد\u2026</string>
     <string name="sync_generate_code_btn">توليد رمز</string>
@@ -1831,7 +1831,7 @@
 
     <!-- ProfileSelectionScreen -->
     <string name="profile_selection_title">من المشاهد؟</string>
-    <string name="profile_selection_subtitle">اختر ملفاً شخصياً للمتابعة</string>
+    <string name="profile_selection_subtitle">إختر ملفاً شخصياً للمتابعة</string>
     <string name="profile_selection_hint">استخدم أزرار الاتجاهات لاختيار ملف</string>
     <string name="profile_selection_empty">لم يتم العثور على ملفات شخصية</string>
     <string name="profile_selection_primary_badge">أساسي</string>
@@ -1856,7 +1856,7 @@
 
     <!-- LayoutSelectionScreen -->
     <string name="layout_selection_welcome">مرحباً بك في Nuvio</string>
-    <string name="layout_selection_subtitle">اختر تنسيق شاشتك الرئيسية</string>
+    <string name="layout_selection_subtitle">إختر تنسيق شاشتك الرئيسية</string>
     <string name="layout_selection_continue">متابعة</string>
 
     <!-- UpdatePromptDialog -->
@@ -1887,10 +1887,10 @@
     <string name="discover_filter_type">النوع</string>
     <string name="discover_filter_catalog">القائمة</string>
     <string name="discover_filter_genre">التصنيف</string>
-    <string name="discover_select_catalog">اختر</string>
+    <string name="discover_select_catalog">إختر</string>
     <string name="discover_genre_default">افتراضي</string>
-    <string name="discover_empty_no_catalog_title">اختر قائمة</string>
-    <string name="discover_empty_no_catalog_subtitle">اختر قائمة للتصفح</string>
+    <string name="discover_empty_no_catalog_title">إختر قائمة</string>
+    <string name="discover_empty_no_catalog_subtitle">إختر قائمة للتصفح</string>
     <string name="discover_empty_no_content_title">لم يتم العثور على محتوى</string>
     <string name="discover_empty_no_content_subtitle">جرب تصنيفاً أو فئة أخرى</string>
 
@@ -2161,7 +2161,7 @@
     <string name="collections_editor_tmdb_person_credits">أعمال الشخص</string>
     <string name="collections_editor_tmdb_director_credits">أعمال المخرج</string>
     <string name="collections_editor_tmdb_company_fallback">شركة TMDB %1$d</string>
-    <string name="collections_editor_tmdb_help_presets">اختر مصدراً جاهزاً. يمكنك تعديله أو حذفه لاحقاً.</string>
+    <string name="collections_editor_tmdb_help_presets">إختر مصدراً جاهزاً. يمكنك تعديله أو حذفه لاحقاً.</string>
     <string name="collections_editor_tmdb_help_list">الصق رابط قائمة TMDB عامة أو رقمها فقط.</string>
     <string name="collections_editor_tmdb_help_production">ابحث باسم الاستوديو أو الصق معرف/رابط شركة TMDB.</string>
     <string name="collections_editor_tmdb_help_network">أدخل معرف الشبكة. القنوات الشائعة متاحة في الإعدادات المسبقة.</string>
