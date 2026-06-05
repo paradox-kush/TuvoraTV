@@ -288,7 +288,11 @@ class ExternalPlaybackTracker @Inject constructor(
         }
         val wp = flow.firstOrNull() ?: return 0L
         if (wp.isCompleted()) return 0L
-        return wp.position
+        return if (wp.duration > 0L) {
+            wp.resolveResumePosition(wp.duration)
+        } else {
+            wp.position
+        }
     }
 
     private fun saveProgress(metadata: ExternalPlaybackMetadata, positionMs: Long, durationMs: Long?) {
