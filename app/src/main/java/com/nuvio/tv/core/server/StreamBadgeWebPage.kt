@@ -1,11 +1,22 @@
 package com.nuvio.tv.core.server
 
 import android.content.Context
+import android.content.res.Configuration
 import com.nuvio.tv.R
 import com.nuvio.tv.core.streams.STREAM_BADGE_IMPORT_LIMIT
+import java.util.Locale
 
 object StreamBadgeWebPage {
-    fun html(context: Context?): String {
+    fun html(rawContext: Context?): String {
+        val context = rawContext?.let { base ->
+            val tag = base.getSharedPreferences("app_locale", Context.MODE_PRIVATE)
+                .getString("locale_tag", null)
+            if (!tag.isNullOrEmpty()) {
+                val config = Configuration(base.resources.configuration)
+                config.setLocale(Locale.forLanguageTag(tag))
+                base.createConfigurationContext(config)
+            } else base
+        }
         val appName = context?.getString(R.string.app_name) ?: "NuvioTV"
         val title = context?.getString(R.string.settings_stream_badges_section) ?: "Fusion Style"
         val urlsTitle = context?.getString(R.string.settings_stream_badge_urls_title) ?: "Fusion badge URLs"
@@ -24,6 +35,17 @@ object StreamBadgeWebPage {
         val previewTitle = context?.getString(R.string.settings_fusion_badge_preview_title) ?: "Fusion badge preview"
         val previewEmpty = context?.getString(R.string.settings_fusion_badge_preview_empty) ?: "No Fusion-style badge images in this URL."
         val otherBadges = context?.getString(R.string.settings_fusion_badge_other_group_title) ?: "Other Fusion badges"
+        val importing = context?.getString(R.string.web_stream_badge_importing) ?: "Importing…"
+        val imported = context?.getString(R.string.web_stream_badge_imported) ?: "Imported badge URL."
+        val importError = context?.getString(R.string.web_stream_badge_import_error) ?: "Badge import failed."
+        val saved = context?.getString(R.string.web_status_saved_streams) ?: "Saved. New streams will use these settings."
+        val deleted = context?.getString(R.string.web_stream_badge_deleted) ?: "Deleted badge URL."
+        val saveError = context?.getString(R.string.web_status_could_not_save) ?: "Could not save"
+        val loadError = context?.getString(R.string.web_stream_badge_load_error) ?: "Could not load stream badge settings"
+        val summaryTemplate = context?.getString(R.string.settings_fusion_badges_summary) ?: "%1\$d/%2\$d URLs, %3\$d active Fusion badges"
+        val groupTitleTemplate = context?.getString(R.string.settings_fusion_badge_group_title) ?: "Group %1\$d"
+        val statusSummaryTemplate = context?.getString(R.string.settings_fusion_badge_url_status_summary) ?: "%1\$s, %2\$d enabled badges, %3\$d groups"
+        val previewCountTemplate = context?.getString(R.string.settings_fusion_badge_preview_count) ?: "%1\$d Fusion-style badges from this URL"
         return """
 <!DOCTYPE html>
 <html lang="en">
@@ -107,8 +129,23 @@ const labels = {
   delete: '${delete.js()}',
   previewTitle: '${previewTitle.js()}',
   previewEmpty: '${previewEmpty.js()}',
-  otherBadges: '${otherBadges.js()}'
+  otherBadges: '${otherBadges.js()}',
+  importing: '${importing.js()}',
+  imported: '${imported.js()}',
+  importError: '${importError.js()}',
+  saved: '${saved.js()}',
+  deleted: '${deleted.js()}',
+  saveError: '${saveError.js()}',
+  loadError: '${loadError.js()}',
+  summary: '${summaryTemplate.js()}',
+  groupTitle: '${groupTitleTemplate.js()}',
+  statusSummary: '${statusSummaryTemplate.js()}',
+  previewCount: '${previewCountTemplate.js()}'
 };
+function fmt(template){
+  const args=arguments;
+  return String(template).replace(/%(\d+)\${'$'}[ds]/g,(match,index)=>args[Number(index)]);
+}
 function escapeHtml(value){
   return String(value||'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
@@ -131,7 +168,7 @@ function badgeRulesPreviewText(rules){
   if(!imports.length)return labels.empty;
   const active=imports.find(isImportActive)||imports[0];
   const enabled=((active&&active.filters)||[]).filter(filter=>filter.isEnabled!==false).length;
-  return imports.length+'/${STREAM_BADGE_IMPORT_LIMIT} URLs, '+enabled+' active Fusion badges';
+  return fmt(labels.summary, imports.length, ${STREAM_BADGE_IMPORT_LIMIT}, enabled);
 }
 function badgePreviewSections(importItem){
   const filters=(importItem.filters||[]).filter(filter=>filter.imageURL);
@@ -142,7 +179,7 @@ function badgePreviewSections(importItem){
     const groupFilters=filters.filter(filter=>filter.groupId===group.id);
     if(groupFilters.length){
       used.add(group.id);
-      sections.push({id:group.id||('group-'+index),title:group.name||('Group '+(index+1)),filters:groupFilters});
+      sections.push({id:group.id||('group-'+index),title:group.name||fmt(labels.groupTitle,(index+1)),filters:groupFilters});
     }
   });
   const other=filters.filter(filter=>!used.has(filter.groupId));
@@ -158,7 +195,7 @@ function renderBadgeImports(){
     const status=activeState?labels.active:labels.inactive;
     const enabled=(importItem.filters||[]).filter(filter=>filter.isEnabled!==false).length;
     const activateButton=imports.length>1&&!activeState?'<button class="btn mini-btn" type="button" data-badge-active="'+index+'">'+labels.select+'</button>':'';
-    return '<div class="row"><div class="source">'+escapeHtml(importItem.sourceUrl)+'</div><div class="meta">'+status+', '+enabled+' enabled badges, '+((importItem.groups||[]).length)+' groups</div><div class="row-actions">'+activateButton+'<button class="btn mini-btn" type="button" data-badge-preview="'+index+'">'+labels.preview+'</button><button class="btn mini-btn" type="button" data-badge-delete="'+index+'">'+labels.delete+'</button></div></div>';
+    return '<div class="row"><div class="source">'+escapeHtml(importItem.sourceUrl)+'</div><div class="meta">'+fmt(labels.statusSummary,status,enabled,(importItem.groups||[]).length)+'</div><div class="row-actions">'+activateButton+'<button class="btn mini-btn" type="button" data-badge-preview="'+index+'">'+labels.preview+'</button><button class="btn mini-btn" type="button" data-badge-delete="'+index+'">'+labels.delete+'</button></div></div>';
   }).join('');
   document.querySelectorAll('[data-badge-active]').forEach(button=>button.addEventListener('click',()=>setActiveBadge(imports[Number(button.dataset.badgeActive)].sourceUrl)));
   document.querySelectorAll('[data-badge-delete]').forEach(button=>button.addEventListener('click',()=>deleteBadge(imports[Number(button.dataset.badgeDelete)].sourceUrl)));
@@ -178,46 +215,46 @@ function showBadgePreview(importItem){
     return '<span class="badge-chip" style="'+style+'"><img src="'+escapeHtml(filter.imageURL)+'" alt="'+escapeHtml(filter.name)+'"></span>';
   }).join('')+'</div></div>').join(''):'<div class="meta">'+labels.previewEmpty+'</div>';
   badgePreview.className='preview active';
-  badgePreview.innerHTML='<div class="preview-title">'+labels.previewTitle+'</div><div class="source">'+escapeHtml(importItem.sourceUrl)+'</div><div class="meta">'+badgeCount+' Fusion-style badges from this URL</div>'+body;
+  badgePreview.innerHTML='<div class="preview-title">'+labels.previewTitle+'</div><div class="source">'+escapeHtml(importItem.sourceUrl)+'</div><div class="meta">'+fmt(labels.previewCount,badgeCount)+'</div>'+body;
 }
 async function importBadges(){
-  statusBox.textContent='Importing...';
+  statusBox.textContent=labels.importing;
   statusBox.className='status';
   const res=await fetch('/api/badges/import',{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify({sourceUrl:badgeSource.value})});
-  const body=await res.json().catch(()=>({error:'Badge import failed.'}));
+  const body=await res.json().catch(()=>({error:labels.importError}));
   if(res.ok){
     streamBadgeRules=normalizeBadgeRules(body.streamBadgeRules||{imports:[]});
     badgeSource.value='';
     renderBadgeImports();
-    statusBox.textContent='Imported badge URL.';
+    statusBox.textContent=labels.imported;
   }else{
-    statusBox.textContent=body.error||'Badge import failed.';
+    statusBox.textContent=body.error||labels.importError;
     statusBox.className='status error';
   }
 }
 async function setActiveBadge(sourceUrl){
   const res=await fetch('/api/badges/active',{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify({sourceUrl})});
-  const body=await res.json().catch(()=>({error:'Could not save'}));
+  const body=await res.json().catch(()=>({error:labels.saveError}));
   if(res.ok){
     streamBadgeRules=normalizeBadgeRules(body.streamBadgeRules||streamBadgeRules);
     renderBadgeImports();
-    statusBox.textContent='Saved. New streams will use these settings.';
+    statusBox.textContent=labels.saved;
     statusBox.className='status';
   }else{
-    statusBox.textContent=body.error||'Could not save';
+    statusBox.textContent=body.error||labels.saveError;
     statusBox.className='status error';
   }
 }
 async function deleteBadge(sourceUrl){
   const res=await fetch('/api/badges/delete',{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify({sourceUrl})});
-  const body=await res.json().catch(()=>({error:'Could not save'}));
+  const body=await res.json().catch(()=>({error:labels.saveError}));
   if(res.ok){
     streamBadgeRules=normalizeBadgeRules(body.streamBadgeRules||{imports:[]});
     renderBadgeImports();
-    statusBox.textContent='Deleted badge URL.';
+    statusBox.textContent=labels.deleted;
     statusBox.className='status';
   }else{
-    statusBox.textContent=body.error||'Could not save';
+    statusBox.textContent=body.error||labels.saveError;
     statusBox.className='status error';
   }
 }
@@ -228,7 +265,7 @@ async function load(){
   renderBadgeImports();
 }
 document.getElementById('importBadges').addEventListener('click',importBadges);
-load().catch(()=>{statusBox.textContent='Could not load stream badge settings';statusBox.className='status error';});
+load().catch(()=>{statusBox.textContent=labels.loadError;statusBox.className='status error';});
 </script>
 </body>
 </html>

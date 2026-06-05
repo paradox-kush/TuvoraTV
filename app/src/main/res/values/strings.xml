@@ -2562,9 +2562,39 @@
     <!-- Subtitle selection: unknown language fallback -->
     <string name="subtitle_language_unknown">Unknown</string>
 
-    <!-- External playback keep-alive notification -->
-    <string name="external_playback_channel_description">Keeps app alive during external player playback</string>
+    <!-- External playback keep-alive service -->
     <string name="external_playback_notification_text">Playing in external player</string>
+    <string name="external_playback_channel_description">Keeps app alive during external player playback</string>
+
+    <!-- Web config page: Direct Debrid formatter -->
+    <string name="web_debrid_title">Direct Debrid Settings</string>
+    <string name="web_debrid_intro_title">Customize Debrid streams</string>
+    <string name="web_debrid_intro_copy">Adjust stream labels, filters, and sorting used for Direct Debrid results.</string>
+    <string name="web_debrid_tab_formatter">Formatter</string>
+    <string name="web_debrid_tab_rules">Filters &amp; Sort</string>
+    <string name="web_debrid_template_fields">Template fields</string>
+    <string name="web_debrid_name_template">Name Template</string>
+    <string name="web_debrid_description_template">Description Template</string>
+    <string name="web_debrid_stream_rules">Stream rules</string>
+    <string name="web_debrid_per_resolution">Per Resolution</string>
+    <string name="web_debrid_per_quality">Per Quality</string>
+    <string name="web_debrid_min_size_gb">Min Size GB</string>
+    <string name="web_debrid_max_size_gb">Max Size GB</string>
+    <string name="web_debrid_restore_default">Restore Default</string>
+    <string name="web_debrid_save_settings">Save Settings</string>
+    <string name="web_debrid_status_load_error">Could not load Debrid settings</string>
+
+    <!-- Web config pages: shared save status -->
+    <string name="web_status_saving">Saving…</string>
+    <string name="web_status_saved_streams">Saved. New streams will use these settings.</string>
+    <string name="web_status_could_not_save">Could not save</string>
+
+    <!-- Web config page: stream badge import status -->
+    <string name="web_stream_badge_importing">Importing…</string>
+    <string name="web_stream_badge_imported">Imported badge URL.</string>
+    <string name="web_stream_badge_import_error">Badge import failed.</string>
+    <string name="web_stream_badge_deleted">Deleted badge URL.</string>
+    <string name="web_stream_badge_load_error">Could not load stream badge settings</string>
 
     <!-- Playback — Buffer & Network settings -->
     <string name="playback_section_buffer_network">Buffer &amp; Network</string>
@@ -2614,5 +2644,4 @@
     <string name="playback_net_connection_count_sub">Number of parallel TCP connections. Higher values increase memory usage and throughput but with diminishing returns.</string>
     <string name="playback_net_chunk_size">Chunk Size</string>
     <string name="playback_net_chunk_size_sub">Size of each download chunk per connection. Larger chunks reduce overhead but use more memory.</string>
-
 </resources>
