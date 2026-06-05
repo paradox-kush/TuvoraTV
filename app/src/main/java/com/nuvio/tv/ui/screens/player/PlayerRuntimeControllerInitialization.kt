@@ -304,6 +304,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             } else {
                 val reason = when (effectiveDv7Mode) {
                     Dv7HandlingMode.HDR10_BASE_LAYER -> "hdr10-base-layer-mode"
+                    Dv7HandlingMode.STRIP_DV -> "strip-dv-mode"
                     Dv7HandlingMode.OFF -> "dv7-mode-off"
                     Dv7HandlingMode.AUTO -> "auto-mode-no-dv81"  // unreachable; AUTO is collapsed above
                     Dv7HandlingMode.DV81_LIBDOVI -> "setting-disabled"  // unreachable
@@ -633,8 +634,7 @@ internal fun PlayerRuntimeController.initializePlayer(
 
             // The app-level factory performs DV7 conversion for the in-band-RPU containers
             // (MP4/fMP4/TS); MKV goes through the vendored extractor. Pass-through for non-DV.
-            val stripDvRpuEnabled = playerSettings.stripDvFromHdr10Files &&
-                    effectiveDv7Mode != Dv7HandlingMode.DV81_LIBDOVI
+            val stripDvRpuEnabled = playerSettings.dv7HandlingMode == Dv7HandlingMode.STRIP_DV
             if (stripDvRpuEnabled) {
                 Log.i(PlayerRuntimeController.TAG, "DV_RPU_STRIP: enabled — will remove DV RPU NALs")
             }
@@ -1815,6 +1815,8 @@ private fun friendlyVideoHdrType(
     return when {
         // Stripped to the HDR10 base layer: output is HDR10/SDR, never Dolby Vision.
         effectiveModeName == "HDR10_BASE_LAYER" -> fromTransfer() ?: "HDR10"
+        // DV RPU stripped: output is HDR10 base layer, never Dolby Vision.
+        effectiveModeName == "STRIP_DV" -> fromTransfer() ?: "HDR10"
         // DV8.1 conversion, but only label it DV if a conversion actually ran. AUTO arms
         // this mode for every file on a DV display, so plain SDR/HDR10 lands here too.
         effectiveModeName == "DV81_LIBDOVI" && dvConversionOccurred -> "Dolby Vision"

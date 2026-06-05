@@ -397,14 +397,16 @@ enum class LibassRenderType {
  * routes via [com.nuvio.tv.core.player.DolbyVisionBaseLayerPolicy].
  *
  * The other three values bypass the policy and apply unconditionally:
- * - HDR10_BASE_LAYER: always strip DV, play HEVC base layer
+ * - HDR10_BASE_LAYER: ignore DV metadata, play HEVC base layer
  * - DV81_LIBDOVI: libdovi DV7 to DV8.1 conversion
+ *   STRIP_DV: libdovi DV stripping
  * - OFF: pass DV7 through untouched (may glitch on hardware lacking DV7 support)
  */
 enum class Dv7HandlingMode {
     AUTO,
     HDR10_BASE_LAYER,
     DV81_LIBDOVI,
+    STRIP_DV,
     OFF;
 
     companion object {
@@ -413,6 +415,7 @@ enum class Dv7HandlingMode {
             AUTO.name -> AUTO
             HDR10_BASE_LAYER.name -> HDR10_BASE_LAYER
             DV81_LIBDOVI.name -> DV81_LIBDOVI
+            STRIP_DV.name -> STRIP_DV
             OFF.name -> OFF
             else -> AUTO
         }

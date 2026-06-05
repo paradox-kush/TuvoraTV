@@ -621,8 +621,8 @@
     <string name="audio_tunneled">Tunneled Playback</string>
     <string name="audio_tunneled_sub">Hardware-level audio/video sync. May improve playback on some Android TV devices</string>
     <!-- DV7 Handling Mode -->
-    <string name="dv7_handling_title">Dolby Vision Profile 7 Handling</string>
-    <string name="dv7_handling_dialog_subtitle">Choose how DV Profile 7 streams are processed at playback time.</string>
+    <string name="dv7_handling_title">Dolby Vision Handling</string>
+    <string name="dv7_handling_dialog_subtitle">Choose how DV streams are processed at playback time.</string>
     <string name="dv7_mode_auto">Auto (recommended)</string>
     <string name="dv7_mode_auto_desc">Detects your display and picks the best mode. If playback issues occur, try HDR10 base layer.</string>
     <string name="dv7_mode_hdr10_base_layer">HDR10 base layer</string>
@@ -631,8 +631,8 @@
     <string name="dv7_mode_dv81_libdovi_desc">Convert DV7 to single-layer DV8.1. Requires Dolby Vision display.</string>
     <string name="dv7_mode_off">Off (native)</string>
     <string name="dv7_mode_off_desc">Pass DV7 through unmodified. May glitch on hardware that does not support DV Profile 7.</string>
-    <string name="strip_dv_hdr10_title">Always Strip DV</string>
-    <string name="strip_dv_hdr10_sub">Removes the Dolby Vision RPU layer from all streams.</string>
+    <string name="dv7_mode_strip_dv">Always Strip DV</string>
+    <string name="dv7_mode_strip_dv_desc">Removes the Dolby Vision RPU layer from all streams.</string>
     <string name="audio_dv5_to_dv81_title">Convert DV5 to DV8.1</string>
     <string name="audio_dv5_to_dv81_sub">Signal Profile 5 streams as Profile 8.1 for HDR10-compatible output. Helps on devices that do not have a native DV5 decoder.</string>
     <string name="audio_dv7_preserve_mapping_title">Preserve DV mapping (DV7 to DV8.1)</string>

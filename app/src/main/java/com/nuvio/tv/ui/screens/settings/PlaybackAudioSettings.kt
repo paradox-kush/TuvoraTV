@@ -75,7 +75,6 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
     onSetTunnelingEnabled: (Boolean) -> Unit,
     onSetDv5ToDv81Enabled: (Boolean) -> Unit,
     onSetDv7ToDv81PreserveMappingEnabled: (Boolean) -> Unit,
-    onSetStripDvFromHdr10Files: (Boolean) -> Unit,
     onItemFocused: () -> Unit = {},
     enabled: Boolean = true,
     videoExtraItems: (LazyListScope.() -> Unit)? = null
@@ -272,6 +271,7 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
                 Dv7HandlingMode.AUTO -> stringResource(R.string.dv7_mode_auto)
                 Dv7HandlingMode.HDR10_BASE_LAYER -> stringResource(R.string.dv7_mode_hdr10_base_layer)
                 Dv7HandlingMode.DV81_LIBDOVI -> stringResource(R.string.dv7_mode_dv81_libdovi)
+                Dv7HandlingMode.STRIP_DV -> stringResource(R.string.dv7_mode_strip_dv)
                 Dv7HandlingMode.OFF -> stringResource(R.string.dv7_mode_off)
             }
             NavigationSettingsItem(
@@ -281,20 +281,6 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
                 onClick = onShowDv7HandlingModeDialog,
                 onFocused = onItemFocused,
                 enabled = enabled
-            )
-        }
-        item(key = "strip_dv_from_hdr10") {
-            ToggleSettingsItem(
-                icon = Icons.Default.Tune,
-                title = stringResource(R.string.strip_dv_hdr10_title),
-                subtitle = stringResource(R.string.strip_dv_hdr10_sub),
-                // Only active when handling mode is OFF — strip is meaningless
-                // alongside AUTO, HDR10_BASE_LAYER or DV81 conversion.
-                isChecked = playerSettings.stripDvFromHdr10Files &&
-                        playerSettings.dv7HandlingMode == Dv7HandlingMode.OFF,
-                onCheckedChange = onSetStripDvFromHdr10Files,
-                onFocused = onItemFocused,
-                enabled = enabled && playerSettings.dv7HandlingMode == Dv7HandlingMode.OFF
             )
         }
         item(key = "audio_dv7_preserve_mapping") {
@@ -625,6 +611,11 @@ private fun Dv7HandlingModeDialog(
             Dv7HandlingMode.DV81_LIBDOVI,
             stringResource(R.string.dv7_mode_dv81_libdovi),
             stringResource(R.string.dv7_mode_dv81_libdovi_desc)
+        ),
+        Triple(
+            Dv7HandlingMode.STRIP_DV,
+            stringResource(R.string.dv7_mode_strip_dv),
+            stringResource(R.string.dv7_mode_strip_dv_desc)
         ),
         Triple(
             Dv7HandlingMode.OFF,
