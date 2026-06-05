@@ -51,6 +51,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
@@ -72,12 +73,20 @@ internal fun StreamItem(
     onUpKey: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val streamName = remember(stream) { stream.getDisplayName() }
     val streamDescription = remember(stream) { stream.getDisplayDescription() }
-    val addonLogoModel = remember(context, stream.addonLogo) {
+    // Pre-upscale: decode at 2× target pixels so the hardware compositor
+    // has enough pixel data for smooth edges inside Card RenderNodes.
+    val logoDecodeSize = remember(density) {
+        with(density) { 32.dp.roundToPx() } * 2
+    }
+    val addonLogoModel = remember(context, stream.addonLogo, logoDecodeSize) {
         stream.addonLogo?.let { logo ->
             ImageRequest.Builder(context)
                 .data(logo)
+                .size(width = logoDecodeSize, height = logoDecodeSize)
+                .memoryCacheKey("${logo}_${logoDecodeSize}x${logoDecodeSize}")
                 .crossfade(true)
                 .build()
         }

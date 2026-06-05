@@ -345,7 +345,10 @@ fun StreamScreen(
         )
 
         val showOverlay = uiState.showDirectAutoPlayOverlay || uiState.externalPlayerOverlayVisible
-        if (showOverlay) {
+        if (!uiState.autoPlayDecided) {
+            // Don't render overlay or stream list until ViewModel decides
+            // whether direct autoplay is active — prevents single-frame flash.
+        } else if (showOverlay) {
             LoadingOverlay(
                 visible = true,
                 backdropUrl = uiState.backdrop ?: uiState.poster,
@@ -1089,12 +1092,20 @@ private fun StreamCard(
     onUpKey: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val streamName = remember(stream) { stream.getDisplayName() }
     val streamDescription = remember(stream) { stream.getDisplayDescription() }
-    val addonLogoModel = remember(context, stream.addonLogo) {
+    // Pre-upscale: decode at 2× target pixels so the hardware compositor
+    // has enough pixel data for smooth edges inside Card RenderNodes.
+    val logoDecodeSize = remember(density) {
+        with(density) { 32.dp.roundToPx() } * 2
+    }
+    val addonLogoModel = remember(context, stream.addonLogo, logoDecodeSize) {
         stream.addonLogo?.let { logo ->
             ImageRequest.Builder(context)
                 .data(logo)
+                .size(width = logoDecodeSize, height = logoDecodeSize)
+                .memoryCacheKey("${logo}_${logoDecodeSize}x${logoDecodeSize}")
                 .crossfade(false)
                 .build()
         }

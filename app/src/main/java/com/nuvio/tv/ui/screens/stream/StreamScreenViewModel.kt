@@ -173,6 +173,7 @@ class StreamScreenViewModel @Inject constructor(
                 it.copy(
                     isDirectAutoPlayFlow = false,
                     showDirectAutoPlayOverlay = false,
+                    autoPlayDecided = true,
                     autoPlayStream = null,
                     autoPlayPlaybackInfo = null,
                     directAutoPlayMessage = null
@@ -298,12 +299,17 @@ class StreamScreenViewModel @Inject constructor(
                     it.copy(
                         isDirectAutoPlayFlow = true,
                         showDirectAutoPlayOverlay = true,
+                        autoPlayDecided = true,
                         directAutoPlayMessage = if (playerSettings.showPlayerLoadingStatus) {
                             context.getString(R.string.stream_finding_source)
                         } else {
                             null
                         }
                     )
+                }
+            } else {
+                updateUiStateIfChanged {
+                    it.copy(autoPlayDecided = true)
                 }
             }
 
@@ -1022,11 +1028,17 @@ class StreamScreenViewModel @Inject constructor(
         val basePlaybackInfo = getStreamForPlayback(stream)
         return when (val result = directDebridResolver.resolve(stream, season, episode)) {
             is DirectDebridResolveResult.Success -> {
-                updateUiStateIfChanged {
-                    it.copy(
-                        showDirectAutoPlayOverlay = false,
-                        directAutoPlayMessage = null
-                    )
+                if (!_uiState.value.isDirectAutoPlayFlow) {
+                    updateUiStateIfChanged {
+                        it.copy(
+                            showDirectAutoPlayOverlay = false,
+                            directAutoPlayMessage = null
+                        )
+                    }
+                } else {
+                    updateUiStateIfChanged {
+                        it.copy(directAutoPlayMessage = null)
+                    }
                 }
                 cancelStreamsLoad()
                 val resolved = basePlaybackInfo.copy(

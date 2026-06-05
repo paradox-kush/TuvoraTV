@@ -405,9 +405,10 @@ class WatchProgressRepositoryImpl @Inject constructor(
                                         progress.source == WatchProgress.SOURCE_TRAKT_HISTORY
                                 }
                             }
-                            .onStart { emit(emptyList()) }
-                    ) { canonicalSeeds, optimisticSeeds ->
-                        mergeNextUpSeeds(canonicalSeeds, optimisticSeeds)
+                            .onStart { emit(emptyList()) },
+                        layoutPreferenceDataStore.nextUpFromFurthestEpisode
+                    ) { canonicalSeeds, optimisticSeeds, useFurthest ->
+                        mergeNextUpSeeds(canonicalSeeds, optimisticSeeds, useFurthest)
                     }
                 } else {
                     // Use watched items (fully synced with pagination) to build seeds
@@ -475,7 +476,8 @@ class WatchProgressRepositoryImpl @Inject constructor(
 
     private fun mergeNextUpSeeds(
         canonicalSeeds: List<WatchProgress>,
-        optimisticSeeds: List<WatchProgress>
+        optimisticSeeds: List<WatchProgress>,
+        useFurthest: Boolean
     ): List<WatchProgress> {
         val merged = linkedMapOf<String, WatchProgress>()
         canonicalSeeds.forEach { seed ->
@@ -484,7 +486,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         optimisticSeeds.forEach { seed ->
             val key = nextUpSeedKey(seed)
             val existing = merged[key]
-            if (existing == null || shouldReplaceNextUpSeed(existing, seed)) {
+            if (existing == null || shouldReplaceNextUpSeed(existing, seed, useFurthest)) {
                 merged[key] = seed
             }
         }
@@ -510,8 +512,12 @@ class WatchProgressRepositoryImpl @Inject constructor(
 
     private fun shouldReplaceNextUpSeed(
         existing: WatchProgress,
-        candidate: WatchProgress
+        candidate: WatchProgress,
+        useFurthest: Boolean
     ): Boolean {
+        if (!useFurthest) {
+            return candidate.lastWatched >= existing.lastWatched
+        }
         val candidateSeason = candidate.season ?: -1
         val candidateEpisode = candidate.episode ?: -1
         val existingSeason = existing.season ?: -1
