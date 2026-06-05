@@ -603,8 +603,6 @@
     <string name="playback_player_ask_desc">اختيار المشغل في كل مرة</string>
     <string name="playback_player_auto">تلقائي (الأنسب للمحتوى)</string>
     <string name="playback_player_auto_desc">مشغل ExoPlayer للأفلام والمسلسلات · مشغل MPV للأنمي</string>
-    <string name="playback_engine_exoplayer_desc">أفضل توافق مع ميزات Nuvio الحالية.</string>
-    <string name="playback_engine_mvplayer_desc">يستخدم libmpv مع عناصر تحكم OSD الخاصة بـ Nuvio. (تجريبي).</string>
 
     <!-- PlaybackAudioSettings -->
     <string name="video_section">الفيديو</string>

@@ -2007,10 +2007,9 @@
 
     <!-- Collection Management -->
     <string name="collections_header">Colecciones</string>
-    <string name="collections_empty">No hay colecciones aún. Crea una para organizar tus catálogos.</string>
+    <string name="collections_empty">Aún no hay colecciones. Crea una para organizar tus catálogos.</string>
     <string name="collections_delete_confirm">Eliminar</string>
     <string name="collections_delete_confirm_subtitle">Esto eliminará permanentemente \"%1$s\". Esta acción no se puede deshacer.</string>
-    <string name="collections_empty">Aún no hay colecciones. Crea una para organizar tus catálogos.</string>
     <string name="collections_new">Nueva colección</string>
     <string name="collections_import">Importar</string>
     <string name="collections_export_file">Exportar archivo</string>
