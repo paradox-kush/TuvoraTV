@@ -267,6 +267,14 @@ fun StreamScreen(
         viewModel.onPlaybackErrorShown()
     }
 
+    // Once streams are resolved, release the MainActivity auto-next loader so it doesn't
+    // mask this screen (whether it auto-launches a player or shows the manual list).
+    LaunchedEffect(uiState.isLoading) {
+        if (!uiState.isLoading) {
+            viewModel.dismissExternalAutoNextOverlay()
+        }
+    }
+
     LaunchedEffect(uiState.autoPlayPlaybackInfo) {
         val playbackInfo = uiState.autoPlayPlaybackInfo ?: return@LaunchedEffect
         if (playbackInfo.url != null || (playbackInfo.isTorrent && playbackInfo.infoHash != null)) {

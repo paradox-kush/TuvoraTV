@@ -1106,6 +1106,11 @@ class StreamScreenViewModel @Inject constructor(
 
     fun isExternalPlayerAutoLaunch(): Boolean = externalPlaybackTracker.isAutoLaunch
 
+    /** Release the MainActivity auto-next loader once this Stream screen has settled. */
+    fun dismissExternalAutoNextOverlay() {
+        externalPlaybackTracker.dismissAutoNextOverlay()
+    }
+
     /** Set to true when external player is launched, reset on stop. */
     private var externalPlayerLaunched = false
     private var externalPlayerLaunchTimeMs = 0L

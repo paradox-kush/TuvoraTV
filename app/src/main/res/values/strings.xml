@@ -400,6 +400,7 @@
     <string name="essential_stream_selection_subtitle">Choose manually or autoplay the first available stream.</string>
     <string name="essential_autoplay_next_episode">Auto-play next episode</string>
     <string name="essential_autoplay_next_episode_subtitle">Continue to the next episode after a stream finishes.</string>
+    <string name="external_auto_next_loading">Loading next episode…</string>
     <string name="essential_p2p_streams">P2P streams</string>
     <string name="essential_p2p_streams_subtitle">Allow peer-to-peer stream sources.</string>
     <string name="essential_subtitle_language_subtitle">Preferred subtitle language.</string>
