@@ -337,7 +337,10 @@ fun StreamScreen(
         )
 
         val showOverlay = uiState.showDirectAutoPlayOverlay || uiState.externalPlayerOverlayVisible
-        if (showOverlay) {
+        if (!uiState.autoPlayDecided) {
+            // Don't render overlay or stream list until ViewModel decides
+            // whether direct autoplay is active — prevents single-frame flash.
+        } else if (showOverlay) {
             LoadingOverlay(
                 visible = true,
                 backdropUrl = uiState.backdrop ?: uiState.poster,
