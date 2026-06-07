@@ -2,6 +2,8 @@
 
 package com.nuvio.tv.ui.screens.settings
 
+import com.nuvio.tv.ui.theme.NuvioTheme
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
@@ -31,7 +33,6 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.VodCacheSizeMode
-import com.nuvio.tv.ui.theme.NuvioColors
 import kotlin.math.min
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -72,8 +73,8 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
             Text(
                 text = stringResource(R.string.playback_buffer_header),
                 style = MaterialTheme.typography.titleMedium,
-                color = NuvioColors.TextSecondary,
-                modifier = Modifier.padding(vertical = 8.dp)
+                color = NuvioTheme.colors.TextSecondary,
+                modifier = Modifier.padding(vertical = NuvioTheme.spacing.sm)
             )
         }
 
@@ -82,7 +83,7 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 text = stringResource(R.string.playback_buffer_warning),
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFFFF9800),
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(bottom = NuvioTheme.spacing.sm)
             )
         }
 
@@ -170,8 +171,8 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 Text(
                     text = stringResource(R.string.playback_buffer_back_reserve, reserveMb),
                     style = MaterialTheme.typography.bodySmall,
-                    color = NuvioColors.TextSecondary,
-                    modifier = Modifier.padding(start = 52.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
+                    color = NuvioTheme.colors.TextSecondary,
+                    modifier = Modifier.padding(start = 52.dp, end = NuvioTheme.spacing.lg, top = NuvioTheme.spacing.xs, bottom = NuvioTheme.spacing.sm)
                 )
             }
         }
@@ -213,8 +214,8 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 Text(
                     text = stringResource(R.string.playback_buffer_target_managed_hint),
                     style = MaterialTheme.typography.bodySmall,
-                    color = NuvioColors.TextSecondary,
-                    modifier = Modifier.padding(start = 52.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
+                    color = NuvioTheme.colors.TextSecondary,
+                    modifier = Modifier.padding(start = 52.dp, end = NuvioTheme.spacing.lg, top = NuvioTheme.spacing.xs, bottom = NuvioTheme.spacing.sm)
                 )
             }
             if (!budgetManaged && playerSettings.allowLargeTargetBuffer && bufferSizeMb > safeMaxMb) {
@@ -222,7 +223,7 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                     text = stringResource(R.string.playback_buffer_target_warning, safeMaxMb),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFFF44336),
-                    modifier = Modifier.padding(start = 52.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
+                    modifier = Modifier.padding(start = 52.dp, end = NuvioTheme.spacing.lg, top = NuvioTheme.spacing.xs, bottom = NuvioTheme.spacing.sm)
                 )
             }
         }
@@ -243,8 +244,8 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
             Text(
                 text = stringResource(R.string.playback_cache_header),
                 style = MaterialTheme.typography.titleMedium,
-                color = NuvioColors.TextSecondary,
-                modifier = Modifier.padding(vertical = 8.dp)
+                color = NuvioTheme.colors.TextSecondary,
+                modifier = Modifier.padding(vertical = NuvioTheme.spacing.sm)
             )
         }
 
@@ -264,7 +265,7 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
             // as a second redundant on/off switch.
             item {
                 val autoMode = playerSettings.vodCacheSizeMode == VodCacheSizeMode.AUTO
-                Box(modifier = Modifier.padding(start = 32.dp)) {
+                Box(modifier = Modifier.padding(start = NuvioTheme.spacing.xxl)) {
                     ToggleSettingsItem(
                         icon = Icons.Default.Tune,
                         title = stringResource(R.string.playback_cache_auto_size),
@@ -334,8 +335,8 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 Text(
                     text = infoText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = NuvioColors.TextSecondary,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    color = NuvioTheme.colors.TextSecondary,
+                    modifier = Modifier.padding(bottom = NuvioTheme.spacing.sm)
                 )
             }
         }
@@ -345,12 +346,12 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 onClick = onResetToDefaults,
                 shape = ButtonDefaults.shape(shape = RoundedCornerShape(10.dp)),
                 colors = ButtonDefaults.colors(
-                    containerColor = NuvioColors.Background,
-                    focusedContainerColor = NuvioColors.Background
+                    containerColor = NuvioTheme.colors.Background,
+                    focusedContainerColor = NuvioTheme.colors.Background
                 ),
                 border = ButtonDefaults.border(
                     focusedBorder = Border(
-                        border = BorderStroke(1.dp, NuvioColors.FocusRing),
+                        border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
                         shape = RoundedCornerShape(10.dp)
                     )
                 )
@@ -358,7 +359,7 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 Text(
                     text = stringResource(R.string.playback_reset_to_default),
                     style = MaterialTheme.typography.labelLarge,
-                    color = NuvioColors.TextPrimary
+                    color = NuvioTheme.colors.TextPrimary
                 )
             }
         }
@@ -424,12 +425,12 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 onClick = onResetNetworkToDefaults,
                 shape = ButtonDefaults.shape(shape = RoundedCornerShape(10.dp)),
                 colors = ButtonDefaults.colors(
-                    containerColor = NuvioColors.Background,
-                    focusedContainerColor = NuvioColors.Background
+                    containerColor = NuvioTheme.colors.Background,
+                    focusedContainerColor = NuvioTheme.colors.Background
                 ),
                 border = ButtonDefaults.border(
                     focusedBorder = Border(
-                        border = BorderStroke(1.dp, NuvioColors.FocusRing),
+                        border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
                         shape = RoundedCornerShape(10.dp)
                     )
                 )
@@ -437,7 +438,7 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 Text(
                     text = stringResource(R.string.playback_reset_to_default),
                     style = MaterialTheme.typography.labelLarge,
-                    color = NuvioColors.TextPrimary
+                    color = NuvioTheme.colors.TextPrimary
                 )
             }
         }

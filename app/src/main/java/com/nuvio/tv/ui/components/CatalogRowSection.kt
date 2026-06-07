@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.components
 
+import com.nuvio.tv.ui.theme.NuvioTheme
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,7 +61,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.MetaPreview
-import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.util.formatAddonTypeLabel
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
@@ -205,7 +206,7 @@ fun CatalogRowSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 48.dp, end = 48.dp, bottom = 12.dp),
+                .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.md),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -213,7 +214,7 @@ fun CatalogRowSection(
                 Text(
                     text = catalogTitle,
                     style = MaterialTheme.typography.headlineMedium,
-                    color = NuvioColors.TextPrimary,
+                    color = NuvioTheme.colors.TextPrimary,
                     maxLines = 3,
                     overflow = TextOverflow.Clip
                 )
@@ -221,7 +222,7 @@ fun CatalogRowSection(
                     Text(
                         text = stringResource(R.string.catalog_from_addon, catalogRow.addonName),
                         style = MaterialTheme.typography.labelMedium,
-                        color = NuvioColors.TextTertiary
+                        color = NuvioTheme.colors.TextTertiary
                     )
                 }
             }
@@ -232,7 +233,7 @@ fun CatalogRowSection(
         val layoutDirection = LocalLayoutDirection.current
         val isRtl = layoutDirection == LayoutDirection.Rtl
         val horizontalBringIntoViewSpec = remember(density, defaultBringIntoViewSpec, isRtl) {
-            val startPx = with(density) { 48.dp.roundToPx() }
+            val startPx = with(density) { NuvioTheme.spacing.xxxl.roundToPx() }
             @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
             object : BringIntoViewSpec {
                 override val scrollAnimationSpec: AnimationSpec<Float> =
@@ -288,8 +289,8 @@ fun CatalogRowSection(
                     }
                 )
                 .focusGroup(),
-            contentPadding = PaddingValues(start = 48.dp, end = 200.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(start = NuvioTheme.spacing.xxxl, end = 200.dp),
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
         ) {
             itemsIndexed(
                 items = catalogRow.items,
@@ -369,12 +370,12 @@ fun CatalogRowSection(
                             .then(directionalFocusModifier),
                         shape = CardDefaults.shape(shape = seeAllCardShape),
                         colors = CardDefaults.colors(
-                            containerColor = NuvioColors.BackgroundCard,
-                            focusedContainerColor = NuvioColors.BackgroundCard
+                            containerColor = NuvioTheme.colors.BackgroundCard,
+                            focusedContainerColor = NuvioTheme.colors.BackgroundCard
                         ),
                         border = CardDefaults.border(
                             focusedBorder = Border(
-                                border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioColors.FocusRing),
+                                border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioTheme.colors.FocusRing),
                                 shape = seeAllCardShape
                             )
                         ),
@@ -391,14 +392,14 @@ fun CatalogRowSection(
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                                     contentDescription = seeAllLabel ?: stringResource(R.string.action_see_all),
-                                    modifier = Modifier.size(32.dp),
-                                    tint = NuvioColors.TextSecondary
+                                    modifier = Modifier.size(NuvioTheme.spacing.xxl),
+                                    tint = NuvioTheme.colors.TextSecondary
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
                                 Text(
                                     text = seeAllLabel ?: stringResource(R.string.action_see_all),
                                     style = MaterialTheme.typography.titleSmall,
-                                    color = NuvioColors.TextSecondary
+                                    color = NuvioTheme.colors.TextSecondary
                                 )
                             }
                         }
