@@ -1613,8 +1613,7 @@ private class CueNormalizingTextOutput(
 
     override fun onCues(cueGroup: CueGroup) {
         val processed = cueGroup.cues.map { cue ->
-            var c = fixCuePositionAnchor(cue)
-            c = fixRtlCueText(c)
+            var c = fixRtlCueText(cue)
             if (shouldNormalizeCuePositionProvider()) c = normalizeCuePosition(c)
             c
         }
@@ -1624,25 +1623,11 @@ private class CueNormalizingTextOutput(
     @Deprecated("Uses the deprecated Media3 callback for text outputs.")
     override fun onCues(cues: List<Cue>) {
         val processed = cues.map { cue ->
-            var c = fixCuePositionAnchor(cue)
-            c = fixRtlCueText(c)
+            var c = fixRtlCueText(cue)
             if (shouldNormalizeCuePositionProvider()) c = normalizeCuePosition(c)
             c
         }
         delegate.onCues(processed)
-    }
-
-    // WebViewSubtitleOutput bug: position==DIMEN_UNSET → left:50%, but
-    // positionAnchor==TYPE_UNSET → translate(0%) instead of translate(-50%).
-    // Fix by setting ANCHOR_TYPE_MIDDLE so the cue is properly centered.
-    private fun fixCuePositionAnchor(cue: Cue): Cue {
-        if (cue.bitmap != null) return cue
-        if (cue.position != Cue.DIMEN_UNSET) return cue
-        if (cue.positionAnchor != Cue.TYPE_UNSET) return cue
-        return cue.buildUpon()
-            .setPosition(Cue.DIMEN_UNSET)
-            .setPositionAnchor(Cue.ANCHOR_TYPE_MIDDLE)
-            .build()
     }
 
     private fun normalizeCuePosition(cue: Cue): Cue {
