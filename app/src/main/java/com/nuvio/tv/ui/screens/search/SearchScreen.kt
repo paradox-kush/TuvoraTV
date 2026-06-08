@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.search
 
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.screens.home.HeroBackdropState
 
 import android.Manifest
 import android.content.Intent
@@ -711,6 +712,8 @@ fun SearchScreen(
                                         it.value.firstVisibleItemIndex to it.value.firstVisibleItemScrollOffset
                                     }
                                     viewModel.hasSavedSearchFocus = true
+                                    val clickedItem = catalogRow.items.firstOrNull { it.id == id }
+                                    HeroBackdropState.update(clickedItem?.backdropUrl)
                                     onNavigateToDetail(id, type, addonBaseUrl)
                                 },
                                 onItemLongPress = { item, addonBaseUrl ->
@@ -736,6 +739,11 @@ fun SearchScreen(
         state = posterOptionsState,
         controller = viewModel.posterOptions,
         onNavigateToDetail = { id, type, addonBaseUrl ->
+            val clickedItem = uiState.catalogRows
+                .flatMap { it.items }
+                .firstOrNull { it.id == id }
+                ?: uiState.discoverResults.firstOrNull { it.id == id }
+            HeroBackdropState.update(clickedItem?.backdropUrl)
             onNavigateToDetail(id, type, addonBaseUrl)
         }
     )
