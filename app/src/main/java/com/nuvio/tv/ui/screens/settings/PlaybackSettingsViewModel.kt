@@ -203,6 +203,10 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setDv7LibdoviModeOverride(mode)
     }
 
+    suspend fun setStripHdr10PlusSei(enabled: Boolean) {
+        playerSettingsDataStore.setStripHdr10PlusSei(enabled)
+    }
+
     suspend fun setUseLibass(enabled: Boolean) {
         playerSettingsDataStore.setUseLibass(enabled)
     }

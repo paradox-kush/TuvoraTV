@@ -296,6 +296,9 @@ fun PlaybackSettingsContent(
                         viewModel.setDv7ToDv81PreserveMappingEnabled(enabled)
                     }
                 },
+                onSetStripHdr10PlusSei = { enabled ->
+                    coroutineScope.launch { viewModel.setStripHdr10PlusSei(enabled) }
+                },
                 onSetBufferEngineEnabled = { enabled ->
                     coroutineScope.launch { viewModel.setBufferEngineEnabled(enabled) }
                     if (enabled) memoryUsageTrigger++
