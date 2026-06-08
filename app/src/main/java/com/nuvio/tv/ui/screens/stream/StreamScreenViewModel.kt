@@ -6,6 +6,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
+import com.nuvio.tv.core.debrid.DebridStreamPresentation
 import com.nuvio.tv.core.debrid.DirectDebridResolveResult
 import com.nuvio.tv.core.debrid.DirectDebridResolver
 import com.nuvio.tv.core.debrid.DirectDebridStreamPreparer
@@ -80,6 +81,7 @@ class StreamScreenViewModel @Inject constructor(
     private val traktAuthService: TraktAuthService,
     private val directDebridResolver: DirectDebridResolver,
     private val directDebridStreamPreparer: DirectDebridStreamPreparer,
+    private val debridStreamPresentation: DebridStreamPresentation,
     private val externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker,
     private val subtitleRepository: com.nuvio.tv.domain.repository.SubtitleRepository,
     private val subtitleFileCache: com.nuvio.tv.core.player.SubtitleFileCache,
@@ -97,6 +99,8 @@ class StreamScreenViewModel @Inject constructor(
     private var resumeBaselineStreams: List<AddonStreams>? = null
     private var sourceChipErrorDismissJob: Job? = null
     private var pendingCacheSaveJob: Job? = null
+    private var streamBadgePresentationJob: Job? = null
+    private var streamBadgePresentationRequestId = 0L
 
     private val embeddedStreamGroupName: String by lazy {
         context.getString(R.string.stream_embedded_group)
@@ -160,6 +164,36 @@ class StreamScreenViewModel @Inject constructor(
         _uiState.update { state ->
             val next = transform(state)
             if (next == state) state else next
+        }
+    }
+
+    private fun scheduleStreamBadgePresentation(groups: List<AddonStreams>) {
+        streamBadgePresentationJob?.cancel()
+        streamBadgePresentationRequestId += 1
+        if (groups.isEmpty()) return
+        val requestId = streamBadgePresentationRequestId
+        streamBadgePresentationJob = viewModelScope.launch {
+            val debridPresentedGroups = debridStreamPresentation.apply(
+                groups = groups,
+                includeBadgeMatches = true
+            )
+            val presentedGroups = streamBadgePresentation.apply(debridPresentedGroups)
+            if (requestId != streamBadgePresentationRequestId || presentedGroups == groups) return@launch
+            updateUiStateIfChanged { state ->
+                val allStreams = presentedGroups.flatMap { addonStreams ->
+                    addonStreams.streams
+                }
+                val filteredStreams = if (state.selectedAddonFilter == null) {
+                    allStreams
+                } else {
+                    allStreams.filter { it.addonName == state.selectedAddonFilter }
+                }
+                state.copy(
+                    addonStreams = presentedGroups,
+                    allStreams = allStreams,
+                    filteredStreams = filteredStreams
+                )
+            }
         }
     }
 
@@ -240,6 +274,8 @@ class StreamScreenViewModel @Inject constructor(
         streamLoadScope?.cancel()
         streamLoadScope = null
         streamLoadJob = null
+        streamBadgePresentationJob?.cancel()
+        streamBadgePresentationRequestId += 1
         updateUiStateIfChanged { it.copy(isLoading = false) }
     }
 
@@ -254,6 +290,8 @@ class StreamScreenViewModel @Inject constructor(
         streamLoadScope?.cancel()
         streamLoadScope = null
         streamLoadJob = null
+        streamBadgePresentationJob?.cancel()
+        streamBadgePresentationRequestId += 1
         sourceChipErrorDismissJob?.cancel()
         val newScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + kotlinx.coroutines.SupervisorJob())
         streamLoadScope = newScope
@@ -382,7 +420,7 @@ class StreamScreenViewModel @Inject constructor(
                     addonStreamGroups,
                     installedAddonOrder
                 )
-                
+
                 val allStreams = orderedAddonStreams.flatMap { addonStreams ->
                     addonStreams.streams
                 }
@@ -443,6 +481,7 @@ class StreamScreenViewModel @Inject constructor(
                         }
                     )
                 }
+                scheduleStreamBadgePresentation(orderedAddonStreams)
             }
 
             if (shouldAttemptEmbeddedMetaStreamLookup()) {
@@ -923,12 +962,11 @@ class StreamScreenViewModel @Inject constructor(
             )
         }
 
-        val group = AddonStreams(
+        return AddonStreams(
             addonName = embeddedStreamGroupName,
             addonLogo = null,
             streams = streams
         )
-        return streamBadgePresentation.apply(listOf(group)).firstOrNull() ?: group
     }
 
     private fun loadMissingMetaDetailsIfNeeded() {
