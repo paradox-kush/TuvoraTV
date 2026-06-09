@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.search
 
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.screens.home.HeroBackdropState
 
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.BorderStroke
@@ -240,6 +241,7 @@ internal fun DiscoverSection(
                     isLoadingMore = uiState.discoverLoadingMore,
                     onLoadMore = onLoadMore,
                     onItemClick = { _, item ->
+                        HeroBackdropState.update(item.backdropUrl)
                         onNavigateToDetail(
                             item.id,
                             item.apiType,

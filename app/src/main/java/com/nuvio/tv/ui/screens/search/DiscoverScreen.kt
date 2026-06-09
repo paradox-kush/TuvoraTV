@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.search
 
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.screens.home.HeroBackdropState
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -132,6 +133,8 @@ fun DiscoverScreen(
             controller = viewModel.posterOptions,
             onNavigateToDetail = { id, type, addonBaseUrl ->
                 pendingDiscoverRestoreOnResume = true
+                val clickedItem = uiState.discoverResults.firstOrNull { it.id == id }
+                HeroBackdropState.update(clickedItem?.backdropUrl)
                 onNavigateToDetail(id, type, addonBaseUrl)
             }
         )

@@ -966,7 +966,15 @@ fun NuvioNavHost(
             SearchScreen(
                 viewModel = searchViewModel,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl))
+                    val heroBackdrop = HeroBackdropState.consumeAndClear()
+                    navController.navigate(
+                        Screen.Detail.createRoute(
+                            itemId = itemId,
+                            itemType = itemType,
+                            addonBaseUrl = addonBaseUrl,
+                            heroBackdropUrl = heroBackdrop
+                        )
+                    )
                 },
                 onNavigateToSeeAll = { catalogId, addonId, type ->
                     navController.navigate(
@@ -981,7 +989,15 @@ fun NuvioNavHost(
             DiscoverScreen(
                 showBuiltInHeader = !hideBuiltInHeaders,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl))
+                    val heroBackdrop = HeroBackdropState.consumeAndClear()
+                    navController.navigate(
+                        Screen.Detail.createRoute(
+                            itemId = itemId,
+                            itemType = itemType,
+                            addonBaseUrl = addonBaseUrl,
+                            heroBackdropUrl = heroBackdrop
+                        )
+                    )
                 }
             )
         }
