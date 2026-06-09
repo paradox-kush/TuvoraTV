@@ -83,6 +83,7 @@ import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.util.formatAddonTypeLabel
+import com.nuvio.tv.ui.util.localizedContentType
 import com.nuvio.tv.ui.util.localizedGenreLabel
 import kotlinx.coroutines.delay
 import androidx.compose.ui.res.stringResource
@@ -98,9 +99,7 @@ private enum class LibraryViewMode {
 @Composable
 private fun localizedTypeLabel(key: String): String = when (key.lowercase()) {
     LibraryTypeTab.ALL_KEY -> stringResource(R.string.library_type_all)
-    "movie" -> stringResource(R.string.type_movie)
-    "series" -> stringResource(R.string.type_series)
-    else -> formatAddonTypeLabel(key)
+    else -> localizedContentType(key)
 }
 
 @Composable

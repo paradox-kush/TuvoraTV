@@ -39,6 +39,8 @@ import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import com.nuvio.tv.ui.util.dpadRepeatThrottle
+import com.nuvio.tv.ui.util.localizedContentType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -559,8 +561,6 @@ private fun RowsContent(
         }
     }
 
-    val strTypeMovie = stringResource(R.string.type_movie)
-    val strTypeSeries = stringResource(R.string.type_series)
     val loadMoreLabel = stringResource(R.string.action_load_more)
 
     LazyColumn(
@@ -571,12 +571,9 @@ private fun RowsContent(
     ) {
         sourceTabs.forEachIndexed { index, tab ->
             item(key = "row_${index}_${tab.label}") {
-                val localizedTypeLabel = remember(tab.rawType, strTypeMovie, strTypeSeries) {
-                    when (tab.rawType.lowercase()) {
-                        "movie" -> strTypeMovie
-                        "series" -> strTypeSeries
-                        else -> tab.rawType.replaceFirstChar { it.uppercase() }
-                    }
+                val folderContext = LocalContext.current
+                val localizedTypeLabel = remember(tab.rawType, folderContext) {
+                    localizedContentType(folderContext, tab.rawType)
                 }
                 val rowTitle = remember(tab.label, localizedTypeLabel) {
                     if (tab.label != tab.typeLabel && localizedTypeLabel.isNotEmpty()) {

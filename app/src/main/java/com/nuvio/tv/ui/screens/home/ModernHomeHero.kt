@@ -449,10 +449,12 @@ private fun HeroTitleContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(metaSpacing)
         ) {
-            val leadingMetaText = remember(preview.contentTypeText, preview.genres) {
+            val leadingMetaText = remember(preview.contentTypeText, preview.genres, context) {
                 buildList {
                     preview.contentTypeText?.takeIf { it.isNotBlank() }?.let(::add)
-                    preview.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let(::add)
+                    preview.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { genre ->
+                        add(com.nuvio.tv.ui.util.localizedGenreLabel(context, genre))
+                    }
                 }.joinToString(separator = " • ")
             }
             val hasLeadingMeta = leadingMetaText.isNotBlank()

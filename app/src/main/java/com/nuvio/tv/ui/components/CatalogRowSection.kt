@@ -62,6 +62,8 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.ui.util.formatAddonTypeLabel
+import com.nuvio.tv.ui.util.localizedContentType
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -180,15 +182,10 @@ fun CatalogRowSection(
         Modifier
     }
 
-    val strTypeMovie = stringResource(R.string.type_movie)
-    val strTypeSeries = stringResource(R.string.type_series)
-    val typeLabel = remember(catalogRow.rawType, catalogRow.apiType, strTypeMovie, strTypeSeries) {
+    val catalogContext = LocalContext.current
+    val typeLabel = remember(catalogRow.rawType, catalogRow.apiType, catalogContext) {
         val raw = catalogRow.rawType.takeIf { it.isNotBlank() } ?: catalogRow.apiType
-        when (raw.lowercase()) {
-            "movie" -> strTypeMovie
-            "series" -> strTypeSeries
-            else -> formatAddonTypeLabel(raw)
-        }
+        localizedContentType(catalogContext, raw)
     }
     val catalogTitle = remember(catalogRow.catalogName, typeLabel, showCatalogTypeSuffix) {
         val formattedName = catalogRow.catalogName.replaceFirstChar { it.uppercase() }
