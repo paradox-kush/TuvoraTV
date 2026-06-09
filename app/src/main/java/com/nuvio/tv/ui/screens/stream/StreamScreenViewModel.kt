@@ -315,7 +315,7 @@ class StreamScreenViewModel @Inject constructor(
         streamLoadJob = null
         streamBadgePresentationJob?.cancel()
         streamBadgePresentationRequestId += 1
-        badgedAddonNames = emptySet()
+        if (resumeBaselineStreams == null) badgedAddonNames = emptySet()
         sourceChipErrorDismissJob?.cancel()
         val newScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + kotlinx.coroutines.SupervisorJob())
         streamLoadScope = newScope
