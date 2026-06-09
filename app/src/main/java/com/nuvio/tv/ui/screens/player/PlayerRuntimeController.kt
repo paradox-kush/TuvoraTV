@@ -293,6 +293,7 @@ class PlayerRuntimeController(
 
     internal var lastSavedPosition: Long = 0L
     internal val saveThresholdMs = 5000L
+    internal var hasMarkedCurrentEpisodeCompleted: Boolean = false
     internal var lastKnownDuration: Long = 0L
 
     internal var playbackStartedForParentalGuide = false

@@ -347,7 +347,12 @@ internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, d
     )
 
     scope.launch(kotlinx.coroutines.NonCancellable) {
-        watchProgressRepository.saveProgress(progress, syncRemote = syncRemote)
+        if (progress.isCompleted() && !hasMarkedCurrentEpisodeCompleted) {
+            hasMarkedCurrentEpisodeCompleted = true
+            watchProgressRepository.markAsCompleted(progress)
+        } else {
+            watchProgressRepository.saveProgress(progress, syncRemote = syncRemote)
+        }
     }
 }
 
