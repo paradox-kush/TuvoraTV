@@ -526,6 +526,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         streamMime.lowercase().contains("mpegurl") ||
                         streamMime.lowercase().contains("m3u8")
                     )
+                    Log.d("NuvioTrackSelector", "selectAllTracks run: streamMime=$streamMime, isHls=$isHls")
                     if (isHls) {
                         for (rendererIndex in 0 until mappedTrackInfo.rendererCount) {
                             if (mappedTrackInfo.getRendererType(rendererIndex) == C.TRACK_TYPE_VIDEO) {
@@ -536,6 +537,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                                         val format = group.getFormat(trackIndex)
                                         val support = rendererFormatSupports[rendererIndex][groupIndex][trackIndex]
                                         val formatSupport = RendererCapabilities.getFormatSupport(support)
+                                        Log.d("NuvioTrackSelector", "Evaluating track: id=${format.id}, res=${format.width}x${format.height}, mime=${format.sampleMimeType}, codecs=${format.codecs}, support=${formatSupport}")
                                         if (formatSupport == C.FORMAT_EXCEEDS_CAPABILITIES) {
                                             val mime = format.sampleMimeType
                                             val isAvcOrHevc = mime == MimeTypes.VIDEO_H264 || mime == MimeTypes.VIDEO_H265
@@ -545,7 +547,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                                             val isHdr = format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_ST2084
                                             val isStandard8Bit = !is10Bit && !isHdr
 
+                                            Log.d("NuvioTrackSelector", "Conditions for id=${format.id}: isAvcOrHevc=$isAvcOrHevc, isAtMost1080p=$isAtMost1080p, isStandard8Bit=$isStandard8Bit")
                                             if (isAvcOrHevc && isAtMost1080p && isStandard8Bit) {
+                                                Log.i("NuvioTrackSelector", "Upgraded track support to FORMAT_HANDLED for id=${format.id}")
                                                 rendererFormatSupports[rendererIndex][groupIndex][trackIndex] =
                                                     RendererCapabilities.create(
                                                         C.FORMAT_HANDLED,
@@ -1001,6 +1005,14 @@ internal fun PlayerRuntimeController.initializePlayer(
 
                     override fun onTracksChanged(tracks: Tracks) {
                         updateAvailableTracks(tracks)
+                    }
+
+                    override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                        if (videoSize.width > 0 && videoSize.height > 0) {
+                            currentVideoWidth = videoSize.width
+                            currentVideoHeight = videoSize.height
+                            Log.d(PlayerRuntimeController.TAG, "onVideoSizeChanged: updated resolution to ${videoSize.width}x${videoSize.height}")
+                        }
                     }
 
                     override fun onRenderedFirstFrame() {
