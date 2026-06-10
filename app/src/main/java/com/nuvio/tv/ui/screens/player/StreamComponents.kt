@@ -69,6 +69,7 @@ internal fun StreamItem(
     requestInitialFocus: Boolean,
     isCurrentStream: Boolean = false,
     showFileSizeBadges: Boolean = true,
+    showAddonLogo: Boolean = true,
     badgePlacement: StreamBadgePlacement = StreamBadgePlacement.BOTTOM,
     onClick: () -> Unit,
     onUpKey: (() -> Unit)? = null
@@ -194,7 +195,7 @@ internal fun StreamItem(
             Column(
                 horizontalAlignment = Alignment.End
             ) {
-                if (addonLogoModel != null) {
+                if (showAddonLogo && addonLogoModel != null) {
                     AsyncImage(
                         model = addonLogoModel,
                         contentDescription = stream.addonName,
