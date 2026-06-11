@@ -29,6 +29,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.net.URL
 import java.net.HttpURLConnection
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.Tracks
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class TrackSelectionInvestigationTest {
 
@@ -461,5 +464,74 @@ class TrackSelectionInvestigationTest {
 
         val finalSupportHevc10 = RendererCapabilities.getFormatSupport(rendererFormatSupports[0][1][0])
         assertEquals(C.FORMAT_EXCEEDS_CAPABILITIES, finalSupportHevc10)
+    }
+
+    @Test
+    fun testBuildStreamInfoDataWithActiveVideoFormat() {
+        val controller = mockk<PlayerRuntimeController>(relaxed = true)
+        val mockExoPlayer = mockk<ExoPlayer>(relaxed = true)
+        
+        // Active format is the cropped format returned by the decoder/player (1918x802)
+        val activeFormat = Format.Builder()
+            .setId("1")
+            .setWidth(1918)
+            .setHeight(802)
+            .setPeakBitrate(1800000)
+            .setSampleMimeType("video/avc")
+            .setCodecs("avc1.640028")
+            .build()
+
+        // Manifest format contains the original uncropped resolution (1920x1080)
+        val manifestFormat = Format.Builder()
+            .setId("1")
+            .setWidth(1920)
+            .setHeight(1080)
+            .setPeakBitrate(1800000)
+            .setSampleMimeType("video/avc")
+            .setCodecs("avc1.640028")
+            .build()
+
+        // Mock currentTracks structure
+        val mockGroup = mockk<Tracks.Group>(relaxed = true)
+        every { mockGroup.type } returns C.TRACK_TYPE_VIDEO
+        every { mockGroup.isSelected } returns true
+        every { mockGroup.length } returns 1
+        every { mockGroup.getTrackFormat(0) } returns manifestFormat
+
+        val mockTracks = mockk<Tracks>(relaxed = true)
+        every { mockTracks.groups } returns listOf(mockGroup)
+        
+        every { mockExoPlayer.videoFormat } returns activeFormat
+        every { mockExoPlayer.currentTracks } returns mockTracks
+        every { controller._exoPlayer } returns mockExoPlayer
+
+        // Mock other controller properties
+        every { controller._uiState } returns MutableStateFlow(PlayerUiState(
+            currentStreamName = "Test Stream",
+            detectedFrameRate = 23.976f
+        ))
+        every { controller.currentAddonName } returns "Test Addon"
+        every { controller.currentAddonLogo } returns "logo.png"
+        every { controller.currentStreamDescription } returns "Description"
+        every { controller.currentFilename } returns "file.mkv"
+        every { controller.currentVideoSize } returns 1024L
+        every { controller.currentVideoWidth } returns 1920
+        every { controller.currentVideoHeight } returns 1080
+        every { controller.currentVideoBitrate } returns 4500000
+        every { controller.currentVideoCodec } returns "HEVC"
+        every { controller.currentInternalPlayerEngine } returns com.nuvio.tv.data.local.InternalPlayerEngine.EXOPLAYER
+
+        val mockContext = mockk<Context>(relaxed = true)
+        every { mockContext.getString(any()) } returns "mocked_string"
+        every { mockContext.resources } returns mockk(relaxed = true)
+        every { controller.context } returns mockContext
+
+        val streamInfo = controller.buildStreamInfoData()
+
+        // Verify that the uncropped manifest/header resolution is matched and resolved
+        assertEquals(1920, streamInfo.videoWidth)
+        assertEquals(1080, streamInfo.videoHeight)
+        assertEquals(1800000, streamInfo.videoBitrate)
+        assertEquals("AVC", streamInfo.videoCodec)
     }
 }

@@ -1249,6 +1249,23 @@ internal fun PlayerRuntimeController.buildStreamInfoData(): StreamInfoData {
     val selectedSubtitle = state.subtitleTracks.firstOrNull { it.isSelected }
     val addonSub = state.selectedAddonSubtitle
 
+    val activeVideoFormat = _exoPlayer?.videoFormat
+    val matchedFormat = _exoPlayer?.currentTracks?.groups
+        ?.firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO && it.isSelected }
+        ?.let { group ->
+            (0 until group.length)
+                .map { group.getTrackFormat(it) }
+                .firstOrNull { it.id == activeVideoFormat?.id || (it.bitrate > 0 && it.bitrate == activeVideoFormat?.bitrate) }
+        }
+
+    val videoWidth = matchedFormat?.width?.takeIf { it > 0 } ?: activeVideoFormat?.width?.takeIf { it > 0 } ?: currentVideoWidth
+    val videoHeight = matchedFormat?.height?.takeIf { it > 0 } ?: activeVideoFormat?.height?.takeIf { it > 0 } ?: currentVideoHeight
+    val videoBitrate = activeVideoFormat?.bitrate?.takeIf { it > 0 } ?: currentVideoBitrate
+    val videoCodec = activeVideoFormat?.let { format ->
+        CustomDefaultTrackNameProvider.formatNameFromMime(format.sampleMimeType)
+            ?: CustomDefaultTrackNameProvider.formatNameFromMime(format.codecs)
+    } ?: currentVideoCodec
+
     return StreamInfoData(
         addonName = currentAddonName,
         addonLogo = currentAddonLogo,
@@ -1256,11 +1273,11 @@ internal fun PlayerRuntimeController.buildStreamInfoData(): StreamInfoData {
         streamDescription = currentStreamDescription,
         filename = currentFilename,
         fileSize = currentVideoSize,
-        videoCodec = currentVideoCodec,
-        videoWidth = currentVideoWidth,
-        videoHeight = currentVideoHeight,
+        videoCodec = videoCodec,
+        videoWidth = videoWidth,
+        videoHeight = videoHeight,
         videoFrameRate = state.detectedFrameRate.takeIf { it > 0f },
-        videoBitrate = currentVideoBitrate,
+        videoBitrate = videoBitrate,
         audioCodec = selectedAudio?.codec,
         audioChannels = selectedAudio?.channelCount?.let {
             CustomDefaultTrackNameProvider.getChannelLayoutName(it)
