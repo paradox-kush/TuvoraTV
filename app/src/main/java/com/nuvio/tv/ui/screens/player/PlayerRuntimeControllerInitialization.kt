@@ -553,7 +553,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                                                 rendererFormatSupports[rendererIndex][groupIndex][trackIndex] =
                                                     RendererCapabilities.create(
                                                         C.FORMAT_HANDLED,
-                                                        RendererCapabilities.getAdaptiveSupport(support),
+                                                        RendererCapabilities.ADAPTIVE_SEAMLESS,
                                                         RendererCapabilities.getTunnelingSupport(support),
                                                         RendererCapabilities.getHardwareAccelerationSupport(support),
                                                         RendererCapabilities.getDecoderSupport(support)

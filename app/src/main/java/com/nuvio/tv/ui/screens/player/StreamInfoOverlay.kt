@@ -238,14 +238,15 @@ private fun formatBitrate(bps: Int): String {
     }
 }
 
-private fun formatResolution(width: Int, height: Int): String {
+internal fun formatResolution(width: Int, height: Int): String {
+    val maxDim = maxOf(width, height)
     val label = when {
-        height >= 2160 || width >= 3840 -> "4K"
-        height >= 1440 || width >= 2560 -> "1440p"
-        height >= 1080 || width >= 1920 -> "1080p"
-        height >= 720 || width >= 1280 -> "720p"
-        height >= 480 || width >= 854 -> "480p"
-        else -> "${height}p"
+        maxDim >= 3600 -> "4K"
+        maxDim >= 2400 -> "1440p"
+        maxDim >= 1800 -> "1080p"
+        maxDim >= 1200 -> "720p"
+        maxDim >= 800 -> "480p"
+        else -> "${minOf(width, height)}p"
     }
     return "$width × $height ($label)"
 }
