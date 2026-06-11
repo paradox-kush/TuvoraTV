@@ -1047,7 +1047,12 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
 
                 _uiState.update { state ->
                     // Don't overwrite cached CW with empty data while sources are still loading.
-                    if (normalItems.isEmpty() && state.continueWatchingItems.isNotEmpty()) {
+                    // Once remote progress is confirmed loaded (Nuvio Sync completed or Trakt
+                    // responded), trust the empty result — items may have been deleted remotely.
+                    val shouldProtectCache = normalItems.isEmpty() &&
+                        state.continueWatchingItems.isNotEmpty() &&
+                        !snapshot.hasLoadedRemoteProgress
+                    if (shouldProtectCache) {
                         state
                     } else if (state.continueWatchingItems == normalItems) {
                         state
