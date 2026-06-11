@@ -542,6 +542,8 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                             state
                         } else if (state.continueWatchingItems == initialItems) {
                             state
+                        } else if (!snapshot.hasLoadedRemoteProgress && state.continueWatchingItems.isNotEmpty() && initialItems.size < state.continueWatchingItems.size) {
+                            state
                         } else {
                             state.copy(continueWatchingItems = initialItems)
                         }
@@ -1052,7 +1054,10 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                     val shouldProtectCache = normalItems.isEmpty() &&
                         state.continueWatchingItems.isNotEmpty() &&
                         !snapshot.hasLoadedRemoteProgress
-                    if (shouldProtectCache) {
+                    val shouldPreventShrink = !snapshot.hasLoadedRemoteProgress &&
+                        state.continueWatchingItems.isNotEmpty() &&
+                        normalItems.size < state.continueWatchingItems.size
+                    if (shouldProtectCache || shouldPreventShrink) {
                         state
                     } else if (state.continueWatchingItems == normalItems) {
                         state
