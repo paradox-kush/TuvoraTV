@@ -50,7 +50,8 @@ class MetaRepositoryImpl @Inject constructor(
 
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // In-memory cache: "type:id" -> Meta
+    // In-memory cache: "addonBaseUrl|type:id" -> Meta. Keyed per addon so two
+    // addons serving meta for the same content id never overwrite each other.
     private val metaCache = ConcurrentHashMap<String, Meta>()
     // Separate cache for full meta fetched from addons (bypasses catalog-level cache)
     private val addonMetaCache = ConcurrentHashMap<String, Meta>()
@@ -66,7 +67,7 @@ class MetaRepositoryImpl @Inject constructor(
         type: String,
         id: String
     ): Flow<NetworkResult<Meta>> = flow {
-        val cacheKey = "$type:$id"
+        val cacheKey = addonMetaCacheKey(addonBaseUrl, type, id)
         metaCache[cacheKey]?.let { cached ->
             emit(NetworkResult.Success(cached))
             return@flow
@@ -184,7 +185,7 @@ class MetaRepositoryImpl @Inject constructor(
                             val episodeLabel = context.getString(R.string.episodes_episode)
                             val meta = metaDto.toDomain(episodeLabel)
                             addonMetaCache[cacheKey] = meta
-                            metaCache[cacheKey] = meta
+                            metaCache[addonMetaCacheKey(addon.baseUrl, requestedType, id)] = meta
                             emit(NetworkResult.Success(meta))
                             return@flow
                         } else {
@@ -224,7 +225,7 @@ class MetaRepositoryImpl @Inject constructor(
                                 if (metaDto != null) {
                                     val meta = metaDto.toDomain(context.getString(R.string.episodes_episode))
                                     addonMetaCache[cacheKey] = meta
-                                    metaCache[cacheKey] = meta
+                                    metaCache[addonMetaCacheKey(addon.baseUrl, candidateType, id)] = meta
                                     Log.d(TAG, "Meta fetch success addonId=${addon.id} type=$candidateType id=$id")
                                     return@async meta
                                 }
@@ -301,7 +302,7 @@ class MetaRepositoryImpl @Inject constructor(
                             val metaDto = result.data.meta ?: return@async null
                             val meta = metaDto.toDomain(context.getString(R.string.episodes_episode))
                             primaryAddonMetaCache[cacheKey] = meta
-                            metaCache[cacheKey] = meta
+                            metaCache[addonMetaCacheKey(addon.baseUrl, candidateType, id)] = meta
                             meta
                         }
                         else -> null
@@ -324,6 +325,9 @@ class MetaRepositoryImpl @Inject constructor(
             )))
         }
     }
+
+    private fun addonMetaCacheKey(addonBaseUrl: String, type: String, id: String): String =
+        "${addonBaseUrl.trimEnd('/')}|$type:$id"
 
     private fun buildMetaUrl(baseUrl: String, type: String, id: String): String {
         val cleanBaseUrl = baseUrl.trimEnd('/')
