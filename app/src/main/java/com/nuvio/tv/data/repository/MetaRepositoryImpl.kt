@@ -326,14 +326,26 @@ class MetaRepositoryImpl @Inject constructor(
         }
     }
 
-    private fun addonMetaCacheKey(addonBaseUrl: String, type: String, id: String): String =
-        "${addonBaseUrl.trimEnd('/')}|$type:$id"
-
-    private fun buildMetaUrl(baseUrl: String, type: String, id: String): String {
+    /**
+     * Splits an addon base URL into its path (trailing slashes trimmed) and
+     * query portions. Shared by URL construction and cache keying so the two
+     * always normalize equivalent base URLs identically.
+     */
+    private fun splitAddonBaseUrl(baseUrl: String): Pair<String, String> {
         val cleanBaseUrl = baseUrl.trimEnd('/')
         val queryStart = cleanBaseUrl.indexOf('?')
         val basePath = if (queryStart >= 0) cleanBaseUrl.substring(0, queryStart).trimEnd('/') else cleanBaseUrl
         val baseQuery = if (queryStart >= 0) cleanBaseUrl.substring(queryStart) else ""
+        return basePath to baseQuery
+    }
+
+    private fun addonMetaCacheKey(addonBaseUrl: String, type: String, id: String): String {
+        val (basePath, baseQuery) = splitAddonBaseUrl(addonBaseUrl)
+        return "$basePath$baseQuery|$type:$id"
+    }
+
+    private fun buildMetaUrl(baseUrl: String, type: String, id: String): String {
+        val (basePath, baseQuery) = splitAddonBaseUrl(baseUrl)
         val encodedType = encodePathSegment(type)
         val encodedId = encodePathSegment(id)
         return "$basePath/meta/$encodedType/$encodedId.json$baseQuery"

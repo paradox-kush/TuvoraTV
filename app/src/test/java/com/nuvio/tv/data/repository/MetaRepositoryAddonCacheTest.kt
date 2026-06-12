@@ -60,6 +60,18 @@ class MetaRepositoryAddonCacheTest {
         coVerify(exactly = 1) { api.getMeta(any()) }
     }
 
+    @Test
+    fun `query-bearing base url maps to the same cache entry regardless of slash placement`() = runTest {
+        val api = mockk<AddonApi>()
+        coEvery { api.getMeta(any()) } returns metaResponse("Query Meta")
+        val repository = newRepository(api)
+
+        repository.getMeta("https://addon.example/cfg/?token=abc", "series", contentId).last()
+        repository.getMeta("https://addon.example/cfg?token=abc", "series", contentId).last()
+
+        coVerify(exactly = 1) { api.getMeta(any()) }
+    }
+
     private fun newRepository(vararg responsesByUrl: Pair<String, String>): MetaRepositoryImpl {
         val api = mockk<AddonApi>()
         responsesByUrl.forEach { (url, name) ->
