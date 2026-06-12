@@ -2328,3 +2328,5 @@
 
 <string name="detail_tmdb_fallback_title">TMDB %1$d</string>
 <string name="collections_editor_tmdb_collection_fallback">TMDB колекция %1$d</string>
+
+</resources>
