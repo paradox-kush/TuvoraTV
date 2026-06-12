@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.debrid
 
 import com.nuvio.tv.domain.model.Stream
+import java.util.Locale
 
 /**
  * Parses a file size out of free-text stream metadata. Addons like Torrentio
@@ -17,11 +18,22 @@ object StreamTextSizeParser {
 
     private const val KILO = 1024.0
 
+    /**
+     * Canonical stream size resolution: structured fields first, free-text
+     * parsing as last resort. Shared by formatting, filtering, and sorting so
+     * the fallback chain cannot drift between call sites.
+     */
+    fun effectiveSizeBytes(stream: Stream): Long? =
+        stream.clientResolve?.stream?.raw?.size
+            ?: stream.behaviorHints?.videoSize
+            ?: stream.debridCacheStatus?.cachedSize
+            ?: sizeBytesFromStreamText(stream)
+
     fun sizeBytesFromText(text: String?): Long? {
         if (text.isNullOrBlank()) return null
         val match = SIZE_REGEX.find(text) ?: return null
         val value = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return null
-        val multiplier = when (match.groupValues[2].uppercase()) {
+        val multiplier = when (match.groupValues[2].uppercase(Locale.ROOT)) {
             "TB" -> KILO * KILO * KILO * KILO
             "GB" -> KILO * KILO * KILO
             "MB" -> KILO * KILO

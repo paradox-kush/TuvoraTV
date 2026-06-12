@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.debrid
 
 import com.nuvio.tv.domain.model.Stream
+import com.nuvio.tv.domain.model.StreamBehaviorHints
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -53,6 +54,27 @@ class StreamTextSizeParserTest {
 
         val titleOnly = sampleStream(name = "Torrentio 4k", title = "Movie\n💾 2 GB", description = null)
         assertEquals(2048L * 1024 * 1024, StreamTextSizeParser.sizeBytesFromStreamText(titleOnly))
+    }
+
+    @Test
+    fun `effective size prefers structured fields over text parsing`() {
+        val structured = sampleStream(
+            name = null,
+            title = "Movie\n💾 2 GB",
+            description = null
+        ).copy(
+            behaviorHints = StreamBehaviorHints(
+                notWebReady = null,
+                bingeGroup = null,
+                countryWhitelist = null,
+                proxyHeaders = null,
+                videoSize = 123L
+            )
+        )
+        assertEquals(123L, StreamTextSizeParser.effectiveSizeBytes(structured))
+
+        val textOnly = sampleStream(name = null, title = "Movie\n💾 2 GB", description = null)
+        assertEquals(2048L * 1024 * 1024, StreamTextSizeParser.effectiveSizeBytes(textOnly))
     }
 
     private fun sampleStream(name: String?, title: String?, description: String?): Stream = Stream(
