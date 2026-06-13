@@ -660,7 +660,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             )
             val vc1SoftwareFallbackActive = vc1SoftwarePreferredStreamUrls.contains(url)
             isVc1SoftwareFallbackActiveForCurrentPlayback = vc1SoftwareFallbackActive
-            val effectiveDecoderPriority = if (vc1SoftwareFallbackActive) {
+            val effectiveDecoderPriority = if (vc1SoftwareFallbackActive || hasTriedAudioPcmFallback) {
                 DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
             } else {
                 playerSettings.decoderPriority
@@ -680,6 +680,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 audioOutputChannels = playerSettings.audioOutputChannels,
                 downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
+                initialForcePcm = hasTriedAudioPcmFallback,
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
                 onFfmpegAudioRendererChanged = { renderer ->
                     ffmpegAudioRenderer = renderer
@@ -793,12 +794,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                     .build()
                 setAudioAttributes(audioAttributes, true)
-                val startupSpeed = if ((applyPcmFallbackOnStartup || hasTriedAudioPcmFallback) && _uiState.value.playbackSpeed == 1f) {
-                    1.00001f
-                } else {
-                    _uiState.value.playbackSpeed
-                }
-                setPlaybackSpeed(startupSpeed)
+                setPlaybackSpeed(_uiState.value.playbackSpeed)
                 if (applyPcmFallbackOnStartup) {
                     pendingAudioPcmFallbackRebuild = false
                     hasTriedAudioPcmFallback = true
@@ -1037,11 +1033,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                             play()
                         }
                         refreshStableProgressResetGate()
-                        // Restore speed after PCM fallback: audio sink is already
-                        // configured in PCM mode and won't revert to passthrough.
-                        if (hasTriedAudioPcmFallback) {
-                            _exoPlayer?.playbackParameters = PlaybackParameters(1f)
-                        }
                         cancelFirstFrameWatchdog()
                         _uiState.update {
                             it.copy(
@@ -1572,6 +1563,7 @@ private class SubtitleOffsetRenderersFactory(
     private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     private val downmixNormalizationEnabled: Boolean,
     private val playbackSpeedProvider: () -> Float,
+    private val initialForcePcm: Boolean = false,
     private val onPlaybackSpeedAwareAudioSinkCreated: (PlaybackSpeedAwareAudioSink) -> Unit,
     private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit
 ) : DefaultRenderersFactory(context) {
@@ -1586,7 +1578,7 @@ private class SubtitleOffsetRenderersFactory(
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessors(arrayOf(gainAudioProcessor))
             .build()
-        val playbackSpeedAwareAudioSink = PlaybackSpeedAwareAudioSink(baseAudioSink)
+        val playbackSpeedAwareAudioSink = PlaybackSpeedAwareAudioSink(baseAudioSink, initialForcePcm)
         playbackSpeedAwareAudioSink.setInitialPlaybackSpeed(playbackSpeedProvider())
         onPlaybackSpeedAwareAudioSinkCreated(playbackSpeedAwareAudioSink)
         return playbackSpeedAwareAudioSink
