@@ -678,6 +678,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 downmixEnabled = playerSettings.downmixEnabled,
                 audioOutputChannels = playerSettings.audioOutputChannels,
                 downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
+                forceOpticalPassthrough = playerSettings.forceOpticalPassthrough,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
                 onFfmpegAudioRendererChanged = { renderer ->
@@ -1570,6 +1571,7 @@ private class SubtitleOffsetRenderersFactory(
     private val downmixEnabled: Boolean,
     private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     private val downmixNormalizationEnabled: Boolean,
+    private val forceOpticalPassthrough: Boolean,
     private val playbackSpeedProvider: () -> Float,
     private val onPlaybackSpeedAwareAudioSinkCreated: (PlaybackSpeedAwareAudioSink) -> Unit,
     private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit
@@ -1580,11 +1582,14 @@ private class SubtitleOffsetRenderersFactory(
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean
     ): AudioSink {
-        val baseAudioSink = DefaultAudioSink.Builder(context)
+        val builder = DefaultAudioSink.Builder(context)
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessors(arrayOf(gainAudioProcessor))
-            .build()
+        if (forceOpticalPassthrough) {
+            builder.setAudioCapabilities(buildStableAudioCapabilities(context, true))
+        }
+        val baseAudioSink = builder.build()
         val playbackSpeedAwareAudioSink = PlaybackSpeedAwareAudioSink(baseAudioSink)
         playbackSpeedAwareAudioSink.setInitialPlaybackSpeed(playbackSpeedProvider())
         onPlaybackSpeedAwareAudioSinkCreated(playbackSpeedAwareAudioSink)
@@ -1941,7 +1946,7 @@ private fun DefaultRenderersFactory.applyMapDv7ToHevcIfSupported(enabled: Boolea
     }.getOrElse { this }
 }
 
-private fun buildStableAudioCapabilities(context: Context): AudioCapabilities {
+private fun buildStableAudioCapabilities(context: Context, forceOpticalPassthrough: Boolean = false): AudioCapabilities {
     val detected = AudioCapabilities.getCapabilities(context, AudioAttributes.DEFAULT, null)
     val supportedEncodings = mutableListOf<Int>()
     val knownEncodings = intArrayOf(
@@ -1955,6 +1960,14 @@ private fun buildStableAudioCapabilities(context: Context): AudioCapabilities {
     }
     if ((detected.supportsEncoding(C.ENCODING_DTS_HD) || detected.supportsEncoding(C.ENCODING_DTS_UHD_P2)) && C.ENCODING_DTS !in supportedEncodings) {
         supportedEncodings += C.ENCODING_DTS
+    }
+    if (forceOpticalPassthrough) {
+        if (C.ENCODING_AC3 !in supportedEncodings) {
+            supportedEncodings += C.ENCODING_AC3
+        }
+        if (C.ENCODING_DTS !in supportedEncodings) {
+            supportedEncodings += C.ENCODING_DTS
+        }
     }
     return AudioCapabilities(supportedEncodings.toIntArray(), detected.maxChannelCount)
 }

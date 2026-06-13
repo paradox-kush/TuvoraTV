@@ -625,6 +625,8 @@
     <string name="audio_enable_downmix_subtitle">Uses the FFmpeg downmix path. When disabled, audio follows the previous Android/device path.</string>
     <string name="audio_tunneled">Tunneled Playback</string>
     <string name="audio_tunneled_sub">Hardware-level audio/video sync. May improve playback on some Android TV devices</string>
+    <string name="audio_force_optical_passthrough">Force Optical/SPDIF Passthrough</string>
+    <string name="audio_force_optical_passthrough_sub">Forces AC-3 and DTS passthrough over Optical/SPDIF connections (bypasses auto-detection)</string>
     <!-- DV7 Handling Mode -->
     <string name="dv7_handling_title">Dolby Vision Handling</string>
     <string name="dv7_handling_dialog_subtitle">Choose how DV streams are processed at playback time.</string>
