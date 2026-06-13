@@ -207,6 +207,6 @@ internal fun watchNextIdMatchesContentId(providerId: String?, contentId: String)
     val episodeSeparator = providerId.indexOf('e', startIndex = baseId.length + 2)
     return episodeSeparator > baseId.length + 2 &&
         episodeSeparator < providerId.lastIndex &&
-        providerId.substring(baseId.length + 2, episodeSeparator).all { it.isDigit() } &&
-        providerId.substring(episodeSeparator + 1).all { it.isDigit() }
+        (baseId.length + 2 until episodeSeparator).all { providerId[it].isDigit() } &&
+        (episodeSeparator + 1..providerId.lastIndex).all { providerId[it].isDigit() }
 }
