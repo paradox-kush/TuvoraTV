@@ -130,6 +130,13 @@ class ExternalPlaybackTracker @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var zidooMonitorJob: Job? = null
+    // The in-flight auto-next resolution (meta fetch -> emit next episode). Held so the user can
+    // cancel it by backing out of the "Loading next episode" loader before it navigates.
+    private var autoNextJob: Job? = null
+    // Set when the user backs out of the loader; blocks the loader from re-raising and auto-next
+    // from firing for the current return (e.g. while VLC's duration backfill is still running).
+    // Reset on each new launch in startTracking.
+    private var autoNextCancelled = false
 
     // Fires on external-episode completion; collected by MainActivity to navigate to
     // the next episode's Stream route. replay = 1 so the event still reaches the
@@ -174,6 +181,8 @@ class ExternalPlaybackTracker @Inject constructor(
     fun startTracking(metadata: ExternalPlaybackMetadata, autoLaunch: Boolean = false) {
         pendingMetadata = metadata
         isAutoLaunch = autoLaunch
+        // Fresh launch — allow the auto-next loader / advance again.
+        autoNextCancelled = false
         // Next player is launching and will cover the screen — drop the loader.
         _autoNextOverlay.value = null
         // Persist so progress-save + auto-next survive the player killing our process.
@@ -305,11 +314,17 @@ class ExternalPlaybackTracker @Inject constructor(
 
         if (result == null) {
             Log.d(TAG, "External player returned no progress data")
+            _autoNextOverlay.value = null
             clearPersistedMetadata()
             // On Zidoo, the monitor job handles progress - don't stop it prematurely.
             if (!ZidooPlayerMonitor.isZidooDevice()) stopTracking()
             return
         }
+
+        // Raise the auto-next loader now (covers the process-recreated case, where onStart had
+        // no in-memory metadata to raise from). Kept for a completion; dismissed in processResult
+        // if this turns out not to be one.
+        raiseAutoNextOverlay(metadata)
 
         Log.d(TAG, "External player returned: pos=${result.positionMs}ms, dur=${result.durationMs}ms, endedByUser=${result.endedByUser}")
 
@@ -346,6 +361,9 @@ class ExternalPlaybackTracker @Inject constructor(
             maybeTriggerAutoNextEpisode(metadata)
         } else {
             saveProgress(metadata, result.positionMs, result.durationMs)
+            // Not a completion — drop the optimistic auto-next loader so we fall back to the
+            // stream screen instead of leaving the loader stuck.
+            _autoNextOverlay.value = null
         }
 
         // Result consumed — safe to drop the persisted copy now.
@@ -464,6 +482,12 @@ class ExternalPlaybackTracker @Inject constructor(
         if (season == null || episode == null || type !in listOf("series", "tv")) {
             return
         }
+        // User already backed out of the loader for this return (e.g. during VLC's backfill) —
+        // don't re-raise it or advance.
+        if (autoNextCancelled) {
+            _autoNextOverlay.value = null
+            return
+        }
 
         // Show the loader before the async work below so it covers the cold-start window.
         val overlay = ExternalAutoNextOverlay(
@@ -476,7 +500,8 @@ class ExternalPlaybackTracker @Inject constructor(
             if (_autoNextOverlay.value === overlay) _autoNextOverlay.value = null
         }
 
-        scope.launch {
+        autoNextJob?.cancel()
+        autoNextJob = scope.launch {
             // Gate exactly like the internal path does.
             val autoPlayNextEnabled = playerSettingsDataStore.playerSettings.first()
                 .streamAutoPlayNextEpisodeEnabled
@@ -541,9 +566,36 @@ class ExternalPlaybackTracker @Inject constructor(
         }
     }
 
-    /** Hide the auto-advance loader (e.g. user pressed Back to cancel waiting). */
+    /** Hide the auto-advance loader and cancel the pending auto-next, so backing out of the
+     *  "Loading next episode" loader actually stops it instead of advancing anyway. */
     fun dismissAutoNextOverlay() {
+        autoNextCancelled = true
+        autoNextJob?.cancel()
+        autoNextJob = null
         _autoNextOverlay.value = null
+    }
+
+    /**
+     * Raise the auto-advance loader the instant we return from an external player, before the
+     * result is even parsed, so the transition shows the loader with no episode-list flash.
+     * Called from MainActivity.onStart (earliest point on return) and onActivityResult. No-op
+     * for movies / non-episodes, and idempotent (won't replace an already-shown loader).
+     * Kept if the playback turns out completed; dismissed by onActivityResult otherwise.
+     */
+    fun raiseAutoNextOverlayOnReturn() {
+        raiseAutoNextOverlay(pendingMetadata ?: return)
+    }
+
+    private fun raiseAutoNextOverlay(metadata: ExternalPlaybackMetadata) {
+        if (autoNextCancelled) return
+        if (metadata.season == null || metadata.episode == null) return
+        if (metadata.contentType.lowercase() !in listOf("series", "tv")) return
+        if (_autoNextOverlay.value != null) return
+        _autoNextOverlay.value = ExternalAutoNextOverlay(
+            backdrop = metadata.backdrop ?: metadata.poster,
+            logo = metadata.logo,
+            title = metadata.contentName
+        )
     }
 
     /**
