@@ -1962,11 +1962,17 @@ private fun buildStableAudioCapabilities(context: Context, forceOpticalPassthrou
         supportedEncodings += C.ENCODING_DTS
     }
     if (forceOpticalPassthrough) {
-        if (C.ENCODING_AC3 !in supportedEncodings) {
-            supportedEncodings += C.ENCODING_AC3
-        }
-        if (C.ENCODING_DTS !in supportedEncodings) {
-            supportedEncodings += C.ENCODING_DTS
+        val forced = intArrayOf(
+            C.ENCODING_AC3,
+            C.ENCODING_E_AC3,
+            C.ENCODING_E_AC3_JOC,
+            C.ENCODING_DTS,
+            C.ENCODING_DTS_HD
+        )
+        for (encoding in forced) {
+            if (encoding !in supportedEncodings) {
+                supportedEncodings += encoding
+            }
         }
     }
     return AudioCapabilities(supportedEncodings.toIntArray(), detected.maxChannelCount)
