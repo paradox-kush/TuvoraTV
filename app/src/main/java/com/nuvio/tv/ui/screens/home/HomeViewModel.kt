@@ -697,10 +697,18 @@ class HomeViewModel @Inject constructor(
      * Called from the UI when a placeholder catalog row becomes visible.
      */
     fun requestLazyCatalogLoad(catalogKey: String) {
-        if (!lazyLoadRequestedKeys.add(catalogKey)) return
+        if (catalogKey in lazyLoadRequestedKeys) {
+            return
+        }
         val pair = synchronized(catalogStateLock) {
             pendingLazyCatalogs.remove(catalogKey)
-        } ?: return
+        }
+        if (pair == null) {
+            return
+        }
+        if (!lazyLoadRequestedKeys.add(catalogKey)) {
+            return
+        }
         val (addon, catalog) = pair
         val generation = catalogLoadGeneration
         pendingCatalogLoads = (pendingCatalogLoads + 1)

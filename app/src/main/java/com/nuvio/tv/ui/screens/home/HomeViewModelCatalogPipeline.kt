@@ -10,6 +10,8 @@ import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.HomeLayout
 import com.nuvio.tv.domain.model.enabledAddons
+import com.nuvio.tv.domain.model.mergeCatalogPage
+import com.nuvio.tv.domain.model.nextCatalogSkip
 import com.nuvio.tv.domain.model.skipStep
 import com.nuvio.tv.domain.model.supportsExtra
 import kotlinx.coroutines.Dispatchers
@@ -491,18 +493,29 @@ internal fun HomeViewModel.loadCatalogPipeline(
 
 internal fun HomeViewModel.loadMoreCatalogItemsPipeline(catalogId: String, addonId: String, type: String) {
     val key = catalogKey(addonId = addonId, type = type, catalogId = catalogId)
-    val currentRow = readCatalogRow(key) ?: return
+    val currentRow = readCatalogRow(key)
 
-    if (currentRow.isLoading || !currentRow.hasMore) return
-    if (key in _loadingCatalogs.value) return
+    if (currentRow == null) {
+        return
+    }
+
+    if (currentRow.isLoading || !currentRow.hasMore) {
+        return
+    }
+    if (key in _loadingCatalogs.value) {
+        return
+    }
 
     updateCatalogRow(key) { it.copy(isLoading = true) }
     _loadingCatalogs.update { it + key }
 
     viewModelScope.launch {
-        val addon = addonsCache.find { it.id == addonId } ?: return@launch
+        val addon = addonsCache.find { it.id == addonId }
+        if (addon == null) {
+            return@launch
+        }
 
-        val nextSkip = (currentRow.currentPage + 1) * currentRow.skipStep
+        val nextSkip = currentRow.nextCatalogSkip()
         catalogRepository.getCatalog(
             addonBaseUrl = addon.baseUrl,
             addonId = addon.id,
@@ -517,15 +530,8 @@ internal fun HomeViewModel.loadMoreCatalogItemsPipeline(catalogId: String, addon
             when (result) {
                 is NetworkResult.Success -> {
                     updateCatalogRow(key) { latestRow ->
-                        val existingIds = latestRow.items.asSequence()
-                            .map { "${it.apiType}:${it.id}" }
-                            .toHashSet()
-                        val newUniqueItems = result.data.items.filter { item ->
-                            "${item.apiType}:${item.id}" !in existingIds
-                        }
-                        val mergedItems = latestRow.items + newUniqueItems
-                        val hasMore = if (newUniqueItems.isEmpty()) false else result.data.hasMore
-                        result.data.copy(items = mergedItems, hasMore = hasMore)
+                        val mergedRow = latestRow.mergeCatalogPage(result.data)
+                        mergedRow
                     }
                     _loadingCatalogs.update { it - key }
                     scheduleUpdateCatalogRows()
@@ -703,12 +709,12 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                     add(HomeRow.CollectionRow(collectionEntry))
                 }
             } else {
-                val catalogRow = displayRowsByKey[key]
-                if (catalogRow != null && catalogRow.items.isNotEmpty()) {
-                    add(HomeRow.Catalog(catalogRow))
-                } else {
-                    val placeholder = placeholdersByKey[key]
-                    if (placeholder != null) {
+                    val catalogRow = displayRowsByKey[key]
+                    if (catalogRow != null && catalogRow.items.isNotEmpty()) {
+                        add(HomeRow.Catalog(catalogRow))
+                    } else {
+                        val placeholder = placeholdersByKey[key]
+                        if (placeholder != null) {
                         if (currentLayout == HomeLayout.MODERN) {
                             add(HomeRow.PlaceholderCatalog(
                                 catalogKey = placeholder.catalogKey,
@@ -783,7 +789,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                                 addonId = row.addonId,
                                 type = row.apiType
                             ))
-                            val hasEnoughForSeeAll = row.items.size >= seeAllThreshold
+                            val hasEnoughForSeeAll = row.hasMore || row.items.size >= seeAllThreshold
                             val displayItems = if (hasEnoughForSeeAll) row.items.take(maxWithSeeAll) else row.items.take(maxWithoutSeeAll)
                             displayItems.forEach { item ->
                                 add(GridItem.Content(
