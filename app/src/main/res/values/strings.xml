@@ -371,6 +371,10 @@
     <string name="settings_profiles_subtitle">Manage user profiles</string>
     <string name="settings_layout">Layout</string>
     <string name="settings_layout_subtitle">Home structure and poster styles</string>
+    <string name="settings_content_discovery">Content &amp; Discovery</string>
+    <string name="settings_content_discovery_subtitle">Add-ons, plugins, catalogs, and discovery sources</string>
+    <string name="settings_content_discovery_addons_subtitle">Manage add-ons, catalog order, and collections</string>
+    <string name="settings_content_discovery_plugins_subtitle">Manage repositories and stream providers</string>
     <string name="settings_plugins">Plugins</string>
     <string name="settings_plugins_subtitle">Repositories and providers</string>
     <string name="settings_integration">Integrations</string>
