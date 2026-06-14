@@ -138,9 +138,7 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
     }
     boolean transcodeToAc3 = forceOpticalPassthrough &&
         format.channelCount > 2 &&
-        !MimeTypes.AUDIO_AC3.equals(format.sampleMimeType) &&
-        !MimeTypes.AUDIO_DTS.equals(format.sampleMimeType) &&
-        !MimeTypes.AUDIO_DTS_HD.equals(format.sampleMimeType);
+        !MimeTypes.AUDIO_AC3.equals(format.sampleMimeType);
     boolean supportsConfiguredOutput;
     if (transcodeToAc3) {
       supportsConfiguredOutput = sinkSupportsFormat(
@@ -176,9 +174,7 @@ public final class FfmpegAudioRenderer extends DecoderAudioRenderer<FfmpegAudioD
     TraceUtil.beginSection("createFfmpegAudioDecoder");
     boolean transcodeToAc3 = forceOpticalPassthrough &&
         format.channelCount > 2 &&
-        !MimeTypes.AUDIO_AC3.equals(format.sampleMimeType) &&
-        !MimeTypes.AUDIO_DTS.equals(format.sampleMimeType) &&
-        !MimeTypes.AUDIO_DTS_HD.equals(format.sampleMimeType);
+        !MimeTypes.AUDIO_AC3.equals(format.sampleMimeType);
     int initialInputBufferSize =
         format.maxInputSize != Format.NO_VALUE ? format.maxInputSize : DEFAULT_INPUT_BUFFER_SIZE;
     @C.PcmEncoding int outputEncoding;
