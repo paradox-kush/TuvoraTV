@@ -351,6 +351,29 @@ fun NuvioNavHost(
                             contentLanguage = contentLanguage
                         )
                     )
+                },
+                onPlayStartFromBeginningClick = { videoId, contentType, contentId, title, poster, backdrop, logo, season, episode, episodeName, genres, year, runtime, contentLanguage ->
+                    navController.navigate(
+                        Screen.Stream.createRoute(
+                            videoId = videoId,
+                            contentType = contentType,
+                            title = title,
+                            poster = poster,
+                            backdrop = backdrop,
+                            logo = logo,
+                            season = season,
+                            episode = episode,
+                            episodeName = episodeName,
+                            genres = genres,
+                            year = year,
+                            contentId = contentId,
+                            contentName = title,
+                            runtime = runtime,
+                            startFromBeginning = true,
+                            returnToDetailOnBack = contentType.equals("series", ignoreCase = true),
+                            contentLanguage = contentLanguage
+                        )
+                    )
                 }
             )
         }
