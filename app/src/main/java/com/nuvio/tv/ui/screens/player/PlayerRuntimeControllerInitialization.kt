@@ -659,6 +659,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             )
             val vc1SoftwareFallbackActive = vc1SoftwarePreferredStreamUrls.contains(url)
             isVc1SoftwareFallbackActiveForCurrentPlayback = vc1SoftwareFallbackActive
+            val isForcePassthroughActive = playerSettings.forceOpticalPassthrough && playerSettings.decoderPriority != 0
             val effectiveDecoderPriority = if (vc1SoftwareFallbackActive || hasTriedAudioPcmFallback) {
                 DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
             } else {
@@ -678,7 +679,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 downmixEnabled = playerSettings.downmixEnabled,
                 audioOutputChannels = playerSettings.audioOutputChannels,
                 downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
-                forceOpticalPassthrough = playerSettings.forceOpticalPassthrough,
+                forceOpticalPassthrough = isForcePassthroughActive,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
                 initialForcePcm = hasTriedAudioPcmFallback,
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
@@ -688,7 +689,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         downmixEnabled = playerSettings.downmixEnabled,
                         audioOutputChannels = playerSettings.audioOutputChannels,
                         downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
-                        forceOpticalPassthrough = playerSettings.forceOpticalPassthrough
+                        forceOpticalPassthrough = isForcePassthroughActive
                     )
                     applyCenterMixLevel(_uiState.value.centerMixLevelDb)
                     updateAudioControlAvailability()
