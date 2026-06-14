@@ -659,7 +659,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             )
             val vc1SoftwareFallbackActive = vc1SoftwarePreferredStreamUrls.contains(url)
             isVc1SoftwareFallbackActiveForCurrentPlayback = vc1SoftwareFallbackActive
-            val effectiveDecoderPriority = if (vc1SoftwareFallbackActive) {
+            val effectiveDecoderPriority = if (vc1SoftwareFallbackActive || hasTriedAudioPcmFallback) {
                 DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
             } else {
                 playerSettings.decoderPriority
@@ -679,6 +679,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 audioOutputChannels = playerSettings.audioOutputChannels,
                 downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
+                initialForcePcm = hasTriedAudioPcmFallback,
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
                 onFfmpegAudioRendererChanged = { renderer ->
                     ffmpegAudioRenderer = renderer
@@ -792,12 +793,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                     .build()
                 setAudioAttributes(audioAttributes, true)
-                val startupSpeed = if ((applyPcmFallbackOnStartup || hasTriedAudioPcmFallback) && _uiState.value.playbackSpeed == 1f) {
-                    1.00001f
-                } else {
-                    _uiState.value.playbackSpeed
-                }
-                setPlaybackSpeed(startupSpeed)
+                setPlaybackSpeed(_uiState.value.playbackSpeed)
                 if (applyPcmFallbackOnStartup) {
                     pendingAudioPcmFallbackRebuild = false
                     hasTriedAudioPcmFallback = true
@@ -1036,11 +1032,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                             play()
                         }
                         refreshStableProgressResetGate()
-                        // Restore speed after PCM fallback: audio sink is already
-                        // configured in PCM mode and won't revert to passthrough.
-                        if (hasTriedAudioPcmFallback) {
-                            _exoPlayer?.playbackParameters = PlaybackParameters(1f)
-                        }
                         cancelFirstFrameWatchdog()
                         _uiState.update {
                             it.copy(
@@ -1571,6 +1562,7 @@ private class SubtitleOffsetRenderersFactory(
     private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     private val downmixNormalizationEnabled: Boolean,
     private val playbackSpeedProvider: () -> Float,
+    private val initialForcePcm: Boolean = false,
     private val onPlaybackSpeedAwareAudioSinkCreated: (PlaybackSpeedAwareAudioSink) -> Unit,
     private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit
 ) : DefaultRenderersFactory(context) {
@@ -1585,7 +1577,7 @@ private class SubtitleOffsetRenderersFactory(
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessors(arrayOf(gainAudioProcessor))
             .build()
-        val playbackSpeedAwareAudioSink = PlaybackSpeedAwareAudioSink(baseAudioSink)
+        val playbackSpeedAwareAudioSink = PlaybackSpeedAwareAudioSink(baseAudioSink, initialForcePcm)
         playbackSpeedAwareAudioSink.setInitialPlaybackSpeed(playbackSpeedProvider())
         onPlaybackSpeedAwareAudioSinkCreated(playbackSpeedAwareAudioSink)
         return playbackSpeedAwareAudioSink
@@ -1721,23 +1713,32 @@ private class CueNormalizingTextOutput(
         if (!containsRtlChars(text)) return cue
         val original = text.toString()
         val fixed = original.split('\n').joinToString("\n") { line ->
-            moveLeadingRtlPunctuationToEnd(line)
+            fixRtlPunctuationForLtr(line)
         }
         if (fixed == original) return cue
         return cue.buildUpon().setText(android.text.SpannableString(fixed)).build()
     }
 
-    // In RTL subtitle files punctuation is stored at the logical start of the string,
-    // which should visually appear at the right (end) in RTL. Since SubtitlePainter
-    // renders LTR, we physically move the punctuation to the end of each line.
-    private fun moveLeadingRtlPunctuationToEnd(line: String): String {
+    private fun fixRtlPunctuationForLtr(line: String): String {
         if (line.isEmpty()) return line
-        var end = 0
-        while (end < line.length && line[end] in RTL_PUNCTUATION) end++
-        if (end == 0) return line
-        val punct = line.substring(0, end)
-        val rest = line.substring(end)
-        return "$rest$punct"
+        
+        var start = 0
+        while (start < line.length && isRtlPunctuation(line[start])) start++
+        
+        var end = line.length
+        while (end > start && isRtlPunctuation(line[end - 1])) end--
+        
+        if (start == 0 && end == line.length) return line
+        
+        val leadingPunct = line.substring(0, start)
+        val middle = line.substring(start, end)
+        val trailingPunct = line.substring(end)
+        
+        return "$trailingPunct$middle$leadingPunct"
+    }
+
+    private fun isRtlPunctuation(ch: Char): Boolean {
+        return ch in RTL_PUNCTUATION || ch.isWhitespace()
     }
 
     private fun containsRtlChars(text: CharSequence): Boolean {
@@ -1750,7 +1751,7 @@ private class CueNormalizingTextOutput(
     }
 
     companion object {
-        private val RTL_PUNCTUATION = setOf('.', ',', '?', '!', '-', ':', ';', '…', ')', '(')
+        private val RTL_PUNCTUATION = setOf('.', ',', '?', '!', '-', ':', ';', '…', ')', '(', '\'', '"')
     }
 }
 

@@ -825,6 +825,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStart() {
+        // Returning from an external player: raise the auto-next loader before the player's
+        // result is dispatched and before the window repaints, so the transition shows the
+        // loader instantly with no episode-list flash. No-op unless a series episode is being
+        // tracked; onActivityResult keeps it for a completion or dismisses it otherwise.
+        externalPlaybackTracker.raiseAutoNextOverlayOnReturn()
         super.onStart()
         profileSettingsSyncService.requestForegroundPull()
         androidTvChannelSyncService.onForegroundChanged(true)
