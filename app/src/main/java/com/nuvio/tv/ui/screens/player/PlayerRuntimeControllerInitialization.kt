@@ -1196,6 +1196,21 @@ internal fun PlayerRuntimeController.initializePlayer(
                             return
                         }
 
+                        if ((error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+                             error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK) &&
+                            !autoSwitchInternalPlayerOnErrorEnabled) {
+                            if (!isSafeAudioModeActiveForCurrentPlayback) {
+                                safeAudioForcedStreamUrls.add(currentStreamUrl)
+                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
+                                return
+                            }
+                            if (!isAudioDisabledForCurrentPlayback) {
+                                audioDisabledForcedStreamUrls.add(currentStreamUrl)
+                                retryCurrentStreamWithAudioDisabled(currentPosition)
+                                return
+                            }
+                        }
+
                         if (error.isAudioTrackInitializationFailure()) {
                             if (!isSafeAudioModeActiveForCurrentPlayback) {
                                 safeAudioForcedStreamUrls.add(currentStreamUrl)
