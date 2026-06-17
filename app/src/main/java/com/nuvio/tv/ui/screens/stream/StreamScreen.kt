@@ -373,6 +373,7 @@ fun StreamScreen(
                 } else {
                     null
                 },
+                progress = uiState.directAutoPlayProgress,
                 modifier = Modifier.fillMaxSize()
             )
         } else {

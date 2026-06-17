@@ -14,6 +14,7 @@ import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.torrent.TorrentSettings
 import com.nuvio.tv.core.torrent.TorrentService
+import com.nuvio.tv.core.torrent.TorrentState
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.player.StreamAutoPlaySelector
 import com.nuvio.tv.core.streams.StreamBadgePresentation
@@ -1229,7 +1230,8 @@ class StreamScreenViewModel @Inject constructor(
         updateUiStateIfChanged {
             it.copy(
                 showDirectAutoPlayOverlay = false,
-                directAutoPlayMessage = null
+                directAutoPlayMessage = null,
+                directAutoPlayProgress = null
             )
         }
         // Secondary cover. The primary flash fix is the tracker's auto-next loader (raised in
@@ -1385,11 +1387,60 @@ class StreamScreenViewModel @Inject constructor(
 
         var playUrl = url
         if (playbackInfo.isTorrent || url.startsWith("torrent:")) {
+            val torrentSettingsData = torrentSettings.settings.first()
+            val statsHidden = torrentSettingsData.hideTorrentStats
+
             updateUiStateIfChanged {
                 it.copy(
-                    directAutoPlayMessage = context.getString(R.string.player_torrent_starting_engine)
+                    directAutoPlayMessage = context.getString(R.string.player_torrent_starting_engine),
+                    directAutoPlayProgress = null
                 )
             }
+            
+            val preloadCompleted = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val statsJob = viewModelScope.launch {
+                torrentService.state.collectLatest { torrentState ->
+                    when (torrentState) {
+                        is TorrentState.Idle -> { /* No-op */ }
+                        is TorrentState.Connecting -> {
+                            updateUiStateIfChanged {
+                                it.copy(
+                                    directAutoPlayMessage = context.getString(R.string.player_torrent_connecting_peers),
+                                    directAutoPlayProgress = null
+                                )
+                            }
+                        }
+                        is TorrentState.Streaming -> {
+                            val message = if (statsHidden) {
+                                null
+                            } else {
+                                val speed = formatSpeed(context, torrentState.downloadSpeed)
+                                val peerInfo = context.getString(R.string.player_torrent_peer_info, torrentState.seeds, torrentState.peers)
+                                val mbLoaded = formatMB(context, torrentState.preloadedBytes)
+                                context.getString(R.string.player_torrent_buffered_status, mbLoaded, peerInfo, speed)
+                            }
+                            
+                            val preloadTarget = 5_242_880L // 5MB
+                            val progress = (torrentState.preloadedBytes.toFloat() / preloadTarget).coerceIn(0f, 1f)
+                            
+                            updateUiStateIfChanged {
+                                it.copy(
+                                    directAutoPlayMessage = message,
+                                    directAutoPlayProgress = progress
+                                )
+                            }
+                            
+                            if (torrentState.preloadedBytes >= preloadTarget) {
+                                preloadCompleted.complete(Unit)
+                            }
+                        }
+                        is TorrentState.Error -> {
+                            preloadCompleted.completeExceptionally(Exception(torrentState.message))
+                        }
+                    }
+                }
+            }
+
             try {
                 val trackers = playbackInfo.sources
                     ?.filter { it.startsWith("tracker:") }
@@ -1403,6 +1454,11 @@ class StreamScreenViewModel @Inject constructor(
                 )
                 playUrl = localUrl
                 isTorrentStreamStarted = true
+                
+                // Wait for TorrServer to preload (or timeout after 15 seconds)
+                kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                    preloadCompleted.await()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start torrent stream for external player", e)
                 updateUiStateIfChanged {
@@ -1410,6 +1466,7 @@ class StreamScreenViewModel @Inject constructor(
                         showDirectAutoPlayOverlay = false,
                         externalPlayerOverlayVisible = false,
                         directAutoPlayMessage = null,
+                        directAutoPlayProgress = null,
                         playbackErrorMessage = context.getString(
                             R.string.player_error_failed_start_torrent,
                             e.message ?: context.getString(R.string.error_unknown)
@@ -1417,6 +1474,12 @@ class StreamScreenViewModel @Inject constructor(
                     )
                 }
                 return
+            } finally {
+                statsJob.cancel()
+                if (!externalPlayerLaunched && isTorrentStreamStarted) {
+                    torrentService.stopStream()
+                    isTorrentStreamStarted = false
+                }
             }
         }
 
@@ -1695,3 +1758,14 @@ data class StreamPlaybackInfo(
 private fun Stream.isReadyForDebridPreparation(): Boolean =
     getStreamUrl() == null &&
         (isDirectDebrid() || (needsLocalDebridResolve() && debridCacheStatus?.state == StreamDebridCacheState.CACHED))
+
+private fun formatSpeed(context: android.content.Context, bytesPerSec: Long): String {
+    return when {
+        bytesPerSec >= 1_048_576 -> context.getString(R.string.unit_speed_mb_s, String.format("%.1f", bytesPerSec / 1_048_576.0))
+        bytesPerSec >= 1_024 -> context.getString(R.string.unit_speed_kb_s, String.format("%.0f", bytesPerSec / 1_024.0))
+        else -> context.getString(R.string.unit_speed_b_s, bytesPerSec)
+    }
+}
+
+private fun formatMB(context: android.content.Context, bytes: Long): String =
+    context.getString(R.string.unit_size_mb, String.format("%.1f", bytes / 1_048_576.0))
