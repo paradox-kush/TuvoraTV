@@ -12,10 +12,10 @@ import androidx.tv.material3.Text
 
 /**
  * Whether focused text is allowed to scroll (marquee) when it overflows. Backed by the
- * "scroll long titles on focus" layout setting and provided at the app root; defaults to enabled
- * so previews and isolated usages still scroll.
+ * "scroll long titles on focus" layout setting and provided at the app root; defaults to disabled
+ * (the feature is off by default).
  */
-val LocalFocusMarqueeEnabled = compositionLocalOf { true }
+val LocalFocusMarqueeEnabled = compositionLocalOf { false }
 
 /**
  * Single-line text that scrolls (marquees) horizontally while [focused] if the content overflows,
@@ -33,15 +33,20 @@ fun FocusMarqueeText(
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified,
     textAlign: TextAlign? = null,
+    maxLines: Int = 1,
 ) {
-    val marquee = focused && LocalFocusMarqueeEnabled.current
+    // The setting (not focus) decides the layout: when on, the text is forced to a single line
+    // (and scrolls while focused); when off, it falls back to the caller's [maxLines] so the
+    // original layout is restored — e.g. a 2-line episode title stays 2 lines.
+    val singleLine = LocalFocusMarqueeEnabled.current
+    val marquee = focused && singleLine
     Text(
         text = text,
         modifier = if (marquee) modifier.basicMarquee(iterations = Int.MAX_VALUE) else modifier,
         style = style,
         color = color,
-        maxLines = 1,
-        softWrap = false,
+        maxLines = if (singleLine) 1 else maxLines,
+        softWrap = !singleLine,
         overflow = if (marquee) TextOverflow.Clip else TextOverflow.Ellipsis,
         textAlign = textAlign,
     )

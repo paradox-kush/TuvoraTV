@@ -314,7 +314,7 @@ class LayoutPreferenceDataStore @Inject constructor(
     }
 
     val marqueeFocusedTextEnabled: Flow<Boolean> = profileFlow { prefs ->
-        prefs[marqueeFocusedTextEnabledKey] ?: true
+        prefs[marqueeFocusedTextEnabledKey] ?: false
     }
 
     suspend fun setMemoryOnlyVerticalScroll(enabled: Boolean) {

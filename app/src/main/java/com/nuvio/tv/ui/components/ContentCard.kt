@@ -483,6 +483,7 @@ fun ContentCard(
                                 focused = isFocused,
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White,
+                                maxLines = 2,
                             )
                         }
                     }

@@ -16,7 +16,7 @@ data class AdvancedSettingsUiState(
     val fastHorizontalNavigationEnabled: Boolean = false,
     val smoothBringIntoViewEnabled: Boolean = true,
     val composeHighlighterEnabled: Boolean = false,
-    val marqueeFocusedTextEnabled: Boolean = true
+    val marqueeFocusedTextEnabled: Boolean = false
 )
 
 sealed class AdvancedSettingsEvent {

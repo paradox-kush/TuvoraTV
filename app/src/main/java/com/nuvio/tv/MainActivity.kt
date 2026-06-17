@@ -192,7 +192,7 @@ private data class MainUiPrefs(
     val smoothBringIntoViewEnabled: Boolean = true,
     val fastHorizontalNavigationEnabled: Boolean = false,
     val composeHighlighterEnabled: Boolean = false,
-    val marqueeFocusedTextEnabled: Boolean = true
+    val marqueeFocusedTextEnabled: Boolean = false
 )
 
 @AndroidEntryPoint
