@@ -472,8 +472,6 @@
     <string name="advanced_fast_horizontal_navigation_subtitle">Increase D-pad repeat speed in rows while keeping repeat throttling enabled.</string>
     <string name="advanced_nuvio_focus_scroll">Nuvio Focus Scrolling</string>
     <string name="advanced_nuvio_focus_scroll_subtitle">Use Nuvio\'s custom global focus scroll animation and positioning.</string>
-    <string name="advanced_marquee_focused_text">Scroll Long Titles on Focus</string>
-    <string name="advanced_marquee_focused_text_subtitle">Scrolls long titles, episode names, and labels across while their card or row is focused instead of cutting them off. Descriptions don\'t scroll.</string>
     <string name="advanced_memory_only_vertical_scroll">Memory-only Vertical Scrolling</string>
     <string name="advanced_memory_only_vertical_scroll_subtitle">Skip disk and network image requests while vertically scrolling home rows.</string>
     <string name="advanced_compose_highlighter">Compose Highlighter</string>

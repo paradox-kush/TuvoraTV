@@ -128,12 +128,9 @@ fun ContentCard(
     LaunchedEffect(isBackdropExpanded) {
         onBackdropExpandedChanged?.invoke(isBackdropExpanded)
     }
-    // Marquee also needs live focus state so the title can scroll while the card is focused, even
-    // when the backdrop-expand / trailer features (which otherwise drive isFocused) are off.
-    val marqueeFocusedTextEnabled = LocalFocusMarqueeEnabled.current
-    val needsFocusState = focusedPosterBackdropExpandEnabled ||
-        focusedPosterBackdropTrailerEnabled ||
-        marqueeFocusedTextEnabled
+    // The card always tracks live focus so the title marquee can scroll while the card is focused,
+    // even when the backdrop-expand / trailer features (which otherwise drive isFocused) are off.
+    val needsFocusState = true
     val lastFocusedRef = remember { booleanArrayOf(false) }
 
     val isPlaceholderItem = item.poster?.startsWith("placeholder://") == true
@@ -483,7 +480,6 @@ fun ContentCard(
                                 focused = isFocused,
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White,
-                                maxLines = 2,
                             )
                         }
                     }

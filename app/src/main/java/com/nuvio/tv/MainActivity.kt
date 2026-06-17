@@ -148,7 +148,6 @@ import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioRadii
 import com.nuvio.tv.ui.theme.NuvioStrokes
 import com.nuvio.tv.ui.theme.NuvioTheme
-import com.nuvio.tv.ui.components.LocalFocusMarqueeEnabled
 import com.nuvio.tv.ui.util.LocalFastHorizontalNavigationEnabled
 import com.nuvio.tv.ui.util.LocalRecompositionHighlighterEnabled
 import com.nuvio.tv.ui.util.rememberDrawerItemFocusRequesters
@@ -191,8 +190,7 @@ private data class MainUiPrefs(
     val discoverLocation: DiscoverLocation? = null,
     val smoothBringIntoViewEnabled: Boolean = true,
     val fastHorizontalNavigationEnabled: Boolean = false,
-    val composeHighlighterEnabled: Boolean = false,
-    val marqueeFocusedTextEnabled: Boolean = false
+    val composeHighlighterEnabled: Boolean = false
 )
 
 @AndroidEntryPoint
@@ -413,14 +411,12 @@ class MainActivity : ComponentActivity() {
                     layoutPreferenceDataStore.smoothBringIntoViewEnabled,
                     layoutPreferenceDataStore.fastHorizontalNavigationEnabled,
                     layoutPreferenceDataStore.composeHighlighterEnabled,
-                    layoutPreferenceDataStore.marqueeFocusedTextEnabled,
-                ) { addonSetupSkipped, smoothBringIntoView, fastHorizontalNav, composeHighlighter, marqueeFocusedText ->
+                ) { addonSetupSkipped, smoothBringIntoView, fastHorizontalNav, composeHighlighter ->
                     MainUiPrefs(
                         addonSetupSkipped = addonSetupSkipped,
                         smoothBringIntoViewEnabled = smoothBringIntoView,
                         fastHorizontalNavigationEnabled = fastHorizontalNav,
                         composeHighlighterEnabled = composeHighlighter,
-                        marqueeFocusedTextEnabled = marqueeFocusedText,
                     )
                 }
                 combine(themeAndExperienceFlow, layoutAndFeaturesFlow, extraFeaturesFlow) { themePrefs, layoutPrefs, extraPrefs ->
@@ -434,7 +430,6 @@ class MainActivity : ComponentActivity() {
                         smoothBringIntoViewEnabled = extraPrefs.smoothBringIntoViewEnabled,
                         fastHorizontalNavigationEnabled = extraPrefs.fastHorizontalNavigationEnabled,
                         composeHighlighterEnabled = extraPrefs.composeHighlighterEnabled,
-                        marqueeFocusedTextEnabled = extraPrefs.marqueeFocusedTextEnabled,
                     )
                 }
             }
@@ -459,7 +454,6 @@ class MainActivity : ComponentActivity() {
                 CompositionLocalProvider(
                     LocalBringIntoViewSpec provides bringIntoViewSpec,
                     LocalFastHorizontalNavigationEnabled provides mainUiPrefs.fastHorizontalNavigationEnabled,
-                    LocalFocusMarqueeEnabled provides mainUiPrefs.marqueeFocusedTextEnabled,
                     LocalRecompositionHighlighterEnabled provides (BuildConfig.IS_DEBUG_BUILD && mainUiPrefs.composeHighlighterEnabled),
                     com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool
                 ) {

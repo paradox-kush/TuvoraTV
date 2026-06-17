@@ -724,7 +724,6 @@ private fun EpisodeCard(
                     focused = isFocused,
                     style = titleStyle,
                     color = textPrimary,
-                    maxLines = 2,
                 )
 
                 if (description.isNotBlank()) {

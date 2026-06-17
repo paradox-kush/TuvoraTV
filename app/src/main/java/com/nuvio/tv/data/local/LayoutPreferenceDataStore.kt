@@ -87,7 +87,6 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val fastHorizontalNavigationEnabledKey = booleanPreferencesKey("fast_horizontal_navigation_enabled")
     private val followAddonsOrderKey = booleanPreferencesKey("follow_addons_order")
     private val composeHighlighterEnabledKey = booleanPreferencesKey("compose_highlighter_enabled")
-    private val marqueeFocusedTextEnabledKey = booleanPreferencesKey("marquee_focused_text_enabled")
 
     private fun <T> profileFlow(extract: (prefs: androidx.datastore.preferences.core.Preferences) -> T): Flow<T> =
         profileManager.activeProfileId.flatMapLatest { pid ->
@@ -313,10 +312,6 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[composeHighlighterEnabledKey] ?: false
     }
 
-    val marqueeFocusedTextEnabled: Flow<Boolean> = profileFlow { prefs ->
-        prefs[marqueeFocusedTextEnabledKey] ?: false
-    }
-
     suspend fun setMemoryOnlyVerticalScroll(enabled: Boolean) {
         store().edit { prefs ->
             prefs[memoryOnlyVerticalScrollKey] = enabled
@@ -344,12 +339,6 @@ class LayoutPreferenceDataStore @Inject constructor(
     suspend fun setComposeHighlighterEnabled(enabled: Boolean) {
         store().edit { prefs ->
             prefs[composeHighlighterEnabledKey] = enabled
-        }
-    }
-
-    suspend fun setMarqueeFocusedTextEnabled(enabled: Boolean) {
-        store().edit { prefs ->
-            prefs[marqueeFocusedTextEnabledKey] = enabled
         }
     }
 
