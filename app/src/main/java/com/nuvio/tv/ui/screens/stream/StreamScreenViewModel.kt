@@ -13,6 +13,7 @@ import com.nuvio.tv.core.debrid.DirectDebridStreamPreparer
 import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.torrent.TorrentSettings
+import com.nuvio.tv.core.torrent.TorrentService
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.player.StreamAutoPlaySelector
 import com.nuvio.tv.core.streams.StreamBadgePresentation
@@ -85,11 +86,13 @@ class StreamScreenViewModel @Inject constructor(
     private val externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker,
     private val subtitleRepository: com.nuvio.tv.domain.repository.SubtitleRepository,
     private val subtitleFileCache: com.nuvio.tv.core.player.SubtitleFileCache,
+    private val torrentService: TorrentService,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
     private var autoPlayHandledForSession = false
     private var directAutoPlayModeInitializedForSession = false
     private var directAutoPlayFlowEnabledForSession = false
+    private var isTorrentStreamStarted = false
     private var streamLoadJob: Job? = null
     private var streamLoadScope: kotlinx.coroutines.CoroutineScope? = null
     private var streamLoadCompleted = false
@@ -1214,6 +1217,10 @@ class StreamScreenViewModel @Inject constructor(
         if (System.currentTimeMillis() - externalPlayerLaunchTimeMs < 500L) return
         externalPlayerLaunched = false
         externalPlayerLaunchTimeMs = 0L
+        if (isTorrentStreamStarted) {
+            torrentService.stopStream()
+            isTorrentStreamStarted = false
+        }
         if (com.nuvio.tv.core.player.ZidooPlayerMonitor.isZidooDevice()) {
             externalPlaybackTracker.dismissOverlayOnly()
         } else {
@@ -1324,6 +1331,10 @@ class StreamScreenViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        if (isTorrentStreamStarted) {
+            torrentService.stopStream()
+            isTorrentStreamStarted = false
+        }
         externalOverlayHideJob?.cancel()
         streamLoadScope?.cancel()
         streamLoadScope = null
@@ -1371,6 +1382,44 @@ class StreamScreenViewModel @Inject constructor(
                 directAutoPlayMessage = null
             )
         }
+
+        var playUrl = url
+        if (playbackInfo.isTorrent || url.startsWith("torrent:")) {
+            updateUiStateIfChanged {
+                it.copy(
+                    directAutoPlayMessage = context.getString(R.string.player_torrent_starting_engine)
+                )
+            }
+            try {
+                val trackers = playbackInfo.sources
+                    ?.filter { it.startsWith("tracker:") }
+                    ?.map { it.removePrefix("tracker:") }
+                    ?: emptyList()
+                val localUrl = torrentService.startStream(
+                    infoHash = playbackInfo.infoHash ?: "",
+                    fileIdx = playbackInfo.fileIdx,
+                    filename = playbackInfo.filename,
+                    trackers = trackers
+                )
+                playUrl = localUrl
+                isTorrentStreamStarted = true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start torrent stream for external player", e)
+                updateUiStateIfChanged {
+                    it.copy(
+                        showDirectAutoPlayOverlay = false,
+                        externalPlayerOverlayVisible = false,
+                        directAutoPlayMessage = null,
+                        playbackErrorMessage = context.getString(
+                            R.string.player_error_failed_start_torrent,
+                            e.message ?: context.getString(R.string.error_unknown)
+                        )
+                    )
+                }
+                return
+            }
+        }
+
         externalPlayerLaunched = true
         // Block stopExternalPlayerTracking during subtitle fetch and player launch.
         // Will be set to real timestamp right before the player intent is sent.
@@ -1404,7 +1453,7 @@ class StreamScreenViewModel @Inject constructor(
 
         externalPlaybackTracker.launchPlayer(
             metadata = metadata,
-            url = url,
+            url = playUrl,
             title = metadata.buildPlayerTitle(),
             headers = playbackInfo.headers,
             resumePositionMs = resumePositionMs,
