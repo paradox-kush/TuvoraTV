@@ -1718,6 +1718,7 @@
     <string name="account_generate_sync_desc">Create a code on this device so other devices can link to it.</string>
     <string name="account_enter_sync_desc">Link this device to another device using a sync code.</string>
     <string name="account_signed_in_as">Signed in as</string>
+    <string name="account_sync_backend_label">Sync server</string>
     <string name="account_generate_sync_signed_in_desc">Create a code so other devices can sync with this account.</string>
     <string name="account_unknown_device">Unknown Device</string>
 
