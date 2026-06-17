@@ -1231,13 +1231,15 @@ private fun LegacySidebarButton(
                 .offset(x = 13.dp)
         )
         if (expanded) {
-            com.nuvio.tv.ui.components.AutoResizeText(
+            Text(
                 text = label,
                 color = contentColor,
                 textAlign = TextAlign.Start,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.Medium,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .fillMaxWidth()
                     .padding(start = 54.dp, end = 14.dp)
             )
         }
