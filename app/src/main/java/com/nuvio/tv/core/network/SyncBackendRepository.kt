@@ -137,7 +137,7 @@ class SyncBackendRepository @Inject constructor(
             .get()
             .build()
         okHttpClient.newCall(request).execute().use { response ->
-            val body = response.body.string()
+            val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw IOException("Sync backend manifest request failed (${response.code}): $body")
             }
