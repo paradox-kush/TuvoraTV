@@ -511,6 +511,10 @@
     <string name="supporters_contributors_subtitle">The people backing Nuvio and the contributors building it across TV and mobile.</string>
     <string name="supporters_contributors_supporters_copy">Supporters and donators help keep the project moving, fund infrastructure, and make room for ambitious features.</string>
     <string name="supporters_contributors_donate_copy">Nuvio will stay free and open source. If you want to support the project, you can help cover the time and infrastructure behind it.</string>
+    <string name="supporters_contributors_donation_progress_title">This month’s server &amp; maintenance</string>
+    <string name="supporters_contributors_donation_progress_complete">Covered. Additional support now goes to development.</string>
+    <string name="supporters_contributors_donation_progress_remaining">After 100%%, additional support goes to development.</string>
+    <string name="supporters_contributors_loading_donation_progress">Loading funding progress...</string>
     <string name="supporters_contributors_donate_button">Donate to Nuvio</string>
     <string name="supporters_contributors_qr_title">Scan to donate</string>
     <string name="supporters_contributors_qr_subtitle">Open the link on your phone and support Nuvio through Ko-fi.</string>
