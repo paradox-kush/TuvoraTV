@@ -128,7 +128,7 @@ class ExternalPlaybackTracker @Inject constructor(
         private const val META_FETCH_TIMEOUT_MS = 15_000L
         /** A "completed" playback shorter than this is treated as a debrid cache-sync placeholder
          *  (e.g. Comet's few-second clip), not a real episode: not marked watched, no auto-advance. */
-        private const val MIN_REAL_PLAYBACK_DURATION_MS = 60_000L
+        private const val MIN_REAL_PLAYBACK_DURATION_MS = 30_000L
         /** A launch within this of an auto-next emit counts as a chain continuation. */
         private const val CONTINUATION_WINDOW_MS = 12_000L
     }
