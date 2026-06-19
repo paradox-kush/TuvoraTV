@@ -742,13 +742,18 @@ class StreamScreenViewModel @Inject constructor(
                 markRemainingSourceChipsAsError()
                 if (directAutoPlayFlowEnabledForSession && !resolvedAutoPlayTarget) {
                     directAutoPlayFlowEnabledForSession = false
+                    // All addons finished with no instant stream to auto-play: drop the loader and
+                    // reveal the manual picker now instead of holding until the hard timeout. Clear
+                    // isLoading too, so an empty result set doesn't leave the screen stuck loading.
                     updateUiStateIfChanged {
                         it.copy(
+                            isLoading = false,
                             isDirectAutoPlayFlow = false,
                             showDirectAutoPlayOverlay = false,
                             directAutoPlayMessage = null
                         )
                     }
+                    externalPlaybackTracker.releaseAutoNextOverlay()
                 }
             }
 
@@ -825,6 +830,7 @@ class StreamScreenViewModel @Inject constructor(
                                 directAutoPlayMessage = null
                             )
                         }
+                        externalPlaybackTracker.releaseAutoNextOverlay()
                         streamLoadInner.cancel()
                         markRemainingSourceChipsAsError()
                     }

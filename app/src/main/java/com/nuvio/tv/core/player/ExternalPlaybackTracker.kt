@@ -123,7 +123,7 @@ class ExternalPlaybackTracker @Inject constructor(
         private const val TAG = "ExtPlaybackTracker"
         private const val AUTO_NEXT_TAG = "ExtAutoNext"
         /** Max time the auto-advance loader stays up if the next player never launches. */
-        private const val AUTO_NEXT_OVERLAY_TIMEOUT_MS = 20_000L
+        private const val AUTO_NEXT_OVERLAY_TIMEOUT_MS = 10_000L
         /** Max time to wait for series meta when resolving the next episode. */
         private const val META_FETCH_TIMEOUT_MS = 15_000L
         /** A "completed" playback shorter than this is treated as a debrid cache-sync placeholder
@@ -614,7 +614,10 @@ class ExternalPlaybackTracker @Inject constructor(
             // Safety net: normally cleared when the next player launches, but in Manual
             // mode the Stream screen waits for the user, so don't leave the loader stuck.
             delay(AUTO_NEXT_OVERLAY_TIMEOUT_MS)
-            dismissOverlayIfCurrent()
+            Log.d(AUTO_NEXT_TAG, "safety-net timeout -> clearing loader")
+            // Clear unconditionally: the identity-guarded variant left a stale overlay stuck when a
+            // re-raise had replaced the object this job captured.
+            _autoNextOverlay.value = null
         }
     }
 
@@ -629,6 +632,7 @@ class ExternalPlaybackTracker @Inject constructor(
      *  of advancing anyway. Sets the durable chain abort too, so one Back press stops a runaway
      *  auto-next loop (it won't re-fire until a fresh/manual launch). Progress stays saved. */
     fun dismissAutoNextOverlay() {
+        Log.d(AUTO_NEXT_TAG, "dismissAutoNextOverlay (user back) overlayWasShowing=${_autoNextOverlay.value != null}")
         autoNextCancelled = true
         autoNextChainAborted = true
         autoNextJob?.cancel()
@@ -640,6 +644,7 @@ class ExternalPlaybackTracker @Inject constructor(
      *  routine return to the screen never suppresses the next auto-advance. Suppresses re-raising so
      *  a later onStart can't bring back a loader that no longer has a job behind it. */
     fun releaseAutoNextOverlay() {
+        Log.d(AUTO_NEXT_TAG, "releaseAutoNextOverlay (settle) overlayWasShowing=${_autoNextOverlay.value != null}")
         autoNextOverlaySuppressed = true
         autoNextJob?.cancel()
         autoNextJob = null
@@ -685,6 +690,7 @@ class ExternalPlaybackTracker @Inject constructor(
             logo = metadata.logo,
             title = metadata.contentName
         )
+        Log.d(AUTO_NEXT_TAG, "raised loader for ${metadata.videoId}")
     }
 
     // ===================== Tracking lifecycle + Zidoo =====================
