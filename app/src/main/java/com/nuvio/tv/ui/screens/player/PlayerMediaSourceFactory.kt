@@ -332,14 +332,42 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             // created lazily elsewhere. Kept as the integration point for the VOD cache.
         }
 
+        private fun inferAdaptiveMimeTypeFromPath(path: String?): String? {
+            val normalized = path?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return null
+            val pathWithoutFragment = normalized.substringBefore('#')
+            val pathPart = pathWithoutFragment.substringBefore('?')
+            val fileName = pathPart.substringAfterLast('/')
+            val extension = fileName.substringAfterLast('.', missingDelimiterValue = "")
+            return when (extension) {
+                "m3u8" -> MimeTypes.APPLICATION_M3U8
+                "mpd" -> MimeTypes.APPLICATION_MPD
+                "ism", "isml" -> MimeTypes.APPLICATION_SS
+                else -> null
+            }
+        }
+
         internal fun inferMimeType(
             url: String,
             filename: String?,
             responseHeaders: Map<String, String>? = null
         ): String? {
+            val adaptiveMime = inferAdaptiveMimeTypeFromPath(filename)
+                ?: inferAdaptiveMimeTypeFromPath(url)
+            if (adaptiveMime != null) {
+                return adaptiveMime
+            }
+
             return inferMimeTypeFromResponseHeaders(responseHeaders)
                 ?: inferMimeTypeFromPath(filename)
                 ?: inferMimeTypeFromPath(url)
+        }
+
+        fun evictMimeType(url: String, headers: Map<String, String>) {
+            val sanitizedHeaders = sanitizeHeaders(headers)
+            val cacheKey = buildMimeProbeCacheKey(url, sanitizedHeaders)
+            synchronized(mimeProbeCache) {
+                mimeProbeCache.remove(cacheKey)
+            }
         }
 
         internal fun normalizeMimeType(contentType: String?): String? {

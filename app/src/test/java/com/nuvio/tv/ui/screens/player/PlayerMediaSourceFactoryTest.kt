@@ -69,4 +69,26 @@ class PlayerMediaSourceFactoryTest {
 
         assertEquals(MimeTypes.VIDEO_MATROSKA, mimeType)
     }
+
+    @Test
+    fun `inferMimeType prefers URL extension for adaptive formats even if headers specify different type`() {
+        val mimeType = PlayerMediaSourceFactory.inferMimeType(
+            url = "https://example.com/stream.m3u8",
+            filename = null,
+            responseHeaders = mapOf("Content-Type" to "video/mp4")
+        )
+
+        assertEquals(MimeTypes.APPLICATION_M3U8, mimeType)
+    }
+
+    @Test
+    fun `inferMimeType prefers filename extension for adaptive formats even if headers specify different type`() {
+        val mimeType = PlayerMediaSourceFactory.inferMimeType(
+            url = "https://example.com/download?id=42",
+            filename = "movie.mpd",
+            responseHeaders = mapOf("Content-Type" to "video/mp4")
+        )
+
+        assertEquals(MimeTypes.APPLICATION_MPD, mimeType)
+    }
 }
