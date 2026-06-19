@@ -35,6 +35,8 @@ internal fun PlayerRuntimeController.attemptStartupRecovery(
     if (!isRetryablePlaybackError(error)) return false
     if (startupRetryCount >= MAX_STARTUP_AUTO_RETRIES) return false
 
+    handleParsingErrorFallback(error)
+
     val paused = userPausedManually
     val attempt = startupRetryCount
     startupRetryCount++
@@ -233,6 +235,8 @@ internal fun PlayerRuntimeController.attemptAutoRetry(
     if (!isRetryablePlaybackError(error)) return false
     if (errorRetryCount >= MAX_AUTO_RETRIES) return false
 
+    handleParsingErrorFallback(error)
+
     val paused = userPausedManually
     val attempt = errorRetryCount
     errorRetryCount++
@@ -418,4 +422,23 @@ internal fun PlayerRuntimeController.tryDv7HevcFallback(
         initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
     }
     return true
+}
+
+private fun PlayerRuntimeController.handleParsingErrorFallback(error: PlaybackException) {
+    if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+        error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ||
+        error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED ||
+        error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED
+    ) {
+        if (currentStreamMimeType != null) {
+            Log.w(
+                PlayerRuntimeController.TAG,
+                "Parsing error [${error.errorCode}] detected with mimeType=$currentStreamMimeType. " +
+                        "Evicting cache and clearing mimeType override for fallback probe."
+            )
+            PlayerMediaSourceFactory.evictMimeType(currentStreamUrl, currentHeaders)
+            currentStreamMimeType = null
+            currentStreamResponseHeaders = emptyMap()
+        }
+    }
 }
