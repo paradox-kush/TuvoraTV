@@ -291,7 +291,9 @@ internal fun PlayerRuntimeController.updateMpvAvailableTracks() {
             "mappedInternalSubtitleCount=${internalSubtitleTracks.size}"
     )
 
-    hasScannedTextTracksOnce = true
+    if (internalSubtitleTracks.isNotEmpty() || hasRenderedFirstFrame) {
+        hasScannedTextTracksOnce = true
+    }
     maybeRestorePendingAudioSelectionAfterSubtitleRefresh(audioTracks)
 
     _uiState.update { state ->
