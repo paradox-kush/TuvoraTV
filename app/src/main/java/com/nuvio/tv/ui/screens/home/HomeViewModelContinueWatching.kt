@@ -1578,7 +1578,7 @@ internal fun sortContinueWatchingItems(
             val sortedReleased = released.sortedByDescending { item ->
                 when (item) {
                     is ContinueWatchingItem.InProgress -> item.progress.lastWatched
-                    is ContinueWatchingItem.NextUp -> item.info.lastWatched
+                    is ContinueWatchingItem.NextUp -> if (item.info.isReleaseAlert) item.info.sortTimestamp else item.info.lastWatched
                 }
             }
 
