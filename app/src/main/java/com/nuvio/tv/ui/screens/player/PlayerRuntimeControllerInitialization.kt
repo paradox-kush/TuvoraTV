@@ -1746,42 +1746,51 @@ private class CueNormalizingTextOutput(
 
     private fun fixRtlCueText(cue: Cue): Cue {
         val text = cue.text ?: return cue
-        
-        // Arabic subtitles use the RLE (\u202B) / PDF (\u202C) wrapping method on each line.
-        // This forces both physical and auto-wrapped lines to be correctly rendered as RTL.
+
+        // Arabic: wrap each physical line with RLE (\u202B) ... PDF (\u202C).
+        // This renders boundary punctuation and auto-wrapped lines as RTL in an LTR container.
         if (containsArabic(text)) {
-            val original = text.toString()
-            if (original.startsWith("\u202B") && original.endsWith("\u202C")) {
-                return cue
-            }
             val builder = android.text.SpannableStringBuilder()
             val lines = text.splitByNewlines()
             for (i in lines.indices) {
-                if (i > 0) {
-                    builder.append("\n")
-                }
-                val line = lines[i]
-                if (line.isNotEmpty()) {
-                    builder.append("\u202B")
+                if (i > 0) builder.append("\n")
+                // Clear existing directional markers -> prevents double wrapping upon re-execution (idempotent).
+                val line = lines[i].stripDirectionalWrap()
+                if (line.isEmpty()) {
                     builder.append(line)
-                    builder.append("\u202C")
-                } else {
-                    builder.append(line)
+                    continue
                 }
+                // Keep the trailing CR (paragraph separator) OUTSIDE of the embedding; otherwise
+                // it terminates the RLE run and leaves the PDF orphan.
+                val hasCr = line[line.length - 1] == '\r'
+                val core = if (hasCr) line.subSequence(0, line.length - 1) else line
+                if (core.isEmpty()) {
+                    builder.append(line)
+                    continue
+                }
+                builder.append("\u202B").append(core).append("\u202C")
+                if (hasCr) builder.append("\r")
             }
+            if (builder.contentEquals(text)) return cue
             return cue.buildUpon().setText(builder).build()
         }
-        
-        // Other RTL subtitles (e.g. Hebrew) use the pre-commit character swapping method.
+
+        // Hebrew / other RTL: punctuation boundary-swap method (span preserving).
         if (containsRtlChars(text)) {
-            val original = text.toString()
-            val fixed = original.split('\n').joinToString("\n") { line ->
-                fixRtlPunctuationForLtr(line)
+            val builder = android.text.SpannableStringBuilder()
+            val lines = text.splitByNewlines()
+            var changed = false
+            for (i in lines.indices) {
+                if (i > 0) builder.append("\n")
+                val line = lines[i]
+                val fixed = fixRtlPunctuationForLtr(line)
+                if (fixed !== line) changed = true
+                builder.append(fixed)
             }
-            if (fixed == original) return cue
-            return cue.buildUpon().setText(android.text.SpannableString(fixed)).build()
+            if (!changed) return cue
+            return cue.buildUpon().setText(builder).build()
         }
-        
+
         return cue
     }
 
@@ -1803,27 +1812,44 @@ private class CueNormalizingTextOutput(
         return false
     }
 
-    private fun fixRtlPunctuationForLtr(line: String): String {
+    // Take CharSequence instead of String -> preserve spans.
+    private fun fixRtlPunctuationForLtr(line: CharSequence): CharSequence {
         if (line.isEmpty()) return line
-        val hasCr = line.endsWith('\r')
-        val cleanLine = if (hasCr) line.substring(0, line.length - 1) else line
-        if (cleanLine.isEmpty()) return line
-        
+        val hasCr = line[line.length - 1] == '\r'
+        val end0 = if (hasCr) line.length - 1 else line.length
+        if (end0 == 0) return line
+
         var start = 0
-        while (start < cleanLine.length && isRtlPunctuation(cleanLine[start])) start++
-        
-        var end = cleanLine.length
-        while (end > start && isRtlPunctuation(cleanLine[end - 1])) end--
-        
-        if (start == 0 && end == cleanLine.length) return line
-        
-        val leadingPunct = cleanLine.substring(0, start)
-        val middle = cleanLine.substring(start, end)
-        val trailingPunct = cleanLine.substring(end)
-        
-        val fixed = "$trailingPunct$middle$leadingPunct"
-        return if (hasCr) "$fixed\r" else fixed
+        while (start < end0 && isRtlPunctuation(line[start])) start++
+
+        var end = end0
+        while (end > start && isRtlPunctuation(line[end - 1])) end--
+
+        if (start == 0 && end == end0) return line
+
+        val out = android.text.SpannableStringBuilder()
+        out.append(line.subSequence(end, end0))   // trailing punct -> front
+            .append(line.subSequence(start, end)) // middle
+            .append(line.subSequence(0, start))   // leading punct -> end
+        if (hasCr) out.append("\r")
+        return out
     }
+
+    // Clears existing directional control characters (idempotency + legacy RLM/LRE remnants).
+    private fun CharSequence.stripDirectionalWrap(): CharSequence {
+        val hasMarker = (0 until length).any { isDirectionalMark(this[it]) }
+        if (!hasMarker) return this
+        val sb = android.text.SpannableStringBuilder(this)
+        var k = 0
+        while (k < sb.length) {
+            if (isDirectionalMark(sb[k])) sb.delete(k, k + 1) else k++
+        }
+        return sb
+    }
+
+    private fun isDirectionalMark(c: Char): Boolean =
+        c == '\u202A' || c == '\u202B' || c == '\u202C' || // LRE / RLE / PDF
+        c == '\u200E' || c == '\u200F'                     // LRM / RLM
 
     private fun CharSequence.splitByNewlines(): List<CharSequence> {
         val result = mutableListOf<CharSequence>()
