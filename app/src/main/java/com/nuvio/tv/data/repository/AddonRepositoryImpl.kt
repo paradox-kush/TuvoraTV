@@ -21,11 +21,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.sync.AddonSyncService
@@ -144,7 +146,7 @@ class AddonRepositoryImpl @Inject constructor(
         }
     }
 
-    override fun getInstalledAddons(): Flow<List<Addon>> =
+    private val installedAddonsShared: Flow<List<Addon>> =
         combine(
             preferences.installedAddonUrls,
             preferences.userSetNames,
@@ -202,6 +204,9 @@ class AddonRepositoryImpl @Inject constructor(
                 }
             }.flowOn(Dispatchers.IO)
         }
+        .shareIn(syncScope, SharingStarted.Eagerly, replay = 1)
+
+    override fun getInstalledAddons(): Flow<List<Addon>> = installedAddonsShared
 
     override suspend fun fetchAddon(baseUrl: String): NetworkResult<Addon> {
         val cleanBaseUrl = canonicalizeUrl(baseUrl)
@@ -213,8 +218,11 @@ class AddonRepositoryImpl @Inject constructor(
         return when (val result = safeApiCall(context) { api.getManifest(manifestUrl) }) {
             is NetworkResult.Success -> {
                 val addon = result.data.toDomain(cleanBaseUrl)
-                manifestCache[cleanBaseUrl] = addon
-                persistManifestCacheToDisk()
+                val existing = manifestCache[cleanBaseUrl]
+                if (existing == null || existing.version != addon.version) {
+                    manifestCache[cleanBaseUrl] = addon
+                    persistManifestCacheToDisk()
+                }
                 NetworkResult.Success(addon)
             }
             is NetworkResult.Error -> {
