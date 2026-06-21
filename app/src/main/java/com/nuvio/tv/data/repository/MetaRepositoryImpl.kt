@@ -37,6 +37,16 @@ class MetaRepositoryImpl @Inject constructor(
         private const val TAG = "MetaRepository"
     }
 
+    /** Internal result type for the deferred meta lookup to distinguish
+     *  "fetched meta", "nothing found", and "source addon already provides this data". */
+    private sealed class MetaLookupResult {
+        data class Found(val meta: Meta) : MetaLookupResult()
+        data object NotFound : MetaLookupResult()
+        /** The first viable candidate is the same addon that served the catalog,
+         *  so the item already has its meta — no request needed. */
+        data object SourceSufficient : MetaLookupResult()
+    }
+
     private enum class MetaFailureKind {
         MISSING,
         REQUEST_FAILED
@@ -59,7 +69,7 @@ class MetaRepositoryImpl @Inject constructor(
 
     // In-flight deduplication: prevents concurrent coroutines from firing duplicate requests
     private val inFlightMeta = ConcurrentHashMap<String, Deferred<Meta?>>()
-    private val inFlightAddonMeta = ConcurrentHashMap<String, Deferred<Meta?>>()
+    private val inFlightAddonMeta = ConcurrentHashMap<String, Deferred<MetaLookupResult>>()
     private val inFlightPrimaryMeta = ConcurrentHashMap<String, Deferred<Meta?>>()
 
     override fun getMeta(
@@ -104,7 +114,8 @@ class MetaRepositoryImpl @Inject constructor(
 
     override fun getMetaFromAllAddons(
         type: String,
-        id: String
+        id: String,
+        sourceAddonBaseUrl: String?
     ): Flow<NetworkResult<Meta>> = flow {
         val cacheKey = "$type:$id"
         addonMetaCache[cacheKey]?.let { cached ->
@@ -216,7 +227,25 @@ class MetaRepositoryImpl @Inject constructor(
         val deferred = inFlightAddonMeta.getOrPut(cacheKey) {
             repositoryScope.async {
                 try {
+                    // Normalize source addon URL for comparison so we can detect
+                    // when the candidate is the same addon that served the catalog.
+                    val normalizedSourceUrl = sourceAddonBaseUrl
+                        ?.let { splitAddonBaseUrl(it).let { (p, q) -> "$p$q" } }
+
                     for ((addon, candidateType) in prioritizedCandidates) {
+                        // If this candidate is the same addon that provided the catalog
+                        // data for this item, the item already carries its meta —
+                        // return immediately without making a request and without
+                        // trying further addons.
+                        if (normalizedSourceUrl != null) {
+                            val normalizedCandidateUrl = splitAddonBaseUrl(addon.baseUrl)
+                                .let { (p, q) -> "$p$q" }
+                            if (normalizedCandidateUrl == normalizedSourceUrl) {
+                                Log.d(TAG, "Source addon matched, catalog meta is sufficient addon=${addon.name} type=$candidateType id=$id")
+                                return@async MetaLookupResult.SourceSufficient
+                            }
+                        }
+
                         val url = buildMetaUrl(addon.baseUrl, candidateType, id)
                         Log.d(TAG, "Trying meta addonId=${addon.id} addonName=${addon.name} type=$candidateType id=$id url=$url")
                         when (val result = safeApiCall(context) { api.getMeta(url) }) {
@@ -227,7 +256,7 @@ class MetaRepositoryImpl @Inject constructor(
                                     addonMetaCache[cacheKey] = meta
                                     metaCache[addonMetaCacheKey(addon.baseUrl, candidateType, id)] = meta
                                     Log.d(TAG, "Meta fetch success addonId=${addon.id} type=$candidateType id=$id")
-                                    return@async meta
+                                    return@async MetaLookupResult.Found(meta)
                                 }
                                 Log.d(TAG, "Meta response was null addonId=${addon.id} type=$candidateType id=$id")
                             }
@@ -237,27 +266,32 @@ class MetaRepositoryImpl @Inject constructor(
                             NetworkResult.Loading -> { /* try next */ }
                         }
                     }
-                    null
+                    MetaLookupResult.NotFound
                 } finally {
                     inFlightAddonMeta.remove(cacheKey)
                 }
             }
         }
 
-        val meta = deferred.await()
-        if (meta != null) {
-            emit(NetworkResult.Success(meta))
-        } else {
-            emit(
-                NetworkResult.Error(
-                    buildAggregateFailureMessage(
-                        type = requestedType,
-                        id = id,
-                        attemptedAddonNames = attemptedAddonNames.toList(),
-                        failures = attemptedFailures
+        when (val lookupResult = deferred.await()) {
+            is MetaLookupResult.Found -> {
+                emit(NetworkResult.Success(lookupResult.meta))
+            }
+            is MetaLookupResult.SourceSufficient -> {
+                emit(NetworkResult.Error("Source addon sufficient", NetworkResult.SOURCE_SUFFICIENT_CODE))
+            }
+            is MetaLookupResult.NotFound -> {
+                emit(
+                    NetworkResult.Error(
+                        buildAggregateFailureMessage(
+                            type = requestedType,
+                            id = id,
+                            attemptedAddonNames = attemptedAddonNames.toList(),
+                            failures = attemptedFailures
+                        )
                     )
                 )
-            )
+            }
         }
     }
 

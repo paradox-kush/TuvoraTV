@@ -5,6 +5,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
 
+internal data class DebridTemplateBytes(val value: Long)
+
 @Singleton
 class DebridStreamTemplateEngine @Inject constructor() {
     fun render(template: String, values: Map<String, Any?>): String {
@@ -309,6 +311,7 @@ class DebridStreamTemplateEngine @Inject constructor() {
     private fun isTruthy(value: Any?): Boolean {
         return when (value) {
             is Boolean -> value
+            is DebridTemplateBytes -> value.value != 0L
             is Number -> value.toDouble() != 0.0
             else -> exists(value)
         }
@@ -324,6 +327,7 @@ class DebridStreamTemplateEngine @Inject constructor() {
 
     private fun asNumber(value: Any?): Double? {
         return when (value) {
+            is DebridTemplateBytes -> value.value.toDouble()
             is Number -> value.toDouble()
             is String -> value.toDoubleOrNull()
             else -> null
@@ -355,6 +359,7 @@ class DebridStreamTemplateEngine @Inject constructor() {
     private fun valueToText(value: Any?): String {
         return when (value) {
             null -> ""
+            is DebridTemplateBytes -> formatBytes(value.value.toDouble())
             is Iterable<*> -> value.mapNotNull { valueToText(it).takeIf { text -> text.isNotBlank() } }.joinToString(", ")
             is Double -> if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
             is Float -> if (value % 1f == 0f) value.toLong().toString() else value.toString()

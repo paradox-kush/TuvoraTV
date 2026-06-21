@@ -213,8 +213,11 @@ class AddonRepositoryImpl @Inject constructor(
         return when (val result = safeApiCall(context) { api.getManifest(manifestUrl) }) {
             is NetworkResult.Success -> {
                 val addon = result.data.toDomain(cleanBaseUrl)
-                manifestCache[cleanBaseUrl] = addon
-                persistManifestCacheToDisk()
+                val existing = manifestCache[cleanBaseUrl]
+                if (existing == null || existing.version != addon.version) {
+                    manifestCache[cleanBaseUrl] = addon
+                    persistManifestCacheToDisk()
+                }
                 NetworkResult.Success(addon)
             }
             is NetworkResult.Error -> {

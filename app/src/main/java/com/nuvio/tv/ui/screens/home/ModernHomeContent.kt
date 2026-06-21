@@ -161,7 +161,7 @@ fun ModernHomeContent(
                     onItemClick = { item ->
                         onNavigateToDetail(item.id, item.apiType, "")
                     },
-                    onItemFocus = onItemFocus
+                    onItemFocus = { item -> onItemFocus(item) }
                 )
             }
         }

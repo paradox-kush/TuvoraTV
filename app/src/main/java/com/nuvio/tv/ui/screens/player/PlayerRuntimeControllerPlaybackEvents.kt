@@ -262,6 +262,22 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
                         val maxMb = runtime.maxMemory() / (1024 * 1024)
                         Log.d(PlayerRuntimeController.TAG, "BUFFER: ahead=${bufAhead}s, loading=$loading, heap=$usedMb/${maxMb}MB, pos=${pos / 1000}s")
+                        
+                        if (NuvioExoPlayerPerformanceHelper.shouldLogMemoryFootprint()) {
+                            val defaultAllocator = _loadControl?.allocator as? androidx.media3.exoplayer.upstream.DefaultAllocator
+                            val totalFootprintBytes = defaultAllocator?.let { allocator ->
+                                try {
+                                    val method = allocator.javaClass.getMethod("getMemoryFootprint")
+                                    method.invoke(allocator) as? Int ?: 0
+                                } catch (e: Exception) {
+                                    0
+                                }
+                            } ?: 0
+                            val totalActiveBytes = defaultAllocator?.totalBytesAllocated ?: 0
+                            val footprintMb = totalFootprintBytes / (1024 * 1024)
+                            val activeMb = totalActiveBytes / (1024 * 1024)
+                            Log.d("ExoMemory", "Off-heap OS ahead: $footprintMb MB, active: $activeMb MB")
+                        }
                     }
                 }
             }
@@ -371,7 +387,10 @@ internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, d
     scope.launch(kotlinx.coroutines.NonCancellable) {
         if (progress.isCompleted() && !hasMarkedCurrentEpisodeCompleted) {
             hasMarkedCurrentEpisodeCompleted = true
-            watchProgressRepository.markAsCompleted(progress)
+            // Don't send markAsWatched to Trakt from the player — the scrobble
+            // stop (≥80%) already causes Trakt to add the history entry.
+            // Local stores + Nuvio Sync are still updated.
+            watchProgressRepository.markAsCompleted(progress, syncRemoteToTrakt = false)
         } else {
             watchProgressRepository.saveProgress(progress, syncRemote = syncRemote)
         }
@@ -444,6 +463,13 @@ internal fun PlayerRuntimeController.buildScrobbleItem(): TraktScrobbleItem? {
 internal fun PlayerRuntimeController.emitScrobbleStart() {
     if (isShortPlaceholderStream()) return
     if (hasRequestedScrobbleStartForCurrentItem) return
+
+    // Don't start a new Trakt scrobble session if playback resumes at ≥80%.
+    // This avoids creating a duplicate history entry when the user continues
+    // watching something already marked as watched. If the user seeks back
+    // below 80%, the next progress update will re-trigger scrobble start.
+    val currentProgress = currentPlaybackProgressPercent()
+    if (currentProgress >= 80f) return
 
     hasRequestedScrobbleStartForCurrentItem = true
     val requestGeneration = ++scrobbleStartRequestGeneration
@@ -696,11 +722,18 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                 _exoPlayer?.let { player ->
                     if (player.isPlaying) {
                         userPausedManually = true
+                        pauseStartTimeMs = System.currentTimeMillis()
                         player.pause()
                         schedulePauseOverlay()
                     } else {
                         userPausedManually = false
                         cancelPauseOverlay()
+                        val pausedDuration = System.currentTimeMillis() - pauseStartTimeMs
+                        if (pauseStartTimeMs > 0L && pausedDuration > PlayerRuntimeController.LONG_PAUSE_THRESHOLD_MS) {
+                            val pos = player.currentPosition
+                            player.seekTo((pos - 1000L).coerceAtLeast(0L))
+                        }
+                        pauseStartTimeMs = 0L
                         player.play()
                     }
                 }

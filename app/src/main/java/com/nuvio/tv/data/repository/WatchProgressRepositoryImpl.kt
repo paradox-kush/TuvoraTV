@@ -781,17 +781,21 @@ class WatchProgressRepositoryImpl @Inject constructor(
     override suspend fun removeProgress(contentId: String, season: Int?, episode: Int?) {
         val useTraktProgress = shouldUseTraktProgress()
         val hasEffectiveTraktConnection = hasEffectiveTraktConnection()
-        val remoteDeleteKeys = if (!useTraktProgress) {
-            resolveRemoteDeleteKeys(contentId, season, episode)
-        } else {
-            emptyList()
-        }
+        val remoteDeleteKeys = resolveRemoteDeleteKeys(contentId, season, episode)
         if (hasEffectiveTraktConnection) {
             traktProgressService.applyOptimisticRemoval(contentId, season, episode)
             traktProgressService.removeProgress(contentId, season, episode)
         }
         watchProgressPreferences.removeProgress(contentId, season, episode)
         if (useTraktProgress) {
+            // Trakt is the primary CW source but still sync the removal to
+            // Nuvio Sync so other devices don't show stale in-progress items.
+            if (authManager.isAuthenticated && remoteDeleteKeys.isNotEmpty()) {
+                watchProgressSyncService.deleteFromRemote(remoteDeleteKeys)
+                    .onFailure { error ->
+                        Log.w(TAG, "removeProgress (trakt path) remote delete failed; relying on push sync", error)
+                    }
+            }
             return
         }
         if (authManager.isAuthenticated && remoteDeleteKeys.isNotEmpty()) {
@@ -878,7 +882,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun markAsCompleted(progress: WatchProgress) {
+    override suspend fun markAsCompleted(progress: WatchProgress, syncRemoteToTrakt: Boolean) {
         // Clear any CW dismiss keys for this series so it reappears in Continue Watching.
         if (progress.contentType.equals("series", ignoreCase = true) ||
             progress.contentType.equals("tv", ignoreCase = true)) {
@@ -902,11 +906,13 @@ class WatchProgressRepositoryImpl @Inject constructor(
             val watchedItem = progress.toWatchedItem(watchedAt = now)
             watchedItemsPreferences.markAsWatched(watchedItem)
             runCatching {
-                traktProgressService.markAsWatched(
-                    progress = completed,
-                    title = completed.name.takeIf { it.isNotBlank() },
-                    year = null
-                )
+                if (syncRemoteToTrakt) {
+                    traktProgressService.markAsWatched(
+                        progress = completed,
+                        title = completed.name.takeIf { it.isNotBlank() },
+                        year = null
+                    )
+                }
             }.onFailure {
                 traktProgressService.applyOptimisticRemoval(
                     contentId = completed.contentId,
@@ -923,7 +929,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         watchProgressPreferences.markAsCompleted(progress)
         val watchedItem = progress.toWatchedItem()
         watchedItemsPreferences.markAsWatched(watchedItem)
-        if (hasEffectiveTraktConnection) {
+        if (hasEffectiveTraktConnection && syncRemoteToTrakt) {
             val now = System.currentTimeMillis()
             val duration = progress.duration.takeIf { it > 0L } ?: 1L
             val completed = progress.copy(
