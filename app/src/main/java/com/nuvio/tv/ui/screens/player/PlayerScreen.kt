@@ -1421,7 +1421,7 @@ private fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
     runCatching {
         javaClass
             .getMethod("setEnableComposeSurfaceSyncWorkaround", java.lang.Boolean.TYPE)
-            .invoke(this, true)
+            .invoke(this, false)
     }
 }
 
@@ -2145,7 +2145,8 @@ private fun ProgressBar(
 @Composable
 private fun SeekOverlay(
     currentPosition: Long,
-    duration: Long
+    duration: Long,
+    bufferedPosition: Long = 0L
 ) {
     Column(
         modifier = Modifier
@@ -2157,7 +2158,8 @@ private fun SeekOverlay(
                 currentPosition = currentPosition,
                 duration = duration,
                 onSeekPreview = {},
-                onSeekCommit = {}
+                onSeekCommit = {},
+                bufferedPosition = bufferedPosition
             )
         }
 
@@ -2183,7 +2185,8 @@ private fun SeekOverlayHost(viewModel: PlayerViewModel) {
 
     SeekOverlay(
         currentPosition = playbackTimeline.currentPosition,
-        duration = playbackTimeline.duration
+        duration = playbackTimeline.duration,
+        bufferedPosition = playbackTimeline.bufferedPosition
     )
 }
 
