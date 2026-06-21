@@ -245,6 +245,10 @@ class FolderDetailViewModel @Inject constructor(
             val posterCardCornerRadiusDp = layoutPreferenceDataStore.posterCardCornerRadiusDp.first()
             val showAll = (collection?.showAllTab ?: true) && folder.sources.size >= 2
 
+            val viewMode = collection?.viewMode ?: FolderViewMode.TABBED_GRID
+            val useShimmerPlaceholders = viewMode == FolderViewMode.FOLLOW_LAYOUT &&
+                (homeLayout == HomeLayout.MODERN || homeLayout == HomeLayout.CLASSIC)
+
             val sourceTabs = folder.sources.map { source ->
                 val (name, typeLabel, rawType) = when (source) {
                     is AddonCatalogCollectionSource -> {
@@ -258,7 +262,45 @@ class FolderDetailViewModel @Inject constructor(
                     is TmdbCollectionSource -> Triple(source.title, buildTmdbTypeLabel(source), source.mediaType.value.toCollectionRawType())
                     is TraktCollectionSource -> Triple(source.title, buildTraktTypeLabel(source), source.mediaType.value.toCollectionRawType())
                 }
-                FolderTab(label = name, typeLabel = typeLabel, rawType = rawType, source = source, isLoading = true)
+                // Generate placeholder CatalogRow with shimmer items for Modern/Classic follow-layout
+                val placeholderRow = if (useShimmerPlaceholders) {
+                    val sourceId = when (source) {
+                        is AddonCatalogCollectionSource -> source.catalogId
+                        is TmdbCollectionSource -> "tmdb_${source.title}"
+                        is TraktCollectionSource -> "trakt_${source.traktListId}"
+                    }
+                    val addonId = (source as? AddonCatalogCollectionSource)?.addonId ?: "placeholder"
+                    val apiType = rawType.ifBlank { "movie" }
+                    val fakeItems = (0 until 8).map { i ->
+                        MetaPreview(
+                            id = "__placeholder_${sourceId}_$i",
+                            type = com.nuvio.tv.domain.model.ContentType.fromString(apiType),
+                            rawType = apiType,
+                            name = " ",
+                            poster = "placeholder://empty",
+                            posterShape = com.nuvio.tv.domain.model.PosterShape.POSTER,
+                            background = null,
+                            logo = null,
+                            description = null,
+                            releaseInfo = " ",
+                            imdbRating = null,
+                            genres = emptyList()
+                        )
+                    }
+                    CatalogRow(
+                        addonId = addonId,
+                        addonName = "",
+                        addonBaseUrl = "",
+                        catalogId = sourceId,
+                        catalogName = name,
+                        type = com.nuvio.tv.domain.model.ContentType.fromString(apiType),
+                        rawType = apiType,
+                        items = fakeItems,
+                        isLoading = true,
+                        hasMore = false
+                    )
+                } else null
+                FolderTab(label = name, typeLabel = typeLabel, rawType = rawType, source = source, catalogRow = placeholderRow, isLoading = true)
             }
 
             val tabs = if (showAll) {
@@ -278,7 +320,7 @@ class FolderDetailViewModel @Inject constructor(
                 it.copy(
                     folder = folder,
                     collectionTitle = collection?.title ?: "",
-                    viewMode = collection?.viewMode ?: FolderViewMode.TABBED_GRID,
+                    viewMode = viewMode,
                     homeLayout = homeLayout,
                     posterLabelsEnabled = posterLabelsEnabled,
                     catalogAddonNameEnabled = catalogAddonNameEnabled,
@@ -304,6 +346,9 @@ class FolderDetailViewModel @Inject constructor(
             // The offset for source tab indices when "All" tab is present
             val tabOffset = if (showAll) 1 else 0
 
+            // Immediately build shimmer placeholders for FOLLOW_LAYOUT mode
+            rebuildFollowLayoutState()
+
             folder.sources.forEachIndexed { index, source ->
                 loadSourceForTab(index + tabOffset, source)
             }
@@ -315,7 +360,10 @@ class FolderDetailViewModel @Inject constructor(
         if (!hasAllTab) return
         val sourceTabs = state.tabs.drop(1) // skip the All tab
         val anyLoading = sourceTabs.any { it.isLoading }
-        val loadedRows = sourceTabs.mapNotNull { it.catalogRow }
+        // Only include real loaded rows (exclude placeholder shimmer rows)
+        val loadedRows = sourceTabs.mapNotNull { tab ->
+            tab.catalogRow?.takeIf { !it.isLoading }
+        }
 
         if (loadedRows.isEmpty()) return
 
@@ -343,11 +391,66 @@ class FolderDetailViewModel @Inject constructor(
         if (state.viewMode != FolderViewMode.FOLLOW_LAYOUT) return
         val sourceTabs = state.tabs.filter { !it.isAllTab }
         val loadedRows = sourceTabs.mapNotNull { it.catalogRow }
-        if (loadedRows.isEmpty()) return
+        val useShimmer = state.homeLayout == HomeLayout.MODERN || state.homeLayout == HomeLayout.CLASSIC
 
-        val homeRows = loadedRows.map { HomeRow.Catalog(it) }
+        // Build rows including placeholder shimmer rows for tabs still loading (Modern/Classic)
+        val allRows = if (useShimmer) {
+            sourceTabs.map { tab ->
+                if (tab.catalogRow != null) {
+                    tab.catalogRow
+                } else if (tab.isLoading) {
+                    // Generate a placeholder CatalogRow with shimmer items
+                    val sourceId = when (val src = tab.source) {
+                        is AddonCatalogCollectionSource -> src.catalogId
+                        is TmdbCollectionSource -> "tmdb_${src.title}"
+                        is TraktCollectionSource -> "trakt_${src.traktListId}"
+                        else -> tab.label
+                    }
+                    val addonId = (tab.source as? AddonCatalogCollectionSource)?.addonId ?: "placeholder"
+                    val apiType = tab.rawType.ifBlank { "movie" }
+                    val fakeItems = (0 until 8).map { i ->
+                        MetaPreview(
+                            id = "__placeholder_${sourceId}_$i",
+                            type = com.nuvio.tv.domain.model.ContentType.fromString(apiType),
+                            rawType = apiType,
+                            name = " ",
+                            poster = "placeholder://empty",
+                            posterShape = com.nuvio.tv.domain.model.PosterShape.POSTER,
+                            background = null,
+                            logo = null,
+                            description = null,
+                            releaseInfo = " ",
+                            imdbRating = null,
+                            genres = emptyList()
+                        )
+                    }
+                    CatalogRow(
+                        addonId = addonId,
+                        addonName = "",
+                        addonBaseUrl = "",
+                        catalogId = sourceId,
+                        catalogName = tab.label,
+                        type = com.nuvio.tv.domain.model.ContentType.fromString(apiType),
+                        rawType = apiType,
+                        items = fakeItems,
+                        isLoading = true,
+                        hasMore = false
+                    )
+                } else {
+                    null // error state or other – skip
+                }
+            }.filterNotNull()
+        } else {
+            loadedRows
+        }
+
+        if (allRows.isEmpty()) return
+
+        val homeRows = allRows.map { HomeRow.Catalog(it) }
+        // Only include real (non-placeholder) rows in grid items
+        val realRows = allRows.filter { !it.isLoading }
         val gridItems = buildList<GridItem> {
-            loadedRows.forEach { row ->
+            realRows.forEach { row ->
                 add(GridItem.SectionDivider(
                     catalogName = row.catalogName,
                     catalogId = row.catalogId,
@@ -388,7 +491,7 @@ class FolderDetailViewModel @Inject constructor(
                 val modernPresentation = buildModernHomePresentation(
                     input = ModernHomePresentationInput(
                         homeRows = homeRows,
-                        catalogRows = loadedRows,
+                        catalogRows = allRows,
                         continueWatchingItems = emptyList(),
                         useLandscapePosters = state.modernLandscapePostersEnabled,
                         showCatalogTypeSuffix = state.catalogTypeSuffixEnabled,
@@ -400,7 +503,7 @@ class FolderDetailViewModel @Inject constructor(
                 )
                 _uiState.update { s ->
                     val homeState = HomeUiState(
-                        catalogRows = loadedRows,
+                        catalogRows = allRows,
                         homeRows = homeRows,
                         gridItems = gridItems,
                         heroItems = emptyList(),
@@ -431,7 +534,7 @@ class FolderDetailViewModel @Inject constructor(
         } else {
             _uiState.update { s ->
                 val homeState = HomeUiState(
-                    catalogRows = loadedRows,
+                    catalogRows = allRows,
                     homeRows = homeRows,
                     gridItems = gridItems,
                     heroItems = emptyList(),
