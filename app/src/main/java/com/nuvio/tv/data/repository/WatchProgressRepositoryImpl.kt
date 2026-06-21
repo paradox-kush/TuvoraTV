@@ -781,17 +781,21 @@ class WatchProgressRepositoryImpl @Inject constructor(
     override suspend fun removeProgress(contentId: String, season: Int?, episode: Int?) {
         val useTraktProgress = shouldUseTraktProgress()
         val hasEffectiveTraktConnection = hasEffectiveTraktConnection()
-        val remoteDeleteKeys = if (!useTraktProgress) {
-            resolveRemoteDeleteKeys(contentId, season, episode)
-        } else {
-            emptyList()
-        }
+        val remoteDeleteKeys = resolveRemoteDeleteKeys(contentId, season, episode)
         if (hasEffectiveTraktConnection) {
             traktProgressService.applyOptimisticRemoval(contentId, season, episode)
             traktProgressService.removeProgress(contentId, season, episode)
         }
         watchProgressPreferences.removeProgress(contentId, season, episode)
         if (useTraktProgress) {
+            // Trakt is the primary CW source but still sync the removal to
+            // Nuvio Sync so other devices don't show stale in-progress items.
+            if (authManager.isAuthenticated && remoteDeleteKeys.isNotEmpty()) {
+                watchProgressSyncService.deleteFromRemote(remoteDeleteKeys)
+                    .onFailure { error ->
+                        Log.w(TAG, "removeProgress (trakt path) remote delete failed; relying on push sync", error)
+                    }
+            }
             return
         }
         if (authManager.isAuthenticated && remoteDeleteKeys.isNotEmpty()) {
