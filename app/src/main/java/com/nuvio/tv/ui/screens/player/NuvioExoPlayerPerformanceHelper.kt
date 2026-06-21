@@ -38,9 +38,13 @@ object NuvioExoPlayerPerformanceHelper {
             applyEngineConfig(value)
         }
 
-    val sharedConnectionPool: okhttp3.ConnectionPool by lazy {
-        okhttp3.ConnectionPool(32, 3, java.util.concurrent.TimeUnit.MINUTES)
-    }
+    @Volatile
+    var sharedConnectionPool: okhttp3.ConnectionPool = okhttp3.ConnectionPool(
+        DEFAULT_NUVIO_CONNECTION_POOL_SIZE,
+        3,
+        java.util.concurrent.TimeUnit.MINUTES
+    )
+        private set
 
     // ─── Constants ────────────────────────────────────────────────────────────
     const val DEFAULT_NUVIO_ALLOCATOR_SEGMENT_SIZE = 64 * 1024        // 64 KB
@@ -102,11 +106,19 @@ object NuvioExoPlayerPerformanceHelper {
             safeLimitMb
         }
 
+        val oldPoolSize = connectionPoolSize
         val customNetwork = settings.parallelNetworkEnabled
         connectionPoolSize = if (customNetwork && settings.useParallelConnections) {
             settings.parallelConnectionCount * 2
         } else {
             DEFAULT_NUVIO_CONNECTION_POOL_SIZE
+        }
+        if (connectionPoolSize != oldPoolSize) {
+            sharedConnectionPool = okhttp3.ConnectionPool(
+                connectionPoolSize,
+                3,
+                java.util.concurrent.TimeUnit.MINUTES
+            )
         }
     }
 
