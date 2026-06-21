@@ -1981,9 +1981,6 @@
     <!-- Player errors -->
     <string name="player_error_failed_start_torrent">トレントの開始に失敗しました: %1$s</string>
 
-    <!-- Playback subtitle settings -->
-    <string name="sub_mode_overlay_canvas_sub">HDRサポートとCanvasレンダリング。UIスレッドをブロックする可能性があります。</string>
-
     <string name="ratings_season_label">S%1$d</string>
     <string name="ratings_episode_label">E%1$d</string>
 
