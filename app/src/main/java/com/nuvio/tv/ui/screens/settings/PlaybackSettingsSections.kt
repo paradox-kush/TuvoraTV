@@ -175,6 +175,7 @@ internal fun PlaybackSettingsSections(
     onSetP2pEnabled: (Boolean) -> Unit = {},
     hideTorrentStats: Boolean = false,
     onSetHideTorrentStats: (Boolean) -> Unit = {},
+    onSetNuvioPerformanceModeEnabled: (Boolean) -> Unit,
     onSetBufferEngineEnabled: (Boolean) -> Unit,
     onSetParallelNetworkEnabled: (Boolean) -> Unit,
     onSetUseParallelConnections: (Boolean) -> Unit,
@@ -192,6 +193,7 @@ internal fun PlaybackSettingsSections(
     onSetVodCacheSizeMode: (VodCacheSizeMode) -> Unit,
     onSetVodCacheSizeMb: (Int) -> Unit,
     onResetBufferSettingsToDefaults: () -> Unit,
+    onSetEnableHttp2: (Boolean) -> Unit,
     onResetNetworkSettingsToDefaults: () -> Unit
 ) {
     var generalExpanded by rememberSaveable { mutableStateOf(false) }
@@ -689,6 +691,7 @@ internal fun PlaybackSettingsSections(
             ) {
                 bufferAndNetworkSettingsItems(
                     playerSettings = playerSettings,
+                    onSetNuvioPerformanceModeEnabled = onSetNuvioPerformanceModeEnabled,
                     onSetBufferEngineEnabled = onSetBufferEngineEnabled,
                     onSetParallelNetworkEnabled = onSetParallelNetworkEnabled,
                     onSetBufferMinBufferMs = onSetBufferMinBufferMs,
@@ -706,6 +709,7 @@ internal fun PlaybackSettingsSections(
                     onSetUseParallelConnections = onSetUseParallelConnections,
                     onSetParallelConnectionCount = onSetParallelConnectionCount,
                     onSetParallelChunkSizeMb = onSetParallelChunkSizeMb,
+                    onSetEnableHttp2 = onSetEnableHttp2,
                     onResetNetworkToDefaults = onResetNetworkSettingsToDefaults
                 )
             }

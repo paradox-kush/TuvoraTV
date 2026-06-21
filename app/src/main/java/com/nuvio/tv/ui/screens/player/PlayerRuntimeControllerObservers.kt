@@ -574,9 +574,9 @@ internal fun PlayerRuntimeController.tryApplyPendingResumeProgress(player: Playe
 
     if (target > 0L) {
         player.seekTo(target)
-        _uiState.update { it.copy(pendingSeekPosition = null) }
-        pendingResumeProgress = null
     }
+    _uiState.update { it.copy(pendingSeekPosition = null) }
+    pendingResumeProgress = null
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)
