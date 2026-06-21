@@ -40,6 +40,16 @@ class DebridStreamTemplateEngineTest {
     }
 
     @Test
+    fun `DebridTemplateBytes auto-formats without bytes modifier`() {
+        val output = engine.render(
+            "{stream.size}",
+            mapOf("stream.size" to DebridTemplateBytes(58_408_797_841L))
+        )
+
+        assertEquals("54.4 GB", output)
+    }
+
+    @Test
     fun `supports and or condition groups`() {
         val output = engine.render(
             "{stream.audioTags::exists::or::stream.audioChannels::exists::and::stream.languages::exists[\"yes\"||\"no\"]}",
