@@ -258,7 +258,7 @@ internal fun HomeViewModel.observeModernHomePresentationPipeline() {
             // via lastEnrichedPreview instead.
             .distinctUntilChanged { old, new ->
                 old.homeRows === new.homeRows
-                    && old.continueWatchingItems === new.continueWatchingItems
+                    && old.continueWatchingItems == new.continueWatchingItems
                     && old.useLandscapePosters == new.useLandscapePosters
                     && old.showCatalogTypeSuffix == new.showCatalogTypeSuffix
                     && old.showFullReleaseDate == new.showFullReleaseDate
