@@ -92,7 +92,12 @@ object NuvioExoPlayerPerformanceHelper {
 
         val safeLimitMb = getSafeNativeMemoryLimitMb(context)
         targetBufferSizeMb = if (customBuffers && !settings.bufferBudgetManaged) {
-            bufferSettings.targetBufferSizeMb
+            val storedSize = bufferSettings.targetBufferSizeMb
+            if (!settings.allowLargeTargetBuffer && storedSize > safeLimitMb) {
+                safeLimitMb
+            } else {
+                storedSize
+            }
         } else {
             safeLimitMb
         }

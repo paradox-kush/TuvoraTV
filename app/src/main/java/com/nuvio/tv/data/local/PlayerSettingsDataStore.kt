@@ -27,6 +27,7 @@ import com.nuvio.tv.ui.util.languageCodeToName
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.nuvio.tv.ui.screens.player.NuvioExoPlayerPerformanceHelper
+import com.nuvio.tv.ui.screens.settings.MemoryBudget
 
 /**
  * Available subtitle languages
@@ -1491,7 +1492,30 @@ class PlayerSettingsDataStore @Inject constructor(
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     suspend fun setAllowLargeTargetBuffer(enabled: Boolean) {
-        store().edit { it[allowLargeTargetBufferKey] = enabled }
+        store().edit { prefs ->
+            prefs[allowLargeTargetBufferKey] = enabled
+            if (!enabled) {
+                val isNativeMemory = prefs[nuvioPerformanceModeEnabledKey] ?: true
+                val safeLimitMb = if (isNativeMemory) {
+                    NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
+                } else {
+                    val parallelNetworkEnabled = prefs[parallelNetworkEnabledKey] ?: false
+                    val useParallelConnections = prefs[useParallelConnectionsKey] ?: false
+                    val connectionCount = prefs[parallelConnectionCountKey] ?: 2
+                    val chunkSizeMb = prefs[parallelChunkSizeMbKey] ?: PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_MB
+                    val parallelOverheadMb = if (parallelNetworkEnabled && useParallelConnections) {
+                        MemoryBudget.parallelOverheadMb(connectionCount, chunkSizeMb)
+                    } else {
+                        0
+                    }
+                    MemoryBudget.maxBufferMb(parallelOverheadMb)
+                }
+                val currentSize = prefs[targetBufferSizeMbKey] ?: BufferSettings.DEFAULT_TARGET_BUFFER_SIZE_MB
+                if (currentSize > safeLimitMb) {
+                    prefs[targetBufferSizeMbKey] = safeLimitMb
+                }
+            }
+        }
     }
     suspend fun setBufferBudgetManaged(enabled: Boolean) {
         store().edit { it[bufferBudgetManagedKey] = enabled }
