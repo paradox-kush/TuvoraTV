@@ -320,7 +320,7 @@ data class PlayerSettings(
         const val DEFAULT_BUFFER_BUDGET_MANAGED = true
         const val DEFAULT_ALLOW_LARGE_TARGET_BUFFER = false
         const val LARGE_TARGET_BUFFER_MAX_MB = 2048
-        const val DEFAULT_VOD_CACHE_ENABLED = true
+        const val DEFAULT_VOD_CACHE_ENABLED = false
         const val DEFAULT_VOD_CACHE_SIZE_MB = 500
         const val MIN_VOD_CACHE_SIZE_MB = 100
         const val MAX_VOD_CACHE_SIZE_MB = 65_536
