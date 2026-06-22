@@ -113,17 +113,36 @@ private fun SourceRow(
 ) {
     val statusText = when (progress) {
         is LocalLibraryManager.ScanProgress.Scanning -> "Scanning… ${progress.itemsFound} found"
-        is LocalLibraryManager.ScanProgress.Matching -> "Matching ${progress.matched}/${progress.total}"
+        is LocalLibraryManager.ScanProgress.Matching -> {
+            val pct = if (progress.total > 0) progress.matched * 100 / progress.total else 0
+            "Matching to TMDB in background… ${progress.matched}/${progress.total} ($pct%)"
+        }
         is LocalLibraryManager.ScanProgress.Failed -> "Failed: ${progress.reason}"
-        is LocalLibraryManager.ScanProgress.Idle -> "${progress.itemCount} items"
-        null -> "${config.itemCount} items"
+        is LocalLibraryManager.ScanProgress.Idle -> matchSummary(progress.matchedCount, progress.itemCount)
+        null -> matchSummary(config.matchedCount, config.itemCount)
     }
+    // Scanning + matching both run on an app-scoped coroutine, so surface a live
+    // spinner on the row to make it obvious the work continues in the background.
+    val isWorking = progress is LocalLibraryManager.ScanProgress.Scanning ||
+        progress is LocalLibraryManager.ScanProgress.Matching
     val disabledHint = if (!config.enabled) " · Disabled" else ""
 
     SettingsActionRow(
         title = config.displayName,
         subtitle = "$kindLabel · $statusText$disabledHint",
         value = null,
+        loading = isWorking,
         onClick = onClick
     )
+}
+
+/**
+ * Compact "X matched · Y unmatched" summary. Only matched items appear in the
+ * app, so surfacing the split makes it obvious when most of a library found no
+ * TMDB match (and why that content isn't showing up).
+ */
+private fun matchSummary(matched: Int, total: Int): String = when {
+    total <= 0 -> "No items indexed"
+    matched >= total -> "$total items · all matched"
+    else -> "$matched matched · ${(total - matched).coerceAtLeast(0)} unmatched"
 }

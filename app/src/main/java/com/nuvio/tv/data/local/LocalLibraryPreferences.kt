@@ -55,8 +55,8 @@ class LocalLibraryPreferences @Inject constructor(
     suspend fun setEnabled(sourceId: String, enabled: Boolean) =
         mutate(sourceId) { it.copy(enabled = enabled) }
 
-    suspend fun setScanResult(sourceId: String, itemCount: Int, lastScanAt: Long) =
-        mutate(sourceId) { it.copy(itemCount = itemCount, lastScanAt = lastScanAt) }
+    suspend fun setScanResult(sourceId: String, itemCount: Int, matchedCount: Int, lastScanAt: Long) =
+        mutate(sourceId) { it.copy(itemCount = itemCount, matchedCount = matchedCount, lastScanAt = lastScanAt) }
 
     private suspend fun mutate(
         sourceId: String,

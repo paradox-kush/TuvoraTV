@@ -26,5 +26,7 @@ data class LocalLibrarySourceConfig(
     val params: Map<String, String> = emptyMap(),
     val enabled: Boolean = true,
     val lastScanAt: Long? = null,
-    val itemCount: Int = 0
+    val itemCount: Int = 0,
+    /** How many of [itemCount] items matched a TMDB id on the last scan. */
+    val matchedCount: Int = 0
 )

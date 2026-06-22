@@ -94,6 +94,15 @@ class StreamRepositoryImpl @Inject constructor(
                 addon.supportsStreamResource(type, videoId)
             }
 
+            // The synthetic Local Library addon only declares the nuvio-local: id
+            // prefix, so it's excluded from streamAddons for tmdb:/imdb ids reached
+            // via search or other addons. Query it directly so matched local files
+            // surface as streams here too (the gateway returns empty when nothing
+            // in the library matches this id).
+            val hasLocalLibrary = addons.any {
+                localLibraryGateway.isLocalLibrary(addonId = it.id, baseUrl = it.baseUrl)
+            }
+
             // Convert IMDB ID to TMDB ID if needed for plugins
             val tmdbId = tmdbService.ensureTmdbId(videoId, type)
             Log.d(TAG, "Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)")
@@ -112,7 +121,8 @@ class StreamRepositoryImpl @Inject constructor(
                 
                 // Track number of pending jobs
                 val totalJobs = streamAddons.size +
-                    (if (pluginRequest != null) 1 else 0)
+                    (if (pluginRequest != null) 1 else 0) +
+                    (if (hasLocalLibrary) 1 else 0)
                 val completedJobs = java.util.concurrent.atomic.AtomicInteger(0)
 
                 // Launch addon jobs
@@ -193,6 +203,32 @@ class StreamRepositoryImpl @Inject constructor(
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             Log.e(TAG, "Plugin execution failed: ${e.message}")
+                            if (completedJobs.incrementAndGet() >= totalJobs) {
+                                resultChannel.close()
+                            }
+                        }
+                    }
+                }
+
+                // Launch local library job — resolves matched local files for this
+                // tmdb/imdb id and sends them as a "Local Library" group.
+                if (hasLocalLibrary) {
+                    launch {
+                        try {
+                            val local = localLibraryGateway.streams(type, videoId, season, episode)
+                            if (local is NetworkResult.Success && local.data.isNotEmpty()) {
+                                resultChannel.send(
+                                    AddonStreams(
+                                        addonName = "Local Library",
+                                        addonLogo = null,
+                                        streams = local.data
+                                    )
+                                )
+                            }
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            Log.w(TAG, "Local library stream resolution failed: ${e.message}")
+                        } finally {
                             if (completedJobs.incrementAndGet() >= totalJobs) {
                                 resultChannel.close()
                             }

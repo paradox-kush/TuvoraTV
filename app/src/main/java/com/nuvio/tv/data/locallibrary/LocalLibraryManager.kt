@@ -40,7 +40,8 @@ class LocalLibraryManager @Inject constructor(
     private val overrideStore: MatchOverrideStore,
     private val matcher: MediaMatcher,
     private val sourceFactory: LocalLibrarySourceFactory,
-    private val metaRepository: MetaRepository
+    private val metaRepository: MetaRepository,
+    private val libraryRevision: LocalLibraryRevision
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val scanJobs = ConcurrentHashMap<String, Job>()
@@ -269,15 +270,18 @@ class LocalLibraryManager @Inject constructor(
             }
         }
         Log.i(TAG, "runScan complete sourceId=${config.id} scanned=${collected.size} matched=$matched")
-        preferences.setScanResult(config.id, collected.size, System.currentTimeMillis())
+        preferences.setScanResult(config.id, collected.size, matched, System.currentTimeMillis())
         metaRepository.clearCache()
-        _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Idle(collected.size))
+        // Signal content consumers (Home catalog rows) that the library changed so
+        // they refresh without needing an app restart.
+        libraryRevision.bump()
+        _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Idle(collected.size, matched))
     }
 
     private fun generateSourceId(): String = java.util.UUID.randomUUID().toString()
 
     sealed class ScanProgress {
-        data class Idle(val itemCount: Int) : ScanProgress()
+        data class Idle(val itemCount: Int, val matchedCount: Int = 0) : ScanProgress()
         data class Scanning(val itemsFound: Int) : ScanProgress()
         data class Matching(val matched: Int, val total: Int) : ScanProgress()
         data class Failed(val reason: String) : ScanProgress()

@@ -4,12 +4,14 @@ package com.nuvio.tv.ui.screens.settings.locallibrary
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -21,6 +23,7 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.data.locallibrary.LocalLibraryManager
 import com.nuvio.tv.ui.screens.settings.SettingsDetailHeader
 import com.nuvio.tv.ui.screens.settings.SettingsGroupCard
 import com.nuvio.tv.ui.screens.settings.SettingsStandaloneScaffold
@@ -67,8 +70,26 @@ fun SourceDetailScreen(
             )
         }
 
-        if (progress != null) {
-            SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
+        // While a scan/match is active, show live progress. Otherwise show the
+        // matched/unmatched breakdown — only matched items appear in the app, so
+        // this makes it obvious when content found no TMDB match.
+        val activeProgress = progress?.takeIf {
+            it is LocalLibraryManager.ScanProgress.Scanning ||
+                it is LocalLibraryManager.ScanProgress.Matching
+        }
+        when {
+            activeProgress != null -> SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = formatProgress(activeProgress),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioColors.TextSecondary
+                )
+            }
+            config.itemCount > 0 -> MatchBreakdownCard(
+                matched = config.matchedCount,
+                total = config.itemCount
+            )
+            progress != null -> SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = formatProgress(progress),
                     style = MaterialTheme.typography.bodyMedium,
@@ -139,14 +160,63 @@ fun SourceDetailScreen(
     }
 }
 
+@Composable
+private fun MatchBreakdownCard(matched: Int, total: Int) {
+    val noMatch = (total - matched).coerceAtLeast(0)
+    SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            MatchSegmentRow(
+                label = "Matched to TMDB",
+                hint = "Shown in catalogs and search",
+                count = matched,
+                countColor = Color(0xFF6BD58A)
+            )
+            MatchSegmentRow(
+                label = "No TMDB match",
+                hint = "Hidden until matched — use Manual match below",
+                count = noMatch,
+                countColor = if (noMatch > 0) Color(0xFFE0A458) else NuvioColors.TextSecondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun MatchSegmentRow(label: String, hint: String, count: Int, countColor: Color) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = NuvioColors.TextPrimary
+            )
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = NuvioColors.TextSecondary
+            )
+        }
+        Text(
+            text = "$count",
+            style = MaterialTheme.typography.titleMedium,
+            color = countColor
+        )
+    }
+}
+
 private fun formatProgress(progress: com.nuvio.tv.data.locallibrary.LocalLibraryManager.ScanProgress): String =
     when (progress) {
         is com.nuvio.tv.data.locallibrary.LocalLibraryManager.ScanProgress.Idle ->
-            "Idle (${progress.itemCount} items)"
+            "${progress.matchedCount} matched of ${progress.itemCount} items"
         is com.nuvio.tv.data.locallibrary.LocalLibraryManager.ScanProgress.Scanning ->
             "Scanning… ${progress.itemsFound} found so far"
-        is com.nuvio.tv.data.locallibrary.LocalLibraryManager.ScanProgress.Matching ->
-            "Matching ${progress.matched}/${progress.total}"
+        is com.nuvio.tv.data.locallibrary.LocalLibraryManager.ScanProgress.Matching -> {
+            val pct = if (progress.total > 0) progress.matched * 100 / progress.total else 0
+            "Matching to TMDB in background… ${progress.matched}/${progress.total} ($pct%)"
+        }
         is com.nuvio.tv.data.locallibrary.LocalLibraryManager.ScanProgress.Failed ->
             "Failed: ${progress.reason}"
     }

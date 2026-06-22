@@ -20,6 +20,7 @@ import com.nuvio.tv.data.local.TmdbSettingsDataStore
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache
+import com.nuvio.tv.data.locallibrary.LocalLibraryRevision
 import com.nuvio.tv.data.trailer.TrailerService
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.CatalogDescriptor
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -80,7 +82,8 @@ class HomeViewModel @Inject constructor(
     internal val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
     internal val cwEnrichmentCache: ContinueWatchingEnrichmentCache,
     internal val profileManager: com.nuvio.tv.core.profile.ProfileManager,
-    internal val tvRecommendationManager: TvRecommendationManager
+    internal val tvRecommendationManager: TvRecommendationManager,
+    internal val localLibraryRevision: LocalLibraryRevision
 ) : ViewModel() {
     companion object {
         internal const val TAG = "HomeViewModel"
@@ -297,6 +300,7 @@ class HomeViewModel @Inject constructor(
             observeProgressSourceChanges()
             observeCollections()
             observeInstalledAddons()
+            observeLocalLibraryRevision()
 
             viewModelScope.launch {
                 _uiState
@@ -659,6 +663,22 @@ class HomeViewModel @Inject constructor(
     private fun observeCollections() = observeCollectionsPipeline()
 
     private fun observeInstalledAddons() = observeInstalledAddonsPipeline()
+
+    /**
+     * Force-reload catalogs when a local library scan completes while Home is
+     * alive — the synthetic addon doesn't change, so the reactive addon pipeline
+     * won't re-fetch on its own. drop(1) skips the current value so a Home opened
+     * after a scan (which already loads matched content) doesn't double-load.
+     */
+    private fun observeLocalLibraryRevision() {
+        viewModelScope.launch {
+            localLibraryRevision.revision.drop(1).collectLatest {
+                if (addonsCache.isNotEmpty()) {
+                    loadAllCatalogs(addonsCache, forceReload = true)
+                }
+            }
+        }
+    }
 
     private suspend fun loadAllCatalogs(addons: List<Addon>, forceReload: Boolean = false) =
         loadAllCatalogsPipeline(addons, forceReload)

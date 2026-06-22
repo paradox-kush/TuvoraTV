@@ -78,7 +78,6 @@ internal enum class SettingsCategory {
     PLAYBACK,
     ADVANCED,
     TRAKT,
-    LOCAL_LIBRARY,
     ABOUT,
     DEBUG
 }
@@ -177,13 +176,6 @@ private fun rememberSettingsSectionSpecs() = listOf(
         title = "Trakt",
         rawIconRes = R.raw.trakt_tv_glyph,
         subtitle = stringResource(R.string.settings_trakt_subtitle),
-        destination = SettingsSectionDestination.External
-    ),
-    SettingsSectionSpec(
-        category = SettingsCategory.LOCAL_LIBRARY,
-        title = "Local sources",
-        icon = Icons.Default.Folder,
-        subtitle = "Jellyfin, SMB shares, on-device files",
         destination = SettingsSectionDestination.External
     ),
     SettingsSectionSpec(
@@ -391,7 +383,6 @@ fun SettingsScreen(
                                         when (section.category) {
                                             SettingsCategory.ACCOUNT -> onNavigateToAuthQrSignIn()
                                             SettingsCategory.TRAKT -> onNavigateToTrakt()
-                                            SettingsCategory.LOCAL_LIBRARY -> onNavigateToLocalLibrary()
                                             else -> Unit
                                         }
                                     } else {
@@ -530,6 +521,7 @@ fun SettingsScreen(
                         SettingsCategory.CONTENT_DISCOVERY -> ContentDiscoverySettingsContent(
                             onNavigateToAddons = onNavigateToAddons,
                             onNavigateToPlugins = onNavigateToPlugins,
+                            onNavigateToLocalLibrary = onNavigateToLocalLibrary,
                             showPlugins = AppFeaturePolicy.pluginsEnabled && !isEssentialMode,
                             initialFocusRequester = if (allowDetailAutofocus) {
                                 contentFocusRequesters[SettingsCategory.CONTENT_DISCOVERY]
@@ -542,7 +534,6 @@ fun SettingsScreen(
                         )
                         SettingsCategory.DEBUG -> DebugSettingsContent()
                         SettingsCategory.TRAKT -> Unit
-                        SettingsCategory.LOCAL_LIBRARY -> Unit
                     }
                 }
             }
@@ -554,6 +545,7 @@ fun SettingsScreen(
 private fun ContentDiscoverySettingsContent(
     onNavigateToAddons: () -> Unit,
     onNavigateToPlugins: () -> Unit,
+    onNavigateToLocalLibrary: () -> Unit,
     showPlugins: Boolean,
     initialFocusRequester: FocusRequester?
 ) {
@@ -585,6 +577,12 @@ private fun ContentDiscoverySettingsContent(
                     leadingIcon = Icons.Default.Build
                 )
             }
+            SettingsActionRow(
+                title = "Local sources",
+                subtitle = "Jellyfin, SMB shares, on-device files",
+                onClick = onNavigateToLocalLibrary,
+                leadingIcon = Icons.Default.Folder
+            )
         }
     }
 }
