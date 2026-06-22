@@ -258,7 +258,7 @@ internal fun HomeViewModel.observeModernHomePresentationPipeline() {
             // via lastEnrichedPreview instead.
             .distinctUntilChanged { old, new ->
                 old.homeRows === new.homeRows
-                    && old.continueWatchingItems === new.continueWatchingItems
+                    && old.continueWatchingItems == new.continueWatchingItems
                     && old.useLandscapePosters == new.useLandscapePosters
                     && old.showCatalogTypeSuffix == new.showCatalogTypeSuffix
                     && old.showFullReleaseDate == new.showFullReleaseDate
@@ -436,7 +436,16 @@ internal fun HomeViewModel.onItemFocusPipeline(item: MetaPreview) {
             externalMetaPrefetchEnabled &&
             !currentTmdbSettings.useArtwork &&
             item.logo.isNullOrBlank()
-        if (!artworkStillNeeded) return
+        if (!artworkStillNeeded) {
+            // Ensure enrichedPreviews contains this item so the UI can display
+            // hero data immediately (e.g. when adjacent prefetch resolved it
+            // before the user focused on it).
+            if (item.id !in _enrichedPreviews.value) {
+                _enrichedPreviews.update { it + (item.id to item) }
+            }
+            if (_enrichingItemId.value == item.id) setEnrichingItemId(null)
+            return
+        }
     }
     if (pendingTmdbEnrichItemId == item.id) return
 
@@ -508,15 +517,26 @@ internal fun HomeViewModel.onItemFocusPipeline(item: MetaPreview) {
                 item.id !in prefetchedExternalMetaIds &&
                 externalMetaPrefetchInFlightIds.add(item.id)) {
                 try {
-                    val result = metaRepository.getMetaFromAllAddons(item.apiType, item.id)
+                    val result = metaRepository.getMetaFromAllAddons(item.apiType, item.id, item.sourceAddonBaseUrl)
                         .first { it is NetworkResult.Success || it is NetworkResult.Error }
-                    if (result is NetworkResult.Success) {
-                        prefetchedExternalMetaIds.add(item.id)
-                        if (artworkStillMissing) {
-                            updateCatalogItemArtworkOnly(item.id, result.data)
-                        } else {
-                            updateCatalogItemWithMeta(item.id, result.data)
+                    when {
+                        result is NetworkResult.Success -> {
+                            prefetchedExternalMetaIds.add(item.id)
+                            if (artworkStillMissing) {
+                                updateCatalogItemArtworkOnly(item.id, result.data)
+                            } else {
+                                updateCatalogItemWithMeta(item.id, result.data)
+                            }
                         }
+                        result is NetworkResult.Error && result.code == NetworkResult.SOURCE_SUFFICIENT_CODE -> {
+                            // Catalog already has the best available meta from this addon —
+                            // mark as resolved without making any changes.
+                            prefetchedExternalMetaIds.add(item.id)
+                            // Also mark in enrichedPreviews so the finally-block doesn't
+                            // treat this item as a failed enrichment.
+                            _enrichedPreviews.update { it + (item.id to item) }
+                        }
+                        else -> { /* Error — leave unresolved */ }
                     }
                 } finally {
                     externalMetaPrefetchInFlightIds.remove(item.id)
@@ -528,7 +548,9 @@ internal fun HomeViewModel.onItemFocusPipeline(item: MetaPreview) {
                 setEnrichingItemId(null)
                 // If enrichment completed but no enriched data exists for this item,
                 // mark it as failed so the UI can show addon data immediately.
-                if (item.id !in _enrichedPreviews.value) {
+                if (item.id !in _enrichedPreviews.value &&
+                    item.id !in prefetchedExternalMetaIds &&
+                    item.id !in prefetchedTmdbIds) {
                     _failedEnrichmentIds.value = _failedEnrichmentIds.value + item.id
                 }
             }
@@ -580,15 +602,23 @@ internal fun HomeViewModel.preloadAdjacentItemPipeline(item: MetaPreview) {
                 externalMetaPrefetchInFlightIds.add(item.id)
             ) {
                 try {
-                    val result = metaRepository.getMetaFromAllAddons(item.apiType, item.id)
+                    val result = metaRepository.getMetaFromAllAddons(item.apiType, item.id, item.sourceAddonBaseUrl)
                         .first { it is NetworkResult.Success || it is NetworkResult.Error }
-                    if (result is NetworkResult.Success) {
-                        prefetchedExternalMetaIds.add(item.id)
-                        if (artworkStillMissing) {
-                            updateCatalogItemArtworkOnly(item.id, result.data)
-                        } else {
-                            updateCatalogItemWithMeta(item.id, result.data)
+                    when {
+                        result is NetworkResult.Success -> {
+                            prefetchedExternalMetaIds.add(item.id)
+                            if (artworkStillMissing) {
+                                updateCatalogItemArtworkOnly(item.id, result.data)
+                            } else {
+                                updateCatalogItemWithMeta(item.id, result.data)
+                            }
+                            _enrichedPreviews.update { it + (item.id to item) }
                         }
+                        result is NetworkResult.Error && result.code == NetworkResult.SOURCE_SUFFICIENT_CODE -> {
+                            prefetchedExternalMetaIds.add(item.id)
+                            _enrichedPreviews.update { it + (item.id to item) }
+                        }
+                        else -> { /* Error — leave unresolved */ }
                     }
                 } finally {
                     externalMetaPrefetchInFlightIds.remove(item.id)

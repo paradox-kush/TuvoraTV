@@ -742,13 +742,18 @@ class StreamScreenViewModel @Inject constructor(
                 markRemainingSourceChipsAsError()
                 if (directAutoPlayFlowEnabledForSession && !resolvedAutoPlayTarget) {
                     directAutoPlayFlowEnabledForSession = false
+                    // All addons finished with no instant stream to auto-play: drop the loader and
+                    // reveal the manual picker now instead of holding until the hard timeout. Clear
+                    // isLoading too, so an empty result set doesn't leave the screen stuck loading.
                     updateUiStateIfChanged {
                         it.copy(
+                            isLoading = false,
                             isDirectAutoPlayFlow = false,
                             showDirectAutoPlayOverlay = false,
                             directAutoPlayMessage = null
                         )
                     }
+                    externalPlaybackTracker.releaseAutoNextOverlay()
                 }
             }
 
@@ -825,6 +830,7 @@ class StreamScreenViewModel @Inject constructor(
                                 directAutoPlayMessage = null
                             )
                         }
+                        externalPlaybackTracker.releaseAutoNextOverlay()
                         streamLoadInner.cancel()
                         markRemainingSourceChipsAsError()
                     }
@@ -1208,9 +1214,10 @@ class StreamScreenViewModel @Inject constructor(
 
     fun consumeAbortedAutoNextContinuation() = externalPlaybackTracker.consumeAbortedAutoNextContinuation()
 
-    /** Release the MainActivity auto-next loader once this Stream screen has settled. */
+    /** Release the MainActivity auto-next loader once this Stream screen has settled. Hides the
+     *  overlay only; it must not abort the chain, or a fast settle would suppress the next advance. */
     fun dismissExternalAutoNextOverlay() {
-        externalPlaybackTracker.dismissAutoNextOverlay()
+        externalPlaybackTracker.releaseAutoNextOverlay()
     }
 
     /** Set to true when external player is launched, reset on stop. */

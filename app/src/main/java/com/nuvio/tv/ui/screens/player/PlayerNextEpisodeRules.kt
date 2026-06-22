@@ -13,9 +13,19 @@ import java.time.ZoneId
 object PlayerNextEpisodeRules {
     fun resolveNextEpisode(
         videos: List<Video>,
-        currentSeason: Int,
+        currentSeason: Int?,
         currentEpisode: Int
     ): Video? {
+        // Absolute-numbered content (e.g. some anime via Kitsu) carries no season; order by episode
+        // number alone and advance to the next one.
+        if (currentSeason == null) {
+            val sorted = videos
+                .filter { it.episode != null }
+                .sortedWith(compareBy<Video>({ it.season ?: 0 }, { it.episode ?: 0 }))
+            val index = sorted.indexOfFirst { it.episode == currentEpisode }
+            return if (index < 0) null else sorted.getOrNull(index + 1)
+        }
+
         val sortedEpisodes = videos
             .filter { it.season != null && it.episode != null }
             .sortedWith(compareBy<Video> { it.season ?: Int.MAX_VALUE }.thenBy { it.episode ?: Int.MAX_VALUE })

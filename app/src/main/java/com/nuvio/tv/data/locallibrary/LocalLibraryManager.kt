@@ -15,8 +15,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -240,7 +240,16 @@ class LocalLibraryManager @Inject constructor(
         val source = sourceFactory.create(config)
         val collected = mutableListOf<ScannedItem>()
         try {
-            source.scan().toList(collected)
+            // Collect incrementally so the UI reflects a live, advancing count
+            // instead of sitting on "0 found" for the whole scan. Throttle the
+            // StateFlow churn so a large library doesn't spam recompositions.
+            source.scan().collect { item ->
+                collected += item
+                if (collected.size <= 20 || collected.size % 25 == 0) {
+                    _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Scanning(collected.size))
+                }
+            }
+            _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Scanning(collected.size))
         } catch (t: Throwable) {
             Log.e(TAG, "Scan failed for ${config.id}", t)
             _scanProgress.value = _scanProgress.value + (config.id to ScanProgress.Failed(t.message ?: "Scan failed"))

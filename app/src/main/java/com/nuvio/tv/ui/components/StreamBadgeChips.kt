@@ -2,7 +2,9 @@ package com.nuvio.tv.ui.components
 
 import com.nuvio.tv.ui.theme.NuvioTheme
 
+import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -50,12 +53,16 @@ private val badgeImageRequestCache = HashMap<String, ImageRequest>(32)
 /** Shared shape instance — all badge chips use the same corner radius. */
 private val BadgeChipShape = RoundedCornerShape(6.dp)
 
+/** Marquee scroll speed — matches FocusMarqueeText velocity for visual consistency. */
+private val MarqueeVelocity = 45.dp
+
 @Composable
 fun StreamBadgeChips(
     badges: List<StreamBadge>,
     fileSizeBytes: Long? = null,
     showFileSizeBadge: Boolean = false,
     animate: Boolean = false,
+    focused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val imageBadges = remember(badges) { badges.filter { it.imageURL.isNotBlank() } }
@@ -72,19 +79,25 @@ fun StreamBadgeChips(
         1f
     }
 
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .clipToBounds()
+            .then(if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE, velocity = MarqueeVelocity, spacing = MarqueeSpacing(36.dp)) else Modifier)
             .then(if (chipAlpha < 1f) Modifier.alpha(chipAlpha) else Modifier),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
+        contentAlignment = Alignment.CenterStart
     ) {
-        imageBadges.forEach { badge ->
-            StreamImportedBadgeChip(badge = badge)
-        }
-        if (sizeBytes != null) {
-            StreamFileSizeBadge(bytes = sizeBytes)
+        Row(
+            modifier = Modifier.wrapContentWidth(align = Alignment.Start, unbounded = true),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
+        ) {
+            imageBadges.forEach { badge ->
+                StreamImportedBadgeChip(badge = badge)
+            }
+            if (sizeBytes != null) {
+                StreamFileSizeBadge(bytes = sizeBytes)
+            }
         }
     }
 }

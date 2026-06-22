@@ -690,7 +690,7 @@ private fun FollowLayoutContent(
 ) {
     val homeState = uiState.followLayoutHomeState
 
-    if (homeState == null || homeState.isLoading) {
+    if (homeState == null || (homeState.isLoading && homeState.catalogRows.isEmpty())) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             LoadingIndicator()
         }

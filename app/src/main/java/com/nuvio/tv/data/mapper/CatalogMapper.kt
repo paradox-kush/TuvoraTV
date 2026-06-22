@@ -5,7 +5,7 @@ import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
 
-fun MetaPreviewDto.toDomain(catalogType: String): MetaPreview {
+fun MetaPreviewDto.toDomain(catalogType: String, sourceAddonBaseUrl: String? = null): MetaPreview {
     val resolvedType = type?.takeIf { it.isNotBlank() } ?: catalogType
     return MetaPreview(
         id = id,
@@ -33,6 +33,7 @@ fun MetaPreviewDto.toDomain(catalogType: String): MetaPreview {
         links = links?.mapNotNull { it.toDomain() } ?: emptyList(),
         behaviorHints = mapBehaviorHints(behaviorHints),
         trailers = mapTrailers(trailers, trailerStreams),
-        trailerYtIds = collectTrailerYtIds(trailers, trailerStreams)
+        trailerYtIds = collectTrailerYtIds(trailers, trailerStreams),
+        sourceAddonBaseUrl = sourceAddonBaseUrl
     )
 }

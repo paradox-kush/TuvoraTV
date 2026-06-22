@@ -67,6 +67,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
@@ -74,6 +75,9 @@ import com.nuvio.tv.ui.util.recompositionHighlighter
 import com.nuvio.tv.ui.util.dpadRepeatThrottle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import com.nuvio.tv.ui.util.RtlKeyUtils
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -436,6 +440,7 @@ fun SearchScreen(
         imm.displayCompletions(view, completions)
     }
 
+    var isScreenActive by remember { mutableStateOf(true) }
     val latestPendingDiscoverRestore by rememberUpdatedState(pendingDiscoverRestoreOnResume)
     val latestShouldKeepSearchFocus by rememberUpdatedState(
         focusResults || uiState.isSearching || isVoiceListening
@@ -444,6 +449,7 @@ fun SearchScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                isScreenActive = true
                 if (latestPendingDiscoverRestore) {
                     restoreDiscoverFocus = true
                     pendingDiscoverRestoreOnResume = false
@@ -463,6 +469,9 @@ fun SearchScreen(
                         }
                     }
                 }
+            } else if (event == Lifecycle.Event.ON_PAUSE) {
+                isScreenActive = false
+                keyboardController?.hide()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -500,7 +509,8 @@ fun SearchScreen(
                     onOpenDiscover = onOpenDiscover,
                     showDiscoverButton = uiState.discoverLocation == DiscoverLocation.IN_SEARCH,
                     keyboardController = keyboardController,
-                    clearHistoryFocusRequester = if (showRecentSearches) recentClearHistoryFocusRequester else null
+                    clearHistoryFocusRequester = if (showRecentSearches) recentClearHistoryFocusRequester else null,
+                    isScreenActive = isScreenActive
                 )
 
                 Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
@@ -563,7 +573,8 @@ fun SearchScreen(
                         onOpenDiscover = onOpenDiscover,
                         showDiscoverButton = uiState.discoverLocation == DiscoverLocation.IN_SEARCH,
                         keyboardController = keyboardController,
-                        clearHistoryFocusRequester = if (showRecentSearches) recentClearHistoryFocusRequester else null
+                        clearHistoryFocusRequester = if (showRecentSearches) recentClearHistoryFocusRequester else null,
+                        isScreenActive = isScreenActive
                     )
                 }
 
@@ -764,6 +775,7 @@ private fun RecentSearchesSection(
     clearHistoryFocusRequester: FocusRequester,
     modifier: Modifier = Modifier
 ) {
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -804,7 +816,8 @@ private fun RecentSearchesSection(
                 modifier = Modifier
                     .fillMaxWidth()
                     .onPreviewKeyEvent { keyEvent ->
-                        if (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                        val clearHistoryKey = RtlKeyUtils.getClearHistoryDpadKey(isRtl)
+                        if (keyEvent.nativeKeyEvent.keyCode == clearHistoryKey) {
                             if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
                                 runCatching { clearHistoryFocusRequester.requestFocus() }
                             }
@@ -848,10 +861,12 @@ private fun SearchInputField(
     onOpenDiscover: () -> Unit,
     showDiscoverButton: Boolean,
     keyboardController: androidx.compose.ui.platform.SoftwareKeyboardController?,
-    clearHistoryFocusRequester: FocusRequester?
+    clearHistoryFocusRequester: FocusRequester?,
+    isScreenActive: Boolean = true
 ) {
     var isDiscoverButtonFocused by remember { mutableStateOf(false) }
     var isVoiceButtonFocused by remember { mutableStateOf(false) }
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     Row(
         modifier = Modifier
@@ -985,6 +1000,9 @@ private fun SearchInputField(
             modifier = Modifier
                 .weight(1f)
                 .focusRequester(searchFocusRequester)
+                .focusProperties {
+                    canFocus = isScreenActive
+                }
                 .onFocusChanged { focusState ->
                     onSearchFieldFocusChanged(focusState.isFocused)
                 }
@@ -1007,13 +1025,16 @@ private fun SearchInputField(
                             }
                         }
 
-                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            if (clearHistoryFocusRequester != null) {
-                                if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
-                                    keyboardController?.hide()
-                                    runCatching { clearHistoryFocusRequester.requestFocus() }
+                        else -> {
+                            val clearHistoryKey = RtlKeyUtils.getClearHistoryDpadKey(isRtl)
+                            if (keyEvent.nativeKeyEvent.keyCode == clearHistoryKey) {
+                                if (clearHistoryFocusRequester != null) {
+                                    if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                                        keyboardController?.hide()
+                                        runCatching { clearHistoryFocusRequester.requestFocus() }
+                                    }
+                                    return@onPreviewKeyEvent true
                                 }
-                                return@onPreviewKeyEvent true
                             }
                         }
                     }

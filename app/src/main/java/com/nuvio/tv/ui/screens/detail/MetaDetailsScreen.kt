@@ -1059,11 +1059,13 @@ private fun MetaDetailsContent(
         pendingRestoreCompanyId
     ) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && pendingRestoreType != null) {
-                android.util.Log.d("DetailFocus", "ON_RESUME: restoreFocusToken++ pendingRestoreType=$pendingRestoreType")
-                restoreFocusToken += 1
-                if (pendingRestoreType == RestoreTarget.COMPANY_OR_NETWORK) {
-                    companyRestoreToken += 1
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (pendingRestoreType != null) {
+                    android.util.Log.d("DetailFocus", "ON_RESUME: restoreFocusToken++ pendingRestoreType=$pendingRestoreType")
+                    restoreFocusToken += 1
+                    if (pendingRestoreType == RestoreTarget.COMPANY_OR_NETWORK) {
+                        companyRestoreToken += 1
+                    }
                 }
             }
         }
@@ -1639,7 +1641,9 @@ private fun MetaDetailsContent(
                                 }
                             }
                             initialHeroFocusRequested = true
-                            clearPendingRestore()
+                            if (pendingRestoreType != RestoreTarget.HERO) {
+                                clearPendingRestore()
+                            }
                         },
                         restorePlayFocusToken = (if (pendingRestoreType == RestoreTarget.HERO) restoreFocusToken else 0) +
                                 restorePlayFocusAfterTrailerBackToken,

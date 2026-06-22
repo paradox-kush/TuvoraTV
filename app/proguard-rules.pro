@@ -78,6 +78,18 @@
 -keep interface com.google.android.exoplayer2.** { *; }
 -keep class com.google.android.exoplayer2.ext.** { *; }
 
+# Keep native interfaces and handles for Nuvio Engine JNI
+-keep class androidx.media3.exoplayer.upstream.DefaultAllocatorNative {
+    native <methods>;
+}
+-keep class androidx.media3.exoplayer.source.SampleDataQueueNative {
+    native <methods>;
+}
+-keep class androidx.media3.exoplayer.upstream.Allocation {
+    <init>(java.nio.ByteBuffer, int, long);
+    public long nativeHandle;
+}
+
 # ── Supabase / Ktor / Kotlinx Serialization ───────────────────────────────────
 -keep class io.github.jan.supabase.** { *; }
 -keep class io.ktor.** { *; }
@@ -130,3 +142,12 @@
 -keepclassmembers class com.fasterxml.jackson.** { *; }
 -dontwarn java.beans.ConstructorProperties
 -dontwarn java.beans.Transient
+
+# ── SMB (smbj) + mbassador event bus ─────────────────────────────────────────
+# smbj pulls in mbassador (net.engio.mbassy) and references Kerberos/GSS APIs.
+# javax.el and org.ietf.jgss are optional JVM-only deps that don't exist on
+# Android, so R8 warns about the missing references. They're never reached at
+# runtime (we don't use EL dispatch or Kerberos auth).
+-dontwarn javax.el.**
+-dontwarn net.engio.mbassy.dispatch.el.**
+-dontwarn org.ietf.jgss.**

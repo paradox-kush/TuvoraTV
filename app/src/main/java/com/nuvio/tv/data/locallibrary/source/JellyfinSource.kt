@@ -52,7 +52,11 @@ class JellyfinSource(
                 limit = pageSize
             )
             if (!response.isSuccessful) {
-                Log.w(TAG, "Jellyfin getItems failed: ${response.code()}")
+                Log.w(TAG, "Jellyfin getItems failed: ${response.code()} (startIndex=$startIndex)")
+                // Surface a first-page failure (auth/permission/bad request) as a
+                // hard error so the scan reports "Failed" instead of masquerading
+                // as an empty library. Later-page failures keep what we collected.
+                if (startIndex == 0) error("Jellyfin returned HTTP ${response.code()} while listing items")
                 break
             }
             val body = response.body() ?: break

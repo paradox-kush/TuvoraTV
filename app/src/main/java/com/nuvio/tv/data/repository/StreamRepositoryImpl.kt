@@ -44,7 +44,6 @@ class StreamRepositoryImpl @Inject constructor(
     private val pluginManager: PluginManager,
     private val tmdbService: TmdbService,
     private val localLibraryGateway: LocalLibraryGateway,
-    private val directDebridStreamSource: DirectDebridStreamSource,
     private val debridStreamPresentation: DebridStreamPresentation,
     private val localDebridAvailabilityService: LocalDebridAvailabilityService
 ) : StreamRepository {

@@ -324,6 +324,7 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                     .sortedByDescending { it.lastWatched }
                     .take(CW_MAX_RECENT_PROGRESS_ITEMS)
                     .toList()
+
                 val recentNextUpSeeds = nextUpSeeds
                     .asSequence()
                     .filter { progress -> cutoffMs == null || progress.lastWatched >= cutoffMs }
@@ -553,8 +554,8 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                         count = initialItems.size,
                         elapsedMs = SystemClock.elapsedRealtime() - cycleStartMs
                     )
-                    // Persist in-progress snapshot early so force-close doesn't lose items
-                    if (inProgressOnly.isNotEmpty()) {
+                    // Persist in-progress snapshot early so force-close doesn't lose items.
+                    if (inProgressOnly.isNotEmpty() && snapshot.hasLoadedRemoteProgress) {
                         viewModelScope.launch(Dispatchers.IO) {
                             val brokenUrls = com.nuvio.tv.ui.components.brokenImageUrls
                             val ipSnap = inProgressOnly.map { item ->
@@ -627,6 +628,11 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                                 )
                                 _uiState.update { state ->
                                     if (state.continueWatchingItems == partialItems) {
+                                        state
+                                    } else if (!snapshot.hasLoadedRemoteProgress && state.continueWatchingItems.isNotEmpty()) {
+                                        // Don't overwrite with partial data until remote progress
+                                        // has loaded. Partial next-up resolution should not replace
+                                        // cached items that include Trakt in-progress entries.
                                         state
                                     } else {
                                         state.copy(continueWatchingItems = partialItems)
@@ -1572,7 +1578,7 @@ internal fun sortContinueWatchingItems(
             val sortedReleased = released.sortedByDescending { item ->
                 when (item) {
                     is ContinueWatchingItem.InProgress -> item.progress.lastWatched
-                    is ContinueWatchingItem.NextUp -> item.info.lastWatched
+                    is ContinueWatchingItem.NextUp -> if (item.info.isReleaseAlert) item.info.sortTimestamp else item.info.lastWatched
                 }
             }
 

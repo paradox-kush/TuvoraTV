@@ -6,6 +6,7 @@ import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.data.remote.dto.MetaDto
 import com.nuvio.tv.data.remote.dto.MetaResponseDto
 import com.nuvio.tv.domain.repository.AddonRepository
+import com.nuvio.tv.domain.repository.LocalLibraryGateway
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -85,10 +86,12 @@ class MetaRepositoryAddonCacheTest {
             every { getString(any()) } returns "Episode"
         }
         val addonRepository = mockk<AddonRepository>(relaxed = true)
+        val localLibraryGateway = mockk<LocalLibraryGateway>(relaxed = true)
         return MetaRepositoryImpl(
             context = context,
             api = api,
-            addonRepository = addonRepository
+            addonRepository = addonRepository,
+            localLibraryGateway = localLibraryGateway
         )
     }
 

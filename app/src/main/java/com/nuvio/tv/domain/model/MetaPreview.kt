@@ -33,7 +33,8 @@ data class MetaPreview(
     val trailers: List<MetaTrailer> = emptyList(),
     val trailerYtIds: List<String> = emptyList(),
     val seasonCount: Int? = null,
-    val voteCount: Int? = null
+    val voteCount: Int? = null,
+    val sourceAddonBaseUrl: String? = null
 ) {
     val apiType: String
         get() = type.toApiString(rawType)

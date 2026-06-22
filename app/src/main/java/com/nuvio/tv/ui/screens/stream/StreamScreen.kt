@@ -1131,6 +1131,8 @@ private fun StreamCard(
     val streamDescription = remember(stream) { stream.getDisplayDescription() }
     val hasBadges = stream.badges.isNotEmpty() || (showFileSizeBadges && stream.behaviorHints?.videoSize != null) || reserveBadgeSpace
 
+    var isFocused by remember { mutableStateOf(false) }
+
     // Track whether badges transitioned from empty to non-empty while this
     // card was composed. If they did, we animate. If the card enters
     // composition with badges already present (tab switch), no animation.
@@ -1157,6 +1159,7 @@ private fun StreamCard(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { isFocused = it.isFocused }
             .then(if (onUpKey != null) Modifier.onKeyEvent { event ->
                 if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && event.key == Key.DirectionUp) {
                     onUpKey(); true
@@ -1186,7 +1189,8 @@ private fun StreamCard(
                             badges = stream.badges,
                             fileSizeBytes = stream.behaviorHints?.videoSize,
                             showFileSizeBadge = showFileSizeBadges,
-                            animate = shouldAnimateBadges
+                            animate = shouldAnimateBadges,
+                            focused = isFocused
                         )
                     } else {
                         Spacer(modifier = Modifier.height(20.dp))
@@ -1217,6 +1221,7 @@ private fun StreamCard(
                             fileSizeBytes = stream.behaviorHints?.videoSize,
                             showFileSizeBadge = showFileSizeBadges,
                             animate = shouldAnimateBadges,
+                            focused = isFocused,
                             modifier = Modifier.padding(top = NuvioTheme.spacing.xxs)
                         )
                     } else {
