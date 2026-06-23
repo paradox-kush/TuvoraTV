@@ -1147,7 +1147,6 @@ class StreamScreenViewModel @Inject constructor(
                     url = result.url,
                     isExternal = false,
                     isTorrent = false,
-                    infoHash = null,
                     headers = null,
                     filename = result.filename ?: basePlaybackInfo.filename,
                     videoSize = result.videoSize ?: basePlaybackInfo.videoSize
