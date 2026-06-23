@@ -450,11 +450,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                     maxBufferMs = bufferSettings.maxBufferMs,
                     bufferForPlaybackMs = bufferSettings.bufferForPlaybackMs,
                     bufferForPlaybackAfterRebufferMs = bufferSettings.bufferForPlaybackAfterRebufferMs,
-                    prioritizeTimeOverSizeThresholds = false,
+                    // Allow buffering past the byte budget until the minimum time threshold is
+                    // met. Without this, high-bitrate remux files (e.g. 100+ Mbps UHD MKV with
+                    // multiple audio tracks) exhaust the 500MB byte cap in <5s of content before
+                    // minBufferMs is satisfied, leaving ExoPlayer stuck in STATE_BUFFERING.
+                    prioritizeTimeOverSizeThresholds = true,
                     backBufferDurationMs = backBufferMsAtBuild,
-                    // Retain back to the keyframe before the boundary, else a backward seek
-                    // into the buffer has no keyframe to decode from and re-fetches. The
-                    // persisted setting defaults false and isn't exposed, so force it on.
                     retainBackBufferFromKeyframe = true,
                     budgetBytes = budgetBytes,
                     allocator = allocator
