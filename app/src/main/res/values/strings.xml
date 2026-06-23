@@ -509,6 +509,7 @@
     <string name="cd_decrease">Decrease</string>
     <string name="cd_increase">Increase</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_switch">Switch</string>
     <string name="action_apply">Apply</string>
     <string name="sub_opacity">Opacity</string>
     <string name="action_none">None</string>
@@ -1732,6 +1733,9 @@
     <string name="account_enter_sync_desc">Link this device to another device using a sync code.</string>
     <string name="account_signed_in_as">Signed in as</string>
     <string name="account_sync_backend_label">Sync server</string>
+    <string name="debug_backend_switch_confirm_title">Switch sync server?</string>
+    <string name="debug_backend_switch_confirm_message">Switch to %1$s and sign out? You can sign in again on the selected sync server.</string>
+    <string name="debug_backend_switching">Switching…</string>
     <string name="account_generate_sync_signed_in_desc">Create a code so other devices can sync with this account.</string>
     <string name="account_unknown_device">Unknown Device</string>
 
