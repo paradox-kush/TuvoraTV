@@ -900,7 +900,7 @@ class PlayerSettingsDataStore @Inject constructor(
                 allowLargeTargetBuffer = prefs[allowLargeTargetBufferKey] ?: PlayerSettings.DEFAULT_ALLOW_LARGE_TARGET_BUFFER,
                 bufferBudgetManaged = prefs[bufferBudgetManagedKey] ?: PlayerSettings.DEFAULT_BUFFER_BUDGET_MANAGED,
                 parallelConnectionCount = run {
-                    val isNativeMemory = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+                    val isNativeMemory = isNativeMemoryActive(prefs)
                     val defaultConnectionCount = if (isNativeMemory) 4 else PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
                     val maxConnectionCount = if (isNativeMemory) 16 else PlayerSettings.MAX_PARALLEL_CONNECTION_COUNT
                     (prefs[parallelConnectionCountKey] ?: defaultConnectionCount).coerceIn(PlayerSettings.MIN_PARALLEL_CONNECTION_COUNT, maxConnectionCount)
@@ -910,7 +910,8 @@ class PlayerSettingsDataStore @Inject constructor(
                 enableBufferLogs = prefs[enableBufferLogsKey] ?: false,
                 resizeMode = (prefs[resizeModeKey] ?: 0).coerceIn(0, 4),
                 enableHttp2 = prefs[enableHttp2Key] ?: PlayerSettings.DEFAULT_ENABLE_HTTP2,
-                nuvioPerformanceModeEnabled = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED,
+                nuvioPerformanceModeEnabled = (prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED) &&
+                        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O,
                 subtitleStyle = SubtitleStyleSettings(
                     preferredLanguage = normalizeSubtitlePreferredLanguageForRead(
                         prefs[subtitlePreferredLanguageKey],
@@ -1421,7 +1422,7 @@ class PlayerSettingsDataStore @Inject constructor(
 
     suspend fun setBufferMinBufferMs(ms: Int) {
         store().edit { prefs ->
-            val isNativeMemory = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+            val isNativeMemory = isNativeMemoryActive(prefs)
             val maxLimit = if (isNativeMemory) 1_200_000 else 120_000
             val newMin = ms.coerceIn(5_000, maxLimit)
             prefs[minBufferMsKey] = newMin
@@ -1431,7 +1432,7 @@ class PlayerSettingsDataStore @Inject constructor(
     }
     suspend fun setBufferMaxBufferMs(ms: Int) {
         store().edit { prefs ->
-            val isNativeMemory = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+            val isNativeMemory = isNativeMemoryActive(prefs)
             val maxLimit = if (isNativeMemory) 1_200_000 else 120_000
             val currentMin = prefs[minBufferMsKey] ?: BufferSettings.DEFAULT_MIN_BUFFER_MS
             prefs[maxBufferMsKey] = ms.coerceIn(currentMin, maxLimit)
@@ -1442,7 +1443,7 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setBufferTargetSizeMb(mb: Int) { store().edit { it[targetBufferSizeMbKey] = mb.coerceAtLeast(0) } }
     suspend fun setBufferBackBufferDurationMs(ms: Int) {
         store().edit { prefs ->
-            val isNativeMemory = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+            val isNativeMemory = isNativeMemoryActive(prefs)
             val maxLimit = if (isNativeMemory) 240_000 else 120_000
             prefs[backBufferDurationMsKey] = ms.coerceIn(0, maxLimit)
         }
@@ -1496,7 +1497,7 @@ class PlayerSettingsDataStore @Inject constructor(
         store().edit { prefs ->
             prefs[allowLargeTargetBufferKey] = enabled
             if (!enabled) {
-                val isNativeMemory = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+                val isNativeMemory = isNativeMemoryActive(prefs)
                 val safeLimitMb = if (isNativeMemory) {
                     NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
                 } else {
@@ -1526,7 +1527,7 @@ class PlayerSettingsDataStore @Inject constructor(
     }
     suspend fun setParallelConnectionCount(count: Int) {
         store().edit { prefs ->
-            val isNativeMemory = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+            val isNativeMemory = isNativeMemoryActive(prefs)
             val maxCount = if (isNativeMemory) 16 else PlayerSettings.MAX_PARALLEL_CONNECTION_COUNT
             prefs[parallelConnectionCountKey] = count.coerceIn(PlayerSettings.MIN_PARALLEL_CONNECTION_COUNT, maxCount)
         }
@@ -1543,7 +1544,7 @@ class PlayerSettingsDataStore @Inject constructor(
             targetBufferSizeMb?.let { prefs[targetBufferSizeMbKey] = it.coerceAtLeast(0) }
             useParallelConnections?.let { prefs[useParallelConnectionsKey] = it }
             parallelConnectionCount?.let {
-                val isNativeMemory = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+                val isNativeMemory = isNativeMemoryActive(prefs)
                 val maxCount = if (isNativeMemory) 16 else PlayerSettings.MAX_PARALLEL_CONNECTION_COUNT
                 prefs[parallelConnectionCountKey] = it.coerceIn(PlayerSettings.MIN_PARALLEL_CONNECTION_COUNT, maxCount)
             }
@@ -1555,14 +1556,16 @@ class PlayerSettingsDataStore @Inject constructor(
 
     val nuvioPerformanceModeEnabled: Flow<Boolean> = profileManager.activeProfileId.flatMapLatest { pid ->
         factory.get(pid, FEATURE).data.map { prefs ->
-            prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+            (prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED) &&
+                    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
         }
     }
 
     suspend fun setNuvioPerformanceModeEnabled(enabled: Boolean) {
+        val actualEnabled = enabled && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
         store().edit { prefs ->
-            prefs[nuvioPerformanceModeEnabledKey] = enabled
-            if (enabled) {
+            prefs[nuvioPerformanceModeEnabledKey] = actualEnabled
+            if (actualEnabled) {
                 val safeLimitMb = NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
                 prefs[minBufferMsKey] = 200_000
                 prefs[maxBufferMsKey] = 280_000
@@ -1588,5 +1591,10 @@ class PlayerSettingsDataStore @Inject constructor(
                 prefs[bufferBudgetManagedKey] = true
             }
         }
+    }
+
+    private fun isNativeMemoryActive(prefs: androidx.datastore.preferences.core.Preferences): Boolean {
+        val isEnabled = prefs[nuvioPerformanceModeEnabledKey] ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+        return isEnabled && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
     }
 }

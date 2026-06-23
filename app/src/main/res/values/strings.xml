@@ -2642,6 +2642,7 @@
     <string name="playback_net_device_memory_info">Device Memory: %1$s | Recommended Safety Limit: %2$d MB</string>
     <string name="playback_net_nuvio_performance_mode">ExoPlayer Native Memory</string>
     <string name="playback_net_nuvio_performance_mode_sub">Enable native off-heap allocator and scrubbing optimizations.</string>
+    <string name="playback_net_nuvio_performance_mode_not_supported">This feature is not supported by your device.</string>
     <string name="playback_buffer_custom">Custom Playback Buffers</string>
     <string name="playback_buffer_custom_sub">Override Media3\'s default buffering with the values below. When off, the player uses Media3\'s stock buffer durations and target size.</string>
     <string name="playback_buffer_header">Buffer</string>

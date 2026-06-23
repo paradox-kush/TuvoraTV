@@ -32,8 +32,10 @@ object NuvioExoPlayerPerformanceHelper {
     @Volatile
     var enabled: Boolean = false
         set(value) {
-            field = value
-            applyEngineConfig(value)
+            val supported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+            val newValue = value && supported
+            field = newValue
+            applyEngineConfig(newValue)
         }
 
     @Volatile
