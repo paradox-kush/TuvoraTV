@@ -73,17 +73,14 @@ internal class DolbyVisionMatroskaTransformer(
         val sample = sampleLengthDelimitedData ?: return null
         val profile = resolveProfile(null, dolbyVisionConfigBytes)
 
-        // FIX: Set baseline size state transparently up front
         lastTransformedLength = sampleLength
 
         if (stripRpuOnly) {
             if (profile == 5) {
-                // FIX: Fall back to original sample instead of returning null if no HDR10+ is found
                 return stripHdr10PlusIfEnabled(sample, sampleLength, nalUnitLengthFieldLength) ?: sample
             }
             val stripped = HevcDvRpuStripper.stripRpuLengthDelimited(
-                sample, sampleLength, nalUnitLengthFieldLength,
-                stripNonBaseLayerNals = profile == 7
+                sample, sampleLength, nalUnitLengthFieldLength
             )
             if (stripped != null) {
                 lastTransformedLength = stripped.size
@@ -93,7 +90,6 @@ internal class DolbyVisionMatroskaTransformer(
         }
 
         if (!config.shouldConvert(profile)) {
-            // FIX: Fall back cleanly to the unmodified original sample
             return stripHdr10PlusIfEnabled(sample, sampleLength, nalUnitLengthFieldLength) ?: sample
         }
 

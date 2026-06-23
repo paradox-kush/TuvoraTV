@@ -22,7 +22,6 @@ internal object HevcDvRpuStripper {
         sample: ByteArray,
         sampleLen: Int,
         nalLengthFieldLength: Int,
-        stripNonBaseLayerNals: Boolean = false
     ): ByteArray? {
         if (sampleLen < nalLengthFieldLength) return null
         val out = ByteArrayOutputStream(sampleLen)
