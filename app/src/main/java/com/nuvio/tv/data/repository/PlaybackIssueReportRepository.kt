@@ -293,9 +293,9 @@ class PlaybackIssueReportRepository @Inject constructor(
             exoIsLoading = exoIsLoading,
             exoPlayWhenReady = exoPlayWhenReady,
             mpvAttached = mpvAttached,
-            startupRetryCount = startupRetryCount,
-            errorRetryCount = errorRetryCount,
-            timeoutRecoveryAttempts = timeoutRecoveryAttempts,
+            startupRetryCount = startupRetryCount.coerceAtLeast(0),
+            errorRetryCount = errorRetryCount.coerceAtLeast(0),
+            timeoutRecoveryAttempts = timeoutRecoveryAttempts.coerceAtLeast(0),
             isLoadingAddonSubtitles = isLoadingAddonSubtitles,
             addonSubtitlesCount = addonSubtitlesCount.coerceAtLeast(0),
             isLoadingSourceStreams = isLoadingSourceStreams,
@@ -597,7 +597,12 @@ class PlaybackIssueReportRepository @Inject constructor(
 
     private fun String.redactSensitiveText(): String =
         replace(Regex("""https?://\S+""", RegexOption.IGNORE_CASE), "[redacted-url]")
-            .replace(Regex("""(?i)(bearer|token|apikey|api_key|authorization|cookie)=\S+"""), "$1=[redacted]")
+            .replace(
+                Regex("""(?i)\b(authorization|proxy-authorization|cookie|set-cookie)\b\s*:\s*[^\r\n]+"""),
+                "$1: [redacted]"
+            )
+            .replace(Regex("""(?i)\b(bearer|token|apikey|api_key)\b\s*[:=]\s*\S+"""), "$1=[redacted]")
+            .replace(Regex("""(?i)\b(authorization|proxy-authorization|cookie|set-cookie)\b\s*=\s*\S+"""), "$1=[redacted]")
 
     private fun String.limit(maxLength: Int): String =
         if (length <= maxLength) this else take(maxLength)

@@ -9,6 +9,7 @@ import android.util.Log
 import android.view.accessibility.CaptioningManager
 import android.media.MediaFormat
 import android.os.Handler
+import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -165,6 +166,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             hasScannedTextTracksOnce = false
             lastPlaybackDiagnosticsForReport = LastPlaybackDiagnostics.EMPTY
             lastPlaybackIssueError = null
+            playbackIssueReportRequestVersion.incrementAndGet()
             playbackAnalyticsDiagnostics.reset()
             _uiState.update {
                 it.copy(
@@ -929,7 +931,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         if (playbackState == Player.STATE_BUFFERING) {
                             if (hasRenderedFirstFrame && rebufferStartedAtMs == 0L) {
                                 rebufferCount += 1
-                                rebufferStartedAtMs = System.currentTimeMillis()
+                                rebufferStartedAtMs = SystemClock.elapsedRealtime()
                                 playbackAnalyticsDiagnostics.onRebufferStarted(this@apply, rebufferCount)
                                 Log.i(
                                     PlayerRuntimeController.TAG,
@@ -940,7 +942,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 )
                             }
                         } else if (rebufferStartedAtMs != 0L) {
-                            val lastRebufferMs = (System.currentTimeMillis() - rebufferStartedAtMs).coerceAtLeast(0L)
+                            val lastRebufferMs = (SystemClock.elapsedRealtime() - rebufferStartedAtMs).coerceAtLeast(0L)
                             rebufferTotalMs += lastRebufferMs
                             rebufferStartedAtMs = 0L
                             playbackAnalyticsDiagnostics.onRebufferEnded(this@apply, rebufferTotalMs, lastRebufferMs)
@@ -1369,7 +1371,16 @@ internal fun PlayerRuntimeController.initializePlayer(
                             return
                         }
 
+                        if (rebufferStartedAtMs != 0L) {
+                            val lastRebufferMs = (SystemClock.elapsedRealtime() - rebufferStartedAtMs).coerceAtLeast(0L)
+                            rebufferTotalMs += lastRebufferMs
+                            rebufferStartedAtMs = 0L
+                            playbackAnalyticsDiagnostics.onRebufferEnded(this@apply, rebufferTotalMs, lastRebufferMs)
+                        }
+
                         val errorDiagnostics = currentDiagnostics.copy(
+                            rebufferCount = rebufferCount,
+                            rebufferTotalMs = rebufferTotalMs,
                             result = "Error: $detailedError"
                         )
                         lastPlaybackDiagnosticsForReport = errorDiagnostics

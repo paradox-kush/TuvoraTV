@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import android.os.SystemClock
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.PlaybackException
@@ -22,7 +23,8 @@ private const val POSITION_STALL_THRESHOLD_MS = 5_000L
 private const val POSITION_PROGRESS_EPSILON_MS = 250L
 
 internal class PlayerPlaybackAnalyticsDiagnostics {
-    private var sessionStartedAtMs: Long = System.currentTimeMillis()
+    private var sessionStartedAtElapsedMs: Long = SystemClock.elapsedRealtime()
+    private var sessionStartedAtWallTimeMs: Long = System.currentTimeMillis()
     private val events: ArrayDeque<PlaybackIssuePlaybackEventInput> = ArrayDeque()
 
     private var eventCount: Int = 0
@@ -39,7 +41,7 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
     private var renderedFirstFrameCount: Int = 0
 
     private var lastPositionForStallMs: Long = -1L
-    private var positionLastAdvancedAtMs: Long = sessionStartedAtMs
+    private var positionLastAdvancedAtMs: Long = sessionStartedAtElapsedMs
     private var positionStallActive: Boolean = false
     private var positionStallCount: Int = 0
     private var longestPositionStallMs: Long = 0L
@@ -78,7 +80,8 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
     private var lastLoadError: PlaybackIssuePlaybackLoadErrorInput? = null
 
     fun reset() {
-        sessionStartedAtMs = System.currentTimeMillis()
+        sessionStartedAtElapsedMs = SystemClock.elapsedRealtime()
+        sessionStartedAtWallTimeMs = System.currentTimeMillis()
         events.clear()
         eventCount = 0
         playbackState = null
@@ -93,7 +96,7 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
         firstFrameElapsedMs = null
         renderedFirstFrameCount = 0
         lastPositionForStallMs = -1L
-        positionLastAdvancedAtMs = sessionStartedAtMs
+        positionLastAdvancedAtMs = sessionStartedAtElapsedMs
         positionStallActive = false
         positionStallCount = 0
         longestPositionStallMs = 0L
@@ -129,7 +132,7 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
     }
 
     fun recordProgressSnapshot(player: Player, hasRenderedFirstFrame: Boolean) {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         val position = player.currentPosition.coerceAtLeast(0L)
         playbackState = player.playbackState
         playbackStateName = player.playbackState.playbackStateName()
@@ -231,7 +234,7 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
     fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime) {
         renderedFirstFrameCount += 1
         if (firstFrameElapsedMs == null) {
-            firstFrameElapsedMs = (System.currentTimeMillis() - sessionStartedAtMs).coerceAtLeast(0L)
+            firstFrameElapsedMs = (SystemClock.elapsedRealtime() - sessionStartedAtElapsedMs).coerceAtLeast(0L)
         }
         record(name = "rendered_first_frame", eventTime = eventTime)
     }
@@ -239,7 +242,7 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
     fun onSyntheticFirstFrame(player: Player?) {
         renderedFirstFrameCount += 1
         if (firstFrameElapsedMs == null) {
-            firstFrameElapsedMs = (System.currentTimeMillis() - sessionStartedAtMs).coerceAtLeast(0L)
+            firstFrameElapsedMs = (SystemClock.elapsedRealtime() - sessionStartedAtElapsedMs).coerceAtLeast(0L)
         }
         player?.let { recordProgressSnapshot(it, hasRenderedFirstFrame = true) }
         record(
@@ -573,7 +576,8 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
         rebufferStartedAtMs: Long
     ): PlaybackIssuePlaybackAnalyticsInput {
         player?.let { recordProgressSnapshot(it, hasRenderedFirstFrame = hasRenderedFirstFrame) }
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
+        val capturedAtMs = System.currentTimeMillis()
         val currentRebufferMs = if (rebufferStartedAtMs > 0L) {
             (now - rebufferStartedAtMs).coerceAtLeast(0L)
         } else {
@@ -581,9 +585,9 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
         }
         return PlaybackIssuePlaybackAnalyticsInput(
             schemaVersion = 1,
-            sessionStartedAtMs = sessionStartedAtMs,
-            capturedAtMs = now,
-            elapsedMs = (now - sessionStartedAtMs).coerceAtLeast(0L),
+            sessionStartedAtMs = sessionStartedAtWallTimeMs,
+            capturedAtMs = capturedAtMs,
+            elapsedMs = (now - sessionStartedAtElapsedMs).coerceAtLeast(0L),
             eventCount = eventCount,
             lastEventElapsedMs = events.lastOrNull()?.elapsedMs,
             playbackState = playbackState,
@@ -646,14 +650,15 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
         eventTime: AnalyticsListener.EventTime? = null,
         details: Map<String, String> = emptyMap()
     ) {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
+        val timeMs = System.currentTimeMillis()
         eventCount += 1
         val position = eventTime?.currentPlaybackPositionMs.safeTimeMs() ?: positionMs
         val bufferedPosition = eventTime?.bufferedPositionMs() ?: bufferedPositionMs
         events.addLast(
             PlaybackIssuePlaybackEventInput(
-                timeMs = now,
-                elapsedMs = (now - sessionStartedAtMs).coerceAtLeast(0L),
+                timeMs = timeMs,
+                elapsedMs = (now - sessionStartedAtElapsedMs).coerceAtLeast(0L),
                 name = name,
                 playbackState = playbackStateName,
                 positionMs = position,

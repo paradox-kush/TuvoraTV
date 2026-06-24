@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import android.os.SystemClock
 import androidx.media3.common.Player
 import com.nuvio.tv.data.repository.PlaybackIssueLoadingEventInput
 import com.nuvio.tv.data.repository.PlaybackIssueLoadingInput
@@ -24,7 +25,7 @@ internal fun PlayerRuntimeController.resetLoadingDiagnostics(
     message: String? = null,
     progress: Float? = null
 ) {
-    val now = System.currentTimeMillis()
+    val now = SystemClock.elapsedRealtime()
     loadingDiagnosticsStartedAtMs = now
     currentLoadingPhase = phase
     currentLoadingPhaseStartedAtMs = now
@@ -59,7 +60,8 @@ internal fun PlayerRuntimeController.recordLoadingDiagnosticEvent(
     progress: Float? = null,
     detail: String? = null
 ) {
-    val now = System.currentTimeMillis()
+    val now = SystemClock.elapsedRealtime()
+    val timeMs = System.currentTimeMillis()
     if (loadingDiagnosticsStartedAtMs == 0L) {
         loadingDiagnosticsStartedAtMs = now
         currentLoadingPhaseStartedAtMs = now
@@ -76,7 +78,7 @@ internal fun PlayerRuntimeController.recordLoadingDiagnosticEvent(
     lastLoadingDiagnosticSignature = signature
     loadingDiagnosticEvents.addLast(
         PlayerLoadingDiagnosticEvent(
-            timeMs = now,
+            timeMs = timeMs,
             elapsedMs = (now - loadingDiagnosticsStartedAtMs).coerceAtLeast(0L),
             phase = phase,
             message = message,
@@ -107,7 +109,7 @@ internal fun PlayerRuntimeController.scheduleLoadingIssueReportAvailability() {
         delay(LOADING_ISSUE_REPORT_DELAY_MS)
         val state = _uiState.value
         if (state.playbackIssueReportsEnabled && !hasRenderedFirstFrame && state.error == null && state.showLoadingOverlay) {
-            val elapsedMs = (System.currentTimeMillis() - loadingDiagnosticsStartedAtMs).coerceAtLeast(0L)
+            val elapsedMs = (SystemClock.elapsedRealtime() - loadingDiagnosticsStartedAtMs).coerceAtLeast(0L)
             _uiState.update {
                 it.copy(
                     loadingIssueReportVisible = true,
@@ -119,7 +121,7 @@ internal fun PlayerRuntimeController.scheduleLoadingIssueReportAvailability() {
 }
 
 internal fun PlayerRuntimeController.buildPlaybackIssueLoadingInput(reportReason: String): PlaybackIssueLoadingInput {
-    val now = System.currentTimeMillis()
+    val now = SystemClock.elapsedRealtime()
     val state = _uiState.value
     val player = _exoPlayer
     val elapsedMs = if (loadingDiagnosticsStartedAtMs > 0L) now - loadingDiagnosticsStartedAtMs else 0L

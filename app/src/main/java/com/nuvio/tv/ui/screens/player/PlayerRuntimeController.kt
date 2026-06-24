@@ -304,6 +304,7 @@ class PlayerRuntimeController(
     internal var lastPlaybackDiagnosticsForReport: LastPlaybackDiagnostics =
         LastPlaybackDiagnostics.EMPTY
     internal var lastPlaybackIssueError: PlaybackIssueErrorInput? = null
+    internal val playbackIssueReportRequestVersion = AtomicLong(0L)
     internal val playbackAnalyticsDiagnostics = PlayerPlaybackAnalyticsDiagnostics()
     internal val loadingDiagnosticEvents: ArrayDeque<PlayerLoadingDiagnosticEvent> = ArrayDeque()
     internal var loadingDiagnosticsStartedAtMs: Long = 0L
@@ -322,12 +323,8 @@ class PlayerRuntimeController(
     internal var hasRenderedFirstFrame = false
     internal var shouldEnforceAutoplayOnFirstReady = true
 
-    // ── Buffer/rebuffer telemetry (per playback; reset in initializePlayer) ──
-    /** Count of rebuffers (STATE_BUFFERING entered after the first frame). */
     internal var rebufferCount: Int = 0
-    /** Total time (ms) spent rebuffering after the first frame. */
     internal var rebufferTotalMs: Long = 0L
-    /** Wall-clock ms when the current post-first-frame rebuffer started, 0 if not rebuffering. */
     internal var rebufferStartedAtMs: Long = 0L
     /** Back buffer (ms) currently in force, after the first-frame DV7/low-RAM resolution. */
     internal var effectiveBackBufferDurationMs: Int = 0

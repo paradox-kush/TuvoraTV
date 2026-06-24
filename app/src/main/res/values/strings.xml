@@ -1461,7 +1461,10 @@
     <string name="player_report_issue_sent_button">Report Sent</string>
     <string name="player_report_issue_failed">Unable to send report</string>
     <string name="player_report_loading_issue">Report Loading Issue</string>
-    <string name="player_report_loading_issue_prompt">Still loading after %1$d sec</string>
+    <plurals name="player_report_loading_issue_prompt">
+        <item quantity="one">Still loading after %1$d second</item>
+        <item quantity="other">Still loading after %1$d seconds</item>
+    </plurals>
     <string name="player_speed_title">Playback Speed</string>
     <string name="player_more_actions_title">More Actions</string>
     <string name="player_more_speed">Playback Speed</string>

@@ -384,6 +384,7 @@ internal fun PlayerRuntimeController.submitPlaybackIssueReport() {
         )
     )
 
+    val requestVersion = playbackIssueReportRequestVersion.incrementAndGet()
     _uiState.update {
         it.copy(
             playbackIssueReportStatus = PlaybackIssueReportStatus.Sending,
@@ -394,22 +395,28 @@ internal fun PlayerRuntimeController.submitPlaybackIssueReport() {
     scope.launch {
         val result = playbackIssueReportRepository.submit(input)
         _uiState.update { current ->
-            result.fold(
-                onSuccess = { reportId ->
-                    current.copy(
-                        playbackIssueReportStatus = PlaybackIssueReportStatus.Sent,
-                        playbackIssueReportId = reportId,
-                        playbackIssueReportError = null
-                    )
-                },
-                onFailure = { error ->
-                    current.copy(
-                        playbackIssueReportStatus = PlaybackIssueReportStatus.Failed,
-                        playbackIssueReportId = null,
-                        playbackIssueReportError = error.message ?: "Unable to send report"
-                    )
-                }
-            )
+            if (playbackIssueReportRequestVersion.get() != requestVersion ||
+                current.playbackIssueReportStatus != PlaybackIssueReportStatus.Sending
+            ) {
+                current
+            } else {
+                result.fold(
+                    onSuccess = { reportId ->
+                        current.copy(
+                            playbackIssueReportStatus = PlaybackIssueReportStatus.Sent,
+                            playbackIssueReportId = reportId,
+                            playbackIssueReportError = null
+                        )
+                    },
+                    onFailure = { error ->
+                        current.copy(
+                            playbackIssueReportStatus = PlaybackIssueReportStatus.Failed,
+                            playbackIssueReportId = null,
+                            playbackIssueReportError = error.message ?: "Unable to send report"
+                        )
+                    }
+                )
+            }
         }
     }
 }
@@ -1341,6 +1348,7 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         PlayerEvent.OnRetry -> {
             hasRenderedFirstFrame = false
             hasRetriedCurrentStreamAfter416 = false
+            playbackIssueReportRequestVersion.incrementAndGet()
             resetErrorRetryState()
             lastPlaybackIssueError = null
             clearPendingEngineSwitchTrackPreference()

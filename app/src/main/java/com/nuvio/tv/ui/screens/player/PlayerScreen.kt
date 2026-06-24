@@ -157,6 +157,7 @@ fun PlayerScreen(
     val nextEpisodeFocusRequester = remember { FocusRequester() }
     var subtitleDelayAutoSyncFocused by remember { mutableStateOf(false) }
     var subtitleTimingConsumeNextConfirmKeyUp by remember { mutableStateOf(false) }
+    var reportCodeVisible by remember { mutableStateOf(false) }
 
     val exitPlayer: () -> Unit = {
         val timeline = viewModel.playbackTimeline.value
@@ -209,6 +210,20 @@ fun PlayerScreen(
                     true
                 )
             }
+        }
+    }
+
+    LaunchedEffect(uiState.playbackIssueReportStatus, uiState.playbackIssueReportId) {
+        if (uiState.playbackIssueReportStatus == PlaybackIssueReportStatus.Sent &&
+            !uiState.playbackIssueReportId.isNullOrBlank()
+        ) {
+            reportCodeVisible = true
+            viewModel.scheduleHideControls()
+            viewModel.onUserInteraction()
+            delay(5000)
+            reportCodeVisible = false
+        } else if (uiState.playbackIssueReportStatus != PlaybackIssueReportStatus.Sent) {
+            reportCodeVisible = false
         }
     }
 
@@ -930,6 +945,7 @@ fun PlayerScreen(
                 playPauseFocusRequester = playPauseFocusRequester,
                 progressBarFocusRequester = progressBarFocusRequester,
                 streamInfoFocusRequester = streamInfoFocusRequester,
+                reportCodeVisible = reportCodeVisible,
                 progressBarUpFocusRequester = when {
                     skipButtonActuallyVisible -> skipIntroFocusRequester
                     uiState.postPlayMode is PostPlayMode.AutoPlay -> nextEpisodeFocusRequester
@@ -1592,6 +1608,7 @@ private fun PlayerControlsOverlay(
     onResetHideTimer: () -> Unit,
     onHideControls: () -> Unit,
     onBack: () -> Unit,
+    reportCodeVisible: Boolean,
     skipButtonVisible: Boolean = false
 ) {
     val customPlayPainter = rememberRawSvgPainter(R.raw.ic_player_play)
@@ -1601,20 +1618,6 @@ private fun PlayerControlsOverlay(
     val customSourcePainter = rememberRawSvgPainter(R.raw.ic_player_source)
     val customAspectPainter = rememberRawSvgPainter(R.raw.ic_player_aspect_ratio)
     val customEpisodesPainter = rememberRawSvgPainter(R.raw.ic_player_episodes)
-    var reportCodeVisible by remember { mutableStateOf(false) }
-
-    LaunchedEffect(uiState.playbackIssueReportStatus, uiState.playbackIssueReportId) {
-        if (uiState.playbackIssueReportStatus == PlaybackIssueReportStatus.Sent &&
-            !uiState.playbackIssueReportId.isNullOrBlank()
-        ) {
-            reportCodeVisible = true
-            onResetHideTimer()
-            delay(5000)
-            reportCodeVisible = false
-        } else if (uiState.playbackIssueReportStatus != PlaybackIssueReportStatus.Sent) {
-            reportCodeVisible = false
-        }
-    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Top gradient
@@ -2611,6 +2614,7 @@ private fun LoadingIssueReportAction(
     modifier: Modifier = Modifier
 ) {
     val focusRequester = remember { FocusRequester() }
+    val context = LocalContext.current
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
@@ -2626,10 +2630,14 @@ private fun LoadingIssueReportAction(
             PlaybackIssueReportStatus.Sent -> stringResource(R.string.player_report_issue_sent, reportId.orEmpty())
             PlaybackIssueReportStatus.Failed -> reportError ?: stringResource(R.string.player_report_issue_failed)
             PlaybackIssueReportStatus.Sending -> stringResource(R.string.player_report_issue_sending)
-            PlaybackIssueReportStatus.Idle -> stringResource(
-                R.string.player_report_loading_issue_prompt,
-                (elapsedMs / 1000L).coerceAtLeast(1L)
-            )
+            PlaybackIssueReportStatus.Idle -> {
+                val elapsedSeconds = (elapsedMs / 1000L).coerceAtLeast(1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                context.resources.getQuantityString(
+                    R.plurals.player_report_loading_issue_prompt,
+                    elapsedSeconds,
+                    elapsedSeconds
+                )
+            }
         }
         Text(
             text = reportMessage,
