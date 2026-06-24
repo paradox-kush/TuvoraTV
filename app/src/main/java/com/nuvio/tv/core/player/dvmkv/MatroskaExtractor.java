@@ -2842,7 +2842,7 @@ public class MatroskaExtractor implements Extractor {
           throw ParserException.createForMalformedContainer(
               "Unrecognized codec identifier.", /* cause= */ null);
       }
-
+      @Nullable String hevcCodecsString = codecs;
       if (dolbyVisionConfigBytes != null) {
         @Nullable
         DolbyVisionConfig dolbyVisionConfig =
@@ -2864,6 +2864,10 @@ public class MatroskaExtractor implements Extractor {
                 mimeType = MimeTypes.VIDEO_H265;
               }
             }
+            if (MimeTypes.VIDEO_DOLBY_VISION.equals(mimeType) && hevcCodecsString != null) {
+              mimeType = MimeTypes.VIDEO_H265;
+              codecs = hevcCodecsString;
+            }
           }
         }
       } else if (dolbyVisionSampleTransformer != null && codecs != null) {
@@ -2877,7 +2881,13 @@ public class MatroskaExtractor implements Extractor {
               dolbyVisionSampleTransformer.onDolbyVisionCodecString(codecs, null);
           if (transformedCodecs != null && !transformedCodecs.isEmpty()) {
             codecs = transformedCodecs;
-            mimeType = MimeTypes.VIDEO_DOLBY_VISION;
+            //Check whether transformer downgraded to HEVC before assuming DV.
+            String tLower = codecs.toLowerCase(Locale.ROOT);
+            if (tLower.startsWith("hvc1.") || tLower.startsWith("hev1.")) {
+              mimeType = MimeTypes.VIDEO_H265;
+            } else {
+              mimeType = MimeTypes.VIDEO_DOLBY_VISION;
+            }
           }
         }
       }

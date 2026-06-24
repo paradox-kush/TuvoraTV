@@ -220,6 +220,9 @@ class PlayerRuntimeController(
             contentName = contentName,
             currentStreamName = streamName,
             currentStreamUrl = currentStreamUrl,
+            currentStreamInfoHash = navigationArgs.infoHash,
+            currentStreamFileIdx = navigationArgs.fileIdx,
+            currentStreamAddonName = navigationArgs.addonName,
             releaseYear = year,
             contentType = contentType,
             backdrop = backdrop,
@@ -333,7 +336,7 @@ class PlayerRuntimeController(
     internal var autoSkipSegmentTypes: Set<AutoSkipSegmentType> = emptySet()
     internal var playerSettingsInitialized: Boolean = false
     internal var skipIntroFetchedKey: String? = null
-    internal var lastAutoSkippedIntervalKey: String? = null
+    internal val autoSkippedIntervalKeys: MutableSet<String> = mutableSetOf()
     internal var lastActiveSkipType: String? = null
     internal var autoSubtitleSelected: Boolean = false
     internal var lastSubtitlePreferredLanguage: String? = null
@@ -473,7 +476,7 @@ class PlayerRuntimeController(
     internal var libassPipelineDecisionStreamUrl: String? = null
     internal var torrentStreamJob: Job? = null
     internal var torrentStateObserverJob: Job? = null
-    internal var isTorrentStream: Boolean = navigationArgs.infoHash != null
+    internal var isTorrentStream: Boolean = navigationArgs.infoHash != null && !initialStreamUrl.startsWith("http")
     internal var currentInfoHash: String? = navigationArgs.infoHash
     internal var currentFileIdx: Int? = navigationArgs.fileIdx
     internal var currentTorrentSources: List<String>? =

@@ -450,11 +450,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                     maxBufferMs = bufferSettings.maxBufferMs,
                     bufferForPlaybackMs = bufferSettings.bufferForPlaybackMs,
                     bufferForPlaybackAfterRebufferMs = bufferSettings.bufferForPlaybackAfterRebufferMs,
-                    prioritizeTimeOverSizeThresholds = false,
+                    // Allow buffering past the byte budget until the minimum time threshold is
+                    // met. Without this, high-bitrate remux files (e.g. 100+ Mbps UHD MKV with
+                    // multiple audio tracks) exhaust the 500MB byte cap in <5s of content before
+                    // minBufferMs is satisfied, leaving ExoPlayer stuck in STATE_BUFFERING.
+                    prioritizeTimeOverSizeThresholds = true,
                     backBufferDurationMs = backBufferMsAtBuild,
-                    // Retain back to the keyframe before the boundary, else a backward seek
-                    // into the buffer has no keyframe to decode from and re-fetches. The
-                    // persisted setting defaults false and isn't exposed, so force it on.
                     retainBackBufferFromKeyframe = true,
                     budgetBytes = budgetBytes,
                     allocator = allocator
@@ -726,7 +727,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                 .setEnableDecoderFallback(true)
                 .setMediaCodecSelector(codecSelector)
                 .applyMapDv7ToHevcIfSupported(mapDv7ToHevcEnabled)
-            NuvioExoPlayerPerformanceHelper.applyAsyncQueueing(renderersFactory)
 
             // The app-level factory performs DV7 conversion for the in-band-RPU containers
             // (MP4/fMP4/TS); MKV goes through the vendored extractor. Pass-through for non-DV.
@@ -739,28 +739,28 @@ internal fun PlayerRuntimeController.initializePlayer(
                 Log.i(PlayerRuntimeController.TAG, "HDR10PLUS_STRIP: enabled — will remove HDR10+ SEI NALs")
             }
 
-            val effectiveExtractorsFactory: ExtractorsFactory =
-                if (isExperimentalDv7ToDv81ActiveForCurrentPlayback || stripDvRpuEnabled || stripHdr10PlusSei) {
-                    DolbyVisionExtractorsFactory(
-                        delegate = extractorsFactory,
-                        config = DolbyVisionConversionConfig(
-                            active = isExperimentalDv7ToDv81ActiveForCurrentPlayback,
-                            forcedMode = when {
-                                libdoviModeOverrideActive -> libdoviModeOverride
-                                dv7Mode1Forced -> 1
-                                else -> -1
-                            },
-                            preserveMapping = playerSettings.dv7ToDv81PreserveMappingEnabled &&
-                                    manualDv81Selected,
-                            dv5Enabled = playerSettings.dv5ToDv81Enabled,
-                            manualDv81 = manualDv81Selected && !dv7Mode1Forced
-                        ),
-                        stripDvRpu = stripDvRpuEnabled,
-                        stripHdr10PlusSei = stripHdr10PlusSei
-                    )
-                } else {
-                    extractorsFactory
-                }
+            val effectiveExtractorsFactory: ExtractorsFactory =             
+                    if (isExperimentalDv7ToDv81ActiveForCurrentPlayback || stripDvRpuEnabled || stripHdr10PlusSei) {
+                        DolbyVisionExtractorsFactory(
+                            delegate = extractorsFactory,
+                            config = DolbyVisionConversionConfig(
+                                active = isExperimentalDv7ToDv81ActiveForCurrentPlayback,
+                                forcedMode = when {
+                                    libdoviModeOverrideActive -> libdoviModeOverride
+                                    dv7Mode1Forced -> 1
+                                    else -> -1
+                                },
+                                preserveMapping = playerSettings.dv7ToDv81PreserveMappingEnabled &&
+                                        manualDv81Selected,
+                                dv5Enabled = playerSettings.dv5ToDv81Enabled,
+                                manualDv81 = manualDv81Selected && !dv7Mode1Forced
+                            ),
+                            stripDvRpu = stripDvRpuEnabled,
+                            stripHdr10PlusSei = stripHdr10PlusSei
+                        )
+                    } else {
+                        extractorsFactory
+                    }
 
             _uiState.update { it.copy(loadingMessage = context.getString(R.string.player_loading_building)) }
             // ── Build ExoPlayer ──

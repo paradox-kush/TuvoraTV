@@ -649,7 +649,9 @@ private fun PlayerRuntimeController.openExternalStreamInBrowser(
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)
-internal fun PlayerRuntimeController.switchToSourceStream(stream: Stream) {
+internal fun PlayerRuntimeController.switchToSourceStream(
+    stream: Stream
+) {
     sourceStreamsScope?.cancel()
     sourceStreamsScope = null
     sourceStreamsJob = null
@@ -745,6 +747,9 @@ internal fun PlayerRuntimeController.switchToSourceStream(stream: Stream) {
             error = null,
             currentStreamName = stream.name ?: stream.addonName,
             currentStreamUrl = url,
+            currentStreamInfoHash = stream.infoHash ?: stream.clientResolve?.infoHash,
+            currentStreamFileIdx = stream.clientResolve?.fileIdx,
+            currentStreamAddonName = stream.addonName,
             audioTracks = emptyList(),
             subtitleTracks = emptyList(),
             selectedAudioTrackIndex = -1,
@@ -826,7 +831,9 @@ internal fun PlayerRuntimeController.selectEpisodesSeason(season: Int) {
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun PlayerRuntimeController.switchToTorrentSourceStream(stream: Stream) {
+private fun PlayerRuntimeController.switchToTorrentSourceStream(
+    stream: Stream
+) {
     val infoHash = stream.getEffectiveInfoHash() ?: return
     sourceStreamsScope?.cancel()
     sourceStreamsScope = null
@@ -849,6 +856,9 @@ private fun PlayerRuntimeController.switchToTorrentSourceStream(stream: Stream) 
             error = null,
             currentStreamName = stream.name ?: stream.addonName,
             currentStreamUrl = "",
+            currentStreamInfoHash = stream.infoHash ?: stream.clientResolve?.infoHash,
+            currentStreamFileIdx = stream.clientResolve?.fileIdx,
+            currentStreamAddonName = stream.addonName,
             audioTracks = emptyList(),
             subtitleTracks = emptyList(),
             selectedAudioTrackIndex = -1,
@@ -1283,6 +1293,9 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
             currentEpisodeTitle = currentEpisodeTitle,
             currentStreamName = stream.name ?: stream.addonName,
             currentStreamUrl = url,
+            currentStreamInfoHash = stream.infoHash ?: stream.clientResolve?.infoHash,
+            currentStreamFileIdx = stream.clientResolve?.fileIdx,
+            currentStreamAddonName = stream.addonName,
             audioTracks = emptyList(),
             subtitleTracks = emptyList(),
             selectedAudioTrackIndex = -1,
@@ -1313,6 +1326,7 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     skipIntervals = emptyList()
     skipIntroFetchedKey = null
     lastActiveSkipType = null
+    autoSkippedIntervalKeys.clear()
 
     fetchParentalGuide(contentId, contentType, currentSeason, currentEpisode)
     fetchSkipIntervals(contentId, currentSeason, currentEpisode)
@@ -1377,6 +1391,9 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
             currentEpisodeTitle = currentEpisodeTitle,
             currentStreamName = stream.name ?: stream.addonName,
             currentStreamUrl = "",
+            currentStreamInfoHash = stream.infoHash ?: stream.clientResolve?.infoHash,
+            currentStreamFileIdx = stream.clientResolve?.fileIdx,
+            currentStreamAddonName = stream.addonName,
             audioTracks = emptyList(),
             subtitleTracks = emptyList(),
             selectedAudioTrackIndex = -1,
@@ -1407,6 +1424,7 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
     skipIntervals = emptyList()
     skipIntroFetchedKey = null
     lastActiveSkipType = null
+    autoSkippedIntervalKeys.clear()
 
     fetchParentalGuide(contentId, contentType, currentSeason, currentEpisode)
     fetchSkipIntervals(contentId, currentSeason, currentEpisode)
