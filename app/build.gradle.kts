@@ -267,6 +267,15 @@ android {
         }
     }
 
+    bundle {
+        language {
+            // Keep all string resources in the
+            // base install so Play Store installs can switch languages at runtime.
+            // https://developer.android.com/guide/app-bundle/configure-base
+            enableSplit = false
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
