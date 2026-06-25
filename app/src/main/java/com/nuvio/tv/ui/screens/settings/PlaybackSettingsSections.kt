@@ -135,6 +135,7 @@ internal fun PlaybackSettingsSections(
     onSetStreamAutoPlayReuseBingeGroup: (Boolean) -> Unit,
     onSetAutoSwitchInternalPlayerOnError: (Boolean) -> Unit,
     onSetExternalPlayerForwardSubtitles: (Boolean) -> Unit,
+    onSetExternalPlayerSendSkipSegments: (Boolean) -> Unit,
     onSetNextEpisodeThresholdPercent: (Float) -> Unit,
     onSetNextEpisodeThresholdMinutesBeforeEnd: (Float) -> Unit,
     onSetStreamAutoPlayTimeoutSeconds: (Int) -> Unit,
@@ -482,6 +483,17 @@ internal fun PlaybackSettingsSections(
                         subtitle = stringResource(R.string.playback_external_forward_subtitles_sub),
                         isChecked = playerSettings.externalPlayerForwardSubtitles,
                         onCheckedChange = onSetExternalPlayerForwardSubtitles,
+                        onFocused = { focusedSection = PlaybackSection.STREAM_SELECTION }
+                    )
+                }
+
+                item(key = "external_player_send_skip_segments") {
+                    ToggleSettingsItem(
+                        icon = Icons.Default.Info,
+                        title = stringResource(R.string.playback_external_send_skip_segments),
+                        subtitle = stringResource(R.string.playback_external_send_skip_segments_sub),
+                        isChecked = playerSettings.externalPlayerSendSkipSegments,
+                        onCheckedChange = onSetExternalPlayerSendSkipSegments,
                         onFocused = { focusedSection = PlaybackSection.STREAM_SELECTION }
                     )
                 }

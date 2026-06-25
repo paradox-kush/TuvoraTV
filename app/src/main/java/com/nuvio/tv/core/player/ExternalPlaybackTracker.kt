@@ -11,6 +11,7 @@ import com.nuvio.tv.data.repository.TraktScrobbleService
 import com.nuvio.tv.data.repository.TraktScrobbleItem
 import com.nuvio.tv.data.repository.TraktEpisodeMappingService
 import com.nuvio.tv.data.repository.TraktAuthService
+import com.nuvio.tv.data.repository.SkipIntroRepository
 import com.nuvio.tv.data.repository.parseContentIds
 import com.nuvio.tv.data.repository.extractYear
 import com.nuvio.tv.data.repository.toTraktIds
@@ -117,7 +118,8 @@ class ExternalPlaybackTracker @Inject constructor(
     private val traktEpisodeMappingService: TraktEpisodeMappingService,
     private val traktAuthService: TraktAuthService,
     private val metaRepository: MetaRepository,
-    private val playerSettingsDataStore: PlayerSettingsDataStore
+    private val playerSettingsDataStore: PlayerSettingsDataStore,
+    private val skipIntroRepository: SkipIntroRepository
 ) {
     companion object {
         private const val TAG = "ExtPlaybackTracker"
@@ -131,6 +133,8 @@ class ExternalPlaybackTracker @Inject constructor(
         private const val MIN_REAL_PLAYBACK_DURATION_MS = 30_000L
         /** A launch within this of an auto-next emit counts as a chain continuation. */
         private const val CONTINUATION_WINDOW_MS = 12_000L
+        /** Upper bound on how long resolving skip segments may delay an external launch. */
+        private const val SKIP_RESOLVE_TIMEOUT_MS = 4_000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -252,15 +256,65 @@ class ExternalPlaybackTracker @Inject constructor(
     ) {
         startTracking(metadata, autoLaunch = autoLaunch)
 
-        // Fetch resume position if not provided, then launch
-        if (resumePositionMs > 0L) {
-            doLaunch(url, title, headers, resumePositionMs, subtitles, context)
-        } else {
-            scope.launch {
-                val position = getResumePosition(metadata)
-                doLaunch(url, title, headers, position, subtitles, context)
+        // Resolve resume position (if not given) and intro/outro skip segments off the main
+        // thread, then launch. Skip resolution is bounded so it never stalls the launch for long
+        // and is cached, so an auto-next chain pays it only once.
+        scope.launch {
+            val position = if (resumePositionMs > 0L) resumePositionMs else getResumePosition(metadata)
+            val skipSegmentsJson = resolveSkipSegmentsJson(metadata)
+            doLaunch(url, title, headers, position, subtitles, skipSegmentsJson, context)
+        }
+    }
+
+    /**
+     * Resolves intro/outro skip segments for [metadata] via the same repository the internal
+     * player uses, and serializes them to a JSON array string for the external player. Mirrors
+     * the id-format handling in `fetchSkipIntervals`. Returns null when skip is disabled, the
+     * content can't be identified, or nothing is found.
+     */
+    private suspend fun resolveSkipSegmentsJson(metadata: ExternalPlaybackMetadata): String? {
+        // Opt-in via the External Player setting (not the internal player's "Skip Intro", which is
+        // greyed out while external player is selected).
+        if (!playerSettingsDataStore.playerSettings.first().externalPlayerSendSkipSegments) return null
+
+        // videoId carries the episode-specific id (e.g. mal:/kitsu:/imdb); fall back to contentId.
+        val effectiveId = metadata.videoId.takeIf { it.isNotBlank() } ?: metadata.contentId
+
+        val intervals = withTimeoutOrNull(SKIP_RESOLVE_TIMEOUT_MS) {
+            when {
+                effectiveId.startsWith("mal:") -> {
+                    val parts = effectiveId.split(":")
+                    val malId = parts.getOrNull(1) ?: return@withTimeoutOrNull null
+                    val ep = parts.getOrNull(2)?.toIntOrNull() ?: metadata.episode ?: return@withTimeoutOrNull null
+                    skipIntroRepository.getSkipIntervalsForMal(malId, ep)
+                }
+                effectiveId.startsWith("kitsu:") -> {
+                    val parts = effectiveId.split(":")
+                    val kitsuId = parts.getOrNull(1) ?: return@withTimeoutOrNull null
+                    val ep = parts.getOrNull(2)?.toIntOrNull() ?: metadata.episode ?: return@withTimeoutOrNull null
+                    skipIntroRepository.getSkipIntervalsForKitsu(kitsuId, ep)
+                }
+                else -> {
+                    val imdbId = effectiveId.split(":").firstOrNull()?.takeIf { it.startsWith("tt") }
+                        ?: return@withTimeoutOrNull null
+                    val s = metadata.season ?: return@withTimeoutOrNull null
+                    val e = metadata.episode ?: return@withTimeoutOrNull null
+                    skipIntroRepository.getSkipIntervals(imdbId, s, e)
+                }
             }
         }
+        if (intervals.isNullOrEmpty()) return null
+
+        val arr = org.json.JSONArray()
+        intervals.forEach { iv ->
+            arr.put(
+                org.json.JSONObject()
+                    .put("type", iv.type)
+                    .put("start", iv.startTime)
+                    .put("end", iv.endTime)
+            )
+        }
+        return arr.toString()
     }
 
     private fun doLaunch(
@@ -269,6 +323,7 @@ class ExternalPlaybackTracker @Inject constructor(
         headers: Map<String, String>?,
         resumePositionMs: Long,
         subtitles: List<SubtitleInput>?,
+        skipSegmentsJson: String?,
         context: Context
     ) {
 
@@ -277,7 +332,8 @@ class ExternalPlaybackTracker @Inject constructor(
             title = title,
             headers = headers,
             resumePositionMs = resumePositionMs,
-            subtitles = subtitles
+            subtitles = subtitles,
+            skipSegmentsJson = skipSegmentsJson
         )
 
         if (ZidooPlayerMonitor.isZidooDevice()) {
@@ -288,7 +344,8 @@ class ExternalPlaybackTracker @Inject constructor(
                 title = title,
                 headers = headers,
                 resumePositionMs = resumePositionMs,
-                subtitles = subtitles
+                subtitles = subtitles,
+                skipSegmentsJson = skipSegmentsJson
             )
         } else {
             // Use Activity-level launcher for ActivityResult
@@ -304,7 +361,8 @@ class ExternalPlaybackTracker @Inject constructor(
                         title = title,
                         headers = headers,
                         resumePositionMs = resumePositionMs,
-                        subtitles = subtitles
+                        subtitles = subtitles,
+                        skipSegmentsJson = skipSegmentsJson
                     )
                 }
             } else {
@@ -315,7 +373,8 @@ class ExternalPlaybackTracker @Inject constructor(
                     title = title,
                     headers = headers,
                     resumePositionMs = resumePositionMs,
-                    subtitles = subtitles
+                    subtitles = subtitles,
+                    skipSegmentsJson = skipSegmentsJson
                 )
             }
         }

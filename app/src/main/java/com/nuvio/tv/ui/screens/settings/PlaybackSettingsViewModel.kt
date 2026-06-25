@@ -89,6 +89,10 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setExternalPlayerForwardSubtitles(enabled)
     }
 
+    suspend fun setExternalPlayerSendSkipSegments(enabled: Boolean) {
+        playerSettingsDataStore.setExternalPlayerSendSkipSegments(enabled)
+    }
+
     suspend fun setTrailerEnabled(enabled: Boolean) {
         trailerSettingsDataStore.setEnabled(enabled)
     }

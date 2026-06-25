@@ -23,7 +23,10 @@ data class ExternalPlayerInput(
     val title: String? = null,
     val headers: Map<String, String>? = null,
     val resumePositionMs: Long = 0L,
-    val subtitles: List<SubtitleInput>? = null
+    val subtitles: List<SubtitleInput>? = null,
+    // Pre-resolved intro/outro skip segments as a JSON array string
+    // (`[{"type","start","end"}]`, times in seconds). Read by mpvNova.
+    val skipSegmentsJson: String? = null
 )
 
 /**
@@ -80,6 +83,9 @@ class ExternalPlayerResultContract : ActivityResultContract<ExternalPlayerInput,
             // Request that the player returns result with position/duration.
             // Required by MX Player; harmless for other players.
             putExtra("return_result", true)
+
+            // Pre-resolved intro/outro skip segments (mpvNova reads this; other players ignore it).
+            input.skipSegmentsJson?.let { putExtra("skip_segments", it) }
 
             // Subtitle extras for external players
             val subs = input.subtitles

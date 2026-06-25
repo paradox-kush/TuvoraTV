@@ -241,6 +241,9 @@ fun PlaybackSettingsContent(
                 onSetExternalPlayerForwardSubtitles = { enabled ->
                     coroutineScope.launch { viewModel.setExternalPlayerForwardSubtitles(enabled) }
                 },
+                onSetExternalPlayerSendSkipSegments = { enabled ->
+                    coroutineScope.launch { viewModel.setExternalPlayerSendSkipSegments(enabled) }
+                },
                 onSetNextEpisodeThresholdPercent = { percent ->
                     coroutineScope.launch { viewModel.setNextEpisodeThresholdPercent(percent) }
                 },

@@ -97,6 +97,7 @@ private val localOnlyPlayerProfileSettingsKeys = setOf(
     "frame_rate_matching_mode",
     "resolution_matching_enabled",
     "external_player_forward_subtitles",
+    "external_player_send_skip_segments",
     "vod_cache_enabled",
     "vod_cache_size_mode",
     "vod_cache_size_mb",
