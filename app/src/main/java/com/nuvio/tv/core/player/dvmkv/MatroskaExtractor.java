@@ -45,7 +45,6 @@ import androidx.media3.container.NalUnitUtil;
 import androidx.media3.extractor.AacUtil;
 import androidx.media3.extractor.AvcConfig;
 import androidx.media3.extractor.ChunkIndex;
-import androidx.media3.extractor.DtsUtil;
 import androidx.media3.extractor.Extractor;
 import androidx.media3.extractor.ExtractorInput;
 import androidx.media3.extractor.ExtractorOutput;
@@ -1769,20 +1768,20 @@ public class MatroskaExtractor implements Extractor {
     // int without consuming it (the 10-byte header is read from position 0 next).
     int word = sampleData.readInt();
     sampleData.setPosition(0);
-    if (DtsUtil.getFrameType(word) == DtsUtil.FRAME_TYPE_CORE) {
+    if (androidx.media3.extractor.DtsUtil.getFrameType(word) == androidx.media3.extractor.DtsUtil.FRAME_TYPE_CORE) {
       if (sampleData.bytesLeft() < 10) {
         return false;
       }
       byte[] header = new byte[10];
       sampleData.readBytes(header, /* offset= */ 0, /* length= */ 10);
       sampleData.setPosition(0);
-      int frameSize = DtsUtil.getDtsFrameSize(header);
+      int frameSize = androidx.media3.extractor.DtsUtil.getDtsFrameSize(header);
       if (frameSize <= 0 || sampleData.bytesLeft() < frameSize + 4) {
         return false;
       }
       sampleData.skipBytes(frameSize);
       word = sampleData.readInt();
-      return DtsUtil.getFrameType(word) == DtsUtil.FRAME_TYPE_EXTENSION_SUBSTREAM;
+      return androidx.media3.extractor.DtsUtil.getFrameType(word) == androidx.media3.extractor.DtsUtil.FRAME_TYPE_EXTENSION_SUBSTREAM;
     }
     return false;
   }
@@ -1943,12 +1942,11 @@ public class MatroskaExtractor implements Extractor {
 
     if (track.waitingForDtsAnalysis) {
       checkNotNull(track.format);
-      // NOTE: DtsUtil.isSampleDtsHd(ExtractorInput, int) is a post-1.8.0 API absent
-      // from the stock media3 we link against in AAR mode, so it is vendored as
-      // isSampleDtsHd(...) below (it only relies on long-standing public DtsUtil
-      // APIs). This preserves DTS-HD MA detection / passthrough for MKV.
-      if (isSampleDtsHd(input, size)) {
-        track.format = track.format.buildUpon().setSampleMimeType(MimeTypes.AUDIO_DTS_HD).build();
+      byte[] peekedData = new byte[size];
+      if (input.peekFully(peekedData, 0, size, true)) {
+        input.resetPeekPosition();
+        String mimeType = com.nuvio.tv.core.player.dvmkv.DtsUtil.getDtsAudioMimeType(peekedData);
+        track.format = track.format.buildUpon().setSampleMimeType(mimeType).build();
       }
       track.output.format(track.format);
       track.waitingForDtsAnalysis = false;
