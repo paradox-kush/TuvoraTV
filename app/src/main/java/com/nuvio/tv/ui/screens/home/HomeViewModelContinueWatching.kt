@@ -1454,7 +1454,19 @@ private suspend fun HomeViewModel.buildLightweightNextUpItems(
                     showUnairedNextUp = showUnairedNextUp,
                     debug = debug
                 ) ?: run {
-                    logNextUpDecision("drop contentId=${progress.contentId} name=${progress.name} reason=buildNextUpItem-null")
+                    // If meta was not available (network error, addon timeout),
+                    // remove from processedContentIds so this series is NOT
+                    // treated as "rejected". The cached CW snapshot will keep
+                    // it visible until the next successful meta resolution.
+                    val metaResolved = synchronized(cwMetaCache) {
+                        cwMetaCache["${progress.contentType}:${progress.contentId}"]
+                            ?: cwMetaCache["series:${progress.contentId}"]
+                            ?: cwMetaCache["tv:${progress.contentId}"]
+                    } != null
+                    if (!metaResolved) {
+                        processedContentIds.remove(progress.contentId)
+                    }
+                    logNextUpDecision("drop contentId=${progress.contentId} name=${progress.name} reason=buildNextUpItem-null metaResolved=$metaResolved")
                     return@withPermit
                 }
                 val fullyWatched = fullyWatchedSeriesIds.fullyWatchedSeriesIds.value
