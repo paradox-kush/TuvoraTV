@@ -707,7 +707,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     dv7ToHevcForcedStreamUrls.contains(url)
             //   DolbyVisionCompatibility.setMapDv7ToHevcEnabled(mapDv7ToHevcEnabled)
             com.nuvio.tv.core.player.dvmkv.DolbyVisionCompatibility.setHdr10BaseLayerModeActive(
-                effectiveDv7Mode == Dv7HandlingMode.HDR10_BASE_LAYER
+                effectiveDv7Mode == Dv7HandlingMode.HDR10_BASE_LAYER ||
+                        effectiveDv7Mode == Dv7HandlingMode.STRIP_DV
             )
             isMapDv7ToHevcActiveForCurrentPlayback = mapDv7ToHevcEnabled
             val convertToDv81Active = !mapDv7ToHevcEnabled &&
