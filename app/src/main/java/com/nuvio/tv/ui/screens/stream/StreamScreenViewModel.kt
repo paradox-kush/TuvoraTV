@@ -1562,6 +1562,18 @@ class StreamScreenViewModel @Inject constructor(
         } else {
             null
         }
+        if (settings.externalPlayerSendSkipSegments) {
+            updateUiStateIfChanged {
+                it.copy(
+                    directAutoPlayMessage = if (settings.showPlayerLoadingStatus) {
+                        context.getString(R.string.external_player_loading_skip_segments)
+                    } else {
+                        null
+                    },
+                    directAutoPlayProgress = null
+                )
+            }
+        }
 
         // Set timestamp right before actual launch so the 500ms guard
         // protects against spurious ON_RESUME after the player intent is sent.
