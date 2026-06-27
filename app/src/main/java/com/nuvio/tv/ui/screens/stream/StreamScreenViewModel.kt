@@ -104,6 +104,7 @@ class StreamScreenViewModel @Inject constructor(
     private var resumeBaselineStreams: List<AddonStreams>? = null
     private var sourceChipErrorDismissJob: Job? = null
     private var pendingCacheSaveJob: Job? = null
+    private var pendingBingeGroupSaveJob: Job? = null
     private var streamBadgePresentationJob: Job? = null
     private var streamBadgePresentationRequestId = 0L
     private var badgedAddonNames: Set<String> = emptySet()
@@ -1334,7 +1335,7 @@ class StreamScreenViewModel @Inject constructor(
         val bg = playbackInfo.bingeGroup
         val cid = playbackInfo.contentId
         if (bg != null && !cid.isNullOrBlank()) {
-            viewModelScope.launch {
+            pendingBingeGroupSaveJob = viewModelScope.launch {
                 bingeGroupCacheDataStore.save(cid, bg)
             }
         }
@@ -1344,6 +1345,13 @@ class StreamScreenViewModel @Inject constructor(
 
     suspend fun awaitStreamLinkCacheSave() {
         pendingCacheSaveJob?.join()
+        pendingBingeGroupSaveJob?.join()
+    }
+
+    private suspend fun persistBingeGroupForPlayback(playbackInfo: StreamPlaybackInfo) {
+        val bg = playbackInfo.bingeGroup ?: return
+        val cid = playbackInfo.contentId?.takeIf { it.isNotBlank() } ?: return
+        bingeGroupCacheDataStore.save(cid, bg)
     }
 
     override fun onCleared() {
@@ -1399,6 +1407,8 @@ class StreamScreenViewModel @Inject constructor(
                 directAutoPlayMessage = null
             )
         }
+
+        persistBingeGroupForPlayback(playbackInfo)
 
         var playUrl = url
         if (playbackInfo.isTorrent || url.startsWith("torrent:")) {
@@ -1561,6 +1571,18 @@ class StreamScreenViewModel @Inject constructor(
             fetchSubtitlesForExternalPlayer(metadata, playbackInfo, settings)
         } else {
             null
+        }
+        if (settings.externalPlayerSendSkipSegments) {
+            updateUiStateIfChanged {
+                it.copy(
+                    directAutoPlayMessage = if (settings.showPlayerLoadingStatus) {
+                        context.getString(R.string.external_player_loading_skip_segments)
+                    } else {
+                        null
+                    },
+                    directAutoPlayProgress = null
+                )
+            }
         }
 
         // Set timestamp right before actual launch so the 500ms guard

@@ -1416,6 +1416,7 @@
     <string name="player_no_external_player">No external player found</string>
     <string name="player_loading_preparing">Preparing stream…</string>
     <string name="player_loading_detecting_format">Detecting stream format…</string>
+    <string name="external_player_loading_skip_segments">Loading intro/outro segments…</string>
     <string name="player_loading_subtitles">Fetching subtitles…</string>
     <string name="player_loading_subtitles_from">Fetching subtitles from %1$d addons…</string>
     <string name="player_loading_subtitles_progress">Fetching subtitles… (%1$d / %2$d)</string>
