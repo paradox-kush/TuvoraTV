@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.player
 
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.core.debrid.DirectDebridPlayableResult
 import com.nuvio.tv.core.network.NetworkResult
@@ -1332,11 +1333,23 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     fetchParentalGuide(contentId, contentType, currentSeason, currentEpisode)
     fetchSkipIntervals(contentId, currentSeason, currentEpisode)
 
+    queuePlaybackRawEventLine(
+        "LINK_SELECTED: source=in_player_source host=${url.safeStreamTraceHost()} " +
+            "streamName=${stream.name} addon=${stream.addonName} " +
+            "contentId=${contentId ?: "n/a"} videoId=${currentVideoId ?: "n/a"} " +
+            "S${currentSeason ?: "-"}E${currentEpisode ?: "-"} torrent=false"
+    )
     preparePlaybackBeforeStart(
         url = url,
         headers = newHeaders,
         loadSavedProgress = true
     )
+}
+
+private fun String.safeStreamTraceHost(): String {
+    return runCatching {
+        Uri.parse(this).host ?: substringBefore("://").takeIf { it.isNotBlank() } ?: "unknown"
+    }.getOrDefault("unknown")
 }
 
 /**

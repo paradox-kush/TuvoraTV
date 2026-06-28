@@ -169,6 +169,7 @@ class PlayerRuntimeController(
     internal val initialSeason: Int? = navigationArgs.initialSeason
     internal val initialEpisode: Int? = navigationArgs.initialEpisode
     internal val initialEpisodeTitle: String? = navigationArgs.initialEpisodeTitle
+    internal val launchStartedAtElapsedMs: Long? = navigationArgs.launchStartedAtMs
     internal val rememberedAudioLanguage: String? = navigationArgs.rememberedAudioLanguage
     internal val rememberedAudioName: String? = navigationArgs.rememberedAudioName
     internal val mediaSourceFactory = PlayerMediaSourceFactory(context.applicationContext)
@@ -307,12 +308,15 @@ class PlayerRuntimeController(
     internal val playbackIssueReportRequestVersion = AtomicLong(0L)
     internal val playbackAnalyticsDiagnostics = PlayerPlaybackAnalyticsDiagnostics()
     internal val loadingDiagnosticEvents: ArrayDeque<PlayerLoadingDiagnosticEvent> = ArrayDeque()
+    internal val loadingDiagnosticRawEventLines: ArrayDeque<String> = ArrayDeque()
+    internal val pendingPlaybackRawEventLines: ArrayDeque<String> = ArrayDeque()
     internal var loadingDiagnosticsStartedAtMs: Long = 0L
     internal var currentLoadingPhase: String = "idle"
     internal var currentLoadingPhaseStartedAtMs: Long = 0L
     internal var currentLoadingMessageForReport: String? = null
     internal var currentLoadingProgressForReport: Float? = null
     internal var lastLoadingDiagnosticSignature: String = ""
+    internal var startupPhaseSequence: Int = 0
 
     internal var lastSavedPosition: Long = 0L
     internal val saveThresholdMs = 5000L

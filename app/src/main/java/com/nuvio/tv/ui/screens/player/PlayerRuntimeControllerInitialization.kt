@@ -221,6 +221,16 @@ internal fun PlayerRuntimeController.initializePlayer(
                 resolvedAutoPlayerEngine = null
             }
             currentInternalPlayerEngine = effectiveInternalPlayerEngine
+            playbackAnalyticsDiagnostics.setTraceContext(
+                host = url.safeHost(),
+                engine = effectiveInternalPlayerEngine.name
+            )
+            playbackAnalyticsDiagnostics.setStartupContext(
+                launchStartedAtElapsedMs = launchStartedAtElapsedMs,
+                initializationStartedAtWallTimeMs = playerInitializationStartedAtMs,
+                startPositionMs = null
+            )
+            flushPendingPlaybackRawEventLines()
             val deviceAspectMode = deviceLocalPlayerPreferences.aspectMode.first()
             _uiState.update {
                 it.copy(
@@ -882,20 +892,34 @@ internal fun PlayerRuntimeController.initializePlayer(
                 applySubtitlePreferences(preferred, secondary)
                 applyStartupSubtitlePreparation(startupSubtitlePreparation)
                 val startupSubtitleConfigurations = buildStartupSubtitleConfigurations(startupSubtitlePreparation)
-
-                setMediaSource(
-                    mediaSourceFactory.createMediaSource(
-                        context = context,
-                        url = url,
-                        headers = headers,
-                        subtitleConfigurations = startupSubtitleConfigurations,
-                        filename = currentFilename,
-                        responseHeaders = currentStreamResponseHeaders,
-                        mimeTypeOverride = currentStreamMimeType,
-                        audioDelayUsProvider = audioDelayUs::get,
-                        mediaMetadata = buildMediaSessionMetadata()
-                    )
+                val initialResumePosition = resolvePendingInitialResumePosition()
+                playbackAnalyticsDiagnostics.setStartupStartPosition(initialResumePosition)
+                playbackAnalyticsDiagnostics.recordRawEventLine(
+                    "PLAYER_INIT: engine=EXOPLAYER host=${url.safeHost()} " +
+                        "playbackSpeed=${_uiState.value.playbackSpeed} " +
+                        "resumePositionMs=$initialResumePosition mime=${currentStreamMimeType ?: "unknown"} " +
+                        "bufferEngine=${playerSettings.bufferEngineEnabled} parallel=${mediaSourceFactory.useParallelConnections} " +
+                        "vodCache=${mediaSourceFactory.vodCacheEnabled} tunneling=${playerSettings.tunnelingEnabled}"
                 )
+                val initialMediaSource = mediaSourceFactory.createMediaSource(
+                    context = context,
+                    url = url,
+                    headers = headers,
+                    subtitleConfigurations = startupSubtitleConfigurations,
+                    filename = currentFilename,
+                    responseHeaders = currentStreamResponseHeaders,
+                    mimeTypeOverride = currentStreamMimeType,
+                    audioDelayUsProvider = audioDelayUs::get,
+                    mediaMetadata = buildMediaSessionMetadata()
+                )
+
+                if (initialResumePosition > 0L) {
+                    setMediaSource(initialMediaSource, initialResumePosition)
+                    clearPendingInitialResumePosition()
+                    updatePlaybackTimeline(currentPosition = initialResumePosition)
+                } else {
+                    setMediaSource(initialMediaSource)
+                }
 
                 setLoadingStatus(
                     phase = "starting_stream",
@@ -1163,7 +1187,33 @@ internal fun PlayerRuntimeController.initializePlayer(
                             pendingSeekTelemetryAwaitingFirstFrame = false
                         }
                         if (isFirstFrame) {
-                            Log.i(PlayerRuntimeController.TAG, "PLAYBACK_STARTUP: firstFrameMs=$startupMs dv7doviActive=$isExperimentalDv7ToDv81ActiveForCurrentPlayback dv7doviAttempted=$conversionAttempted dvSourceProfile=${sourceProfile ?: "n/a"} dvConvertMode=${conversionMode ?: "n/a"} dv7doviSignalRewrites=$signalingRewrites dv7doviCalls=$conversionCalls dv7doviSuccess=$conversionSucceeded dv7doviReason=${dv7ToDv81LastProbeReasonForCurrentPlayback ?: "n/a"} dv7doviBridge=${dv7ToDv81BridgeVersionForCurrentPlayback ?: "n/a"} dv7hevcActive=$isMapDv7ToHevcActiveForCurrentPlayback host=${currentStreamUrl.safeHost()}")
+                            val clickToFirstFrameMs = launchStartedAtElapsedMs
+                                ?.let { (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L) }
+                                ?: -1L
+                            val playbackSnapshot = playbackAnalyticsDiagnostics.snapshot(
+                                player = this@apply,
+                                hasRenderedFirstFrame = true,
+                                rebufferCount = rebufferCount,
+                                rebufferTotalMs = rebufferTotalMs,
+                                rebufferStartedAtMs = rebufferStartedAtMs
+                            )
+                            playbackAnalyticsDiagnostics.recordRawEventLine(
+                                "PLAYBACK_STARTUP: clickToFirstFrameMs=$clickToFirstFrameMs " +
+                                    "initToFirstFrameMs=$startupMs playbackSpeed=${playbackParameters.speed} " +
+                                    "pitch=${playbackParameters.pitch} startPositionMs=$initialResumePosition " +
+                                    "currentPositionMs=${currentPosition.coerceAtLeast(0L)} bufferedMs=${bufferedPosition.coerceAtLeast(0L)} " +
+                                    "durationMs=${duration.takeIf { it > 0L } ?: -1L} " +
+                                    "video=${playbackSnapshot.videoFormat?.sampleMimeType ?: currentVideoTrackMimeType ?: "n/a"} " +
+                                    "codecs=${playbackSnapshot.videoFormat?.codecs ?: currentVideoTrackCodecs ?: "n/a"} " +
+                                    "size=${playbackSnapshot.videoFormat?.width ?: currentVideoTrackWidth}x${playbackSnapshot.videoFormat?.height ?: currentVideoTrackHeight} " +
+                                    "frameRate=${playbackSnapshot.videoFormat?.frameRate ?: -1f} " +
+                                    "bitrate=${playbackSnapshot.videoFormat?.bitrate ?: -1} " +
+                                    "bandwidthBps=${playbackSnapshot.bandwidthEstimateBps ?: -1L} " +
+                                    "loads=${playbackSnapshot.loadCompletedCount}/${playbackSnapshot.loadStartedCount} " +
+                                    "bytesLoaded=${playbackSnapshot.totalBytesLoaded} droppedFrames=${playbackSnapshot.droppedFrames} " +
+                                    "audioUnderruns=${playbackSnapshot.audioUnderrunCount} rebufferCount=$rebufferCount " +
+                                    "host=${currentStreamUrl.safeHost()} engine=$currentInternalPlayerEngine"
+                            )
 
                             // Real DV7 only if a conversion actually succeeded (or a DV profile
                             // / codec rewrite was seen). Don't use conversionCalls: the startup
@@ -1435,6 +1485,13 @@ internal fun PlayerRuntimeController.initializePlayer(
 
                     override fun onIsLoadingChanged(eventTime: AnalyticsListener.EventTime, isLoading: Boolean) {
                         playbackAnalyticsDiagnostics.onIsLoadingChanged(eventTime, isLoading)
+                    }
+
+                    override fun onPlaybackParametersChanged(
+                        eventTime: AnalyticsListener.EventTime,
+                        playbackParameters: PlaybackParameters
+                    ) {
+                        playbackAnalyticsDiagnostics.onPlaybackParametersChanged(eventTime, playbackParameters)
                     }
 
                     override fun onRenderedFirstFrame(

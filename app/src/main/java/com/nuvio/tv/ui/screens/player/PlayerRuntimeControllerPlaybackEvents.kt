@@ -166,6 +166,17 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                             firstFrameReady = pos > 0L || (playingNow && !cacheBuffering && playerDuration > 0L)
                             if (firstFrameReady) {
                                 hasRenderedFirstFrame = true
+                                val clickToFirstFrameMs = launchStartedAtElapsedMs
+                                    ?.let { (android.os.SystemClock.elapsedRealtime() - it).coerceAtLeast(0L) }
+                                    ?: -1L
+                                val initToFirstFrameMs = (System.currentTimeMillis() - playerInitializationStartedAtMs)
+                                    .coerceAtLeast(0L)
+                                playbackAnalyticsDiagnostics.recordRawEventLine(
+                                    "PLAYBACK_STARTUP: clickToFirstFrameMs=$clickToFirstFrameMs " +
+                                        "initToFirstFrameMs=$initToFirstFrameMs playbackSpeed=${_uiState.value.playbackSpeed} " +
+                                        "currentPositionMs=$pos durationMs=$playerDuration engine=MPV " +
+                                        "host=${currentStreamUrl.safePlaybackEventsHost()}"
+                                )
                                 finishLoadingDiagnostics("mpv_first_frame_ready")
                                 if (_uiState.value.postPlayDismissedForCurrentEpisode) {
                                     _uiState.update { it.copy(postPlayDismissedForCurrentEpisode = false) }
@@ -224,7 +235,9 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                 )
                 playbackAnalyticsDiagnostics.recordProgressSnapshot(
                     player = player,
-                    hasRenderedFirstFrame = hasRenderedFirstFrame
+                    hasRenderedFirstFrame = hasRenderedFirstFrame,
+                    rebufferCount = rebufferCount,
+                    rebufferTotalMs = rebufferTotalMs
                 )
                 // Update torrent rebuffer progress from ExoPlayer's buffer state
                 if (isTorrentStream && _uiState.value.isBuffering && hasRenderedFirstFrame) {
@@ -346,6 +359,14 @@ internal fun PlayerRuntimeController.submitPlaybackIssueReport() {
     } else {
         "playback_error"
     }
+    val loadingInput = buildPlaybackIssueLoadingInput(reportReason)
+    val playbackAnalyticsInput = playbackAnalyticsDiagnostics.snapshot(
+        player = _exoPlayer,
+        hasRenderedFirstFrame = hasRenderedFirstFrame,
+        rebufferCount = rebufferCount,
+        rebufferTotalMs = rebufferTotalMs,
+        rebufferStartedAtMs = rebufferStartedAtMs
+    ).copy(startupStages = loadingInput.events)
     val input = PlaybackIssueReportInput(
         diagnostics = diagnostics,
         error = reportError,
@@ -367,7 +388,7 @@ internal fun PlayerRuntimeController.submitPlaybackIssueReport() {
         requestHeaders = currentHeaders,
         responseHeaders = currentStreamResponseHeaders,
         playerEngine = currentInternalPlayerEngine.name,
-        loading = buildPlaybackIssueLoadingInput(reportReason),
+        loading = loadingInput,
         positionMs = timeline.currentPosition.takeIf { it > 0L },
         durationMs = timeline.duration.takeIf { it > 0L },
         bufferedPositionMs = timeline.bufferedPosition.takeIf { it > 0L },
@@ -375,13 +396,7 @@ internal fun PlayerRuntimeController.submitPlaybackIssueReport() {
         selectedSubtitleTrack = subtitleTrack,
         isTorrentStream = isTorrentStream,
         playbackSettings = buildPlaybackIssuePlaybackSettingsInput(),
-        playbackAnalytics = playbackAnalyticsDiagnostics.snapshot(
-            player = _exoPlayer,
-            hasRenderedFirstFrame = hasRenderedFirstFrame,
-            rebufferCount = rebufferCount,
-            rebufferTotalMs = rebufferTotalMs,
-            rebufferStartedAtMs = rebufferStartedAtMs
-        )
+        playbackAnalytics = playbackAnalyticsInput
     )
 
     val requestVersion = playbackIssueReportRequestVersion.incrementAndGet()
@@ -1580,6 +1595,12 @@ internal fun PlayerRuntimeController.buildStreamInfoData(): StreamInfoData {
             com.nuvio.tv.data.local.InternalPlayerEngine.AUTO -> null
         }
     )
+}
+
+private fun String.safePlaybackEventsHost(): String {
+    return runCatching {
+        Uri.parse(this).host ?: substringBefore("://").takeIf { it.isNotBlank() } ?: "unknown"
+    }.getOrDefault("unknown")
 }
 
 private fun formatTorrentSpeed(context: android.content.Context, bytesPerSec: Long): String {

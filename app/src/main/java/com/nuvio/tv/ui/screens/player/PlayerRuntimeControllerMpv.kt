@@ -110,7 +110,17 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
         )
         performPendingMpvHardRestartIfNeeded(view)
         view.applyHardwareDecodeMode(mpvHardwareDecodeModeSetting)
-        view.setMedia(url, headers)
+        val initialResumePosition = resolvePendingInitialResumePosition()
+        playbackAnalyticsDiagnostics.setStartupStartPosition(initialResumePosition)
+        view.setMedia(url, headers, initialResumePosition)
+        playbackAnalyticsDiagnostics.recordRawEventLine(
+            "PLAYER_INIT: engine=MPV host=${url.safeMpvTraceHost()} " +
+                "playbackSpeed=${_uiState.value.playbackSpeed} resumePositionMs=$initialResumePosition"
+        )
+        if (initialResumePosition > 0L) {
+            clearPendingInitialResumePosition()
+            updatePlaybackTimeline(currentPosition = initialResumePosition)
+        }
         view.setPlaybackSpeed(_uiState.value.playbackSpeed)
         view.applyAudioAmplificationDb(_uiState.value.audioAmplificationDb)
         view.applyAudioLanguagePreferences(mpvPreferredAudioLanguages)
@@ -167,6 +177,12 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
 
 internal fun PlayerRuntimeController.releaseMpvPlayer() {
     runCatching { mpvView?.releasePlayer() }
+}
+
+private fun String.safeMpvTraceHost(): String {
+    return runCatching {
+        android.net.Uri.parse(this).host ?: substringBefore("://").takeIf { it.isNotBlank() } ?: "unknown"
+    }.getOrDefault("unknown")
 }
 
 internal fun PlayerRuntimeController.pauseForLifecycle() {
