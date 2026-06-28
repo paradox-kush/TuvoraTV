@@ -882,20 +882,26 @@ internal fun PlayerRuntimeController.initializePlayer(
                 applySubtitlePreferences(preferred, secondary)
                 applyStartupSubtitlePreparation(startupSubtitlePreparation)
                 val startupSubtitleConfigurations = buildStartupSubtitleConfigurations(startupSubtitlePreparation)
-
-                setMediaSource(
-                    mediaSourceFactory.createMediaSource(
-                        context = context,
-                        url = url,
-                        headers = headers,
-                        subtitleConfigurations = startupSubtitleConfigurations,
-                        filename = currentFilename,
-                        responseHeaders = currentStreamResponseHeaders,
-                        mimeTypeOverride = currentStreamMimeType,
-                        audioDelayUsProvider = audioDelayUs::get,
-                        mediaMetadata = buildMediaSessionMetadata()
-                    )
+                val initialResumePosition = resolvePendingInitialResumePosition()
+                val initialMediaSource = mediaSourceFactory.createMediaSource(
+                    context = context,
+                    url = url,
+                    headers = headers,
+                    subtitleConfigurations = startupSubtitleConfigurations,
+                    filename = currentFilename,
+                    responseHeaders = currentStreamResponseHeaders,
+                    mimeTypeOverride = currentStreamMimeType,
+                    audioDelayUsProvider = audioDelayUs::get,
+                    mediaMetadata = buildMediaSessionMetadata()
                 )
+
+                if (initialResumePosition > 0L) {
+                    setMediaSource(initialMediaSource, initialResumePosition)
+                    clearPendingInitialResumePosition()
+                    updatePlaybackTimeline(currentPosition = initialResumePosition)
+                } else {
+                    setMediaSource(initialMediaSource)
+                }
 
                 setLoadingStatus(
                     phase = "starting_stream",

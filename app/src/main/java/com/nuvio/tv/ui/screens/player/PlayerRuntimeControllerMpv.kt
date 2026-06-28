@@ -110,7 +110,12 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
         )
         performPendingMpvHardRestartIfNeeded(view)
         view.applyHardwareDecodeMode(mpvHardwareDecodeModeSetting)
-        view.setMedia(url, headers)
+        val initialResumePosition = resolvePendingInitialResumePosition()
+        view.setMedia(url, headers, initialResumePosition)
+        if (initialResumePosition > 0L) {
+            clearPendingInitialResumePosition()
+            updatePlaybackTimeline(currentPosition = initialResumePosition)
+        }
         view.setPlaybackSpeed(_uiState.value.playbackSpeed)
         view.applyAudioAmplificationDb(_uiState.value.audioAmplificationDb)
         view.applyAudioLanguagePreferences(mpvPreferredAudioLanguages)

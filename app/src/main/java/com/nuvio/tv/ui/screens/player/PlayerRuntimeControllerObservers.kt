@@ -586,6 +586,24 @@ internal fun PlayerRuntimeController.tryApplyPendingResumeProgress(player: Playe
     pendingResumeProgress = null
 }
 
+internal fun PlayerRuntimeController.resolvePendingInitialResumePosition(): Long {
+    val saved = pendingResumeProgress ?: return 0L
+    val target = when {
+        saved.duration > 0L -> saved.resolveResumePosition(saved.duration)
+        saved.position > 0L -> saved.position
+        else -> 0L
+    }
+    if (target <= 0L && saved.progressPercent == null) {
+        clearPendingInitialResumePosition()
+    }
+    return target.coerceAtLeast(0L)
+}
+
+internal fun PlayerRuntimeController.clearPendingInitialResumePosition() {
+    pendingResumeProgress = null
+    _uiState.update { it.copy(pendingSeekPosition = null) }
+}
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(UnstableApi::class)
 internal fun PlayerRuntimeController.retryCurrentStreamFromStartAfter416() {
