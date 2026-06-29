@@ -718,39 +718,60 @@ internal fun PlayerRuntimeController.maybeScheduleStallWatchdog() {
 internal fun PlayerRuntimeController.maybeScheduleFirstFrameWatchdog() {
     if (hasRenderedFirstFrame || !currentStreamHasVideoTrack) return
     val player = _exoPlayer ?: return
-    if (player.playbackState != Player.STATE_READY || !player.playWhenReady) return
+
+    val isReadyAndPlaying = player.playbackState == Player.STATE_READY && player.playWhenReady
+    val isReadyAndDeadlocked = player.playbackState == Player.STATE_READY && !player.playWhenReady && !userPausedManually
+
+    if (!isReadyAndPlaying && !isReadyAndDeadlocked) return
     if (firstFrameWatchdogJob?.isActive == true) return
 
     firstFrameWatchdogJob = scope.launch {
-        delay(PlayerRuntimeController.FIRST_FRAME_TIMEOUT_MS)
+        if (isReadyAndDeadlocked) {
+            // Deadlock watchdog: wait 3.5 seconds. If the first frame still isn't rendered,
+            // force playWhenReady = true to kick the hardware decoder.
+            delay(3500L)
+            val livePlayer = _exoPlayer ?: return@launch
+            if (hasRenderedFirstFrame) return@launch
+            if (livePlayer.playbackState == Player.STATE_READY && !livePlayer.playWhenReady && !userPausedManually) {
+                Log.w(
+                    PlayerRuntimeController.TAG,
+                    "FIRST_FRAME_DEADLOCK_PREVENTION: Stuck in STATE_READY paused waiting for first frame. " +
+                        "Forcing playWhenReady=true to break deadlock."
+                )
+                livePlayer.playWhenReady = true
+                livePlayer.play()
+            }
+        } else {
+            delay(PlayerRuntimeController.FIRST_FRAME_TIMEOUT_MS)
 
-        val livePlayer = _exoPlayer ?: return@launch
-        if (hasRenderedFirstFrame) return@launch
-        if (livePlayer.playbackState != Player.STATE_READY || !livePlayer.playWhenReady) return@launch
+            val livePlayer = _exoPlayer ?: return@launch
+            if (hasRenderedFirstFrame) return@launch
+            if (livePlayer.playbackState != Player.STATE_READY || !livePlayer.playWhenReady) return@launch
 
-        val currentPosition = livePlayer.currentPosition
-        // Manual Convert-to-DV8.1 mode 2 produced no first frame (e.g. black
-        // screen): retry the stream at libdovi mode 1 before other fallbacks.
-        if (isManualDv81Mode2ActiveForCurrentPlayback &&
-            !dv7Mode1ForcedStreamUrls.contains(currentStreamUrl)
-        ) {
-            dv7Mode1ForcedStreamUrls.add(currentStreamUrl)
-            retryCurrentStreamWithDv7Mode1Fallback(currentPosition)
-            return@launch
-        }
-        if (currentVideoTrackIsLikelyVc1 && !isVc1SoftwareFallbackActiveForCurrentPlayback) {
-            vc1SoftwarePreferredStreamUrls.add(currentStreamUrl)
-            retryCurrentStreamWithVc1SoftwareFallback(currentPosition)
-            return@launch
-        }
+            val currentPosition = livePlayer.currentPosition
+            // Manual Convert-to-DV8.1 mode 2 produced no first frame (e.g. black
+            // screen): retry the stream at libdovi mode 1 before other fallbacks.
+            if (isManualDv81Mode2ActiveForCurrentPlayback &&
+                !dv7Mode1ForcedStreamUrls.contains(currentStreamUrl)
+            ) {
+                dv7Mode1ForcedStreamUrls.add(currentStreamUrl)
+                retryCurrentStreamWithDv7Mode1Fallback(currentPosition)
+                return@launch
+            }
+            if (currentVideoTrackIsLikelyVc1 && !isVc1SoftwareFallbackActiveForCurrentPlayback) {
+                vc1SoftwarePreferredStreamUrls.add(currentStreamUrl)
+                retryCurrentStreamWithVc1SoftwareFallback(currentPosition)
+                return@launch
+            }
 
-        if (currentVideoTrackIsLikelyVc1 &&
-            !currentVideoTrackSelected &&
-            isVc1SoftwareFallbackActiveForCurrentPlayback &&
-            !isVc1TrackSelectionBypassActiveForCurrentPlayback
-        ) {
-            vc1TrackSelectionBypassStreamUrls.add(currentStreamUrl)
-            retryCurrentStreamWithVc1TrackSelectionBypass(currentPosition)
+            if (currentVideoTrackIsLikelyVc1 &&
+                !currentVideoTrackSelected &&
+                isVc1SoftwareFallbackActiveForCurrentPlayback &&
+                !isVc1TrackSelectionBypassActiveForCurrentPlayback
+            ) {
+                vc1TrackSelectionBypassStreamUrls.add(currentStreamUrl)
+                retryCurrentStreamWithVc1TrackSelectionBypass(currentPosition)
+            }
         }
     }
 }
