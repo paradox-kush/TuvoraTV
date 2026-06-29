@@ -50,6 +50,10 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
     @Volatile private var currentVodCacheActive: Boolean = false
     private val parallelStartupPrefetchUnlocked = AtomicBoolean(true)
 
+    fun unlockStartupPrefetch() {
+        parallelStartupPrefetchUnlocked.set(true)
+    }
+
     var useParallelConnections: Boolean = PlayerSettings.DEFAULT_USE_PARALLEL_CONNECTIONS
     var parallelConnectionCount: Int = PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
     var parallelChunkSizeMb: Int = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_MB
@@ -72,7 +76,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             maxRequests = 64
             maxRequestsPerHost = 12
         }
-        OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .cookieJar(NuvioApplication.extensionCookieJar)
             .dns(IPv4FirstDns())
             .dispatcher(dispatcher)
@@ -81,11 +85,10 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(45, TimeUnit.SECONDS)
-            .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
             .retryOnConnectionFailure(true)
             .followRedirects(true)
             .followSslRedirects(true)
-            .build()
+        NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(builder).build()
     }
 
     fun configureSubtitleParsing(
