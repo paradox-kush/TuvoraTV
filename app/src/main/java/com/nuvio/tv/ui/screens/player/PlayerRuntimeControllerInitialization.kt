@@ -530,7 +530,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             if (playerSettings.parallelNetworkEnabled) {
                 mediaSourceFactory.useParallelConnections = playerSettings.useParallelConnections
                 mediaSourceFactory.parallelConnectionCount = playerSettings.parallelConnectionCount
-                mediaSourceFactory.parallelChunkSizeMb = playerSettings.parallelChunkSizeMb
+                mediaSourceFactory.parallelChunkSizeKb = playerSettings.parallelChunkSizeKb
                 mediaSourceFactory.nuvioPerformanceModeEnabled = playerSettings.nuvioPerformanceModeEnabled
             } else {
                 // Reset each playback so the factory doesn't keep last stream's state.
@@ -947,6 +947,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (isReleasingPlayer) return
+                        if (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY) {
+                            mediaSourceFactory.unlockStartupPrefetch()
+                        }
                         val playerDuration = duration
                         if (playerDuration > lastKnownDuration) { lastKnownDuration = playerDuration }
                         val isBuffering = playbackState == Player.STATE_BUFFERING

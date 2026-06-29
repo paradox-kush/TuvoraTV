@@ -56,7 +56,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
 
     var useParallelConnections: Boolean = PlayerSettings.DEFAULT_USE_PARALLEL_CONNECTIONS
     var parallelConnectionCount: Int = PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
-    var parallelChunkSizeMb: Int = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_MB
+    var parallelChunkSizeKb: Int = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_KB
     var nuvioPerformanceModeEnabled: Boolean = PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
     var vodCacheEnabled: Boolean = PlayerSettings.DEFAULT_VOD_CACHE_ENABLED
     var vodCacheSizeMode: VodCacheSizeMode = PlayerSettings.DEFAULT_VOD_CACHE_SIZE_MODE
@@ -74,7 +74,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         }
         val dispatcher = Dispatcher().apply {
             maxRequests = 64
-            maxRequestsPerHost = 12
+            maxRequestsPerHost = 32
         }
         val builder = OkHttpClient.Builder()
             .cookieJar(NuvioApplication.extensionCookieJar)
@@ -143,9 +143,9 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             ParallelRangeDataSource.Factory(
                 okHttpFactory,
                 parallelConnectionCount,
-                parallelChunkSizeMb.toLong() * 1024L * 1024L,
+                parallelChunkSizeKb.toLong() * 1024L,
                 useNativeMemory = nuvioPerformanceModeEnabled,
-                shouldAllowBackgroundPrefetch = { parallelStartupPrefetchUnlocked.get() },
+                shouldAllowBackgroundPrefetch = { true },
                 onResolvedUri = { resolved -> currentVodCacheResolvedUrl = resolved?.toString() }
             )
         } else {
