@@ -53,6 +53,13 @@ internal class DolbyVisionMatroskaTransformer(
         return convertRpuNal(blockAdditionalData, config.conversionMode(profile))
     }
 
+    override fun shouldTransform(codecs: String?, dolbyVisionConfigBytes: ByteArray?): Boolean {
+        if (stripHdr10PlusSei) return true
+        if (stripRpuOnly) return true
+        val profile = resolveProfile(codecs, dolbyVisionConfigBytes)
+        return config.shouldConvert(profile)
+    }
+
     override fun onHevcSample(
         sampleSizeBytes: Int,
         blockAdditionalData: ByteArray?,
