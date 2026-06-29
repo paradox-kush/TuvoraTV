@@ -34,7 +34,7 @@ internal object PlayerPlaybackNetworking {
         }
     }
 
-    private val playbackHttpClient: OkHttpClient by lazy {
+    internal val playbackHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .dns(IPv4FirstDns())
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
