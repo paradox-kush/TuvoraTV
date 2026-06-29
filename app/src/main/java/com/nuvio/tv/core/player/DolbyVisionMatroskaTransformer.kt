@@ -55,7 +55,9 @@ internal class DolbyVisionMatroskaTransformer(
 
     override fun shouldTransform(codecs: String?, dolbyVisionConfigBytes: ByteArray?): Boolean {
         if (stripHdr10PlusSei) return true
-        if (stripRpuOnly) return true
+        val isDv = codecs?.startsWith("dv", ignoreCase = true) == true ||
+                (dolbyVisionConfigBytes != null && dolbyVisionConfigBytes.isNotEmpty())
+        if (stripRpuOnly) return isDv
         val profile = resolveProfile(codecs, dolbyVisionConfigBytes)
         return config.shouldConvert(profile)
     }

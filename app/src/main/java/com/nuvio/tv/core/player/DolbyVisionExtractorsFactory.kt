@@ -606,6 +606,7 @@ internal class Hdr10StrippingTrackOutput(
     private var inputScratch = ByteArray(0)
     private var nalLengthFieldLength = 4
     private val scratch = ParsableByteArray()
+    private var shouldStrip = false
 
     private fun ensurePendingCapacity(extra: Int) {
         val need = pendingLen + extra
@@ -629,7 +630,8 @@ internal class Hdr10StrippingTrackOutput(
     override fun format(format: Format) {
         nalLengthFieldLength = parseNalLengthFieldLength(format)
         val strippedCodecs = stripDvCodecString(format.codecs)
-        val outFormat = if (strippedCodecs != null && strippedCodecs != format.codecs) {
+        shouldStrip = strippedCodecs != null && strippedCodecs != format.codecs
+        val outFormat = if (shouldStrip) {
             format.buildUpon()
                 .setCodecs(strippedCodecs)
                 .setSampleMimeType(MimeTypes.VIDEO_H265)
@@ -647,6 +649,9 @@ internal class Hdr10StrippingTrackOutput(
         allowEndOfInput: Boolean,
         sampleDataPart: Int
     ): Int {
+        if (!shouldStrip) {
+            return delegate.sampleData(input, length, allowEndOfInput, sampleDataPart)
+        }
         ensureInputScratch(length)
         val read = input.read(inputScratch, 0, length)
         if (read == C.RESULT_END_OF_INPUT) {
@@ -666,7 +671,7 @@ internal class Hdr10StrippingTrackOutput(
     }
 
     override fun sampleData(data: ParsableByteArray, length: Int, sampleDataPart: Int) {
-        if (sampleDataPart != TrackOutput.SAMPLE_DATA_PART_MAIN || length <= 0) {
+        if (!shouldStrip || sampleDataPart != TrackOutput.SAMPLE_DATA_PART_MAIN || length <= 0) {
             delegate.sampleData(data, length, sampleDataPart)
             return
         }
@@ -682,7 +687,7 @@ internal class Hdr10StrippingTrackOutput(
         offset: Int,
         cryptoData: TrackOutput.CryptoData?
     ) {
-        if (pendingLen == 0) {
+        if (!shouldStrip || pendingLen == 0) {
             delegate.sampleMetadata(timeUs, flags, size, offset, cryptoData)
             return
         }
