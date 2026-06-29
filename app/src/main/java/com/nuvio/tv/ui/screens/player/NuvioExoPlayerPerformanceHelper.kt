@@ -360,13 +360,11 @@ object NuvioExoPlayerPerformanceHelper {
      * performance mode is enabled. No-op otherwise.
      */
     fun applyNetworkOptimizations(builder: okhttp3.OkHttpClient.Builder): okhttp3.OkHttpClient.Builder {
+        val withPool = builder.connectionPool(sharedConnectionPool)
         return if (enableHttp2) {
-            builder
-                .connectionPool(sharedConnectionPool)
-                .protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
+            withPool.protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
         } else {
-            builder
-                .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            withPool.protocols(listOf(okhttp3.Protocol.HTTP_1_1))
         }
     }
 
