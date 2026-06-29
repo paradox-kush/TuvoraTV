@@ -169,7 +169,7 @@ internal class ParallelRangeDataSource(
         closed.set(false)
         val isReopen = originalDataSpec != null && 
                        originalDataSpec?.uri == dataSpec.uri && 
-                       Math.abs(position - dataSpec.position) < chunkSize &&
+                       position == dataSpec.position &&
                        totalFileLength != C.LENGTH_UNSET.toLong()
 
         if (isReopen) {
