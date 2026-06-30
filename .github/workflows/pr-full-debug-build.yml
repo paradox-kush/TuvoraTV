@@ -75,7 +75,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nuvio-full-debug-pr-${{ github.event.pull_request.number || github.run_number }}
-          path: app/build/outputs/apk/full/debug/*.apk
+          path: app/build/outputs/apk/full/debug/app-full-universal-debug.apk
           if-no-files-found: error
           retention-days: 7
 
