@@ -3027,7 +3027,7 @@ public class MatroskaExtractor implements Extractor {
               .build();
       requiresDolbyVisionTransform =
           dolbyVisionSampleTransformer != null
-              && dolbyVisionSampleTransformer.shouldTransform(codecs, codecPrivate);
+              && dolbyVisionSampleTransformer.shouldTransform(codecs, dolbyVisionConfigBytes);
       isHevc = CODEC_ID_H265.equals(codecId);
     }
 
