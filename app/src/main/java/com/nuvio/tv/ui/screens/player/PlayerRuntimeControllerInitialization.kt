@@ -722,11 +722,12 @@ internal fun PlayerRuntimeController.initializePlayer(
             // OR the error handler's per-stream override (preserved for retry-after-failure).
             val mapDv7ToHevcEnabled = effectiveDv7Mode == Dv7HandlingMode.HDR10_BASE_LAYER ||
                     dv7ToHevcForcedStreamUrls.contains(url)
-            //   DolbyVisionCompatibility.setMapDv7ToHevcEnabled(mapDv7ToHevcEnabled)
-            com.nuvio.tv.core.player.dvmkv.DolbyVisionCompatibility.setHdr10BaseLayerModeActive(
-                effectiveDv7Mode == Dv7HandlingMode.HDR10_BASE_LAYER ||
+            val isHdr10BaseLayerModeActive = when (playerSettings.dv7HandlingMode) {
+                Dv7HandlingMode.AUTO -> dv7AutoResult?.displayDv != true
+                else -> effectiveDv7Mode == Dv7HandlingMode.HDR10_BASE_LAYER ||
                         effectiveDv7Mode == Dv7HandlingMode.STRIP_DV
-            )
+            }
+            com.nuvio.tv.core.player.dvmkv.DolbyVisionCompatibility.setHdr10BaseLayerModeActive(isHdr10BaseLayerModeActive)
             isMapDv7ToHevcActiveForCurrentPlayback = mapDv7ToHevcEnabled
             val convertToDv81Active = !mapDv7ToHevcEnabled &&
                     dv7AutoResult?.decision == DolbyVisionBaseLayerPolicy.Decision.CONVERT_TO_DV81
