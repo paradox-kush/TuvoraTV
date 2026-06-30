@@ -1136,6 +1136,9 @@ public class MatroskaExtractor implements Extractor {
           if (isCodecSupported(currentTrack.codecId)) {
             currentTrack.initializeFormat(currentTrack.number, dolbyVisionSampleTransformer);
             currentTrack.output = extractorOutput.track(currentTrack.number, currentTrack.type);
+            if (!currentTrack.waitingForDtsAnalysis) {
+              currentTrack.output.format(checkNotNull(currentTrack.format));
+            }
             tracks.put(currentTrack.number, currentTrack);
           }
         }
