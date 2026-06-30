@@ -606,6 +606,7 @@ internal class Hdr10StrippingTrackOutput(
     private var inputScratch = ByteArray(0)
     private var nalLengthFieldLength = 4
     private val scratch = ParsableByteArray()
+    private val stripScratch = ExposedByteArrayOutputStream(64 * 1024)
     private var shouldStrip = false
 
     private fun ensurePendingCapacity(extra: Int) {
@@ -694,14 +695,14 @@ internal class Hdr10StrippingTrackOutput(
         val carrySize = offset.coerceIn(0, pendingLen)
         val sampleEnd = pendingLen - carrySize
 
-        val afterRpuStrip = when (nalFormat) {
+        val changed = when (nalFormat) {
             NalFormat.LENGTH_DELIMITED ->
-                HevcDvRpuStripper.stripRpuLengthDelimited(pendingBuf, sampleEnd, nalLengthFieldLength)
+                HevcDvRpuStripper.stripRpuLengthDelimited(pendingBuf, sampleEnd, nalLengthFieldLength, stripScratch)
             NalFormat.ANNEX_B ->
-                HevcDvRpuStripper.stripRpuAnnexB(pendingBuf, sampleEnd)
+                HevcDvRpuStripper.stripRpuAnnexB(pendingBuf, sampleEnd, stripScratch)
         }
-        val afterRpuData = afterRpuStrip ?: pendingBuf
-        val afterRpuLen = afterRpuStrip?.size ?: sampleEnd
+        val afterRpuData = if (changed) stripScratch.backingArray() else pendingBuf
+        val afterRpuLen = if (changed) stripScratch.size() else sampleEnd
 
         scratch.reset(afterRpuData, afterRpuLen)
         delegate.sampleData(scratch, afterRpuLen)

@@ -37,9 +37,7 @@ internal class DolbyVisionMatroskaTransformer(
     // Reused across samples; grows to the largest frame once.
     private val scratch = ExposedByteArrayOutputStream(64 * 1024)
 
-    private class ExposedByteArrayOutputStream(size: Int) : ByteArrayOutputStream(size) {
-        fun backingArray(): ByteArray = buf
-    }
+    // Reuses the package-private ExposedByteArrayOutputStream from HevcDvRpuStripper.kt
 
     override fun onDolbyVisionBlockAdditionalData(
         blockAdditionalData: ByteArray?,
@@ -88,12 +86,13 @@ internal class DolbyVisionMatroskaTransformer(
             if (profile == 5) {
                 return stripHdr10PlusIfEnabled(sample, sampleLength, nalUnitLengthFieldLength) ?: sample
             }
-            val stripped = HevcDvRpuStripper.stripRpuLengthDelimited(
-                sample, sampleLength, nalUnitLengthFieldLength
+            // Use the shared ExposedByteArrayOutputStream scratch buffer to avoid GC allocations on every frame
+            val changed = HevcDvRpuStripper.stripRpuLengthDelimited(
+                sample, sampleLength, nalUnitLengthFieldLength, scratch
             )
-            if (stripped != null) {
-                lastTransformedLength = stripped.size
-                return stripHdr10PlusIfEnabled(stripped, stripped.size, nalUnitLengthFieldLength) ?: stripped
+            if (changed) {
+                val stripped = finishScratch()
+                return stripHdr10PlusIfEnabled(stripped, lastTransformedLength, nalUnitLengthFieldLength) ?: stripped
             }
             return stripHdr10PlusIfEnabled(sample, sampleLength, nalUnitLengthFieldLength) ?: sample
         }
