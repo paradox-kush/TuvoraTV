@@ -22,13 +22,9 @@ import com.nuvio.tv.NuvioApplication
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.VodCacheSizeMode
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
-import java.io.InputStream
-import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URLDecoder
 import java.security.SecureRandom
@@ -255,20 +251,14 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
     }
 
     companion object {
-        private const val PROBE_TIMEOUT_MS = 4000
-        private const val PROBE_BYTES = 1024
-        private const val MIME_PROBE_CACHE_SIZE = 64
         private const val MIME_VIDEO_QUICK_TIME = "video/quicktime"
         private const val ENABLE_VOD_CACHE = true
         private const val VOD_CACHE_FREE_SPACE_RESERVE_BYTES = 1024L * 1024L * 1024L
         internal const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        private val mimeProbeCache = object : LinkedHashMap<String, String>(MIME_PROBE_CACHE_SIZE, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean {
-                return size > MIME_PROBE_CACHE_SIZE
-            }
-        }
+
+        private const val MIME_PROBE_CACHE_SIZE = 64
 
         data class StreamProbeInfo(
             val contentLength: Long,
@@ -295,6 +285,19 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             val cacheKey = buildMimeProbeCacheKey(url, sanitizedHeaders)
             synchronized(probeInfoCache) {
                 probeInfoCache[cacheKey] = StreamProbeInfo(contentLength, acceptsRanges)
+            }
+        }
+
+        private fun buildMimeProbeCacheKey(url: String, headers: Map<String, String>): String {
+            if (headers.isEmpty()) return url
+            return buildString {
+                append(url)
+                headers.toSortedMap(String.CASE_INSENSITIVE_ORDER).forEach { (key, value) ->
+                    append('|')
+                    append(key)
+                    append('=')
+                    append(value)
+                }
             }
         }
 
@@ -395,14 +398,6 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 ?: inferMimeTypeFromPath(url)
         }
 
-        fun evictMimeType(url: String, headers: Map<String, String>) {
-            val sanitizedHeaders = sanitizeHeaders(headers)
-            val cacheKey = buildMimeProbeCacheKey(url, sanitizedHeaders)
-            synchronized(mimeProbeCache) {
-                mimeProbeCache.remove(cacheKey)
-            }
-        }
-
         internal fun normalizeMimeType(contentType: String?): String? {
             val normalized = contentType
                 ?.substringBefore(';')
@@ -458,48 +453,11 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             filename: String? = null,
             responseHeaders: Map<String, String>? = null
         ): String? {
-            inferMimeType(
+            return inferMimeType(
                 url = url,
                 filename = filename,
                 responseHeaders = responseHeaders
-            )?.let { return it }
-
-            val sanitizedHeaders = sanitizeHeaders(headers)
-            val cacheKey = buildMimeProbeCacheKey(url, sanitizedHeaders)
-
-            synchronized(mimeProbeCache) {
-                mimeProbeCache[cacheKey]
-            }?.let { return it }
-
-            val probeRequestHeaders = sanitizedHeaders.toMutableMap().apply {
-                put("Connection", "close")
-            }
-
-            val probedMimeType = withContext(Dispatchers.IO) {
-                probeMimeTypeWithRangeGet(url, probeRequestHeaders)
-                    ?: probeMimeTypeWithHead(url, probeRequestHeaders)
-            }
-
-            if (probedMimeType != null) {
-                synchronized(mimeProbeCache) {
-                    mimeProbeCache[cacheKey] = probedMimeType
-                }
-            }
-
-            return probedMimeType
-        }
-
-        private fun buildMimeProbeCacheKey(url: String, headers: Map<String, String>): String {
-            if (headers.isEmpty()) return url
-            return buildString {
-                append(url)
-                headers.toSortedMap(String.CASE_INSENSITIVE_ORDER).forEach { (key, value) ->
-                    append('|')
-                    append(key)
-                    append('=')
-                    append(value)
-                }
-            }
+            )
         }
 
         private fun inferMimeTypeFromResponseHeaders(headers: Map<String, String>?): String? {
@@ -617,115 +575,6 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             }
         }
 
-        private suspend fun probeMimeTypeWithHead(url: String, headers: Map<String, String>): String? =
-            withContext(Dispatchers.IO) {
-                val requestBuilder = okhttp3.Request.Builder()
-                    .url(url)
-                    .head()
-                headers.forEach { (k, v) ->
-                    if (!k.equals("Range", ignoreCase = true)) {
-                        requestBuilder.header(k, v)
-                    }
-                }
-                try {
-                    val client = PlayerPlaybackNetworking.playbackHttpClient
-                    val response = client.newCall(requestBuilder.build()).execute()
-                    response.use { resp ->
-                        val respHeaders = resp.headers
-                        val responseHeaders = LinkedHashMap<String, String>(respHeaders.size)
-                        for (i in 0 until respHeaders.size) {
-                            responseHeaders[respHeaders.name(i)] = respHeaders.value(i)
-                        }
-                        
-                        val contentLength = resp.body?.contentLength() ?: -1L
-                        val acceptRanges = resp.header("Accept-Ranges")
-                        val acceptsRanges = acceptRanges != null && !acceptRanges.equals("none", ignoreCase = true)
-                        cacheProbeInfo(url, headers, contentLength, acceptsRanges)
-
-                        normalizeMimeType(resp.header("Content-Type"))
-                            ?: inferMimeType(
-                                url = url,
-                                filename = null,
-                                responseHeaders = responseHeaders
-                            )
-                    }
-                } catch (_: Exception) {
-                    null
-                }
-            }
-
-        private suspend fun probeMimeTypeWithRangeGet(url: String, headers: Map<String, String>): String? =
-            withContext(Dispatchers.IO) {
-                val requestBuilder = okhttp3.Request.Builder()
-                    .url(url)
-                    .header("Range", "bytes=0-${PROBE_BYTES - 1}")
-                headers.forEach { (k, v) ->
-                    if (!k.equals("Range", ignoreCase = true)) {
-                        requestBuilder.header(k, v)
-                    }
-                }
-                try {
-                    val client = PlayerPlaybackNetworking.playbackHttpClient
-                    val response = client.newCall(requestBuilder.build()).execute()
-                    response.use { resp ->
-                        val respHeaders = resp.headers
-                        val responseHeaders = LinkedHashMap<String, String>(respHeaders.size)
-                        for (i in 0 until respHeaders.size) {
-                            responseHeaders[respHeaders.name(i)] = respHeaders.value(i)
-                        }
-                        
-                        val contentRange = resp.header("Content-Range")
-                        val contentLength = if (contentRange != null) {
-                            contentRange.substringAfterLast('/').toLongOrNull() ?: -1L
-                        } else {
-                            resp.body?.contentLength() ?: -1L
-                        }
-                        val acceptsRanges = resp.code == 206
-                        cacheProbeInfo(url, headers, contentLength, acceptsRanges)
-
-                        val bodyStream = resp.body?.byteStream()
-                        val mimeType = normalizeMimeType(resp.header("Content-Type"))
-                            ?: inferMimeType(
-                                url = url,
-                                filename = null,
-                                responseHeaders = responseHeaders
-                            )
-                        if (mimeType != null) {
-                            mimeType
-                        } else if (bodyStream != null) {
-                            sniffManifestMimeType(readProbeSnippet(bodyStream))
-                        } else {
-                            null
-                        }
-                    }
-                } catch (_: Exception) {
-                    null
-                }
-            }
-
-        private fun openConnection(
-            url: String,
-            headers: Map<String, String>,
-            method: String,
-            range: String? = null
-        ): HttpURLConnection {
-            return PlayerPlaybackNetworking.openConnection(
-                url = url,
-                headers = headers,
-                method = method,
-                connectTimeoutMs = PROBE_TIMEOUT_MS,
-                readTimeoutMs = PROBE_TIMEOUT_MS,
-                range = range
-            )
-        }
-
-        private fun readProbeSnippet(inputStream: InputStream?): String? {
-            if (inputStream == null) return null
-            val buffer = ByteArray(PROBE_BYTES)
-            val read = inputStream.read(buffer)
-            if (read <= 0) return null
-            return String(buffer, 0, read, Charsets.UTF_8)
-        }
 
         private fun wrapAudioDelay(
             mediaSource: MediaSource,
@@ -738,19 +587,6 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                     mediaSource = mediaSource,
                     audioDelayUsProvider = audioDelayUsProvider
                 )
-            }
-        }
-
-        private fun readResponseHeaders(connection: HttpURLConnection): Map<String, String> {
-            return buildMap {
-                connection.headerFields.forEach { (key, values) ->
-                    if (key.isNullOrBlank()) return@forEach
-                    val value = values
-                        ?.firstOrNull { it.isNotBlank() }
-                        ?.trim()
-                        ?: return@forEach
-                    put(key, value)
-                }
             }
         }
 

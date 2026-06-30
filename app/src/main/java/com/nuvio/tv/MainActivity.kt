@@ -496,7 +496,7 @@ class MainActivity : ComponentActivity() {
                         !onboardingCompletedThisSession
                     ) {
                         AuthQrSignInScreen(
-                            onBackPress = {},
+                            onBackPress = { finish() },
                             onContinue = {
                                 lifecycleScope.launch {
                                     val shouldRunRemoteOnboardingSync =

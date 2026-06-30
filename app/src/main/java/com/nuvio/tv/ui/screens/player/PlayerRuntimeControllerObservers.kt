@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.player
 
 import android.util.Log
 import com.nuvio.tv.core.player.OpenSubtitlesHasher
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.data.local.FrameRateMatchingMode
@@ -698,10 +699,40 @@ internal fun PlayerRuntimeController.maybeScheduleStallWatchdog() {
             val stalledForMs = nowMs - lastAdvanceAtMs
             if (stalledForMs >= PlayerRuntimeController.STALL_WATCHDOG_THRESHOLD_MS) {
                 val playheadMs = livePlayer.currentPosition.coerceAtLeast(0L)
-                // Seek past buffered edge to force Media3 to cancel the stuck Range request.
-                val durationMs = livePlayer.duration.coerceAtLeast(0L)
-                val seekTargetMs = (bufferedNow + STALL_WATCHDOG_SKIP_PAST_BUFFERED_MS)
-                    .coerceAtMost(durationMs)
+                val durationMs = livePlayer.duration
+                if (durationMs == C.TIME_UNSET || durationMs <= 0L) {
+                    Log.w(
+                        PlayerRuntimeController.TAG,
+                        "STALL_WATCHDOG: bufferedPosition stuck at $bufferedNow for ${stalledForMs}ms " +
+                            "during STATE_BUFFERING (playhead=$playheadMs); skipping self-seek " +
+                            "because duration is unknown"
+                    )
+                    return@launch
+                }
+                if (bufferedNow <= playheadMs) {
+                    Log.w(
+                        PlayerRuntimeController.TAG,
+                        "STALL_WATCHDOG: bufferedPosition stuck at $bufferedNow for ${stalledForMs}ms " +
+                            "during STATE_BUFFERING (playhead=$playheadMs); skipping self-seek " +
+                            "because buffered position is not ahead"
+                    )
+                    return@launch
+                }
+                val targetPastBufferedMs = if (bufferedNow > Long.MAX_VALUE - STALL_WATCHDOG_SKIP_PAST_BUFFERED_MS) {
+                    Long.MAX_VALUE
+                } else {
+                    bufferedNow + STALL_WATCHDOG_SKIP_PAST_BUFFERED_MS
+                }
+                val seekTargetMs = targetPastBufferedMs.coerceAtMost((durationMs - 1L).coerceAtLeast(0L))
+                if (seekTargetMs <= playheadMs || seekTargetMs <= 0L) {
+                    Log.w(
+                        PlayerRuntimeController.TAG,
+                        "STALL_WATCHDOG: bufferedPosition stuck at $bufferedNow for ${stalledForMs}ms " +
+                            "during STATE_BUFFERING (playhead=$playheadMs); skipping self-seek " +
+                            "because target=$seekTargetMs is not forward"
+                    )
+                    return@launch
+                }
                 Log.w(
                     PlayerRuntimeController.TAG,
                     "STALL_WATCHDOG: bufferedPosition stuck at $bufferedNow for ${stalledForMs}ms " +
@@ -718,60 +749,44 @@ internal fun PlayerRuntimeController.maybeScheduleStallWatchdog() {
 internal fun PlayerRuntimeController.maybeScheduleFirstFrameWatchdog() {
     if (hasRenderedFirstFrame || !currentStreamHasVideoTrack) return
     val player = _exoPlayer ?: return
-
-    val isReadyAndPlaying = player.playbackState == Player.STATE_READY && player.playWhenReady
-    val isReadyAndDeadlocked = player.playbackState == Player.STATE_READY && !player.playWhenReady && !userPausedManually
-
-    if (!isReadyAndPlaying && !isReadyAndDeadlocked) return
+    if (player.playbackState != Player.STATE_READY) return
     if (firstFrameWatchdogJob?.isActive == true) return
 
     firstFrameWatchdogJob = scope.launch {
-        if (isReadyAndDeadlocked) {
-            // Deadlock watchdog: wait 3.5 seconds. If the first frame still isn't rendered,
-            // force playWhenReady = true to kick the hardware decoder.
-            delay(3500L)
-            val livePlayer = _exoPlayer ?: return@launch
-            if (hasRenderedFirstFrame) return@launch
-            if (livePlayer.playbackState == Player.STATE_READY && !livePlayer.playWhenReady && !userPausedManually) {
-                Log.w(
-                    PlayerRuntimeController.TAG,
-                    "FIRST_FRAME_DEADLOCK_PREVENTION: Stuck in STATE_READY paused waiting for first frame. " +
-                        "Forcing playWhenReady=true to break deadlock."
-                )
-                livePlayer.playWhenReady = true
-                livePlayer.play()
-            }
-        } else {
-            delay(PlayerRuntimeController.FIRST_FRAME_TIMEOUT_MS)
+        delay(PlayerRuntimeController.FIRST_FRAME_TIMEOUT_MS)
 
-            val livePlayer = _exoPlayer ?: return@launch
-            if (hasRenderedFirstFrame) return@launch
-            if (livePlayer.playbackState != Player.STATE_READY || !livePlayer.playWhenReady) return@launch
+        val livePlayer = _exoPlayer ?: return@launch
+        if (hasRenderedFirstFrame) return@launch
+        if (livePlayer.playbackState != Player.STATE_READY) return@launch
 
-            val currentPosition = livePlayer.currentPosition
-            // Manual Convert-to-DV8.1 mode 2 produced no first frame (e.g. black
-            // screen): retry the stream at libdovi mode 1 before other fallbacks.
-            if (isManualDv81Mode2ActiveForCurrentPlayback &&
-                !dv7Mode1ForcedStreamUrls.contains(currentStreamUrl)
-            ) {
-                dv7Mode1ForcedStreamUrls.add(currentStreamUrl)
-                retryCurrentStreamWithDv7Mode1Fallback(currentPosition)
-                return@launch
-            }
-            if (currentVideoTrackIsLikelyVc1 && !isVc1SoftwareFallbackActiveForCurrentPlayback) {
-                vc1SoftwarePreferredStreamUrls.add(currentStreamUrl)
-                retryCurrentStreamWithVc1SoftwareFallback(currentPosition)
-                return@launch
-            }
+        if (!livePlayer.playWhenReady && !userPausedManually) {
+            livePlayer.playWhenReady = true
+            livePlayer.play()
+            return@launch
+        }
+        if (!livePlayer.playWhenReady) return@launch
 
-            if (currentVideoTrackIsLikelyVc1 &&
-                !currentVideoTrackSelected &&
-                isVc1SoftwareFallbackActiveForCurrentPlayback &&
-                !isVc1TrackSelectionBypassActiveForCurrentPlayback
-            ) {
-                vc1TrackSelectionBypassStreamUrls.add(currentStreamUrl)
-                retryCurrentStreamWithVc1TrackSelectionBypass(currentPosition)
-            }
+        val currentPosition = livePlayer.currentPosition
+        if (isManualDv81Mode2ActiveForCurrentPlayback &&
+            !dv7Mode1ForcedStreamUrls.contains(currentStreamUrl)
+        ) {
+            dv7Mode1ForcedStreamUrls.add(currentStreamUrl)
+            retryCurrentStreamWithDv7Mode1Fallback(currentPosition)
+            return@launch
+        }
+        if (currentVideoTrackIsLikelyVc1 && !isVc1SoftwareFallbackActiveForCurrentPlayback) {
+            vc1SoftwarePreferredStreamUrls.add(currentStreamUrl)
+            retryCurrentStreamWithVc1SoftwareFallback(currentPosition)
+            return@launch
+        }
+
+        if (currentVideoTrackIsLikelyVc1 &&
+            !currentVideoTrackSelected &&
+            isVc1SoftwareFallbackActiveForCurrentPlayback &&
+            !isVc1TrackSelectionBypassActiveForCurrentPlayback
+        ) {
+            vc1TrackSelectionBypassStreamUrls.add(currentStreamUrl)
+            retryCurrentStreamWithVc1TrackSelectionBypass(currentPosition)
         }
     }
 }

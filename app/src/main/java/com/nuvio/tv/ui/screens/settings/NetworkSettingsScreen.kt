@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -267,7 +266,6 @@ fun AdvancedSettingsContent(
     }
 
     val networkListState = rememberLazyListState()
-    val performanceFocusRequester = remember { initialFocusRequester ?: FocusRequester() }
     var showExperienceModeConfirmation by remember { mutableStateOf(false) }
     Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
@@ -305,7 +303,12 @@ fun AdvancedSettingsContent(
                     title = stringResource(R.string.experience_mode_switch_to_essential),
                     subtitle = stringResource(R.string.experience_mode_switch_to_essential_subtitle),
                     value = stringResource(R.string.experience_mode_advanced),
-                    onClick = { showExperienceModeConfirmation = true }
+                    onClick = { showExperienceModeConfirmation = true },
+                    modifier = if (initialFocusRequester != null) {
+                        Modifier.focusRequester(initialFocusRequester)
+                    } else {
+                        Modifier
+                    }
                 )
             }
         }
@@ -321,11 +324,6 @@ fun AdvancedSettingsContent(
 
         item(key = "performance_settings") {
             SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
-                LaunchedEffect(Unit) {
-                    if (initialFocusRequester != null) {
-                        runCatching { performanceFocusRequester.requestFocus() }
-                    }
-                }
                 SettingsToggleRow(
                     title = stringResource(R.string.advanced_fast_horizontal_navigation),
                     subtitle = stringResource(R.string.advanced_fast_horizontal_navigation_subtitle),
@@ -336,8 +334,7 @@ fun AdvancedSettingsContent(
                                 !uiState.fastHorizontalNavigationEnabled
                             )
                         )
-                    },
-                    modifier = Modifier.focusRequester(performanceFocusRequester)
+                    }
                 )
                 SettingsToggleRow(
                     title = stringResource(R.string.advanced_nuvio_focus_scroll),

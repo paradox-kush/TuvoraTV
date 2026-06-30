@@ -354,7 +354,7 @@ class AccountViewModel @Inject constructor(
             ).fold(
                 onSuccess = { result ->
                     val expiresAtMillis = runCatching { Instant.parse(result.expiresAt).toEpochMilli() }.getOrNull()
-                    val qrBitmap = runCatching { QrCodeGenerator.generate(result.webUrl, 420) }.getOrNull()
+                    val qrBitmap = runCatching { QrCodeGenerator.generate(result.webUrl, 420, margin = 1) }.getOrNull()
                     _uiState.update {
                         it.copy(
                             isLoading = false,

@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
 import android.util.Log
+import androidx.media3.exoplayer.SeekParameters
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
@@ -476,7 +477,10 @@ internal fun PlayerRuntimeController.isPlaybackCurrentlyPlaying(): Boolean {
     }
 }
 
-internal fun PlayerRuntimeController.seekPlaybackTo(positionMs: Long) {
+internal fun PlayerRuntimeController.seekPlaybackTo(
+    positionMs: Long,
+    seekParameters: SeekParameters = SeekParameters.CLOSEST_SYNC
+) {
     if (isUsingMpvEngine()) {
         mpvView?.let { view ->
             view.seekToMs(positionMs)
@@ -504,6 +508,7 @@ internal fun PlayerRuntimeController.seekPlaybackTo(positionMs: Long) {
                     player.setScrubbingModeParameters(params)
                 }
             }
+            player.setSeekParameters(seekParameters)
             player.seekTo(positionMs)
         }
     }

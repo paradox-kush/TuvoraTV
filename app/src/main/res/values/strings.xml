@@ -1762,6 +1762,7 @@
     <string name="auth_signin_qr_btn">Continue with QR</string>
 
     <string name="auth_qr_title">Sign In With QR</string>
+    <string name="auth_qr_tagline">Watch your library, anywhere</string>
     <string name="auth_qr_account_login">Account Login</string>
     <string name="auth_qr_finishing">Finishing sign in\u2026</string>
     <string name="auth_qr_code_label">Code: %1$s</string>
@@ -1778,6 +1779,8 @@
     <string name="auth_qr_please_wait">Please wait\u2026</string>
     <string name="auth_qr_continue">Continue</string>
     <string name="auth_qr_back">Back</string>
+    <string name="auth_qr_terms_prefix">By signing up / logging in, I agree to the</string>
+    <string name="auth_qr_terms_link">Terms</string>
 
     <string name="sync_generate_title">Generate Sync Code</string>
     <string name="sync_generate_subtitle">Create a PIN to protect your sync code. Share the code with your other devices.</string>
