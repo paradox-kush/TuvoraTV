@@ -567,14 +567,14 @@ object FrameRateUtils {
     private fun shouldUseNextLibProbe(sourceUrl: String, headers: Map<String, String>): Boolean {
         if (sourceUrl.isBlank()) return false
         if (isLiveStreamUrl(sourceUrl)) return false
-        if (isMkvSource(sourceUrl)) return true
 
-        // Custom headers indicate authenticated/premium streams (e.g. RealDebrid).
-        // Skip NextLib probe since its MediaInfoBuilder does not accept headers, preventing 403 errors and delays.
-        val hasCustomHeaders = headers.any { (k, v) -> 
-            v.isNotBlank() && !k.equals("Range", ignoreCase = true)
-        }
-        if (hasCustomHeaders) return false
+        // If the caller supplied any stream headers (auth tokens, cookies, etc.),
+        // bypass NextLib since its MediaInfoBuilder cannot forward them.
+        // Range is already stripped by the caller; no synthetic headers reach here.
+        val hasStreamHeaders = headers.any { (_, v) -> v.isNotBlank() }
+        if (hasStreamHeaders) return false
+
+        if (isMkvSource(sourceUrl)) return true
 
         val scheme = Uri.parse(sourceUrl).scheme?.lowercase(Locale.ROOT)
         return when (scheme) {

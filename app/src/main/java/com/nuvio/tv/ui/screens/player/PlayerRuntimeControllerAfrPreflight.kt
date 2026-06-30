@@ -53,7 +53,11 @@ internal suspend fun PlayerRuntimeController.runAfrPreflightIfEnabled(
         )
     }
 
-    val probeHeaders = headers.filterKeys { !it.equals("Range", ignoreCase = true) }.toMutableMap().apply {
+    // Original stream headers (without Range) – used for NextLib bypass decision.
+    // If these contain any entries, the stream likely requires auth headers that NextLib cannot forward.
+    val streamHeaders = headers.filterKeys { !it.equals("Range", ignoreCase = true) }
+    // Extractor fallback headers – add Connection: close for proper connection teardown.
+    val probeHeaders = streamHeaders.toMutableMap().apply {
         put("Connection", "close")
     }
 
@@ -114,7 +118,7 @@ internal suspend fun PlayerRuntimeController.runAfrPreflightIfEnabled(
                 FrameRateUtils.detectFrameRateFromNextLib(
                     context = context,
                     sourceUrl = url,
-                    headers = probeHeaders
+                    headers = streamHeaders
                 )
             }
         }
