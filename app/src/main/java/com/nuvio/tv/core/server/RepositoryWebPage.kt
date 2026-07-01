@@ -317,7 +317,7 @@ object RepositoryWebPage {
 <body>
 <div class="page">
   <div class="header">
-    <img src="/logo.png" alt="NuvioTV" class="header-logo">
+    <img src="/logo.png" alt="Tuvora" class="header-logo">
     <p>${context.getString(R.string.web_manage_repos_subtitle)}</p>
   </div>
 

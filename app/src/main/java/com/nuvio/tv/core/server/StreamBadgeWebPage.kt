@@ -17,7 +17,7 @@ object StreamBadgeWebPage {
                 base.createConfigurationContext(config)
             } else base
         }
-        val appName = context?.getString(R.string.app_name) ?: "NuvioTV"
+        val appName = context?.getString(R.string.app_name) ?: "Tuvora"
         val title = context?.getString(R.string.settings_stream_badges_section) ?: "Fusion Style"
         val urlsTitle = context?.getString(R.string.settings_stream_badge_urls_title) ?: "Fusion badge URLs"
         val badgePositionTitle = context?.getString(R.string.settings_stream_badge_position_title) ?: "Badge position"

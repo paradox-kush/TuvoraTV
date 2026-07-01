@@ -45,7 +45,7 @@ fun DebugSyncBackendSwitchCard(
     if (!uiState.debugBackendSwitchEnabled) return
 
     val isNuvioSelected = uiState.syncBackendId == SYNC_BACKEND_NUVIO_ID
-    val targetBackendName = if (isNuvioSelected) "Hosted" else "Nuvio"
+    val targetBackendName = if (isNuvioSelected) "Hosted" else "Tuvora"
     var showConfirm by remember { mutableStateOf(false) }
 
     fun requestSwitch() {
