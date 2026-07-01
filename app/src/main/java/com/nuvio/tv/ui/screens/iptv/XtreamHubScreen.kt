@@ -263,8 +263,10 @@ private fun HubChip(
                     if (focused || selected) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
                     RoundedCornerShape(8.dp)
                 )
-                .focusable()
+                // ponytail: onFocusChanged before focusable, else the tab never shows its
+                // focused highlight (can't tell which tab you're on).
                 .onFocusChanged { focused = it.isFocused }
+                .focusable()
                 .onKeyEvent {
                     if ((it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
                             it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER) &&

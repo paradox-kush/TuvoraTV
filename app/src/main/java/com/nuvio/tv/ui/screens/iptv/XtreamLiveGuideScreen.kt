@@ -154,8 +154,10 @@ private fun GuideCategoryRow(
                     else -> Color.Transparent
                 }
             )
-            .focusable()
+            // ponytail: onFocusChanged MUST precede focusable to observe it; reversed = the
+            // focused highlight never lights up (you can't see where the D-pad is).
             .onFocusChanged { focused = it.isFocused }
+            .focusable()
             .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm)
     ) {
         Text(
