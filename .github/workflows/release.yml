@@ -81,8 +81,8 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist
-          cp "$(find app/build/outputs/apk/full/release -name '*.apk' | head -1)" "dist/NuvioTV-${{ steps.ver.outputs.version }}.apk"
-          cp "$(find app/build/outputs/bundle -name '*.aab' | head -1)" "dist/NuvioTV-${{ steps.ver.outputs.version }}.aab"
+          cp "$(find app/build/outputs/apk/full/release -name '*.apk' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}.apk"
+          cp "$(find app/build/outputs/bundle -name '*.aab' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}.aab"
           ls -la dist
 
       - name: Publish GitHub Release
@@ -90,6 +90,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ steps.ver.outputs.tag }}" dist/* \
-            --title "NuvioTV ${{ steps.ver.outputs.version }}" \
+            --title "Tuvora TV ${{ steps.ver.outputs.version }}" \
             --generate-notes || \
           gh release upload "${{ steps.ver.outputs.tag }}" dist/* --clobber
