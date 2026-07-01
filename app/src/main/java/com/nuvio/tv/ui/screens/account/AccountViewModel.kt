@@ -13,6 +13,7 @@ import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.qr.QrCodeGenerator
 import com.nuvio.tv.core.sync.AddonSyncService
+import com.nuvio.tv.core.sync.XtreamAccountSyncService
 import com.nuvio.tv.core.sync.LibrarySyncService
 import com.nuvio.tv.core.sync.PluginSyncService
 import com.nuvio.tv.core.sync.WatchProgressSyncService
@@ -55,6 +56,7 @@ class AccountViewModel @Inject constructor(
     private val syncRepository: SyncRepository,
     private val pluginSyncService: PluginSyncService,
     private val addonSyncService: AddonSyncService,
+    private val xtreamAccountSyncService: XtreamAccountSyncService,
     private val watchProgressSyncService: WatchProgressSyncService,
     private val librarySyncService: LibrarySyncService,
     private val watchedItemsSyncService: WatchedItemsSyncService,
@@ -651,6 +653,7 @@ class AccountViewModel @Inject constructor(
         profileSettingsSyncService.pushCurrentProfileToRemote()
         pluginSyncService.pushToRemote()
         addonSyncService.pushToRemote()
+        xtreamAccountSyncService.pushToRemote()
         watchProgressSyncService.pushToRemote(profileId)
         librarySyncService.pushToRemote()
         watchedItemsSyncService.pushToRemote()
@@ -678,6 +681,8 @@ class AccountViewModel @Inject constructor(
                 removeMissingLocal = true
             )
             addonRepository.isSyncingFromRemote = false
+
+            xtreamAccountSyncService.pullAndApply()
 
             val isTraktConnected = traktAuthDataStore.isEffectivelyAuthenticated.first()
             val shouldUseSupabaseWatchProgressSync = watchProgressSyncService.shouldUseSupabaseWatchProgressSync()

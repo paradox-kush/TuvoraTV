@@ -6,6 +6,7 @@ import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.core.iptv.xtreamAccountFromFields
+import com.nuvio.tv.core.sync.XtreamAccountSyncService
 import com.nuvio.tv.data.local.XtreamAccountStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,7 +26,8 @@ data class XtreamSettingsUiState(
 @HiltViewModel
 class XtreamSettingsViewModel @Inject constructor(
     private val store: XtreamAccountStore,
-    private val client: XtreamClient
+    private val client: XtreamClient,
+    private val syncService: XtreamAccountSyncService
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
@@ -64,6 +66,7 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(isValidating = false) }
             result.onSuccess {
                 store.upsert(account)
+                syncService.triggerRemoteSync()
                 onSuccess()
             }.onFailure { e ->
                 _uiState.update { it.copy(error = e.message ?: "Could not reach the panel") }
@@ -72,11 +75,11 @@ class XtreamSettingsViewModel @Inject constructor(
     }
 
     fun setEnabled(id: String, enabled: Boolean) {
-        viewModelScope.launch { store.setEnabled(id, enabled) }
+        viewModelScope.launch { store.setEnabled(id, enabled); syncService.triggerRemoteSync() }
     }
 
     fun remove(id: String) {
-        viewModelScope.launch { store.remove(id) }
+        viewModelScope.launch { store.remove(id); syncService.triggerRemoteSync() }
     }
 
     fun clearError() = _uiState.update { it.copy(error = null) }

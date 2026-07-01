@@ -56,6 +56,11 @@ class XtreamAccountStore @Inject constructor(
         }
     }
 
+    /** Replace all accounts for the active profile (used when applying a remote pull). */
+    suspend fun replaceAll(accounts: List<XtreamAccount>) {
+        store().edit { prefs -> prefs[accountsKey] = gson.toJson(accounts) }
+    }
+
     private fun parse(json: String?): List<XtreamAccount> {
         if (json.isNullOrBlank()) return emptyList()
         return try {

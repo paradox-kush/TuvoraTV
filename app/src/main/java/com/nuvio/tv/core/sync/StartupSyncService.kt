@@ -35,6 +35,7 @@ class StartupSyncService @Inject constructor(
     private val authManager: AuthManager,
     private val pluginSyncService: PluginSyncService,
     private val addonSyncService: AddonSyncService,
+    private val xtreamAccountSyncService: XtreamAccountSyncService,
     private val collectionSyncService: CollectionSyncService,
     private val homeCatalogSettingsSyncService: HomeCatalogSettingsSyncService,
     private val watchProgressSyncService: WatchProgressSyncService,
@@ -428,6 +429,15 @@ class StartupSyncService @Inject constructor(
                 }
             }
 
+            val xtreamJob = async {
+                try {
+                    xtreamAccountSyncService.pullAndApply().getOrElse { throw it }
+                    Log.d(TAG, "Pulled xtream accounts from remote for profile $profileId")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to pull xtream accounts from remote, keeping local", e)
+                }
+            }
+
             val collectionJob = async {
                 try {
                     collectionSyncService.pullFromRemote()
@@ -458,6 +468,7 @@ class StartupSyncService @Inject constructor(
 
             pluginJob.await()
             addonJob.await()
+            xtreamJob.await()
             collectionJob.await()
             homeCatalogJob.await()
             libraryJob.await()

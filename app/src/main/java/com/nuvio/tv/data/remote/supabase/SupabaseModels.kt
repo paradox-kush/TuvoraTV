@@ -35,6 +35,21 @@ data class SupabaseAddon(
 )
 
 @Serializable
+data class SupabaseXtreamAccount(
+    val id: String? = null,
+    @SerialName("user_id") val userId: String? = null,
+    @SerialName("base_url") val baseUrl: String,
+    val username: String,
+    val password: String,
+    val name: String? = null,
+    val enabled: Boolean = true,
+    @SerialName("sort_order") val sortOrder: Int = 0,
+    @SerialName("profile_id") val profileId: Int = 1,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null
+)
+
+@Serializable
 data class SyncCodeResult(
     val code: String
 )
