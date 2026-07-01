@@ -30,7 +30,13 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     renderType: AssRenderType = AssRenderType.CUES,
     playerMediaSourceFactory: PlayerMediaSourceFactory? = null,
     dataSourceFactory: DataSource.Factory = PlayerPlaybackNetworking.createDataSourceFactory(context),
-    extractorsFactory: ExtractorsFactory = DefaultExtractorsFactory(),
+    extractorsFactory: ExtractorsFactory = DefaultExtractorsFactory()
+        // IPTV live MPEG-TS streams often lack AUDs / IDR keyframes -> ExoPlayer buffers forever.
+        // These flags let it detect frame boundaries itself and accept non-IDR keyframes.
+        .setTsExtractorFlags(
+            androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
+                androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+        ),
     renderersFactory: RenderersFactory = DefaultRenderersFactory(context)
 ): ExoPlayer {
     val assHandler = AssHandler(renderType)

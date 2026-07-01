@@ -31,7 +31,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     fun ensureInitialized() {
         if (initialized) return
-        Utils.copyAssets(context)
+        // copyAssets re-writes fonts + cacert from assets and is slow on first run; skip it
+        // once the marker file exists so repeat inits (e.g. the Live TV preview) don't block.
+        if (!java.io.File(context.filesDir, "cacert.pem").exists()) {
+            Utils.copyAssets(context)
+        }
         initialize(
             configDir = context.filesDir.path,
             cacheDir = context.cacheDir.path

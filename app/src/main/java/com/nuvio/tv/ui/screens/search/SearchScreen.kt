@@ -684,7 +684,9 @@ fun SearchScreen(
                                 showSeeAll = hasEnoughForSeeAll,
                                 showPosterLabels = uiState.posterLabelsEnabled,
                                 showAddonName = uiState.catalogAddonNameEnabled,
-                                showCatalogTypeSuffix = uiState.catalogTypeSuffixEnabled,
+                                // IPTV rows are already titled (e.g. "IPTV Channels"); the
+                                // generic type suffix would mislabel a channel row as "Series".
+                                showCatalogTypeSuffix = uiState.catalogTypeSuffixEnabled && catalogRow.addonId != "xtream",
                                 enableRowFocusRestorer = true,
                                 rowFocusRequester = rowFocusRequester,
                                 entryFocusRequester = entryFocusRequester,

@@ -1,0 +1,249 @@
+package com.nuvio.tv.core.iptv
+
+import com.nuvio.tv.data.remote.api.XtreamApi
+import com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import retrofit2.Response
+import java.util.Base64
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/** A configured Xtream panel the user has added. */
+data class XtreamAccount(
+    val id: String,            // stable key (the normalized base url)
+    val name: String,          // user-facing label
+    val baseUrl: String,       // e.g. http://host:port  (no trailing slash, no path)
+    val username: String,
+    val password: String,
+    val enabled: Boolean = true
+)
+
+// --- Domain models (what the UI consumes) -----------------------------------
+
+data class XtreamChannel(
+    val streamId: Int,
+    val name: String,
+    val logo: String?,
+    val epgChannelId: String?,
+    val categoryId: String?,
+    val hasArchive: Boolean,
+    val streamUrl: String
+)
+
+data class XtreamMovie(
+    val streamId: Int,
+    val name: String,
+    val poster: String?,
+    val categoryId: String?,
+    val rating: String?,
+    val streamUrl: String
+)
+
+data class XtreamSeriesItem(
+    val seriesId: Int,
+    val name: String,
+    val poster: String?,
+    val categoryId: String?,
+    val plot: String?,
+    val rating: String?
+)
+
+data class XtreamCategory(val id: String, val name: String)
+
+data class XtreamEpisode(
+    val episodeId: String,
+    val season: Int,
+    val episodeNum: Int,
+    val title: String,
+    val plot: String?,
+    val still: String?,
+    val streamUrl: String
+)
+
+data class XtreamSeriesDetail(
+    val tmdbId: Int?,
+    val plot: String?,
+    val backdrop: String?,
+    val episodes: List<XtreamEpisode>
+)
+
+data class XtreamProgram(
+    val title: String,
+    val description: String,
+    val startMs: Long,
+    val endMs: Long,
+    val nowPlaying: Boolean
+)
+
+/**
+ * Talks to one Xtream panel. Builds the `player_api.php` URLs and the live/vod/series
+ * stream URLs, then maps the raw DTOs to domain models.
+ *
+ * ponytail: stream URLs reuse the account's entered baseUrl. Some panels send a
+ * different host in server_info.url for load-balancing — switch to that if a panel
+ * 302s the .ts requests away.
+ */
+@Singleton
+class XtreamClient @Inject constructor(
+    private val api: XtreamApi
+) {
+    /** Verifies credentials. Success only when the panel reports auth=1 and an active status. */
+    suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
+        val info = api.getAccount(playerApi(acc)).requireBody().userInfo
+        check(info?.auth == 1) { "Authentication failed" }
+        val status = info.status?.lowercase().orEmpty()
+        check(status.isEmpty() || status == "active") { "Account status: ${info.status}" }
+    }
+
+    suspend fun liveCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
+        categories(acc, "get_live_categories")
+
+    suspend fun vodCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
+        categories(acc, "get_vod_categories")
+
+    suspend fun seriesCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
+        categories(acc, "get_series_categories")
+
+    suspend fun liveChannels(acc: XtreamAccount, categoryId: String? = null): Result<List<XtreamChannel>> = call {
+        api.getLiveStreams(playerApi(acc, "get_live_streams", categoryId)).requireBody().mapNotNull { dto ->
+            val id = dto.streamId ?: return@mapNotNull null
+            XtreamChannel(
+                streamId = id,
+                name = dto.name.orEmpty(),
+                logo = dto.streamIcon?.takeIf { it.isNotBlank() },
+                epgChannelId = dto.epgChannelId?.takeIf { it.isNotBlank() },
+                categoryId = dto.categoryId,
+                hasArchive = (dto.tvArchive ?: 0) > 0,
+                streamUrl = streamUrl(acc, "live", id, "ts")
+            )
+        }
+    }
+
+    suspend fun vodMovies(acc: XtreamAccount, categoryId: String? = null): Result<List<XtreamMovie>> = call {
+        api.getVodStreams(playerApi(acc, "get_vod_streams", categoryId)).requireBody().mapNotNull { dto ->
+            val id = dto.streamId ?: return@mapNotNull null
+            XtreamMovie(
+                streamId = id,
+                name = dto.name.orEmpty(),
+                poster = dto.streamIcon?.takeIf { it.isNotBlank() },
+                categoryId = dto.categoryId,
+                rating = dto.rating,
+                streamUrl = streamUrl(acc, "movie", id, dto.containerExtension?.takeIf { it.isNotBlank() } ?: "mp4")
+            )
+        }
+    }
+
+    suspend fun series(acc: XtreamAccount, categoryId: String? = null): Result<List<XtreamSeriesItem>> = call {
+        api.getSeries(playerApi(acc, "get_series", categoryId)).requireBody().mapNotNull { dto ->
+            val id = dto.seriesId ?: return@mapNotNull null
+            XtreamSeriesItem(id, dto.name.orEmpty(), dto.cover?.takeIf { it.isNotBlank() }, dto.categoryId, dto.plot, dto.rating)
+        }
+    }
+
+    /** Now + next few programs for a channel (cheap, one call). Full XMLTV grid is the upgrade path. */
+    suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int = 4): Result<List<XtreamProgram>> = call {
+        val url = playerApi(acc, "get_short_epg").toHttpUrl().newBuilder()
+            .addQueryParameter("stream_id", streamId.toString())
+            .addQueryParameter("limit", limit.toString())
+            .build().toString()
+        api.getShortEpg(url).requireBody().listings.orEmpty().map { it.toProgram() }
+    }
+
+    /** Full episode list (across seasons) for a series, each with its built stream URL. */
+    suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail> = call {
+        val url = playerApi(acc, "get_series_info").toHttpUrl().newBuilder()
+            .addQueryParameter("series_id", seriesId.toString())
+            .build().toString()
+        val resp = api.getSeriesInfo(url).requireBody()
+        val episodes = resp.episodes.orEmpty().flatMap { (seasonKey, list) ->
+            list.mapNotNull { e ->
+                val epId = e.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val ext = e.containerExtension?.takeIf { it.isNotBlank() } ?: "mp4"
+                XtreamEpisode(
+                    episodeId = epId,
+                    season = e.season ?: seasonKey.toIntOrNull() ?: 1,
+                    episodeNum = e.episodeNum ?: 0,
+                    title = e.title.orEmpty().ifBlank { "Episode" },
+                    plot = e.info?.plot,
+                    still = e.info?.movieImage?.takeIf { it.isNotBlank() },
+                    streamUrl = seriesEpisodeUrl(acc, epId, ext)
+                )
+            }
+        }.sortedWith(compareBy({ it.season }, { it.episodeNum }))
+        XtreamSeriesDetail(
+            tmdbId = resp.info?.tmdbId?.takeIf { it > 0 },
+            plot = resp.info?.plot,
+            backdrop = resp.info?.backdropPath?.firstOrNull(),
+            episodes = episodes
+        )
+    }
+
+    private fun seriesEpisodeUrl(acc: XtreamAccount, episodeId: String, ext: String): String =
+        (acc.baseUrl.toHttpUrlOrNull() ?: error("Invalid server URL"))
+            .newBuilder()
+            .addPathSegment("series").addPathSegment(acc.username).addPathSegment(acc.password)
+            .addPathSegment("$episodeId.$ext")
+            .build().toString()
+
+    /** Fetches a VOD item's TMDB id (for native art/metadata enrichment). null if the panel doesn't provide one. */
+    suspend fun vodTmdbId(acc: XtreamAccount, vodId: Int): Result<Int?> = call {
+        val url = playerApi(acc, "get_vod_info").toHttpUrl().newBuilder()
+            .addQueryParameter("vod_id", vodId.toString())
+            .build().toString()
+        api.getVodInfo(url).requireBody().info?.tmdbId?.takeIf { it > 0 }
+    }
+
+    // --- URL building --------------------------------------------------------
+
+    private fun playerApi(acc: XtreamAccount, action: String? = null, categoryId: String? = null): String {
+        val b = (acc.baseUrl.toHttpUrlOrNull() ?: error("Invalid server URL"))
+            .newBuilder()
+            .addPathSegment("player_api.php")
+            .addQueryParameter("username", acc.username)
+            .addQueryParameter("password", acc.password)
+        if (action != null) b.addQueryParameter("action", action)
+        if (categoryId != null) b.addQueryParameter("category_id", categoryId)
+        return b.build().toString()
+    }
+
+    private fun streamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String): String =
+        (acc.baseUrl.toHttpUrlOrNull() ?: error("Invalid server URL"))
+            .newBuilder()
+            .addPathSegment(kind)
+            .addPathSegment(acc.username)
+            .addPathSegment(acc.password)
+            .addPathSegment("$id.$ext")
+            .build().toString()
+
+    private suspend fun categories(acc: XtreamAccount, action: String): Result<List<XtreamCategory>> = call {
+        api.getCategories(playerApi(acc, action)).requireBody().mapNotNull { dto ->
+            val id = dto.categoryId ?: return@mapNotNull null
+            XtreamCategory(id, dto.categoryName.orEmpty())
+        }
+    }
+
+    private fun String.toHttpUrl(): HttpUrl = toHttpUrlOrNull() ?: error("Invalid URL")
+
+    private inline fun <T> call(block: () -> T): Result<T> =
+        runCatching { block() }
+
+    private fun <T> Response<T>.requireBody(): T {
+        if (!isSuccessful) error("HTTP ${code()}: ${message()}")
+        return body() ?: error("Empty response")
+    }
+}
+
+internal fun XtreamEpgEntryDto.toProgram(): XtreamProgram = XtreamProgram(
+    title = decodeXtreamBase64(title),
+    description = decodeXtreamBase64(description),
+    startMs = (startTimestamp?.toLongOrNull() ?: 0L) * 1000,
+    endMs = (stopTimestamp?.toLongOrNull() ?: 0L) * 1000,
+    nowPlaying = nowPlaying == 1
+)
+
+/** Xtream base64-encodes EPG title/description. Returns "" on null/garbage rather than throwing. */
+internal fun decodeXtreamBase64(s: String?): String {
+    if (s.isNullOrBlank()) return ""
+    return runCatching { String(Base64.getDecoder().decode(s.trim()), Charsets.UTF_8) }.getOrDefault(s)
+}

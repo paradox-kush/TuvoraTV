@@ -423,6 +423,9 @@ class PlayerRuntimeController(
     internal var mpvInitializationInProgress: Boolean = false
     internal var mpvTrackRefreshInProgress: Boolean = false
     internal var pendingMpvHardRestartOnNextAttach: Boolean = false
+    // Set when initializeMpvPlayer ran before the mpv surface existed (engine switched
+    // mid-flight, e.g. live-stream override). The next attachMpvView completes the init.
+    internal var mpvNeedsInitOnAttach: Boolean = false
     internal var delayMpvResumeSeekUntilVideoTrack: Boolean = false
     internal var mpvDelayStartAfterAfrSwitch: Boolean = false
     internal var pauseOverlayJob: Job? = null

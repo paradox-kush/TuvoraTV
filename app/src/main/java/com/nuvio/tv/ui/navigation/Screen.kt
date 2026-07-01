@@ -141,6 +141,15 @@ sealed class Screen(val route: String) {
     data object SupportersContributors : Screen("supporters_contributors")
     data object LicensesAttributions : Screen("licenses_attributions")
     data object AddonManager : Screen("addon_manager")
+    data object XtreamHub : Screen("xtream_hub")
+    data object XtreamVod : Screen("xtream_vod/{accountId}") {
+        fun createRoute(accountId: String): String =
+            "xtream_vod/${URLEncoder.encode(accountId, "UTF-8").replace("+", "%20")}"
+    }
+    data object XtreamLive : Screen("xtream_live/{accountId}") {
+        fun createRoute(accountId: String): String =
+            "xtream_live/${URLEncoder.encode(accountId, "UTF-8").replace("+", "%20")}"
+    }
     data object CatalogOrder : Screen("catalog_order")
     data object Plugins : Screen("plugins")
     data object ExperienceModeSelection : Screen("experience_mode_selection")

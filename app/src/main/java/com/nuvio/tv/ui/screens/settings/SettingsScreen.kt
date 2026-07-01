@@ -86,7 +86,8 @@ private enum class IntegrationSettingsSection {
     Debrid,
     Tmdb,
     MdbList,
-    AnimeSkip
+    AnimeSkip,
+    Iptv
 }
 
 internal enum class SettingsSectionDestination {
@@ -210,6 +211,8 @@ fun SettingsScreen(
     onNavigateToManageProfiles: () -> Unit = {},
     onNavigateToSupportersContributors: () -> Unit = {},
     onNavigateToLicensesAttributions: () -> Unit = {},
+    onNavigateToXtreamVod: (accountId: String) -> Unit = {},
+    onNavigateToXtreamLive: (accountId: String) -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
     experienceModeViewModel: ExperienceModeSettingsViewModel = hiltViewModel()
 ) {
@@ -278,6 +281,7 @@ fun SettingsScreen(
     val integrationTmdbFocusRequester = remember { FocusRequester() }
     val integrationMdbListFocusRequester = remember { FocusRequester() }
     val integrationAnimeSkipFocusRequester = remember { FocusRequester() }
+    val integrationIptvFocusRequester = remember { FocusRequester() }
     var integrationSection by remember { mutableStateOf(IntegrationSettingsSection.Hub) }
     var pendingContentFocusCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var pendingContentFocusRequestId by remember { mutableLongStateOf(0L) }
@@ -506,6 +510,9 @@ fun SettingsScreen(
                             tmdbFocusRequester = integrationTmdbFocusRequester,
                             mdbListFocusRequester = integrationMdbListFocusRequester,
                             animeSkipFocusRequester = integrationAnimeSkipFocusRequester,
+                            iptvFocusRequester = integrationIptvFocusRequester,
+                            onNavigateToXtreamVod = onNavigateToXtreamVod,
+                            onNavigateToXtreamLive = onNavigateToXtreamLive,
                             autoFocusEnabled = allowDetailAutofocus
                         )
                         SettingsCategory.ABOUT -> AboutSettingsContent(
@@ -663,6 +670,9 @@ private fun IntegrationSettingsContent(
     tmdbFocusRequester: FocusRequester,
     mdbListFocusRequester: FocusRequester,
     animeSkipFocusRequester: FocusRequester,
+    iptvFocusRequester: FocusRequester,
+    onNavigateToXtreamVod: (accountId: String) -> Unit,
+    onNavigateToXtreamLive: (accountId: String) -> Unit,
     autoFocusEnabled: Boolean
 ) {
     BackHandler(enabled = selectedSection != IntegrationSettingsSection.Hub) {
@@ -678,6 +688,7 @@ private fun IntegrationSettingsContent(
             IntegrationSettingsSection.Tmdb -> tmdbFocusRequester
             IntegrationSettingsSection.MdbList -> mdbListFocusRequester
             IntegrationSettingsSection.AnimeSkip -> animeSkipFocusRequester
+            IntegrationSettingsSection.Iptv -> iptvFocusRequester
         }
         runCatching { requester.requestFocus() }
     }
@@ -733,6 +744,13 @@ private fun IntegrationSettingsContent(
                                     onClick = { onSelectSection(IntegrationSettingsSection.AnimeSkip) }
                                 )
                             }
+                            item(key = "integration_hub_iptv") {
+                                SettingsActionRow(
+                                    title = "IPTV (Xtream Codes)",
+                                    subtitle = "Add a live TV / VOD provider by URL",
+                                    onClick = { onSelectSection(IntegrationSettingsSection.Iptv) }
+                                )
+                            }
                         }
                         SettingsVerticalScrollIndicators(state = integrationHubState)
                     }
@@ -761,6 +779,14 @@ private fun IntegrationSettingsContent(
         IntegrationSettingsSection.AnimeSkip -> {
             AnimeSkipSettingsContent(
                 initialFocusRequester = animeSkipFocusRequester
+            )
+        }
+
+        IntegrationSettingsSection.Iptv -> {
+            XtreamSettingsContent(
+                onBrowseVod = onNavigateToXtreamVod,
+                onBrowseLive = onNavigateToXtreamLive,
+                initialFocusRequester = iptvFocusRequester
             )
         }
     }

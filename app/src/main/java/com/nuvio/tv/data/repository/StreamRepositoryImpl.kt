@@ -12,6 +12,7 @@ import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
+import com.nuvio.tv.core.iptv.toAddonStreams
 import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.LocalScraperResult
 import com.nuvio.tv.domain.model.PluginRepository
@@ -43,7 +44,8 @@ class StreamRepositoryImpl @Inject constructor(
     private val pluginManager: PluginManager,
     private val tmdbService: TmdbService,
     private val debridStreamPresentation: DebridStreamPresentation,
-    private val localDebridAvailabilityService: LocalDebridAvailabilityService
+    private val localDebridAvailabilityService: LocalDebridAvailabilityService,
+    private val xtreamRegistry: com.nuvio.tv.core.iptv.XtreamItemRegistry
 ) : StreamRepository {
     private enum class StreamFailureKind {
         MISSING,
@@ -63,6 +65,12 @@ class StreamRepositoryImpl @Inject constructor(
         episode: Int?
     ): Flow<NetworkResult<List<AddonStreams>>> = flow {
         emit(NetworkResult.Loading)
+        // HYBRID LANE: Xtream ids play their own single direct stream — skip addon + debrid.
+        if (xtreamRegistry.isXtreamId(videoId)) {
+            val item = xtreamRegistry.get(videoId)
+            emit(NetworkResult.Success(item?.toAddonStreams() ?: emptyList()))
+            return@flow
+        }
 
         try {
             val addons = addonRepository.getInstalledAddons().first().enabledAddons()

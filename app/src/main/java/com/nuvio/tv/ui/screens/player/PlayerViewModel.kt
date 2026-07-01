@@ -66,8 +66,12 @@ class PlayerViewModel @Inject constructor(
     private val playbackIssueReportRepository: com.nuvio.tv.data.repository.PlaybackIssueReportRepository,
     private val externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker,
     private val subtitleFileCache: com.nuvio.tv.core.player.SubtitleFileCache,
+    private val livePlaylist: com.nuvio.tv.core.iptv.XtreamLivePlaylist,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    // Tracks which live channel is on-screen so up/down can resolve the next/previous one.
+    private var currentLiveContentId: String? = savedStateHandle.get<String>("contentId")
 
     init {
         // Release trailer player codec resources so the full-screen player can
@@ -156,6 +160,14 @@ class PlayerViewModel @Inject constructor(
 
     fun startInitialPlaybackIfNeeded() {
         controller.startInitialPlaybackIfNeeded()
+    }
+
+    /** Zap to the next (delta +1) or previous (delta -1) live channel, in place. */
+    fun zapLive(delta: Int) {
+        val cur = currentLiveContentId ?: return
+        val next = livePlaylist.relativeTo(cur, delta) ?: return
+        currentLiveContentId = next.id
+        controller.switchToLiveChannel(name = next.name, url = next.streamUrl)
     }
 
     fun onEvent(event: PlayerEvent) {

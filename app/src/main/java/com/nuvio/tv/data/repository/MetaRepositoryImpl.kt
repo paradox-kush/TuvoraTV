@@ -7,6 +7,7 @@ import com.nuvio.tv.core.network.safeApiCall
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
+import com.nuvio.tv.core.iptv.toMeta
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.AddonResource
 import com.nuvio.tv.domain.model.enabledAddons
@@ -31,7 +32,11 @@ import javax.inject.Singleton
 class MetaRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val api: AddonApi,
-    private val addonRepository: AddonRepository
+    private val addonRepository: AddonRepository,
+    private val xtreamRegistry: com.nuvio.tv.core.iptv.XtreamItemRegistry,
+    private val xtreamClient: com.nuvio.tv.core.iptv.XtreamClient,
+    private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
+    private val tmdbMetadataService: com.nuvio.tv.core.tmdb.TmdbMetadataService
 ) : MetaRepository {
     companion object {
         private const val TAG = "MetaRepository"
@@ -112,11 +117,101 @@ class MetaRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * Builds a [Meta] for an Xtream item. Tries TMDB enrichment (get_vod_info -> tmdb_id ->
+     * fetchEnrichment) for a native-looking detail (backdrop/logo/cast/plot); falls back to the
+     * bare Xtream data if no tmdb_id or enrichment is available.
+     */
+    private suspend fun buildXtreamMeta(item: com.nuvio.tv.core.iptv.XtreamResolvedItem): Meta =
+        when (item.kind) {
+            com.nuvio.tv.core.iptv.XtreamKind.SERIES -> buildXtreamSeriesMeta(item)
+            else -> buildXtreamVodMeta(item)
+        }
+
+    /** Series: fetch episodes (get_series_info), register each for playback, build a Meta with videos. */
+    private suspend fun buildXtreamSeriesMeta(item: com.nuvio.tv.core.iptv.XtreamResolvedItem): Meta {
+        val base = item.toMeta()
+        val account = runCatching { xtreamAccountStore.accounts.first() }.getOrNull()
+            ?.firstOrNull { it.id == item.accountId } ?: return base
+        val detail = xtreamClient.seriesInfo(account, item.streamId).getOrNull() ?: return base
+        val videos = detail.episodes.map { ep ->
+            val epId = com.nuvio.tv.core.iptv.XtreamItemRegistry.episodeId(account.id, ep.episodeId)
+            xtreamRegistry.register(
+                com.nuvio.tv.core.iptv.XtreamResolvedItem(
+                    id = epId, type = com.nuvio.tv.domain.model.ContentType.SERIES, name = ep.title,
+                    poster = ep.still, streamUrl = ep.streamUrl, accountId = account.id
+                )
+            )
+            com.nuvio.tv.domain.model.Video(
+                id = epId, title = ep.title, released = null, thumbnail = ep.still,
+                season = ep.season, episode = ep.episodeNum, overview = ep.plot
+            )
+        }
+        val enrichment = detail.tmdbId?.let {
+            runCatching { tmdbMetadataService.fetchEnrichment(it.toString(), com.nuvio.tv.domain.model.ContentType.SERIES) }.getOrNull()
+        }
+        return base.copy(
+            type = com.nuvio.tv.domain.model.ContentType.SERIES,
+            videos = videos,
+            poster = enrichment?.poster ?: base.poster,
+            background = enrichment?.backdrop ?: detail.backdrop,
+            logo = enrichment?.logo,
+            description = enrichment?.description ?: detail.plot ?: base.description,
+            releaseInfo = enrichment?.releaseInfo ?: base.releaseInfo,
+            imdbRating = enrichment?.rating?.toFloat() ?: base.imdbRating,
+            genres = enrichment?.genres?.ifEmpty { base.genres } ?: base.genres,
+            cast = enrichment?.castMembers?.map { it.name } ?: emptyList(),
+            castMembers = enrichment?.castMembers ?: emptyList()
+        )
+    }
+
+    /** Movies: optional get_vod_info -> tmdb_id -> TMDB enrichment for a native-looking detail. */
+    private suspend fun buildXtreamVodMeta(item: com.nuvio.tv.core.iptv.XtreamResolvedItem): Meta {
+        val base = item.toMeta()
+        val account = runCatching { xtreamAccountStore.accounts.first() }.getOrNull()
+            ?.firstOrNull { it.id == item.accountId } ?: return base
+        val tmdbId = xtreamClient.vodTmdbId(account, item.streamId).getOrNull() ?: return base
+        val enrichment = runCatching {
+            tmdbMetadataService.fetchEnrichment(tmdbId.toString(), item.type)
+        }.getOrNull() ?: return base
+        return base.copy(
+            name = enrichment.localizedTitle ?: enrichment.originalTitle ?: base.name,
+            poster = enrichment.poster ?: base.poster,
+            background = enrichment.backdrop,
+            logo = enrichment.logo,
+            description = enrichment.description ?: base.description,
+            releaseInfo = enrichment.releaseInfo,
+            status = enrichment.status,
+            imdbRating = enrichment.rating?.toFloat() ?: base.imdbRating,
+            genres = enrichment.genres.ifEmpty { base.genres },
+            runtime = enrichment.runtimeMinutes?.toString(),
+            director = enrichment.director,
+            writer = enrichment.writer,
+            cast = enrichment.castMembers.map { it.name },
+            castMembers = enrichment.castMembers,
+            productionCompanies = enrichment.productionCompanies,
+            networks = enrichment.networks,
+            ageRating = enrichment.ageRating,
+            country = enrichment.countries?.joinToString(", "),
+            language = enrichment.language,
+            trailers = enrichment.trailers
+        )
+    }
+
     override fun getMetaFromAllAddons(
         type: String,
         id: String,
         sourceAddonBaseUrl: String?
     ): Flow<NetworkResult<Meta>> = flow {
+        // HYBRID LANE: Xtream ids resolve their own meta, bypassing all addon resolution.
+        // Enriched with TMDB art/metadata (backdrop, logo, cast) when a tmdb_id is available,
+        // so the native detail screen looks identical to addon-backed content.
+        if (xtreamRegistry.isXtreamId(id)) {
+            val item = xtreamRegistry.get(id)
+            if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
+            else emit(NetworkResult.Error("IPTV item is no longer available"))
+            return@flow
+        }
         val cacheKey = "$type:$id"
         addonMetaCache[cacheKey]?.let { cached ->
             emit(NetworkResult.Success(cached))

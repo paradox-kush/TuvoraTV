@@ -37,6 +37,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
@@ -297,6 +299,14 @@ private fun AuthQrLoginPane(
     onRefreshOrSignOut: () -> Unit,
     onBackOrContinue: () -> Unit
 ) {
+    // Default focus to "Continue without account" during onboarding so it's reachable
+    // immediately (otherwise focus lands on the inline "Terms" link and is awkward to escape).
+    val continueFocus = remember { FocusRequester() }
+    LaunchedEffect(isOnboardingMode, isSignedIn) {
+        if (isOnboardingMode && !isSignedIn) {
+            runCatching { continueFocus.requestFocus() }
+        }
+    }
     Column(
         modifier = modifier.padding(horizontal = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -374,6 +384,7 @@ private fun AuthQrLoginPane(
             }
             Button(
                 onClick = onBackOrContinue,
+                modifier = Modifier.focusRequester(continueFocus),
                 colors = ButtonDefaults.colors(
                     containerColor = AuthSecondaryButtonBackground,
                     focusedContainerColor = Color.White,

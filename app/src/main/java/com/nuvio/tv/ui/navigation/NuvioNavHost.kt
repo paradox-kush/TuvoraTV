@@ -730,8 +730,25 @@ fun NuvioNavHost(
                 }
             )
         ) { backStackEntry ->
+            // Shared live-exit valve used by every player-exit callback (back, error, ended).
+            // Returns true when this was a LIVE channel and we routed back to the IPTV guide;
+            // callers must early-return when true so the VOD/series logic is skipped. Uses the
+            // built-in Detail pattern (pop-by-route, then navigate-fallback for live launched
+            // from Library/Search) — idempotent, so the player's double BACK-dispatch never
+            // overshoots to Home/launcher and the retained hub VM keeps its selected category.
+            fun returnToLiveGuideOrPop(): Boolean {
+                val isLive = backStackEntry.arguments
+                    ?.getString("contentType").equals("live", ignoreCase = true)
+                if (!isLive) return false
+                val popped = navController.popBackStack(Screen.XtreamHub.route, inclusive = false)
+                if (!popped) {
+                    navController.navigate(Screen.XtreamHub.route) { launchSingleTop = true }
+                }
+                return true
+            }
             PlayerScreen(
-                onBackPress = { currentVideoId, currentSeason, currentEpisode, autoPlayEnabled, playbackCompleted ->
+                onBackPress = onBack@{ currentVideoId, currentSeason, currentEpisode, autoPlayEnabled, playbackCompleted ->
+                    if (returnToLiveGuideOrPop()) return@onBack
                     val args = backStackEntry.arguments
                     val initialSeason = args?.getString("season")?.toIntOrNull()
                     val initialEpisode = args?.getString("episode")?.toIntOrNull()
@@ -832,7 +849,8 @@ fun NuvioNavHost(
                         }
                     }
                 },
-                onPlaybackEnded = { nextVideoId, nextSeason, nextEpisode, exitReason ->
+                onPlaybackEnded = onEnded@{ nextVideoId, nextSeason, nextEpisode, exitReason ->
+                    if (returnToLiveGuideOrPop()) return@onEnded
                     val args = backStackEntry.arguments
                     val contentType = args?.getString("contentType").orEmpty()
                     val contentId = args?.getString("contentId").orEmpty()
@@ -942,7 +960,10 @@ fun NuvioNavHost(
                         }
                     }
                 },
-                onPlaybackErrorBack = {
+                onPlaybackErrorBack = onErrBack@{
+                    // Error overlay → BACK. For live, return to the guide (no Stream/Detail exists;
+                    // the old path fabricated a broken Stream screen and then exited to the launcher).
+                    if (returnToLiveGuideOrPop()) return@onErrBack
                     val returnedToStream = navController.popBackStack(Screen.Stream.route, inclusive = false)
                     if (!returnedToStream) {
                         val args = backStackEntry.arguments
@@ -988,18 +1009,30 @@ fun NuvioNavHost(
         composable(Screen.Search.route) { backStackEntry ->
             val searchViewModel: com.nuvio.tv.ui.screens.search.SearchViewModel =
                 androidx.hilt.navigation.compose.hiltViewModel(backStackEntry)
+            val liveResolver: com.nuvio.tv.ui.screens.iptv.XtreamLiveResolverViewModel = androidx.hilt.navigation.compose.hiltViewModel()
             SearchScreen(
                 viewModel = searchViewModel,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    val heroBackdrop = HeroBackdropState.consumeAndClear()
-                    navController.navigate(
-                        Screen.Detail.createRoute(
-                            itemId = itemId,
-                            itemType = itemType,
-                            addonBaseUrl = addonBaseUrl,
-                            heroBackdropUrl = heroBackdrop
+                    val live = if (com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(itemId)) liveResolver.resolve(itemId) else null
+                    if (live != null) {
+                        liveResolver.recordPlayed(itemId)
+                        navController.navigate(
+                            Screen.Player.createRoute(
+                                streamUrl = live.url, title = live.name,
+                                contentId = itemId, contentType = "live"
+                            )
                         )
-                    )
+                    } else {
+                        val heroBackdrop = HeroBackdropState.consumeAndClear()
+                        navController.navigate(
+                            Screen.Detail.createRoute(
+                                itemId = itemId,
+                                itemType = itemType,
+                                addonBaseUrl = addonBaseUrl,
+                                heroBackdropUrl = heroBackdrop
+                            )
+                        )
+                    }
                 },
                 onNavigateToSeeAll = { catalogId, addonId, type ->
                     navController.navigate(
@@ -1028,10 +1061,23 @@ fun NuvioNavHost(
         }
 
         composable(Screen.Library.route) {
+            val liveResolver: com.nuvio.tv.ui.screens.iptv.XtreamLiveResolverViewModel = androidx.hilt.navigation.compose.hiltViewModel()
             LibraryScreen(
                 showBuiltInHeader = !hideBuiltInHeaders,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl))
+                    // A favorited live channel has no detail screen — play it directly.
+                    val live = if (com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(itemId)) liveResolver.resolve(itemId) else null
+                    if (live != null) {
+                        liveResolver.recordPlayed(itemId)
+                        navController.navigate(
+                            Screen.Player.createRoute(
+                                streamUrl = live.url, title = live.name,
+                                contentId = itemId, contentType = "live"
+                            )
+                        )
+                    } else {
+                        navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl))
+                    }
                 },
                 onCloudPlaybackResolved = { info ->
                     val filename = info.filename ?: info.file.name
@@ -1066,6 +1112,54 @@ fun NuvioNavHost(
                 },
                 onNavigateToLicensesAttributions = {
                     navController.navigate(Screen.LicensesAttributions.route)
+                },
+                onNavigateToXtreamVod = { accountId ->
+                    navController.navigate(Screen.XtreamVod.createRoute(accountId))
+                },
+                onNavigateToXtreamLive = { accountId ->
+                    navController.navigate(Screen.XtreamLive.createRoute(accountId))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.XtreamVod.route,
+            arguments = listOf(navArgument("accountId") { type = NavType.StringType })
+        ) {
+            com.nuvio.tv.ui.screens.iptv.XtreamVodScreen(
+                onBackPress = { navController.popBackStack() },
+                onMovieSelected = { contentId ->
+                    navController.navigate(Screen.Detail.createRoute(contentId, "movie"))
+                }
+            )
+        }
+
+        composable(Screen.XtreamHub.route) {
+            com.nuvio.tv.ui.screens.iptv.XtreamHubScreen(
+                onPlayChannel = { title, streamUrl, contentId ->
+                    // "live" → forces the libmpv engine (ExoPlayer can't sustain raw continuous
+                    // MPEG-TS). contentId lets the fullscreen player zap up/down the channel list.
+                    navController.navigate(
+                        Screen.Player.createRoute(streamUrl = streamUrl, title = title, contentId = contentId, contentType = "live")
+                    )
+                },
+                onOpenDetail = { contentId, type ->
+                    navController.navigate(Screen.Detail.createRoute(contentId, type))
+                },
+                onAddProvider = { navController.navigate(Screen.Settings.route) }
+            )
+        }
+
+        composable(
+            route = Screen.XtreamLive.route,
+            arguments = listOf(navArgument("accountId") { type = NavType.StringType })
+        ) {
+            com.nuvio.tv.ui.screens.iptv.XtreamLiveScreen(
+                onBackPress = { navController.popBackStack() },
+                onChannelSelected = { title, streamUrl ->
+                    navController.navigate(
+                        Screen.Player.createRoute(streamUrl = streamUrl, title = title, contentType = "tv")
+                    )
                 }
             )
         }

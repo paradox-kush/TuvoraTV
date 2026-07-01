@@ -48,6 +48,7 @@ class SearchViewModel @Inject constructor(
     private val watchProgressRepository: com.nuvio.tv.domain.repository.WatchProgressRepository,
     private val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
     val posterOptions: com.nuvio.tv.ui.components.posteroptions.PosterOptionsController,
+    private val xtreamSearchIndex: com.nuvio.tv.core.iptv.XtreamSearchIndex,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -411,6 +412,9 @@ class SearchViewModel @Inject constructor(
             pendingCatalogResponses = jobs.size
             activeSearchJobs = jobs
 
+            // IPTV results appear as their own rows below the addon rows.
+            loadXtreamResults(query)
+
             // Wait for all jobs to complete so we can stop showing the global loading state.
             viewModelScope.launch {
                 try {
@@ -466,6 +470,47 @@ class SearchViewModel @Inject constructor(
                     // No-op; screen shows global loading when empty.
                 }
             }
+        }
+    }
+
+    /** Fetch IPTV matches (channels/movies/series) and append them as their own rows. */
+    private fun loadXtreamResults(query: String) {
+        viewModelScope.launch {
+            val results = try { xtreamSearchIndex.search(query) } catch (_: Exception) { return@launch }
+            if (uiState.value.submittedQuery.trim() != query) return@launch
+
+            fun putRow(catalogId: String, name: String, rawType: String, hits: List<com.nuvio.tv.core.iptv.XtreamSearchIndex.Hit>) {
+                if (hits.isEmpty()) return
+                val key = catalogKey(addonId = "xtream", type = rawType, catalogId = catalogId)
+                if (key !in catalogOrder) catalogOrder.add(key)
+                catalogsMap[key] = CatalogRow(
+                    addonId = "xtream",
+                    addonName = "IPTV",
+                    addonBaseUrl = "",
+                    catalogId = catalogId,
+                    catalogName = name,
+                    type = ContentType.fromString(rawType),
+                    rawType = rawType,
+                    items = hits.map { hit ->
+                        MetaPreview(
+                            id = hit.contentId,
+                            type = ContentType.fromString(rawType),
+                            rawType = rawType,
+                            name = hit.name,
+                            poster = hit.poster,
+                            posterShape = if (hit.isLive) PosterShape.LANDSCAPE else PosterShape.POSTER,
+                            background = null, logo = null, description = null, releaseInfo = null,
+                            imdbRating = null, genres = emptyList()
+                        )
+                    },
+                    isLoading = false,
+                    hasMore = false
+                )
+            }
+            putRow("xtream_channels", "IPTV Channels", "tv", results.channels)
+            putRow("xtream_movies", "IPTV Movies", "movie", results.movies)
+            putRow("xtream_series", "IPTV Series", "series", results.series)
+            scheduleCatalogRowsUpdate()
         }
     }
 

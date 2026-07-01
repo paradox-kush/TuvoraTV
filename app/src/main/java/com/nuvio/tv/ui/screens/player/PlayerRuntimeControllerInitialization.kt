@@ -214,6 +214,11 @@ internal fun PlayerRuntimeController.initializePlayer(
             if (effectiveInternalPlayerEngine == InternalPlayerEngine.AUTO) {
                 effectiveInternalPlayerEngine = resolveAutoInternalPlayerEngine()
             }
+            // IPTV live channels play continuous raw MPEG-TS, which ExoPlayer can't sustain
+            // (it buffers forever). libmpv handles it natively, so force it for live streams.
+            if (contentType.equals("live", ignoreCase = true)) {
+                effectiveInternalPlayerEngine = InternalPlayerEngine.MVP_PLAYER
+            }
             runtimeInternalPlayerEngineOverride = overrideInternalPlayerEngine
             if (overrideInternalPlayerEngine == null && playerSettings.internalPlayerEngine == InternalPlayerEngine.AUTO) {
                 resolvedAutoPlayerEngine = effectiveInternalPlayerEngine

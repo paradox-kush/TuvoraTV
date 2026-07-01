@@ -170,7 +170,14 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             progressiveUpstreamFactory
         }
 
+        // IPTV live MPEG-TS streams frequently lack Access Unit Delimiters / IDR keyframes at the
+        // join point, which makes ExoPlayer buffer forever without ever reaching READY. These TS
+        // extractor flags tell it to detect frame boundaries itself and accept non-IDR keyframes.
         val extractorsFactory = customExtractorsFactory ?: DefaultExtractorsFactory()
+            .setTsExtractorFlags(
+                androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
+                    androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+            )
         val defaultFactory = DefaultMediaSourceFactory(progressiveFactory, extractorsFactory).apply {
             setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
             customSubtitleParserFactory?.let { parserFactory ->

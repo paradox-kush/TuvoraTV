@@ -87,6 +87,7 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideMoshi(): Moshi = Moshi.Builder()
+        .add(com.nuvio.tv.data.remote.dto.FlexIntAdapter)
         .add(KotlinJsonAdapterFactory())
         .build()
 
@@ -249,6 +250,11 @@ object NetworkModule {
     @Singleton
     fun provideAddonApi(retrofit: Retrofit): AddonApi =
         retrofit.create(AddonApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideXtreamApi(retrofit: Retrofit): com.nuvio.tv.data.remote.api.XtreamApi =
+        retrofit.create(com.nuvio.tv.data.remote.api.XtreamApi::class.java)
 
     @Provides
     @Singleton

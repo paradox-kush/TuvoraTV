@@ -17,7 +17,11 @@ internal fun PlayerRuntimeController.attachMpvView(view: NuvioMpvSurfaceView?) {
     if (view == null) return
     if (!isUsingMpvEngine()) return
     if (currentStreamUrl.isBlank()) return
-    if (mpvInitializationInProgress) return
+    // If init bailed earlier waiting for this surface, finish it now even though the
+    // init coroutine may still be flagged in-progress.
+    val resumingPendingInit = mpvNeedsInitOnAttach
+    if (mpvInitializationInProgress && !resumingPendingInit) return
+    mpvNeedsInitOnAttach = false
 
     runCatching {
         performPendingMpvHardRestartIfNeeded(view)
@@ -87,6 +91,9 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
 
     val view = mpvView
     if (view == null) {
+        // Surface not composed yet (engine switched mid-flight). Mark it so the next
+        // attachMpvView finishes the job instead of deadlocking on "Building player…".
+        mpvNeedsInitOnAttach = true
         setLoadingStatus(
             phase = "mpv_waiting_surface",
             message = context.getString(com.nuvio.tv.R.string.player_loading_building),
@@ -103,6 +110,7 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
         return
     }
 
+    mpvNeedsInitOnAttach = false
     runCatching {
         setLoadingStatus(
             phase = "mpv_starting",

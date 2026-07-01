@@ -631,7 +631,11 @@ fun PlayerScreen(
                             }
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
-                                if (!uiState.showControls) {
+                                val isLive = uiState.contentType.equals("live", ignoreCase = true)
+                                if (!uiState.showControls && isLive) {
+                                    // TiViMate-style zap: up = previous channel (in place, same surface).
+                                    viewModel.zapLive(-1)
+                                } else if (!uiState.showControls) {
                                     viewModel.onEvent(PlayerEvent.OnToggleControls)
                                 } else {
                                     try {
@@ -656,7 +660,12 @@ fun PlayerScreen(
                                 true
                             }
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            if (!uiState.showControls) {
+                            val isLive = uiState.contentType.equals("live", ignoreCase = true)
+                            if (!uiState.showControls && isLive) {
+                                // TiViMate-style zap: down = next channel (in place, same surface).
+                                viewModel.zapLive(1)
+                                true
+                            } else if (!uiState.showControls) {
                                 viewModel.onEvent(PlayerEvent.OnToggleControls)
                                 true
                             } else {

@@ -799,6 +799,48 @@ internal fun PlayerRuntimeController.switchToSourceStream(
     loadSavedProgressFor(currentSeason, currentEpisode)
 }
 
+/** Zap to another live channel by swapping the stream on the RUNNING mpv instance
+ *  (`loadfile replace`) — no releasePlayer/destroy. Destroying a stuck decoder (e.g. a 4K
+ *  channel the device can't decode) would block the main thread; loadfile-replace aborts the
+ *  current file and loads the new one cleanly, which is also the smoothest zap. */
+internal fun PlayerRuntimeController.switchToLiveChannel(name: String, url: String) {
+    val view = mpvView
+    if (view == null || !isUsingMpvEngine()) {
+        // Fallback for the unexpected non-mpv case: full source switch.
+        switchToSourceStream(
+            com.nuvio.tv.domain.model.Stream(
+                name = name, title = name, description = null, url = url, ytId = null,
+                infoHash = null, fileIdx = null, externalUrl = null, behaviorHints = null,
+                addonName = "Xtream IPTV", addonLogo = null
+            )
+        )
+        return
+    }
+    flushPlaybackSnapshotForSwitchOrExit()
+    currentStreamUrl = url
+    resetLoadingOverlayForNewStream()
+    _uiState.update {
+        it.copy(
+            title = name,
+            contentName = name,
+            currentStreamName = name,
+            currentStreamUrl = url,
+            isBuffering = true,
+            error = null,
+            audioTracks = emptyList(),
+            subtitleTracks = emptyList(),
+            selectedAudioTrackIndex = -1,
+            selectedSubtitleTrackIndex = -1
+        )
+    }
+    hasRenderedFirstFrame = false
+    runCatching {
+        view.setMedia(url, currentHeaders)
+        view.setPaused(false)
+    }
+    emitScrobbleStart()
+}
+
 internal fun PlayerRuntimeController.dismissEpisodesPanel() {
     episodeStreamsScope?.cancel()
     episodeStreamsScope = null
