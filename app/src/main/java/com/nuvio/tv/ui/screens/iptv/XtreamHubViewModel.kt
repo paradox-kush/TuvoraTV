@@ -68,6 +68,21 @@ class XtreamHubViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(XtreamHubUiState())
     val uiState: StateFlow<XtreamHubUiState> = _uiState.asStateFlow()
 
+    /**
+     * Hero banner items for the Movies/Series sections: the first few items of the
+     * first loaded category of the current section. Cheap to derive — reuses the
+     * already-loaded category items rather than fetching anything extra.
+     */
+    val heroItems: StateFlow<List<XtreamHubItem>> = _uiState
+        .map { state ->
+            if (state.section == XtreamSection.LIVE) return@map emptyList()
+            val firstLoaded = state.categories.firstNotNullOfOrNull { cat ->
+                state.itemsByCategory[cat.id]?.takeIf { it.isNotEmpty() }
+            } ?: emptyList()
+            firstLoaded.take(10)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     /** Recently-watched channels, newest first — the hub's "Recent Channels" row. */
     val recents: StateFlow<List<XtreamHubItem>> = liveStore.recents
         .map { refs -> refs.map { it.toHubItem() } }

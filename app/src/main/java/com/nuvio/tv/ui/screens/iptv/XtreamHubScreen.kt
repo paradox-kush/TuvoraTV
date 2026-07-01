@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -45,8 +46,10 @@ import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.ui.components.CatalogRowSection
+import com.nuvio.tv.ui.components.HeroCarousel
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.util.asStable
 
 /**
  * Top-level IPTV hub (a main-nav destination). Defaults to the first account with a dropdown to
@@ -62,8 +65,11 @@ fun XtreamHubScreen(
     viewModel: XtreamHubViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val heroItems by viewModel.heroItems.collectAsStateWithLifecycle()
     var showAccountPicker by remember { mutableStateOf(false) }
     val firstFocus = remember { FocusRequester() }
+    // Hero banner (Movies/Series): D-pad UP from row 0 lands here; UP from here lands on the tab.
+    val heroFocus = remember { FocusRequester() }
 
     // Per-tab focus targets so D-pad UP from the first content row lands back on the
     // active tab, and focusRestorer restores focus to it when returning to the header.
@@ -140,9 +146,21 @@ fun XtreamHubScreen(
                 }
             }
 
+            val showHero = heroItems.isNotEmpty()
             LazyColumn(
                 contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxl)
             ) {
+                if (showHero) {
+                    item(key = "${uiState.section}_hero") {
+                        HeroCarousel(
+                            items = heroItems.map { it.toMetaPreview() }.asStable(),
+                            onItemClick = { preview -> heroItems.firstOrNull { it.cardId == preview.id }?.let(onActivate) },
+                            focusRequester = heroFocus,
+                            // UP from the hero returns to the active section tab.
+                            modifier = Modifier.focusProperties { up = selectedTabRequester }
+                        )
+                    }
+                }
                 itemsIndexed(uiState.categories, key = { _, it -> "${uiState.section}_${it.id}" }) { index, category ->
                     LaunchedEffect(uiState.selectedAccountId, uiState.section, category.id) {
                         viewModel.loadCategory(category.id)
@@ -153,8 +171,8 @@ fun XtreamHubScreen(
                         HubChannelRow(
                             title = category.name, catalogId = category.id,
                             items = items, isLoading = !loaded, onActivate = onActivate,
-                            // Only the first row routes UP back to the active tab.
-                            upFocusRequester = if (index == 0) selectedTabRequester else null
+                            // First row routes UP to the hero when present, otherwise to the active tab.
+                            upFocusRequester = if (index == 0) (if (showHero) heroFocus else selectedTabRequester) else null
                         )
                     }
                 }

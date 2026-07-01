@@ -398,6 +398,16 @@ class MetaRepositoryImpl @Inject constructor(
         type: String,
         id: String
     ): Flow<NetworkResult<Meta>> = flow {
+        // HYBRID LANE: Xtream ids resolve their own meta (same as getMetaFromAllAddons),
+        // bypassing addon resolution. Without this the primary lane errors on xtream: ids,
+        // so Continue Watching enrichment / next-up for IPTV movies & series never resolves.
+        if (xtreamRegistry.isXtreamId(id)) {
+            val item = xtreamRegistry.get(id)
+                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, xtreamClient)
+            if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
+            else emit(NetworkResult.Error("IPTV item is no longer available"))
+            return@flow
+        }
         val cacheKey = "$type:$id"
         primaryAddonMetaCache[cacheKey]?.let { cached ->
             emit(NetworkResult.Success(cached))
