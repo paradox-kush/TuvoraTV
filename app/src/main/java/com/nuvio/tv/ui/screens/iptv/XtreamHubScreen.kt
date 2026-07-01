@@ -11,10 +11,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,7 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.unit.dp
 import android.view.KeyEvent
@@ -62,6 +65,17 @@ fun XtreamHubScreen(
     var showAccountPicker by remember { mutableStateOf(false) }
     val firstFocus = remember { FocusRequester() }
 
+    // Per-tab focus targets so D-pad UP from the first content row lands back on the
+    // active tab, and focusRestorer restores focus to it when returning to the header.
+    val liveTab = remember { FocusRequester() }
+    val moviesTab = remember { FocusRequester() }
+    val seriesTab = remember { FocusRequester() }
+    val selectedTabRequester = when (uiState.section) {
+        XtreamSection.LIVE -> liveTab
+        XtreamSection.MOVIES -> moviesTab
+        XtreamSection.SERIES -> seriesTab
+    }
+
     // Movies/Series tile -> native detail. (Live is handled by the TiViMate guide below.)
     val onActivate: (XtreamHubItem) -> Unit = { hit ->
         hit.contentId?.let { onOpenDetail(it, hit.detailType) }
@@ -90,7 +104,9 @@ fun XtreamHubScreen(
     Column(modifier = Modifier.fillMaxSize().padding(top = NuvioTheme.spacing.xl)) {
         // Header: account dropdown + section tabs
         Row(
-            modifier = Modifier.padding(start = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.md),
+            modifier = Modifier
+                .padding(start = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.md)
+                .focusRestorer(selectedTabRequester),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
         ) {
@@ -101,16 +117,16 @@ fun XtreamHubScreen(
                 onClick = { if (uiState.accounts.size > 1) showAccountPicker = true }
             )
             Spacer(Modifier.width(NuvioTheme.spacing.md))
-            HubChip("Live TV", uiState.section == XtreamSection.LIVE) { viewModel.selectSection(XtreamSection.LIVE) }
-            HubChip("Movies", uiState.section == XtreamSection.MOVIES) { viewModel.selectSection(XtreamSection.MOVIES) }
-            HubChip("Series", uiState.section == XtreamSection.SERIES) { viewModel.selectSection(XtreamSection.SERIES) }
+            HubChip("Live TV", uiState.section == XtreamSection.LIVE, focusRequester = liveTab) { viewModel.selectSection(XtreamSection.LIVE) }
+            HubChip("Movies", uiState.section == XtreamSection.MOVIES, focusRequester = moviesTab) { viewModel.selectSection(XtreamSection.MOVIES) }
+            HubChip("Series", uiState.section == XtreamSection.SERIES, focusRequester = seriesTab) { viewModel.selectSection(XtreamSection.SERIES) }
         }
 
         // Live TV = TiViMate-style guide (category col + live preview + EPG channel list).
         // Movies/Series = native poster rows.
         val liveAccount = uiState.selectedAccount
         if (uiState.section == XtreamSection.LIVE && liveAccount != null) {
-            LiveGuide(account = liveAccount, onPlayChannel = onPlayChannel)
+            LiveGuide(account = liveAccount, onPlayChannel = onPlayChannel, selectedTabRequester = selectedTabRequester)
         } else {
             val status = when {
                 uiState.error != null -> uiState.error
@@ -127,7 +143,7 @@ fun XtreamHubScreen(
             LazyColumn(
                 contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxl)
             ) {
-                items(uiState.categories, key = { "${uiState.section}_${it.id}" }) { category ->
+                itemsIndexed(uiState.categories, key = { _, it -> "${uiState.section}_${it.id}" }) { index, category ->
                     LaunchedEffect(uiState.selectedAccountId, uiState.section, category.id) {
                         viewModel.loadCategory(category.id)
                     }
@@ -136,7 +152,9 @@ fun XtreamHubScreen(
                     if (!loaded || items.isNotEmpty()) {
                         HubChannelRow(
                             title = category.name, catalogId = category.id,
-                            items = items, isLoading = !loaded, onActivate = onActivate
+                            items = items, isLoading = !loaded, onActivate = onActivate,
+                            // Only the first row routes UP back to the active tab.
+                            upFocusRequester = if (index == 0) selectedTabRequester else null
                         )
                     }
                 }
@@ -165,6 +183,7 @@ private fun HubChannelRow(
     items: List<XtreamHubItem>,
     isLoading: Boolean,
     onActivate: (XtreamHubItem) -> Unit,
+    upFocusRequester: FocusRequester? = null,
 ) {
     CatalogRowSection(
         catalogRow = CatalogRow(
@@ -178,6 +197,7 @@ private fun HubChannelRow(
         showSeeAll = false,
         showAddonName = false,
         showCatalogTypeSuffix = false,
+        upFocusRequester = upFocusRequester,
     )
 }
 
@@ -200,27 +220,50 @@ private fun HubChip(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) NuvioTheme.colors.Primary else NuvioTheme.colors.BackgroundElevated)
-            .border(1.dp, if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border, RoundedCornerShape(8.dp))
-            .focusable()
-            .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent {
-                if ((it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                        it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER) &&
-                    it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN
-                ) { onClick(); true } else false
-            }
-            .padding(horizontal = 16.dp, vertical = NuvioTheme.spacing.sm),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (selected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                .clip(RoundedCornerShape(8.dp))
+                // Filled primary tint marks the active section even when focus is elsewhere;
+                // focus adds a brighter fill on top so the two states stay distinguishable.
+                .background(
+                    when {
+                        focused -> NuvioTheme.colors.Primary
+                        selected -> NuvioTheme.colors.Primary.copy(alpha = 0.28f)
+                        else -> NuvioTheme.colors.BackgroundElevated
+                    }
+                )
+                .border(
+                    1.dp,
+                    if (focused || selected) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
+                    RoundedCornerShape(8.dp)
+                )
+                .focusable()
+                .onFocusChanged { focused = it.isFocused }
+                .onKeyEvent {
+                    if ((it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                            it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER) &&
+                        it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN
+                    ) { onClick(); true } else false
+                }
+                .padding(horizontal = 16.dp, vertical = NuvioTheme.spacing.sm),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (selected || focused) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
+            )
+        }
+        // Underline indicator so the active tab is obvious at a glance.
+        Spacer(Modifier.padding(top = 3.dp))
+        Box(
+            modifier = Modifier
+                .width(24.dp)
+                .height(3.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(if (selected) NuvioTheme.colors.Primary else Color.Transparent)
         )
     }
 }

@@ -207,6 +207,14 @@ class XtreamClient @Inject constructor(
         return b.build().toString()
     }
 
+    /**
+     * Public stream-URL builder for rebuilding an item from a parsed content id on a
+     * registry cache miss (deep link / saved library item). `kind` is "movie" or "live";
+     * VOD container extension isn't known here, so it falls back to "mp4" like [vodMovies].
+     */
+    fun buildStreamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String = "mp4"): String =
+        streamUrl(acc, kind, id, if (kind == "live") "ts" else ext)
+
     private fun streamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String): String =
         (acc.baseUrl.toHttpUrlOrNull() ?: error("Invalid server URL"))
             .newBuilder()

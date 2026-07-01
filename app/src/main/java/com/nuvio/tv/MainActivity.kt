@@ -143,6 +143,7 @@ import com.nuvio.tv.ui.components.ProfileAvatarCircle
 import com.nuvio.tv.ui.navigation.NuvioNavHost
 import com.nuvio.tv.ui.navigation.Screen
 import com.nuvio.tv.ui.screens.account.AuthQrSignInScreen
+import com.nuvio.tv.ui.screens.account.AuthSignInScreen
 import com.nuvio.tv.ui.screens.addon.EssentialAddonSetupScreen
 import com.nuvio.tv.ui.screens.profile.ProfileSelectionScreen
 import com.nuvio.tv.ui.theme.NuvioComponents
@@ -496,44 +497,57 @@ class MainActivity : ComponentActivity() {
                         authState !is AuthState.FullAccount &&
                         !onboardingCompletedThisSession
                     ) {
-                        AuthQrSignInScreen(
-                            onBackPress = { finish() },
-                            onContinue = {
-                                lifecycleScope.launch {
-                                    val shouldRunRemoteOnboardingSync =
-                                        authManager.authState.value is AuthState.FullAccount
+                        // ponytail: onboarding stays QR-primary, but a brand-new user must be able to
+                        // CREATE an account from the first screen too (B1) — toggle to the email screen inline.
+                        var showEmailSignIn by remember { mutableStateOf(false) }
+                        val completeOnboarding: () -> Unit = {
+                            lifecycleScope.launch {
+                                val shouldRunRemoteOnboardingSync =
+                                    authManager.authState.value is AuthState.FullAccount
 
-                                    if (shouldRunRemoteOnboardingSync) {
-                                        if (onboardingProfileSyncInProgress) return@launch
-                                        onboardingProfileSyncInProgress = true
-                                        val maxAttempts = 3
-                                        var synced = false
-                                        for (attempt in 0 until maxAttempts) {
-                                            val result = profileSyncService.pullFromRemote()
-                                            if (result.isSuccess) {
-                                                synced = true
-                                                break
-                                            }
-                                            if (attempt < maxAttempts - 1) {
-                                                delay(1_000)
-                                            }
+                                if (shouldRunRemoteOnboardingSync) {
+                                    if (onboardingProfileSyncInProgress) return@launch
+                                    onboardingProfileSyncInProgress = true
+                                    val maxAttempts = 3
+                                    var synced = false
+                                    for (attempt in 0 until maxAttempts) {
+                                        val result = profileSyncService.pullFromRemote()
+                                        if (result.isSuccess) {
+                                            synced = true
+                                            break
                                         }
-                                        if (!synced) {
-                                            android.util.Log.w(
-                                                "MainActivity",
-                                                "Onboarding profile sync failed after retries; continuing"
-                                            )
+                                        if (attempt < maxAttempts - 1) {
+                                            delay(1_000)
                                         }
                                     }
-                                    appOnboardingDataStore.setHasSeenAuthQrOnFirstLaunch(true)
-                                    onboardingCompletedThisSession = true
-                                    onboardingProfileSyncInProgress = false
+                                    if (!synced) {
+                                        android.util.Log.w(
+                                            "MainActivity",
+                                            "Onboarding profile sync failed after retries; continuing"
+                                        )
+                                    }
                                 }
-                                if (authManager.authState.value is AuthState.FullAccount) {
-                                    startupSyncService.requestSyncNow()
-                                }
+                                appOnboardingDataStore.setHasSeenAuthQrOnFirstLaunch(true)
+                                onboardingCompletedThisSession = true
+                                onboardingProfileSyncInProgress = false
                             }
-                        )
+                            if (authManager.authState.value is AuthState.FullAccount) {
+                                startupSyncService.requestSyncNow()
+                            }
+                        }
+                        if (showEmailSignIn) {
+                            AuthSignInScreen(
+                                onBackPress = { showEmailSignIn = false },
+                                onNavigateToQrSignIn = { showEmailSignIn = false },
+                                onSuccess = completeOnboarding
+                            )
+                        } else {
+                            AuthQrSignInScreen(
+                                onBackPress = { finish() },
+                                onNavigateToEmailSignIn = { showEmailSignIn = true },
+                                onContinue = completeOnboarding
+                            )
+                        }
                         return@Surface
                     }
 

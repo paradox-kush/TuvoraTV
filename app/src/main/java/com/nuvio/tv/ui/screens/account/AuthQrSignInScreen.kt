@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -79,6 +81,7 @@ private val AuthSecondaryButtonBorder = Color.White.copy(alpha = 0.09f)
 fun AuthQrSignInScreen(
     onBackPress: () -> Unit = {},
     onContinue: (() -> Unit)? = null,
+    onNavigateToEmailSignIn: () -> Unit = {},
     viewModel: AccountViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -213,7 +216,8 @@ fun AuthQrSignInScreen(
                     } else {
                         leaveAuthScreen()
                     }
-                }
+                },
+                onNavigateToEmailSignIn = onNavigateToEmailSignIn
             )
         }
     }
@@ -297,7 +301,8 @@ private fun AuthQrLoginPane(
     isOnboardingMode: Boolean,
     remainingMillis: Long,
     onRefreshOrSignOut: () -> Unit,
-    onBackOrContinue: () -> Unit
+    onBackOrContinue: () -> Unit,
+    onNavigateToEmailSignIn: () -> Unit
 ) {
     // Default focus to "Continue without account" during onboarding so it's reachable
     // immediately (otherwise focus lands on the inline "Terms" link and is awkward to escape).
@@ -308,7 +313,9 @@ private fun AuthQrLoginPane(
         }
     }
     Column(
-        modifier = modifier.padding(horizontal = 48.dp),
+        modifier = modifier
+            .padding(horizontal = 48.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -405,6 +412,28 @@ private fun AuthQrLoginPane(
                         stringResource(R.string.auth_qr_back)
                     }
                 )
+            }
+        }
+        // Escape hatch to the email screen (Sign In + Create Account); QR stays primary.
+        // Own full-width row; the pane now scrolls (verticalScroll) so this can't clip off-screen.
+        if (!isSignedIn) {
+            Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
+            Button(
+                onClick = onNavigateToEmailSignIn,
+                colors = ButtonDefaults.colors(
+                    containerColor = AuthSecondaryButtonBackground,
+                    focusedContainerColor = Color.White,
+                    contentColor = AuthTextPrimary,
+                    focusedContentColor = Color.Black
+                ),
+                border = ButtonDefaults.border(
+                    border = androidx.tv.material3.Border(
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AuthSecondaryButtonBorder),
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                )
+            ) {
+                Text(stringResource(R.string.auth_qr_email_sign_in))
             }
         }
     }

@@ -1285,7 +1285,8 @@ fun NuvioNavHost(
 
         composable(Screen.Account.route) {
             AuthQrSignInScreen(
-                onBackPress = { navController.popBackStack() }
+                onBackPress = { navController.popBackStack() },
+                onNavigateToEmailSignIn = { navController.navigate(Screen.AuthSignIn.route) }
             )
         }
 
@@ -1299,7 +1300,8 @@ fun NuvioNavHost(
 
         composable(Screen.AuthQrSignIn.route) {
             AuthQrSignInScreen(
-                onBackPress = { navController.popBackStack() }
+                onBackPress = { navController.popBackStack() },
+                onNavigateToEmailSignIn = { navController.navigate(Screen.AuthSignIn.route) }
             )
         }
 

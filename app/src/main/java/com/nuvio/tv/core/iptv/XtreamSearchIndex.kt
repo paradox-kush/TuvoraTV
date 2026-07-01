@@ -3,13 +3,10 @@ package com.nuvio.tv.core.iptv
 import android.util.Log
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.domain.model.ContentType
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,11 +42,8 @@ class XtreamSearchIndex @Inject constructor(
     private val liveCache = ConcurrentHashMap<String, List<XtreamChannel>>()
     private val vodCache = ConcurrentHashMap<String, List<XtreamMovie>>()
     private val seriesCache = ConcurrentHashMap<String, List<XtreamSeriesItem>>()
-    private val vodLoading = ConcurrentHashMap.newKeySet<String>()
-    private val scope = CoroutineScope(SupervisorJob())
 
-    /** Awaits the fast lists (live + series); VOD (often 100k+) loads in the background
-     *  so the channel/series rows appear immediately and movies fill in on a later search. */
+    /** Awaits live + series + VOD per account so all three are searchable on the first query. */
     private suspend fun ensureLoaded() = coroutineScope {
         val accounts = store.accounts.first().filter { it.enabled }
         accounts.map { acc ->
@@ -64,12 +58,13 @@ class XtreamSearchIndex @Inject constructor(
                     seriesCache[acc.id] = s.take(MAX_INDEX)
                     Log.d(TAG, "indexed series=${s.size} for ${acc.name}")
                 }
-                if (!vodCache.containsKey(acc.id) && vodLoading.add(acc.id)) {
-                    scope.launch {
-                        val vod = client.vodMovies(acc).getOrDefault(emptyList())
-                        vodCache[acc.id] = vod.take(MAX_INDEX)
-                        Log.d(TAG, "indexed vod=${vod.size} for ${acc.name}")
-                    }
+                // ponytail: VOD is fetched inline (awaited) so movies are present on the FIRST
+                // search. Tradeoff: a large panel makes the first search a bit slower, but the
+                // previous detached launch never joined awaitAll, so movies came back empty.
+                if (!vodCache.containsKey(acc.id)) {
+                    val vod = client.vodMovies(acc).getOrDefault(emptyList())
+                    vodCache[acc.id] = vod.take(MAX_INDEX)
+                    Log.d(TAG, "indexed vod=${vod.size} for ${acc.name}")
                 }
             }
         }.awaitAll()

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,6 +57,7 @@ import java.util.Locale
 fun LiveGuide(
     account: XtreamAccount,
     onPlayChannel: (title: String, streamUrl: String, contentId: String) -> Unit,
+    selectedTabRequester: FocusRequester? = null,
     viewModel: XtreamLiveGuideViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -72,11 +74,13 @@ fun LiveGuide(
             modifier = Modifier.width(260.dp).fillMaxHeight().focusRestorer(),
             contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
         ) {
-            items(uiState.categories, key = { it.id }) { cat ->
+            itemsIndexed(uiState.categories, key = { _, it -> it.id }) { index, cat ->
                 GuideCategoryRow(
                     label = cat.name,
                     selected = cat.id == uiState.selectedCategoryId,
                     rightFocus = channelListFocus,
+                    // First category routes UP back to the active tab so the tabs stay reachable.
+                    upFocus = if (index == 0) selectedTabRequester else null,
                     onFocused = { viewModel.selectCategory(cat.id) }
                 )
             }
@@ -130,6 +134,7 @@ private fun GuideCategoryRow(
     label: String,
     selected: Boolean,
     rightFocus: FocusRequester,
+    upFocus: FocusRequester? = null,
     onFocused: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -138,7 +143,10 @@ private fun GuideCategoryRow(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .focusProperties { right = rightFocus }
+            .focusProperties {
+                right = rightFocus
+                if (upFocus != null) up = upFocus
+            }
             .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(

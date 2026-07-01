@@ -7,6 +7,7 @@ import com.nuvio.tv.core.network.safeApiCall
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
+import com.nuvio.tv.core.iptv.rebuildFromId
 import com.nuvio.tv.core.iptv.toMeta
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.AddonResource
@@ -207,7 +208,10 @@ class MetaRepositoryImpl @Inject constructor(
         // Enriched with TMDB art/metadata (backdrop, logo, cast) when a tmdb_id is available,
         // so the native detail screen looks identical to addon-backed content.
         if (xtreamRegistry.isXtreamId(id)) {
+            // Registry is process-lifetime; a saved/deep-linked id not browsed this session
+            // misses, so rebuild it from the id + account before giving up.
             val item = xtreamRegistry.get(id)
+                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, xtreamClient)
             if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
             else emit(NetworkResult.Error("IPTV item is no longer available"))
             return@flow

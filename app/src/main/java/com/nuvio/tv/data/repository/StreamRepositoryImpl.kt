@@ -12,6 +12,7 @@ import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
+import com.nuvio.tv.core.iptv.rebuildFromId
 import com.nuvio.tv.core.iptv.toAddonStreams
 import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.LocalScraperResult
@@ -45,7 +46,9 @@ class StreamRepositoryImpl @Inject constructor(
     private val tmdbService: TmdbService,
     private val debridStreamPresentation: DebridStreamPresentation,
     private val localDebridAvailabilityService: LocalDebridAvailabilityService,
-    private val xtreamRegistry: com.nuvio.tv.core.iptv.XtreamItemRegistry
+    private val xtreamRegistry: com.nuvio.tv.core.iptv.XtreamItemRegistry,
+    private val xtreamClient: com.nuvio.tv.core.iptv.XtreamClient,
+    private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore
 ) : StreamRepository {
     private enum class StreamFailureKind {
         MISSING,
@@ -67,7 +70,9 @@ class StreamRepositoryImpl @Inject constructor(
         emit(NetworkResult.Loading)
         // HYBRID LANE: Xtream ids play their own single direct stream — skip addon + debrid.
         if (xtreamRegistry.isXtreamId(videoId)) {
+            // Rebuild from the id on a registry miss (saved/deep-linked item not browsed this session).
             val item = xtreamRegistry.get(videoId)
+                ?: xtreamRegistry.rebuildFromId(videoId, xtreamAccountStore, xtreamClient)
             emit(NetworkResult.Success(item?.toAddonStreams() ?: emptyList()))
             return@flow
         }

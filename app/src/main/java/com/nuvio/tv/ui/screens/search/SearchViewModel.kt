@@ -72,6 +72,7 @@ class SearchViewModel @Inject constructor(
     private var discoverJob: Job? = null
     private var catalogRowsUpdateJob: Job? = null
     private var suggestionJob: Job? = null
+    private var searchDebounceJob: Job? = null
     private var hasRenderedFirstCatalog = false
     private var pendingCatalogResponses = 0
     private var revealBatchAfterNextDiscoverFetch = false
@@ -201,9 +202,20 @@ class SearchViewModel @Inject constructor(
             )
         }
 
-        // Search is explicit on submit only; stop any in-flight requests while editing.
+        // Stop any in-flight requests while editing.
         activeSearchJobs.forEach { it.cancel() }
         activeSearchJobs = emptyList()
+
+        // Debounced auto-search so results load while typing; SubmitSearch/onDone stays
+        // as an immediate-submit path.
+        searchDebounceJob?.cancel()
+        val q = query.trim()
+        if (q.length >= 2) {
+            searchDebounceJob = viewModelScope.launch {
+                kotlinx.coroutines.delay(300)
+                performSearch(query)
+            }
+        }
 
         fetchSuggestions(query.trim())
     }
