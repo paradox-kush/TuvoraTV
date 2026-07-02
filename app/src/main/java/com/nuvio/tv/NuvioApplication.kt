@@ -75,6 +75,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
             ).apply {
                 // Capture uncaught exceptions as $exception events (where the app breaks).
                 errorTrackingConfig.autoCapture = true
+                // SDK logcat diagnostics in debug builds only.
+                debug = BuildConfig.DEBUG
             }
         )
         PluginRuntimeHooks.onApplicationCreate(this)
