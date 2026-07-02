@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -38,7 +39,13 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -55,6 +62,7 @@ import com.nuvio.tv.core.iptv.XtreamProgram
 import com.nuvio.tv.ui.screens.player.NuvioMpvSurfaceView
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
@@ -88,8 +96,15 @@ fun LiveGuide(
     val firstChannelFocus = remember { FocusRequester() }
 
     var mpvView by remember { mutableStateOf<NuvioMpvSurfaceView?>(null) }
+    val lifecycleScope = rememberCoroutineScope()
     DisposableEffect(Unit) { onDispose { mpvView?.releasePlayer() } }
     BackHandler(enabled = fullscreen) { onFullscreenChange(false) }
+
+    // Fullscreen controls overlay: shown on entry and on any key, auto-hides while playing.
+    var paused by remember { mutableStateOf(false) }
+    var controlsVisible by remember { mutableStateOf(false) }
+    var controlsTick by remember { mutableStateOf(0) }
+    fun showControls() { controlsVisible = true; controlsTick++ }
 
     // The player tunes ONLY when the preview channel changes (OK press / last-played restore) —
     // never on focus movement. mpv calls go off-main: they can block on the core lock for
@@ -101,17 +116,55 @@ fun LiveGuide(
         withContext(Dispatchers.Default) { view.setMediaUsingLoadfile(url, emptyMap()) }
     }
 
+    // Pause holds the frame; resume reloads instead of unpausing (a paused live buffer goes
+    // stale). loadfile does NOT clear mpv's pause property, so resume must unpause explicitly.
+    fun togglePause() {
+        val view = mpvView ?: return
+        val url = uiState.previewChannel?.streamUrl ?: return
+        val target = !paused
+        paused = target
+        lifecycleScope.launch(Dispatchers.Default) {
+            if (target) {
+                view.setPaused(true)
+            } else {
+                view.setPaused(false)
+                view.setMediaUsingLoadfile(url, emptyMap())
+            }
+        }
+        showControls()
+    }
+
+    // Entering fullscreen peeks the controls; leaving it rejoins the live edge if paused.
+    LaunchedEffect(fullscreen) {
+        if (fullscreen) showControls()
+        else {
+            controlsVisible = false
+            if (paused) togglePause()
+        }
+    }
+    // Auto-hide after 4s of playback; stay up while paused so a frozen frame is explained.
+    LaunchedEffect(fullscreen, controlsTick, paused) {
+        if (fullscreen && controlsVisible && !paused) {
+            delay(4_000)
+            controlsVisible = false
+        }
+    }
+
     // Backgrounding: stop burning the decoder on STOP; rejoin the live edge on START (a paused
     // live buffer goes stale, so reload instead of unpause). Off-main for the same lock reason.
     val lifecycleOwner = LocalLifecycleOwner.current
-    val lifecycleScope = rememberCoroutineScope()
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> lifecycleScope.launch(Dispatchers.Default) { mpvView?.setPaused(true) }
                 Lifecycle.Event.ON_START -> {
                     val url = uiState.previewChannel?.streamUrl ?: return@LifecycleEventObserver
-                    lifecycleScope.launch(Dispatchers.Default) { mpvView?.setMediaUsingLoadfile(url, emptyMap()) }
+                    paused = false
+                    lifecycleScope.launch(Dispatchers.Default) {
+                        // loadfile keeps mpv's pause property — unpause or the rejoin stays frozen.
+                        mpvView?.setPaused(false)
+                        mpvView?.setMediaUsingLoadfile(url, emptyMap())
+                    }
                 }
                 else -> Unit
             }
@@ -120,7 +173,33 @@ fun LiveGuide(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            // Fullscreen key handling. Focus stays locked on the (hidden) channel row, so keys
+            // arrive there — intercept them in the preview phase before the row's clickable.
+            // BACK is NOT consumed (BackHandler collapses). (ponytail: no channel zap yet — wire
+            // DirectionUp/Down to prev/next channel if requested.)
+            .onPreviewKeyEvent { event ->
+                if (!fullscreen) return@onPreviewKeyEvent false
+                val handled = when (event.key) {
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
+                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause,
+                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> true
+                    else -> false
+                }
+                if (!handled) return@onPreviewKeyEvent false
+                if (event.type == KeyEventType.KeyDown) {
+                    when (event.key) {
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> togglePause()
+                        Key.MediaPlay -> if (paused) togglePause() else showControls()
+                        Key.MediaPause -> if (!paused) togglePause() else showControls()
+                        else -> showControls()
+                    }
+                }
+                true // consume KeyUp of handled keys too, so the locked row never clicks
+            }
+    ) {
         Row(Modifier.fillMaxSize()) {
             // Category column
             LazyColumn(
@@ -170,8 +249,8 @@ fun LiveGuide(
                                 nowTitle = uiState.epg[ch.streamId]?.now?.title,
                                 isFavorite = ch.contentId in favoriteIds,
                                 // While fullscreen, focus is locked in place behind the video;
-                                // BACK collapses. (ponytail: no fullscreen zap yet — add key
-                                // up/down channel switching if requested.)
+                                // keys are intercepted by the root onPreviewKeyEvent (controls
+                                // overlay + play/pause), BACK collapses.
                                 lockFocus = fullscreen,
                                 onFocused = { viewModel.onChannelFocused(ch, index) },
                                 // OK: tune the preview; OK on the tuned channel: go fullscreen.
@@ -201,7 +280,78 @@ fun LiveGuide(
                 },
                 modifier = Modifier.fillMaxSize()
             )
+            if (fullscreen && controlsVisible) {
+                LiveControlsOverlay(
+                    channel = uiState.previewChannel,
+                    epg = uiState.previewChannel?.let { uiState.epg[it.streamId] },
+                    paused = paused
+                )
+            }
         }
+    }
+}
+
+/** Fullscreen live controls: bottom scrim with channel + now/next EPG and the play state. */
+@Composable
+private fun BoxScope.LiveControlsOverlay(
+    channel: GuideChannel?,
+    epg: GuideEpg?,
+    paused: Boolean,
+) {
+    Column(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f))))
+            .padding(horizontal = NuvioTheme.spacing.xxxl, vertical = NuvioTheme.spacing.xl)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
+        ) {
+            AsyncImage(
+                model = channel?.logo,
+                contentDescription = null,
+                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp))
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = channel?.name ?: "",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+                epg?.now?.let { now ->
+                    Text(
+                        text = "${timeRange(now)}  ${now.title}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White,
+                        maxLines = 1
+                    )
+                }
+                epg?.next?.let { next ->
+                    Text(
+                        text = "Next: ${timeRange(next)}  ${next.title}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NuvioTheme.colors.TextSecondary,
+                        maxLines = 1
+                    )
+                }
+            }
+            Text(
+                text = if (paused) "❙❙ Paused" else "▶ Live",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (paused) Color.White else NuvioTheme.colors.Primary
+            )
+        }
+        Spacer(Modifier.height(NuvioTheme.spacing.sm))
+        Text(
+            text = "OK play/pause · BACK exit fullscreen",
+            style = MaterialTheme.typography.bodySmall,
+            color = NuvioTheme.colors.TextSecondary
+        )
     }
 }
 
