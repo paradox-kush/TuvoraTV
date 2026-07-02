@@ -6,6 +6,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -21,6 +22,10 @@ data class RadarUiState(
     val prefs: RadarPrefs = RadarPrefs(),
     val fixturesByLeague: Map<String, List<RadarFixture>> = emptyMap(),
     val liveEventIds: Set<String> = emptySet(),
+    /** Sports the last FRESH fetch returned livescore data for — the feed is authoritative
+     *  for these (empty after a cold-start disk load: stale feed data must not suppress
+     *  the time-window inference). */
+    val livescoreSports: Set<String> = emptySet(),
     val loadingFixtures: Boolean = false,
 ) {
     val followedLeagueIds: Set<String> get() = follows.map { it.leagueId }.toSet()
@@ -31,8 +36,14 @@ data class RadarUiState(
     fun activeFeatured(nowMs: Long): List<RadarFeaturedEvent> =
         catalog.featured.filter { it.isActive(nowMs) }
 
-    fun isLive(fixture: RadarFixture, nowMs: Long): Boolean =
-        fixture.id?.let { it in liveEventIds } ?: false || fixture.inferredLive(nowMs)
+    fun isLive(fixture: RadarFixture, nowMs: Long): Boolean {
+        val feedConfirmed = fixture.id?.let { it in liveEventIds } == true
+        val sport = fixture.sport?.lowercase()
+        // Fresh feed coverage for this sport -> the feed decides (a finished match must
+        // lose its badge even inside the inferred window); otherwise infer from kick-off.
+        return if (sport != null && sport in livescoreSports) feedConfirmed
+        else feedConfirmed || fixture.inferredLive(nowMs)
+    }
 
     fun upcoming(leagueIds: Collection<String>, nowMs: Long, cap: Int = 20): List<RadarFixture> =
         leagueIds.asSequence()
@@ -82,10 +93,13 @@ class RadarRepository @Inject constructor(
                     }
                 }
                 // Profile-reactive: any follows/prefs change (local edit, sync pull, profile
-                // switch) lands here and re-evaluates what to fetch.
+                // switch) lands here and re-evaluates what to fetch. Force past the throttle
+                // when a followed league has NO cached fixtures yet (new follow / profile
+                // switch to different follows) so it doesn't sit empty for a TTL.
                 store.state.collect { local ->
                     _uiState.update { it.copy(follows = local.follows, prefs = local.prefs) }
-                    refreshFixtures()
+                    val uncovered = local.follows.any { it.leagueId !in _uiState.value.fixturesByLeague }
+                    refreshFixtures(force = uncovered)
                 }
             }
         } else {
@@ -115,23 +129,28 @@ class RadarRepository @Inject constructor(
                 it.copy(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
                     liveEventIds = liveIds(response),
+                    livescoreSports = response.livescore.keys.map { s -> s.lowercase() }.toSet(),
                     loadingFixtures = false,
                 )
             }
-            store.saveFixtures(response)
+            // Persist the MERGED map — persisting only the raw response would drop leagues
+            // this (possibly partial) response omitted from the offline cache.
+            store.saveFixtures(response.copy(fixtures = _uiState.value.fixturesByLeague))
         }
     }
 
     fun toggleFollow(league: RadarLeague) {
         scope.launch {
-            val current = _uiState.value.follows
-            val without = current.filterNot { it.leagueId == league.id }
-            val follows = if (without.size == current.size) {
+            // Read the STORE, not _uiState — the ui mirror updates async via the collector,
+            // so rapid consecutive toggles would silently drop earlier writes.
+            val current = store.state.first()
+            val without = current.follows.filterNot { it.leagueId == league.id }
+            val follows = if (without.size == current.follows.size) {
                 without + RadarFollow(leagueId = league.id, sport = league.sport ?: "", sortOrder = without.size)
             } else {
                 without
             }
-            store.saveState(RadarLocalState(follows = follows, prefs = _uiState.value.prefs))
+            store.saveState(current.copy(follows = follows))
             syncService.triggerRemoteSync()
             refreshFixtures(force = true)
         }
@@ -139,11 +158,12 @@ class RadarRepository @Inject constructor(
 
     fun setOptIn(featuredEventId: String, accepted: Boolean) {
         scope.launch {
-            val prefs = _uiState.value.prefs.copy(
+            val current = store.state.first()
+            val prefs = current.prefs.copy(
                 featuredEventId = featuredEventId,
                 optInState = if (accepted) RadarOptIn.ACCEPTED else RadarOptIn.DECLINED,
             )
-            store.saveState(RadarLocalState(follows = _uiState.value.follows, prefs = prefs))
+            store.saveState(current.copy(prefs = prefs))
             syncService.triggerRemoteSync()
         }
     }

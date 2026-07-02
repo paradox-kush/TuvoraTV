@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.radar
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -161,7 +162,15 @@ fun SportsHubScreen(
         }
     }
 
-    LaunchedEffect(featured.size, upcoming.size) { runCatching { firstFocus.requestFocus() } }
+    // Initial focus only — re-requesting on every fixture refresh would yank the D-pad
+    // away from wherever the user has navigated to.
+    var initialFocusDone by remember { mutableStateOf(false) }
+    LaunchedEffect(featured.size, upcoming.size) {
+        if (!initialFocusDone && (featured.isNotEmpty() || state.catalog.categories.isNotEmpty())) {
+            initialFocusDone = true
+            runCatching { firstFocus.requestFocus() }
+        }
+    }
 
     browseCategory?.let { category ->
         NuvioDialog(
@@ -193,8 +202,11 @@ fun SportsHubScreen(
     }
 
     sheet?.let { s ->
+        // hasPlaylists reactively: the sheet snapshot can be stale for the first frames
+        // (stateIn's initial value is a placeholder until DataStore emits).
+        val hasPlaylistsNow by viewModel.hasPlaylists.collectAsStateWithLifecycle()
         MatchChannelsOverlay(
-            state = s,
+            state = s.copy(hasPlaylists = hasPlaylistsNow),
             isLive = viewModel.uiState.value.isLive(s.fixture, RadarTime.nowMs()),
             onPlay = { match ->
                 val (title, url, contentId) = viewModel.preparePlay(match)
@@ -324,11 +336,21 @@ private fun MatchRow(
 @Composable
 private fun MatchCard(fixture: RadarFixture, live: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    // Focus = unmistakable Primary treatment (HubChip's vocabulary): the D-pad cursor must
+    // always be visible. onFocusChanged BEFORE clickable, per the guide-row gotcha.
     Column(
         modifier = Modifier
             .width(280.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) NuvioTheme.colors.SurfaceVariant else NuvioTheme.colors.Surface)
+            .background(
+                if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.24f)
+                else NuvioTheme.colors.BackgroundElevated
+            )
+            .border(
+                if (focused) 2.dp else 1.dp,
+                if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
+                RoundedCornerShape(10.dp),
+            )
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(NuvioTheme.spacing.md),
@@ -380,12 +402,19 @@ private fun FeaturedBannerCard(
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    // Image card: a fat Primary border is the only focus treatment that stays visible
+    // over arbitrary artwork.
     Box(
         modifier = Modifier
             .width(360.dp)
             .height(140.dp)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .clip(RoundedCornerShape(12.dp))
+            .border(
+                if (focused) 3.dp else 0.dp,
+                if (focused) NuvioTheme.colors.Primary else Color.Transparent,
+                RoundedCornerShape(12.dp),
+            )
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick),
     ) {
@@ -439,7 +468,15 @@ private fun CategoryTile(
             .width(200.dp)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) NuvioTheme.colors.SurfaceVariant else NuvioTheme.colors.Surface)
+            .background(
+                if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.24f)
+                else NuvioTheme.colors.BackgroundElevated
+            )
+            .border(
+                if (focused) 2.dp else 1.dp,
+                if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
+                RoundedCornerShape(10.dp),
+            )
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(NuvioTheme.spacing.md),
@@ -465,11 +502,12 @@ private fun CategoryTile(
 @Composable
 private fun FocusableRow(onClick: () -> Unit, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    // Same treatment as the live guide's rows: full Primary fill marks the D-pad cursor.
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(if (focused) NuvioTheme.colors.SurfaceVariant else Color.Transparent)
+            .background(if (focused) NuvioTheme.colors.Primary else Color.Transparent)
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),
