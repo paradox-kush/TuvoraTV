@@ -87,7 +87,8 @@ fun LiveGuide(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val favoriteIds by viewModel.favoriteLiveIds.collectAsStateWithLifecycle()
-    LaunchedEffect(account.id) { viewModel.setAccount(account) }
+    // Keyed on the whole account (not just id) so option edits (category selections) re-filter.
+    LaunchedEffect(account) { viewModel.setAccount(account) }
 
     // RIGHT from a category must land on the channel list — without this, focus search looks
     // rightward at the (non-focusable) preview pane and jumps up to the tabs instead.

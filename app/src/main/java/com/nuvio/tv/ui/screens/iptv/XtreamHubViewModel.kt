@@ -28,6 +28,14 @@ import javax.inject.Inject
 
 enum class XtreamSection { LIVE, MOVIES, SERIES }
 
+/** The content-type key this section maps to in [XtreamAccount.contentTypes]. */
+val XtreamSection.typeKey: String
+    get() = when (this) {
+        XtreamSection.LIVE -> XtreamAccount.TYPE_LIVE
+        XtreamSection.MOVIES -> XtreamAccount.TYPE_MOVIES
+        XtreamSection.SERIES -> XtreamAccount.TYPE_SERIES
+    }
+
 /** One browsable item in the hub: a movie/series opens a detail; a channel plays directly. */
 data class XtreamHubItem(
     val cardId: String,        // MetaPreview id used for card key + click matching
@@ -110,7 +118,9 @@ class XtreamHubViewModel @Inject constructor(
                     val selected = _uiState.value.selectedAccountId
                         ?.takeIf { id -> accounts.any { it.id == id } }
                         ?: accounts.firstOrNull()?.id
-                    _uiState.update { it.copy(accounts = accounts, selectedAccountId = selected) }
+                    // A disabled content type hides its tab — never leave the section on one.
+                    val section = coerceSection(_uiState.value.section, accounts.firstOrNull { it.id == selected })
+                    _uiState.update { it.copy(accounts = accounts, selectedAccountId = selected, section = section) }
                     if (accounts.isEmpty()) {
                         _uiState.update { it.copy(loading = false) }
                     } else {
@@ -122,7 +132,8 @@ class XtreamHubViewModel @Inject constructor(
 
     fun selectAccount(accountId: String) {
         if (accountId == _uiState.value.selectedAccountId) return
-        _uiState.update { it.copy(selectedAccountId = accountId, categories = emptyList(), itemsByCategory = emptyMap()) }
+        val section = coerceSection(_uiState.value.section, _uiState.value.accounts.firstOrNull { it.id == accountId })
+        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap()) }
         loadCategories()
     }
 
@@ -132,14 +143,27 @@ class XtreamHubViewModel @Inject constructor(
         loadCategories()
     }
 
+    /** Keeps the section on a content type the account has enabled (first enabled one otherwise). */
+    private fun coerceSection(current: XtreamSection, acc: XtreamAccount?): XtreamSection {
+        if (acc == null || acc.typeEnabled(current.typeKey)) return current
+        return XtreamSection.entries.firstOrNull { acc.typeEnabled(it.typeKey) } ?: current
+    }
+
     private fun loadCategories() {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
+        // Disabled content type: hidden section, and its data is never fetched.
+        if (!acc.typeEnabled(section.typeKey)) {
+            _uiState.update { it.copy(categories = emptyList(), itemsByCategory = emptyMap(), loading = false, error = null) }
+            return
+        }
         val catKey = "${acc.id}|$section"
         // Cache hit: restore categories + their already-loaded items instantly (no spinner, no re-fetch).
+        // The cache keeps the UNFILTERED list; category selections filter at display time.
         categoriesCache[catKey]?.let { cached ->
-            val items = cached.mapNotNull { c -> itemsCache["$catKey|${c.id}"]?.let { c.id to it } }.toMap()
-            _uiState.update { it.copy(categories = cached, itemsByCategory = items, loading = false, error = null) }
+            val visible = cached.filter { acc.allowsCategory(section.typeKey, it.id) }
+            val items = visible.mapNotNull { c -> itemsCache["$catKey|${c.id}"]?.let { c.id to it } }.toMap()
+            _uiState.update { it.copy(categories = visible, itemsByCategory = items, loading = false, error = null) }
             return
         }
         _uiState.update { it.copy(loading = true, error = null) }
@@ -150,7 +174,11 @@ class XtreamHubViewModel @Inject constructor(
                 XtreamSection.SERIES -> client.seriesCategories(acc)
             }
             result
-                .onSuccess { cats -> categoriesCache[catKey] = cats; _uiState.update { it.copy(categories = cats, loading = false) } }
+                .onSuccess { cats ->
+                    categoriesCache[catKey] = cats
+                    val visible = cats.filter { acc.allowsCategory(section.typeKey, it.id) }
+                    _uiState.update { it.copy(categories = visible, loading = false) }
+                }
                 .onFailure { e -> _uiState.update { it.copy(loading = false, error = e.message ?: "Failed to load") } }
         }
     }

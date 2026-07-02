@@ -3,6 +3,8 @@ package com.nuvio.tv.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.XtreamAccountInfo
+import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.parseXtreamAccount
@@ -25,7 +27,11 @@ import javax.inject.Inject
 data class XtreamSettingsUiState(
     val accounts: List<XtreamAccount> = emptyList(),
     val isValidating: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    /** "accountId|type" -> that type's category list (for the Content & Categories checklist). */
+    val categoryLists: Map<String, List<XtreamCategory>> = emptyMap(),
+    /** accountId -> "Active · 0/1 connections · Expires 2027-01-11" (lazily fetched, silent on failure). */
+    val accountStatus: Map<String, String> = emptyMap()
 )
 
 @HiltViewModel
@@ -110,7 +116,16 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = parseError) }
             return
         }
-        val account = candidate.copy(enabled = old.enabled)
+        // Credential/URL edits keep the playlist options (content toggles, category selections,
+        // etc.) — they're usually a panel domain move / cred rotation of the same playlist.
+        val account = candidate.copy(
+            enabled = old.enabled,
+            epgUrl = old.epgUrl,
+            dnsProvider = old.dnsProvider,
+            autoRefreshHours = old.autoRefreshHours,
+            contentTypes = old.contentTypes,
+            categorySelections = old.categorySelections
+        )
         viewModelScope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             val result = client.verify(account)
@@ -161,4 +176,76 @@ class XtreamSettingsViewModel @Inject constructor(
     }
 
     fun clearError() = _uiState.update { it.copy(error = null) }
+
+    // --- Content & Categories (playlist manager P1) --------------------------
+
+    private val categoryRequests = mutableSetOf<String>()   // "accountId|type" in flight or done
+    private val statusRequests = mutableSetOf<String>()     // accountId in flight or done
+
+    /** Fetch the three category lists for the Content & Categories dialog (cached, silent on failure). */
+    fun loadCategoryLists(account: XtreamAccount) {
+        for (type in listOf(XtreamAccount.TYPE_LIVE, XtreamAccount.TYPE_MOVIES, XtreamAccount.TYPE_SERIES)) {
+            val key = "${account.id}|$type"
+            if (!categoryRequests.add(key)) continue
+            viewModelScope.launch {
+                val result = when (type) {
+                    XtreamAccount.TYPE_LIVE -> client.liveCategories(account)
+                    XtreamAccount.TYPE_MOVIES -> client.vodCategories(account)
+                    else -> client.seriesCategories(account)
+                }
+                result
+                    .onSuccess { cats -> _uiState.update { it.copy(categoryLists = it.categoryLists + (key to cats)) } }
+                    .onFailure { categoryRequests.remove(key) }   // allow a retry on next dialog open
+            }
+        }
+    }
+
+    /** Toggle a content type on/off. Option-only edit: no credential re-verification. */
+    fun setContentTypeEnabled(accountId: String, type: String, enabled: Boolean) {
+        updateAccount(accountId) { acc ->
+            acc.copy(contentTypes = if (enabled) acc.contentTypes + type else acc.contentTypes - type)
+        }
+    }
+
+    /** Set a type's category selection (null = all incl. future). Option-only edit: no re-verification. */
+    fun setCategorySelection(accountId: String, type: String, selection: List<String>?) {
+        updateAccount(accountId) { acc ->
+            acc.copy(categorySelections = acc.categorySelections.withType(type, selection))
+        }
+    }
+
+    private fun updateAccount(accountId: String, transform: (XtreamAccount) -> XtreamAccount) {
+        val account = _uiState.value.accounts.firstOrNull { it.id == accountId } ?: return
+        viewModelScope.launch {
+            store.upsert(transform(account))
+            syncService.triggerRemoteSync()
+        }
+    }
+
+    /** Lazily fetch the account-status line for a settings row. Non-blocking, cached, silent on failure. */
+    fun ensureAccountStatus(account: XtreamAccount) {
+        if (!statusRequests.add(account.id)) return
+        viewModelScope.launch {
+            client.accountInfo(account)
+                .onSuccess { info ->
+                    info.toStatusLine()?.let { line ->
+                        _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to line)) }
+                    }
+                }
+                .onFailure { statusRequests.remove(account.id) }   // silent; retry on a later recomposition
+        }
+    }
+
+    private fun XtreamAccountInfo.toStatusLine(): String? {
+        val parts = buildList {
+            status?.let { add(it) }
+            if (activeConnections != null && maxConnections != null) add("$activeConnections/$maxConnections connections")
+            expiresAtEpochSec?.let {
+                val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                add("Expires " + fmt.format(java.util.Date(it * 1000)))
+            }
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
 }

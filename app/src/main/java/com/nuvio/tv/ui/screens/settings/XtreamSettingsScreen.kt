@@ -4,14 +4,19 @@ import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -64,6 +69,10 @@ fun XtreamSettingsContent(
     var showAddDialog by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
     var editFor by remember { mutableStateOf<XtreamAccount?>(null) }
+    // Content & Categories: track ids (not snapshots) so the dialogs always render the
+    // freshest account from the store after each toggle.
+    var contentForId by remember { mutableStateOf<String?>(null) }
+    var checklistType by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -92,9 +101,11 @@ fun XtreamSettingsContent(
         )
 
         uiState.accounts.forEach { account ->
+            // Lazily fetch "Active · 0/1 connections · Expires …" for the row (silent on failure).
+            LaunchedEffect(account.id) { viewModel.ensureAccountStatus(account) }
             SettingsActionRow(
                 title = account.name,
-                subtitle = account.baseUrl,
+                subtitle = listOfNotNull(account.baseUrl, uiState.accountStatus[account.id]).joinToString("\n"),
                 value = if (account.enabled) "On" else "Off",
                 onClick = { actionsFor = account }
             )
@@ -157,6 +168,15 @@ fun XtreamSettingsContent(
                 }
             )
             SettingsActionRow(
+                title = "Content & Categories",
+                subtitle = "Choose which content types and categories to show",
+                onClick = {
+                    val id = account.id
+                    actionsFor = null
+                    contentForId = id
+                }
+            )
+            SettingsActionRow(
                 title = "Edit URL / credentials",
                 subtitle = null,
                 onClick = {
@@ -181,6 +201,240 @@ fun XtreamSettingsContent(
                 }
             )
         }
+    }
+
+    // Content & Categories: content-type toggles + per-type category checklist.
+    contentForId?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) {
+            contentForId = null; checklistType = null
+        } else {
+            LaunchedEffect(id) { viewModel.loadCategoryLists(account) }
+            XtreamContentTypesDialog(
+                account = account,
+                categoryLists = uiState.categoryLists,
+                onToggleType = { type, enabled -> viewModel.setContentTypeEnabled(id, type, enabled) },
+                onOpenChecklist = { type -> checklistType = type },
+                onDismiss = { contentForId = null; checklistType = null }
+            )
+            checklistType?.let { type ->
+                XtreamCategoryChecklistDialog(
+                    account = account,
+                    type = type,
+                    categories = uiState.categoryLists["$id|$type"],
+                    onSetSelection = { selection -> viewModel.setCategorySelection(id, type, selection) },
+                    onDismiss = { checklistType = null }
+                )
+            }
+        }
+    }
+}
+
+private val CONTENT_TYPES = listOf(
+    XtreamAccount.TYPE_LIVE to "Live TV",
+    XtreamAccount.TYPE_MOVIES to "Movies",
+    XtreamAccount.TYPE_SERIES to "Series"
+)
+
+/** Level 1: the three content-type rows (checkbox toggles the type, body opens its checklist). */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun XtreamContentTypesDialog(
+    account: XtreamAccount,
+    categoryLists: Map<String, List<com.nuvio.tv.core.iptv.XtreamCategory>>,
+    onToggleType: (type: String, enabled: Boolean) -> Unit,
+    onOpenChecklist: (type: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val firstRowFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstRowFocus.requestFocus() } }
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = "Content & Categories",
+        subtitle = account.name
+    ) {
+        CONTENT_TYPES.forEachIndexed { index, (type, label) ->
+            val enabled = account.typeEnabled(type)
+            val selection = account.categorySelections.forType(type)
+            val total = categoryLists["${account.id}|$type"]?.size
+            val countText = when {
+                !enabled -> "Hidden"
+                selection == null -> "All categories"
+                total != null -> "${selection.size}/$total"
+                else -> "${selection.size} selected"
+            }
+            ContentTypeRow(
+                label = label,
+                enabled = enabled,
+                countText = countText,
+                focusRequester = if (index == 0) firstRowFocus else null,
+                onToggle = { onToggleType(type, !enabled) },
+                onOpen = { onOpenChecklist(type) }
+            )
+        }
+        Text(
+            text = "Checkbox shows/hides the content type. Select a type to choose its categories.",
+            style = MaterialTheme.typography.bodySmall,
+            color = NuvioTheme.colors.TextTertiary
+        )
+    }
+}
+
+/** Level 2: the category checklist for one content type. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun XtreamCategoryChecklistDialog(
+    account: XtreamAccount,
+    type: String,
+    categories: List<com.nuvio.tv.core.iptv.XtreamCategory>?,
+    onSetSelection: (List<String>?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val label = CONTENT_TYPES.firstOrNull { it.first == type }?.second ?: type
+    val selection = account.categorySelections.forType(type)
+    val selectAllFocus = remember { FocusRequester() }
+    LaunchedEffect(categories != null) { runCatching { selectAllFocus.requestFocus() } }
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = "$label categories",
+        subtitle = when {
+            categories == null -> "Loading categories…"
+            else -> "${selection?.size ?: categories.size}/${categories.size} selected"
+        }
+    ) {
+        if (categories == null) return@NuvioDialog
+        Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
+            ChecklistAction("Select All", focusRequester = selectAllFocus) { onSetSelection(null) }
+            ChecklistAction("Deselect All") { onSetSelection(emptyList()) }
+        }
+        LazyColumn(
+            modifier = Modifier.heightIn(max = 380.dp),
+            contentPadding = PaddingValues(vertical = NuvioTheme.spacing.xs)
+        ) {
+            items(categories, key = { it.id }) { category ->
+                val checked = selection == null || category.id in selection
+                CategoryCheckRow(
+                    name = category.name.ifBlank { "Other" },
+                    checked = checked,
+                    onToggle = {
+                        // Toggling away from "all" materializes today's full id list first, so
+                        // only the toggled category changes (future categories arrive unselected).
+                        val current = selection ?: categories.map { it.id }
+                        onSetSelection(if (category.id in current) current - category.id else current + category.id)
+                    }
+                )
+            }
+        }
+    }
+}
+
+/** A content-type row: [checkbox] toggles the type, [body] opens the category checklist. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ContentTypeRow(
+    label: String,
+    enabled: Boolean,
+    countText: String,
+    focusRequester: FocusRequester? = null,
+    onToggle: () -> Unit,
+    onOpen: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        FocusableBox(onSelect = onToggle, focusRequester = focusRequester) { focused ->
+            Text(
+                text = if (enabled) "☑" else "☐",
+                style = MaterialTheme.typography.bodyLarge,
+                color = when {
+                    focused -> NuvioTheme.colors.TextPrimary
+                    enabled -> NuvioTheme.colors.Primary
+                    else -> NuvioTheme.colors.TextTertiary
+                }
+            )
+        }
+        Spacer(Modifier.width(NuvioTheme.spacing.sm))
+        FocusableBox(onSelect = onOpen, modifier = Modifier.weight(1f)) { focused ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (enabled || focused) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextTertiary,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "$countText  ›",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (focused) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ChecklistAction(label: String, focusRequester: FocusRequester? = null, onSelect: () -> Unit) {
+    FocusableBox(onSelect = onSelect, focusRequester = focusRequester) { focused ->
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (focused) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
+        )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun CategoryCheckRow(name: String, checked: Boolean, onToggle: () -> Unit) {
+    FocusableBox(onSelect = onToggle, modifier = Modifier.fillMaxWidth()) { focused ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = if (checked) "☑" else "☐",
+                style = MaterialTheme.typography.bodyMedium,
+                color = when {
+                    focused -> NuvioTheme.colors.TextPrimary
+                    checked -> NuvioTheme.colors.Primary
+                    else -> NuvioTheme.colors.TextTertiary
+                }
+            )
+            Spacer(Modifier.width(NuvioTheme.spacing.sm))
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (focused) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+/** Minimal focusable container with the app's focus border/background styling (dialog rows). */
+@Composable
+private fun FocusableBox(
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    content: @Composable (focused: Boolean) -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) NuvioTheme.colors.Primary else Color.Transparent)
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .onKeyEvent {
+                if ((it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                        it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER) &&
+                    it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN
+                ) { onSelect(); true } else false
+            }
+            .padding(horizontal = 10.dp, vertical = NuvioTheme.spacing.sm)
+    ) {
+        content(focused)
     }
 }
 

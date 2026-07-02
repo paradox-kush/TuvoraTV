@@ -94,10 +94,24 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> full list
     private val channelsCache = mutableMapOf<String, List<GuideChannel>>()      // "accountId|categoryId"
 
-    /** Called by the screen when the hub's selected account changes. */
+    /** Called by the screen when the hub's selected account changes (or its options change —
+     *  category selections filter the guide's category column at display time). */
     fun setAccount(acc: XtreamAccount) {
-        if (acc.id == account?.id) return
+        if (acc == account) return
+        val sameAccount = acc.id == account?.id
         account = acc
+        if (sameAccount) {
+            // Option-only change: re-filter the cached category column, keep everything else.
+            categoriesCache[acc.id]?.let { full ->
+                val visible = filteredCategories(acc, full)
+                _uiState.update { it.copy(categories = visible) }
+                // If the selected category just got deselected, fall back to "All channels".
+                if (visible.none { it.id == _uiState.value.selectedCategoryId }) {
+                    selectCategory(visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id ?: visible.firstOrNull()?.id)
+                }
+            }
+            return
+        }
         epgRequested.clear()
         // Tune the preview to the LAST OPENED channel of this account (TiViMate-style resume).
         viewModelScope.launch {
@@ -109,10 +123,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     _uiState.update { it.copy(previewChannel = it.previewChannel ?: restored) }
                 }
         }
-        // Cache hit: show the category column immediately without re-fetching.
+        // Cache hit: show the category column immediately without re-fetching. The cache keeps
+        // the UNFILTERED list; category selections filter at display time.
         categoriesCache[acc.id]?.let { full ->
-            _uiState.update { it.copy(categories = full) }
-            selectCategory(full.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id ?: full.firstOrNull()?.id)
+            val visible = filteredCategories(acc, full)
+            _uiState.update { it.copy(categories = visible) }
+            selectCategory(visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id ?: visible.firstOrNull()?.id)
             return
         }
         viewModelScope.launch {
@@ -124,11 +140,17 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 cats.forEach { add(GuideCategory(it.id, it.name)) }
             }
             categoriesCache[acc.id] = full
-            _uiState.update { it.copy(categories = full) }
+            val visible = filteredCategories(acc, full)
+            _uiState.update { it.copy(categories = visible) }
             // Default to "All channels" so the guide isn't empty for a fresh account.
-            selectCategory(full.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id ?: full.firstOrNull()?.id)
+            selectCategory(visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id ?: visible.firstOrNull()?.id)
         }
     }
+
+    /** Category selections hide deselected provider categories; the synthetic ones
+     *  (Favorites/Recent/All channels) are always shown. */
+    private fun filteredCategories(acc: XtreamAccount, full: List<GuideCategory>): List<GuideCategory> =
+        full.filter { it.special != null || acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.id) }
 
     fun selectCategory(categoryId: String?) {
         val acc = account ?: return

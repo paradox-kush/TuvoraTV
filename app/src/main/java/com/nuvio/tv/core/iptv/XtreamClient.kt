@@ -9,14 +9,77 @@ import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** A configured Xtream panel the user has added. */
+/**
+ * Per-content-type category include lists.
+ * Semantics: null = ALL categories (including ones the provider adds later);
+ * empty list = none; non-empty list = only those category ids.
+ */
+data class CategorySelections(
+    val live: List<String>? = null,
+    val movies: List<String>? = null,
+    val series: List<String>? = null
+) {
+    fun forType(type: String): List<String>? = when (type) {
+        XtreamAccount.TYPE_LIVE -> live
+        XtreamAccount.TYPE_MOVIES -> movies
+        XtreamAccount.TYPE_SERIES -> series
+        else -> null
+    }
+
+    fun withType(type: String, selection: List<String>?): CategorySelections = when (type) {
+        XtreamAccount.TYPE_LIVE -> copy(live = selection)
+        XtreamAccount.TYPE_MOVIES -> copy(movies = selection)
+        XtreamAccount.TYPE_SERIES -> copy(series = selection)
+        else -> this
+    }
+
+    val allNull: Boolean get() = live == null && movies == null && series == null
+}
+
+/**
+ * A configured IPTV playlist the user has added. P1 of the playlist manager: still Xtream-only,
+ * but carries the shared playlist options (source type, EPG override, DNS, refresh, content-type
+ * toggles, category selections). All new fields default so previously-persisted JSON loads
+ * unchanged (see the Gson normalizer in XtreamAccountStore).
+ */
 data class XtreamAccount(
     val id: String,            // stable key (the normalized base url)
     val name: String,          // user-facing label
     val baseUrl: String,       // e.g. http://host:port  (no trailing slash, no path)
     val username: String,
     val password: String,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val sourceType: String = SOURCE_XTREAM,
+    val epgUrl: String? = null,
+    val dnsProvider: String = DNS_SYSTEM,
+    val autoRefreshHours: Int = 0,           // 0 = off
+    val contentTypes: Set<String> = DEFAULT_CONTENT_TYPES,
+    val categorySelections: CategorySelections = CategorySelections()
+) {
+    fun typeEnabled(type: String): Boolean = type in contentTypes
+
+    /** Category filter: null selection = all (incl. future); empty = none; list = only those ids. */
+    fun allowsCategory(type: String, categoryId: String?): Boolean {
+        val selection = categorySelections.forType(type) ?: return true
+        return categoryId != null && categoryId in selection
+    }
+
+    companion object {
+        const val SOURCE_XTREAM = "xtream"
+        const val DNS_SYSTEM = "system"
+        const val TYPE_LIVE = "live"
+        const val TYPE_MOVIES = "movies"
+        const val TYPE_SERIES = "series"
+        val DEFAULT_CONTENT_TYPES = setOf(TYPE_LIVE, TYPE_MOVIES, TYPE_SERIES)
+    }
+}
+
+/** Account status from the panel's `user_info` (player_api.php with no action). */
+data class XtreamAccountInfo(
+    val status: String?,               // "Active", "Expired", ...
+    val expiresAtEpochSec: Long?,      // null = unlimited/unknown
+    val activeConnections: Int?,
+    val maxConnections: Int?
 )
 
 // --- Domain models (what the UI consumes) -----------------------------------
@@ -103,6 +166,17 @@ class XtreamClient @Inject constructor(
         check(info?.auth == 1) { "Authentication failed" }
         val status = info.status?.lowercase().orEmpty()
         check(status.isEmpty() || status == "active") { "Account status: ${info.status}" }
+    }
+
+    /** Account status (expiry/connections) for the settings row. Same endpoint as [verify]. */
+    suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = call {
+        val info = api.getAccount(playerApi(acc)).requireBody().userInfo
+        XtreamAccountInfo(
+            status = info?.status?.takeIf { it.isNotBlank() },
+            expiresAtEpochSec = info?.expDate?.trim()?.toLongOrNull(),
+            activeConnections = info?.activeConnections?.trim()?.toIntOrNull(),
+            maxConnections = info?.maxConnections?.trim()?.toIntOrNull()
+        )
     }
 
     suspend fun liveCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =

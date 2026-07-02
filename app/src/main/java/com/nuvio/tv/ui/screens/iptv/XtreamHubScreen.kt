@@ -81,11 +81,19 @@ fun XtreamHubScreen(
     val liveTab = remember { FocusRequester() }
     val moviesTab = remember { FocusRequester() }
     val seriesTab = remember { FocusRequester() }
+    // Disabled content types (per-playlist Content & Categories) hide their tab entirely.
+    val account = uiState.selectedAccount
+    val showLive = account?.typeEnabled(XtreamAccount.TYPE_LIVE) != false
+    val showMovies = account?.typeEnabled(XtreamAccount.TYPE_MOVIES) != false
+    val showSeries = account?.typeEnabled(XtreamAccount.TYPE_SERIES) != false
+    val anyTypeEnabled = showLive || showMovies || showSeries
     val selectedTabRequester = when (uiState.section) {
         XtreamSection.LIVE -> liveTab
         XtreamSection.MOVIES -> moviesTab
         XtreamSection.SERIES -> seriesTab
     }
+    // With every type disabled no tab requester is attached — restore focus to the account chip.
+    val headerRestoreTarget = if (anyTypeEnabled) selectedTabRequester else firstFocus
 
     // Movies/Series tile -> native detail. (Live is handled by the TiViMate guide below.)
     val onActivate: (XtreamHubItem) -> Unit = { hit ->
@@ -117,7 +125,7 @@ fun XtreamHubScreen(
         if (!liveFullscreen) Row(
             modifier = Modifier
                 .padding(start = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.md)
-                .focusRestorer(selectedTabRequester),
+                .focusRestorer(headerRestoreTarget),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
         ) {
@@ -130,18 +138,25 @@ fun XtreamHubScreen(
                 onClick = { if (uiState.accounts.size > 1) showAccountPicker = true }
             )
             Spacer(Modifier.width(NuvioTheme.spacing.md))
-            HubChip("Live TV", uiState.section == XtreamSection.LIVE, focusRequester = liveTab,
+            if (showLive) HubChip("Live TV", uiState.section == XtreamSection.LIVE, focusRequester = liveTab,
                 onFocusSelect = { if (uiState.section != XtreamSection.LIVE) viewModel.selectSection(XtreamSection.LIVE) }) { viewModel.selectSection(XtreamSection.LIVE) }
-            HubChip("Movies", uiState.section == XtreamSection.MOVIES, focusRequester = moviesTab,
+            if (showMovies) HubChip("Movies", uiState.section == XtreamSection.MOVIES, focusRequester = moviesTab,
                 onFocusSelect = { if (uiState.section != XtreamSection.MOVIES) viewModel.selectSection(XtreamSection.MOVIES) }) { viewModel.selectSection(XtreamSection.MOVIES) }
-            HubChip("Series", uiState.section == XtreamSection.SERIES, focusRequester = seriesTab,
+            if (showSeries) HubChip("Series", uiState.section == XtreamSection.SERIES, focusRequester = seriesTab,
                 onFocusSelect = { if (uiState.section != XtreamSection.SERIES) viewModel.selectSection(XtreamSection.SERIES) }) { viewModel.selectSection(XtreamSection.SERIES) }
         }
 
         // Live TV = TiViMate-style guide (category col + live preview + EPG channel list).
         // Movies/Series = native poster rows.
         val liveAccount = uiState.selectedAccount
-        if (uiState.section == XtreamSection.LIVE && liveAccount != null) {
+        if (!anyTypeEnabled) {
+            Box(Modifier.fillMaxWidth().padding(NuvioTheme.spacing.xxxl)) {
+                Text(
+                    "All content types are hidden for this playlist. Enable them in Settings → IPTV → Content & Categories.",
+                    style = MaterialTheme.typography.bodyLarge, color = NuvioTheme.colors.TextSecondary
+                )
+            }
+        } else if (uiState.section == XtreamSection.LIVE && liveAccount != null) {
             LiveGuide(
                 account = liveAccount,
                 fullscreen = liveFullscreen,

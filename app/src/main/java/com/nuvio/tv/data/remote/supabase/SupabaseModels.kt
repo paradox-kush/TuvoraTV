@@ -34,6 +34,33 @@ data class SupabaseAddon(
     @SerialName("updated_at") val updatedAt: String? = null
 )
 
+/**
+ * Row of `public.iptv_playlists` (playlist-manager v2 sync table). Only the columns this
+ * client reads are modelled; unknown columns are ignored by the supabase-kt serializer.
+ * `category_selections` is jsonb — kept as a raw [JsonElement] and decoded leniently in
+ * XtreamAccountSyncService (a malformed object degrades to "all categories", never throws).
+ */
+@Serializable
+data class SupabaseIptvPlaylist(
+    val id: String? = null,
+    @SerialName("user_id") val userId: String? = null,
+    @SerialName("source_type") val sourceType: String = "xtream",
+    val name: String? = null,
+    val enabled: Boolean = true,
+    @SerialName("sort_order") val sortOrder: Int = 0,
+    @SerialName("profile_id") val profileId: Int = 1,
+    @SerialName("base_url") val baseUrl: String? = null,
+    val username: String? = null,
+    val password: String? = null,
+    @SerialName("epg_url") val epgUrl: String? = null,
+    @SerialName("dns_provider") val dnsProvider: String = "system",
+    @SerialName("auto_refresh_hours") val autoRefreshHours: Int = 0,
+    @SerialName("content_types") val contentTypes: List<String> = listOf("live", "movies", "series"),
+    @SerialName("category_selections") val categorySelections: JsonElement? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null
+)
+
 @Serializable
 data class SupabaseXtreamAccount(
     val id: String? = null,

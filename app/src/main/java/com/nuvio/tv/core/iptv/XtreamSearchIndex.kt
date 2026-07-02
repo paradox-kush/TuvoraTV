@@ -47,15 +47,20 @@ class XtreamSearchIndex @Inject constructor(
         val accounts = store.accounts.first().filter { it.enabled }
         accounts.map { acc ->
             async {
-                if (!liveCache.containsKey(acc.id)) {
+                // Disabled content types are skipped entirely (not fetched, not indexed).
+                if (acc.typeEnabled(XtreamAccount.TYPE_LIVE) && !liveCache.containsKey(acc.id)) {
                     val live = client.liveChannels(acc).getOrDefault(emptyList())
                     liveCache[acc.id] = live
                     Log.d(TAG, "indexed live=${live.size} for ${acc.name}")
                 }
                 // a cold index build (huge catalogs) shouldn't stall a keystroke forever;
                 // a built index responds instantly, a building one fills in on a later search
-                withTimeoutOrNull(INDEX_WAIT_MS) { resolver.ensureIndexed(acc, MatchKind.MOVIE) }
-                withTimeoutOrNull(INDEX_WAIT_MS) { resolver.ensureIndexed(acc, MatchKind.SERIES) }
+                if (acc.typeEnabled(XtreamAccount.TYPE_MOVIES)) {
+                    withTimeoutOrNull(INDEX_WAIT_MS) { resolver.ensureIndexed(acc, MatchKind.MOVIE) }
+                }
+                if (acc.typeEnabled(XtreamAccount.TYPE_SERIES)) {
+                    withTimeoutOrNull(INDEX_WAIT_MS) { resolver.ensureIndexed(acc, MatchKind.SERIES) }
+                }
             }
         }.awaitAll()
     }
@@ -69,17 +74,22 @@ class XtreamSearchIndex @Inject constructor(
         val movies = ArrayList<Hit>()
         val series = ArrayList<Hit>()
         for (acc in accounts) {
-            liveCache[acc.id].orEmpty().asSequence().filter { it.name.contains(q, ignoreCase = true) }.take(PER_ACCOUNT).forEach { ch ->
-                val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
-                registry.register(
-                    XtreamResolvedItem(
-                        id = id, type = ContentType.TV, name = ch.name, poster = ch.logo,
-                        streamUrl = ch.streamUrl, kind = XtreamKind.LIVE, accountId = acc.id, streamId = ch.streamId
+            // Live hits carry a categoryId -> category selections filter them; a disabled
+            // content type contributes nothing. (Movie/series index rows carry no categoryId,
+            // so those filter at the content-type level only.)
+            if (acc.typeEnabled(XtreamAccount.TYPE_LIVE)) liveCache[acc.id].orEmpty().asSequence()
+                .filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) }
+                .filter { it.name.contains(q, ignoreCase = true) }.take(PER_ACCOUNT).forEach { ch ->
+                    val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
+                    registry.register(
+                        XtreamResolvedItem(
+                            id = id, type = ContentType.TV, name = ch.name, poster = ch.logo,
+                            streamUrl = ch.streamUrl, kind = XtreamKind.LIVE, accountId = acc.id, streamId = ch.streamId
+                        )
                     )
-                )
-                channels += Hit(id, ch.name, ch.logo, isLive = true, streamUrl = ch.streamUrl, detailType = "tv")
-            }
-            matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, PER_ACCOUNT).forEach { m ->
+                    channels += Hit(id, ch.name, ch.logo, isLive = true, streamUrl = ch.streamUrl, detailType = "tv")
+                }
+            if (acc.typeEnabled(XtreamAccount.TYPE_MOVIES)) matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, PER_ACCOUNT).forEach { m ->
                 val id = XtreamItemRegistry.vodId(acc.id, m.sid)
                 val streamUrl = client.buildStreamUrl(acc, "movie", m.sid, m.ext ?: "mp4")
                 registry.register(
@@ -90,7 +100,7 @@ class XtreamSearchIndex @Inject constructor(
                 )
                 movies += Hit(id, m.name, m.poster, isLive = false, streamUrl = null, detailType = "movie")
             }
-            matchIndex.searchByName(acc.id, MatchKind.SERIES, q, PER_ACCOUNT).forEach { s ->
+            if (acc.typeEnabled(XtreamAccount.TYPE_SERIES)) matchIndex.searchByName(acc.id, MatchKind.SERIES, q, PER_ACCOUNT).forEach { s ->
                 val id = XtreamItemRegistry.seriesId(acc.id, s.sid)
                 registry.register(
                     XtreamResolvedItem(

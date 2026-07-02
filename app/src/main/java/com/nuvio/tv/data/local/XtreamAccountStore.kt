@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.nuvio.tv.core.iptv.CategorySelections
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.profile.ProfileManager
 import kotlinx.coroutines.flow.Flow
@@ -71,16 +72,44 @@ class XtreamAccountStore @Inject constructor(
         store().edit { prefs -> prefs[accountsKey] = gson.toJson(accounts) }
     }
 
-    private fun parse(json: String?): List<XtreamAccount> {
-        if (json.isNullOrBlank()) return emptyList()
-        return try {
-            gson.fromJson(json, object : TypeToken<List<XtreamAccount>>() {}.type) ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
+    private fun parse(json: String?): List<XtreamAccount> = decodeXtreamAccountsJson(gson, json)
 
     companion object {
         private const val FEATURE = "xtream_accounts"
     }
 }
+
+/** Decodes the persisted account list. Extracted so the decode-defaults behavior is unit-testable. */
+internal fun decodeXtreamAccountsJson(gson: Gson, json: String?): List<XtreamAccount> {
+    if (json.isNullOrBlank()) return emptyList()
+    return try {
+        gson.fromJson<List<XtreamAccount>>(json, object : TypeToken<List<XtreamAccount>>() {}.type)
+            ?.map { it.withDecodeDefaults() }
+            ?: emptyList()
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+/**
+ * Gson instantiates [XtreamAccount] via Unsafe (no no-arg constructor), so Kotlin constructor
+ * defaults do NOT apply — fields missing from previously-persisted JSON come back null even on
+ * non-null types. Re-apply the defaults here. The elvis operators look useless to the compiler
+ * but are load-bearing at runtime. (Can't use copy(): its non-null params null-check the current
+ * field values and would throw.)
+ */
+@Suppress("USELESS_ELVIS")
+private fun XtreamAccount.withDecodeDefaults(): XtreamAccount = XtreamAccount(
+    id = id,
+    name = name ?: "",
+    baseUrl = baseUrl,
+    username = username,
+    password = password,
+    enabled = enabled,
+    sourceType = sourceType ?: XtreamAccount.SOURCE_XTREAM,
+    epgUrl = epgUrl,
+    dnsProvider = dnsProvider ?: XtreamAccount.DNS_SYSTEM,
+    autoRefreshHours = autoRefreshHours,
+    contentTypes = contentTypes ?: XtreamAccount.DEFAULT_CONTENT_TYPES,
+    categorySelections = categorySelections ?: CategorySelections()
+)
