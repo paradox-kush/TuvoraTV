@@ -481,7 +481,12 @@ private fun CategoryTile(
             .clickable(onClick = onClick)
             .padding(NuvioTheme.spacing.md),
     ) {
-        Text(sportEmoji(category.icon), style = MaterialTheme.typography.headlineSmall)
+        // Artwork-first like the rest of the app: the category's flagship league badge.
+        AsyncImage(
+            model = category.leagues.firstOrNull()?.badge,
+            contentDescription = null,
+            modifier = Modifier.size(40.dp),
+        )
         Spacer(Modifier.height(NuvioTheme.spacing.sm))
         Text(
             category.name,
@@ -531,19 +536,3 @@ private fun RowTitle(text: String) {
     )
 }
 
-private fun sportEmoji(icon: String): String = when (icon) {
-    "soccer" -> "⚽"
-    "basketball" -> "🏀"
-    "american_football" -> "🏈"
-    "baseball" -> "⚾"
-    "ice_hockey" -> "🏒"
-    "motorsport" -> "🏎️"
-    "fighting" -> "🥊"
-    "rugby" -> "🏉"
-    "aussie_rules" -> "🏉"
-    "cricket" -> "🏏"
-    "tennis" -> "🎾"
-    "cycling" -> "🚴"
-    "golf" -> "⛳"
-    else -> "🏆"
-}
