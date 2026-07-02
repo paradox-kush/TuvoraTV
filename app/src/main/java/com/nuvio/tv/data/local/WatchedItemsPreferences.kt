@@ -99,6 +99,26 @@ class WatchedItemsPreferences @Inject constructor(
         }
     }
 
+    /**
+     * IPTV playlist edit: rewrites every watched mark under an old `xtream:{accountId}:` id
+     * prefix to the new one, or drops them when newPrefix is null (different playlist).
+     */
+    suspend fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        store().edit { preferences ->
+            val current = preferences[watchedItemsKey] ?: return@edit
+            val updated = current.mapNotNull { json ->
+                val item = runCatching { gson.fromJson(json, WatchedItem::class.java) }.getOrNull()
+                    ?: return@mapNotNull json
+                when {
+                    !item.contentId.startsWith(oldPrefix) -> json
+                    newPrefix == null -> null
+                    else -> gson.toJson(item.copy(contentId = newPrefix + item.contentId.removePrefix(oldPrefix)))
+                }
+            }.toSet()
+            preferences[watchedItemsKey] = updated
+        }
+    }
+
     suspend fun markAsWatched(item: WatchedItem) {
         store().edit { preferences ->
             val current = preferences[watchedItemsKey] ?: emptySet()

@@ -91,6 +91,26 @@ class LibraryPreferences @Inject constructor(
         return libraryItems.first()
     }
 
+    /**
+     * IPTV playlist edit: rewrites every saved item under an old `xtream:{accountId}:` id
+     * prefix to the new one, or drops them when newPrefix is null (different playlist).
+     */
+    suspend fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        store().edit { preferences ->
+            val current = preferences[libraryItemsKey] ?: return@edit
+            val updated = current.mapNotNull { json ->
+                val item = runCatching { gson.fromJson(json, SavedLibraryItem::class.java) }.getOrNull()
+                    ?: return@mapNotNull json
+                when {
+                    !item.id.startsWith(oldPrefix) -> json
+                    newPrefix == null -> null
+                    else -> gson.toJson(item.copy(id = newPrefix + item.id.removePrefix(oldPrefix)))
+                }
+            }.toSet()
+            preferences[libraryItemsKey] = updated
+        }
+    }
+
     suspend fun updateLogo(id: String, type: String, logo: String) {
         store().edit { preferences ->
             val current = preferences[libraryItemsKey] ?: emptySet()

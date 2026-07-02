@@ -63,6 +63,7 @@ fun XtreamSettingsContent(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
+    var editFor by remember { mutableStateOf<XtreamAccount?>(null) }
 
     Column(
         modifier = Modifier
@@ -115,6 +116,22 @@ fun XtreamSettingsContent(
         )
     }
 
+    editFor?.let { account ->
+        XtreamAddDialog(
+            isValidating = uiState.isValidating,
+            error = uiState.error,
+            initial = account,
+            onSubmitUrl = { url -> viewModel.editFromUrl(account, url) { editFor = null } },
+            onSubmitManual = { server, user, pass, name ->
+                viewModel.editManual(account, server, user, pass, name) { editFor = null }
+            },
+            onDismiss = {
+                viewModel.clearError()
+                editFor = null
+            }
+        )
+    }
+
     actionsFor?.let { account ->
         NuvioDialog(
             onDismiss = { actionsFor = null },
@@ -137,6 +154,14 @@ fun XtreamSettingsContent(
                     val id = account.id
                     actionsFor = null
                     onBrowseVod(id)
+                }
+            )
+            SettingsActionRow(
+                title = "Edit URL / credentials",
+                subtitle = null,
+                onClick = {
+                    actionsFor = null
+                    editFor = account
                 }
             )
             SettingsActionRow(
@@ -166,16 +191,17 @@ private fun XtreamAddDialog(
     error: String?,
     onSubmitUrl: (String) -> Unit,
     onSubmitManual: (server: String, user: String, pass: String, name: String?) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initial: XtreamAccount? = null
 ) {
-    var manualMode by remember { mutableStateOf(false) }
+    var manualMode by remember { mutableStateOf(initial != null) }
     // paste mode
     var url by remember { mutableStateOf("") }
-    // manual mode
-    var server by remember { mutableStateOf("") }
-    var user by remember { mutableStateOf("") }
-    var pass by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
+    // manual mode (prefilled when editing an existing account)
+    var server by remember { mutableStateOf(initial?.baseUrl ?: "") }
+    var user by remember { mutableStateOf(initial?.username ?: "") }
+    var pass by remember { mutableStateOf(initial?.password ?: "") }
+    var name by remember { mutableStateOf(initial?.name ?: "") }
 
     val firstFieldFocus = remember { FocusRequester() }
     LaunchedEffect(manualMode) { runCatching { firstFieldFocus.requestFocus() } }
@@ -194,7 +220,7 @@ private fun XtreamAddDialog(
 
     NuvioDialog(
         onDismiss = onDismiss,
-        title = "Add IPTV account",
+        title = if (initial != null) "Edit IPTV account" else "Add IPTV account",
         subtitle = if (manualMode) "Enter your panel details" else "Paste your portal or M3U URL (it contains your username & password)",
         width = 760.dp,
         suppressFirstKeyUp = false
@@ -211,7 +237,7 @@ private fun XtreamAddDialog(
             XtreamField(user, { user = it }, "Username", onSubmit = submit)
             XtreamField(pass, { pass = it }, "Password", isPassword = true, onSubmit = submit)
             XtreamField(name, { name = it }, "Name (optional)", onSubmit = submit)
-            XtreamAddButton(isValidating, onClick = submit)
+            XtreamAddButton(isValidating, label = if (initial != null) "Save changes" else "Add account", onClick = submit)
         } else {
             XtreamField(url, { url = it }, "http://host:port/get.php?username=…&password=…", firstFieldFocus, onSubmit = submit)
         }
@@ -315,7 +341,7 @@ private fun XtreamField(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun XtreamAddButton(isValidating: Boolean, onClick: () -> Unit) {
+private fun XtreamAddButton(isValidating: Boolean, label: String = "Add account", onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
@@ -336,7 +362,7 @@ private fun XtreamAddButton(isValidating: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = if (isValidating) "Verifying…" else "Add account",
+            text = if (isValidating) "Verifying…" else label,
             style = MaterialTheme.typography.bodyMedium,
             color = NuvioTheme.colors.TextPrimary
         )

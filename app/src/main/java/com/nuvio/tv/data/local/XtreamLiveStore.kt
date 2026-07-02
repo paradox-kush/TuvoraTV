@@ -74,6 +74,26 @@ class XtreamLiveStore @Inject constructor(
     /** Record a channel as just-watched (recents + replayable). */
     suspend fun recordPlayed(ref: LiveChannelRef) = upsert(ref, markPlayed = true)
 
+    /**
+     * IPTV playlist edit: applies [transform] to every ref under the old account's id prefix
+     * (rewrite id + rebuild streamUrl against the new server); a null transform drops them
+     * instead (different playlist). The in-memory mirror refreshes via the flow collector.
+     */
+    suspend fun migrateAccount(oldPrefix: String, transform: ((LiveChannelRef) -> LiveChannelRef)?) {
+        store().edit { prefs ->
+            val current = parse(prefs[key])
+            if (current.none { it.id.startsWith(oldPrefix) }) return@edit
+            val updated = current.mapNotNull { ref ->
+                when {
+                    !ref.id.startsWith(oldPrefix) -> ref
+                    transform == null -> null
+                    else -> transform(ref)
+                }
+            }
+            prefs[key] = gson.toJson(updated)
+        }
+    }
+
     private suspend fun upsert(ref: LiveChannelRef, markPlayed: Boolean) {
         store().edit { prefs ->
             val current = parse(prefs[key]).toMutableList()

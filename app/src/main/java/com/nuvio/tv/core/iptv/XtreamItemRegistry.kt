@@ -49,11 +49,16 @@ class XtreamItemRegistry @Inject constructor() {
     fun get(id: String): XtreamResolvedItem? = items[id]
     fun isXtreamId(id: String): Boolean = id.startsWith(PREFIX)
 
+    /** Drop everything (playlist edited: cached stream URLs embed the old server/creds). */
+    fun clear() { items.clear() }
+
     /** Parsed pieces of an `xtream:` content id, used to rebuild an item on a cache miss. */
     data class ParsedId(val accountId: String, val kind: String, val streamId: String)
 
     companion object {
         const val PREFIX = "xtream:"
+        /** Prefix shared by every content id of one account — used for playlist-edit id migration. */
+        fun accountPrefix(accountId: String): String = "$PREFIX$accountId:"
         /** Stable, collision-free per-playlist content ids. accountId may contain ':'/'|' — fine, it's only a map key + prefix check. */
         fun vodId(accountId: String, streamId: Int): String = "$PREFIX$accountId:vod:$streamId"
         fun seriesId(accountId: String, seriesId: Int): String = "$PREFIX$accountId:series:$seriesId"

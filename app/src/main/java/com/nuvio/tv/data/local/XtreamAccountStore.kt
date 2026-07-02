@@ -43,6 +43,16 @@ class XtreamAccountStore @Inject constructor(
         }
     }
 
+    /** Swap the account stored under oldId in place (URL/creds edit), keeping list position. */
+    suspend fun replace(oldId: String, account: XtreamAccount) {
+        store().edit { prefs ->
+            val updated = parse(prefs[accountsKey])
+                .filterNot { it.id == account.id && it.id != oldId } // drop a pre-existing duplicate of the new identity
+                .map { if (it.id == oldId) account else it }
+            prefs[accountsKey] = gson.toJson(updated)
+        }
+    }
+
     suspend fun remove(id: String) {
         store().edit { prefs ->
             prefs[accountsKey] = gson.toJson(parse(prefs[accountsKey]).filterNot { it.id == id })

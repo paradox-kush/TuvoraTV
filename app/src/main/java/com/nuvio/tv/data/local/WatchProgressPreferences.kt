@@ -445,6 +445,40 @@ class WatchProgressPreferences @Inject constructor(
     }
 
     /**
+     * IPTV playlist edit: rewrites every entry under an old `xtream:{accountId}:` id prefix
+     * (map key + contentId + videoId) to the new one, or drops them when newPrefix is null
+     * (different playlist).
+     */
+    suspend fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        store().edit { preferences ->
+            val json = preferences[watchProgressKey] ?: return@edit
+            val map = parseProgressMap(json)
+            val affected = { p: WatchProgress ->
+                p.contentId.startsWith(oldPrefix) || p.videoId.startsWith(oldPrefix)
+            }
+            if (map.keys.none { it.startsWith(oldPrefix) } && map.values.none(affected)) return@edit
+            val migrated = mutableMapOf<String, WatchProgress>()
+            map.forEach { (key, progress) ->
+                when {
+                    !key.startsWith(oldPrefix) && !affected(progress) -> migrated[key] = progress
+                    newPrefix == null -> Unit
+                    else -> {
+                        val moved = progress.copy(
+                            contentId = progress.contentId.rewriteIdPrefix(oldPrefix, newPrefix),
+                            videoId = progress.videoId.rewriteIdPrefix(oldPrefix, newPrefix),
+                        )
+                        migrated[createKey(moved)] = moved
+                    }
+                }
+            }
+            preferences[watchProgressKey] = gson.toJson(migrated)
+        }
+    }
+
+    private fun String.rewriteIdPrefix(oldPrefix: String, newPrefix: String): String =
+        if (startsWith(oldPrefix)) newPrefix + removePrefix(oldPrefix) else this
+
+    /**
      * Clear all watch progress
      */
     suspend fun clearAll() {

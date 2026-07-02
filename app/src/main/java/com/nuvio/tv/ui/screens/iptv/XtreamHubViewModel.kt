@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -101,9 +101,22 @@ class XtreamHubViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val accounts = store.accounts.first().filter { it.enabled }
-            _uiState.update { it.copy(accounts = accounts, selectedAccountId = accounts.firstOrNull()?.id) }
-            if (accounts.isEmpty()) _uiState.update { it.copy(loading = false) } else loadCategories()
+            // Keep observing so playlist edits/enables from Settings refresh a hub VM that
+            // stayed on the backstack (a one-shot first() served stale accounts until death).
+            store.accounts
+                .map { list -> list.filter { it.enabled } }
+                .distinctUntilChanged()
+                .collect { accounts ->
+                    val selected = _uiState.value.selectedAccountId
+                        ?.takeIf { id -> accounts.any { it.id == id } }
+                        ?: accounts.firstOrNull()?.id
+                    _uiState.update { it.copy(accounts = accounts, selectedAccountId = selected) }
+                    if (accounts.isEmpty()) {
+                        _uiState.update { it.copy(loading = false) }
+                    } else {
+                        loadCategories()
+                    }
+                }
         }
     }
 
