@@ -7,6 +7,7 @@ import com.nuvio.tv.domain.model.TmdbCollectionMediaType
 import com.nuvio.tv.domain.model.TmdbCollectionSource
 import com.nuvio.tv.domain.model.TmdbCollectionSourceType
 import com.nuvio.tv.domain.model.TraktCollectionSource
+import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -14,7 +15,12 @@ import org.junit.Test
 
 class CollectionsDataStoreSourceMigrationTest {
     private val store = CollectionsDataStore(
-        appContext = mockk<Context>(relaxed = true),
+        // relaxed getString() returns "", so stub the validation message the test asserts on
+        appContext = mockk<Context>(relaxed = true) {
+            every {
+                getString(com.nuvio.tv.R.string.collections_import_error_missing_trakt_list_id, *anyVararg())
+            } returns "missing Trakt list ID"
+        },
         factory = mockk<ProfileDataStoreFactory>(relaxed = true),
         profileManager = mockk<ProfileManager>(relaxed = true)
     )

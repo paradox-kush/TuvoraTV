@@ -217,9 +217,14 @@ class LocalhostZeroCopyDataSourceTest {
             .build()
         
         try {
-            assertThrows(HttpDataSource.InvalidResponseCodeException::class.java) {
+            // ponytail: the prebuilt media3 AAR wraps its own InvalidResponseCodeException in a
+            // generic HttpDataSourceException and reports responseCode 400 for everything but 416
+            // (real status line kept in responseMessage); assert that shape until the AAR is fixed
+            val thrown = assertThrows(HttpDataSource.HttpDataSourceException::class.java) {
                 dataSource.open(dataSpec)
             }
+            val cause = thrown.cause as HttpDataSource.InvalidResponseCodeException
+            assertTrue(cause.responseMessage.orEmpty().contains("404"))
         } finally {
             dataSource.close()
             serverSocket.close()

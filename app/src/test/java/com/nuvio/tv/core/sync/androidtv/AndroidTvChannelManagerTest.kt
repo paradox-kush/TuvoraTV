@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.sync.androidtv
 
+import android.app.Application
 import android.content.ContentResolver
 import android.content.Context
 import android.content.pm.PackageManager
@@ -14,7 +15,17 @@ import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 
+// Robolectric supplies real Intent/ContentValues/Uri so the reconcile-path tests can
+// exercise buildProgramValues. application = plain Application: Robolectric instantiates
+// the manifest app class per test, and @HiltAndroidApp NuvioApplication can't boot here.
+// sdk = 35, not 36: Robolectric's SDK 36 sandbox requires Java 21; this repo builds on 17.
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
 class AndroidTvChannelManagerTest {
 
     private val context: Context = mockk(relaxed = true)
@@ -27,6 +38,9 @@ class AndroidTvChannelManagerTest {
 
     @Before
     fun setUp() {
+        // reconcile() swallows failures into Log.w — echo logs so they show in test output
+        ShadowLog.stream = System.out
+
         every { context.packageManager } returns packageManager
         every { context.contentResolver } returns contentResolver
         every { context.packageName } returns "com.nuvio.tv"
@@ -110,7 +124,7 @@ class AndroidTvChannelManagerTest {
             every { moveToFirst() } returns true
             every { getLong(0) } returns channelId
         }
-        // Use any() for the URI to avoid depending on Uri.parse stubs in JVM tests
+        // any() URI: don't couple the stub to exact channel-URI construction
         every { contentResolver.query(any(), any(), null, null, null) } returns channelCursor
     }
 
@@ -121,8 +135,11 @@ class AndroidTvChannelManagerTest {
             every { moveToNext() } answers { idx++; idx < rows.size }
             every { getColumnIndexOrThrow(TvContractCompat.PreviewPrograms._ID) } returns 0
             every { getColumnIndexOrThrow(TvContractCompat.PreviewPrograms.COLUMN_INTERNAL_PROVIDER_ID) } returns 1
+            // queryExistingPrograms filters by channel id in memory (Fire OS workaround)
+            every { getColumnIndexOrThrow(TvContractCompat.PreviewPrograms.COLUMN_CHANNEL_ID) } returns 2
             every { getLong(0) } answers { rows[idx].value }
             every { getString(1) } answers { rows[idx].key }
+            every { getLong(2) } returns channelId
         }
         every {
             contentResolver.query(TvContractCompat.PreviewPrograms.CONTENT_URI, any(), any(), any(), null)

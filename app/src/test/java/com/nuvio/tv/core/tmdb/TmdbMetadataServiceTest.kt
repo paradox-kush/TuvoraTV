@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.tmdb
 
+import com.nuvio.tv.data.remote.api.TmdbAggregateCreditsResponse
 import com.nuvio.tv.data.remote.api.TmdbApi
 import com.nuvio.tv.data.remote.api.TmdbCompany
 import com.nuvio.tv.data.remote.api.TmdbCompanyDetailsResponse
@@ -13,9 +14,13 @@ import com.nuvio.tv.data.remote.api.TmdbNetwork
 import com.nuvio.tv.data.remote.api.TmdbNetworkDetailsResponse
 import com.nuvio.tv.data.remote.api.TmdbTvContentRatingsResponse
 import com.nuvio.tv.data.remote.api.TmdbVideosResponse
+import android.util.Log
 import com.nuvio.tv.domain.model.ContentType
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -23,15 +28,34 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TmdbMetadataServiceTest {
+
+    @Before
+    fun setUp() {
+        mockkStatic(Log::class)
+        every { Log.d(any<String>(), any<String>()) } returns 0
+        every { Log.w(any<String>(), any<String>()) } returns 0
+        // print instead of swallowing so errors the service catches stay visible in test output
+        every { Log.e(any<String>(), any<String>()) } answers { println("Log.e: ${secondArg<String>()}"); 0 }
+        every { Log.e(any<String>(), any<String>(), any<Throwable>()) } answers {
+            println("Log.e: ${secondArg<String>()}"); thirdArg<Throwable>().printStackTrace(); 0
+        }
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic(Log::class)
+    }
 
     @Test
     fun `fetchEnrichment maps tmdb ids onto production and network companies`() = runTest {
@@ -78,6 +102,7 @@ class TmdbMetadataServiceTest {
             )
         )
         coEvery { api.getTvCredits(any(), any(), any()) } returns Response.success(TmdbCreditsResponse())
+        coEvery { api.getTvAggregateCredits(any(), any(), any()) } returns Response.success(TmdbAggregateCreditsResponse())
         coEvery { api.getTvImages(any(), any(), any()) } returns Response.success(TmdbImagesResponse())
         coEvery { api.getTvContentRatings(any(), any()) } returns Response.success(TmdbTvContentRatingsResponse())
         coEvery { api.getTvVideos(any(), any(), any()) } returns Response.success(TmdbVideosResponse(id = 20))
@@ -106,6 +131,7 @@ class TmdbMetadataServiceTest {
             )
         )
         coEvery { api.getTvCredits(any(), any(), any()) } returns Response.success(TmdbCreditsResponse())
+        coEvery { api.getTvAggregateCredits(any(), any(), any()) } returns Response.success(TmdbAggregateCreditsResponse())
         coEvery { api.getTvImages(any(), any(), any()) } returns Response.success(TmdbImagesResponse())
         coEvery { api.getTvContentRatings(any(), any()) } returns Response.success(TmdbTvContentRatingsResponse())
         coEvery { api.getTvVideos(any(), any(), any()) } returns Response.success(TmdbVideosResponse(id = 21))

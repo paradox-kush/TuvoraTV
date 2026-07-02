@@ -105,6 +105,7 @@ class StreamRepositoryImpl @Inject constructor(
             } else {
                 emptyList()
             }
+            Log.d(TAG, "Xtream match targets: ${xtreamMatchTargets.size} type=$type")
 
             coroutineScope {
                 // Channel to receive results as they complete

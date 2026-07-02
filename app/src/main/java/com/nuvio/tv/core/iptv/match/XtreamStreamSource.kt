@@ -25,8 +25,14 @@ class XtreamStreamSource @Inject constructor(
             "series", "tv" -> MatchKind.SERIES
             else -> return emptyList()
         }
-        val tmdbId = tmdbService.ensureTmdbId(videoId, type)?.toIntOrNull() ?: return emptyList()
-        val titles = tmdbService.titleBundle(tmdbId, type) ?: return emptyList()
+        val tmdbId = tmdbService.ensureTmdbId(videoId, type)?.toIntOrNull() ?: run {
+            android.util.Log.w("XtreamStreamSource", "skip $videoId: no TMDB id (missing API key or unknown id)")
+            return emptyList()
+        }
+        val titles = tmdbService.titleBundle(tmdbId, type) ?: run {
+            android.util.Log.w("XtreamStreamSource", "skip tmdb=$tmdbId: title bundle unavailable (API key/network)")
+            return emptyList()
+        }
         val match = resolver.resolve(acc, kind, tmdbId, titles) ?: return emptyList()
 
         return when (kind) {
@@ -35,9 +41,10 @@ class XtreamStreamSource @Inject constructor(
                 // same film — surface them all as separate streams
                 val editions = index.byTmdb(acc.id, kind, tmdbId).ifEmpty { listOf(match.item) }
                 editions.map { item ->
+                    // label with the panel's own catalog name — carries 4K/NF/language tags
                     xtreamStream(
                         acc = acc,
-                        title = item.name,
+                        label = item.name,
                         url = client.buildStreamUrl(acc, "movie", item.sid, item.ext ?: "mp4"),
                     )
                 }
@@ -47,15 +54,15 @@ class XtreamStreamSource @Inject constructor(
                 val e = episode ?: return emptyList()
                 val detail = client.seriesInfo(acc, match.item.sid).getOrNull() ?: return emptyList()
                 detail.episodes.filter { it.season == s && it.episodeNum == e }.map { ep ->
-                    xtreamStream(acc = acc, title = ep.title, url = ep.streamUrl)
+                    xtreamStream(acc = acc, label = "S${s}E${e} · ${ep.title}", url = ep.streamUrl)
                 }
             }
         }
     }
 
-    private fun xtreamStream(acc: XtreamAccount, title: String, url: String) = Stream(
-        name = "Direct",
-        title = title,
+    private fun xtreamStream(acc: XtreamAccount, label: String, url: String) = Stream(
+        name = label,
+        title = null,
         description = null,
         url = url,
         ytId = null,

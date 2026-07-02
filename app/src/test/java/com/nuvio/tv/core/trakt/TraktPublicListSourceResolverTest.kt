@@ -34,7 +34,15 @@ import org.junit.Test
 import retrofit2.Response
 
 class TraktPublicListSourceResolverTest {
-    private val context = mockk<Context>(relaxed = true)
+    // relaxed getString() returns "", so stub the count strings the subtitle assertions rely on
+    private val context = mockk<Context>(relaxed = true) {
+        every { getString(com.nuvio.tv.R.string.collections_editor_trakt_items_count, *anyVararg()) } answers {
+            "${(invocation.args[1] as Array<*>).first()} items"
+        }
+        every { getString(com.nuvio.tv.R.string.collections_editor_trakt_likes_count, *anyVararg()) } answers {
+            "${(invocation.args[1] as Array<*>).first()} likes"
+        }
+    }
 
     @Test
     fun `parseTraktListId accepts numeric ids and trakt urls`() {

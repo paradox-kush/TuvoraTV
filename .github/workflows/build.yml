@@ -43,10 +43,14 @@ jobs:
           {
             echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}"
             echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}"
+            echo "TMDB_API_KEY=${{ secrets.TMDB_API_KEY }}"
           } >> local.properties
 
       - name: Raise Gradle heap for packaging
         run: printf '\norg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8\n' >> gradle.properties
+
+      - name: Run unit tests
+        run: ./gradlew :app:testFullDebugUnitTest --stacktrace
 
       - name: Build debug APK (arm64-v8a only — fast per-push validation)
         run: ./gradlew :app:assembleFullDebug -Pandroid.injected.build.abi=arm64-v8a --stacktrace
