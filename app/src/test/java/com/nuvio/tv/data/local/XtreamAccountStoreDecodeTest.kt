@@ -40,7 +40,8 @@ class XtreamAccountStoreDecodeTest {
         assertEquals(XtreamAccount.SOURCE_XTREAM, acc.sourceType)
         assertNull(acc.epgUrl)
         assertEquals(XtreamAccount.DNS_SYSTEM, acc.dnsProvider)
-        assertEquals(0, acc.autoRefreshHours)
+        // missing field → the 24h product default, not Gson's primitive 0
+        assertEquals(24, acc.autoRefreshHours)
         assertEquals(XtreamAccount.DEFAULT_CONTENT_TYPES, acc.contentTypes)
         assertEquals(CategorySelections(), acc.categorySelections)
         // and the default selection means "everything allowed"
@@ -70,6 +71,16 @@ class XtreamAccountStoreDecodeTest {
         // null (series) stays null through the roundtrip: "all categories incl. future"
         assertNull(decoded.categorySelections.series)
         assertEquals(emptyList<String>(), decoded.categorySelections.movies)
+    }
+
+    @Test
+    fun `explicit autoRefreshHours 0 (Off) is preserved, not overwritten by the default`() {
+        val json = """
+            [{"id":"http://host|u","name":"P","baseUrl":"http://host","username":"u","password":"p",
+              "enabled":true,"autoRefreshHours":0}]
+        """.trimIndent()
+
+        assertEquals(0, decodeXtreamAccountsJson(gson, json).single().autoRefreshHours)
     }
 
     @Test

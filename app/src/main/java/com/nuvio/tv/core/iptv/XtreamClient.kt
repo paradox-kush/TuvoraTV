@@ -52,7 +52,7 @@ data class XtreamAccount(
     val sourceType: String = SOURCE_XTREAM,
     val epgUrl: String? = null,
     val dnsProvider: String = DNS_SYSTEM,
-    val autoRefreshHours: Int = 0,           // 0 = off
+    val autoRefreshHours: Int = DEFAULT_AUTO_REFRESH_HOURS,   // 0 = off; 24 = default
     val contentTypes: Set<String> = DEFAULT_CONTENT_TYPES,
     val categorySelections: CategorySelections = CategorySelections()
 ) {
@@ -67,6 +67,7 @@ data class XtreamAccount(
     companion object {
         const val SOURCE_XTREAM = "xtream"
         const val DNS_SYSTEM = "system"
+        const val DEFAULT_AUTO_REFRESH_HOURS = 24
         const val TYPE_LIVE = "live"
         const val TYPE_MOVIES = "movies"
         const val TYPE_SERIES = "series"

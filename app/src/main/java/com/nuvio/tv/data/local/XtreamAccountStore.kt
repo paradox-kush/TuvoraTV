@@ -3,6 +3,7 @@ package com.nuvio.tv.data.local
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import com.nuvio.tv.core.iptv.CategorySelections
 import com.nuvio.tv.core.iptv.XtreamAccount
@@ -83,9 +84,15 @@ class XtreamAccountStore @Inject constructor(
 internal fun decodeXtreamAccountsJson(gson: Gson, json: String?): List<XtreamAccount> {
     if (json.isNullOrBlank()) return emptyList()
     return try {
-        gson.fromJson<List<XtreamAccount>>(json, object : TypeToken<List<XtreamAccount>>() {}.type)
-            ?.map { it.withDecodeDefaults() }
-            ?: emptyList()
+        val raw = JsonParser.parseString(json).asJsonArray
+        val decoded = gson.fromJson<List<XtreamAccount>>(json, object : TypeToken<List<XtreamAccount>>() {}.type)
+            ?: return emptyList()
+        // Same-source array → same order/size; the raw element tells us whether a primitive field
+        // was actually present (Gson can't distinguish a missing Int from 0).
+        decoded.mapIndexed { i, acc ->
+            val hadAutoRefresh = raw[i].asJsonObject.has("autoRefreshHours")
+            acc.withDecodeDefaults(hadAutoRefresh)
+        }
     } catch (e: Exception) {
         emptyList()
     }
@@ -99,7 +106,7 @@ internal fun decodeXtreamAccountsJson(gson: Gson, json: String?): List<XtreamAcc
  * field values and would throw.)
  */
 @Suppress("USELESS_ELVIS")
-private fun XtreamAccount.withDecodeDefaults(): XtreamAccount = XtreamAccount(
+private fun XtreamAccount.withDecodeDefaults(hadAutoRefresh: Boolean): XtreamAccount = XtreamAccount(
     id = id,
     name = name ?: "",
     baseUrl = baseUrl,
@@ -109,7 +116,9 @@ private fun XtreamAccount.withDecodeDefaults(): XtreamAccount = XtreamAccount(
     sourceType = sourceType ?: XtreamAccount.SOURCE_XTREAM,
     epgUrl = epgUrl,
     dnsProvider = dnsProvider ?: XtreamAccount.DNS_SYSTEM,
-    autoRefreshHours = autoRefreshHours,
+    // Missing (pre-playlist-manager JSON) → the 24h default, like a freshly-added playlist;
+    // present → keep the stored value (incl. a deliberate 0 = Off).
+    autoRefreshHours = if (hadAutoRefresh) autoRefreshHours else XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS,
     contentTypes = contentTypes ?: XtreamAccount.DEFAULT_CONTENT_TYPES,
     categorySelections = categorySelections ?: CategorySelections()
 )
