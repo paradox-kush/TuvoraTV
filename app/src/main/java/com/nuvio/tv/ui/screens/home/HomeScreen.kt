@@ -233,16 +233,11 @@ fun HomeScreen(
                         LoadingIndicator()
                     }
                 } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = stringResource(R.string.home_no_addons),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = NuvioTheme.colors.TextSecondary
-                        )
-                    }
+                    ErrorState(
+                        message = stringResource(R.string.home_no_addons),
+                        onRetry = { viewModel.onEvent(HomeEvent.OnRetry) },
+                        requestInitialFocus = true
+                    )
                 }
             }
 
@@ -252,23 +247,19 @@ fun HomeScreen(
                         LoadingIndicator()
                     }
                 } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = stringResource(R.string.home_no_catalog_addons),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = NuvioTheme.colors.TextSecondary
-                        )
-                    }
+                    ErrorState(
+                        message = stringResource(R.string.home_no_catalog_addons),
+                        onRetry = { viewModel.onEvent(HomeEvent.OnRetry) },
+                        requestInitialFocus = true
+                    )
                 }
             }
 
             uiState.error != null && uiState.catalogRows.isEmpty() -> {
                 ErrorState(
                     message = uiState.error ?: stringResource(R.string.error_generic),
-                    onRetry = { viewModel.onEvent(HomeEvent.OnRetry) }
+                    onRetry = { viewModel.onEvent(HomeEvent.OnRetry) },
+                    requestInitialFocus = true
                 )
             }
 
@@ -283,16 +274,13 @@ fun HomeScreen(
                         LoadingIndicator()
                     }
                 } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = stringResource(R.string.web_no_catalogs),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = NuvioTheme.colors.TextSecondary
-                        )
-                    }
+                    // Offline / all catalog fetches failed. The Retry button must take focus:
+                    // with zero focusable nodes the D-pad is dead and the sidebar unreachable.
+                    ErrorState(
+                        message = stringResource(R.string.web_no_catalogs),
+                        onRetry = { viewModel.onEvent(HomeEvent.OnRetry) },
+                        requestInitialFocus = true
+                    )
                 }
             }
 
