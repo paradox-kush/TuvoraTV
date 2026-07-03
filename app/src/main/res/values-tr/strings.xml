@@ -2772,4 +2772,26 @@
     <string name="supporters_error_api_http">Bağış API hatası: %1$d</string>
     <string name="sponsors_error_api_http">Sponsor API hatası: %1$d</string>
 
+    <!-- Stream Throughput Speed & Chunk Diagnostic Test -->
+    <string name="stream_test_section_header">Akış Performans Testi (Throughput)</string>
+    <string name="stream_test_card_title">Son Oynatılan Akışı Test Et</string>
+    <string name="stream_test_server_label">Sunucu: %1$s</string>
+    <string name="stream_test_no_stream">Kayıtlı oynatma bulunamadı. Önce bir video oynatın.</string>
+    <string name="stream_test_btn_start">Testi Başlat</string>
+    <string name="stream_test_btn_measuring_baseline">Standart Hız Ölçülüyor...</string>
+    <string name="stream_test_btn_measuring_parallel1">Paralel (1MB) Ölçülüyor...</string>
+    <string name="stream_test_btn_measuring_parallel4">Paralel (4MB) Ölçülüyor...</string>
+    <string name="stream_test_btn_measuring_parallel8">Paralel (8MB) Ölçülüyor...</string>
+    <string name="stream_test_btn_measuring_parallel16">Paralel (16MB) Ölçülüyor...</string>
+    <string name="stream_test_btn_run_again">Yeniden Başlat</string>
+    <string name="stream_test_btn_running">Çalışıyor...</string>
+    <string name="stream_test_label_baseline">Standart Tek Bağlantı (Baseline)</string>
+    <string name="stream_test_label_parallel1">Paralel Bağlantı (1 MB Parçalar)</string>
+    <string name="stream_test_label_parallel4">Paralel Bağlantı (4 MB Parçalar)</string>
+    <string name="stream_test_label_parallel8">Paralel Bağlantı (8 MB Parçalar)</string>
+    <string name="stream_test_label_parallel16">Paralel Bağlantı (16 MB Parçalar)</string>
+    <string name="stream_test_error_prefix">Hata: %1$s</string>
+    <string name="stream_test_video_bitrate">Ortalama Video Bitrate: %1$s</string>
+    <string name="stream_test_error_connection">Bağlantı başarısız. Son oynatılan video linkinin süresi dolmuş veya sunucuya erişilemiyor olabilir. Lütfen videoyu tekrar oynatıp testi yeniden deneyin.</string>
+
 </resources>

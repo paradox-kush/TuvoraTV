@@ -46,9 +46,14 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
     @Volatile private var currentVodCacheActive: Boolean = false
     private val parallelStartupPrefetchUnlocked = AtomicBoolean(true)
 
+    fun unlockStartupPrefetch() {
+        parallelStartupPrefetchUnlocked.set(true)
+    }
+
     var useParallelConnections: Boolean = PlayerSettings.DEFAULT_USE_PARALLEL_CONNECTIONS
     var parallelConnectionCount: Int = PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
-    var parallelChunkSizeMb: Int = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_MB
+    var parallelChunkSizeKb: Int = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_KB
+    var nuvioPerformanceModeEnabled: Boolean = PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
     var vodCacheEnabled: Boolean = PlayerSettings.DEFAULT_VOD_CACHE_ENABLED
     var vodCacheSizeMode: VodCacheSizeMode = PlayerSettings.DEFAULT_VOD_CACHE_SIZE_MODE
     var vodCacheSizeMb: Int = PlayerSettings.DEFAULT_VOD_CACHE_SIZE_MB
@@ -65,9 +70,9 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         }
         val dispatcher = Dispatcher().apply {
             maxRequests = 64
-            maxRequestsPerHost = 12
+            maxRequestsPerHost = 32
         }
-        OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .cookieJar(NuvioApplication.extensionCookieJar)
             .dns(IPv4FirstDns())
             .dispatcher(dispatcher)
@@ -76,11 +81,10 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(45, TimeUnit.SECONDS)
-            .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
             .retryOnConnectionFailure(true)
             .followRedirects(true)
             .followSslRedirects(true)
-            .build()
+        NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(builder).build()
     }
 
     fun configureSubtitleParsing(
@@ -135,8 +139,9 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             ParallelRangeDataSource.Factory(
                 okHttpFactory,
                 parallelConnectionCount,
-                parallelChunkSizeMb.toLong() * 1024L * 1024L,
-                shouldAllowBackgroundPrefetch = { parallelStartupPrefetchUnlocked.get() },
+                parallelChunkSizeKb.toLong() * 1024L,
+                useNativeMemory = nuvioPerformanceModeEnabled,
+                shouldAllowBackgroundPrefetch = { true },
                 onResolvedUri = { resolved -> currentVodCacheResolvedUrl = resolved?.toString() }
             )
         } else {
@@ -252,6 +257,49 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         internal const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        private const val MIME_PROBE_CACHE_SIZE = 64
+
+        data class StreamProbeInfo(
+            val contentLength: Long,
+            val acceptsRanges: Boolean
+        )
+
+        private val probeInfoCache = object : LinkedHashMap<String, StreamProbeInfo>(MIME_PROBE_CACHE_SIZE, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StreamProbeInfo>?): Boolean {
+                return size > MIME_PROBE_CACHE_SIZE
+            }
+        }
+
+        @JvmStatic
+        fun getProbeInfo(url: String, headers: Map<String, String>): StreamProbeInfo? {
+            val sanitizedHeaders = sanitizeHeaders(headers)
+            val cacheKey = buildMimeProbeCacheKey(url, sanitizedHeaders)
+            return synchronized(probeInfoCache) {
+                probeInfoCache[cacheKey]
+            }
+        }
+
+        private fun cacheProbeInfo(url: String, headers: Map<String, String>, contentLength: Long, acceptsRanges: Boolean) {
+            val sanitizedHeaders = sanitizeHeaders(headers)
+            val cacheKey = buildMimeProbeCacheKey(url, sanitizedHeaders)
+            synchronized(probeInfoCache) {
+                probeInfoCache[cacheKey] = StreamProbeInfo(contentLength, acceptsRanges)
+            }
+        }
+
+        private fun buildMimeProbeCacheKey(url: String, headers: Map<String, String>): String {
+            if (headers.isEmpty()) return url
+            return buildString {
+                append(url)
+                headers.toSortedMap(String.CASE_INSENSITIVE_ORDER).forEach { (key, value) ->
+                    append('|')
+                    append(key)
+                    append('=')
+                    append(value)
+                }
+            }
+        }
 
         @Volatile private var sharedSimpleCache: SimpleCache? = null
         @Volatile private var configuredVodCacheMaxBytes: Long = -1L
@@ -526,6 +574,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 else -> null
             }
         }
+
 
         private fun wrapAudioDelay(
             mediaSource: MediaSource,
