@@ -10,6 +10,8 @@ import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -61,6 +63,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.LocaleCache
 import com.nuvio.tv.R
 import com.nuvio.tv.domain.model.AppTheme
+import com.nuvio.tv.domain.model.SettingsUiStyle
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.theme.ThemeColors
 import com.nuvio.tv.ui.theme.getFontFamily
@@ -187,6 +190,27 @@ fun ThemeSettingsContent(
                             )
                         }
                     )
+                }
+            }
+
+            SettingsGroupCard(
+                modifier = Modifier.fillMaxWidth(),
+                title = stringResource(R.string.appearance_settings_style),
+                subtitle = stringResource(R.string.appearance_settings_style_subtitle)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = NuvioTheme.spacing.xs, vertical = NuvioTheme.spacing.xs),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    uiState.availableSettingsUiStyles.forEach { style ->
+                        SettingsStyleOptionCard(
+                            style = style,
+                            isSelected = style == uiState.settingsUiStyle,
+                            onClick = { viewModel.onEvent(ThemeSettingsEvent.SelectSettingsUiStyle(style)) }
+                        )
+                    }
                 }
             }
 
@@ -329,6 +353,250 @@ private fun ThemeSwatchChip(
             )
         }
     }
+}
+
+@Composable
+private fun SettingsStyleOptionCard(
+    style: SettingsUiStyle,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    val cardShape = RoundedCornerShape(18.dp)
+
+    Card(
+        onClick = onClick,
+        modifier = modifier
+            .width(210.dp)
+            .onFocusChanged { state ->
+                val nowFocused = state.isFocused
+                if (isFocused != nowFocused) {
+                    isFocused = nowFocused
+                }
+            },
+        colors = CardDefaults.colors(
+            containerColor = NuvioTheme.colors.Background,
+            focusedContainerColor = NuvioTheme.colors.Background
+        ),
+        border = CardDefaults.border(
+            border = if (isSelected) Border(
+                border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
+                shape = cardShape
+            ) else Border.None,
+            focusedBorder = Border(
+                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                shape = cardShape
+            )
+        ),
+        shape = CardDefaults.shape(cardShape),
+        scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(NuvioTheme.spacing.md)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(76.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(NuvioTheme.colors.BackgroundElevated)
+            ) {
+                when (style) {
+                    SettingsUiStyle.CLASSIC -> ClassicStylePreview()
+                    SettingsUiStyle.ZEN -> ZenStylePreview()
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = style.localizedName(),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isFocused || isSelected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary,
+                    maxLines = 1,
+                    modifier = Modifier.align(Alignment.CenterStart)
+                )
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = stringResource(R.string.cd_selected),
+                        tint = NuvioTheme.colors.Secondary,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .align(Alignment.CenterEnd)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(NuvioTheme.spacing.xxs))
+
+            Text(
+                text = style.localizedDescription(),
+                style = MaterialTheme.typography.bodySmall,
+                color = NuvioTheme.colors.TextTertiary,
+                maxLines = 2
+            )
+        }
+    }
+}
+
+@Composable
+private fun ClassicStylePreview() {
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(10.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(NuvioTheme.colors.BackgroundCard)
+            .border(
+                width = NuvioTheme.spacing.hairline,
+                color = NuvioTheme.colors.Border,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Column(
+            modifier = Modifier.weight(0.42f),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            repeat(3) { index ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(9.dp)
+                        .clip(RoundedCornerShape(SettingsPillRadius))
+                        .background(
+                            if (index == 0) {
+                                NuvioTheme.colors.SurfaceVariant
+                            } else {
+                                NuvioTheme.colors.Surface
+                            }
+                        )
+                )
+            }
+        }
+        Column(
+            modifier = Modifier.weight(0.58f),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(22.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(NuvioTheme.colors.Surface)
+                    .border(
+                        width = NuvioTheme.spacing.hairline,
+                        color = NuvioTheme.colors.Border,
+                        shape = RoundedCornerShape(6.dp)
+                    )
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(9.dp)
+                    .clip(RoundedCornerShape(SettingsPillRadius))
+                    .background(NuvioTheme.colors.Surface)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ZenStylePreview() {
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.weight(0.42f),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(SettingsPillRadius))
+                        .background(NuvioTheme.colors.Secondary)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(7.dp)
+                        .clip(RoundedCornerShape(SettingsPillRadius))
+                        .background(NuvioTheme.colors.TextTertiary.copy(alpha = 0.45f))
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.8f)
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(SettingsPillRadius))
+                    .background(NuvioTheme.colors.TextTertiary.copy(alpha = 0.2f))
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(SettingsPillRadius))
+                    .background(NuvioTheme.colors.TextTertiary.copy(alpha = 0.2f))
+            )
+        }
+        Column(
+            modifier = Modifier.weight(0.58f),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.55f)
+                    .height(9.dp)
+                    .clip(RoundedCornerShape(SettingsPillRadius))
+                    .background(NuvioTheme.colors.TextTertiary.copy(alpha = 0.45f))
+            )
+            Box(
+                modifier = Modifier
+                    .width(12.dp)
+                    .height(2.dp)
+                    .clip(RoundedCornerShape(SettingsPillRadius))
+                    .background(NuvioTheme.colors.Secondary)
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(SettingsPillRadius))
+                    .background(NuvioTheme.colors.TextTertiary.copy(alpha = 0.2f))
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(SettingsPillRadius))
+                    .background(NuvioTheme.colors.TextTertiary.copy(alpha = 0.2f))
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsUiStyle.localizedName(): String = when (this) {
+    SettingsUiStyle.CLASSIC -> stringResource(R.string.settings_style_classic)
+    SettingsUiStyle.ZEN -> stringResource(R.string.settings_style_zen)
+}
+
+@Composable
+private fun SettingsUiStyle.localizedDescription(): String = when (this) {
+    SettingsUiStyle.CLASSIC -> stringResource(R.string.settings_style_classic_desc)
+    SettingsUiStyle.ZEN -> stringResource(R.string.settings_style_zen_desc)
 }
 
 @Composable
