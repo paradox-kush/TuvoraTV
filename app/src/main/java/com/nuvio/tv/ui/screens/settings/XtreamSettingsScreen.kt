@@ -59,6 +59,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.theme.NuvioTheme
 
@@ -523,8 +524,10 @@ private fun XtreamAddDialog(
     // Source type — Xtream is the default and only functional source in P1.
     var sourceType by remember { mutableStateOf(initial?.sourceType ?: XtreamAccount.SOURCE_XTREAM) }
 
-    // Xtream: paste-URL vs manual-details sub-mode (paste auto-fills via the parser).
-    var manualMode by remember { mutableStateOf(initial != null) }
+    // Xtream is portal + username + password (the reference form). The three fields are the
+    // default; "Paste link" stays as a secondary convenience. Pasting a get.php URL into the
+    // Server URL field also auto-fills user/pass, so most users never touch the toggle.
+    var manualMode by remember { mutableStateOf(true) }
     var url by remember { mutableStateOf("") }
     var server by remember { mutableStateOf(initial?.baseUrl ?: "") }
     var user by remember { mutableStateOf(initial?.username ?: "") }
@@ -588,14 +591,20 @@ private fun XtreamAddDialog(
 
             when (sourceType) {
                 XtreamAccount.SOURCE_XTREAM -> {
-                    // Xtream credentials — paste a portal/M3U URL (auto-fills) or enter details.
+                    // Xtream = portal (Server URL) + username + password. Enter details is primary;
+                    // Paste link is a secondary convenience.
                     Row(modifier = Modifier.padding(top = NuvioTheme.spacing.xs)) {
-                        SettingsChoiceChip("Paste link", selected = !manualMode, onClick = { manualMode = false })
-                        Spacer(Modifier.width(NuvioTheme.spacing.sm))
                         SettingsChoiceChip("Enter details", selected = manualMode, onClick = { manualMode = true })
+                        Spacer(Modifier.width(NuvioTheme.spacing.sm))
+                        SettingsChoiceChip("Paste link", selected = !manualMode, onClick = { manualMode = false })
                     }
                     if (manualMode) {
-                        XtreamField(server, { server = it }, "Server URL  (http://host:port)", firstFieldFocus, onSubmit = submit)
+                        // Pasting a full get.php URL into Server URL auto-fills username/password.
+                        XtreamField(server, { input ->
+                            val parsed = parseXtreamAccount(input)
+                            if (parsed != null) { server = parsed.baseUrl; user = parsed.username; pass = parsed.password }
+                            else server = input
+                        }, "Server URL  (portal, e.g. http://host:port)", firstFieldFocus, onSubmit = submit)
                         XtreamField(user, { user = it }, "Username", onSubmit = submit)
                         XtreamField(pass, { pass = it }, "Password", isPassword = true, onSubmit = submit)
                         XtreamField(name, { name = it }, "Name (optional)", onSubmit = submit)
