@@ -2,8 +2,8 @@ package com.nuvio.tv.ui.screens.iptv
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
-import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamKind
 import com.nuvio.tv.core.iptv.XtreamLivePlaylist
@@ -72,7 +72,7 @@ data class LiveGuideUiState(
  */
 @HiltViewModel
 class XtreamLiveGuideViewModel @Inject constructor(
-    private val client: XtreamClient,
+    private val clientFactory: IptvClientFactory,
     private val registry: XtreamItemRegistry,
     private val liveStore: XtreamLiveStore,
     private val livePlaylist: XtreamLivePlaylist,
@@ -140,7 +140,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            val cats = client.liveCategories(acc).getOrDefault(emptyList())
+            val cats = clientFactory.clientFor(acc).liveCategories(acc).getOrDefault(emptyList())
             val full = buildList {
                 add(GuideCategory("__fav", "Favorites", GuideSpecial.FAVORITES))
                 add(GuideCategory("__recent", "Recent", GuideSpecial.RECENT))
@@ -273,7 +273,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val acc = account ?: return
         if (streamId <= 0 || !epgRequested.add(streamId)) return
         viewModelScope.launch {
-            val programs = client.shortEpg(acc, streamId).getOrDefault(emptyList())
+            val programs = clientFactory.clientFor(acc).shortEpg(acc, streamId).getOrDefault(emptyList())
             val nowMs = System.currentTimeMillis()
             val nowIdx = programs.indexOfFirst { it.nowPlaying || (nowMs in it.startMs until it.endMs) }
                 .takeIf { it >= 0 } ?: 0
@@ -285,7 +285,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     /** null = request failed (as opposed to a genuinely empty category). */
     private suspend fun fetchChannels(acc: XtreamAccount, categoryId: String?): List<GuideChannel>? {
-        return client.liveChannels(acc, categoryId).getOrNull()?.map { ch ->
+        return clientFactory.clientFor(acc).liveChannels(acc, categoryId).getOrNull()?.map { ch ->
             val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
             registry.register(
                 XtreamResolvedItem(

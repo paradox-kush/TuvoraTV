@@ -175,7 +175,7 @@ data class XtreamVodSignal(val tmdbId: Int?, val year: Int?)
 @Singleton
 class XtreamClient @Inject constructor(
     private val api: XtreamApi
-) {
+) : IptvClient {
     /** Verifies credentials. Success only when the panel reports auth=1 and an active status. */
     suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
         val info = api.getAccount(playerApi(acc)).requireBody().userInfo
@@ -195,16 +195,16 @@ class XtreamClient @Inject constructor(
         )
     }
 
-    suspend fun liveCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
+    override suspend fun liveCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
         categories(acc, "get_live_categories")
 
-    suspend fun vodCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
+    override suspend fun vodCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
         categories(acc, "get_vod_categories")
 
-    suspend fun seriesCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
+    override suspend fun seriesCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
         categories(acc, "get_series_categories")
 
-    suspend fun liveChannels(acc: XtreamAccount, categoryId: String? = null): Result<List<XtreamChannel>> = call {
+    override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = call {
         api.getLiveStreams(playerApi(acc, "get_live_streams", categoryId)).requireBody().mapNotNull { dto ->
             val id = dto.streamId ?: return@mapNotNull null
             XtreamChannel(
@@ -219,7 +219,7 @@ class XtreamClient @Inject constructor(
         }
     }
 
-    suspend fun vodMovies(acc: XtreamAccount, categoryId: String? = null): Result<List<XtreamMovie>> = call {
+    override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = call {
         api.getVodStreams(playerApi(acc, "get_vod_streams", categoryId)).requireBody().mapNotNull { dto ->
             val id = dto.streamId ?: return@mapNotNull null
             XtreamMovie(
@@ -235,7 +235,7 @@ class XtreamClient @Inject constructor(
         }
     }
 
-    suspend fun series(acc: XtreamAccount, categoryId: String? = null): Result<List<XtreamSeriesItem>> = call {
+    override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = call {
         api.getSeries(playerApi(acc, "get_series", categoryId)).requireBody().mapNotNull { dto ->
             val id = dto.seriesId ?: return@mapNotNull null
             XtreamSeriesItem(
@@ -247,7 +247,7 @@ class XtreamClient @Inject constructor(
     }
 
     /** Now + next few programs for a channel (cheap, one call). Full XMLTV grid is the upgrade path. */
-    suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int = 4): Result<List<XtreamProgram>> = call {
+    override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
         val url = playerApi(acc, "get_short_epg").toHttpUrl().newBuilder()
             .addQueryParameter("stream_id", streamId.toString())
             .addQueryParameter("limit", limit.toString())
@@ -256,7 +256,7 @@ class XtreamClient @Inject constructor(
     }
 
     /** Full episode list (across seasons) for a series, each with its built stream URL. */
-    suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail> = call {
+    override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail> = call {
         val url = playerApi(acc, "get_series_info").toHttpUrl().newBuilder()
             .addQueryParameter("series_id", seriesId.toString())
             .build().toString()
@@ -332,6 +332,10 @@ class XtreamClient @Inject constructor(
      */
     fun buildStreamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String = "mp4"): String =
         streamUrl(acc, kind, id, if (kind == "live") "ts" else ext)
+
+    /** [IptvClient] stream-URL resolution — Xtream derives it by formula (always succeeds). */
+    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int): String =
+        buildStreamUrl(acc, kind, streamId)
 
     /**
      * Catch-up (tv_archive) replay URL — XUI's standard timeshift path form.

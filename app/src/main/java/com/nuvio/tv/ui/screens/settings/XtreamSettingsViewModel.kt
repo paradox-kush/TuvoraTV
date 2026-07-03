@@ -2,11 +2,14 @@ package com.nuvio.tv.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
+import com.nuvio.tv.core.iptv.isM3U
+import com.nuvio.tv.core.iptv.m3uAccountFromUrl
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.core.iptv.withPlaylistOptions
 import com.nuvio.tv.core.iptv.xtreamAccountFromFields
@@ -39,6 +42,7 @@ data class XtreamSettingsUiState(
 class XtreamSettingsViewModel @Inject constructor(
     private val store: XtreamAccountStore,
     private val client: XtreamClient,
+    private val clientFactory: IptvClientFactory,
     private val syncService: XtreamAccountSyncService,
     private val registry: XtreamItemRegistry,
     private val libraryPreferences: LibraryPreferences,
@@ -96,6 +100,50 @@ class XtreamSettingsViewModel @Inject constructor(
             "Enter a server URL, username and password",
             onSuccess
         )
+    }
+
+    /**
+     * Add an M3U URL playlist. There's no Xtream API to verify against — the playlist URL IS the
+     * source — so we persist immediately, then kick off the ingest (fetch + stream-parse into the
+     * content DB) in the background. The hub/search show the catalog once the ingest completes;
+     * a first hub/search access also triggers ingest if it hasn't run yet.
+     */
+    fun addM3UUrl(playlistUrl: String, userAgent: String?, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {
+        val account = m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options)
+        if (account == null) {
+            _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
+            return
+        }
+        viewModelScope.launch {
+            store.upsert(account)
+            syncService.triggerRemoteSync()
+            onSuccess()
+            // Ingest in the background (M3UClient is single-flight + self-scoped, survives this scope).
+            runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+        }
+    }
+
+    /** Re-save an edited M3U URL playlist: swap in place, migrate saved ids, force a re-ingest. */
+    fun editM3UUrl(old: XtreamAccount, playlistUrl: String, userAgent: String?, options: PlaylistOptions = old.toOptions(), onSuccess: () -> Unit) {
+        val candidate = m3uAccountFromUrl(playlistUrl, userAgent, old.name)?.withOptions(options)
+        if (candidate == null) {
+            _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
+            return
+        }
+        val account = candidate.copy(
+            enabled = old.enabled,
+            contentTypes = old.contentTypes,
+            categorySelections = old.categorySelections
+        )
+        viewModelScope.launch {
+            store.replace(old.id, account)
+            if (account.id != old.id) migrateSavedData(old, account)
+            registry.clear()
+            evictAccountCaches(old.id, account.id)
+            syncService.triggerRemoteSync()
+            onSuccess()
+            runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+        }
     }
 
     private fun verifyAndSave(account: XtreamAccount?, parseError: String, onSuccess: () -> Unit) {
@@ -194,10 +242,14 @@ class XtreamSettingsViewModel @Inject constructor(
         liveStore.migrateAccount(
             oldPrefix,
             transform = if (newPrefix == null) null else { ref ->
+                // Xtream live URLs are formula-derivable, so rebuild them for the new creds/host.
+                // M3U live URLs aren't (arbitrary provider URLs); keep the old one — the forced
+                // re-ingest refreshes the catalog and replay re-resolves via resolveStreamUrl.
                 val streamId = ref.id.substringAfterLast(':').toIntOrNull()
                 ref.copy(
                     id = newPrefix + ref.id.removePrefix(oldPrefix),
-                    streamUrl = streamId?.let { client.buildStreamUrl(new, "live", it) } ?: ref.streamUrl
+                    streamUrl = if (new.isM3U()) ref.streamUrl
+                    else streamId?.let { client.buildStreamUrl(new, "live", it) } ?: ref.streamUrl
                 )
             }
         )

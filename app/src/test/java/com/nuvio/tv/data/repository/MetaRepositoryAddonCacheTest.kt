@@ -91,6 +91,7 @@ class MetaRepositoryAddonCacheTest {
             addonRepository = addonRepository,
             xtreamRegistry = mockk(relaxed = true),
             xtreamClient = mockk(relaxed = true),
+            iptvClientFactory = mockk(relaxed = true),
             xtreamAccountStore = mockk(relaxed = true),
             tmdbMetadataService = mockk(relaxed = true)
         )

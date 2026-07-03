@@ -2,9 +2,9 @@ package com.nuvio.tv.ui.screens.iptv
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
-import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
 import com.nuvio.tv.data.local.XtreamAccountStore
@@ -67,7 +67,7 @@ data class XtreamHubUiState(
 @HiltViewModel
 class XtreamHubViewModel @Inject constructor(
     private val store: XtreamAccountStore,
-    private val client: XtreamClient,
+    private val clientFactory: IptvClientFactory,
     private val registry: XtreamItemRegistry,
     private val liveStore: XtreamLiveStore,
     private val libraryRepository: LibraryRepository
@@ -168,6 +168,7 @@ class XtreamHubViewModel @Inject constructor(
         }
         _uiState.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
+            val client = clientFactory.clientFor(acc)
             val result = when (section) {
                 XtreamSection.LIVE -> client.liveCategories(acc)
                 XtreamSection.MOVIES -> client.vodCategories(acc)
@@ -197,6 +198,7 @@ class XtreamHubViewModel @Inject constructor(
         }
         if (!requested.add(key)) return
         viewModelScope.launch {
+            val client = clientFactory.clientFor(acc)
             val items: List<XtreamHubItem> = when (section) {
                 XtreamSection.LIVE -> client.liveChannels(acc, categoryId).getOrDefault(emptyList()).map { ch ->
                     val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)

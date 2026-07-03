@@ -12,6 +12,7 @@ import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
+import com.nuvio.tv.core.iptv.isM3U
 import com.nuvio.tv.core.iptv.rebuildFromId
 import com.nuvio.tv.core.iptv.toAddonStreams
 import com.nuvio.tv.domain.model.AddonStreams
@@ -47,7 +48,7 @@ class StreamRepositoryImpl @Inject constructor(
     private val debridStreamPresentation: DebridStreamPresentation,
     private val localDebridAvailabilityService: LocalDebridAvailabilityService,
     private val xtreamRegistry: com.nuvio.tv.core.iptv.XtreamItemRegistry,
-    private val xtreamClient: com.nuvio.tv.core.iptv.XtreamClient,
+    private val iptvClientFactory: com.nuvio.tv.core.iptv.IptvClientFactory,
     private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
     private val xtreamStreamSource: com.nuvio.tv.core.iptv.match.XtreamStreamSource
 ) : StreamRepository {
@@ -73,7 +74,7 @@ class StreamRepositoryImpl @Inject constructor(
         if (xtreamRegistry.isXtreamId(videoId)) {
             // Rebuild from the id on a registry miss (saved/deep-linked item not browsed this session).
             val item = xtreamRegistry.get(videoId)
-                ?: xtreamRegistry.rebuildFromId(videoId, xtreamAccountStore, xtreamClient)
+                ?: xtreamRegistry.rebuildFromId(videoId, xtreamAccountStore, iptvClientFactory)
             emit(NetworkResult.Success(item?.toAddonStreams() ?: emptyList()))
             return@flow
         }
@@ -100,8 +101,11 @@ class StreamRepositoryImpl @Inject constructor(
 
             // Xtream IPTV as a stream source for TMDB content: each enabled account gets
             // its own group via the TMDB->stream matcher (index + verify + synced cache).
+            // TMDB->stream matching (Sports Centre + addon-detail IPTV streams) needs a get_vod_info /
+            // get_series_info verify endpoint, which M3U sources don't have — so only Xtream accounts
+            // participate. M3U content still plays via its own namespaced hybrid lane (registry ids).
             val xtreamMatchTargets = if (type == "movie" || type == "series") {
-                xtreamAccountStore.accounts.first().filter { it.enabled }
+                xtreamAccountStore.accounts.first().filter { it.enabled && !it.isM3U() }
             } else {
                 emptyList()
             }

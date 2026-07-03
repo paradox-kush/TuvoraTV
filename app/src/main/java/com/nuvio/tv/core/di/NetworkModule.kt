@@ -203,6 +203,35 @@ object NetworkModule {
             }
             .build()
 
+    /**
+     * Client for streaming a whole M3U playlist body into the content DB. Deliberately NOT the
+     * shared client: (1) no HTTP cache — an M3U can be 192MB and must never land in the 50MB disk
+     * cache; (2) a long read timeout for the large streamed download; (3) trust-all TLS + IPv4-first
+     * DNS like the Xtream client (IPTV hosts routinely have bad certs); (4) NO unconditional
+     * User-Agent interceptor, so M3UClient's per-request UA header (from the account) is honored.
+     * Redirect-follow + transparent gzip are OkHttp defaults.
+     */
+    @Provides
+    @Singleton
+    @Named("m3uIngest")
+    fun provideM3UIngestOkHttpClient(): OkHttpClient {
+        val trustAllManager = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
+        }
+        return OkHttpClient.Builder()
+            .dns(IPv4FirstDns())
+            .sslSocketFactory(sslContext.socketFactory, trustAllManager)
+            .hostnameVerifier { _, _ -> true }
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.MINUTES)   // a 192MB body streams for a while
+            .build()
+    }
+
     @Provides
     @Singleton
     @Named("trakt")

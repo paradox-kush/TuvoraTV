@@ -130,6 +130,9 @@ fun XtreamSettingsContent(
             onSubmitManual = { server, user, pass, name, options ->
                 viewModel.addManual(server, user, pass, name, options) { showAddDialog = false }
             },
+            onSubmitM3U = { playlistUrl, userAgent, name, options ->
+                viewModel.addM3UUrl(playlistUrl, userAgent, name, options) { showAddDialog = false }
+            },
             onDismiss = {
                 viewModel.clearError()
                 showAddDialog = false
@@ -145,6 +148,9 @@ fun XtreamSettingsContent(
             onSubmitUrl = { url, options -> viewModel.editFromUrl(account, url, options) { editFor = null } },
             onSubmitManual = { server, user, pass, name, options ->
                 viewModel.editManual(account, server, user, pass, name, options) { editFor = null }
+            },
+            onSubmitM3U = { playlistUrl, userAgent, _, options ->
+                viewModel.editM3UUrl(account, playlistUrl, userAgent, options) { editFor = null }
             },
             onDismiss = {
                 viewModel.clearError()
@@ -492,7 +498,7 @@ private data class PlaylistSource(
 )
 
 private val PLAYLIST_SOURCES = listOf(
-    PlaylistSource(XtreamAccount.SOURCE_URL, "URL", enabled = false),
+    PlaylistSource(XtreamAccount.SOURCE_URL, "URL", enabled = true),
     PlaylistSource(XtreamAccount.SOURCE_FILE, "File", enabled = false, hiddenOnTv = true),
     PlaylistSource(XtreamAccount.SOURCE_XTREAM, "Xtream", enabled = true),
     PlaylistSource(XtreamAccount.SOURCE_STALKER, "Stalker", enabled = false)
@@ -518,10 +524,11 @@ private fun XtreamAddDialog(
     error: String?,
     onSubmitUrl: (String, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onSubmitManual: (server: String, user: String, pass: String, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
+    onSubmitM3U: (playlistUrl: String, userAgent: String?, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onDismiss: () -> Unit,
     initial: XtreamAccount? = null
 ) {
-    // Source type — Xtream is the default and only functional source in P1.
+    // Source type — Xtream is the default; URL (M3U) is now selectable too.
     var sourceType by remember { mutableStateOf(initial?.sourceType ?: XtreamAccount.SOURCE_XTREAM) }
 
     // Xtream is portal + username + password (the reference form). The three fields are the
@@ -529,10 +536,15 @@ private fun XtreamAddDialog(
     // Server URL field also auto-fills user/pass, so most users never touch the toggle.
     var manualMode by remember { mutableStateOf(true) }
     var url by remember { mutableStateOf("") }
-    var server by remember { mutableStateOf(initial?.baseUrl ?: "") }
-    var user by remember { mutableStateOf(initial?.username ?: "") }
+    val isEditingM3U = initial?.sourceType == XtreamAccount.SOURCE_URL
+    var server by remember { mutableStateOf(if (isEditingM3U) "" else initial?.baseUrl ?: "") }
+    var user by remember { mutableStateOf(if (isEditingM3U) "" else initial?.username ?: "") }
     var pass by remember { mutableStateOf(initial?.password ?: "") }
     var name by remember { mutableStateOf(initial?.name ?: "") }
+
+    // M3U URL source fields: the playlist URL lives in baseUrl, the optional User-Agent in username.
+    var m3uUrl by remember { mutableStateOf(if (isEditingM3U) initial.baseUrl else "") }
+    var m3uUserAgent by remember { mutableStateOf(if (isEditingM3U) initial.username else "") }
 
     // Shared options (all source types).
     var epgUrl by remember { mutableStateOf(initial?.epgUrl ?: "") }
@@ -551,13 +563,20 @@ private fun XtreamAddDialog(
         )
     }
     val submit = {
-        if (!isValidating && sourceType == XtreamAccount.SOURCE_XTREAM) {
-            if (manualMode) {
-                if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
-                    onSubmitManual(server.trim(), user.trim(), pass.trim(), name.trim().ifEmpty { null }, options())
+        if (!isValidating) when (sourceType) {
+            XtreamAccount.SOURCE_XTREAM -> {
+                if (manualMode) {
+                    if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
+                        onSubmitManual(server.trim(), user.trim(), pass.trim(), name.trim().ifEmpty { null }, options())
+                    }
+                } else if (url.isNotBlank()) {
+                    onSubmitUrl(url.trim(), options())
                 }
-            } else if (url.isNotBlank()) {
-                onSubmitUrl(url.trim(), options())
+            }
+            XtreamAccount.SOURCE_URL -> {
+                if (m3uUrl.isNotBlank()) {
+                    onSubmitM3U(m3uUrl.trim(), m3uUserAgent.trim().ifEmpty { null }, name.trim().ifEmpty { null }, options())
+                }
             }
         }
     }
@@ -612,7 +631,16 @@ private fun XtreamAddDialog(
                         XtreamField(url, { url = it }, "http://host:port/get.php?username=…&password=…", firstFieldFocus, onSubmit = submit)
                     }
                 }
-                XtreamAccount.SOURCE_URL -> UrlSourceFields()
+                XtreamAccount.SOURCE_URL -> UrlSourceFields(
+                    url = m3uUrl,
+                    onUrlChange = { m3uUrl = it },
+                    userAgent = m3uUserAgent,
+                    onUserAgentChange = { m3uUserAgent = it },
+                    name = name,
+                    onNameChange = { name = it },
+                    firstFieldFocus = firstFieldFocus,
+                    onSubmit = submit
+                )
                 XtreamAccount.SOURCE_STALKER -> StalkerSourceFields()
             }
 
@@ -639,7 +667,7 @@ private fun XtreamAddDialog(
             XtreamAddButton(
                 isValidating = isValidating,
                 label = if (initial != null) "Save changes" else "Add Playlist",
-                enabled = sourceType == XtreamAccount.SOURCE_XTREAM,
+                enabled = sourceType == XtreamAccount.SOURCE_XTREAM || sourceType == XtreamAccount.SOURCE_URL,
                 onClick = submit
             )
 
@@ -781,14 +809,27 @@ private fun DnsProviderTiles(selected: String, onSelect: (String) -> Unit) {
 }
 
 /**
- * Field layout for a plain M3U/URL playlist source. STUB — not wired in P1 (the URL tile is
- * disabled). A later phase enables the tile and collects [url] into a url/user_agent playlist.
+ * Field layout for a plain M3U/URL playlist source: the playlist URL (required) plus an optional
+ * User-Agent and display name. The parsed playlist becomes the catalog (streamed into the content
+ * DB on save) — there's no Xtream API, so no username/password. Uses the same [XtreamField] design
+ * vocabulary as the Xtream form.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun UrlSourceFields() {
-    // TODO(playlist-manager URL phase): fields = [ playlist url, optional user-agent ].
-    FormHelperText("URL playlists are coming soon.")
+private fun UrlSourceFields(
+    url: String,
+    onUrlChange: (String) -> Unit,
+    userAgent: String,
+    onUserAgentChange: (String) -> Unit,
+    name: String,
+    onNameChange: (String) -> Unit,
+    firstFieldFocus: FocusRequester,
+    onSubmit: () -> Unit
+) {
+    XtreamField(url, onUrlChange, "M3U URL  (http://host/get.php?…&type=m3u_plus  or  …/playlist.m3u)", firstFieldFocus, onSubmit = onSubmit)
+    XtreamField(userAgent, onUserAgentChange, "User-Agent (optional)", onSubmit = onSubmit)
+    XtreamField(name, onNameChange, "Name (optional)", onSubmit = onSubmit)
+    FormHelperText("Paste the playlist URL. The whole list is downloaded and indexed once so it browses fast; large lists take a moment after saving.")
 }
 
 /**

@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.iptv
 
 import android.util.Log
+import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.core.iptv.match.MatchKind
 import com.nuvio.tv.core.iptv.match.XtreamMatchIndex
 import com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
@@ -24,10 +25,12 @@ import javax.inject.Singleton
 @Singleton
 class XtreamSearchIndex @Inject constructor(
     private val store: XtreamAccountStore,
-    private val client: XtreamClient,
+    private val clientFactory: IptvClientFactory,
+    private val xtreamClient: XtreamClient,   // for the Xtream-only match-index stream URLs
     private val registry: XtreamItemRegistry,
     private val matchIndex: XtreamMatchIndex,
     private val resolver: XtreamTmdbResolver,
+    private val contentDb: IptvContentDb,
 ) {
     /** A search match, ready to become a MetaPreview + click target. */
     data class Hit(
@@ -47,10 +50,17 @@ class XtreamSearchIndex @Inject constructor(
         val accounts = store.accounts.first().filter { it.enabled }
         accounts.map { acc ->
             async {
+                // M3U: the whole catalog (live/vod/series) is in IptvContentDb once ingested —
+                // no per-type RAM cache or match index. Just ensure the ingest exists (bounded so a
+                // cold 192MB parse doesn't stall a keystroke; it fills in on a later search).
+                if (acc.isM3U()) {
+                    withTimeoutOrNull(INDEX_WAIT_MS) { clientFactory.m3u().ensureIngested(acc) }
+                    return@async
+                }
                 // Disabled content types and explicit-empty selections are skipped entirely
                 // (not fetched, not indexed).
                 if (acc.searchIncludesType(XtreamAccount.TYPE_LIVE) && !liveCache.containsKey(acc.id)) {
-                    val live = client.liveChannels(acc).getOrDefault(emptyList())
+                    val live = clientFactory.clientFor(acc).liveChannels(acc).getOrDefault(emptyList())
                     liveCache[acc.id] = live
                     Log.d(TAG, "indexed live=${live.size} for ${acc.name}")
                 }
@@ -75,6 +85,7 @@ class XtreamSearchIndex @Inject constructor(
         val movies = ArrayList<Hit>()
         val series = ArrayList<Hit>()
         for (acc in accounts) {
+            if (acc.isM3U()) { searchM3U(acc, q, channels, movies, series); continue }
             // Live hits carry a categoryId -> category selections filter them per item; a
             // disabled content type (or an explicit "Deselect All") contributes nothing.
             if (acc.searchIncludesType(XtreamAccount.TYPE_LIVE)) liveCache[acc.id].orEmpty().asSequence()
@@ -91,7 +102,7 @@ class XtreamSearchIndex @Inject constructor(
                 }
             if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, PER_ACCOUNT).forEach { m ->
                 val id = XtreamItemRegistry.vodId(acc.id, m.sid)
-                val streamUrl = client.buildStreamUrl(acc, "movie", m.sid, m.ext ?: "mp4")
+                val streamUrl = xtreamClient.buildStreamUrl(acc, "movie", m.sid, m.ext ?: "mp4")
                 registry.register(
                     XtreamResolvedItem(
                         id = id, type = ContentType.MOVIE, name = m.name, poster = m.poster,
@@ -112,6 +123,48 @@ class XtreamSearchIndex @Inject constructor(
             }
         }
         return Results(channels.take(DISPLAY), movies.take(DISPLAY), series.take(DISPLAY))
+    }
+
+    /**
+     * M3U search reads the ingested catalog from [IptvContentDb] (substring name match per type),
+     * registering each hit like the Xtream path so it plays via the same short-circuit. Respects the
+     * content-type toggles; live hits also honor per-category selections (they carry a categoryId).
+     */
+    private suspend fun searchM3U(acc: XtreamAccount, q: String, channels: MutableList<Hit>, movies: MutableList<Hit>, series: MutableList<Hit>) {
+        if (acc.searchIncludesType(XtreamAccount.TYPE_LIVE)) {
+            contentDb.searchChannels(acc.id, q, PER_ACCOUNT).asSequence()
+                .filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) }
+                .forEach { ch ->
+                    val id = XtreamItemRegistry.liveId(acc.id, ch.sid)
+                    registry.register(
+                        XtreamResolvedItem(
+                            id = id, type = ContentType.TV, name = ch.name, poster = ch.logo,
+                            streamUrl = ch.url, kind = XtreamKind.LIVE, accountId = acc.id, streamId = ch.sid
+                        )
+                    )
+                    channels += Hit(id, ch.name, ch.logo, isLive = true, streamUrl = ch.url, detailType = "tv")
+                }
+        }
+        if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) contentDb.searchVod(acc.id, q, PER_ACCOUNT).forEach { m ->
+            val id = XtreamItemRegistry.vodId(acc.id, m.sid)
+            registry.register(
+                XtreamResolvedItem(
+                    id = id, type = ContentType.MOVIE, name = m.name, poster = m.logo,
+                    streamUrl = m.url, accountId = acc.id, streamId = m.sid
+                )
+            )
+            movies += Hit(id, m.name, m.logo, isLive = false, streamUrl = null, detailType = "movie")
+        }
+        if (acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) contentDb.searchSeries(acc.id, q, PER_ACCOUNT).forEach { s ->
+            val id = XtreamItemRegistry.seriesId(acc.id, s.sid)
+            registry.register(
+                XtreamResolvedItem(
+                    id = id, type = ContentType.SERIES, name = s.name, poster = s.logo,
+                    streamUrl = "", kind = XtreamKind.SERIES, accountId = acc.id, streamId = s.sid
+                )
+            )
+            series += Hit(id, s.name, s.logo, isLive = false, streamUrl = null, detailType = "series")
+        }
     }
 
     companion object {

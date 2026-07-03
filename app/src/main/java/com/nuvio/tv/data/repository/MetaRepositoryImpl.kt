@@ -7,6 +7,7 @@ import com.nuvio.tv.core.network.safeApiCall
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
+import com.nuvio.tv.core.iptv.isM3U
 import com.nuvio.tv.core.iptv.rebuildFromId
 import com.nuvio.tv.core.iptv.toMeta
 import com.nuvio.tv.domain.model.Meta
@@ -36,6 +37,7 @@ class MetaRepositoryImpl @Inject constructor(
     private val addonRepository: AddonRepository,
     private val xtreamRegistry: com.nuvio.tv.core.iptv.XtreamItemRegistry,
     private val xtreamClient: com.nuvio.tv.core.iptv.XtreamClient,
+    private val iptvClientFactory: com.nuvio.tv.core.iptv.IptvClientFactory,
     private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
     private val tmdbMetadataService: com.nuvio.tv.core.tmdb.TmdbMetadataService
 ) : MetaRepository {
@@ -134,7 +136,8 @@ class MetaRepositoryImpl @Inject constructor(
         val base = item.toMeta()
         val account = runCatching { xtreamAccountStore.accounts.first() }.getOrNull()
             ?.firstOrNull { it.id == item.accountId } ?: return base
-        val detail = xtreamClient.seriesInfo(account, item.streamId).getOrNull() ?: return base
+        // Xtream: get_series_info. M3U: episodes grouped from the ingested catalog (same shape).
+        val detail = iptvClientFactory.clientFor(account).seriesInfo(account, item.streamId).getOrNull() ?: return base
         val videos = detail.episodes.map { ep ->
             val epId = com.nuvio.tv.core.iptv.XtreamItemRegistry.episodeId(account.id, ep.episodeId)
             xtreamRegistry.register(
@@ -171,6 +174,8 @@ class MetaRepositoryImpl @Inject constructor(
         val base = item.toMeta()
         val account = runCatching { xtreamAccountStore.accounts.first() }.getOrNull()
             ?.firstOrNull { it.id == item.accountId } ?: return base
+        // M3U has no get_vod_info; its posters are already TMDB art, so use the bare meta as-is.
+        if (account.isM3U()) return base
         val tmdbId = xtreamClient.vodTmdbId(account, item.streamId).getOrNull() ?: return base
         val enrichment = runCatching {
             tmdbMetadataService.fetchEnrichment(tmdbId.toString(), item.type)
@@ -211,7 +216,7 @@ class MetaRepositoryImpl @Inject constructor(
             // Registry is process-lifetime; a saved/deep-linked id not browsed this session
             // misses, so rebuild it from the id + account before giving up.
             val item = xtreamRegistry.get(id)
-                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, xtreamClient)
+                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, iptvClientFactory)
             if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
             else emit(NetworkResult.Error("IPTV item is no longer available"))
             return@flow
@@ -403,7 +408,7 @@ class MetaRepositoryImpl @Inject constructor(
         // so Continue Watching enrichment / next-up for IPTV movies & series never resolves.
         if (xtreamRegistry.isXtreamId(id)) {
             val item = xtreamRegistry.get(id)
-                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, xtreamClient)
+                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, iptvClientFactory)
             if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
             else emit(NetworkResult.Error("IPTV item is no longer available"))
             return@flow
