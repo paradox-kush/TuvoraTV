@@ -212,6 +212,7 @@ class AuthManager @Inject constructor(
                 "startup_auth_begin",
                 mapOf(
                     "supabaseUrl" to BuildConfig.SUPABASE_URL,
+                    "authFallbackSupabaseUrl" to BuildConfig.SUPABASE_FALLBACK_URL,
                     "tvLoginWebBaseUrl" to BuildConfig.TV_LOGIN_WEB_BASE_URL,
                     "reportsBaseUrlConfigured" to BuildConfig.PLAYBACK_REPORTS_BASE_URL.isNotBlank().toString(),
                     "authState" to _authState.value.nameForLog()
@@ -605,9 +606,63 @@ class AuthManager @Inject constructor(
         method: String = "POST"
     ): AuthHttpResponse {
         val requestId = tvLoginRequestCounter.incrementAndGet()
+        return try {
+            executeSupabaseJsonRequestAttempt(
+                requestId = requestId,
+                attempt = "primary",
+                diagnostics = diagnostics,
+                endpoint = endpoint,
+                url = url,
+                headers = headers,
+                body = body,
+                method = method
+            )
+        } catch (primaryError: Exception) {
+            val fallbackUrl = supabaseFallbackUrl(endpoint)
+            if (fallbackUrl == null || !primaryError.shouldRetryWithAuthFallback()) {
+                throw primaryError
+            }
+            diagnostics?.recordState(
+                "auth_origin_fallback_retry",
+                mapOf(
+                    "endpoint" to endpoint,
+                    "primaryUrl" to url,
+                    "fallbackUrl" to fallbackUrl,
+                    "reason" to primaryError.diagnosticSummary()
+                )
+            )
+            Log.w(TAG, "auth request #$requestId endpoint=$endpoint retrying origin fallback url=${fallbackUrl.urlForLog()} reason=${primaryError.diagnosticSummary()}")
+            try {
+                executeSupabaseJsonRequestAttempt(
+                    requestId = requestId,
+                    attempt = "origin_fallback",
+                    diagnostics = diagnostics,
+                    endpoint = endpoint,
+                    url = fallbackUrl,
+                    headers = headers,
+                    body = body,
+                    method = method
+                )
+            } catch (fallbackError: Exception) {
+                fallbackError.addSuppressed(primaryError)
+                throw fallbackError
+            }
+        }
+    }
+
+    private suspend fun executeSupabaseJsonRequestAttempt(
+        requestId: Long,
+        attempt: String,
+        diagnostics: AuthDiagnosticsSession?,
+        endpoint: String,
+        url: String,
+        headers: Map<String, String>,
+        body: String,
+        method: String
+    ): AuthHttpResponse {
         val startedAtMs = SystemClock.elapsedRealtime()
         diagnostics?.recordRequest(endpoint = endpoint, method = method, url = url, headers = headers, body = body)
-        Log.d(TAG, "auth request #$requestId method=$method endpoint=$endpoint url=${url.urlForLog()} payloadBytes=${body.length}")
+        Log.d(TAG, "auth request #$requestId attempt=$attempt method=$method endpoint=$endpoint url=${url.urlForLog()} payloadBytes=${body.length}")
         val requestBuilder = Request.Builder().url(url)
         headers.forEach { (name, value) -> requestBuilder.header(name, value) }
         when (method.uppercase()) {
@@ -636,7 +691,7 @@ class AuthManager @Inject constructor(
                         body = responseBody,
                         contentType = responseContentType
                     )
-                    Log.d(TAG, "auth response #$requestId endpoint=$endpoint http=${response.code} success=${response.isSuccessful} bodyBytes=${responseBody.length} elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs} body=${authDiagnosticFilteredBody(responseBody).orEmpty().bodySnippetForLog()}")
+                    Log.d(TAG, "auth response #$requestId attempt=$attempt endpoint=$endpoint http=${response.code} success=${response.isSuccessful} bodyBytes=${responseBody.length} elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs} body=${authDiagnosticFilteredBody(responseBody).orEmpty().bodySnippetForLog()}")
                     if (!response.isSuccessful) {
                         throw AuthHttpException(endpoint, response.code, responseBody)
                     }
@@ -645,13 +700,21 @@ class AuthManager @Inject constructor(
             }
         } catch (e: Exception) {
             diagnostics?.recordException(endpoint, e)
-            Log.e(TAG, "auth request #$requestId endpoint=$endpoint failed elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs} error=${e.diagnosticSummary()}", e)
+            Log.e(TAG, "auth request #$requestId attempt=$attempt endpoint=$endpoint failed elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs} error=${e.diagnosticSummary()}", e)
             throw e
         }
     }
 
     private fun supabaseUrl(endpoint: String): String =
         "${BuildConfig.SUPABASE_URL.trimEnd('/')}$endpoint"
+
+    private fun supabaseFallbackUrl(endpoint: String): String? {
+        val primary = BuildConfig.SUPABASE_URL.trimEnd('/')
+        val fallback = BuildConfig.SUPABASE_FALLBACK_URL.trim().trimEnd('/')
+        if (fallback.isBlank()) return null
+        if (primary.equals(fallback, ignoreCase = true)) return null
+        return "$fallback$endpoint"
+    }
 
     private fun supabaseHeaders(accessToken: String? = null): Map<String, String> =
         buildMap {
@@ -762,6 +825,19 @@ private fun Throwable.toSessionRefreshResult(): SessionRefreshResult {
 
 private fun Throwable.authHttpStatus(): Int? =
     findCause<AuthHttpException>()?.statusCode
+
+private fun Throwable.shouldRetryWithAuthFallback(): Boolean {
+    findCause<AuthHttpException>()?.let { error ->
+        return error.statusCode in setOf(408, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530) ||
+            error.responseBody.contains("cloudflare", ignoreCase = true) ||
+            error.responseBody.contains("cf-error-code", ignoreCase = true)
+    }
+
+    return hasCause<UnknownHostException>() ||
+        hasCause<ConnectException>() ||
+        hasCause<NoRouteToHostException>() ||
+        hasCause<SSLException>()
+}
 
 private inline fun <reified T : Throwable> Throwable.hasCause(): Boolean =
     findCause<T>() != null
