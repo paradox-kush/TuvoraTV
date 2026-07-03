@@ -115,4 +115,75 @@ class IptvContentDbTest {
         assertEquals(1, db.channelsFor(other, null).size)
         assertEquals("Other Channel", db.channelsFor(other, null)[0].name)
     }
+
+    // --- EPG (XMLTV) --------------------------------------------------------
+
+    @Test
+    fun `ingest captures the url-tvg header and channel tvg-ids`() = runTest {
+        db.ingest(pid) { w ->
+            w.setTvgUrl("http://epg.example/xmltv.xml.gz")
+            w.addChannel(ContentChannel(1, "BBC", null, "BBC.uk", "UK", "http://h/live/1.ts"))
+            w.addChannel(ContentChannel(2, "No EPG id", null, null, "UK", "http://h/live/2.ts"))
+            w.addChannel(ContentChannel(3, "CNN", null, "cnn.us ", "US", "http://h/live/3.ts"))
+        }
+        assertEquals("http://epg.example/xmltv.xml.gz", db.tvgUrl(pid))
+        // tvg-ids are normalized (trim + lowercase); the null one is excluded.
+        assertEquals(setOf("bbc.uk", "cnn.us"), db.channelTvgIds(pid))
+        // fresh ingest leaves EPG unbuilt (so it refetches)
+        assertNull(db.epgBuiltAt(pid))
+    }
+
+    @Test
+    fun `replaceEpg stores programmes and stamps epg_built_at last`() = runTest {
+        ingestSample()
+        db.replaceEpg(pid, builtAtMs = 5_000L) { w ->
+            w.add(EpgProgramme("bbc.uk", 1_000L, 2_000L, "Show A", "desc"))
+            w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Show B", null))
+        }
+        assertEquals(5_000L, db.epgBuiltAt(pid))
+    }
+
+    @Test
+    fun `epgNowNext returns the current programme plus the next`() = runTest {
+        ingestSample()
+        db.replaceEpg(pid, builtAtMs = 0L) { w ->
+            w.add(EpgProgramme("bbc.uk", 1_000L, 2_000L, "Past", null))       // already ended
+            w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Now", "current"))   // spans nowMs=2500
+            w.add(EpgProgramme("bbc.uk", 3_000L, 4_000L, "Next", null))
+            w.add(EpgProgramme("bbc.uk", 4_000L, 5_000L, "Later", null))
+        }
+        val nowNext = db.epgNowNext(pid, "bbc.uk", nowMs = 2_500L)
+        assertEquals(listOf("Now", "Next"), nowNext.map { it.title })
+        assertEquals("current", nowNext[0].desc)
+    }
+
+    @Test
+    fun `epgNowNext during a gap returns the upcoming programme first`() = runTest {
+        ingestSample()
+        db.replaceEpg(pid, builtAtMs = 0L) { w ->
+            w.add(EpgProgramme("bbc.uk", 1_000L, 2_000L, "Earlier", null))
+            w.add(EpgProgramme("bbc.uk", 5_000L, 6_000L, "Upcoming", null))
+        }
+        // nowMs=3000 falls in a schedule gap -> the next upcoming programme leads.
+        val nowNext = db.epgNowNext(pid, "bbc.uk", nowMs = 3_000L)
+        assertEquals(listOf("Upcoming"), nowNext.map { it.title })
+    }
+
+    @Test
+    fun `epgNowNext empty for a channel with no EPG`() = runTest {
+        ingestSample()
+        assertTrue(db.epgNowNext(pid, "unknown.channel", nowMs = 1_000L).isEmpty())
+    }
+
+    @Test
+    fun `catalog re-ingest keeps old programmes but marks EPG stale`() = runTest {
+        ingestSample()
+        db.replaceEpg(pid, builtAtMs = 9_000L) { w -> w.add(EpgProgramme("bbc.uk", 1L, 2L, "P", null)) }
+        assertEquals(9_000L, db.epgBuiltAt(pid))
+        // A fresh catalog ingest resets epg_built_at (finish writes NULL) so the EPG refetches,
+        // but the programmes rows survive until that refetch replaces them (no now/next gap).
+        db.ingest(pid) { w -> w.addChannel(ContentChannel(1, "BBC", null, "bbc.uk", "UK", "http://h/live/1.ts")) }
+        assertNull(db.epgBuiltAt(pid))
+        assertEquals(listOf("P"), db.epgNowNext(pid, "bbc.uk", nowMs = 1L).map { it.title })
+    }
 }

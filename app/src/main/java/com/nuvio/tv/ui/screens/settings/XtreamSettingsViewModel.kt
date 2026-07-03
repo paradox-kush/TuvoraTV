@@ -2,14 +2,19 @@ package com.nuvio.tv.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
+import com.nuvio.tv.core.iptv.content.M3UFileStore
 import com.nuvio.tv.core.iptv.isM3U
+import com.nuvio.tv.core.iptv.isM3UFile
+import com.nuvio.tv.core.iptv.m3uAccountFromFile
 import com.nuvio.tv.core.iptv.m3uAccountFromUrl
+import com.nuvio.tv.core.iptv.newM3UFilePlaylistId
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.core.iptv.withPlaylistOptions
 import com.nuvio.tv.core.iptv.xtreamAccountFromFields
@@ -48,7 +53,8 @@ class XtreamSettingsViewModel @Inject constructor(
     private val libraryPreferences: LibraryPreferences,
     private val watchProgressPreferences: WatchProgressPreferences,
     private val watchedItemsPreferences: WatchedItemsPreferences,
-    private val liveStore: XtreamLiveStore
+    private val liveStore: XtreamLiveStore,
+    private val fileStore: M3UFileStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
@@ -145,6 +151,47 @@ class XtreamSettingsViewModel @Inject constructor(
             runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
         }
     }
+
+    /**
+     * Add an M3U FILE playlist: copy the picked document into app storage (so the source can
+     * disappear), persist a SOURCE_FILE account, then ingest the LOCAL copy through the same M3U
+     * pipeline. File contents are NOT synced (spec §3.2) — only the account row, which is filtered
+     * out of the current sync, so this stays local. [uri] is the SAF document uri; [fileName] is its
+     * display name; [reimportFor] (non-null) re-imports a file playlist that lost its local copy,
+     * keeping its id + saved content.
+     */
+    fun addM3UFile(uri: Uri, fileName: String, name: String?, options: PlaylistOptions = PlaylistOptions(), reimportFor: XtreamAccount? = null, onSuccess: () -> Unit) {
+        val playlistId = reimportFor?.id ?: newM3UFilePlaylistId()
+        val displayName = reimportFor?.name ?: name
+        val account = m3uAccountFromFile(playlistId, fileName, displayName).withOptions(
+            // A re-import keeps the existing account's options; a fresh add takes the form's.
+            reimportFor?.toOptions() ?: options
+        ).let { built ->
+            reimportFor?.let { old ->
+                built.copy(enabled = old.enabled, contentTypes = old.contentTypes, categorySelections = old.categorySelections)
+            } ?: built
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isValidating = true, error = null) }
+            val copied = runCatching { fileStore.importFrom(playlistId, uri) }
+            _uiState.update { it.copy(isValidating = false) }
+            copied.onFailure { e ->
+                _uiState.update { it.copy(error = e.message ?: "Couldn't read the selected file") }
+                return@launch
+            }
+            store.upsert(account)   // upsert also covers the re-import case (same id -> replace).
+            // File playlists aren't synced (contents can't travel), but push keeps the account list
+            // consistent; the sync filters non-xtream rows out anyway.
+            syncService.triggerRemoteSync()
+            onSuccess()
+            runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+        }
+    }
+
+    /** True when a file playlist has NO local copy on this device (synced from elsewhere / cleared)
+     *  and must be re-imported before it can browse. Always false for non-file playlists. */
+    fun needsReimport(account: XtreamAccount): Boolean =
+        account.isM3UFile() && !fileStore.exists(account.id)
 
     private fun verifyAndSave(account: XtreamAccount?, parseError: String, onSuccess: () -> Unit) {
         if (account == null) {
@@ -260,7 +307,12 @@ class XtreamSettingsViewModel @Inject constructor(
     }
 
     fun remove(id: String) {
-        viewModelScope.launch { store.remove(id); syncService.triggerRemoteSync() }
+        viewModelScope.launch {
+            store.remove(id)
+            // A file playlist's local copy is orphaned once its account is gone — reclaim the space.
+            runCatching { fileStore.delete(id) }
+            syncService.triggerRemoteSync()
+        }
     }
 
     fun clearError() = _uiState.update { it.copy(error = null) }

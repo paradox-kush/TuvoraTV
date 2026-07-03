@@ -17,6 +17,8 @@ data class ContentSeries(val sid: Int, val name: String, val logo: String?, val 
 /** One episode under a series header, with its direct stream URL. */
 data class ContentEpisode(val seriesSid: Int, val episodeSid: String, val season: Int, val episodeNum: Int, val title: String, val logo: String?, val url: String, val ext: String?)
 data class ContentCategory(val id: String, val name: String)
+/** One XMLTV programme spanning [startMs, endMs), keyed to a channel by its (normalized) EPG id. */
+data class EpgProgramme(val channelId: String, val startMs: Long, val endMs: Long, val title: String, val desc: String?)
 
 /**
  * Disk-backed catalog for M3U/URL playlists. Unlike Xtream (which has a live API per browse),
@@ -31,7 +33,7 @@ data class ContentCategory(val id: String, val name: String)
 @Singleton
 class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
-    private val helper = object : SQLiteOpenHelper(context, "iptv_content.db", null, 1) {
+    private val helper = object : SQLiteOpenHelper(context, "iptv_content.db", null, 2) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX channels_cat ON channels(playlist_id, category_id)")
@@ -42,15 +44,24 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             db.execSQL("CREATE TABLE episodes(playlist_id TEXT NOT NULL, series_sid INTEGER NOT NULL, episode_sid TEXT NOT NULL, season INTEGER NOT NULL, episode_num INTEGER NOT NULL, title TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, PRIMARY KEY(playlist_id, episode_sid)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX episodes_series ON episodes(playlist_id, series_sid)")
             db.execSQL("CREATE TABLE categories(playlist_id TEXT NOT NULL, type TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(playlist_id, type, id)) WITHOUT ROWID")
-            db.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL) WITHOUT ROWID")
+            // tvg_url = the url-tvg/x-tvg-url captured from the #EXTM3U header (default XMLTV source);
+            // epg_built_at = when this playlist's EPG was last fetched (throttles the ~2×/day refresh).
+            db.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL, tvg_url TEXT, epg_built_at INTEGER) WITHOUT ROWID")
+            createEpgTable(db)
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             // Everything here is a rebuildable cache of the parsed playlist — drop + re-ingest.
-            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta")) {
+            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes")) {
                 db.execSQL("DROP TABLE IF EXISTS $t")
             }
             onCreate(db)
+        }
+
+        /** XMLTV now/next store: one row per programme, looked up by (playlist, channel, time). */
+        private fun createEpgTable(db: SQLiteDatabase) {
+            db.execSQL("CREATE TABLE epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT)")
+            db.execSQL("CREATE INDEX epg_lookup ON epg_programmes(playlist_id, channel_id, start_ms)")
         }
     }
 
@@ -60,6 +71,20 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     suspend fun builtAt(playlistId: String): Long? = withContext(Dispatchers.IO) {
         db.rawQuery("SELECT built_at FROM ingest_meta WHERE playlist_id = ?", arrayOf(playlistId)).use { c ->
             if (c.moveToFirst()) c.getLong(0) else null
+        }
+    }
+
+    /** The default XMLTV EPG url captured from the M3U's #EXTM3U header (null if none / not built). */
+    suspend fun tvgUrl(playlistId: String): String? = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT tvg_url FROM ingest_meta WHERE playlist_id = ?", arrayOf(playlistId)).use { c ->
+            if (c.moveToFirst()) c.getStringOrNull(0) else null
+        }
+    }
+
+    /** When this playlist's EPG was last fetched (null = never — refresh it). */
+    suspend fun epgBuiltAt(playlistId: String): Long? = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT epg_built_at FROM ingest_meta WHERE playlist_id = ?", arrayOf(playlistId)).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
         }
     }
 
@@ -87,6 +112,10 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         private val seriesSidByKey = HashMap<String, Int>()  // "categoryId|name" -> sid
         private var nextSeriesSid = 1
         private var nextEpisodeSeq = 0   // monotonic across chunks (batch index resets on flush)
+        private var tvgUrl: String? = null   // url-tvg/x-tvg-url from the #EXTM3U header, if any
+
+        /** Capture the M3U header's default XMLTV EPG url (persisted with the meta row). */
+        fun setTvgUrl(url: String) { if (tvgUrl == null && url.isNotBlank()) tvgUrl = url }
 
         fun addChannel(row: ContentChannel) {
             channelBatch.add(row); counts.live++
@@ -201,13 +230,14 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             categoryBatch.clear()
         }
 
-        /** Flush remaining batches then write the crash-safe meta row LAST. */
+        /** Flush remaining batches then write the crash-safe meta row LAST. epg_built_at is left
+         *  null so a fresh ingest re-fetches the EPG (the catalog's channel set may have changed). */
         internal fun finish() {
             flushAll()
             inTx {
                 db.execSQL(
-                    "INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count) VALUES(?,?,?,?,?)",
-                    arrayOf<Any?>(playlistId, System.currentTimeMillis(), counts.live, counts.vod, counts.series)
+                    "INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, tvg_url, epg_built_at) VALUES(?,?,?,?,?,?,NULL)",
+                    arrayOf<Any?>(playlistId, System.currentTimeMillis(), counts.live, counts.vod, counts.series, tvgUrl)
                 )
             }
         }
@@ -242,6 +272,9 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
     suspend fun clear(playlistId: String) = withContext(Dispatchers.IO) {
         inTx {
+            // NOTE: epg_programmes is intentionally NOT cleared here. A catalog re-ingest resets the
+            // meta's epg_built_at (finish writes NULL) so the EPG re-fetches, but the old programmes
+            // stay readable until that fetch replaces them (via replaceEpg) — no now/next gap.
             for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta")) {
                 db.delete(t, "playlist_id = ?", arrayOf(playlistId))
             }
@@ -349,6 +382,81 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     private fun catFilter(playlistId: String, categoryId: String?): Pair<String, Array<String>> =
         if (categoryId == null) "playlist_id = ?" to arrayOf(playlistId)
         else "playlist_id = ? AND category_id = ?" to arrayOf(playlistId, categoryId)
+
+    // --- EPG (XMLTV for M3U live now/next) ----------------------------------
+
+    /**
+     * The distinct, NORMALIZED (trim+lowercase) EPG channel ids present in this playlist's live
+     * channels. The XMLTV parse filters to this set so a 100MB+ guide never fully lands in the DB —
+     * only programmes for channels the user actually has are stored.
+     */
+    suspend fun channelTvgIds(playlistId: String): Set<String> = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT DISTINCT tvg_id FROM channels WHERE playlist_id = ? AND tvg_id IS NOT NULL", arrayOf(playlistId)).use { c ->
+            buildSet { while (c.moveToNext()) c.getStringOrNull(0)?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }?.let { add(it) } }
+        }
+    }
+
+    /**
+     * Replace this playlist's EPG in one pass: clear its old programmes, stream new ones in via the
+     * [fill] block ([EpgWriter] batches [CHUNK]-sized inserts), then stamp epg_built_at LAST so a
+     * crash mid-write reads as "not built" and the next refresh retries. channel_id is stored
+     * already-normalized by the caller so lookups are a plain equality match.
+     */
+    suspend fun replaceEpg(playlistId: String, builtAtMs: Long, fill: suspend (EpgWriter) -> Unit) = withContext(Dispatchers.IO) {
+        inTx { db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId)) }
+        val writer = EpgWriter(playlistId)
+        fill(writer)
+        writer.flush()
+        // Stamp freshness last (row exists from the catalog ingest; UPDATE it).
+        inTx { db.execSQL("UPDATE ingest_meta SET epg_built_at = ? WHERE playlist_id = ?", arrayOf<Any?>(builtAtMs, playlistId)) }
+    }
+
+    /** Batches programme inserts during an XMLTV parse (mirrors IngestWriter's chunking). */
+    inner class EpgWriter internal constructor(private val playlistId: String) {
+        private val batch = ArrayList<EpgProgramme>(CHUNK)
+        var count = 0; private set
+
+        fun add(p: EpgProgramme) {
+            batch.add(p); count++
+            if (batch.size >= CHUNK) flush()
+        }
+
+        internal fun flush() {
+            if (batch.isEmpty()) return
+            inTx {
+                val s = db.compileStatement("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc) VALUES(?,?,?,?,?,?)")
+                for (p in batch) {
+                    s.clearBindings()
+                    s.bindString(1, playlistId); s.bindString(2, p.channelId)
+                    s.bindLong(3, p.startMs); s.bindLong(4, p.endMs); s.bindString(5, p.title)
+                    bindNullable(s, 6, p.desc)
+                    s.executeInsert()
+                }
+                s.close()
+            }
+            batch.clear()
+        }
+    }
+
+    /**
+     * Now + next programme for a channel: the programme whose window spans [nowMs] (or, if none is
+     * live, the next upcoming one) plus the one immediately after it. [channelId] must already be
+     * normalized (trim+lowercase) by the caller — the stored ids are. Returns up to 2 rows ordered
+     * by start; empty when the channel has no EPG. Cheap (indexed range scan, LIMIT 2).
+     */
+    suspend fun epgNowNext(playlistId: String, channelId: String, nowMs: Long): List<EpgProgramme> = withContext(Dispatchers.IO) {
+        // The current programme (latest one that started at/before now and hasn't ended) + the next.
+        // A single query: everything ending after now, ordered by start, take 2. The first is "now"
+        // if it already started, else the schedule has a gap and it's the upcoming programme.
+        db.rawQuery(
+            "SELECT channel_id, start_ms, end_ms, title, desc FROM epg_programmes WHERE playlist_id = ? AND channel_id = ? AND end_ms > ? ORDER BY start_ms LIMIT 2",
+            arrayOf(playlistId, channelId, nowMs.toString())
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4)))
+            }
+        }
+    }
 
     companion object {
         const val TYPE_LIVE = "live"

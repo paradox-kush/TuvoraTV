@@ -120,16 +120,26 @@ object M3UParser {
      * Streaming parse: walk [reader] ONCE (never materializing the whole body — critical for a
      * 192MB M3U) reading each `#EXTINF` line then its following URL line, emitting one [M3UEntry]
      * per pair via [onEntry]. Non-EXTINF `#` directives (#EXTM3U, #EXTGRP) and blanks are skipped;
-     * a stray URL with no preceding #EXTINF is ignored. Pure (no Android/DB) so the parse is
-     * unit-testable against any Reader (plain or gzip-backed).
+     * a stray URL with no preceding #EXTINF is ignored. The `#EXTM3U` header's `url-tvg` /
+     * `x-tvg-url` attribute (the default XMLTV EPG location) is surfaced once via [onHeaderTvgUrl]
+     * if present. Pure (no Android/DB) so the parse is unit-testable against any Reader.
      */
-    fun parseStream(reader: java.io.BufferedReader, onEntry: (M3UEntry) -> Unit) {
+    fun parseStream(
+        reader: java.io.BufferedReader,
+        onHeaderTvgUrl: (String) -> Unit = {},
+        onEntry: (M3UEntry) -> Unit
+    ) {
         var pendingExtInf: String? = null
+        var headerSeen = false
         var line = reader.readLine()
         while (line != null) {
             val trimmed = line.trim()
             when {
                 trimmed.startsWith("#EXTINF") -> pendingExtInf = trimmed
+                !headerSeen && trimmed.startsWith("#EXTM3U") -> {
+                    headerSeen = true
+                    tvgUrlOf(trimmed)?.let(onHeaderTvgUrl)
+                }
                 trimmed.startsWith("#") || trimmed.isEmpty() -> { /* directive / blank */ }
                 pendingExtInf != null -> {
                     val entry = parseExtInf(pendingExtInf, trimmed)
@@ -140,6 +150,18 @@ object M3UParser {
             }
             line = reader.readLine()
         }
+    }
+
+    /**
+     * The default XMLTV EPG URL declared on the `#EXTM3U` header line, if any. Providers use either
+     * `url-tvg="..."` or `x-tvg-url="..."` (both accepted; first non-blank wins). Returns null when
+     * neither is present. Used to resolve an EPG source when the account has no explicit epgUrl.
+     */
+    fun tvgUrlOf(extM3ULine: String): String? {
+        if (!extM3ULine.startsWith("#EXTM3U")) return null
+        val attrs = HashMap<String, String>()
+        for (m in ATTR.findAll(extM3ULine)) attrs[m.groupValues[1].lowercase()] = m.groupValues[2]
+        return (attrs["url-tvg"] ?: attrs["x-tvg-url"])?.takeIf { it.isNotBlank() }
     }
 
     private val SXXEXX = Regex("""[sS](\d{1,2})[\s._-]*[eE](\d{1,3})""")

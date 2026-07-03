@@ -5,8 +5,10 @@ import com.nuvio.tv.core.iptv.content.ContentChannel
 import com.nuvio.tv.core.iptv.content.ContentSeries
 import com.nuvio.tv.core.iptv.content.ContentVod
 import com.nuvio.tv.core.iptv.content.IptvContentDb
+import com.nuvio.tv.core.iptv.content.M3UFileStore
 import com.nuvio.tv.core.iptv.content.M3UKind
 import com.nuvio.tv.core.iptv.content.M3UParser
+import com.nuvio.tv.core.iptv.epg.XmltvClient
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +20,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedReader
+import java.io.InputStream
+import java.util.zip.GZIPInputStream
 import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Singleton
@@ -42,6 +46,8 @@ import javax.inject.Singleton
 class M3UClient @Inject constructor(
     private val db: IptvContentDb,
     @Named("m3uIngest") private val http: OkHttpClient,
+    private val fileStore: M3UFileStore,
+    private val xmltv: XmltvClient,
 ) : IptvClient {
 
     private val ingestLock = Mutex()
@@ -91,14 +97,27 @@ class M3UClient @Inject constructor(
     }
 
     /**
-     * Fetch the playlist body and STREAM it into [IptvContentDb]. Never loads the whole body: a
-     * BufferedReader walks it line by line, emitting #EXTINF+URL pairs to the ingest writer, which
-     * batches DB inserts. OkHttp follows redirects + transparently gunzips a gzip body by default;
-     * a per-account User-Agent (acc.epgUrl is unrelated) is applied when set.
+     * Stream the playlist body into [IptvContentDb]. The byte source depends on the account's
+     * source type — a URL fetch ([XtreamAccount.SOURCE_URL]) or the local copy of a picked file
+     * ([XtreamAccount.SOURCE_FILE]) — but both feed the SAME [parseInto]/[M3UParser.parseStream]
+     * pipeline (reader walked ONCE, never fully materialized). After the catalog lands, refresh the
+     * EPG (throttled) so M3U live channels get real now/next.
      */
     private suspend fun ingest(acc: XtreamAccount) = withContext(Dispatchers.IO) {
-        // For M3U, acc.baseUrl holds the FULL playlist URL verbatim; the optional per-playlist
-        // User-Agent is stored in acc.username (see m3uAccountFromUrl).
+        if (acc.isM3UFile()) ingestFromFile(acc) else ingestFromUrl(acc)
+        // Piggyback an EPG refresh on the catalog ingest. NOT forced — a fresh add has no EPG yet so
+        // it fetches, but a frequent catalog auto-refresh (e.g. every 6h) won't blow past the ~2×/day
+        // EPG cap (refreshIfStale throttles). A catalog re-ingest resets epg_built_at (finish writes
+        // NULL) too, so an edited playlist does re-fetch its EPG. Self-scoped; never fails ingest.
+        runCatching { xmltv.refreshIfStale(acc) }
+            .onFailure { Log.w(TAG, "EPG refresh failed for ${acc.name}", it) }
+    }
+
+    /**
+     * URL source: fetch + stream. OkHttp follows redirects + transparently gunzips a gzip body by
+     * default; a per-account User-Agent (stored in acc.username) is applied when set.
+     */
+    private suspend fun ingestFromUrl(acc: XtreamAccount) {
         val request = Request.Builder()
             .url(acc.baseUrl)
             .apply { acc.username.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) } }
@@ -108,15 +127,47 @@ class M3UClient @Inject constructor(
             // charStream() decodes the (possibly gunzipped) source incrementally — no full buffer.
             val reader = resp.body.charStream().buffered()
             val writer = db.ingest(acc.id) { w -> parseInto(reader, w) }
-            Log.i(TAG, "ingested M3U for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
+            Log.i(TAG, "ingested M3U (url) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
         }
     }
 
+    /**
+     * File source: stream the LOCAL copy at files/playlists/{id}.m3u through the same parser. The
+     * source document may have vanished — that's fine, the whole point of copying it in. If the
+     * local copy is ALSO missing (a file playlist synced from another device; contents aren't
+     * synced), skip cleanly: leave any prior catalog intact and let the hub show the re-import
+     * affordance (builtAt stays as-is). Gzip-aware (.gz exports) via magic-byte sniffing.
+     */
+    private suspend fun ingestFromFile(acc: XtreamAccount) {
+        val file = fileStore.fileFor(acc.id)
+        if (!file.exists() || file.length() == 0L) {
+            Log.w(TAG, "M3U file missing for ${acc.name} (${acc.fileName}) — needs re-import on this device")
+            return
+        }
+        openMaybeGzip(file.inputStream()).use { stream ->
+            val reader = stream.bufferedReader(Charsets.UTF_8)
+            val writer = db.ingest(acc.id) { w -> parseInto(reader, w) }
+            Log.i(TAG, "ingested M3U (file) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
+        }
+    }
+
+    /** Wrap a raw file stream in a GZIPInputStream when it starts with the gzip magic (0x1f 0x8b),
+     *  so a `.m3u.gz` export ingests transparently — mirroring OkHttp's transparent gunzip. */
+    private fun openMaybeGzip(raw: InputStream): InputStream {
+        val buffered = raw.buffered()
+        buffered.mark(2)
+        val b0 = buffered.read()
+        val b1 = buffered.read()
+        buffered.reset()
+        return if (b0 == 0x1f && b1 == 0x8b) GZIPInputStream(buffered) else buffered
+    }
+
     /** Route each parsed entry to the DB writer. The heavy streaming walk lives in
-     *  [M3UParser.parseStream] (reader walked ONCE, never fully materialized). */
+     *  [M3UParser.parseStream] (reader walked ONCE, never fully materialized). The #EXTM3U header's
+     *  url-tvg is captured for XMLTV EPG resolution. */
     private fun parseInto(reader: BufferedReader, w: IptvContentDb.IngestWriter) {
         var sid = 1
-        M3UParser.parseStream(reader) { entry ->
+        M3UParser.parseStream(reader, onHeaderTvgUrl = { w.setTvgUrl(it) }) { entry ->
             when (entry.kind) {
                 M3UKind.LIVE -> w.addChannel(ContentChannel(sid++, entry.name, entry.logo, entry.tvgId, entry.group, entry.url))
                 M3UKind.SERIES -> w.addEpisodeFrom(entry)
@@ -180,9 +231,28 @@ class M3UClient @Inject constructor(
         XtreamSeriesDetail(tmdbId = null, plot = null, backdrop = header?.logo, episodes = episodes)
     }
 
-    /** M3U has no per-channel EPG yet — XMLTV is P2c. Return empty ("No information" in the guide). */
-    override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> =
-        Result.success(emptyList())
+    /**
+     * Now/next for an M3U live channel, from the XMLTV EPG (if one is configured — account.epgUrl
+     * or the M3U's url-tvg header). Resolves the channel's tvg-id, then the programme spanning now +
+     * the one after. Returns empty (guide shows "No information") when the channel has no tvg-id or
+     * no EPG has been fetched. Also nudges a throttled EPG refresh so a first browse warms it.
+     */
+    override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = runCatching {
+        val tvgId = db.channelRow(acc.id, streamId)?.tvgId?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+            ?: return@runCatching emptyList()
+        // Lazily ensure the EPG is present/fresh (single-flight + throttled inside XmltvClient).
+        runCatching { xmltv.refreshIfStale(acc) }
+        val now = System.currentTimeMillis()
+        db.epgNowNext(acc.id, tvgId, now).map { p ->
+            XtreamProgram(
+                title = p.title,
+                description = p.desc.orEmpty(),
+                startMs = p.startMs,
+                endMs = p.endMs,
+                nowPlaying = now in p.startMs until p.endMs
+            )
+        }
+    }
 
     override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int): String? {
         // URLs aren't formula-derivable for M3U (they're arbitrary provider URLs) — look them up.

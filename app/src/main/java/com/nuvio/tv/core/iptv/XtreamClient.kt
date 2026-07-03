@@ -54,7 +54,14 @@ data class XtreamAccount(
     val dnsProvider: String = DNS_SYSTEM,
     val autoRefreshHours: Int = DEFAULT_AUTO_REFRESH_HOURS,   // 0 = off; 24 = default
     val contentTypes: Set<String> = DEFAULT_CONTENT_TYPES,
-    val categorySelections: CategorySelections = CategorySelections()
+    val categorySelections: CategorySelections = CategorySelections(),
+    /**
+     * Display name of the picked M3U for a [SOURCE_FILE] playlist (the local copy lives at
+     * `files/playlists/{id}.m3u`; see M3UFileStore). Null for every other source type. A file
+     * playlist that arrives with no local copy (synced from another device — file contents are
+     * NOT synced) keeps this so the UI can offer "re-import on this device".
+     */
+    val fileName: String? = null
 ) {
     fun typeEnabled(type: String): Boolean = type in contentTypes
 

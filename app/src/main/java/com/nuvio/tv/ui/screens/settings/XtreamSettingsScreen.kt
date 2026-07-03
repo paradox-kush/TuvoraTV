@@ -1,6 +1,12 @@
 package com.nuvio.tv.ui.screens.settings
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.view.KeyEvent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -44,6 +50,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -133,6 +140,9 @@ fun XtreamSettingsContent(
             onSubmitM3U = { playlistUrl, userAgent, name, options ->
                 viewModel.addM3UUrl(playlistUrl, userAgent, name, options) { showAddDialog = false }
             },
+            onSubmitFile = { uri, fileName, name, options ->
+                viewModel.addM3UFile(uri, fileName, name, options) { showAddDialog = false }
+            },
             onDismiss = {
                 viewModel.clearError()
                 showAddDialog = false
@@ -152,6 +162,10 @@ fun XtreamSettingsContent(
             onSubmitM3U = { playlistUrl, userAgent, _, options ->
                 viewModel.editM3UUrl(account, playlistUrl, userAgent, options) { editFor = null }
             },
+            onSubmitFile = { uri, fileName, _, _ ->
+                // Editing a file playlist = re-pick its file (same id, keeps saved content/options).
+                viewModel.addM3UFile(uri, fileName, name = null, reimportFor = account) { editFor = null }
+            },
             onDismiss = {
                 viewModel.clearError()
                 editFor = null
@@ -160,14 +174,32 @@ fun XtreamSettingsContent(
     }
 
     actionsFor?.let { account ->
+        val needsReimport = viewModel.needsReimport(account)
         NuvioDialog(
             onDismiss = { actionsFor = null },
             title = account.name,
-            subtitle = account.baseUrl
+            subtitle = when {
+                needsReimport -> "Imported file not on this device — re-import to browse"
+                account.fileName != null -> account.fileName
+                else -> account.baseUrl
+            }
         ) {
+            // A file playlist with no local copy on this device (synced from elsewhere) can't browse
+            // until it's re-imported here — offer that first, hide the dead browse entries.
+            if (needsReimport) {
+                SettingsActionRow(
+                    title = "Re-import file",
+                    subtitle = "Pick the playlist file again on this device",
+                    leadingIcon = Icons.Default.Add,
+                    onClick = {
+                        actionsFor = null
+                        editFor = account
+                    }
+                )
+            }
             // Browse entries respect the content-type toggles — a disabled type is hidden here
             // too, not just in the hub (this was a bypass around "Hidden").
-            if (account.typeEnabled(XtreamAccount.TYPE_LIVE)) {
+            if (!needsReimport && account.typeEnabled(XtreamAccount.TYPE_LIVE)) {
                 SettingsActionRow(
                     title = "Browse Live TV",
                     subtitle = null,
@@ -178,7 +210,7 @@ fun XtreamSettingsContent(
                     }
                 )
             }
-            if (account.typeEnabled(XtreamAccount.TYPE_MOVIES)) {
+            if (!needsReimport && account.typeEnabled(XtreamAccount.TYPE_MOVIES)) {
                 SettingsActionRow(
                     title = "Browse Movies (VOD)",
                     subtitle = null,
@@ -198,14 +230,18 @@ fun XtreamSettingsContent(
                     contentForId = id
                 }
             )
-            SettingsActionRow(
-                title = "Edit URL / credentials",
-                subtitle = null,
-                onClick = {
-                    actionsFor = null
-                    editFor = account
-                }
-            )
+            // File playlists have no URL/creds to edit — re-picking the file IS the edit. Only show
+            // the plain "Edit" entry when the file is present (a missing file shows Re-import above).
+            if (!(account.fileName != null && needsReimport)) {
+                SettingsActionRow(
+                    title = if (account.fileName != null) "Change / re-import file" else "Edit URL / credentials",
+                    subtitle = null,
+                    onClick = {
+                        actionsFor = null
+                        editFor = account
+                    }
+                )
+            }
             SettingsActionRow(
                 title = if (account.enabled) "Disable" else "Enable",
                 subtitle = null,
@@ -482,24 +518,23 @@ private fun SettingsRowCard(
     )
 }
 
-// --- "Add Playlist" form (playlist manager P1) ------------------------------
-// Only Xtream is functional in P1. URL / Stalker source tiles render with a "Soon" badge and
-// are non-selectable; File is hidden on TV entirely (SAF is unreliable on Android TV). To enable
-// a source in a later phase, flip its `enabled` flag in [PLAYLIST_SOURCES] and fill in its
-// currently-stubbed field layout (see UrlSourceFields / StalkerSourceFields).
+// --- "Add Playlist" form (playlist manager P1/P2) ---------------------------
+// Xtream, URL, and File are functional; Stalker renders with a "Soon" badge and is non-selectable.
+// The File tile IS shown on TV: SAF's ACTION_OPEN_DOCUMENT is often unavailable on Android TV, so
+// the file source degrades gracefully — if no documents UI resolves the intent, it shows an inline
+// "add by URL or from your phone" message instead of crashing (see FileSourceFields). To enable a
+// future source, flip its `enabled` flag in [PLAYLIST_SOURCES] and fill in its field layout.
 
 /** A selectable source-type tile. `enabled=false` -> shows a "Soon" badge and can't be picked. */
 private data class PlaylistSource(
     val id: String,
     val label: String,
-    val enabled: Boolean,
-    /** Hidden entirely (not even shown disabled). File is hidden on TV. */
-    val hiddenOnTv: Boolean = false
+    val enabled: Boolean
 )
 
 private val PLAYLIST_SOURCES = listOf(
     PlaylistSource(XtreamAccount.SOURCE_URL, "URL", enabled = true),
-    PlaylistSource(XtreamAccount.SOURCE_FILE, "File", enabled = false, hiddenOnTv = true),
+    PlaylistSource(XtreamAccount.SOURCE_FILE, "File", enabled = true),
     PlaylistSource(XtreamAccount.SOURCE_XTREAM, "Xtream", enabled = true),
     PlaylistSource(XtreamAccount.SOURCE_STALKER, "Stalker", enabled = false)
 )
@@ -525,11 +560,36 @@ private fun XtreamAddDialog(
     onSubmitUrl: (String, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onSubmitManual: (server: String, user: String, pass: String, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onSubmitM3U: (playlistUrl: String, userAgent: String?, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
+    onSubmitFile: (uri: Uri, fileName: String, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onDismiss: () -> Unit,
     initial: XtreamAccount? = null
 ) {
-    // Source type — Xtream is the default; URL (M3U) is now selectable too.
+    val context = LocalContext.current
+    // Source type — Xtream is the default; URL (M3U) + File are selectable too.
     var sourceType by remember { mutableStateOf(initial?.sourceType ?: XtreamAccount.SOURCE_XTREAM) }
+
+    // File source: the picked document uri + its display name (null until the user picks one).
+    var pickedFileUri by remember { mutableStateOf<Uri?>(null) }
+    var pickedFileName by remember { mutableStateOf(if (initial?.sourceType == XtreamAccount.SOURCE_FILE) initial.fileName.orEmpty() else "") }
+    // ACTION_OPEN_DOCUMENT is often absent on Android TV — detect via resolveActivity and, if so,
+    // show an honest inline message instead of launching an intent that no activity can handle.
+    val openDocIntent = remember {
+        Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+    }
+    val filePickerAvailable = remember {
+        openDocIntent.resolveActivity(context.packageManager) != null
+    }
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            pickedFileUri = uri
+            pickedFileName = queryDisplayName(context, uri) ?: pickedFileName.ifBlank { "playlist.m3u" }
+        }
+    }
 
     // Xtream is portal + username + password (the reference form). The three fields are the
     // default; "Paste link" stays as a secondary convenience. Pasting a get.php URL into the
@@ -578,6 +638,11 @@ private fun XtreamAddDialog(
                     onSubmitM3U(m3uUrl.trim(), m3uUserAgent.trim().ifEmpty { null }, name.trim().ifEmpty { null }, options())
                 }
             }
+            XtreamAccount.SOURCE_FILE -> {
+                pickedFileUri?.let { uri ->
+                    onSubmitFile(uri, pickedFileName.ifBlank { "playlist.m3u" }, name.trim().ifEmpty { null }, options())
+                }
+            }
         }
     }
 
@@ -599,7 +664,7 @@ private fun XtreamAddDialog(
             // --- Source Type -------------------------------------------------
             FormSectionLabel("Source Type")
             Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
-                PLAYLIST_SOURCES.filterNot { it.hiddenOnTv }.forEach { source ->
+                PLAYLIST_SOURCES.forEach { source ->
                     SourceTypeTile(
                         source = source,
                         selected = sourceType == source.id,
@@ -641,6 +706,15 @@ private fun XtreamAddDialog(
                     firstFieldFocus = firstFieldFocus,
                     onSubmit = submit
                 )
+                XtreamAccount.SOURCE_FILE -> FileSourceFields(
+                    pickerAvailable = filePickerAvailable,
+                    pickedFileName = pickedFileName,
+                    reimport = initial?.sourceType == XtreamAccount.SOURCE_FILE,
+                    onChooseFile = { runCatching { filePicker.launch(arrayOf("*/*")) } },
+                    name = name,
+                    onNameChange = { name = it },
+                    onSubmit = submit
+                )
                 XtreamAccount.SOURCE_STALKER -> StalkerSourceFields()
             }
 
@@ -667,7 +741,12 @@ private fun XtreamAddDialog(
             XtreamAddButton(
                 isValidating = isValidating,
                 label = if (initial != null) "Save changes" else "Add Playlist",
-                enabled = sourceType == XtreamAccount.SOURCE_XTREAM || sourceType == XtreamAccount.SOURCE_URL,
+                enabled = when (sourceType) {
+                    XtreamAccount.SOURCE_XTREAM, XtreamAccount.SOURCE_URL -> true
+                    // File: only submittable once a document is actually picked.
+                    XtreamAccount.SOURCE_FILE -> pickedFileUri != null
+                    else -> false
+                },
                 onClick = submit
             )
 
@@ -831,6 +910,53 @@ private fun UrlSourceFields(
     XtreamField(name, onNameChange, "Name (optional)", onSubmit = onSubmit)
     FormHelperText("Paste the playlist URL. The whole list is downloaded and indexed once so it browses fast; large lists take a moment after saving.")
 }
+
+/**
+ * Field layout for an M3U FILE source. When a documents UI is available, a "Choose file" button
+ * launches ACTION_OPEN_DOCUMENT (via the parent's launcher) and the picked file's name is shown;
+ * the file is copied into app storage on save and ingested like a URL playlist. When NO documents
+ * UI resolves the intent (common on Android TV), the button is replaced by an honest message
+ * pointing the user at the URL source or their phone (file playlists sync as an account, so a phone
+ * import shows up here to re-import). [reimport] tweaks the copy for a lost-local-file re-pick.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun FileSourceFields(
+    pickerAvailable: Boolean,
+    pickedFileName: String,
+    reimport: Boolean,
+    onChooseFile: () -> Unit,
+    name: String,
+    onNameChange: (String) -> Unit,
+    onSubmit: () -> Unit
+) {
+    if (!pickerAvailable) {
+        FormHelperText("No file picker on this device — add the file by URL or from your phone (it syncs).")
+        return
+    }
+    if (reimport && pickedFileName.isNotBlank()) {
+        FormHelperText("This file playlist was added on another device. Re-import \"$pickedFileName\" to browse it here.")
+    }
+    SettingsActionRow(
+        title = if (pickedFileName.isBlank()) "Choose file" else "Change file",
+        subtitle = pickedFileName.ifBlank { "Pick an .m3u / .m3u8 (or .gz) playlist file" },
+        value = null,
+        onClick = onChooseFile
+    )
+    XtreamField(name, onNameChange, "Name (optional)", onSubmit = onSubmit)
+    FormHelperText("The file is copied into the app so it keeps working if the original moves or is deleted. File contents don't sync across devices.")
+}
+
+/** Best-effort human display name for a picked document uri (falls back to null). */
+private fun queryDisplayName(context: android.content.Context, uri: Uri): String? =
+    runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) {
+                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) c.getString(idx) else null
+            } else null
+        }
+    }.getOrNull()
 
 /**
  * Field layout for a Stalker portal source. STUB — not wired in P1 (the Stalker tile is disabled).

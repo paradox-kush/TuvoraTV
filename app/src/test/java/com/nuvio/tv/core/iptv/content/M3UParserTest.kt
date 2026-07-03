@@ -128,6 +128,33 @@ class M3UParserTest {
         assertEquals("The Grand Tour S01E02", entries[2].name)
     }
 
+    // --- #EXTM3U url-tvg (default XMLTV EPG) header --------------------------
+
+    @Test
+    fun `tvgUrlOf reads url-tvg and x-tvg-url from the header`() {
+        assertEquals("http://epg/xmltv.xml.gz", M3UParser.tvgUrlOf("""#EXTM3U url-tvg="http://epg/xmltv.xml.gz""""))
+        assertEquals("http://epg/x.xml", M3UParser.tvgUrlOf("""#EXTM3U x-tvg-url="http://epg/x.xml""""))
+        // url-tvg wins when both present
+        assertEquals("http://a", M3UParser.tvgUrlOf("""#EXTM3U url-tvg="http://a" x-tvg-url="http://b""""))
+        // no attr / not a header line -> null
+        assertNull(M3UParser.tvgUrlOf("#EXTM3U"))
+        assertNull(M3UParser.tvgUrlOf("""#EXTINF:-1 url-tvg="http://x","""))
+    }
+
+    @Test
+    fun `parseStream surfaces the header url-tvg once`() {
+        val withHeader = """
+            #EXTM3U url-tvg="http://epg/guide.xml.gz"
+            #EXTINF:-1 group-title="G",Chan
+            http://h/live/1.ts
+        """.trimIndent()
+        var captured: String? = null
+        buildList<M3UEntry> {
+            M3UParser.parseStream(withHeader.reader().buffered(), onHeaderTvgUrl = { captured = it }) { add(it) }
+        }
+        assertEquals("http://epg/guide.xml.gz", captured)
+    }
+
     @Test
     fun `gzip body parses identically to plain (transparent decode through the reader)`() {
         val gzBytes = java.io.ByteArrayOutputStream().also { bos ->

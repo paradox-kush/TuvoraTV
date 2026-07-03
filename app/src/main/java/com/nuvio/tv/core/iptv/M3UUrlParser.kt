@@ -36,5 +36,38 @@ fun m3uAccountFromUrl(playlistUrl: String, userAgent: String? = null, name: Stri
     )
 }
 
+/**
+ * Builds an [XtreamAccount] for an **M3U FILE** playlist (sourceType = [XtreamAccount.SOURCE_FILE]).
+ * The picked file is copied into app storage (see M3UFileStore) so the original can disappear; the
+ * account only carries a stable [playlistId] and the [fileName] for display + re-import prompts.
+ *
+ *  - [XtreamAccount.id] is the supplied [playlistId] (a fresh `file:{uuid}` minted once when the
+ *    user picks a file, so re-editing the same playlist keeps its id and its saved content ids).
+ *  - [XtreamAccount.baseUrl] is empty — there is no URL; the source is the local copy at
+ *    `files/playlists/{id-hash}.m3u`. [XtreamAccount.username] (the M3U UA slot) stays empty too.
+ *  - [XtreamAccount.fileName] is the display name of the picked document.
+ *
+ * File playlists are NOT synced (per spec §3.2): the local copy can't travel, so a device that
+ * pulls one shows a "re-import" affordance instead. Pure so the mapping is unit-testable.
+ */
+fun m3uAccountFromFile(playlistId: String, fileName: String, name: String? = null): XtreamAccount = XtreamAccount(
+    id = playlistId,
+    name = name?.trim()?.takeIf { it.isNotEmpty() } ?: fileName,
+    baseUrl = "",
+    username = "",
+    password = "",
+    sourceType = XtreamAccount.SOURCE_FILE,
+    fileName = fileName
+)
+
+/** A fresh, filesystem-safe, stable playlist id for a newly-picked file. */
+fun newM3UFilePlaylistId(): String = "file:" + java.util.UUID.randomUUID().toString()
+
 /** True for an account whose content comes from a parsed M3U URL rather than an Xtream API. */
 fun XtreamAccount.isM3U(): Boolean = sourceType == XtreamAccount.SOURCE_URL
+
+/** True for an account whose content comes from a locally-copied M3U file. */
+fun XtreamAccount.isM3UFile(): Boolean = sourceType == XtreamAccount.SOURCE_FILE
+
+/** True for either M3U-backed source (URL or File) — both browse/play through [M3UClient]. */
+fun XtreamAccount.isM3UBacked(): Boolean = isM3U() || isM3UFile()

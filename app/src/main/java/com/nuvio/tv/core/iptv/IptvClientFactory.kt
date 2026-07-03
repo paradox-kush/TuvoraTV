@@ -7,6 +7,7 @@ import javax.inject.Singleton
  * Hands a call site the right [IptvClient] for an account, dispatching on [XtreamAccount.sourceType]:
  *  - [XtreamAccount.SOURCE_XTREAM] -> [XtreamClient] (live `player_api.php`)
  *  - [XtreamAccount.SOURCE_URL]    -> [M3UClient] (pre-ingested M3U catalog in SQLite)
+ *  - [XtreamAccount.SOURCE_FILE]   -> [M3UClient] (same catalog, ingested from a local file copy)
  *
  * Every IPTV consumer (hub, live guide, search, meta/stream short-circuits) resolves its client
  * through here so the browse/play pipeline stays source-agnostic — the registry ids, native detail,
@@ -19,7 +20,7 @@ class IptvClientFactory @Inject constructor(
     private val m3uClient: M3UClient,
 ) {
     fun clientFor(account: XtreamAccount): IptvClient = when (account.sourceType) {
-        XtreamAccount.SOURCE_URL -> m3uClient
+        XtreamAccount.SOURCE_URL, XtreamAccount.SOURCE_FILE -> m3uClient
         else -> xtreamClient
     }
 

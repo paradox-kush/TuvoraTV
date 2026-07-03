@@ -137,5 +137,6 @@ private fun XtreamAccount.withDecodeDefaults(hadAutoRefresh: Boolean): XtreamAcc
     // present → keep the stored value (incl. a deliberate 0 = Off).
     autoRefreshHours = if (hadAutoRefresh) autoRefreshHours else XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS,
     contentTypes = contentTypes ?: XtreamAccount.DEFAULT_CONTENT_TYPES,
-    categorySelections = categorySelections ?: CategorySelections()
+    categorySelections = categorySelections ?: CategorySelections(),
+    fileName = fileName   // nullable; missing in older JSON -> null, which is the default anyway
 )
