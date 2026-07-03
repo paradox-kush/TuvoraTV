@@ -45,6 +45,17 @@ data class RadarUiState(
         else feedConfirmed || fixture.inferredLive(nowMs)
     }
 
+    /** Finished/started fixtures of one league, most recent first (scores when the API has them). */
+    fun recent(leagueId: String, nowMs: Long, cap: Int = 15): List<RadarFixture> =
+        fixturesByLeague[leagueId].orEmpty()
+            .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
+            .filter { fx ->
+                val start = fx.startEpochMs ?: return@filter false
+                start < nowMs && !isLive(fx, nowMs)
+            }
+            .sortedByDescending { it.startEpochMs }
+            .take(cap)
+
     fun upcoming(leagueIds: Collection<String>, nowMs: Long, cap: Int = 20): List<RadarFixture> =
         leagueIds.asSequence()
             .flatMap { fixturesByLeague[it].orEmpty() }
@@ -165,6 +176,25 @@ class RadarRepository @Inject constructor(
             )
             store.saveState(current.copy(prefs = prefs))
             syncService.triggerRemoteSync()
+        }
+    }
+
+    /**
+     * On-demand fetch for a league the user is BROWSING (league/event page) — followed
+     * leagues load via [refreshFixtures]; discovery must not depend on following.
+     */
+    fun ensureLeagueLoaded(leagueId: String) {
+        if (_uiState.value.fixturesByLeague.containsKey(leagueId)) return
+        val sport = _uiState.value.leagueById(leagueId)?.sport?.lowercase()
+        val sports = if (sport != null && sport in RADAR_LIVESCORE_SPORTS) setOf(sport) else emptySet()
+        scope.launch {
+            val response = fixturesClient.fetch(listOf(leagueId), sports) ?: return@launch
+            _uiState.update {
+                it.copy(
+                    fixturesByLeague = it.fixturesByLeague + response.fixtures,
+                    liveEventIds = it.liveEventIds + liveIds(response),
+                )
+            }
         }
     }
 

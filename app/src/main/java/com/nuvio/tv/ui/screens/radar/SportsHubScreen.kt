@@ -48,6 +48,7 @@ import com.nuvio.tv.core.radar.RadarCategory
 import com.nuvio.tv.core.radar.RadarChannelMatcher
 import com.nuvio.tv.core.radar.RadarFeaturedEvent
 import com.nuvio.tv.core.radar.RadarFixture
+import com.nuvio.tv.core.radar.RadarLeague
 import com.nuvio.tv.core.radar.RadarTime
 import com.nuvio.tv.core.radar.radarWhenLabel
 import com.nuvio.tv.ui.components.NuvioDialog
@@ -74,7 +75,36 @@ fun SportsHubScreen(
     val featured = state.activeFeatured(nowMs)
     val upcoming = state.upcoming(state.followedLeagueIds + featured.map { it.leagueId }, nowMs)
     var browseCategory by remember { mutableStateOf<RadarCategory?>(null) }
+    // Discovery drill-in: a league/event page listing everything happening in it.
+    var leaguePage by remember { mutableStateOf<RadarLeague?>(null) }
     val firstFocus = remember { FocusRequester() }
+
+    leaguePage?.let { league ->
+        LeagueFixturesPage(
+            state = state,
+            league = league,
+            isLive = state.isLiveCheck(nowMs),
+            ensureLoaded = { viewModel.repository.ensureLeagueLoaded(it) },
+            onMatch = { viewModel.openMatch(it) },
+            onToggleFollow = { viewModel.repository.toggleFollow(league) },
+            onBack = { leaguePage = null },
+        )
+        sheet?.let { s ->
+            val hasPlaylistsNow by viewModel.hasPlaylists.collectAsStateWithLifecycle()
+            MatchChannelsOverlay(
+                state = s.copy(hasPlaylists = hasPlaylistsNow),
+                isLive = viewModel.uiState.value.isLive(s.fixture, RadarTime.nowMs()),
+                onPlay = { match ->
+                    val (title, url, contentId) = viewModel.preparePlay(match)
+                    viewModel.closeMatch()
+                    onPlayChannel(title, url, contentId)
+                },
+                onAddProvider = { viewModel.closeMatch(); onAddProvider() },
+                onDismiss = { viewModel.closeMatch() },
+            )
+        }
+        return
+    }
 
     Column(
         modifier = Modifier
@@ -104,10 +134,8 @@ fun SportsHubScreen(
                                 event = event,
                                 matchCount = state.upcoming(listOf(event.leagueId), nowMs, cap = 99).size,
                                 focusRequester = if (event === featured.first()) firstFocus else null,
-                                onClick = {
-                                    state.upcoming(listOf(event.leagueId), nowMs, cap = 1).firstOrNull()
-                                        ?.let { viewModel.openMatch(it) }
-                                },
+                                // Into the event: every match, live + recent — discovery first.
+                                onClick = { state.leagueById(event.leagueId)?.let { leaguePage = it } },
                             )
                         }
                     }
@@ -176,12 +204,13 @@ fun SportsHubScreen(
         NuvioDialog(
             onDismiss = { browseCategory = null },
             title = category.name,
-            subtitle = "Select a league to follow or unfollow",
+            subtitle = "Select a league to see its matches",
         ) {
             LazyColumn(modifier = Modifier.height(400.dp)) {
                 items(category.leagues, key = { it.id }) { league ->
                     val followed = league.id in state.followedLeagueIds
-                    FocusableRow(onClick = { viewModel.repository.toggleFollow(league) }) {
+                    // OK = go INSIDE the league (discovery); following happens on its page.
+                    FocusableRow(onClick = { browseCategory = null; leaguePage = league }) {
                         AsyncImage(model = league.badge, contentDescription = null, modifier = Modifier.size(32.dp))
                         Spacer(Modifier.width(NuvioTheme.spacing.md))
                         Text(
@@ -191,7 +220,7 @@ fun SportsHubScreen(
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            if (followed) "★ Following" else "Follow",
+                            if (followed) "★ Following" else "›",
                             style = MaterialTheme.typography.labelLarge,
                             color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
                         )
@@ -334,13 +363,17 @@ private fun MatchRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun MatchCard(fixture: RadarFixture, live: Boolean, onClick: () -> Unit) {
+private fun MatchCard(
+    fixture: RadarFixture,
+    live: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier.width(280.dp),
+) {
     var focused by remember { mutableStateOf(false) }
     // Focus = unmistakable Primary treatment (HubChip's vocabulary): the D-pad cursor must
     // always be visible. onFocusChanged BEFORE clickable, per the guide-row gotcha.
     Column(
-        modifier = Modifier
-            .width(280.dp)
+        modifier = modifier
             .clip(RoundedCornerShape(10.dp))
             .background(
                 if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.24f)
@@ -385,11 +418,122 @@ private fun MatchCard(fixture: RadarFixture, live: Boolean, onClick: () -> Unit)
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.height(NuvioTheme.spacing.sm))
-        Text(
-            fixture.startEpochMs?.let { radarWhenLabel(it) } ?: "Time TBC",
-            style = MaterialTheme.typography.labelMedium,
-            color = NuvioTheme.colors.TextSecondary,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                fixture.startEpochMs?.let { radarWhenLabel(it) } ?: "Time TBC",
+                style = MaterialTheme.typography.labelMedium,
+                color = NuvioTheme.colors.TextSecondary,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            fixture.scoreLabel?.let { score ->
+                Spacer(Modifier.width(NuvioTheme.spacing.sm))
+                Text(
+                    score,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = NuvioTheme.colors.TextPrimary,
+                )
+            }
+        }
+    }
+}
+
+/** League/event page: EVERYTHING happening in it — live, upcoming, recent results. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun LeagueFixturesPage(
+    state: com.nuvio.tv.core.radar.RadarUiState,
+    league: RadarLeague,
+    isLive: (RadarFixture) -> Boolean,
+    ensureLoaded: (String) -> Unit,
+    onMatch: (RadarFixture) -> Unit,
+    onToggleFollow: () -> Unit,
+    onBack: () -> Unit,
+) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    // Browsing must not require following — fetch this league on demand.
+    LaunchedEffect(league.id) { ensureLoaded(league.id) }
+    val nowMs = RadarTime.nowMs()
+    val upcoming = state.upcoming(listOf(league.id), nowMs, cap = 40)
+    val recent = state.recent(league.id, nowMs)
+    val loaded = state.fixturesByLeague.containsKey(league.id)
+    val followed = league.id in state.followedLeagueIds
+    val headerFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { headerFocus.requestFocus() } }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = NuvioTheme.spacing.xl, start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(model = league.badge, contentDescription = null, modifier = Modifier.size(56.dp))
+            Spacer(Modifier.width(NuvioTheme.spacing.md))
+            Column(Modifier.weight(1f)) {
+                Text(league.name, style = MaterialTheme.typography.headlineSmall, color = NuvioTheme.colors.TextPrimary)
+                Text(
+                    listOfNotNull(league.sport, if (loaded) "${upcoming.size} upcoming" else "Loading…").joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioTheme.colors.TextSecondary,
+                )
+            }
+            Box(modifier = Modifier.focusRequester(headerFocus)) {
+                FocusableRow(onClick = onToggleFollow) {
+                    Text(
+                        if (followed) "★ Following" else "Follow",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextPrimary,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(NuvioTheme.spacing.md))
+        LazyColumn(contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxxl)) {
+            if (upcoming.isNotEmpty()) {
+                item(key = "up-title") {
+                    Text(
+                        "Live & Upcoming",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NuvioTheme.colors.TextPrimary,
+                        modifier = Modifier.padding(vertical = NuvioTheme.spacing.sm),
+                    )
+                }
+                items(upcoming, key = { "up-${it.id ?: it.hashCode()}" }) { fx ->
+                    MatchCard(
+                        fx, live = isLive(fx), onClick = { onMatch(fx) },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs),
+                    )
+                }
+            }
+            if (recent.isNotEmpty()) {
+                item(key = "recent-title") {
+                    Text(
+                        "Recent results",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NuvioTheme.colors.TextPrimary,
+                        modifier = Modifier.padding(vertical = NuvioTheme.spacing.sm),
+                    )
+                }
+                items(recent, key = { "rec-${it.id ?: it.hashCode()}" }) { fx ->
+                    MatchCard(
+                        fx, live = false, onClick = { onMatch(fx) },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs),
+                    )
+                }
+            }
+            if (loaded && upcoming.isEmpty() && recent.isEmpty()) {
+                item(key = "empty") {
+                    Text(
+                        "No scheduled matches right now.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NuvioTheme.colors.TextSecondary,
+                        modifier = Modifier.padding(vertical = NuvioTheme.spacing.md),
+                    )
+                }
+            }
+        }
     }
 }
 

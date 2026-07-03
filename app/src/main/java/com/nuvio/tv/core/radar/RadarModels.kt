@@ -100,6 +100,10 @@ data class RadarFixture(
             else -> "Round $round"
         }
 
+    /** "2 – 1" when the API has a result for this fixture (finished/in-play), else null. */
+    val scoreLabel: String?
+        get() = if (!homeScore.isNullOrBlank() && !awayScore.isNullOrBlank()) "$homeScore – $awayScore" else null
+
     /**
      * In its live window? Kick-off reached and a sport-typical duration not yet elapsed.
      * The livescore feed overrides this for the sports it covers (soccer, NFL, NBA, MLB, NHL).
