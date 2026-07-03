@@ -100,9 +100,11 @@ fun pairingPayloadToXtreamAccount(payload: JsonElement?): XtreamAccount? {
             )
         }
 
-        XtreamAccount.SOURCE_URL -> {
-            // The playlist URL may arrive under `url` (web-form convention) or `base_url` (the
-            // sync row column). Reuse the same builder the settings form uses so ids match.
+        // The pairing page (and mobile) send the wire spelling `m3u_url`; this client's internal
+        // constant is "url" — accept both. The playlist URL may arrive under `url` (web-form
+        // convention) or `base_url` (the sync row column). Reuse the same builder the settings
+        // form uses so ids match.
+        XtreamAccount.SOURCE_URL, "m3u_url" -> {
             val url = (obj.stringField("url") ?: obj.stringField("base_url"))
                 ?.takeIf { it.isNotBlank() } ?: return null
             val userAgent = obj.stringField("user_agent") ?: obj.stringField("username")
@@ -111,19 +113,27 @@ fun pairingPayloadToXtreamAccount(payload: JsonElement?): XtreamAccount? {
         }
 
         XtreamAccount.SOURCE_STALKER -> {
-            // No browse support yet — but keep the row so it syncs + works once Stalker lands.
-            // Stash portal_url in baseUrl and mac_address in username (the model has no dedicated
-            // fields; these round-trip through the sync JSON columns).
-            val portal = (obj.stringField("portal_url") ?: obj.stringField("base_url"))
+            // Same shape (fields + id) the settings form's Stalker builder produces, so a paired
+            // portal authenticates identically to a hand-typed one (StalkerSession reads
+            // portalUrl/macAddress, NOT baseUrl/username).
+            val portalRaw = (obj.stringField("portal_url") ?: obj.stringField("base_url"))
                 ?.takeIf { it.isNotBlank() } ?: return null
-            val mac = obj.stringField("mac_address").orEmpty()
+            val portal = if (portalRaw.startsWith("http")) portalRaw else "http://$portalRaw"
+            val mac = obj.stringField("mac_address")?.takeIf { it.isNotBlank() } ?: return null
             XtreamAccount(
-                id = "stalker:$portal|$mac",
+                id = "stalker|$portal|$mac",
                 name = name?.ifBlank { null } ?: portal,
                 baseUrl = portal,
-                username = mac,
-                password = obj.stringField("password").orEmpty(),
-                sourceType = XtreamAccount.SOURCE_STALKER
+                username = "",
+                password = "",
+                sourceType = XtreamAccount.SOURCE_STALKER,
+                portalUrl = portal,
+                macAddress = mac,
+                stalkerUsername = obj.stringField("stalker_username").orEmpty(),
+                stalkerPassword = obj.stringField("stalker_password").orEmpty(),
+                serialNumber = obj.stringField("serial_number").orEmpty(),
+                deviceId = obj.stringField("device_id").orEmpty(),
+                sendDeviceId = obj.boolField("send_device_id") ?: true
             )
         }
 

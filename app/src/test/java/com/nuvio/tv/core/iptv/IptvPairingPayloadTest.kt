@@ -101,7 +101,19 @@ class IptvPairingPayloadTest {
     }
 
     @Test
-    fun `stalker payload is saved even though it cannot be browsed yet`() {
+    fun `the pairing page's m3u_url wire spelling maps to the internal url source type`() {
+        val payload = buildJsonObject {
+            put("source_type", "m3u_url")   // what page.html actually submits
+            put("url", "http://host/playlist.m3u")
+        }
+        val account = pairingPayloadToXtreamAccount(payload)
+        assertNotNull(account)
+        assertEquals(XtreamAccount.SOURCE_URL, account!!.sourceType)
+        assertEquals("http://host/playlist.m3u", account.baseUrl)
+    }
+
+    @Test
+    fun `stalker payload builds the same account shape as the settings form`() {
         val payload = buildJsonObject {
             put("source_type", "stalker")
             put("name", "Portal")
@@ -110,13 +122,22 @@ class IptvPairingPayloadTest {
         }
 
         val account = pairingPayloadToXtreamAccount(payload)
-        // Spec §4: unbrowsable source types must still persist (they sync + work once implemented).
         assertNotNull(account)
         account!!
         assertEquals(XtreamAccount.SOURCE_STALKER, account.sourceType)
         assertEquals("Portal", account.name)
-        assertEquals("http://portal.example/c/", account.baseUrl)     // portal_url stashed in baseUrl
-        assertEquals("00:1A:79:AA:BB:CC", account.username)           // mac_address stashed in username
+        // The P4 session reads portalUrl/macAddress — the dedicated fields must be populated
+        // (NOT stashed in baseUrl/username), and the id must match the form builder's format.
+        assertEquals("http://portal.example/c/", account.portalUrl)
+        assertEquals("00:1A:79:AA:BB:CC", account.macAddress)
+        assertEquals("stalker|http://portal.example/c/|00:1A:79:AA:BB:CC", account.id)
+        assertEquals(true, account.sendDeviceId)
+
+        // A MAC-less stalker payload can never authenticate — dropped, not saved broken.
+        assertNull(pairingPayloadToXtreamAccount(buildJsonObject {
+            put("source_type", "stalker")
+            put("portal_url", "http://portal.example/c/")
+        }))
     }
 
     @Test

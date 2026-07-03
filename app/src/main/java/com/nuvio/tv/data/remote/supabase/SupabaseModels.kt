@@ -57,6 +57,18 @@ data class SupabaseIptvPlaylist(
     @SerialName("auto_refresh_hours") val autoRefreshHours: Int = 0,
     @SerialName("content_types") val contentTypes: List<String> = listOf("live", "movies", "series"),
     @SerialName("category_selections") val categorySelections: JsonElement? = null,
+    // M3U (url/file) columns
+    val url: String? = null,
+    @SerialName("user_agent") val userAgent: String? = null,
+    @SerialName("file_name") val fileName: String? = null,
+    // Stalker columns
+    @SerialName("portal_url") val portalUrl: String? = null,
+    @SerialName("mac_address") val macAddress: String? = null,
+    @SerialName("stalker_username") val stalkerUsername: String? = null,
+    @SerialName("stalker_password") val stalkerPassword: String? = null,
+    @SerialName("serial_number") val serialNumber: String? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+    @SerialName("send_device_id") val sendDeviceId: Boolean = true,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("updated_at") val updatedAt: String? = null
 )

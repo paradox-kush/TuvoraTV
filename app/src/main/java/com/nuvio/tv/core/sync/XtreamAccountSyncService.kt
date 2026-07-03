@@ -4,6 +4,7 @@ import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.iptv.CategorySelections
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.m3uAccountFromUrl
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.XtreamAccountStore
@@ -114,11 +115,11 @@ class XtreamAccountSyncService @Inject constructor(
                     .decodeList<SupabaseIptvPlaylist>()
             }
             // Emptiness is decided AFTER filtering to rows this client understands: a table
-            // holding only foreign source types (m3u/stalker from a newer client) must behave
-            // exactly like an empty remote — applying an empty list would wipe local state.
+            // holding only foreign source types (a future client's) must behave exactly like an
+            // empty remote — applying an empty list would wipe local state.
             val remoteAccounts = rows.sortedBy { it.sortOrder }.mapNotNull { it.toXtreamAccountOrNull() }
             if (remoteAccounts.isNotEmpty()) {
-                applyRemote(remoteAccounts)
+                applyRemote(reconcileLocalIds(remoteAccounts, accountStore.accounts.first()))
                 Log.d(TAG, "Pulled ${remoteAccounts.size} iptv playlists for profile $profileId")
                 return@withContext Result.success(Unit)
             }
@@ -185,20 +186,90 @@ class XtreamAccountSyncService @Inject constructor(
     }
 }
 
-/** P1: this client only understands xtream sources; other source types stay remote-only. */
+// Wire (backend column enum) <-> internal source-type mapping. The table stores
+// xtream | m3u_url | m3u_file | stalker; this client's internal spellings for M3U are
+// SOURCE_URL ("url") / SOURCE_FILE ("file"). Mobile already writes the canonical names.
+private const val WIRE_M3U_URL = "m3u_url"
+private const val WIRE_M3U_FILE = "m3u_file"
+
+internal fun wireSourceType(internalType: String): String = when (internalType) {
+    XtreamAccount.SOURCE_URL -> WIRE_M3U_URL
+    XtreamAccount.SOURCE_FILE -> WIRE_M3U_FILE
+    else -> internalType
+}
+
+/**
+ * Maps a sync row to a local account for every source type this client understands; null for
+ * malformed rows and unknown (future) source types — those stay remote-only, and the push scope
+ * (p_source_types) guarantees we never delete them. Ids are re-derived with the same builders
+ * the settings form uses, so a pulled playlist matches a hand-added one. The internal "url"/"file"
+ * spellings are accepted as aliases beside the canonical wire names (defensive).
+ */
 internal fun SupabaseIptvPlaylist.toXtreamAccountOrNull(): XtreamAccount? {
-    if (sourceType != XtreamAccount.SOURCE_XTREAM) return null
-    val base = baseUrl ?: return null
-    val user = username ?: return null
-    val pass = password ?: return null
-    return XtreamAccount(
-        id = "$base|$user",
-        name = name ?: base,
-        baseUrl = base,
-        username = user,
-        password = pass,
-        enabled = enabled,
-        sourceType = sourceType,
+    val base: XtreamAccount = when (sourceType) {
+        XtreamAccount.SOURCE_XTREAM -> {
+            val baseUrl = baseUrl ?: return null
+            val user = username ?: return null
+            val pass = password ?: return null
+            XtreamAccount(
+                id = "$baseUrl|$user",
+                name = name ?: baseUrl,
+                baseUrl = baseUrl,
+                username = user,
+                password = pass,
+                enabled = enabled,
+                sourceType = XtreamAccount.SOURCE_XTREAM
+            )
+        }
+        WIRE_M3U_URL, XtreamAccount.SOURCE_URL -> {
+            val playlistUrl = (url ?: baseUrl)?.takeIf { it.isNotBlank() } ?: return null
+            // UA rides `user_agent` (canonical) with `username` as the legacy stash this client
+            // itself used to write.
+            m3uAccountFromUrl(
+                playlistUrl,
+                userAgent = (userAgent ?: username)?.takeIf { it.isNotBlank() },
+                name = name
+            )?.copy(enabled = enabled) ?: return null
+        }
+        WIRE_M3U_FILE, XtreamAccount.SOURCE_FILE -> {
+            // File BYTES are never synced — this lands as a re-import ghost. Deterministic id so
+            // repeated pulls are stable; reconcileLocalIds keeps the local id (and with it the
+            // local file copy) when this device already has the playlist.
+            val fn = (fileName ?: name)?.takeIf { it.isNotBlank() } ?: "Playlist"
+            XtreamAccount(
+                id = "file:synced-$fn",
+                name = name ?: fn.substringBeforeLast('.'),
+                baseUrl = "",
+                username = "",
+                password = "",
+                enabled = enabled,
+                sourceType = XtreamAccount.SOURCE_FILE,
+                fileName = fn
+            )
+        }
+        XtreamAccount.SOURCE_STALKER -> {
+            val portal = (portalUrl ?: baseUrl)?.takeIf { it.isNotBlank() } ?: return null
+            val mac = macAddress?.takeIf { it.isNotBlank() } ?: return null
+            XtreamAccount(
+                id = "stalker|$portal|$mac",
+                name = name ?: portal,
+                baseUrl = portal,
+                username = "",
+                password = "",
+                enabled = enabled,
+                sourceType = XtreamAccount.SOURCE_STALKER,
+                portalUrl = portal,
+                macAddress = mac,
+                stalkerUsername = stalkerUsername.orEmpty(),
+                stalkerPassword = stalkerPassword.orEmpty(),
+                serialNumber = serialNumber.orEmpty(),
+                deviceId = deviceId.orEmpty(),
+                sendDeviceId = sendDeviceId
+            )
+        }
+        else -> return null
+    }
+    return base.copy(
         epgUrl = epgUrl,
         dnsProvider = dnsProvider,
         autoRefreshHours = autoRefreshHours,
@@ -208,10 +279,29 @@ internal fun SupabaseIptvPlaylist.toXtreamAccountOrNull(): XtreamAccount? {
 }
 
 /**
+ * Keeps this device's account id when a pulled account is the same playlist under a different id.
+ * Only file playlists need it: their locally-minted id is a random `file:{uuid}` (the local copy
+ * lives at `{id}.m3u`), while a pulled ghost has the deterministic `file:synced-` id — matching by
+ * fileName preserves the local copy + saved content keys. Every other source type derives ids
+ * deterministically, so pulled == local already.
+ */
+internal fun reconcileLocalIds(pulled: List<XtreamAccount>, local: List<XtreamAccount>): List<XtreamAccount> =
+    pulled.map { acc ->
+        if (acc.sourceType != XtreamAccount.SOURCE_FILE) return@map acc
+        val match = local.firstOrNull { it.sourceType == XtreamAccount.SOURCE_FILE && it.fileName == acc.fileName }
+        if (match != null) acc.copy(id = match.id) else acc
+    }
+
+/** The wire source types this client fully understands — the push's full-replace scope. Unknown
+ *  (future) types stay outside the scope, so they can never be deleted by this client. */
+internal val SYNCED_SOURCE_TYPES = listOf(
+    XtreamAccount.SOURCE_XTREAM, WIRE_M3U_URL, WIRE_M3U_FILE, XtreamAccount.SOURCE_STALKER
+)
+
+/**
  * Full parameter object for `sync_push_iptv_playlists`. Every push scopes the full-replace with
- * `p_source_types: ["xtream"]` so this P1 client never deletes rows of source types it doesn't
- * understand (m3u/stalker written by a newer client). `p_only_if_empty` is sent only on the
- * legacy-migration push.
+ * the source types this client understands, so it never deletes rows of a type it doesn't
+ * (written by a newer client). `p_only_if_empty` is sent only on the legacy-migration push.
  */
 internal fun playlistPushParams(accounts: List<XtreamAccount>, profileId: Int, onlyIfEmpty: Boolean): JsonObject =
     buildJsonObject {
@@ -219,26 +309,43 @@ internal fun playlistPushParams(accounts: List<XtreamAccount>, profileId: Int, o
             accounts.forEachIndexed { index, acc -> add(playlistPushJson(acc, index)) }
         })
         put("p_profile_id", profileId)
-        put("p_source_types", buildJsonArray { add(XtreamAccount.SOURCE_XTREAM) })
+        put("p_source_types", buildJsonArray { SYNCED_SOURCE_TYPES.forEach { add(it) } })
         if (onlyIfEmpty) put("p_only_if_empty", true)
     }
 
 /**
  * One playlist row of the `sync_push_iptv_playlists` payload. Contract (must match the
- * migration RPC in nuvio-backend `20260702000000_iptv_playlists.sql`): source_type, name
- * (omitted when blank), enabled, sort_order, base_url, username, password, epg_url (omitted
- * when null), dns_provider, auto_refresh_hours, content_types (array of strings),
- * category_selections (object with live/movies/series arrays, each omitted when null;
- * whole object omitted when all three are null).
+ * migration RPC in nuvio-backend `20260702210000_iptv_playlists.sql`): source_type is the WIRE
+ * name (m3u_url/m3u_file for this client's url/file); per-type extras ride their dedicated
+ * columns (url/user_agent, file_name, portal_url/mac_address/stalker_*); name is omitted when
+ * blank, epg_url when null, category_selections when all-null — the RPC's coalesce defaults apply.
  */
 internal fun playlistPushJson(acc: XtreamAccount, sortOrder: Int): JsonObject = buildJsonObject {
-    put("source_type", acc.sourceType)
+    put("source_type", wireSourceType(acc.sourceType))
     if (acc.name.isNotBlank()) put("name", acc.name)
     put("enabled", acc.enabled)
     put("sort_order", sortOrder)
     put("base_url", acc.baseUrl)
     put("username", acc.username)
     put("password", acc.password)
+    when (acc.sourceType) {
+        XtreamAccount.SOURCE_URL -> {
+            put("url", acc.baseUrl)                                    // the playlist URL IS the base
+            acc.username.takeIf { it.isNotBlank() }?.let { put("user_agent", it) }   // UA lives in username
+        }
+        XtreamAccount.SOURCE_FILE -> {
+            acc.fileName?.takeIf { it.isNotBlank() }?.let { put("file_name", it) }   // metadata only
+        }
+        XtreamAccount.SOURCE_STALKER -> {
+            put("portal_url", acc.portalUrl)
+            put("mac_address", acc.macAddress)
+            acc.stalkerUsername.takeIf { it.isNotBlank() }?.let { put("stalker_username", it) }
+            acc.stalkerPassword.takeIf { it.isNotBlank() }?.let { put("stalker_password", it) }
+            acc.serialNumber.takeIf { it.isNotBlank() }?.let { put("serial_number", it) }
+            acc.deviceId.takeIf { it.isNotBlank() }?.let { put("device_id", it) }
+            put("send_device_id", acc.sendDeviceId)
+        }
+    }
     acc.epgUrl?.let { put("epg_url", it) }
     put("dns_provider", acc.dnsProvider)
     put("auto_refresh_hours", acc.autoRefreshHours)

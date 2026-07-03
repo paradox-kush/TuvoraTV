@@ -100,15 +100,16 @@ class XtreamPlaylistSyncPayloadTest {
     }
 
     @Test
-    fun `regular push scopes the replace to xtream and omits p_only_if_empty`() {
+    fun `regular push scopes the replace to the known source types and omits p_only_if_empty`() {
         val params = playlistPushParams(listOf(account()), profileId = 2, onlyIfEmpty = false)
 
         // exact key set: no p_only_if_empty on a regular push
         assertEquals(setOf("p_playlists", "p_profile_id", "p_source_types"), params.keys)
         assertEquals(2, params["p_profile_id"]!!.jsonPrimitive.content.toInt())
-        // EVERY push is source-type-scoped so a P1 client can't delete m3u/stalker rows
+        // EVERY push is source-type-scoped so this client can't delete a FUTURE type's rows.
+        // Wire names — the internal "url"/"file" spellings never leave the device.
         assertEquals(
-            listOf("xtream"),
+            listOf("xtream", "m3u_url", "m3u_file", "stalker"),
             params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content }
         )
         assertEquals(1, params["p_playlists"]!!.jsonArray.size)
@@ -122,25 +123,110 @@ class XtreamPlaylistSyncPayloadTest {
         assertTrue(params["p_only_if_empty"]!!.jsonPrimitive.content.toBoolean())
         // still source-type-scoped
         assertEquals(
-            listOf("xtream"),
+            listOf("xtream", "m3u_url", "m3u_file", "stalker"),
             params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content }
         )
     }
 
     @Test
-    fun `pull with only foreign source types maps to no usable accounts (local state kept)`() {
-        val foreign = SupabaseIptvPlaylist(sourceType = "m3u_url", name = "M3U", enabled = true)
-        val stalker = SupabaseIptvPlaylist(sourceType = "stalker", name = "Portal")
+    fun `m3u and stalker accounts push their wire type and per-type extras`() {
+        val m3u = XtreamAccount(
+            id = "m3u:http://h/list.m3u", name = "M3U", baseUrl = "http://h/list.m3u",
+            username = "VLC/3.0",   // this client stashes the UA in username
+            password = "", sourceType = XtreamAccount.SOURCE_URL
+        )
+        val m3uJson = playlistPushJson(m3u, sortOrder = 0)
+        assertEquals("m3u_url", m3uJson.str("source_type"))         // wire name, not "url"
+        assertEquals("http://h/list.m3u", m3uJson.str("url"))
+        assertEquals("VLC/3.0", m3uJson.str("user_agent"))
+
+        val file = XtreamAccount(
+            id = "file:abc", name = "tv", baseUrl = "", username = "", password = "",
+            sourceType = XtreamAccount.SOURCE_FILE, fileName = "tv.m3u"
+        )
+        val fileJson = playlistPushJson(file, sortOrder = 1)
+        assertEquals("m3u_file", fileJson.str("source_type"))       // wire name, not "file"
+        assertEquals("tv.m3u", fileJson.str("file_name"))
+
+        val stalker = XtreamAccount(
+            id = "stalker|http://p:8080|00:1A:79:AA:BB:CC", name = "Portal", baseUrl = "http://p:8080",
+            username = "", password = "", sourceType = XtreamAccount.SOURCE_STALKER,
+            portalUrl = "http://p:8080", macAddress = "00:1A:79:AA:BB:CC",
+            serialNumber = "SN1", sendDeviceId = false
+        )
+        val stalkerJson = playlistPushJson(stalker, sortOrder = 2)
+        assertEquals("stalker", stalkerJson.str("source_type"))
+        assertEquals("http://p:8080", stalkerJson.str("portal_url"))
+        assertEquals("00:1A:79:AA:BB:CC", stalkerJson.str("mac_address"))
+        assertEquals("SN1", stalkerJson.str("serial_number"))
+        assertEquals(false, stalkerJson["send_device_id"]!!.jsonPrimitive.content.toBoolean())
+        // blank optionals stay omitted
+        assertTrue("stalker_username" !in stalkerJson)
+        assertTrue("device_id" !in stalkerJson)
+    }
+
+    @Test
+    fun `pull maps every source type to the settings-form account shape`() {
+        // m3u_url (wire) -> internal SOURCE_URL via the shared builder (UA back into username).
+        val m3u = SupabaseIptvPlaylist(sourceType = "m3u_url", url = "http://h/list.m3u", userAgent = "VLC/3.0")
+            .toXtreamAccountOrNull()!!
+        assertEquals(XtreamAccount.SOURCE_URL, m3u.sourceType)
+        assertEquals("http://h/list.m3u", m3u.baseUrl)
+        assertEquals("VLC/3.0", m3u.username)
+        assertTrue(m3u.id.startsWith("m3u:"))
+
+        // m3u_file -> re-import ghost with a deterministic id.
+        val file = SupabaseIptvPlaylist(sourceType = "m3u_file", fileName = "tv.m3u", name = "TV")
+            .toXtreamAccountOrNull()!!
+        assertEquals(XtreamAccount.SOURCE_FILE, file.sourceType)
+        assertEquals("file:synced-tv.m3u", file.id)
+        assertEquals("tv.m3u", file.fileName)
+
+        // stalker -> the P4 field shape + form-builder id (portalUrl/macAddress drive the session).
+        val stalker = SupabaseIptvPlaylist(
+            sourceType = "stalker", portalUrl = "http://p:8080", macAddress = "00:1A:79:AA:BB:CC",
+            serialNumber = "SN1", sendDeviceId = false
+        ).toXtreamAccountOrNull()!!
+        assertEquals("stalker|http://p:8080|00:1A:79:AA:BB:CC", stalker.id)
+        assertEquals("http://p:8080", stalker.portalUrl)
+        assertEquals("00:1A:79:AA:BB:CC", stalker.macAddress)
+        assertEquals("SN1", stalker.serialNumber)
+        assertEquals(false, stalker.sendDeviceId)
+    }
+
+    @Test
+    fun `reconcile keeps the local file playlist id so its local copy survives a pull`() {
+        val local = XtreamAccount(
+            id = "file:1234-uuid", name = "tv", baseUrl = "", username = "", password = "",
+            sourceType = XtreamAccount.SOURCE_FILE, fileName = "tv.m3u"
+        )
+        val pulled = SupabaseIptvPlaylist(sourceType = "m3u_file", fileName = "tv.m3u", dnsProvider = "quad9")
+            .toXtreamAccountOrNull()!!
+        val reconciled = reconcileLocalIds(listOf(pulled), listOf(local)).single()
+        assertEquals("file:1234-uuid", reconciled.id)          // local copy + content keys survive
+        assertEquals("quad9", reconciled.dnsProvider)          // remote option edits still apply
+        // no local match -> deterministic synced id kept
+        assertEquals("file:synced-tv.m3u", reconcileLocalIds(listOf(pulled), emptyList()).single().id)
+    }
+
+    @Test
+    fun `pull with only unknown or malformed rows maps to no usable accounts (local state kept)`() {
+        val futureType = SupabaseIptvPlaylist(sourceType = "plex", name = "Future", enabled = true)
+        val malformedM3u = SupabaseIptvPlaylist(sourceType = "m3u_url", name = "M3U")          // no url
+        val malformedStalker = SupabaseIptvPlaylist(sourceType = "stalker", name = "Portal")   // no portal/mac
         val xtream = SupabaseIptvPlaylist(
             sourceType = "xtream", baseUrl = "http://host:8080", username = "u1", password = "p1"
         )
 
-        // Foreign-only rows must decode to an EMPTY usable list -> pullAndApply treats it like an
+        // Unusable-only rows must decode to an EMPTY usable list -> pullAndApply treats it like an
         // empty remote (no applyRemote of []), so local accounts survive.
-        assertEquals(emptyList<XtreamAccount>(), listOf(foreign, stalker).mapNotNull { it.toXtreamAccountOrNull() })
+        assertEquals(
+            emptyList<XtreamAccount>(),
+            listOf(futureType, malformedM3u, malformedStalker).mapNotNull { it.toXtreamAccountOrNull() }
+        )
 
-        // Mixed rows keep only the xtream ones.
-        val usable = listOf(foreign, xtream, stalker).mapNotNull { it.toXtreamAccountOrNull() }
+        // Mixed rows keep the usable ones.
+        val usable = listOf(futureType, xtream, malformedStalker).mapNotNull { it.toXtreamAccountOrNull() }
         assertEquals(listOf("http://host:8080|u1"), usable.map { it.id })
 
         // An xtream row missing credentials is unusable too.
