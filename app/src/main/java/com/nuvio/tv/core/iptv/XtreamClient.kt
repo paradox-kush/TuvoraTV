@@ -61,7 +61,20 @@ data class XtreamAccount(
      * playlist that arrives with no local copy (synced from another device — file contents are
      * NOT synced) keeps this so the UI can offer "re-import on this device".
      */
-    val fileName: String? = null
+    val fileName: String? = null,
+    // --- Stalker portal (MAG/Ministra) source fields (sourceType = SOURCE_STALKER). ------------
+    // All additive + defaulted so previously-persisted JSON loads unchanged (see the Gson decode
+    // defaults in XtreamAccountStore). For Stalker: [baseUrl]/[username]/[password] stay empty and
+    // these carry the config instead — [portalUrl] is the base portal (e.g. http://host:port),
+    // [macAddress] is the virtual STB MAC. Serial/Device ID override the MAC-derived values.
+    val portalUrl: String = "",
+    val macAddress: String = "",
+    val stalkerUsername: String = "",
+    val stalkerPassword: String = "",
+    val serialNumber: String = "",
+    val deviceId: String = "",
+    /** Send the derived (or overridden) device signature on get_profile. Default on. */
+    val sendDeviceId: Boolean = true
 ) {
     fun typeEnabled(type: String): Boolean = type in contentTypes
 
@@ -102,7 +115,9 @@ data class XtreamAccountInfo(
     val status: String?,               // "Active", "Expired", ...
     val expiresAtEpochSec: Long?,      // null = unlimited/unknown
     val activeConnections: Int?,
-    val maxConnections: Int?
+    val maxConnections: Int?,
+    /** Free-text expiry when the source gives one instead of an epoch (Stalker's `phone` field). */
+    val expiresText: String? = null
 )
 
 // --- Domain models (what the UI consumes) -----------------------------------

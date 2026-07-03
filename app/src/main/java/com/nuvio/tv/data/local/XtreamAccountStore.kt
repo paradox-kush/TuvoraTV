@@ -107,8 +107,11 @@ internal fun decodeXtreamAccountsJson(gson: Gson, json: String?): List<XtreamAcc
         // Same-source array → same order/size; the raw element tells us whether a primitive field
         // was actually present (Gson can't distinguish a missing Int from 0).
         decoded.mapIndexed { i, acc ->
-            val hadAutoRefresh = raw[i].asJsonObject.has("autoRefreshHours")
-            acc.withDecodeDefaults(hadAutoRefresh)
+            val obj = raw[i].asJsonObject
+            acc.withDecodeDefaults(
+                hadAutoRefresh = obj.has("autoRefreshHours"),
+                hadSendDeviceId = obj.has("sendDeviceId")
+            )
         }
     } catch (e: Exception) {
         emptyList()
@@ -123,7 +126,7 @@ internal fun decodeXtreamAccountsJson(gson: Gson, json: String?): List<XtreamAcc
  * field values and would throw.)
  */
 @Suppress("USELESS_ELVIS")
-private fun XtreamAccount.withDecodeDefaults(hadAutoRefresh: Boolean): XtreamAccount = XtreamAccount(
+private fun XtreamAccount.withDecodeDefaults(hadAutoRefresh: Boolean, hadSendDeviceId: Boolean): XtreamAccount = XtreamAccount(
     id = id,
     name = name ?: "",
     baseUrl = baseUrl,
@@ -138,5 +141,16 @@ private fun XtreamAccount.withDecodeDefaults(hadAutoRefresh: Boolean): XtreamAcc
     autoRefreshHours = if (hadAutoRefresh) autoRefreshHours else XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS,
     contentTypes = contentTypes ?: XtreamAccount.DEFAULT_CONTENT_TYPES,
     categorySelections = categorySelections ?: CategorySelections(),
-    fileName = fileName   // nullable; missing in older JSON -> null, which is the default anyway
+    fileName = fileName,   // nullable; missing in older JSON -> null, which is the default anyway
+    // Stalker fields: missing in pre-P4 JSON -> Unsafe leaves them null on non-null types; re-apply
+    // the constructor defaults (elvis is load-bearing at runtime, useless to the compiler).
+    portalUrl = portalUrl ?: "",
+    macAddress = macAddress ?: "",
+    stalkerUsername = stalkerUsername ?: "",
+    stalkerPassword = stalkerPassword ?: "",
+    serialNumber = serialNumber ?: "",
+    deviceId = deviceId ?: "",
+    // sendDeviceId is a primitive boolean: Gson can't tell missing from an explicit false. Present ->
+    // keep the stored value (incl. a deliberate false); missing (pre-P4 JSON) -> the `true` default.
+    sendDeviceId = if (hadSendDeviceId) sendDeviceId else true
 )

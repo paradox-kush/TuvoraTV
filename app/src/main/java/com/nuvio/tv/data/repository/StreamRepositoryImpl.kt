@@ -63,6 +63,37 @@ class StreamRepositoryImpl @Inject constructor(
         val detail: String
     )
 
+    /**
+     * Build the single direct-stream group for an xtream/registry item at PLAY time. If the item
+     * already carries a stream URL (Xtream / M3U — stable), use it. If it's blank (Stalker — the
+     * create_link URL is single-use, so it's never cached), resolve it FRESH now via the source's
+     * [com.nuvio.tv.core.iptv.IptvClient.resolveStreamUrl] (or the Stalker episode resolver). A
+     * resolve miss / gone item -> empty (the picker shows "no streams").
+     */
+    private suspend fun resolveXtreamPlayStreams(
+        videoId: String,
+        item: com.nuvio.tv.core.iptv.XtreamResolvedItem
+    ): List<AddonStreams> {
+        if (item.streamUrl.isNotBlank()) return item.toAddonStreams()
+        val parsed = com.nuvio.tv.core.iptv.XtreamItemRegistry.parseId(videoId) ?: return emptyList()
+        val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == parsed.accountId } ?: return emptyList()
+        val client = iptvClientFactory.clientFor(account)
+        val freshUrl = when (parsed.kind) {
+            "live" -> client.resolveStreamUrl(account, "live", parsed.streamId.toIntOrNull() ?: return emptyList())
+            "vod" -> client.resolveStreamUrl(account, "movie", parsed.streamId.toIntOrNull() ?: return emptyList())
+            "episode" -> {
+                // Stalker episode ids encode "seriesId:episodeNum" as the streamId segment.
+                val stalker = client as? com.nuvio.tv.core.iptv.stalker.StalkerClient
+                val parts = parsed.streamId.split(":")
+                val seriesId = parts.getOrNull(0)?.toIntOrNull()
+                val epNum = parts.getOrNull(1)?.toIntOrNull()
+                if (stalker != null && seriesId != null && epNum != null) stalker.resolveEpisodeUrl(account, seriesId, epNum) else null
+            }
+            else -> null
+        } ?: return emptyList()
+        return item.copy(streamUrl = freshUrl).toAddonStreams()
+    }
+
     override fun getStreamsFromAllAddons(
         type: String,
         videoId: String,
@@ -75,7 +106,11 @@ class StreamRepositoryImpl @Inject constructor(
             // Rebuild from the id on a registry miss (saved/deep-linked item not browsed this session).
             val item = xtreamRegistry.get(videoId)
                 ?: xtreamRegistry.rebuildFromId(videoId, xtreamAccountStore, iptvClientFactory)
-            emit(NetworkResult.Success(item?.toAddonStreams() ?: emptyList()))
+            // Stalker create_link URLs are SINGLE-USE, so browse-time items carry a blank stream URL:
+            // resolve it FRESH here at play time (never from cache). Xtream/M3U items already have a
+            // stable URL, so this only fires for Stalker (or a placeholder).
+            val streams = item?.let { resolveXtreamPlayStreams(videoId, it) } ?: emptyList()
+            emit(NetworkResult.Success(streams))
             return@flow
         }
 

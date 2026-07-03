@@ -232,6 +232,33 @@ object NetworkModule {
             .build()
     }
 
+    /**
+     * Client for Stalker-portal (MAG/Ministra) control calls. Small JSON responses, so short
+     * timeouts; trust-all TLS + IPv4-first DNS like the other IPTV clients (portal hosts routinely
+     * have bad certs). NO unconditional User-Agent — StalkerSession sets the exact MAG UA per call.
+     * Redirect-follow is on (portals commonly 302 the load.php).
+     */
+    @Provides
+    @Singleton
+    @Named("stalker")
+    fun provideStalkerOkHttpClient(): OkHttpClient {
+        val trustAllManager = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
+        }
+        return OkHttpClient.Builder()
+            .dns(IPv4FirstDns())
+            .sslSocketFactory(sslContext.socketFactory, trustAllManager)
+            .hostnameVerifier { _, _ -> true }
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
     @Provides
     @Singleton
     @Named("trakt")
