@@ -143,6 +143,9 @@ fun XtreamSettingsContent(
             onSubmitFile = { uri, fileName, name, options ->
                 viewModel.addM3UFile(uri, fileName, name, options) { showAddDialog = false }
             },
+            onSubmitStalker = { fields, name, options ->
+                viewModel.addStalker(fields, name, options) { showAddDialog = false }
+            },
             onDismiss = {
                 viewModel.clearError()
                 showAddDialog = false
@@ -165,6 +168,9 @@ fun XtreamSettingsContent(
             onSubmitFile = { uri, fileName, _, _ ->
                 // Editing a file playlist = re-pick its file (same id, keeps saved content/options).
                 viewModel.addM3UFile(uri, fileName, name = null, reimportFor = account) { editFor = null }
+            },
+            onSubmitStalker = { fields, name, options ->
+                viewModel.editStalker(account, fields, name, options) { editFor = null }
             },
             onDismiss = {
                 viewModel.clearError()
@@ -536,7 +542,7 @@ private val PLAYLIST_SOURCES = listOf(
     PlaylistSource(XtreamAccount.SOURCE_URL, "URL", enabled = true),
     PlaylistSource(XtreamAccount.SOURCE_FILE, "File", enabled = true),
     PlaylistSource(XtreamAccount.SOURCE_XTREAM, "Xtream", enabled = true),
-    PlaylistSource(XtreamAccount.SOURCE_STALKER, "Stalker", enabled = false)
+    PlaylistSource(XtreamAccount.SOURCE_STALKER, "Stalker", enabled = true)
 )
 
 private data class DnsOption(val id: String, val label: String)
@@ -561,6 +567,7 @@ private fun XtreamAddDialog(
     onSubmitManual: (server: String, user: String, pass: String, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onSubmitM3U: (playlistUrl: String, userAgent: String?, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onSubmitFile: (uri: Uri, fileName: String, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
+    onSubmitStalker: (fields: XtreamSettingsViewModel.StalkerFields, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onDismiss: () -> Unit,
     initial: XtreamAccount? = null
 ) {
@@ -606,6 +613,15 @@ private fun XtreamAddDialog(
     var m3uUrl by remember { mutableStateOf(if (isEditingM3U) initial.baseUrl else "") }
     var m3uUserAgent by remember { mutableStateOf(if (isEditingM3U) initial.username else "") }
 
+    // Stalker portal source fields.
+    var portalUrl by remember { mutableStateOf(initial?.portalUrl ?: "") }
+    var mac by remember { mutableStateOf(initial?.macAddress?.ifBlank { "00:1A:79:" } ?: "00:1A:79:") }
+    var stalkerUser by remember { mutableStateOf(initial?.stalkerUsername ?: "") }
+    var stalkerPass by remember { mutableStateOf(initial?.stalkerPassword ?: "") }
+    var serial by remember { mutableStateOf(initial?.serialNumber ?: "") }
+    var deviceId by remember { mutableStateOf(initial?.deviceId ?: "") }
+    var sendDeviceId by remember { mutableStateOf(initial?.sendDeviceId ?: true) }
+
     // Shared options (all source types).
     var epgUrl by remember { mutableStateOf(initial?.epgUrl ?: "") }
     var dnsProvider by remember { mutableStateOf(initial?.dnsProvider ?: XtreamAccount.DNS_SYSTEM) }
@@ -641,6 +657,23 @@ private fun XtreamAddDialog(
             XtreamAccount.SOURCE_FILE -> {
                 pickedFileUri?.let { uri ->
                     onSubmitFile(uri, pickedFileName.ifBlank { "playlist.m3u" }, name.trim().ifEmpty { null }, options())
+                }
+            }
+            XtreamAccount.SOURCE_STALKER -> {
+                if (portalUrl.isNotBlank() && mac.isNotBlank()) {
+                    onSubmitStalker(
+                        XtreamSettingsViewModel.StalkerFields(
+                            portalUrl = portalUrl.trim(),
+                            macAddress = mac.trim(),
+                            username = stalkerUser.trim(),
+                            password = stalkerPass.trim(),
+                            serialNumber = serial.trim(),
+                            deviceId = deviceId.trim(),
+                            sendDeviceId = sendDeviceId
+                        ),
+                        name.trim().ifEmpty { null },
+                        options()
+                    )
                 }
             }
         }
@@ -715,7 +748,17 @@ private fun XtreamAddDialog(
                     onNameChange = { name = it },
                     onSubmit = submit
                 )
-                XtreamAccount.SOURCE_STALKER -> StalkerSourceFields()
+                XtreamAccount.SOURCE_STALKER -> StalkerSourceFields(
+                    portalUrl = portalUrl, onPortalUrlChange = { portalUrl = it },
+                    mac = mac, onMacChange = { mac = it },
+                    username = stalkerUser, onUsernameChange = { stalkerUser = it },
+                    password = stalkerPass, onPasswordChange = { stalkerPass = it },
+                    serial = serial, onSerialChange = { serial = it },
+                    deviceId = deviceId, onDeviceIdChange = { deviceId = it },
+                    sendDeviceId = sendDeviceId, onSendDeviceIdChange = { sendDeviceId = it },
+                    firstFieldFocus = firstFieldFocus,
+                    onSubmit = submit
+                )
             }
 
             // --- EPG URL (shared) --------------------------------------------
@@ -958,16 +1001,45 @@ private fun queryDisplayName(context: android.content.Context, uri: Uri): String
         }
     }.getOrNull()
 
-/**
- * Field layout for a Stalker portal source. STUB — not wired in P1 (the Stalker tile is disabled).
- * A later phase enables the tile and collects
- * [portalUrl, macAddress, stalkerUsername?, stalkerPassword?, serialNumber?, deviceId?, sendDeviceId].
- */
+/** Field layout for a Stalker portal (MAG/Ministra) source: portal URL + virtual STB MAC + optionals. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun StalkerSourceFields() {
-    // TODO(playlist-manager Stalker phase): fields listed above + a sendDeviceId toggle.
-    FormHelperText("Stalker portals are coming soon.")
+private fun StalkerSourceFields(
+    portalUrl: String, onPortalUrlChange: (String) -> Unit,
+    mac: String, onMacChange: (String) -> Unit,
+    username: String, onUsernameChange: (String) -> Unit,
+    password: String, onPasswordChange: (String) -> Unit,
+    serial: String, onSerialChange: (String) -> Unit,
+    deviceId: String, onDeviceIdChange: (String) -> Unit,
+    sendDeviceId: Boolean, onSendDeviceIdChange: (Boolean) -> Unit,
+    firstFieldFocus: FocusRequester,
+    onSubmit: () -> Unit
+) {
+    XtreamField(portalUrl, onPortalUrlChange, "Portal URL  (http://host:port)", firstFieldFocus, onSubmit = onSubmit)
+    XtreamField(mac, onMacChange, "MAC Address  (00:1A:79:xx:xx:xx)", onSubmit = onSubmit)
+    SettingsActionRow(
+        title = "Randomize MAC",
+        subtitle = "Generate a virtual STB MAC (Infomir range)",
+        value = null,
+        onClick = { onMacChange(randomStbMac()) }
+    )
+    XtreamField(username, onUsernameChange, "Username (optional)", onSubmit = onSubmit)
+    XtreamField(password, onPasswordChange, "Password (optional)", isPassword = true, onSubmit = onSubmit)
+    XtreamField(serial, onSerialChange, "Serial Number (optional)", onSubmit = onSubmit)
+    XtreamField(deviceId, onDeviceIdChange, "Device ID (optional)", onSubmit = onSubmit)
+    SettingsActionRow(
+        title = "Send Device ID",
+        subtitle = "Include device identifier in portal requests",
+        value = if (sendDeviceId) "On" else "Off",
+        onClick = { onSendDeviceIdChange(!sendDeviceId) }
+    )
+    FormHelperText("Enter your portal URL and the MAC registered with the provider. Serial / Device ID override the values derived from the MAC.")
+}
+
+/** A virtual STB MAC in Infomir's 00:1A:79 range (the OUI most Stalker portals accept). */
+private fun randomStbMac(): String {
+    val tail = (0 until 3).joinToString(":") { "%02X".format(kotlin.random.Random.nextInt(0, 256)) }
+    return "00:1A:79:$tail"
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

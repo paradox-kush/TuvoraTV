@@ -76,6 +76,76 @@ class XtreamSettingsViewModel @Inject constructor(
         val autoRefreshHours: Int = XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS
     )
 
+    /** Stalker portal form fields collected by the Add/Edit Playlist dialog. */
+    data class StalkerFields(
+        val portalUrl: String,
+        val macAddress: String,
+        val username: String = "",
+        val password: String = "",
+        val serialNumber: String = "",
+        val deviceId: String = "",
+        val sendDeviceId: Boolean = true
+    )
+
+    /** Build a Stalker XtreamAccount from the form fields (id is stable: stalker|portal|mac). */
+    private fun stalkerAccountFrom(fields: StalkerFields, name: String?): XtreamAccount? {
+        val portal = fields.portalUrl.trim().let { if (it.startsWith("http")) it else "http://$it" }
+        val mac = fields.macAddress.trim()
+        if (portal.length <= "http://".length || mac.isBlank()) return null
+        val host = runCatching { java.net.URI(portal).host }.getOrNull()?.takeIf { it.isNotBlank() } ?: portal
+        return XtreamAccount(
+            id = "stalker|$portal|$mac",
+            name = name?.takeIf { it.isNotBlank() } ?: host,
+            baseUrl = portal,
+            username = "",
+            password = "",
+            sourceType = XtreamAccount.SOURCE_STALKER,
+            portalUrl = portal,
+            macAddress = mac,
+            stalkerUsername = fields.username.trim(),
+            stalkerPassword = fields.password.trim(),
+            serialNumber = fields.serialNumber.trim(),
+            deviceId = fields.deviceId.trim(),
+            sendDeviceId = fields.sendDeviceId
+        )
+    }
+
+    /** Add a Stalker portal playlist: persist + sync. Content loads live via the portal session on browse. */
+    fun addStalker(fields: StalkerFields, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {
+        val account = stalkerAccountFrom(fields, name)?.withOptions(options)
+        if (account == null) {
+            _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
+            return
+        }
+        viewModelScope.launch {
+            store.upsert(account)
+            syncService.triggerRemoteSync()
+            onSuccess()
+        }
+    }
+
+    /** Re-save an edited Stalker playlist: swap in place, preserve enable/content/category selections. */
+    fun editStalker(old: XtreamAccount, fields: StalkerFields, name: String?, options: PlaylistOptions = old.toOptions(), onSuccess: () -> Unit) {
+        val candidate = stalkerAccountFrom(fields, name ?: old.name)?.withOptions(options)
+        if (candidate == null) {
+            _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
+            return
+        }
+        val account = candidate.copy(
+            enabled = old.enabled,
+            contentTypes = old.contentTypes,
+            categorySelections = old.categorySelections
+        )
+        viewModelScope.launch {
+            store.replace(old.id, account)
+            if (account.id != old.id) migrateSavedData(old, account)
+            registry.clear()
+            evictAccountCaches(old.id, account.id)
+            syncService.triggerRemoteSync()
+            onSuccess()
+        }
+    }
+
     /** Copies the form's shared playlist options onto a parsed/built account before verify+save. */
     private fun XtreamAccount.withOptions(options: PlaylistOptions): XtreamAccount =
         withPlaylistOptions(options.epgUrl, options.dnsProvider, options.autoRefreshHours)
@@ -409,10 +479,14 @@ class XtreamSettingsViewModel @Inject constructor(
         val parts = buildList {
             status?.let { add(it) }
             if (activeConnections != null && maxConnections != null) add("$activeConnections/$maxConnections connections")
-            expiresAtEpochSec?.let {
-                val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-                fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
-                add("Expires " + fmt.format(java.util.Date(it * 1000)))
+            when {
+                // Stalker gives free-text expiry ("February 20, 2027"); surface it verbatim.
+                expiresText != null -> add("Expires $expiresText")
+                expiresAtEpochSec != null -> {
+                    val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                    fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    add("Expires " + fmt.format(java.util.Date(expiresAtEpochSec * 1000)))
+                }
             }
         }
         return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")

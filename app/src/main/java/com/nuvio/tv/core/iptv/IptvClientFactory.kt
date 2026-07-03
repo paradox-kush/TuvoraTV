@@ -1,13 +1,15 @@
 package com.nuvio.tv.core.iptv
 
+import com.nuvio.tv.core.iptv.stalker.StalkerClient
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * Hands a call site the right [IptvClient] for an account, dispatching on [XtreamAccount.sourceType]:
- *  - [XtreamAccount.SOURCE_XTREAM] -> [XtreamClient] (live `player_api.php`)
- *  - [XtreamAccount.SOURCE_URL]    -> [M3UClient] (pre-ingested M3U catalog in SQLite)
- *  - [XtreamAccount.SOURCE_FILE]   -> [M3UClient] (same catalog, ingested from a local file copy)
+ *  - [XtreamAccount.SOURCE_XTREAM]  -> [XtreamClient] (live `player_api.php`)
+ *  - [XtreamAccount.SOURCE_URL]     -> [M3UClient] (pre-ingested M3U catalog in SQLite)
+ *  - [XtreamAccount.SOURCE_FILE]    -> [M3UClient] (same catalog, ingested from a local file copy)
+ *  - [XtreamAccount.SOURCE_STALKER] -> [StalkerClient] (MAG/Ministra portal via a stateful session)
  *
  * Every IPTV consumer (hub, live guide, search, meta/stream short-circuits) resolves its client
  * through here so the browse/play pipeline stays source-agnostic — the registry ids, native detail,
@@ -18,12 +20,17 @@ import javax.inject.Singleton
 class IptvClientFactory @Inject constructor(
     private val xtreamClient: XtreamClient,
     private val m3uClient: M3UClient,
+    private val stalkerClient: StalkerClient,
 ) {
     fun clientFor(account: XtreamAccount): IptvClient = when (account.sourceType) {
         XtreamAccount.SOURCE_URL, XtreamAccount.SOURCE_FILE -> m3uClient
+        XtreamAccount.SOURCE_STALKER -> stalkerClient
         else -> xtreamClient
     }
 
     /** The M3U client, for the ingest trigger on add/edit (which is M3U-specific). */
     fun m3u(): M3UClient = m3uClient
+
+    /** The Stalker client, for verify/account-info on add/edit (session-based, not in [IptvClient]). */
+    fun stalker(): StalkerClient = stalkerClient
 }

@@ -131,15 +131,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
         epgRequested.clear()
         // Tune the preview to the LAST OPENED channel of this account (TiViMate-style resume).
-        viewModelScope.launch {
-            if (_uiState.value.previewChannel != null) return@launch
-            liveStore.recents.first()
-                .firstOrNull { it.id.startsWith("${XtreamItemRegistry.PREFIX}${acc.id}:live:") }
-                ?.let { ref ->
-                    if (_uiState.value.previewChannel == null) {
-                        tunePreview(GuideChannel(ref.id, ref.name, ref.logo, ref.streamUrl, streamIdOf(ref.id)))
+        // Stalker's stored URL is a dead single-use create_link — skip the auto-resume for it
+        // (OK on a row resolves a fresh URL); Xtream/M3U resume with their stable stored URL.
+        if (acc.sourceType != XtreamAccount.SOURCE_STALKER) {
+            viewModelScope.launch {
+                if (_uiState.value.previewChannel != null) return@launch
+                liveStore.recents.first()
+                    .firstOrNull { it.id.startsWith("${XtreamItemRegistry.PREFIX}${acc.id}:live:") }
+                    ?.let { ref ->
+                        if (_uiState.value.previewChannel == null) {
+                            tunePreview(GuideChannel(ref.id, ref.name, ref.logo, ref.streamUrl, streamIdOf(ref.id)))
+                        }
                     }
-                }
+            }
         }
         // Cache hit: show the category column immediately without re-fetching. The cache keeps
         // the UNFILTERED list; category selections filter at display time.
@@ -262,10 +266,32 @@ class XtreamLiveGuideViewModel @Inject constructor(
     }
 
     /** OK on a channel row: tune the single preview player to it (and remember it as
-     *  last-played). OK on the already-tuned channel is handled by the screen (fullscreen). */
+     *  last-played). OK on the already-tuned channel is handled by the screen (fullscreen).
+     *
+     *  Stalker channels carry a blank browse-time URL (create_link is single-use) — resolve it
+     *  FRESH here so the placeholder never reaches mpv. Xtream/M3U have a stable URL, so
+     *  [resolvedStreamUrl] returns it unchanged with no extra round-trip. */
     fun playPreview(channel: GuideChannel) {
-        tunePreview(channel)
-        recordPlayed(channel)
+        viewModelScope.launch {
+            // Stalker needs a fresh create_link; Xtream/M3U reuse the browse-time URL. Then tunePreview
+            // applies the playlist's DNS (resolve → rewrite) before handing the URL to the player.
+            val playable = resolvedStreamUrl(channel)
+            if (playable == null) {
+                _uiState.update { it.copy(error = "Couldn't open \"${channel.name}\"") }
+                return@launch
+            }
+            val tuned = channel.copy(streamUrl = playable)
+            tunePreview(tuned)
+            recordPlayed(tuned)
+        }
+    }
+
+    /** The stream URL to feed the player: the browse-time URL if present (Xtream/M3U), else a fresh
+     *  create_link (Stalker). Null if the source can't produce one. */
+    private suspend fun resolvedStreamUrl(channel: GuideChannel): String? {
+        if (channel.streamUrl.isNotBlank()) return channel.streamUrl
+        val acc = account ?: return null
+        return clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId)
     }
 
     /**
