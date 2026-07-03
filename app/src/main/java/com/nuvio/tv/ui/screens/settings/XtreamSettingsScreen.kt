@@ -125,9 +125,9 @@ fun XtreamSettingsContent(
         XtreamAddDialog(
             isValidating = uiState.isValidating,
             error = uiState.error,
-            onSubmitUrl = { url -> viewModel.addFromUrl(url, name = null) { showAddDialog = false } },
-            onSubmitManual = { server, user, pass, name ->
-                viewModel.addManual(server, user, pass, name) { showAddDialog = false }
+            onSubmitUrl = { url, options -> viewModel.addFromUrl(url, name = null, options = options) { showAddDialog = false } },
+            onSubmitManual = { server, user, pass, name, options ->
+                viewModel.addManual(server, user, pass, name, options) { showAddDialog = false }
             },
             onDismiss = {
                 viewModel.clearError()
@@ -141,9 +141,9 @@ fun XtreamSettingsContent(
             isValidating = uiState.isValidating,
             error = uiState.error,
             initial = account,
-            onSubmitUrl = { url -> viewModel.editFromUrl(account, url) { editFor = null } },
-            onSubmitManual = { server, user, pass, name ->
-                viewModel.editManual(account, server, user, pass, name) { editFor = null }
+            onSubmitUrl = { url, options -> viewModel.editFromUrl(account, url, options) { editFor = null } },
+            onSubmitManual = { server, user, pass, name, options ->
+                viewModel.editManual(account, server, user, pass, name, options) { editFor = null }
             },
             onDismiss = {
                 viewModel.clearError()
@@ -475,109 +475,323 @@ private fun SettingsRowCard(
     )
 }
 
+// --- "Add Playlist" form (playlist manager P1) ------------------------------
+// Only Xtream is functional in P1. URL / Stalker source tiles render with a "Soon" badge and
+// are non-selectable; File is hidden on TV entirely (SAF is unreliable on Android TV). To enable
+// a source in a later phase, flip its `enabled` flag in [PLAYLIST_SOURCES] and fill in its
+// currently-stubbed field layout (see UrlSourceFields / StalkerSourceFields).
+
+/** A selectable source-type tile. `enabled=false` -> shows a "Soon" badge and can't be picked. */
+private data class PlaylistSource(
+    val id: String,
+    val label: String,
+    val enabled: Boolean,
+    /** Hidden entirely (not even shown disabled). File is hidden on TV. */
+    val hiddenOnTv: Boolean = false
+)
+
+private val PLAYLIST_SOURCES = listOf(
+    PlaylistSource(XtreamAccount.SOURCE_URL, "URL", enabled = false),
+    PlaylistSource(XtreamAccount.SOURCE_FILE, "File", enabled = false, hiddenOnTv = true),
+    PlaylistSource(XtreamAccount.SOURCE_XTREAM, "Xtream", enabled = true),
+    PlaylistSource(XtreamAccount.SOURCE_STALKER, "Stalker", enabled = false)
+)
+
+private data class DnsOption(val id: String, val label: String)
+
+private val DNS_OPTIONS = listOf(
+    DnsOption(XtreamAccount.DNS_SYSTEM, "System"),
+    DnsOption(XtreamAccount.DNS_CLOUDFLARE, "Cloudflare"),
+    DnsOption(XtreamAccount.DNS_GOOGLE, "Google"),
+    DnsOption(XtreamAccount.DNS_MULLVAD, "Mullvad"),
+    DnsOption(XtreamAccount.DNS_QUAD9, "Swiss"),
+    DnsOption(XtreamAccount.DNS_DNSSB, "DNS.SB")
+)
+
+private fun autoRefreshLabel(hours: Int): String = if (hours == 0) "Off" else "${hours}h"
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun XtreamAddDialog(
     isValidating: Boolean,
     error: String?,
-    onSubmitUrl: (String) -> Unit,
-    onSubmitManual: (server: String, user: String, pass: String, name: String?) -> Unit,
+    onSubmitUrl: (String, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
+    onSubmitManual: (server: String, user: String, pass: String, name: String?, XtreamSettingsViewModel.PlaylistOptions) -> Unit,
     onDismiss: () -> Unit,
     initial: XtreamAccount? = null
 ) {
+    // Source type — Xtream is the default and only functional source in P1.
+    var sourceType by remember { mutableStateOf(initial?.sourceType ?: XtreamAccount.SOURCE_XTREAM) }
+
+    // Xtream: paste-URL vs manual-details sub-mode (paste auto-fills via the parser).
     var manualMode by remember { mutableStateOf(initial != null) }
-    // paste mode
     var url by remember { mutableStateOf("") }
-    // manual mode (prefilled when editing an existing account)
     var server by remember { mutableStateOf(initial?.baseUrl ?: "") }
     var user by remember { mutableStateOf(initial?.username ?: "") }
     var pass by remember { mutableStateOf(initial?.password ?: "") }
     var name by remember { mutableStateOf(initial?.name ?: "") }
 
-    val firstFieldFocus = remember { FocusRequester() }
-    LaunchedEffect(manualMode) { runCatching { firstFieldFocus.requestFocus() } }
+    // Shared options (all source types).
+    var epgUrl by remember { mutableStateOf(initial?.epgUrl ?: "") }
+    var dnsProvider by remember { mutableStateOf(initial?.dnsProvider ?: XtreamAccount.DNS_SYSTEM) }
+    var autoRefreshHours by remember { mutableStateOf(initial?.autoRefreshHours ?: XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS) }
+    var showRefreshPicker by remember { mutableStateOf(false) }
 
+    val firstFieldFocus = remember { FocusRequester() }
+    LaunchedEffect(manualMode, sourceType) { runCatching { firstFieldFocus.requestFocus() } }
+
+    val options = {
+        XtreamSettingsViewModel.PlaylistOptions(
+            epgUrl = epgUrl.trim().ifEmpty { null },
+            dnsProvider = dnsProvider,
+            autoRefreshHours = autoRefreshHours
+        )
+    }
     val submit = {
-        if (!isValidating) {
+        if (!isValidating && sourceType == XtreamAccount.SOURCE_XTREAM) {
             if (manualMode) {
                 if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
-                    onSubmitManual(server.trim(), user.trim(), pass.trim(), name.trim().ifEmpty { null })
+                    onSubmitManual(server.trim(), user.trim(), pass.trim(), name.trim().ifEmpty { null }, options())
                 }
             } else if (url.isNotBlank()) {
-                onSubmitUrl(url.trim())
+                onSubmitUrl(url.trim(), options())
             }
         }
     }
 
     NuvioDialog(
         onDismiss = onDismiss,
-        title = if (initial != null) "Edit IPTV account" else "Add IPTV account",
-        subtitle = if (manualMode) "Enter your panel details" else "Paste your portal or M3U URL (it contains your username & password)",
+        title = if (initial != null) "Edit Playlist" else "Add Playlist",
+        subtitle = if (initial != null) "Update this playlist's source and options" else "Add an IPTV source and choose its options",
         width = 760.dp,
         suppressFirstKeyUp = false
     ) {
-        // mode toggle
-        Row(modifier = Modifier.padding(top = NuvioTheme.spacing.sm)) {
-            XtreamModeTab("Paste link", selected = !manualMode) { manualMode = false }
-            Spacer(Modifier.width(NuvioTheme.spacing.sm))
-            XtreamModeTab("Enter details", selected = manualMode) { manualMode = true }
-        }
+        // The form is tall; scroll it so every field stays D-pad reachable inside the dialog.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = PlaylistFormMaxHeight)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
+        ) {
+            // --- Source Type -------------------------------------------------
+            FormSectionLabel("Source Type")
+            Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
+                PLAYLIST_SOURCES.filterNot { it.hiddenOnTv }.forEach { source ->
+                    SourceTypeTile(
+                        source = source,
+                        selected = sourceType == source.id,
+                        onClick = { if (source.enabled) sourceType = source.id }
+                    )
+                }
+            }
 
-        if (manualMode) {
-            XtreamField(server, { server = it }, "Server URL  (http://host:port)", firstFieldFocus, onSubmit = submit)
-            XtreamField(user, { user = it }, "Username", onSubmit = submit)
-            XtreamField(pass, { pass = it }, "Password", isPassword = true, onSubmit = submit)
-            XtreamField(name, { name = it }, "Name (optional)", onSubmit = submit)
-            XtreamAddButton(isValidating, label = if (initial != null) "Save changes" else "Add account", onClick = submit)
-        } else {
-            XtreamField(url, { url = it }, "http://host:port/get.php?username=…&password=…", firstFieldFocus, onSubmit = submit)
-        }
+            when (sourceType) {
+                XtreamAccount.SOURCE_XTREAM -> {
+                    // Xtream credentials — paste a portal/M3U URL (auto-fills) or enter details.
+                    Row(modifier = Modifier.padding(top = NuvioTheme.spacing.xs)) {
+                        SettingsChoiceChip("Paste link", selected = !manualMode, onClick = { manualMode = false })
+                        Spacer(Modifier.width(NuvioTheme.spacing.sm))
+                        SettingsChoiceChip("Enter details", selected = manualMode, onClick = { manualMode = true })
+                    }
+                    if (manualMode) {
+                        XtreamField(server, { server = it }, "Server URL  (http://host:port)", firstFieldFocus, onSubmit = submit)
+                        XtreamField(user, { user = it }, "Username", onSubmit = submit)
+                        XtreamField(pass, { pass = it }, "Password", isPassword = true, onSubmit = submit)
+                        XtreamField(name, { name = it }, "Name (optional)", onSubmit = submit)
+                    } else {
+                        XtreamField(url, { url = it }, "http://host:port/get.php?username=…&password=…", firstFieldFocus, onSubmit = submit)
+                    }
+                }
+                XtreamAccount.SOURCE_URL -> UrlSourceFields()
+                XtreamAccount.SOURCE_STALKER -> StalkerSourceFields()
+            }
 
-        val status = when {
-            isValidating -> "Verifying…"
-            error != null -> error
-            else -> null
-        }
-        if (status != null) {
-            Text(
-                text = status,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (error != null && !isValidating) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary,
-                modifier = Modifier.padding(top = NuvioTheme.spacing.sm)
+            // --- EPG URL (shared) --------------------------------------------
+            FormSectionLabel("EPG URL (optional)")
+            XtreamField(epgUrl, { epgUrl = it }, "http://host:port/xmltv.php?username=…&password=…", onSubmit = submit)
+
+            // --- DNS Provider (shared) ---------------------------------------
+            FormSectionLabel("DNS Provider")
+            DnsProviderTiles(selected = dnsProvider, onSelect = { dnsProvider = it })
+            FormHelperText("Choose a DNS server for resolving this playlist's addresses. Cloudflare or Google can improve connection reliability.")
+
+            // --- Auto-Refresh (shared) ---------------------------------------
+            FormSectionLabel("Auto-Refresh")
+            SettingsActionRow(
+                title = "Auto-Refresh",
+                subtitle = null,
+                value = autoRefreshLabel(autoRefreshHours),
+                onClick = { showRefreshPicker = true }
             )
+            FormHelperText("Periodically check this playlist for new movies and series.")
+
+            // --- Save --------------------------------------------------------
+            XtreamAddButton(
+                isValidating = isValidating,
+                label = if (initial != null) "Save changes" else "Add Playlist",
+                enabled = sourceType == XtreamAccount.SOURCE_XTREAM,
+                onClick = submit
+            )
+
+            val status = when {
+                isValidating -> "Verifying…"
+                error != null -> error
+                else -> null
+            }
+            if (status != null) {
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (error != null && !isValidating) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary
+                )
+            }
         }
     }
+
+    if (showRefreshPicker) {
+        SettingsSingleChoiceDialog(
+            title = "Auto-Refresh",
+            options = XtreamAccount.AUTO_REFRESH_OPTIONS.map {
+                SettingsPickerOption(value = it, title = autoRefreshLabel(it))
+            },
+            selectedValue = autoRefreshHours,
+            onOptionSelected = { autoRefreshHours = it; showRefreshPicker = false },
+            onDismiss = { showRefreshPicker = false }
+        )
+    }
+}
+
+/** Max height for the scrollable form body inside the dialog (dialog itself is height-capped too). */
+private val PlaylistFormMaxHeight = 460.dp
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun FormSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = NuvioTheme.colors.TextPrimary
+    )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun XtreamModeTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
+private fun FormHelperText(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = NuvioTheme.colors.TextTertiary
+    )
+}
+
+/**
+ * A source-type tile built on the settings Card vocabulary (FocusRing border, no scale/flood).
+ * Disabled tiles dim their label and show a "Soon" badge; they can be focused (so D-pad traversal
+ * isn't trapped) but selecting is a no-op.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SourceTypeTile(
+    source: PlaylistSource,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val alpha = if (source.enabled) 1f else 0.4f
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.colors(
+            containerColor = if (selected) NuvioTheme.colors.FocusRing.copy(alpha = 0.2f) else NuvioTheme.colors.Background,
+            focusedContainerColor = if (selected) NuvioTheme.colors.FocusRing.copy(alpha = 0.2f) else NuvioTheme.colors.Background
+        ),
+        border = CardDefaults.border(
+            border = if (selected) Border(
+                border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
+                shape = RoundedCornerShape(SettingsPillRadius)
+            ) else Border.None,
+            focusedBorder = Border(
+                border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
+                shape = RoundedCornerShape(SettingsPillRadius)
+            )
+        ),
+        shape = CardDefaults.shape(RoundedCornerShape(SettingsPillRadius)),
+        scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = source.label,
+                style = MaterialTheme.typography.labelMedium,
+                color = (if (selected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary).copy(alpha = alpha)
+            )
+            if (!source.enabled) {
+                Spacer(Modifier.width(NuvioTheme.spacing.sm))
+                SoonBadge()
+            }
+        }
+    }
+}
+
+/** Small "Soon" pill for not-yet-enabled source tiles. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SoonBadge() {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) NuvioTheme.colors.Primary else NuvioTheme.colors.BackgroundElevated)
-            .border(
-                width = 1.dp,
-                color = if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
-                shape = RoundedCornerShape(8.dp)
-            )
-            .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .onKeyEvent {
-                if ((it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                        it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER) &&
-                    it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN
-                ) { onClick(); true } else false
-            }
-            .padding(horizontal = 14.dp, vertical = NuvioTheme.spacing.sm)
+            .clip(RoundedCornerShape(SettingsPillRadius))
+            .background(NuvioTheme.colors.BackgroundCard)
+            .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp)
     ) {
         Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (selected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
+            text = "Soon",
+            style = MaterialTheme.typography.labelSmall,
+            color = NuvioTheme.colors.TextTertiary
         )
     }
+}
+
+/** DNS provider tiles wrapped across rows (3 per row) — reuses the SettingsChoiceChip pattern. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun DnsProviderTiles(selected: String, onSelect: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
+        DNS_OPTIONS.chunked(3).forEach { rowItems ->
+            Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
+                rowItems.forEach { option ->
+                    SettingsChoiceChip(
+                        label = option.label,
+                        selected = selected == option.id,
+                        onClick = { onSelect(option.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Field layout for a plain M3U/URL playlist source. STUB — not wired in P1 (the URL tile is
+ * disabled). A later phase enables the tile and collects [url] into a url/user_agent playlist.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun UrlSourceFields() {
+    // TODO(playlist-manager URL phase): fields = [ playlist url, optional user-agent ].
+    FormHelperText("URL playlists are coming soon.")
+}
+
+/**
+ * Field layout for a Stalker portal source. STUB — not wired in P1 (the Stalker tile is disabled).
+ * A later phase enables the tile and collects
+ * [portalUrl, macAddress, stalkerUsername?, stalkerPassword?, serialNumber?, deviceId?, sendDeviceId].
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun StalkerSourceFields() {
+    // TODO(playlist-manager Stalker phase): fields listed above + a sendDeviceId toggle.
+    FormHelperText("Stalker portals are coming soon.")
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -632,8 +846,14 @@ private fun XtreamField(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun XtreamAddButton(isValidating: Boolean, label: String = "Add account", onClick: () -> Unit) {
+private fun XtreamAddButton(
+    isValidating: Boolean,
+    label: String = "Add account",
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
     var focused by remember { mutableStateOf(false) }
+    val contentAlpha = if (enabled) 1f else 0.4f
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -644,7 +864,8 @@ private fun XtreamAddButton(isValidating: Boolean, label: String = "Add account"
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .onKeyEvent {
-                if ((it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                if (enabled &&
+                    (it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
                         it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER) &&
                     it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN
                 ) { onClick(); true } else false
@@ -655,7 +876,7 @@ private fun XtreamAddButton(isValidating: Boolean, label: String = "Add account"
         Text(
             text = if (isValidating) "Verifying…" else label,
             style = MaterialTheme.typography.bodyMedium,
-            color = NuvioTheme.colors.TextPrimary
+            color = NuvioTheme.colors.TextPrimary.copy(alpha = contentAlpha)
         )
     }
 }

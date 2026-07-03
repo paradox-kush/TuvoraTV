@@ -8,6 +8,7 @@ import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.parseXtreamAccount
+import com.nuvio.tv.core.iptv.withPlaylistOptions
 import com.nuvio.tv.core.iptv.xtreamAccountFromFields
 import com.nuvio.tv.core.sync.XtreamAccountSyncService
 import com.nuvio.tv.data.local.LibraryPreferences
@@ -57,15 +58,41 @@ class XtreamSettingsViewModel @Inject constructor(
         }
     }
 
-    /** Parse a pasted portal/M3U URL, verify the credentials live, then persist. */
-    fun addFromUrl(input: String, name: String?, onSuccess: () -> Unit) {
-        verifyAndSave(parseXtreamAccount(input, name), "Couldn't read a username & password from that URL", onSuccess)
+    /** The shared "Add Playlist" options collected by the form (EPG override, DNS, auto-refresh). */
+    data class PlaylistOptions(
+        val epgUrl: String? = null,
+        val dnsProvider: String = XtreamAccount.DNS_SYSTEM,
+        val autoRefreshHours: Int = XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS
+    )
+
+    /** Copies the form's shared playlist options onto a parsed/built account before verify+save. */
+    private fun XtreamAccount.withOptions(options: PlaylistOptions): XtreamAccount =
+        withPlaylistOptions(options.epgUrl, options.dnsProvider, options.autoRefreshHours)
+
+    /** The form's shared options as currently persisted on an account (to prefill an edit). */
+    private fun XtreamAccount.toOptions(): PlaylistOptions =
+        PlaylistOptions(epgUrl = epgUrl, dnsProvider = dnsProvider, autoRefreshHours = autoRefreshHours)
+
+    /** Parse a pasted portal/M3U URL, verify the credentials live, then persist (with form options). */
+    fun addFromUrl(input: String, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {
+        verifyAndSave(
+            parseXtreamAccount(input, name)?.withOptions(options),
+            "Couldn't read a username & password from that URL",
+            onSuccess
+        )
     }
 
-    /** Add from manually-entered server URL + username + password. */
-    fun addManual(serverUrl: String, username: String, password: String, name: String?, onSuccess: () -> Unit) {
+    /** Add from manually-entered server URL + username + password (with form options). */
+    fun addManual(
+        serverUrl: String,
+        username: String,
+        password: String,
+        name: String?,
+        options: PlaylistOptions = PlaylistOptions(),
+        onSuccess: () -> Unit
+    ) {
         verifyAndSave(
-            xtreamAccountFromFields(serverUrl, username, password, name),
+            xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options),
             "Enter a server URL, username and password",
             onSuccess
         )
@@ -91,15 +118,23 @@ class XtreamSettingsViewModel @Inject constructor(
     }
 
     /** Re-verify + replace an existing account from a pasted portal/M3U URL (playlist edit). */
-    fun editFromUrl(old: XtreamAccount, input: String, onSuccess: () -> Unit) {
-        verifyAndReplace(old, parseXtreamAccount(input, old.name), "Couldn't read a username & password from that URL", onSuccess)
+    fun editFromUrl(old: XtreamAccount, input: String, options: PlaylistOptions = old.toOptions(), onSuccess: () -> Unit) {
+        verifyAndReplace(old, parseXtreamAccount(input, old.name)?.withOptions(options), "Couldn't read a username & password from that URL", onSuccess)
     }
 
     /** Re-verify + replace an existing account from manually-edited fields (playlist edit). */
-    fun editManual(old: XtreamAccount, serverUrl: String, username: String, password: String, name: String?, onSuccess: () -> Unit) {
+    fun editManual(
+        old: XtreamAccount,
+        serverUrl: String,
+        username: String,
+        password: String,
+        name: String?,
+        options: PlaylistOptions = old.toOptions(),
+        onSuccess: () -> Unit
+    ) {
         verifyAndReplace(
             old,
-            xtreamAccountFromFields(serverUrl, username, password, name),
+            xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options),
             "Enter a server URL, username and password",
             onSuccess
         )
@@ -116,13 +151,11 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = parseError) }
             return
         }
-        // Credential/URL edits keep the playlist options (content toggles, category selections,
-        // etc.) — they're usually a panel domain move / cred rotation of the same playlist.
+        // Credential/URL edits keep the content selections (toggles, category picks) — those aren't
+        // in this form. The shared options (epg/dns/refresh) already ride on `candidate` from the
+        // form (withOptions), so DON'T overwrite them from `old`, or an edit couldn't change them.
         val account = candidate.copy(
             enabled = old.enabled,
-            epgUrl = old.epgUrl,
-            dnsProvider = old.dnsProvider,
-            autoRefreshHours = old.autoRefreshHours,
             contentTypes = old.contentTypes,
             categorySelections = old.categorySelections
         )

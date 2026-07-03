@@ -32,6 +32,21 @@ fun parseXtreamAccount(input: String, name: String? = null): XtreamAccount? {
 }
 
 /**
+ * Applies the shared "Add Playlist" options (EPG override, DNS provider, auto-refresh) collected by
+ * the form onto a parsed/built [XtreamAccount]. Blank EPG normalizes to null. Pure so the
+ * field->account mapping is unit-testable independent of the (Hilt-bound) settings ViewModel.
+ */
+fun XtreamAccount.withPlaylistOptions(
+    epgUrl: String?,
+    dnsProvider: String,
+    autoRefreshHours: Int
+): XtreamAccount = copy(
+    epgUrl = epgUrl?.trim()?.takeIf { it.isNotEmpty() },
+    dnsProvider = dnsProvider,
+    autoRefreshHours = autoRefreshHours
+)
+
+/**
  * Builds an account from manually-entered fields (server/portal URL + username + password).
  * The server field may be "host", "host:port", or a full "http(s)://host:port[/path]" — we keep
  * only scheme+host+port. Defaults to http when no scheme is given (Xtream panels are usually http).

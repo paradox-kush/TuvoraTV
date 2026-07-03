@@ -65,9 +65,24 @@ data class XtreamAccount(
     }
 
     companion object {
+        // Source types (P1: only xtream is functional; url/file/stalker are reserved for later phases).
         const val SOURCE_XTREAM = "xtream"
+        const val SOURCE_URL = "url"
+        const val SOURCE_FILE = "file"
+        const val SOURCE_STALKER = "stalker"
+
+        // DNS provider ids persisted to dnsProvider (opaque strings; behaviour wired in P3).
         const val DNS_SYSTEM = "system"
+        const val DNS_CLOUDFLARE = "cloudflare"
+        const val DNS_GOOGLE = "google"
+        const val DNS_MULLVAD = "mullvad"
+        const val DNS_QUAD9 = "quad9"
+        const val DNS_DNSSB = "dnssb"
+
+        // Auto-refresh options (hours). 0 = off; 24 = product default.
         const val DEFAULT_AUTO_REFRESH_HOURS = 24
+        val AUTO_REFRESH_OPTIONS = listOf(0, 6, 12, 24, 48, 72)
+
         const val TYPE_LIVE = "live"
         const val TYPE_MOVIES = "movies"
         const val TYPE_SERIES = "series"
