@@ -7,6 +7,7 @@ import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.data.remote.api.AniSkipApi
 import com.nuvio.tv.data.remote.api.AnimeSkipApi
 import com.nuvio.tv.data.remote.api.ArmApi
+import com.nuvio.tv.data.remote.api.AuthDiagnosticReportApi
 import com.nuvio.tv.data.remote.api.DonationsApi
 import com.nuvio.tv.data.remote.api.GitHubReleaseApi
 import com.nuvio.tv.data.remote.api.TraktApi
@@ -463,6 +464,11 @@ object NetworkModule {
     @Singleton
     fun providePlaybackIssueReportApi(@Named("playbackReports") retrofit: Retrofit): PlaybackIssueReportApi =
         retrofit.create(PlaybackIssueReportApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideAuthDiagnosticReportApi(@Named("playbackReports") retrofit: Retrofit): AuthDiagnosticReportApi =
+        retrofit.create(AuthDiagnosticReportApi::class.java)
 
     // --- Trailer API ---
 
