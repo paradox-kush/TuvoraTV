@@ -740,7 +740,10 @@ fun NuvioNavHost(
                 val isLive = backStackEntry.arguments
                     ?.getString("contentType").equals("live", ignoreCase = true)
                 if (!isLive) return false
-                val popped = navController.popBackStack(Screen.XtreamHub.route, inclusive = false)
+                // Prefer whichever live surface launched us: the Sports hub if it's on the
+                // stack (its match overlay started playback), else the IPTV guide.
+                val popped = navController.popBackStack(Screen.SportsHub.route, inclusive = false) ||
+                    navController.popBackStack(Screen.XtreamHub.route, inclusive = false)
                 if (!popped) {
                     navController.navigate(Screen.XtreamHub.route) { launchSingleTop = true }
                 }
@@ -1140,6 +1143,28 @@ fun NuvioNavHost(
                     navController.navigate(Screen.Detail.createRoute(contentId, type))
                 },
                 onAddProvider = { navController.navigate(Screen.Settings.route) }
+            )
+        }
+
+        composable(Screen.SportsHub.route) {
+            com.nuvio.tv.ui.screens.radar.SportsHubScreen(
+                onPlayChannel = { title, streamUrl, contentId ->
+                    // Same proven live path as Library/Search live clicks: contentType="live"
+                    // forces the mpv engine; returnToLiveGuideOrPop routes BACK to this hub.
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = streamUrl,
+                            title = title,
+                            contentType = "live",
+                            contentId = contentId,
+                        )
+                    )
+                },
+                onAddProvider = { navController.navigate(Screen.Settings.route) },
+                // Recordings are registry-registered VOD ids — native detail pipeline.
+                onOpenDetail = { contentId, type ->
+                    navController.navigate(Screen.Detail.createRoute(contentId, type))
+                },
             )
         }
 

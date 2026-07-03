@@ -142,6 +142,7 @@ sealed class Screen(val route: String) {
     data object LicensesAttributions : Screen("licenses_attributions")
     data object AddonManager : Screen("addon_manager")
     data object XtreamHub : Screen("xtream_hub")
+    data object SportsHub : Screen("sports_hub")
     data object XtreamVod : Screen("xtream_vod/{accountId}") {
         fun createRoute(accountId: String): String =
             "xtream_vod/${URLEncoder.encode(accountId, "UTF-8").replace("+", "%20")}"

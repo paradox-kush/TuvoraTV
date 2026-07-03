@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -749,6 +750,13 @@ class MainActivity : ComponentActivity() {
                                     route = Screen.XtreamHub.route,
                                     label = "IPTV",
                                     icon = Icons.Default.LiveTv
+                                )
+                            )
+                            add(
+                                DrawerItem(
+                                    route = Screen.SportsHub.route,
+                                    label = "Sports",
+                                    icon = Icons.Default.SportsSoccer
                                 )
                             )
                             add(

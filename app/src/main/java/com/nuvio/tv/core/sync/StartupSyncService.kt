@@ -36,6 +36,7 @@ class StartupSyncService @Inject constructor(
     private val pluginSyncService: PluginSyncService,
     private val addonSyncService: AddonSyncService,
     private val xtreamAccountSyncService: XtreamAccountSyncService,
+    private val radarSyncService: com.nuvio.tv.core.radar.RadarSyncService,
     private val collectionSyncService: CollectionSyncService,
     private val homeCatalogSettingsSyncService: HomeCatalogSettingsSyncService,
     private val watchProgressSyncService: WatchProgressSyncService,
@@ -438,6 +439,15 @@ class StartupSyncService @Inject constructor(
                 }
             }
 
+            val radarJob = async {
+                try {
+                    radarSyncService.pullAndApply().getOrElse { throw it }
+                    Log.d(TAG, "Pulled radar follows from remote for profile $profileId")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to pull radar follows from remote, keeping local", e)
+                }
+            }
+
             val collectionJob = async {
                 try {
                     collectionSyncService.pullFromRemote()
@@ -469,6 +479,7 @@ class StartupSyncService @Inject constructor(
             pluginJob.await()
             addonJob.await()
             xtreamJob.await()
+            radarJob.await()
             collectionJob.await()
             homeCatalogJob.await()
             libraryJob.await()
