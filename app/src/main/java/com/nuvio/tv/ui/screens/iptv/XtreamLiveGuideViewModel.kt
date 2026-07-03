@@ -9,6 +9,8 @@ import com.nuvio.tv.core.iptv.XtreamKind
 import com.nuvio.tv.core.iptv.XtreamLivePlaylist
 import com.nuvio.tv.core.iptv.XtreamProgram
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
+import com.nuvio.tv.core.iptv.dns.PlaylistLivePlayback
+import com.nuvio.tv.core.iptv.dns.PreparedLiveStream
 import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.data.local.XtreamLiveStore
 import com.nuvio.tv.domain.model.ContentType
@@ -16,6 +18,7 @@ import com.nuvio.tv.domain.model.LibraryEntryInput
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.repository.LibraryRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /** A category entry in the guide's left column. [special] marks the synthetic ones. */
@@ -56,6 +60,10 @@ data class LiveGuideUiState(
     /** What the single preview player is tuned to. Changes ONLY on OK (or last-played restore),
      *  never on focus movement — focus just browses. */
     val previewChannel: GuideChannel? = null,
+    /** The URL + headers to actually hand mpv for [previewChannel] — DoH-rewritten when the playlist
+     *  opts into a non-system resolver, else the channel's URL with no extra headers. Recomputed per
+     *  channel; null until computed (the screen waits for it before loading). */
+    val previewPlayback: PreparedLiveStream? = null,
     val loadingChannels: Boolean = false,
     val error: String? = null
 ) {
@@ -76,7 +84,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val registry: XtreamItemRegistry,
     private val liveStore: XtreamLiveStore,
     private val livePlaylist: XtreamLivePlaylist,
-    private val libraryRepository: LibraryRepository
+    private val libraryRepository: LibraryRepository,
+    private val livePlayback: PlaylistLivePlayback,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LiveGuideUiState())
@@ -127,8 +136,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
             liveStore.recents.first()
                 .firstOrNull { it.id.startsWith("${XtreamItemRegistry.PREFIX}${acc.id}:live:") }
                 ?.let { ref ->
-                    val restored = GuideChannel(ref.id, ref.name, ref.logo, ref.streamUrl, streamIdOf(ref.id))
-                    _uiState.update { it.copy(previewChannel = it.previewChannel ?: restored) }
+                    if (_uiState.value.previewChannel == null) {
+                        tunePreview(GuideChannel(ref.id, ref.name, ref.logo, ref.streamUrl, streamIdOf(ref.id)))
+                    }
                 }
         }
         // Cache hit: show the category column immediately without re-fetching. The cache keeps
@@ -254,8 +264,25 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** OK on a channel row: tune the single preview player to it (and remember it as
      *  last-played). OK on the already-tuned channel is handled by the screen (fullscreen). */
     fun playPreview(channel: GuideChannel) {
-        _uiState.update { it.copy(previewChannel = channel) }
+        tunePreview(channel)
         recordPlayed(channel)
+    }
+
+    /**
+     * Points the preview at [channel]: sets it synchronously (clearing any stale prepared playback so
+     * the screen never loads the previous channel's DoH-rewritten URL) and computes the DoH-prepared
+     * URL + headers off-main. The prepare is defensive — any failure yields the plain URL.
+     */
+    private fun tunePreview(channel: GuideChannel) {
+        _uiState.update { it.copy(previewChannel = channel, previewPlayback = null) }
+        val provider = account?.dnsProvider
+        viewModelScope.launch {
+            val prepared = withContext(Dispatchers.IO) { livePlayback.prepare(provider, channel.streamUrl) }
+            // Ignore a stale result if the user has since tuned to a different channel.
+            _uiState.update {
+                if (it.previewChannel?.contentId == channel.contentId) it.copy(previewPlayback = prepared) else it
+            }
+        }
     }
 
     /** Record a channel as just-watched + publish the current list so the fullscreen player

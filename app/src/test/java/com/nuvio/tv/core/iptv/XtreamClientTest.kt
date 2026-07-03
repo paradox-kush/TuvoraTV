@@ -33,7 +33,14 @@ class XtreamClientTest {
             listOf(XtreamLiveStreamDto(num = 1, name = "BBC", streamId = 42, streamIcon = "", epgChannelId = "bbc", categoryId = "3", tvArchive = 1))
         )
 
-        val channels = XtreamClient(api).liveChannels(acc).getOrThrow()
+        // acc uses system DNS, so apiFor(acc) returns this mock api (no DoH Retrofit is built) — the
+        // extra client/moshi/dns are inert here.
+        val channels = XtreamClient(
+            api,
+            okhttp3.OkHttpClient(),
+            Moshi.Builder().add(FlexIntAdapter).add(KotlinJsonAdapterFactory()).build(),
+            com.nuvio.tv.core.iptv.dns.PlaylistDns(),
+        ).liveChannels(acc).getOrThrow()
 
         // request URL: encoded creds, player_api.php, correct action
         val reqUrl = urlSlot.captured

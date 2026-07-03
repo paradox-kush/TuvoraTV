@@ -54,7 +54,8 @@ class XtreamSettingsViewModel @Inject constructor(
     private val watchProgressPreferences: WatchProgressPreferences,
     private val watchedItemsPreferences: WatchedItemsPreferences,
     private val liveStore: XtreamLiveStore,
-    private val fileStore: M3UFileStore
+    private val fileStore: M3UFileStore,
+    private val refreshStore: com.nuvio.tv.core.iptv.refresh.IptvRefreshStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
@@ -311,6 +312,8 @@ class XtreamSettingsViewModel @Inject constructor(
             store.remove(id)
             // A file playlist's local copy is orphaned once its account is gone — reclaim the space.
             runCatching { fileStore.delete(id) }
+            // Drop its auto-refresh timestamp so the pref store doesn't leak stale keys.
+            runCatching { refreshStore.clear(id) }
             syncService.triggerRemoteSync()
         }
     }

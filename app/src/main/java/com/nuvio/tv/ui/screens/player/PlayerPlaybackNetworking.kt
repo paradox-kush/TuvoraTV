@@ -5,6 +5,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import com.nuvio.tv.core.network.IPv4FirstDns
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import java.net.HttpURLConnection
 import java.net.URL
@@ -49,8 +50,14 @@ internal object PlayerPlaybackNetworking {
     }
 
     @OptIn(UnstableApi::class)
-    fun createHttpDataSourceFactory(defaultHeaders: Map<String, String> = emptyMap()): DataSource.Factory {
+    fun createHttpDataSourceFactory(
+        defaultHeaders: Map<String, String> = emptyMap(),
+        dns: Dns? = null
+    ): DataSource.Factory {
         val builder = playbackHttpClient.newBuilder()
+        // Per-playlist DoH resolver (VOD/series). SNI/cert stay keyed on the original host, so this
+        // works for https too — only mpv's live URL-rewrite can't do https (see PlaylistLivePlayback).
+        if (dns != null) builder.dns(dns)
         if (defaultHeaders.any { it.key.equals("Authorization", ignoreCase = true) }) {
             // OkHttp strips the Authorization header on cross-host redirects.
             // WebDAV servers behind reverse proxies commonly redirect to a
@@ -87,9 +94,12 @@ internal object PlayerPlaybackNetworking {
     @OptIn(UnstableApi::class)
     fun createDataSourceFactory(
         context: android.content.Context,
-        defaultHeaders: Map<String, String> = emptyMap()
+        defaultHeaders: Map<String, String> = emptyMap(),
+        dns: Dns? = null
     ): DataSource.Factory {
-        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders))
+        // DefaultDataSource keeps file/content/rtmp/udp/asset URIs working; only http(s) uses the
+        // OkHttp (optionally DoH-resolved) upstream.
+        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns))
     }
 
     fun openConnection(

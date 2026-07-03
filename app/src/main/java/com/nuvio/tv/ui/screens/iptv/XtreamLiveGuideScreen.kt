@@ -110,18 +110,19 @@ fun LiveGuide(
     // The player tunes ONLY when the preview channel changes (OK press / last-played restore) —
     // never on focus movement. mpv calls go off-main: they can block on the core lock for
     // seconds while a slow live stream is opening (that blocked a KeyEvent >5s = ANR).
-    val previewUrl = uiState.previewChannel?.streamUrl
-    LaunchedEffect(previewUrl, mpvView) {
+    // previewPlayback carries the (DoH-rewritten when the playlist opts in) URL + Host header.
+    val previewPlayback = uiState.previewPlayback
+    LaunchedEffect(previewPlayback, mpvView) {
         val view = mpvView ?: return@LaunchedEffect
-        val url = previewUrl ?: return@LaunchedEffect
-        withContext(Dispatchers.Default) { view.setMediaUsingLoadfile(url, emptyMap()) }
+        val prepared = previewPlayback ?: return@LaunchedEffect
+        withContext(Dispatchers.Default) { view.setMediaUsingLoadfile(prepared.url, prepared.headers) }
     }
 
     // Pause holds the frame; resume reloads instead of unpausing (a paused live buffer goes
     // stale). loadfile does NOT clear mpv's pause property, so resume must unpause explicitly.
     fun togglePause() {
         val view = mpvView ?: return
-        val url = uiState.previewChannel?.streamUrl ?: return
+        val prepared = uiState.previewPlayback ?: return
         val target = !paused
         paused = target
         lifecycleScope.launch(Dispatchers.Default) {
@@ -129,7 +130,7 @@ fun LiveGuide(
                 view.setPaused(true)
             } else {
                 view.setPaused(false)
-                view.setMediaUsingLoadfile(url, emptyMap())
+                view.setMediaUsingLoadfile(prepared.url, prepared.headers)
             }
         }
         showControls()
@@ -159,12 +160,12 @@ fun LiveGuide(
             when (event) {
                 Lifecycle.Event.ON_STOP -> lifecycleScope.launch(Dispatchers.Default) { mpvView?.setPaused(true) }
                 Lifecycle.Event.ON_START -> {
-                    val url = uiState.previewChannel?.streamUrl ?: return@LifecycleEventObserver
+                    val prepared = uiState.previewPlayback ?: return@LifecycleEventObserver
                     paused = false
                     lifecycleScope.launch(Dispatchers.Default) {
                         // loadfile keeps mpv's pause property — unpause or the rejoin stays frozen.
                         mpvView?.setPaused(false)
-                        mpvView?.setMediaUsingLoadfile(url, emptyMap())
+                        mpvView?.setMediaUsingLoadfile(prepared.url, prepared.headers)
                     }
                 }
                 else -> Unit

@@ -16,7 +16,10 @@ import coil3.request.allowHardware
 import coil3.request.allowRgb565
 import coil3.bitmapFactoryMaxParallelism
 
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import okio.Path.Companion.toOkioPath
+import com.nuvio.tv.core.iptv.refresh.IptvRefreshScheduler
 import com.nuvio.tv.core.runtime.PluginRuntimeHooks
 import com.nuvio.tv.core.sync.StartupSyncService
 import com.nuvio.tv.core.sync.androidtv.AndroidTvChannelSyncService
@@ -31,10 +34,22 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 @HiltAndroidApp
-class NuvioApplication : Application(), SingletonImageLoader.Factory {
+class NuvioApplication : Application(), SingletonImageLoader.Factory, Configuration.Provider {
 
     @Inject lateinit var startupSyncService: StartupSyncService
     @Inject lateinit var androidTvChannelSyncService: AndroidTvChannelSyncService
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+    @Inject lateinit var iptvRefreshScheduler: IptvRefreshScheduler
+    // Eagerly created so its accountId->dnsProvider mirror is warm before the first playback needs
+    // it (its init observes the account store); otherwise a very-early first live/VOD play could
+    // miss its playlist's DoH provider and fall back to system DNS.
+    @Inject lateinit var playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver
+
+    // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
 
     companion object {
         // Public client-side key — safe to ship in the binary.
@@ -81,6 +96,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
         )
         PluginRuntimeHooks.onApplicationCreate(this)
         androidTvChannelSyncService.start()
+        // Keep the IPTV auto-refresh worker scheduled to the shortest enabled playlist interval.
+        iptvRefreshScheduler.start()
         // Load locale synchronously so it's available before Activity.attachBaseContext.
         // SharedPreferences reads are fast (cached in memory after first access).
         val tag = getSharedPreferences("app_locale", Context.MODE_PRIVATE)

@@ -53,6 +53,9 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
     var vodCacheSizeMode: VodCacheSizeMode = PlayerSettings.DEFAULT_VOD_CACHE_SIZE_MODE
     var vodCacheSizeMb: Int = PlayerSettings.DEFAULT_VOD_CACHE_SIZE_MB
 
+    /** Per-playlist DNS-over-HTTPS resolver for the currently-playing item (null = system resolver). */
+    var playbackDns: okhttp3.Dns? = null
+
     // OkHttp client used only by the opt-in parallel-connections path.
     private val playbackHttpClient by lazy {
         val trustAllManager = object : X509TrustManager {
@@ -103,7 +106,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         mediaMetadata: androidx.media3.common.MediaMetadata? = null
     ): MediaSource {
         val sanitizedHeaders = sanitizeHeaders(headers)
-        val httpDataSourceFactory = PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders)
+        val httpDataSourceFactory = PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders, playbackDns)
 
         val resolvedMimeType = mimeTypeOverride ?: inferMimeType(
             url = url,
@@ -128,7 +131,9 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         // OkHttpDataSource.Factory, so build one only on this path.
         parallelStartupPrefetchUnlocked.set(!(useParallelConnections && !isHls && !isDash))
         val progressiveUpstreamFactory: DataSource.Factory = if (useParallelConnections && !isHls && !isDash) {
-            val okHttpFactory = OkHttpDataSource.Factory(playbackHttpClient).apply {
+            // Apply the per-playlist DoH resolver to the parallel path's client too (shares the pool).
+            val parallelClient = playbackDns?.let { playbackHttpClient.newBuilder().dns(it).build() } ?: playbackHttpClient
+            val okHttpFactory = OkHttpDataSource.Factory(parallelClient).apply {
                 setDefaultRequestProperties(sanitizedHeaders)
                 setUserAgent(DEFAULT_USER_AGENT)
             }

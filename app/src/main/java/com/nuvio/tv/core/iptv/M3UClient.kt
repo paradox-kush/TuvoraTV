@@ -48,6 +48,7 @@ class M3UClient @Inject constructor(
     @Named("m3uIngest") private val http: OkHttpClient,
     private val fileStore: M3UFileStore,
     private val xmltv: XmltvClient,
+    private val playlistDns: com.nuvio.tv.core.iptv.dns.PlaylistDns,
 ) : IptvClient {
 
     private val ingestLock = Mutex()
@@ -122,7 +123,8 @@ class M3UClient @Inject constructor(
             .url(acc.baseUrl)
             .apply { acc.username.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) } }
             .build()
-        http.newCall(request).execute().use { resp ->
+        // Fetch through the playlist's DoH resolver when it opts into one (shares the ingest pool).
+        playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
             check(resp.isSuccessful) { "HTTP ${resp.code}" }
             // charStream() decodes the (possibly gunzipped) source incrementally — no full buffer.
             val reader = resp.body.charStream().buffered()

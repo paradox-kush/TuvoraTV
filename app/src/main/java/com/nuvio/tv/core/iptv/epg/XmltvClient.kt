@@ -32,6 +32,7 @@ import javax.inject.Singleton
 class XmltvClient @Inject constructor(
     private val db: IptvContentDb,
     @Named("m3uIngest") private val http: OkHttpClient,
+    private val playlistDns: com.nuvio.tv.core.iptv.dns.PlaylistDns,
 ) {
 
     private val lock = Mutex()
@@ -90,7 +91,8 @@ class XmltvClient @Inject constructor(
             .url(url)
             .apply { acc.username.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) } }
             .build()
-        http.newCall(request).execute().use { resp ->
+        // XMLTV fetch honours the playlist's DoH resolver (shares the ingest pool).
+        playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
             check(resp.isSuccessful) { "HTTP ${resp.code}" }
             // charStream() decodes the (possibly gunzipped) body incrementally — never fully buffered.
             val reader = resp.body.charStream().buffered()

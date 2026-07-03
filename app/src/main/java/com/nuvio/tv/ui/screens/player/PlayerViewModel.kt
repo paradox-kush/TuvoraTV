@@ -67,6 +67,8 @@ class PlayerViewModel @Inject constructor(
     private val externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker,
     private val subtitleFileCache: com.nuvio.tv.core.player.SubtitleFileCache,
     private val livePlaylist: com.nuvio.tv.core.iptv.XtreamLivePlaylist,
+    private val playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver,
+    private val playbackActivityTracker: com.nuvio.tv.core.player.PlaybackActivityTracker,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -77,6 +79,8 @@ class PlayerViewModel @Inject constructor(
         // Release trailer player codec resources so the full-screen player can
         // claim hardware decoders without contention (prevents black screen).
         trailerPlayerPool.yield()
+        // Signal that a player is active so the IPTV refresh worker defers re-ingest while playing.
+        playbackActivityTracker.onPlayerStarted()
     }
 
     private val controller = PlayerRuntimeController(
@@ -109,6 +113,7 @@ class PlayerViewModel @Inject constructor(
         directDebridStreamPreparer = directDebridStreamPreparer,
         streamBadgePresentation = streamBadgePresentation,
         playbackIssueReportRepository = playbackIssueReportRepository,
+        playlistDnsResolver = playlistDnsResolver,
         savedStateHandle = savedStateHandle,
         scope = viewModelScope
     )
@@ -167,7 +172,13 @@ class PlayerViewModel @Inject constructor(
         val cur = currentLiveContentId ?: return
         val next = livePlaylist.relativeTo(cur, delta) ?: return
         currentLiveContentId = next.id
-        controller.switchToLiveChannel(name = next.name, url = next.streamUrl)
+        // Prepare the DoH-rewritten URL/headers off-main (no-op for system-DNS playlists), then swap.
+        viewModelScope.launch {
+            val prepared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                playlistDnsResolver.prepareLive(next.id, next.streamUrl)
+            }
+            controller.switchToLiveChannel(name = next.name, url = prepared.url, extraHeaders = prepared.headers)
+        }
     }
 
     fun onEvent(event: PlayerEvent) {
@@ -182,6 +193,7 @@ class PlayerViewModel @Inject constructor(
         controller.onCleared()
         // Allow the trailer player to be re-created when returning to home screen.
         trailerPlayerPool.reclaim()
+        playbackActivityTracker.onPlayerStopped()
         super.onCleared()
     }
 

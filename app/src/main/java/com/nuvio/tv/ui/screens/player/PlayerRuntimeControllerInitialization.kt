@@ -78,11 +78,13 @@ import com.nuvio.tv.data.repository.PlaybackIssueErrorInput
 import com.nuvio.tv.domain.model.Subtitle
 import io.github.peerless2012.ass.media.kt.buildWithAssSupport
 import io.github.peerless2012.ass.media.type.AssRenderType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.SocketTimeoutException
 import kotlin.math.min
@@ -273,7 +275,25 @@ internal fun PlayerRuntimeController.initializePlayer(
                         phase = "mpv_buffering",
                         message = context.getString(R.string.player_loading_buffering)
                     )
-                    initializeMpvPlayer(url = url, headers = headers, allowEngineFailover = allowEngineFailover)
+                    // Per-playlist DoH for the live mpv path: resolve + follow redirects + rewrite an
+                    // http URL to a resolved IP with a Host header (see PlaylistLivePlayback). No-op for
+                    // non-live, system-DNS playlists, https, or any failure (returns the URL untouched).
+                    var mpvUrl = url
+                    var mpvHeaders = headers
+                    if (contentType.equals("live", ignoreCase = true)) {
+                        val prepared = withContext(Dispatchers.IO) { playlistDnsResolver.prepareLive(contentId, url) }
+                        if (prepared.url != url || prepared.headers.isNotEmpty()) {
+                            mpvUrl = prepared.url
+                            mpvHeaders = if (prepared.headers.isEmpty()) headers else headers + prepared.headers
+                            // Keep currentStreamUrl/currentHeaders in lockstep: a surface re-attach
+                            // (attachMpvView) reloads from these, so the IP URL must carry its Host
+                            // header there too — otherwise the rejoin would drop it and fail.
+                            currentStreamUrl = mpvUrl
+                            currentHeaders = mpvHeaders
+                            _uiState.update { it.copy(currentStreamUrl = mpvUrl) }
+                        }
+                    }
+                    initializeMpvPlayer(url = mpvUrl, headers = mpvHeaders, allowEngineFailover = allowEngineFailover)
                     fetchAddonSubtitles()
                 } finally {
                     mpvInitializationInProgress = false
@@ -535,6 +555,13 @@ internal fun PlayerRuntimeController.initializePlayer(
                 // Reset each playback so the factory doesn't keep last stream's state.
                 mediaSourceFactory.useParallelConnections = false
             }
+
+            // Per-playlist DoH for Media3 (VOD/series). Resolves off the xtream content id; null (a
+            // non-IPTV item or a system-DNS playlist) leaves the default system resolver. Reset every
+            // playback so the factory never carries the previous stream's resolver.
+            mediaSourceFactory.playbackDns =
+                playlistDnsResolver.dnsForVideoId(currentVideoId)
+                    ?: playlistDnsResolver.dnsForVideoId(contentId)
 
             // Log the effective state (post-gating), not the raw settings.
             Log.i(

@@ -1,11 +1,17 @@
 package com.nuvio.tv.core.iptv
 
+import com.nuvio.tv.core.iptv.dns.PlaylistDns
 import com.nuvio.tv.data.remote.api.XtreamApi
 import com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto
+import com.squareup.moshi.Moshi
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -181,11 +187,36 @@ data class XtreamVodSignal(val tmdbId: Int?, val year: Int?)
  */
 @Singleton
 class XtreamClient @Inject constructor(
-    private val api: XtreamApi
+    /** System-DNS API (shared client) — the fast path when a playlist uses no DoH. */
+    private val api: XtreamApi,
+    /** Shared OkHttp client whose connection pool a per-provider DoH client reuses. */
+    private val baseClient: OkHttpClient,
+    private val moshi: Moshi,
+    private val playlistDns: PlaylistDns,
 ) : IptvClient {
+
+    /** Per-provider [XtreamApi] cache. Built lazily off a DoH-derived client that shares [baseClient]'s pool. */
+    private val apiByProvider = ConcurrentHashMap<String, XtreamApi>()
+
+    /**
+     * The [XtreamApi] to use for [acc]. The system provider (the common case) returns the injected
+     * shared [api] untouched; a DoH provider returns a cached Retrofit built on a client whose DNS is
+     * the playlist's resolver (all Xtream URLs are absolute @Url, so baseUrl is only a placeholder).
+     */
+    private fun apiFor(acc: XtreamAccount): XtreamApi {
+        if (!playlistDns.usesDoh(acc.dnsProvider)) return api
+        return apiByProvider.getOrPut(acc.dnsProvider) {
+            Retrofit.Builder()
+                .baseUrl("https://placeholder.nuvio.tv/")
+                .client(playlistDns.clientFor(baseClient, acc.dnsProvider))
+                .addConverterFactory(MoshiConverterFactory.create(moshi))
+                .build()
+                .create(XtreamApi::class.java)
+        }
+    }
     /** Verifies credentials. Success only when the panel reports auth=1 and an active status. */
     suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
-        val info = api.getAccount(playerApi(acc)).requireBody().userInfo
+        val info = apiFor(acc).getAccount(playerApi(acc)).requireBody().userInfo
         check(info?.auth == 1) { "Authentication failed" }
         val status = info.status?.lowercase().orEmpty()
         check(status.isEmpty() || status == "active") { "Account status: ${info.status}" }
@@ -193,7 +224,7 @@ class XtreamClient @Inject constructor(
 
     /** Account status (expiry/connections) for the settings row. Same endpoint as [verify]. */
     suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = call {
-        val info = api.getAccount(playerApi(acc)).requireBody().userInfo
+        val info = apiFor(acc).getAccount(playerApi(acc)).requireBody().userInfo
         XtreamAccountInfo(
             status = info?.status?.takeIf { it.isNotBlank() },
             expiresAtEpochSec = info?.expDate?.trim()?.toLongOrNull(),
@@ -212,7 +243,7 @@ class XtreamClient @Inject constructor(
         categories(acc, "get_series_categories")
 
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = call {
-        api.getLiveStreams(playerApi(acc, "get_live_streams", categoryId)).requireBody().mapNotNull { dto ->
+        apiFor(acc).getLiveStreams(playerApi(acc, "get_live_streams", categoryId)).requireBody().mapNotNull { dto ->
             val id = dto.streamId ?: return@mapNotNull null
             XtreamChannel(
                 streamId = id,
@@ -227,7 +258,7 @@ class XtreamClient @Inject constructor(
     }
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = call {
-        api.getVodStreams(playerApi(acc, "get_vod_streams", categoryId)).requireBody().mapNotNull { dto ->
+        apiFor(acc).getVodStreams(playerApi(acc, "get_vod_streams", categoryId)).requireBody().mapNotNull { dto ->
             val id = dto.streamId ?: return@mapNotNull null
             XtreamMovie(
                 streamId = id,
@@ -243,7 +274,7 @@ class XtreamClient @Inject constructor(
     }
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = call {
-        api.getSeries(playerApi(acc, "get_series", categoryId)).requireBody().mapNotNull { dto ->
+        apiFor(acc).getSeries(playerApi(acc, "get_series", categoryId)).requireBody().mapNotNull { dto ->
             val id = dto.seriesId ?: return@mapNotNull null
             XtreamSeriesItem(
                 id, dto.name.orEmpty(), dto.cover?.takeIf { it.isNotBlank() }, dto.categoryId, dto.plot, dto.rating,
@@ -259,7 +290,7 @@ class XtreamClient @Inject constructor(
             .addQueryParameter("stream_id", streamId.toString())
             .addQueryParameter("limit", limit.toString())
             .build().toString()
-        api.getShortEpg(url).requireBody().listings.orEmpty().map { it.toProgram() }
+        apiFor(acc).getShortEpg(url).requireBody().listings.orEmpty().map { it.toProgram() }
     }
 
     /** Full episode list (across seasons) for a series, each with its built stream URL. */
@@ -267,7 +298,7 @@ class XtreamClient @Inject constructor(
         val url = playerApi(acc, "get_series_info").toHttpUrl().newBuilder()
             .addQueryParameter("series_id", seriesId.toString())
             .build().toString()
-        val resp = api.getSeriesInfo(url).requireBody()
+        val resp = apiFor(acc).getSeriesInfo(url).requireBody()
         val episodes = resp.episodes.orEmpty().flatMap { (seasonKey, list) ->
             list.mapNotNull { e ->
                 val epId = e.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
@@ -304,7 +335,7 @@ class XtreamClient @Inject constructor(
         val url = playerApi(acc, "get_vod_info").toHttpUrl().newBuilder()
             .addQueryParameter("vod_id", vodId.toString())
             .build().toString()
-        api.getVodInfo(url).requireBody().info?.tmdbId?.takeIf { it > 0 }
+        apiFor(acc).getVodInfo(url).requireBody().info?.tmdbId?.takeIf { it > 0 }
     }
 
     /** What get_vod_info can confirm about a candidate during TMDB->stream matching. */
@@ -312,7 +343,7 @@ class XtreamClient @Inject constructor(
         val url = playerApi(acc, "get_vod_info").toHttpUrl().newBuilder()
             .addQueryParameter("vod_id", vodId.toString())
             .build().toString()
-        val info = api.getVodInfo(url).requireBody().info
+        val info = apiFor(acc).getVodInfo(url).requireBody().info
         XtreamVodSignal(
             tmdbId = info?.tmdbId?.takeIf { it > 0 },
             year = (info?.releaseDate ?: info?.releaseDateAlt)?.trim()?.take(4)?.toIntOrNull()
@@ -375,7 +406,7 @@ class XtreamClient @Inject constructor(
             .build().toString()
 
     private suspend fun categories(acc: XtreamAccount, action: String): Result<List<XtreamCategory>> = call {
-        api.getCategories(playerApi(acc, action)).requireBody().mapNotNull { dto ->
+        apiFor(acc).getCategories(playerApi(acc, action)).requireBody().mapNotNull { dto ->
             val id = dto.categoryId ?: return@mapNotNull null
             XtreamCategory(id, dto.categoryName.orEmpty())
         }

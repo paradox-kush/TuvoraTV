@@ -399,12 +399,18 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
+    implementation(libs.hilt.work)
+    ksp(libs.hilt.work.compiler)
+
+    // WorkManager (IPTV auto-refresh)
+    implementation(libs.androidx.work.runtime)
 
     // Networking
     implementation(libs.retrofit)
     implementation(libs.retrofit.moshi)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
+    implementation(libs.okhttp.dnsoverhttps)
     implementation(libs.moshi)
     ksp(libs.moshi.codegen)
 

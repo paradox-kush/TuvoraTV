@@ -803,7 +803,13 @@ internal fun PlayerRuntimeController.switchToSourceStream(
  *  (`loadfile replace`) — no releasePlayer/destroy. Destroying a stuck decoder (e.g. a 4K
  *  channel the device can't decode) would block the main thread; loadfile-replace aborts the
  *  current file and loads the new one cleanly, which is also the smoothest zap. */
-internal fun PlayerRuntimeController.switchToLiveChannel(name: String, url: String) {
+internal fun PlayerRuntimeController.switchToLiveChannel(
+    name: String,
+    url: String,
+    extraHeaders: Map<String, String> = emptyMap()
+) {
+    // Additive (e.g. a DoH Host header) — merged over the live stream's existing headers.
+    val headers = if (extraHeaders.isEmpty()) currentHeaders else currentHeaders + extraHeaders
     val view = mpvView
     if (view == null || !isUsingMpvEngine()) {
         // Fallback for the unexpected non-mpv case: full source switch.
@@ -835,7 +841,7 @@ internal fun PlayerRuntimeController.switchToLiveChannel(name: String, url: Stri
     }
     hasRenderedFirstFrame = false
     runCatching {
-        view.setMedia(url, currentHeaders)
+        view.setMedia(url, headers)
         view.setPaused(false)
     }
     emitScrobbleStart()
