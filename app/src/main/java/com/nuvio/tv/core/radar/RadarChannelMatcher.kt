@@ -31,6 +31,8 @@ class RadarChannelMatcher @Inject constructor(
     private val xtreamClient: XtreamClient,
     private val accountStore: XtreamAccountStore,
     private val registry: XtreamItemRegistry,
+    private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
+    private val resolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver,
 ) {
     data class CandidateChannel(
         val playlistId: String,
@@ -40,6 +42,16 @@ class RadarChannelMatcher @Inject constructor(
         val logo: String?,
         val streamId: Int,
         val streamUrl: String,
+        /** Channel offers catch-up (Xtream tv_archive) — enables Replay for past fixtures. */
+        val hasArchive: Boolean = false,
+    )
+
+    /** A provider VOD entry that looks like a recording of the fixture. */
+    data class RecordingHit(
+        val contentId: String,
+        val name: String,
+        val poster: String?,
+        val playlistName: String,
     )
 
     data class ChannelMatch(
@@ -91,6 +103,77 @@ class RadarChannelMatcher @Inject constructor(
         return probed.sortedByDescending { it.score }.take(RESULT_CAP)
     }
 
+    /**
+     * Catch-up Replay for a started/finished fixture on an archived channel: registers a
+     * synthetic live item carrying the timeshift URL and returns (contentId, url, title) —
+     * plays through the same live route as everything else. Null when no archive/not started.
+     */
+    suspend fun replayFor(match: ChannelMatch, fixture: RadarFixture): Triple<String, String, String>? {
+        val start = fixture.startEpochMs ?: return null
+        if (!match.channel.hasArchive || start > RadarTime.nowMs()) return null
+        val account = accountStore.accounts.first().firstOrNull { it.id == match.channel.playlistId }
+            ?: return null
+        val programme = match.programme
+        val replayStart = programme?.startMs?.takeIf { it > 0 } ?: (start - 15 * 60 * 1000L)
+        val durationMin = (((programme?.endMs ?: 0L) - (programme?.startMs ?: 0L)) / 60_000L)
+            .toInt().takeIf { it in 30..360 } ?: 165
+        val url = xtreamClient.liveTimeshiftUrl(account, match.channel.streamId, replayStart, durationMin)
+        val title = "${match.channel.name} · Replay"
+        val contentId = "${match.channel.contentId}r${replayStart / 60_000L}"
+        registry.register(
+            XtreamResolvedItem(
+                id = contentId, type = ContentType.TV, name = title, poster = match.channel.logo,
+                streamUrl = url, kind = XtreamKind.LIVE, accountId = account.id, streamId = match.channel.streamId,
+            )
+        )
+        return Triple(contentId, url, title)
+    }
+
+    /**
+     * Provider VOD entries that look like recordings of this fixture, from the SAME SQLite
+     * catalog index the TMDB matcher builds. Registered so OK opens the native detail.
+     */
+    suspend fun findRecordings(fixture: RadarFixture): List<RecordingHit> {
+        val start = fixture.startEpochMs ?: return emptyList()
+        if (start > RadarTime.nowMs()) return emptyList()
+        val homeTokens = teamTokens(fixture.home)
+        val awayTokens = teamTokens(fixture.away)
+        val eventTokens = teamTokens(fixture.event)
+        val queries = buildList {
+            homeTokens.firstOrNull()?.let(::add)
+            awayTokens.firstOrNull()?.let(::add)
+            if (isEmpty()) eventTokens.take(2).forEach(::add)
+        }.distinct()
+        if (queries.isEmpty()) return emptyList()
+
+        val accounts = accountStore.accounts.first().filter { it.enabled }
+        val hits = LinkedHashMap<String, RecordingHit>()
+        for (account in accounts) {
+            kotlinx.coroutines.withTimeoutOrNull(INDEX_WAIT_MS) {
+                resolver.ensureIndexed(account, com.nuvio.tv.core.iptv.match.MatchKind.MOVIE)
+            }
+            for (q in queries) {
+                matchIndex.searchByName(account.id, com.nuvio.tv.core.iptv.match.MatchKind.MOVIE, q, 30).forEach { item ->
+                    val text = normalize(item.name)
+                    val bothTeams = homeTokens.any { hits(text, it) } && awayTokens.any { hits(text, it) }
+                    val eventMatch = eventTokens.isNotEmpty() && eventTokens.count { hits(text, it) } >= 2
+                    if (!bothTeams && !eventMatch) return@forEach
+                    val contentId = XtreamItemRegistry.vodId(account.id, item.sid)
+                    registry.register(
+                        XtreamResolvedItem(
+                            id = contentId, type = ContentType.MOVIE, name = item.name, poster = item.poster,
+                            streamUrl = xtreamClient.buildStreamUrl(account, "movie", item.sid, item.ext ?: "mp4"),
+                            accountId = account.id, streamId = item.sid,
+                        )
+                    )
+                    hits.getOrPut(contentId) { RecordingHit(contentId, item.name, item.poster, account.name) }
+                }
+            }
+            if (hits.size >= RECORDING_CAP) break
+        }
+        return hits.values.take(RECORDING_CAP)
+    }
+
     /** Registers the match's channel so the player route can resolve it like any live id. */
     fun ensurePlayable(match: ChannelMatch) {
         if (registry.get(match.channel.contentId) != null) return
@@ -133,6 +216,7 @@ class RadarChannelMatcher @Inject constructor(
                     logo = ch.logo,
                     streamId = ch.streamId,
                     streamUrl = ch.streamUrl,
+                    hasArchive = ch.hasArchive,
                 )
             }
         }
@@ -222,6 +306,8 @@ class RadarChannelMatcher @Inject constructor(
         const val EPG_PROBE_CAP = 40
         const val EPG_CONCURRENCY = 8
         const val RESULT_CAP = 10
+        const val RECORDING_CAP = 6
+        const val INDEX_WAIT_MS = 12_000L
 
         // Compared against normalize()d names — punctuation is already stripped.
         val GENERIC_SPORT_MARKERS = listOf(

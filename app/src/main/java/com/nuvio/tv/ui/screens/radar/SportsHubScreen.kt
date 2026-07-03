@@ -65,6 +65,7 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 fun SportsHubScreen(
     onPlayChannel: (title: String, streamUrl: String, contentId: String) -> Unit,
     onAddProvider: () -> Unit,
+    onOpenDetail: (contentId: String, type: String) -> Unit = { _, _ -> },
     viewModel: SportsHubViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -98,6 +99,14 @@ fun SportsHubScreen(
                     val (title, url, contentId) = viewModel.preparePlay(match)
                     viewModel.closeMatch()
                     onPlayChannel(title, url, contentId)
+                },
+                onPlayReplay = { replay ->
+                    viewModel.closeMatch()
+                    onPlayChannel(replay.third, replay.second, replay.first)
+                },
+                onOpenRecording = { id ->
+                    viewModel.closeMatch()
+                    onOpenDetail(id, "movie")
                 },
                 onAddProvider = { viewModel.closeMatch(); onAddProvider() },
                 onDismiss = { viewModel.closeMatch() },
@@ -242,6 +251,14 @@ fun SportsHubScreen(
                 viewModel.closeMatch()
                 onPlayChannel(title, url, contentId)
             },
+            onPlayReplay = { replay ->
+                viewModel.closeMatch()
+                onPlayChannel(replay.third, replay.second, replay.first)
+            },
+            onOpenRecording = { id ->
+                viewModel.closeMatch()
+                onOpenDetail(id, "movie")
+            },
             onAddProvider = { viewModel.closeMatch(); onAddProvider() },
             onDismiss = { viewModel.closeMatch() },
         )
@@ -258,6 +275,8 @@ private fun MatchChannelsOverlay(
     state: MatchSheetState,
     isLive: Boolean,
     onPlay: (RadarChannelMatcher.ChannelMatch) -> Unit,
+    onPlayReplay: (Triple<String, String, String>) -> Unit = {},
+    onOpenRecording: (String) -> Unit = {},
     onAddProvider: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -295,6 +314,49 @@ private fun MatchChannelsOverlay(
                 color = NuvioTheme.colors.TextSecondary,
             )
             else -> LazyColumn(modifier = Modifier.height(360.dp)) {
+                if (state.recordings.isNotEmpty()) {
+                    item(key = "recordings-title") {
+                        Text(
+                            "RECORDINGS",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = NuvioTheme.colors.TextSecondary,
+                            modifier = Modifier.padding(vertical = NuvioTheme.spacing.xs),
+                        )
+                    }
+                    items(state.recordings, key = { "rec-${it.contentId}" }) { rec ->
+                        FocusableRow(onClick = { onOpenRecording(rec.contentId) }) {
+                            AsyncImage(
+                                model = rec.poster,
+                                contentDescription = null,
+                                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)),
+                            )
+                            Spacer(Modifier.width(NuvioTheme.spacing.md))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    rec.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = NuvioTheme.colors.TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    rec.playlistName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = NuvioTheme.colors.TextSecondary,
+                                )
+                            }
+                            Text("›", color = NuvioTheme.colors.TextPrimary)
+                        }
+                    }
+                    item(key = "channels-title") {
+                        Text(
+                            "CHANNELS",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = NuvioTheme.colors.TextSecondary,
+                            modifier = Modifier.padding(vertical = NuvioTheme.spacing.xs),
+                        )
+                    }
+                }
                 items(state.matches, key = { it.channel.contentId }) { match ->
                     FocusableRow(onClick = { onPlay(match) }) {
                         AsyncImage(
@@ -325,6 +387,19 @@ private fun MatchChannelsOverlay(
                             )
                         }
                         Text("▶", color = NuvioTheme.colors.TextPrimary)
+                    }
+                    // Archived channel + started fixture -> its catch-up Replay, indented
+                    // under the channel as its own focusable row (no long-press on TV).
+                    state.replays[match.channel.contentId]?.let { replay ->
+                        FocusableRow(onClick = { onPlayReplay(replay) }) {
+                            Spacer(Modifier.width(48.dp))
+                            Text(
+                                "↩ Replay from kick-off",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = NuvioTheme.colors.TextPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
                 if (state.matching) {

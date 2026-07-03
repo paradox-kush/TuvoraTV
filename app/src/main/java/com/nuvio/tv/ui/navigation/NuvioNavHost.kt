@@ -1160,7 +1160,11 @@ fun NuvioNavHost(
                         )
                     )
                 },
-                onAddProvider = { navController.navigate(Screen.Settings.route) }
+                onAddProvider = { navController.navigate(Screen.Settings.route) },
+                // Recordings are registry-registered VOD ids — native detail pipeline.
+                onOpenDetail = { contentId, type ->
+                    navController.navigate(Screen.Detail.createRoute(contentId, type))
+                },
             )
         }
 

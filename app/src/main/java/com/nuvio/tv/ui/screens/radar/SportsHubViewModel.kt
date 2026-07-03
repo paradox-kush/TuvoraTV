@@ -24,6 +24,10 @@ import javax.inject.Inject
 data class MatchSheetState(
     val fixture: RadarFixture,
     val matches: List<RadarChannelMatcher.ChannelMatch> = emptyList(),
+    /** Provider VOD recordings of this fixture (started/finished matches). */
+    val recordings: List<RadarChannelMatcher.RecordingHit> = emptyList(),
+    /** channel contentId -> (replayContentId, timeshiftUrl, title) for archived channels. */
+    val replays: Map<String, Triple<String, String, String>> = emptyMap(),
     val matching: Boolean = true,
     val hasPlaylists: Boolean = true,
 )
@@ -57,10 +61,22 @@ class SportsHubViewModel @Inject constructor(
         }
         matchJob = viewModelScope.launch {
             val league = fixture.leagueId?.let { repository.uiState.value.leagueById(it) }
+            launch {
+                val recordings = runCatching { matcher.findRecordings(fixture) }.getOrDefault(emptyList())
+                _sheet.update { s -> if (s?.fixture === fixture) s.copy(recordings = recordings) else s }
+            }
             val result = matcher.match(fixture, league, onPartial = { partial ->
                 _sheet.update { s -> if (s?.fixture === fixture) s.copy(matches = partial) else s }
             })
-            _sheet.update { s -> if (s?.fixture === fixture) s.copy(matches = result, matching = false) else s }
+            val replays = buildMap {
+                result.forEach { m ->
+                    runCatching { matcher.replayFor(m, fixture) }.getOrNull()
+                        ?.let { put(m.channel.contentId, it) }
+                }
+            }
+            _sheet.update { s ->
+                if (s?.fixture === fixture) s.copy(matches = result, replays = replays, matching = false) else s
+            }
         }
     }
 

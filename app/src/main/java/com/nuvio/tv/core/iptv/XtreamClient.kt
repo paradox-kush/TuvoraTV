@@ -243,6 +243,27 @@ class XtreamClient @Inject constructor(
     fun buildStreamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String = "mp4"): String =
         streamUrl(acc, kind, id, if (kind == "live") "ts" else ext)
 
+    /**
+     * Catch-up (tv_archive) replay URL — XUI's standard timeshift path form.
+     * ponytail: start is UTC-derived; panels technically interpret it in the SERVER's
+     * timezone, so a mis-set panel replays offset — reading server_info.timezone and
+     * shifting is the upgrade path if providers surface that in practice.
+     */
+    fun liveTimeshiftUrl(acc: XtreamAccount, streamId: Int, startEpochMs: Long, durationMinutes: Int): String {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd:HH-mm", java.util.Locale.US)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        val start = fmt.format(java.util.Date(startEpochMs))
+        return (acc.baseUrl.toHttpUrlOrNull() ?: error("Invalid server URL"))
+            .newBuilder()
+            .addPathSegment("timeshift")
+            .addPathSegment(acc.username)
+            .addPathSegment(acc.password)
+            .addPathSegment(durationMinutes.toString())
+            .addPathSegment(start)
+            .addPathSegment("$streamId.ts")
+            .build().toString()
+    }
+
     private fun streamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String): String =
         (acc.baseUrl.toHttpUrlOrNull() ?: error("Invalid server URL"))
             .newBuilder()
