@@ -120,16 +120,21 @@ class IptvPairingViewModel @Inject constructor(
 
                 when (result.status.lowercase()) {
                     "consumed" -> {
-                        cancelPolling()
                         // The payload is present exactly once (when it first flips to consumed).
                         // A null payload here means we lost the single-use race / a stale re-poll —
                         // treat it as expired so the user can retry rather than hang.
                         val account = pairingPayloadToXtreamAccount(result.payload)
                         if (account != null) {
-                            savePairedAccount(account)
+                            // Save on viewModelScope, NOT here: this runs inside the poll job, and
+                            // cancelPolling() below cancels it — savePairedAccount's suspending
+                            // DataStore write would then throw CancellationException on its first
+                            // suspension and the playlist would never persist. The independent
+                            // coroutine survives the poll-loop cancellation.
+                            viewModelScope.launch { savePairedAccount(account) }
                         } else {
                             _uiState.update { it.copy(status = IptvPairingStatus.EXPIRED) }
                         }
+                        cancelPolling()
                     }
                     "expired" -> {
                         cancelPolling()
@@ -157,6 +162,7 @@ class IptvPairingViewModel @Inject constructor(
                 it.copy(status = IptvPairingStatus.SUCCESS, savedAccountName = account.name)
             }
         }.onFailure { e ->
+            Log.e("IptvPairingViewModel", "savePairedAccount failed for ${account.id}", e)
             _uiState.update {
                 it.copy(status = IptvPairingStatus.ERROR, errorMessage = friendlyError(e))
             }
