@@ -1163,6 +1163,30 @@
     <string name="qr_login_signing_in">Signing you in…</string>
     <string name="qr_login_success">Signed in successfully</string>
     <string name="qr_login_exchange_failed">Could not complete QR sign in</string>
+
+    <!-- P5: IPTV playlist pairing from a phone (no sign-in needed). -->
+    <string name="iptv_pairing_entry_title">Add from phone</string>
+    <string name="iptv_pairing_entry_subtitle">Scan a QR on your phone and enter a playlist — no typing on the TV</string>
+    <string name="iptv_pairing_title">Add IPTV from your phone</string>
+    <string name="iptv_pairing_subtitle">Scan the QR code with your phone, or open the link below and enter the code. Then type your playlist on the phone — it will appear here.</string>
+    <string name="iptv_pairing_preparing">Preparing a pairing code…</string>
+    <string name="iptv_pairing_generating">Generating QR…</string>
+    <string name="iptv_pairing_unavailable">QR unavailable</string>
+    <string name="iptv_pairing_code_label">Your code</string>
+    <string name="iptv_pairing_open_url">On your phone, go to:</string>
+    <string name="iptv_pairing_waiting">Waiting for a playlist from your phone…</string>
+    <string name="iptv_pairing_expires">Code expires in %1$s</string>
+    <string name="iptv_pairing_saving">Adding your playlist…</string>
+    <string name="iptv_pairing_success_title">Playlist added</string>
+    <string name="iptv_pairing_success_message">%1$s is now on your TV.</string>
+    <string name="iptv_pairing_success_generic">Your playlist is now on your TV.</string>
+    <string name="iptv_pairing_expired_title">Pairing code expired</string>
+    <string name="iptv_pairing_expired_message">The code timed out before a playlist was received. Try again to get a new code.</string>
+    <string name="iptv_pairing_error_title">Couldn\'t pair</string>
+    <string name="iptv_pairing_retry">Try again</string>
+    <string name="iptv_pairing_done">Done</string>
+    <string name="iptv_pairing_back">Back</string>
+    <string name="cd_iptv_pairing_qr">IPTV pairing QR code</string>
     <string name="trakt_code_expires">Code expires in %1$s</string>
     <string name="trakt_token_refreshes">Trakt access token refreshes in %1$s</string>
     <string name="trakt_login_instruction">Press Login to start Trakt device authentication. A QR code will appear here.</string>

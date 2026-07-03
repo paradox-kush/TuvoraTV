@@ -34,9 +34,11 @@ import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import android.view.KeyEvent
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.nuvio.tv.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
@@ -62,6 +64,7 @@ import com.nuvio.tv.ui.util.asStable
 fun XtreamHubScreen(
     onOpenDetail: (contentId: String, type: String) -> Unit,
     onAddProvider: () -> Unit,
+    onPairFromPhone: () -> Unit = {},
     viewModel: XtreamHubViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -115,7 +118,12 @@ fun XtreamHubScreen(
                 style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary
             )
             Spacer(Modifier.padding(top = NuvioTheme.spacing.lg))
-            HubChip("Add IPTV provider", selected = true, focusRequester = firstFocus, onClick = onAddProvider)
+            Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+                HubChip("Add IPTV provider", selected = true, focusRequester = firstFocus, onClick = onAddProvider)
+                // Typing on a TV is painful (and the TV may be signed out) — offer the phone-pairing
+                // path as an equal-weight alternative right on the empty state (P5).
+                HubChip(stringResource(R.string.iptv_pairing_entry_title), selected = false, onClick = onPairFromPhone)
+            }
         }
         return
     }

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +53,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -64,6 +66,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.R
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.parseXtreamAccount
@@ -80,6 +83,7 @@ fun XtreamSettingsContent(
     viewModel: XtreamSettingsViewModel = hiltViewModel(),
     onBrowseVod: (accountId: String) -> Unit = {},
     onBrowseLive: (accountId: String) -> Unit = {},
+    onPairFromPhone: () -> Unit = {},
     initialFocusRequester: FocusRequester? = null
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -115,6 +119,15 @@ fun XtreamSettingsContent(
             onClick = { showAddDialog = true },
             leadingIcon = Icons.Default.Add,
             modifier = initialFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier
+        )
+
+        // Pair from a phone: typing on a TV remote is painful (and the TV may not be signed in),
+        // so this opens a QR + code the user enters a playlist against on their phone (P5).
+        SettingsActionRow(
+            title = stringResource(R.string.iptv_pairing_entry_title),
+            subtitle = stringResource(R.string.iptv_pairing_entry_subtitle),
+            onClick = onPairFromPhone,
+            leadingIcon = Icons.Default.PhoneAndroid
         )
 
         uiState.accounts.forEach { account ->

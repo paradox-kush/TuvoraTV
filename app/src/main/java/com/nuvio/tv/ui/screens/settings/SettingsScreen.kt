@@ -213,6 +213,7 @@ fun SettingsScreen(
     onNavigateToLicensesAttributions: () -> Unit = {},
     onNavigateToXtreamVod: (accountId: String) -> Unit = {},
     onNavigateToXtreamLive: (accountId: String) -> Unit = {},
+    onNavigateToIptvPairing: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
     experienceModeViewModel: ExperienceModeSettingsViewModel = hiltViewModel()
 ) {
@@ -513,6 +514,7 @@ fun SettingsScreen(
                             iptvFocusRequester = integrationIptvFocusRequester,
                             onNavigateToXtreamVod = onNavigateToXtreamVod,
                             onNavigateToXtreamLive = onNavigateToXtreamLive,
+                            onNavigateToIptvPairing = onNavigateToIptvPairing,
                             autoFocusEnabled = allowDetailAutofocus
                         )
                         SettingsCategory.ABOUT -> AboutSettingsContent(
@@ -673,6 +675,7 @@ private fun IntegrationSettingsContent(
     iptvFocusRequester: FocusRequester,
     onNavigateToXtreamVod: (accountId: String) -> Unit,
     onNavigateToXtreamLive: (accountId: String) -> Unit,
+    onNavigateToIptvPairing: () -> Unit,
     autoFocusEnabled: Boolean
 ) {
     BackHandler(enabled = selectedSection != IntegrationSettingsSection.Hub) {
@@ -786,6 +789,7 @@ private fun IntegrationSettingsContent(
             XtreamSettingsContent(
                 onBrowseVod = onNavigateToXtreamVod,
                 onBrowseLive = onNavigateToXtreamLive,
+                onPairFromPhone = onNavigateToIptvPairing,
                 initialFocusRequester = iptvFocusRequester
             )
         }

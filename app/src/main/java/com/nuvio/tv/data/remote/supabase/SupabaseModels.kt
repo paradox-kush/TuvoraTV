@@ -120,6 +120,32 @@ data class TvLoginExchangeResult(
     @SerialName("expires_in") val expiresIn: Long? = null
 )
 
+/**
+ * Result of `create_iptv_pairing(p_code, p_code_hash)` — the P5 IPTV playlist pairing RPC
+ * (anon-callable; the not-signed-in TV shows this code + a QR that deep-links the web form).
+ * `expiresAt` is a UTC ISO-8601 string (the RPC returns text, not a timestamptz).
+ */
+@Serializable
+data class IptvPairingStartResult(
+    val code: String,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("poll_interval_seconds") val pollIntervalSeconds: Int = 3
+)
+
+/**
+ * Result of `poll_iptv_pairing(p_code, p_code_hash)`. `status` is pending | consumed | expired.
+ * `payload` is the submitted playlist row (shaped like a `sync_push_iptv_playlists` row) and is
+ * present EXACTLY ONCE — when the status first flips to consumed — then withheld (null) on later
+ * polls. Kept as a raw [JsonElement] so the pairing payload -> XtreamAccount mapping stays lenient.
+ */
+@Serializable
+data class IptvPairingPollResult(
+    val status: String,
+    val payload: JsonElement? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("poll_interval_seconds") val pollIntervalSeconds: Int? = null
+)
+
 @Serializable
 data class SupabaseWatchProgress(
     val id: String? = null,

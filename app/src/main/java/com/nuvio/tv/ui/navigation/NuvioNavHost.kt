@@ -1121,7 +1121,8 @@ fun NuvioNavHost(
                 },
                 onNavigateToXtreamLive = { accountId ->
                     navController.navigate(Screen.XtreamLive.createRoute(accountId))
-                }
+                },
+                onNavigateToIptvPairing = { navController.navigate(Screen.IptvPairing.route) }
             )
         }
 
@@ -1142,7 +1143,22 @@ fun NuvioNavHost(
                 onOpenDetail = { contentId, type ->
                     navController.navigate(Screen.Detail.createRoute(contentId, type))
                 },
-                onAddProvider = { navController.navigate(Screen.Settings.route) }
+                onAddProvider = { navController.navigate(Screen.Settings.route) },
+                onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) }
+            )
+        }
+
+        composable(Screen.IptvPairing.route) {
+            com.nuvio.tv.ui.screens.iptv.IptvPairingScreen(
+                onBackPress = { navController.popBackStack() },
+                // On success, land the user on the IPTV hub so they can immediately browse the
+                // just-added playlist (pop back through this screen so BACK doesn't return here).
+                onPaired = {
+                    navController.navigate(Screen.XtreamHub.route) {
+                        popUpTo(Screen.IptvPairing.route) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
             )
         }
 
