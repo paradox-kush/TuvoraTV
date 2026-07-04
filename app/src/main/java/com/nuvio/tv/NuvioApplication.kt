@@ -69,7 +69,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
         SentryInitializer.start(this, sentrySettingsDataStore)
         PluginRuntimeHooks.onApplicationCreate(this)
         androidTvChannelSyncService.start()
-        realtimeSyncInvalidationService.start()
+        if (BuildConfig.REALTIME_SYNC_ENABLED) {
+            realtimeSyncInvalidationService.start()
+        }
         // Load locale synchronously so it's available before Activity.attachBaseContext.
         // SharedPreferences reads are fast (cached in memory after first access).
         val tag = getSharedPreferences("app_locale", Context.MODE_PRIVATE)
