@@ -19,6 +19,7 @@ import coil3.bitmapFactoryMaxParallelism
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import okio.Path.Companion.toOkioPath
+import com.nuvio.tv.core.analytics.AppExitReporter
 import com.nuvio.tv.core.iptv.refresh.IptvRefreshScheduler
 import com.nuvio.tv.core.runtime.PluginRuntimeHooks
 import com.nuvio.tv.core.sync.StartupSyncService
@@ -90,10 +91,15 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             ).apply {
                 // Capture uncaught exceptions as $exception events (where the app breaks).
                 errorTrackingConfig.autoCapture = true
+                // Upload queued events quickly after launch: a crash queued by the previous
+                // run must ship before the user navigates back into whatever crashed
+                // (the default 30s starved uploads during crash-loops).
+                flushIntervalSeconds = 10
                 // SDK logcat diagnostics in debug builds only.
                 debug = BuildConfig.DEBUG
             }
         )
+        AppExitReporter.reportPendingExits(this)
         PluginRuntimeHooks.onApplicationCreate(this)
         androidTvChannelSyncService.start()
         // Keep the IPTV auto-refresh worker scheduled to the shortest enabled playlist interval.
