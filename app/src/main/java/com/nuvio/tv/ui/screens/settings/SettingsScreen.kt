@@ -6,9 +6,15 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RawRes
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -122,6 +128,7 @@ internal data class SettingsSectionSpec(
 )
 
 private const val SETTINGS_DETAIL_FOCUS_DELAY_MS = 120L
+private const val SETTINGS_TAB_FOCUS_SELECT_DELAY_MS = 140L
 private const val SETTINGS_DETAIL_ANIM_IN_DURATION_MS = 200
 private const val SETTINGS_DETAIL_ANIM_OUT_DURATION_MS = 180
 
@@ -370,6 +377,23 @@ fun SettingsScreen(
                 var focusedTabBounds by remember { mutableStateOf<Rect?>(null) }
                 val density = LocalDensity.current
 
+                var focusedTabCategory by remember { mutableStateOf<SettingsCategory?>(null) }
+                val selectFocusedTab: (SettingsCategory) -> Unit = { category ->
+                    if (selectedCategory != category) {
+                        if (category == SettingsCategory.INTEGRATION) {
+                            integrationSection = IntegrationSettingsSection.Hub
+                        }
+                        allowDetailAutofocus = false
+                        selectedCategory = category
+                    }
+                }
+
+                LaunchedEffect(focusedTabCategory) {
+                    val category = focusedTabCategory ?: return@LaunchedEffect
+                    delay(SETTINGS_TAB_FOCUS_SELECT_DELAY_MS)
+                    selectFocusedTab(category)
+                }
+
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
@@ -424,6 +448,7 @@ fun SettingsScreen(
                                 }
                                 .onPreviewKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                        focusedTabCategory?.let(selectFocusedTab)
                                         allowDetailAutofocus = true
                                     }
                                     false
@@ -442,6 +467,11 @@ fun SettingsScreen(
                                     isSelected = selectedCategory == section.category,
                                     focusRequester = railFocusRequesters[section.category],
                                     onClick = { onSectionClick(section) },
+                                    onFocused = {
+                                        if (section.destination == SettingsSectionDestination.Inline) {
+                                            focusedTabCategory = section.category
+                                        }
+                                    },
                                     onFocusedTabPositioned = { tabCoordinates ->
                                         topBarCoordinates?.let { container ->
                                             focusedTabBounds = container.localBoundingBoxOf(tabCoordinates, clipBounds = false)
@@ -465,15 +495,32 @@ fun SettingsScreen(
                                 }
                             }
                     ) {
-                        Box(
+                        AnimatedContent(
+                            targetState = selectedCategory,
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
                                 .fillMaxHeight()
                                 .widthIn(max = 880.dp)
-                                .fillMaxWidth()
-                        ) {
+                                .fillMaxWidth(),
+                            transitionSpec = {
+                                val order = visibleSections.map { it.category }
+                                val forward = order.indexOf(targetState) >= order.indexOf(initialState)
+                                val toStart = forward != isRtl
+                                (slideInHorizontally(
+                                    animationSpec = tween(SETTINGS_DETAIL_ANIM_IN_DURATION_MS, easing = FastOutSlowInEasing)
+                                ) { fullWidth -> if (toStart) fullWidth / 4 else -fullWidth / 4 } +
+                                    fadeIn(tween(SETTINGS_DETAIL_ANIM_IN_DURATION_MS)))
+                                    .togetherWith(
+                                        slideOutHorizontally(
+                                            animationSpec = tween(SETTINGS_DETAIL_ANIM_OUT_DURATION_MS, easing = FastOutSlowInEasing)
+                                        ) { fullWidth -> if (toStart) -fullWidth / 4 else fullWidth / 4 } +
+                                            fadeOut(tween(SETTINGS_DETAIL_ANIM_OUT_DURATION_MS))
+                                    )
+                            },
+                            label = "settingsDetailTransition"
+                        ) { animatedCategory ->
                             SettingsDetailPane(
-                                selectedCategory = selectedCategory,
+                                selectedCategory = animatedCategory,
                                 isEssentialMode = isEssentialMode,
                                 allowDetailAutofocus = allowDetailAutofocus,
                                 contentFocusRequesters = contentFocusRequesters,
