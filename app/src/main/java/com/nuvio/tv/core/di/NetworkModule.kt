@@ -35,6 +35,7 @@ import okhttp3.CacheControl
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -149,35 +150,7 @@ object NetworkModule {
             }
             // Panel flake fallback: on network failure or 4xx/5xx for a catalog request,
             // serve the last cached copy (up to 7 days stale) instead of failing the screen.
-            .addInterceptor { chain ->
-                val request = chain.request()
-                if (!isXtreamCatalogUrl(request.url)) return@addInterceptor chain.proceed(request)
-                val staleRequest = request.newBuilder()
-                    .cacheControl(
-                        CacheControl.Builder()
-                            .onlyIfCached()
-                            .maxStale(7, TimeUnit.DAYS)
-                            .build()
-                    )
-                    .build()
-                val networkResponse: Response = try {
-                    chain.proceed(request)
-                } catch (e: java.io.IOException) {
-                    val cached = chain.proceed(staleRequest)
-                    if (cached.isSuccessful) return@addInterceptor cached
-                    cached.close()
-                    throw e
-                }
-                if (networkResponse.isSuccessful) return@addInterceptor networkResponse
-                val cached = chain.proceed(staleRequest)
-                if (cached.isSuccessful) {
-                    networkResponse.close()
-                    cached
-                } else {
-                    cached.close()
-                    networkResponse
-                }
-            }
+            .addInterceptor(XtreamCatalogFallbackInterceptor())
             .addInterceptor(HttpLoggingInterceptor().apply {
                 level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC
                         else HttpLoggingInterceptor.Level.NONE
@@ -663,7 +636,53 @@ object NetworkModule {
     )
     private const val XTREAM_CATALOG_FRESH_SECONDS = 3600 // 1h serve-from-disk window
 
-    private fun isXtreamCatalogUrl(url: HttpUrl): Boolean =
+    internal fun isXtreamCatalogUrl(url: HttpUrl): Boolean =
         url.encodedPath.endsWith("/player_api.php") &&
             url.queryParameter("action") in XTREAM_CACHEABLE_ACTIONS
+}
+
+/**
+ * On network failure or 4xx/5xx for an Xtream catalog request, serve the last
+ * cached copy (up to 7 days stale) instead of failing the screen.
+ *
+ * OkHttp forbids a second [Interceptor.Chain.proceed] while the previous
+ * response body is still open — violating that throws IllegalStateException on
+ * the dispatcher thread, which is fatal (crashed real devices whenever a panel
+ * returned an error). So the error body is buffered and closed before the
+ * cache lookup, and re-attached if the cache misses.
+ */
+internal class XtreamCatalogFallbackInterceptor : okhttp3.Interceptor {
+    override fun intercept(chain: okhttp3.Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!NetworkModule.isXtreamCatalogUrl(request.url)) return chain.proceed(request)
+        val staleRequest = request.newBuilder()
+            .cacheControl(
+                CacheControl.Builder()
+                    .onlyIfCached()
+                    .maxStale(7, TimeUnit.DAYS)
+                    .build()
+            )
+            .build()
+        val networkResponse: Response = try {
+            chain.proceed(request)
+        } catch (e: java.io.IOException) {
+            val cached = chain.proceed(staleRequest)
+            if (cached.isSuccessful) return cached
+            cached.close()
+            throw e
+        }
+        if (networkResponse.isSuccessful) return networkResponse
+        val errorBytes = runCatching { networkResponse.body?.bytes() }.getOrNull()
+        val errorContentType = networkResponse.body?.contentType()
+        networkResponse.close()
+        val cached = chain.proceed(staleRequest)
+        return if (cached.isSuccessful) {
+            cached
+        } else {
+            cached.close()
+            networkResponse.newBuilder()
+                .body((errorBytes ?: ByteArray(0)).toResponseBody(errorContentType))
+                .build()
+        }
+    }
 }
