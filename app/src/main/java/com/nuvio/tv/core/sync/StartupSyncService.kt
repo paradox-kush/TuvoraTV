@@ -14,6 +14,7 @@ import com.nuvio.tv.data.repository.LibraryRepositoryImpl
 import com.nuvio.tv.data.repository.WatchProgressRepositoryImpl
 import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.domain.model.LibrarySourceMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,6 +30,8 @@ import javax.inject.Singleton
 private const val TAG = "StartupSyncService"
 private const val FORCE_RESYNC_MIN_INTERVAL_MS = 30_000L
 private const val FULL_STARTUP_PULL_TTL_MS = 6 * 60 * 60 * 1000L
+private const val PERIODIC_WATCH_STATE_PULL_INTERVAL_MS = 120_000L
+private const val PERIODIC_LIBRARY_PULL_INTERVAL_MS = 240_000L
 
 @Singleton
 class StartupSyncService @Inject constructor(
@@ -56,6 +59,8 @@ class StartupSyncService @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startupPullJob: Job? = null
+    private var periodicWatchStatePullJob: Job? = null
+    private var periodicLibraryPullJob: Job? = null
     private var lastPulledKey: String? = null
     private var lastPulledIncludedProfileSettings: Boolean = false
     private var lastPulledAtMs: Long = 0L
@@ -97,6 +102,44 @@ class StartupSyncService @Inject constructor(
                 }
             }
         }
+    }
+
+    fun startPeriodicSurfacePulls() {
+        if (periodicWatchStatePullJob?.isActive != true) {
+            periodicWatchStatePullJob = scope.launch {
+                while (true) {
+                    delay(PERIODIC_WATCH_STATE_PULL_INTERVAL_MS)
+                    try {
+                        pullPeriodicWatchState()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Periodic watch state pull failed", e)
+                    }
+                }
+            }
+        }
+        if (periodicLibraryPullJob?.isActive != true) {
+            periodicLibraryPullJob = scope.launch {
+                while (true) {
+                    delay(PERIODIC_LIBRARY_PULL_INTERVAL_MS)
+                    try {
+                        pullPeriodicLibrary()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Periodic library pull failed", e)
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopPeriodicSurfacePulls() {
+        periodicWatchStatePullJob?.cancel()
+        periodicWatchStatePullJob = null
+        periodicLibraryPullJob?.cancel()
+        periodicLibraryPullJob = null
     }
 
     fun requestSyncNow(includeProfileSettings: Boolean = true) {
@@ -222,6 +265,51 @@ class StartupSyncService @Inject constructor(
         }
     }
 
+
+    private suspend fun pullPeriodicWatchState() {
+        if (authManager.authState.value !is AuthState.FullAccount) return
+
+        val profileId = profileManager.activeProfileId.value
+        val isTraktConnected = traktAuthDataStore.isEffectivelyAuthenticated.first()
+        val shouldUseSupabaseWatchProgressSync = watchProgressSyncService.shouldUseSupabaseWatchProgressSync()
+        watchProgressSyncService.restoreLastPushTimestamp()
+        watchedItemsSyncService.restoreLastPushTimestamp()
+        Log.d(
+            TAG,
+            "Periodic watch state pull: profile=$profileId isTraktConnected=$isTraktConnected shouldUseSupabaseWatchProgressSync=$shouldUseSupabaseWatchProgressSync"
+        )
+
+        if (!isTraktConnected) {
+            pullWatchedItemsDelta(profileId, traktMode = false)
+            syncWatchProgressDelta(
+                profileId = profileId,
+                pushUnsynced = true,
+                failureMessage = "Periodic watch progress pull failed"
+            )
+        } else if (shouldUseSupabaseWatchProgressSync) {
+            pullWatchedItemsDelta(
+                profileId = profileId,
+                traktMode = true,
+                pushUnsynced = false
+            )
+            syncWatchProgressDelta(
+                profileId = profileId,
+                pushUnsynced = false,
+                failureMessage = "Periodic watch progress pull failed while Trakt is connected"
+            )
+        } else {
+            watchProgressRepository.hasCompletedInitialPull = true
+            Log.d(TAG, "Skipping periodic Supabase watch state pull for profile $profileId because Trakt watch progress source is active")
+        }
+    }
+
+    private suspend fun pullPeriodicLibrary() {
+        if (authManager.authState.value !is AuthState.FullAccount) return
+
+        val profileId = profileManager.activeProfileId.value
+        Log.d(TAG, "Periodic library pull requested profile=$profileId")
+        pullRealtimeLibrary(profileId)
+    }
 
     private fun pullKey(userId: String): String {
         val profileId = profileManager.activeProfileId.value
