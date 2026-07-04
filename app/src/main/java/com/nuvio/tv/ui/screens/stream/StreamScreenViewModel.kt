@@ -283,12 +283,6 @@ class StreamScreenViewModel @Inject constructor(
             StreamScreenEvent.OnBackPress -> { /* Handle in screen */ }
             StreamScreenEvent.OnResume -> {
                 hostInForeground = true
-                updateUiStateIfChanged {
-                    it.copy(
-                        showDirectAutoPlayOverlay = false,
-                        directAutoPlayMessage = null
-                    )
-                }
                 // If loading was cancelled (e.g. user went to player) and
                 // hasn't completed yet, resume it. The baseline snapshot
                 // captured at cancel time keeps existing results visible
@@ -1147,8 +1141,17 @@ class StreamScreenViewModel @Inject constructor(
 
         return when (result) {
             is DirectDebridResolveResult.Success -> {
-                updateUiStateIfChanged {
-                    it.copy(directAutoPlayMessage = null)
+                if (!_uiState.value.isDirectAutoPlayFlow) {
+                    updateUiStateIfChanged {
+                        it.copy(
+                            showDirectAutoPlayOverlay = false,
+                            directAutoPlayMessage = null
+                        )
+                    }
+                } else {
+                    updateUiStateIfChanged {
+                        it.copy(directAutoPlayMessage = null)
+                    }
                 }
                 cancelStreamsLoad()
                 val resolved = basePlaybackInfo.copy(
@@ -1203,7 +1206,7 @@ class StreamScreenViewModel @Inject constructor(
 
     fun onInternalPlayerLaunching() {
         updateUiStateIfChanged {
-            it.copy(directAutoPlayMessage = null)
+            it.copy(showDirectAutoPlayOverlay = false, directAutoPlayMessage = null)
         }
     }
 
