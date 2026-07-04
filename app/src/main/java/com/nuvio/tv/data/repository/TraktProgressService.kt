@@ -1035,21 +1035,22 @@ class TraktProgressService @Inject constructor(
         supervisorScope {
             val hiddenDeferred = async { runCatching { ensureHiddenProgressShows(force = force) } }
 
-            if ((force || watchedMoviesStale) && hasLoadedWatchedMovies) {
-                launch { runCatching { getWatchedMoviesSnapshot(forceRefresh = true) } }
-            }
+            val watchedMoviesDeferred: Deferred<Set<String>>? = if (force || watchedMoviesStale || !hasLoadedWatchedMovies) {
+                async {
+                    try { getWatchedMoviesSnapshot(forceRefresh = force || hasLoadedWatchedMovies) }
+                    catch (_: Exception) { emptySet() }
+                }
+            } else null
 
-            val needSeedsRefresh = force ||
-                (watchedShowSeedsStale && hasLoadedWatchedShowSeeds)
+            val needSeedsRefresh = force || watchedShowSeedsStale || !hasLoadedWatchedShowSeeds
             val progressDeferred = async { fetchAllProgressSnapshot(force = force) }
             val seedsDeferred: Deferred<List<WatchProgress>>? = if (needSeedsRefresh) {
                 async {
-                    try { getWatchedShowSeedsSnapshot(forceRefresh = true) }
+                    try { getWatchedShowSeedsSnapshot(forceRefresh = force || hasLoadedWatchedShowSeeds) }
                     catch (_: Exception) { emptyList() }
                 }
             } else null
 
-            // Wait for hidden shows before emitting progress so filters apply.
             hiddenDeferred.await()
 
             val snapshot = try {
@@ -1058,21 +1059,18 @@ class TraktProgressService @Inject constructor(
                 Log.w(TAG, "fetchAllProgressSnapshot failed, using empty snapshot", e)
                 emptyList()
             }
+            watchedMoviesDeferred?.let {
+                try { it.await() } catch (_: Exception) { }
+            }
             seedsDeferred?.let {
                 try { it.await() } catch (_: Exception) { }
             }
+            val visibleSnapshot = suppressKnownWatchedPlayback(snapshot)
 
-            if (snapshot.isNotEmpty()) {
-                remoteProgress.value = snapshot
-                hasLoadedRemoteProgress.value = true
-                reconcileOptimistic(snapshot)
-                hydrateMetadata(snapshot)
-            } else if (remoteProgress.value.isEmpty()) {
-                // Don't mark as loaded with empty data — let retry handle it
-                throw IOException("Progress snapshot empty after fetch failure")
-            } else {
-                Log.d(TAG, "refreshRemoteSnapshot: empty snapshot, preserving existing ${remoteProgress.value.size} items")
-            }
+            remoteProgress.value = visibleSnapshot
+            hasLoadedRemoteProgress.value = true
+            reconcileOptimistic(visibleSnapshot)
+            hydrateMetadata(visibleSnapshot)
         }
     }
 
@@ -1680,6 +1678,65 @@ class TraktProgressService @Inject constructor(
         return if (canonical.isNotBlank()) canonical else contentId.trim()
     }
 
+    private fun suppressKnownWatchedPlayback(snapshot: List<WatchProgress>): List<WatchProgress> {
+        if (snapshot.none { it.source == WatchProgress.SOURCE_TRAKT_PLAYBACK }) return snapshot
+        val watchedMovies = watchedMoviesState.value
+        val watchedEpisodes = watchedShowEpisodesMap
+        val fullyWatchedSeries = watchedSeriesStateHolder.fullyWatchedSeriesIds.value
+        return snapshot.filterNot { progress ->
+            progress.source == WatchProgress.SOURCE_TRAKT_PLAYBACK &&
+                isKnownWatchedPlayback(progress, watchedMovies, watchedEpisodes, fullyWatchedSeries)
+        }
+    }
+
+    private fun isKnownWatchedPlayback(
+        progress: WatchProgress,
+        watchedMovies: Set<String>,
+        watchedEpisodes: Map<String, Set<Pair<Int, Int>>>,
+        fullyWatchedSeries: Set<String>
+    ): Boolean {
+        val keys = progressLookupKeys(progress)
+        if (progress.contentType.equals("movie", ignoreCase = true)) {
+            return keys.any { it in watchedMovies }
+        }
+        if (!progress.contentType.equals("series", ignoreCase = true) &&
+            !progress.contentType.equals("tv", ignoreCase = true)
+        ) {
+            return false
+        }
+        val season = progress.season ?: return false
+        val episode = progress.episode ?: return false
+        if (keys.any { it in fullyWatchedSeries }) return true
+        val episodeKey = season to episode
+        return keys.any { key -> watchedEpisodes[key]?.contains(episodeKey) == true }
+    }
+
+    private fun progressLookupKeys(progress: WatchProgress): Set<String> {
+        val direct = linkedSetOf<String>()
+        progress.contentId.trim().takeIf { it.isNotBlank() }?.let { contentId ->
+            direct.add(contentId)
+            direct.add(canonicalLookupKey(contentId))
+        }
+        if (progress.contentType.equals("movie", ignoreCase = true)) {
+            progress.traktMovieId?.let { direct.add("trakt:$it") }
+            progress.videoId.trim().takeIf { it.isNotBlank() }?.let { videoId ->
+                direct.add(videoId)
+                direct.add(canonicalLookupKey(videoId))
+            }
+        } else {
+            progress.traktShowId?.let { direct.add("trakt:$it") }
+        }
+        val expanded = linkedSetOf<String>()
+        direct.forEach { key ->
+            expanded.add(key)
+            val siblings = showIdSiblingsMap[key].orEmpty()
+            if ("__ambiguous__" !in siblings) {
+                expanded.addAll(siblings)
+            }
+        }
+        return expanded.filterTo(linkedSetOf()) { it.isNotBlank() }
+    }
+
     /**
      * Resolves a content ID to a format accepted by Trakt path endpoints.
      * Trakt path segments accept: IMDB ID, Trakt numeric ID, or Trakt slug.
@@ -1798,7 +1855,9 @@ class TraktProgressService @Inject constructor(
             .forEach { progress ->
                 val key = progressKey(progress)
                 val existing = mergedByKey[key]
-                if (existing == null || progress.isInProgress()) {
+                val shouldUsePlayback = existing == null ||
+                    (progress.isInProgress() && progress.lastWatched >= existing.lastWatched - 1_000L)
+                if (shouldUsePlayback) {
                     mergedByKey[key] = progress
                 }
             }
