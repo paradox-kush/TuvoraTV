@@ -1056,8 +1056,8 @@ class TraktProgressService @Inject constructor(
             val snapshot = try {
                 progressDeferred.await()
             } catch (e: Exception) {
-                Log.w(TAG, "fetchAllProgressSnapshot failed, using empty snapshot", e)
-                emptyList()
+                Log.w(TAG, "fetchAllProgressSnapshot failed, keeping existing snapshot", e)
+                null
             }
             watchedMoviesDeferred?.let {
                 try { it.await() } catch (_: Exception) { }
@@ -1065,8 +1065,15 @@ class TraktProgressService @Inject constructor(
             seedsDeferred?.let {
                 try { it.await() } catch (_: Exception) { }
             }
-            val visibleSnapshot = suppressKnownWatchedPlayback(snapshot)
 
+            if (snapshot == null) {
+                if (!hasLoadedRemoteProgress.value) {
+                    throw IOException("Progress snapshot fetch failed before initial load")
+                }
+                return@supervisorScope
+            }
+
+            val visibleSnapshot = suppressKnownWatchedPlayback(snapshot)
             remoteProgress.value = visibleSnapshot
             hasLoadedRemoteProgress.value = true
             reconcileOptimistic(visibleSnapshot)
