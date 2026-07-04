@@ -107,7 +107,7 @@ android {
         applicationId = "com.nuvio.tv"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1032
+        versionCode = 1033
         versionName = "0.7.15-beta"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
@@ -428,6 +428,7 @@ dependencies {
     implementation(libs.coil.gif)
     implementation(libs.coil.svg)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.lottie.compose)
 
     // Navigation
     implementation(libs.navigation.compose)

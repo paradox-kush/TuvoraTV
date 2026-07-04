@@ -1252,6 +1252,12 @@
     <string name="debug_section_popup">Popup / Dialog Testing</string>
     <string name="debug_playback_error_title">Playback Error Screen</string>
     <string name="debug_playback_error_subtitle">Show a simulated playback error popup</string>
+    <string name="debug_section_progress">Progress Indicator</string>
+    <string name="debug_progress_indicator_title">Loading Indicator</string>
+    <string name="debug_progress_indicator_subtitle">Preview the shared loading animation at common UI sizes</string>
+    <string name="debug_progress_indicator_small">Small</string>
+    <string name="debug_progress_indicator_default">Default</string>
+    <string name="debug_progress_indicator_large">Large</string>
     <string name="debug_section_features">Feature Toggles</string>
     <string name="debug_account_tab_title">Account Tab</string>
     <string name="debug_account_tab_subtitle">Show the Account tab in Settings navigation</string>
