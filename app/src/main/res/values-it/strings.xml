@@ -2540,13 +2540,13 @@
   <string name="update_error_download_failed">Download fallito</string>
   <string name="update_error_apk_missing">Il file scaricato è mancante</string>
   <string name="debrid_picker_preferred_resolutions_title">Risoluzioni preferite</string>
-  <string name="debrid_picker_preferred_resolutions_subtitle">Ordina prima le risoluzioni selezionate, nell'ordine predefinito.</string>
+  <string name="debrid_picker_preferred_resolutions_subtitle">Ordina prima le risoluzioni selezionate, nell\'ordine predefinito.</string>
   <string name="debrid_picker_required_resolutions_title">Risoluzioni richieste</string>
   <string name="debrid_picker_required_resolutions_subtitle">Mostra solo le risoluzioni selezionate.</string>
   <string name="debrid_picker_excluded_resolutions_title">Risoluzioni escluse</string>
   <string name="debrid_picker_excluded_resolutions_subtitle">Nascondi le risoluzioni selezionate.</string>
   <string name="debrid_picker_preferred_qualities_title">Qualità preferite</string>
-  <string name="debrid_picker_preferred_qualities_subtitle">Ordina prima le qualità selezionate, nell'ordine predefinito.</string>
+  <string name="debrid_picker_preferred_qualities_subtitle">Ordina prima le qualità selezionate, nell\'ordine predefinito.</string>
   <string name="debrid_picker_required_qualities_title">Qualità richieste</string>
   <string name="debrid_picker_required_qualities_subtitle">Mostra solo le qualità sorgente selezionate.</string>
   <string name="debrid_picker_excluded_qualities_title">Qualità escluse</string>

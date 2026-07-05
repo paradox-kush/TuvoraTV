@@ -1597,10 +1597,6 @@
     <string name="account_generate_sync_desc">Créez un code sur cet appareil pour que d’autres appareils puissent s’y lier.</string>
     <string name="account_enter_sync_desc">Liez cet appareil à un autre en utilisant un code de synchronisation.</string>
     <string name="account_signed_in_as">Connecté en tant que</string>
-    <string name="account_sync_backend_label">Serveur de synchronisation</string>
-    <string name="debug_backend_switch_confirm_title">Changer de serveur de synchronisation ?</string>
-    <string name="debug_backend_switch_confirm_message">Basculer vers %1$s et se déconnecter ? Vous pourrez vous reconnecter sur le serveur de synchronisation sélectionné.</string>
-    <string name="debug_backend_switching">Changement…</string>
     <string name="account_generate_sync_signed_in_desc">Créez un code pour que d’autres appareils puissent se synchroniser avec ce compte.</string>
     <string name="account_unknown_device">Appareil inconnu</string>
 
