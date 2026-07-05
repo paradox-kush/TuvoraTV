@@ -93,6 +93,7 @@ fun AuthQrSignInScreen(
     }
     var onboardingTransitionHandled by remember(isOnboardingMode) { mutableStateOf(false) }
     var exitRequested by remember { mutableStateOf(false) }
+    var showSignOutConfirmation by remember { mutableStateOf(false) }
 
     fun leaveAuthScreen() {
         exitRequested = true
@@ -123,12 +124,13 @@ fun AuthQrSignInScreen(
         }
     }
 
-    LaunchedEffect(uiState.authState, isSignedIn, uiState.qrLoginCode, uiState.isLoading, exitRequested) {
+    LaunchedEffect(uiState.authState, isSignedIn, uiState.qrLoginCode, uiState.isLoading, uiState.error, exitRequested) {
         if (
             !exitRequested &&
             uiState.authState !is AuthState.Loading &&
             !isSignedIn &&
             uiState.qrLoginCode.isNullOrBlank() &&
+            uiState.error.isNullOrBlank() &&
             !uiState.isLoading
         ) {
             viewModel.startQrLogin()
@@ -181,9 +183,7 @@ fun AuthQrSignInScreen(
                     .fillMaxHeight()
                     .padding(start = 56.dp, end = 56.dp),
                 isSignedIn = isSignedIn,
-                fullAccount = fullAccount,
-                uiState = uiState,
-                viewModel = viewModel
+                fullAccount = fullAccount
             )
 
             AuthQrLoginPane(
@@ -205,7 +205,7 @@ fun AuthQrSignInScreen(
                 remainingMillis = remainingMillis,
                 onRefreshOrSignOut = {
                     if (isSignedIn) {
-                        viewModel.signOut()
+                        showSignOutConfirmation = true
                     } else {
                         viewModel.startQrLogin()
                     }
@@ -221,15 +221,23 @@ fun AuthQrSignInScreen(
             )
         }
     }
+
+    if (showSignOutConfirmation) {
+        AccountSignOutConfirmationDialog(
+            onConfirm = {
+                viewModel.signOut()
+                showSignOutConfirmation = false
+            },
+            onDismiss = { showSignOutConfirmation = false }
+        )
+    }
 }
 
 @Composable
 private fun AuthQrBrandPanel(
     modifier: Modifier,
     isSignedIn: Boolean,
-    fullAccount: AuthState.FullAccount?,
-    uiState: AccountUiState,
-    viewModel: AccountViewModel
+    fullAccount: AuthState.FullAccount?
 ) {
     Column(
         modifier = modifier,
@@ -268,14 +276,6 @@ private fun AuthQrBrandPanel(
                 fontWeight = FontWeight.Normal
             )
         )
-        if (!isSignedIn && uiState.debugBackendSwitchEnabled) {
-            Spacer(modifier = Modifier.height(24.dp))
-            DebugSyncBackendSwitchCard(
-                uiState = uiState,
-                requireConfirmation = false,
-                onSwitchBackend = viewModel::switchDebugBackend
-            )
-        }
         if (isSignedIn && fullAccount != null) {
             Spacer(modifier = Modifier.height(24.dp))
             Text(

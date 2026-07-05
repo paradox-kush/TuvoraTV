@@ -199,39 +199,35 @@ fun HomeScreen(
 
     val noAddonsError = stringResource(R.string.home_error_no_addons)
     val noCatalogAddonsError = stringResource(R.string.home_error_no_catalog_addons)
+    val hasAnyContent = uiState.catalogRows.isNotEmpty() ||
+        uiState.continueWatchingItems.isNotEmpty() ||
+        uiState.heroItems.isNotEmpty() ||
+        hasCollectionContent
+    val showStartupLoader = when {
+        !uiState.layoutPreferencesReady -> true
+        uiState.isLoading && !hasAnyContent -> true
+        uiState.error == noAddonsError && uiState.catalogRows.isEmpty() -> !homeStableGateReleased
+        uiState.error == noCatalogAddonsError && uiState.catalogRows.isEmpty() && !hasCollectionContent && !hasHeroContent -> !homeStableGateReleased
+        uiState.error != null && uiState.catalogRows.isEmpty() -> false
+        !uiState.isLoading && !hasAnyContent -> !homeStableGateReleased
+        else -> !homeStableGateReleased || !modernPresentationReady || !showHomeContentWithAnimation
+    }
 
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
-        val hasAnyContent = uiState.catalogRows.isNotEmpty() ||
-            uiState.continueWatchingItems.isNotEmpty() ||
-            uiState.heroItems.isNotEmpty() ||
-            hasCollectionContent
-
         when {
             !uiState.layoutPreferencesReady -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    LoadingIndicator()
-                }
+                Unit
             }
 
             uiState.isLoading && !hasAnyContent -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    LoadingIndicator()
-                }
+                Unit
             }
 
             uiState.error == noAddonsError && uiState.catalogRows.isEmpty() -> {
                 if (!homeStableGateReleased) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        LoadingIndicator()
-                    }
+                    Unit
                 } else {
                     ErrorState(
                         message = stringResource(R.string.home_no_addons),
@@ -243,9 +239,7 @@ fun HomeScreen(
 
             uiState.error == noCatalogAddonsError && uiState.catalogRows.isEmpty() && !hasCollectionContent && !hasHeroContent -> {
                 if (!homeStableGateReleased) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        LoadingIndicator()
-                    }
+                    Unit
                 } else {
                     ErrorState(
                         message = stringResource(R.string.home_no_catalog_addons),
@@ -267,12 +261,7 @@ fun HomeScreen(
                 // Don't show "no catalogs" until the stable gate has released —
                 // addons may still be loading from remote after a cache clear.
                 if (!homeStableGateReleased) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        LoadingIndicator()
-                    }
+                    Unit
                 } else {
                     // Offline / all catalog fetches failed. The Retry button must take focus:
                     // with zero focusable nodes the D-pad is dead and the sidebar unreachable.
@@ -288,19 +277,9 @@ fun HomeScreen(
                 // On first launch, wait for stable content before revealing home.
                 // Once released, never go back to loading (homeStableGateReleased is rememberSaveable).
                 if (!homeStableGateReleased) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        LoadingIndicator()
-                    }
+                    Unit
                 } else if (!modernPresentationReady) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        LoadingIndicator()
-                    }
+                    Unit
                 } else {
                     // Flip showHomeContentWithAnimation on the next frame so
                     // AnimatedVisibility can run its enter transition.
@@ -317,12 +296,7 @@ fun HomeScreen(
                     }
                     // Keep loading visible during the single-frame gap before animation starts.
                     if (!showHomeContentWithAnimation) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            LoadingIndicator()
-                        }
+                        Unit
                     }
                     AnimatedVisibility(
                         visible = showHomeContentWithAnimation,
@@ -382,6 +356,15 @@ fun HomeScreen(
                         }
                     }
                 }
+            }
+        }
+
+        if (showStartupLoader) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                LoadingIndicator()
             }
         }
 

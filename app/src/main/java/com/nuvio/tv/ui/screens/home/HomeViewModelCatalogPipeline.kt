@@ -13,6 +13,7 @@ import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.model.mergeCatalogPage
 import com.nuvio.tv.domain.model.nextCatalogSkip
 import com.nuvio.tv.domain.model.skipStep
+import com.nuvio.tv.domain.model.WatchedItem
 import com.nuvio.tv.domain.model.supportsExtra
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -982,31 +983,14 @@ internal fun HomeViewModel.reconcilePosterStatusObserversPipeline(rows: List<Cat
             ) { fullyWatched, watchedItems ->
                 fullyWatched to watchedItems
             }.collectLatest { (fullyWatched, watchedItems) ->
-                val watchedEpisodesByContentId = watchedItems
-                    .filter { it.season != null && it.episode != null }
-                    .groupBy { it.contentId }
-                    .mapValues { (_, items) -> items.map { it.season!! to it.episode!! }.toSet() }
-                val cacheResolvedIds = mutableSetOf<String>()
-                val cacheResolvedFullyWatched = buildSet {
-                    allSeriesItemsByKey.values.forEach { contentId ->
-                        val requiredEpisodes = synchronized(cwBadgeEpisodeCache) {
-                            cwBadgeEpisodeCache["series:$contentId"] ?: cwBadgeEpisodeCache["tv:$contentId"]
-                        } ?: return@forEach
-                        cacheResolvedIds.add(contentId)
-                        val watchedEpisodes = watchedEpisodesByContentId[contentId].orEmpty()
-                        if (requiredEpisodes.isNotEmpty() && requiredEpisodes.all { it in watchedEpisodes }) {
-                            add(contentId)
-                        }
-                    }
-                }
-                val effectiveFullyWatched = if (cacheResolvedIds.isNotEmpty()) {
-                    val mergedHolderIds = (fullyWatched - cacheResolvedIds) + cacheResolvedFullyWatched
-                    if (mergedHolderIds != fullyWatchedSeriesIds.fullyWatchedSeriesIds.value) {
-                        fullyWatchedSeriesIds.updateWithValidation(mergedHolderIds, cacheResolvedIds)
-                    }
-                    mergedHolderIds
-                } else {
+                val effectiveFullyWatched = if (watchProgressRepository.isTraktProgressActive()) {
                     fullyWatched
+                } else {
+                    reconcileFullyWatchedFromLocalItems(
+                        fullyWatched = fullyWatched,
+                        watchedItems = watchedItems,
+                        seriesContentIds = allSeriesItemsByKey.values
+                    )
                 }
                 val seriesStatus = buildMap {
                     allSeriesItemsByKey.forEach { (statusKey, contentId) ->
@@ -1036,4 +1020,34 @@ internal fun HomeViewModel.reconcilePosterStatusObserversPipeline(rows: List<Cat
             state.copy(movieWatchedPending = trimmedMovieWatchedPending)
         }
     }
+}
+
+private fun HomeViewModel.reconcileFullyWatchedFromLocalItems(
+    fullyWatched: Set<String>,
+    watchedItems: List<WatchedItem>,
+    seriesContentIds: Iterable<String>
+): Set<String> {
+    val watchedEpisodesByContentId = watchedItems
+        .filter { it.season != null && it.episode != null }
+        .groupBy { it.contentId }
+        .mapValues { (_, items) -> items.map { it.season!! to it.episode!! }.toSet() }
+    val cacheResolvedIds = mutableSetOf<String>()
+    val cacheResolvedFullyWatched = buildSet {
+        seriesContentIds.forEach { contentId ->
+            val requiredEpisodes = synchronized(cwBadgeEpisodeCache) {
+                cwBadgeEpisodeCache["series:$contentId"] ?: cwBadgeEpisodeCache["tv:$contentId"]
+            } ?: return@forEach
+            cacheResolvedIds.add(contentId)
+            val watchedEpisodes = watchedEpisodesByContentId[contentId].orEmpty()
+            if (requiredEpisodes.isNotEmpty() && requiredEpisodes.all { it in watchedEpisodes }) {
+                add(contentId)
+            }
+        }
+    }
+    if (cacheResolvedIds.isEmpty()) return fullyWatched
+    val mergedHolderIds = (fullyWatched - cacheResolvedIds) + cacheResolvedFullyWatched
+    if (mergedHolderIds != fullyWatchedSeriesIds.fullyWatchedSeriesIds.value) {
+        fullyWatchedSeriesIds.updateWithValidation(mergedHolderIds, cacheResolvedIds)
+    }
+    return mergedHolderIds
 }

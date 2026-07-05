@@ -299,7 +299,8 @@ class TraktPublicListSourceResolverTest {
             context = context,
             traktApi = api,
             traktAuthDataStore = authStore,
-            authSessionNoticeDataStore = mockk<AuthSessionNoticeDataStore>(relaxed = true)
+            authSessionNoticeDataStore = mockk<AuthSessionNoticeDataStore>(relaxed = true),
+            traktCredentialSyncService = mockk(relaxed = true)
         )
         return TraktPublicListSourceResolver(
             appContext = context,

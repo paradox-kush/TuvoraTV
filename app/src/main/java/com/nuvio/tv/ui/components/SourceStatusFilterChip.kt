@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator as MaterialCircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,6 +38,9 @@ data class SourceChipItem(
     val name: String,
     val status: SourceChipStatus
 )
+
+private val SourceChipLoadingIndicatorSize = 12.dp
+private const val SourceChipLoadingIndicatorScale = 1.75f
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -136,10 +138,14 @@ fun SourceStatusFilterChip(
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
         ) {
             if (isLoading) {
-                MaterialCircularProgressIndicator(
-                    modifier = Modifier.size(NuvioTheme.spacing.md),
-                    color = if (isFocused || isSelected) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextSecondary,
-                    strokeWidth = 1.5.dp
+                LoadingIndicator(
+                    modifier = Modifier
+                        .size(SourceChipLoadingIndicatorSize)
+                        .graphicsLayer {
+                            scaleX = SourceChipLoadingIndicatorScale
+                            scaleY = SourceChipLoadingIndicatorScale
+                        },
+                    color = if (isFocused || isSelected) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextSecondary
                 )
             }
             Text(

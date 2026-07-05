@@ -20,10 +20,13 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import okio.Path.Companion.toOkioPath
 import com.nuvio.tv.core.analytics.AppExitReporter
+import com.nuvio.tv.core.diagnostics.SentryInitializer
 import com.nuvio.tv.core.iptv.refresh.IptvRefreshScheduler
 import com.nuvio.tv.core.runtime.PluginRuntimeHooks
+import com.nuvio.tv.core.sync.RealtimeSyncInvalidationService
 import com.nuvio.tv.core.sync.StartupSyncService
 import com.nuvio.tv.core.sync.androidtv.AndroidTvChannelSyncService
+import com.nuvio.tv.data.local.SentrySettingsDataStore
 import com.posthog.android.PostHogAndroid
 import com.posthog.android.PostHogAndroidConfig
 import dagger.hilt.android.HiltAndroidApp
@@ -46,6 +49,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     // miss its playlist's DoH provider and fall back to system DNS.
     @Inject lateinit var playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver
     @Inject lateinit var xtreamTmdbResolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
+    @Inject lateinit var realtimeSyncInvalidationService: RealtimeSyncInvalidationService
+    @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -100,9 +105,15 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 debug = BuildConfig.DEBUG
             }
         )
+        // Upstream's Sentry: inert without a SENTRY_DSN (the fork's crash reporter is PostHog);
+        // kept wired so future upstream merges stay clean.
+        SentryInitializer.start(this, sentrySettingsDataStore)
         AppExitReporter.reportPendingExits(this)
         PluginRuntimeHooks.onApplicationCreate(this)
         androidTvChannelSyncService.start()
+        if (BuildConfig.REALTIME_SYNC_ENABLED) {
+            realtimeSyncInvalidationService.start()
+        }
         // Keep the IPTV auto-refresh worker scheduled to the shortest enabled playlist interval.
         iptvRefreshScheduler.start()
         // Warm the Xtream match indexes off the critical path so the first play/search

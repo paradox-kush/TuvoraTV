@@ -10,7 +10,7 @@ import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.remote.supabase.SupabaseWatchedItem
 import com.nuvio.tv.data.remote.supabase.SupabaseWatchedItemEvent
 import com.nuvio.tv.domain.model.WatchedItem
-import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
+import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -42,15 +42,13 @@ data class WatchedItemsRemoteSyncResult(
 @Singleton
 class WatchedItemsSyncService @Inject constructor(
     private val authManager: AuthManager,
-    private val supabaseProvider: SyncBackendSupabaseProvider,
+    private val postgrest: Postgrest,
     private val watchedItemsPreferences: WatchedItemsPreferences,
     private val traktAuthDataStore: TraktAuthDataStore,
     private val traktSettingsDataStore: TraktSettingsDataStore,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val syncClientIdentity: SyncClientIdentity
 ) {
-    private val postgrest
-        get() = supabaseProvider.postgrest
-
     private val deltaSyncMutex = Mutex()
 
     /**
@@ -156,6 +154,7 @@ class WatchedItemsSyncService @Inject constructor(
                     }
                 })
                 put("p_profile_id", profileId)
+                putSyncOriginClientId(syncClientIdentity)
             }
             withJwtRefreshRetry {
                 postgrest.rpc("sync_push_watched_items", params)
@@ -396,6 +395,7 @@ class WatchedItemsSyncService @Inject constructor(
                         if (episode != null) put("episode", episode)
                     }
                 })
+                putSyncOriginClientId(syncClientIdentity)
             }
             withJwtRefreshRetry {
                 postgrest.rpc("sync_delete_watched_items", params)
@@ -428,6 +428,7 @@ class WatchedItemsSyncService @Inject constructor(
                         }
                     }
                 })
+                putSyncOriginClientId(syncClientIdentity)
             }
             withJwtRefreshRetry {
                 postgrest.rpc("sync_delete_watched_items", params)

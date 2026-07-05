@@ -1,6 +1,7 @@
 package com.nuvio.tv.data.local
 
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.nuvio.tv.core.profile.ProfileManager
@@ -35,6 +36,8 @@ class WatchedSeriesStateHolder @Inject constructor(
         private const val FEATURE = "watched_series_cache"
         private val KEY = stringSetPreferencesKey("fully_watched_ids")
         private val REVALIDATE_KEY = stringPreferencesKey("revalidate_after")
+        private val VALIDATION_RESET_KEY = intPreferencesKey("validation_reset_version")
+        private const val VALIDATION_RESET_VERSION = 1
         private const val DEFAULT_TTL_MS = 7L * 24 * 60 * 60 * 1000 // 7 days
     }
 
@@ -54,7 +57,16 @@ class WatchedSeriesStateHolder @Inject constructor(
         if (loaded) return
         val prefs = store().data.first()
         val persisted = prefs[KEY] ?: emptySet()
-        revalidateAfterMap = parseTimestamps(prefs[REVALIDATE_KEY])
+        val resetVersion = prefs[VALIDATION_RESET_KEY] ?: 0
+        if (resetVersion < VALIDATION_RESET_VERSION) {
+            revalidateAfterMap = emptyMap()
+            store().edit { p ->
+                p.remove(REVALIDATE_KEY)
+                p[VALIDATION_RESET_KEY] = VALIDATION_RESET_VERSION
+            }
+        } else {
+            revalidateAfterMap = parseTimestamps(prefs[REVALIDATE_KEY])
+        }
         if (_fullyWatchedSeriesIds.value.isEmpty() && persisted.isNotEmpty()) {
             _fullyWatchedSeriesIds.value = persisted
         }

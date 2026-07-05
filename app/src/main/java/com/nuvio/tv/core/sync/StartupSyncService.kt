@@ -14,6 +14,7 @@ import com.nuvio.tv.data.repository.LibraryRepositoryImpl
 import com.nuvio.tv.data.repository.WatchProgressRepositoryImpl
 import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.domain.model.LibrarySourceMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,6 +30,8 @@ import javax.inject.Singleton
 private const val TAG = "StartupSyncService"
 private const val FORCE_RESYNC_MIN_INTERVAL_MS = 30_000L
 private const val FULL_STARTUP_PULL_TTL_MS = 6 * 60 * 60 * 1000L
+private const val PERIODIC_WATCH_STATE_PULL_INTERVAL_MS = 120_000L
+private const val PERIODIC_LIBRARY_PULL_INTERVAL_MS = 240_000L
 
 @Singleton
 class StartupSyncService @Inject constructor(
@@ -43,6 +46,7 @@ class StartupSyncService @Inject constructor(
     private val librarySyncService: LibrarySyncService,
     private val watchedItemsSyncService: WatchedItemsSyncService,
     private val profileSettingsSyncService: ProfileSettingsSyncService,
+    private val traktCredentialSyncService: TraktCredentialSyncService,
     private val profileSyncService: ProfileSyncService,
     private val pluginManager: PluginManager,
     private val addonRepository: AddonRepositoryImpl,
@@ -58,6 +62,8 @@ class StartupSyncService @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startupPullJob: Job? = null
+    private var periodicWatchStatePullJob: Job? = null
+    private var periodicLibraryPullJob: Job? = null
     private var lastPulledKey: String? = null
     private var lastPulledIncludedProfileSettings: Boolean = false
     private var lastPulledAtMs: Long = 0L
@@ -99,6 +105,44 @@ class StartupSyncService @Inject constructor(
                 }
             }
         }
+    }
+
+    fun startPeriodicSurfacePulls() {
+        if (periodicWatchStatePullJob?.isActive != true) {
+            periodicWatchStatePullJob = scope.launch {
+                while (true) {
+                    delay(PERIODIC_WATCH_STATE_PULL_INTERVAL_MS)
+                    try {
+                        pullPeriodicWatchState()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Periodic watch state pull failed", e)
+                    }
+                }
+            }
+        }
+        if (periodicLibraryPullJob?.isActive != true) {
+            periodicLibraryPullJob = scope.launch {
+                while (true) {
+                    delay(PERIODIC_LIBRARY_PULL_INTERVAL_MS)
+                    try {
+                        pullPeriodicLibrary()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Periodic library pull failed", e)
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopPeriodicSurfacePulls() {
+        periodicWatchStatePullJob?.cancel()
+        periodicWatchStatePullJob = null
+        periodicLibraryPullJob?.cancel()
+        periodicLibraryPullJob = null
     }
 
     fun requestSyncNow(includeProfileSettings: Boolean = true) {
@@ -154,6 +198,121 @@ class StartupSyncService @Inject constructor(
         }
     }
 
+    fun requestRealtimeSurfacePull(profileId: Int, surface: String) {
+        if (!authManager.isAuthenticated) return
+        if (surface != "profiles" && profileManager.activeProfileId.value != profileId) {
+            Log.d(TAG, "Ignoring realtime surface=$surface for inactive profile $profileId")
+            return
+        }
+
+        scope.launch {
+            Log.i(TAG, "Realtime surface pull requested profile=$profileId surface=$surface")
+            when (surface) {
+                "addons" -> pullRealtimeAddons(profileId)
+                "plugins" -> pullRealtimePlugins(profileId)
+                "library" -> pullRealtimeLibrary(profileId)
+                "watch_progress" -> {
+                    watchProgressSyncService.restoreLastPushTimestamp()
+                    syncWatchProgressDelta(
+                        profileId = profileId,
+                        pushUnsynced = false,
+                        failureMessage = "Realtime watch progress pull failed"
+                    )
+                }
+                "watched_items" -> {
+                    watchedItemsSyncService.restoreLastPushTimestamp()
+                    pullWatchedItemsDelta(
+                        profileId = profileId,
+                        traktMode = traktAuthDataStore.isEffectivelyAuthenticated.first(),
+                        pushUnsynced = false
+                    )
+                }
+                "profile_settings" -> {
+                    profileSettingsSyncService.pullCurrentProfileFromRemote()
+                        .onSuccess { applied ->
+                            Log.d(TAG, "Realtime profile settings pull completed profile=$profileId applied=$applied")
+                        }
+                        .onFailure { error ->
+                            Log.e(TAG, "Realtime profile settings pull failed profile=$profileId", error)
+                        }
+                }
+                "collections" -> {
+                    collectionSyncService.pullFromRemote()
+                        .onSuccess { applied ->
+                            Log.d(TAG, "Realtime collections pull completed profile=$profileId applied=$applied")
+                        }
+                        .onFailure { error ->
+                            Log.e(TAG, "Realtime collections pull failed profile=$profileId", error)
+                        }
+                }
+                "home_catalog_settings" -> {
+                    homeCatalogSettingsSyncService.pullFromRemote()
+                        .onSuccess { applied ->
+                            Log.d(TAG, "Realtime home catalog settings pull completed profile=$profileId applied=$applied")
+                        }
+                        .onFailure { error ->
+                            Log.e(TAG, "Realtime home catalog settings pull failed profile=$profileId", error)
+                        }
+                }
+                "profiles" -> {
+                    profileSyncService.pullFromRemote()
+                        .onSuccess { profiles ->
+                            Log.d(TAG, "Realtime profiles pull completed count=${profiles.size}")
+                        }
+                        .onFailure { error ->
+                            Log.e(TAG, "Realtime profiles pull failed", error)
+                        }
+                }
+                else -> Log.w(TAG, "Unknown realtime sync surface=$surface profile=$profileId")
+            }
+        }
+    }
+
+
+    private suspend fun pullPeriodicWatchState() {
+        if (authManager.authState.value !is AuthState.FullAccount) return
+
+        val profileId = profileManager.activeProfileId.value
+        val isTraktConnected = traktAuthDataStore.isEffectivelyAuthenticated.first()
+        val shouldUseSupabaseWatchProgressSync = watchProgressSyncService.shouldUseSupabaseWatchProgressSync()
+        watchProgressSyncService.restoreLastPushTimestamp()
+        watchedItemsSyncService.restoreLastPushTimestamp()
+        Log.d(
+            TAG,
+            "Periodic watch state pull: profile=$profileId isTraktConnected=$isTraktConnected shouldUseSupabaseWatchProgressSync=$shouldUseSupabaseWatchProgressSync"
+        )
+
+        if (!isTraktConnected) {
+            pullWatchedItemsDelta(profileId, traktMode = false)
+            syncWatchProgressDelta(
+                profileId = profileId,
+                pushUnsynced = true,
+                failureMessage = "Periodic watch progress pull failed"
+            )
+        } else if (shouldUseSupabaseWatchProgressSync) {
+            pullWatchedItemsDelta(
+                profileId = profileId,
+                traktMode = true,
+                pushUnsynced = false
+            )
+            syncWatchProgressDelta(
+                profileId = profileId,
+                pushUnsynced = false,
+                failureMessage = "Periodic watch progress pull failed while Trakt is connected"
+            )
+        } else {
+            watchProgressRepository.hasCompletedInitialPull = true
+            Log.d(TAG, "Skipping periodic Supabase watch state pull for profile $profileId because Trakt watch progress source is active")
+        }
+    }
+
+    private suspend fun pullPeriodicLibrary() {
+        if (authManager.authState.value !is AuthState.FullAccount) return
+
+        val profileId = profileManager.activeProfileId.value
+        Log.d(TAG, "Periodic library pull requested profile=$profileId")
+        pullRealtimeLibrary(profileId)
+    }
 
     private fun pullKey(userId: String): String {
         val profileId = profileManager.activeProfileId.value
@@ -373,6 +532,14 @@ class StartupSyncService @Inject constructor(
                 }
         }
 
+        traktCredentialSyncService.pullFromRemote()
+            .onSuccess { applied ->
+                Log.d(TAG, "Trakt credential pull completed for profile $profileId (applied=$applied)")
+            }
+            .onFailure { e ->
+                Log.e(TAG, "Failed to pull Trakt credentials, keeping local credentials", e)
+            }
+
         coroutineScope {
             val libraryJob = async {
                 val librarySource = traktSettingsDataStore.librarySourceMode.first()
@@ -486,9 +653,67 @@ class StartupSyncService @Inject constructor(
         }
     }
 
+    private suspend fun pullRealtimeLibrary(profileId: Int) {
+        val librarySource = traktSettingsDataStore.librarySourceMode.first()
+        val isTraktLibrary = librarySource == LibrarySourceMode.TRAKT &&
+            traktAuthDataStore.isEffectivelyAuthenticated.first()
+        if (isTraktLibrary) {
+            libraryRepository.hasCompletedInitialPull = true
+            Log.d(TAG, "Skipping realtime library pull for profile $profileId because Trakt library mode is active")
+            return
+        }
+
+        libraryRepository.isSyncingFromRemote = true
+        try {
+            val remoteLibraryItems = librarySyncService.pullFromRemote().getOrElse { throw it }
+            libraryPreferences.mergeRemoteItems(remoteLibraryItems)
+            libraryRepository.hasCompletedInitialPull = true
+            Log.d(TAG, "Realtime library pull reconciled ${remoteLibraryItems.size} items for profile $profileId")
+        } catch (e: Exception) {
+            libraryRepository.hasCompletedInitialPull = true
+            Log.e(TAG, "Realtime library pull failed profile=$profileId", e)
+        } finally {
+            libraryRepository.isSyncingFromRemote = false
+        }
+    }
+
+    private suspend fun pullRealtimePlugins(profileId: Int) {
+        pluginManager.isSyncingFromRemote = true
+        try {
+            val remotePlugins = pluginSyncService.getRemoteRepoUrls().getOrElse { throw it }
+            pluginManager.reconcileWithRemoteRepoUrls(
+                remotePlugins = remotePlugins,
+                removeMissingLocal = true
+            )
+            Log.d(TAG, "Realtime plugins pull reconciled ${remotePlugins.size} repos for profile $profileId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Realtime plugins pull failed profile=$profileId", e)
+        } finally {
+            pluginManager.isSyncingFromRemote = false
+            pluginManager.flushPendingSync()
+        }
+    }
+
+    private suspend fun pullRealtimeAddons(profileId: Int) {
+        addonRepository.isSyncingFromRemote = true
+        try {
+            val remoteAddonUrls = addonSyncService.getRemoteAddonUrls().getOrElse { throw it }
+            addonRepository.reconcileWithRemoteAddonUrls(
+                remoteUrls = remoteAddonUrls,
+                removeMissingLocal = true
+            )
+            Log.d(TAG, "Realtime addons pull reconciled ${remoteAddonUrls.size} addons for profile $profileId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Realtime addons pull failed profile=$profileId", e)
+        } finally {
+            addonRepository.isSyncingFromRemote = false
+        }
+    }
+
     private suspend fun pullWatchedItemsDelta(
         profileId: Int,
-        traktMode: Boolean
+        traktMode: Boolean,
+        pushUnsynced: Boolean = true
     ) {
         try {
             if (traktMode) {
@@ -509,7 +734,7 @@ class StartupSyncService @Inject constructor(
                     "Watched items sync applied ${watchedItemsResult.upsertedItems} upserts and ${watchedItemsResult.deletedItems} deletes (snapshot=${watchedItemsResult.usedSnapshot})"
                 )
             }
-            if (watchedItemsResult.preservedLocalItems) {
+            if (pushUnsynced && watchedItemsResult.preservedLocalItems) {
                 if (traktMode) {
                     Log.d(TAG, "Detected unsynced watched items (Trakt mode), pushing to remote")
                 } else {
