@@ -50,6 +50,8 @@ class XtreamAccountSyncService @Inject constructor(
     private val authManager: AuthManager,
     private val accountStore: XtreamAccountStore,
     private val profileManager: ProfileManager,
+    private val purge: com.nuvio.tv.core.iptv.IptvAccountPurge,
+    private val resolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver,
 ) {
     private val postgrest get() = supabaseProvider.postgrest
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -165,8 +167,15 @@ class XtreamAccountSyncService @Inject constructor(
 
     private suspend fun applyRemote(accounts: List<XtreamAccount>) {
         isSyncingFromRemote = true
+        val before = runCatching { accountStore.accounts.first() }.getOrDefault(emptyList())
         accountStore.replaceAll(accounts)
         isSyncingFromRemote = false
+        // Playlists removed on another device: drop their local caches (indexes, ingested
+        // catalog, session caches). Saved user data is untouched — see IptvAccountPurge.
+        val remaining = accounts.map { it.id }.toSet()
+        before.filter { it.id !in remaining }.forEach { runCatching { purge.purgeCaches(it.id) } }
+        // Playlists added on another device: index them now, not on first play.
+        resolver.warmUp(accounts)
     }
 
     /** One-shot legacy cleanup after a successful migration push: empty the old

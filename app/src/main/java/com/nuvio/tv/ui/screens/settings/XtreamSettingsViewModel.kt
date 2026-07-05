@@ -10,8 +10,10 @@ import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.content.M3UFileStore
-import com.nuvio.tv.core.iptv.isM3U
+import com.nuvio.tv.core.iptv.isM3UBacked
 import com.nuvio.tv.core.iptv.isM3UFile
+import com.nuvio.tv.core.iptv.isXtream
+import com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
 import com.nuvio.tv.core.iptv.m3uAccountFromFile
 import com.nuvio.tv.core.iptv.m3uAccountFromUrl
 import com.nuvio.tv.core.iptv.newM3UFilePlaylistId
@@ -29,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -55,11 +58,17 @@ class XtreamSettingsViewModel @Inject constructor(
     private val watchedItemsPreferences: WatchedItemsPreferences,
     private val liveStore: XtreamLiveStore,
     private val fileStore: M3UFileStore,
-    private val refreshStore: com.nuvio.tv.core.iptv.refresh.IptvRefreshStore
+    private val refreshStore: com.nuvio.tv.core.iptv.refresh.IptvRefreshStore,
+    private val resolver: XtreamTmdbResolver,
+    private val purge: com.nuvio.tv.core.iptv.IptvAccountPurge,
+    private val searchIndex: com.nuvio.tv.core.iptv.XtreamSearchIndex
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
     val uiState: StateFlow<XtreamSettingsUiState> = _uiState.asStateFlow()
+
+    /** Account ids whose catalog index is building — shown as "Preparing catalog…" on the rows. */
+    val indexingAccounts: StateFlow<Set<String>> = resolver.indexing
 
     init {
         viewModelScope.launch {
@@ -275,6 +284,8 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(isValidating = false) }
             result.onSuccess {
                 store.upsert(account)
+                // Start the catalog index now, not on first play — minutes on budget boxes.
+                resolver.warmUp(listOf(account))
                 syncService.triggerRemoteSync()
                 onSuccess()
             }.onFailure { e ->
@@ -337,6 +348,7 @@ class XtreamSettingsViewModel @Inject constructor(
                 // A renewed/edited account must not keep showing a stale "Expired" status or
                 // category lists fetched under the old creds — evict both ids' caches.
                 evictAccountCaches(old.id, account.id)
+                resolver.warmUp(listOf(account))
                 syncService.triggerRemoteSync()
                 onSuccess()
             }.onFailure { e ->
@@ -366,7 +378,10 @@ class XtreamSettingsViewModel @Inject constructor(
                 val streamId = ref.id.substringAfterLast(':').toIntOrNull()
                 ref.copy(
                     id = newPrefix + ref.id.removePrefix(oldPrefix),
-                    streamUrl = if (new.isM3U()) ref.streamUrl
+                    // Only Xtream URLs are formula-derivable. M3U keeps the stored URL (re-ingest
+                    // refreshes it); Stalker refs resolve via create_link at play time — rebuilding
+                    // either with the player_api formula would write garbage URLs.
+                    streamUrl = if (!new.isXtream()) ref.streamUrl
                     else streamId?.let { client.buildStreamUrl(new, "live", it) } ?: ref.streamUrl
                 )
             }
@@ -374,16 +389,26 @@ class XtreamSettingsViewModel @Inject constructor(
     }
 
     fun setEnabled(id: String, enabled: Boolean) {
-        viewModelScope.launch { store.setEnabled(id, enabled); syncService.triggerRemoteSync() }
+        viewModelScope.launch {
+            store.setEnabled(id, enabled)
+            if (enabled) store.accounts.first().firstOrNull { it.id == id }?.let { resolver.warmUp(listOf(it)) }
+            syncService.triggerRemoteSync()
+        }
     }
 
     fun remove(id: String) {
         viewModelScope.launch {
             store.remove(id)
-            // A file playlist's local copy is orphaned once its account is gone — reclaim the space.
-            runCatching { fileStore.delete(id) }
-            // Drop its auto-refresh timestamp so the pref store doesn't leak stale keys.
-            runCatching { refreshStore.clear(id) }
+            // Caches/indexes keyed by this id (match db, M3U catalog+EPG, session caches,
+            // file copy, refresh timestamp) — otherwise they leak on disk forever.
+            purge.purgeCaches(id)
+            // Explicit delete also drops the playlist's saved refs — they'd be dead ids
+            // (phantom favorites / continue-watching rows) otherwise.
+            val prefix = XtreamItemRegistry.accountPrefix(id)
+            libraryPreferences.migrateIdPrefix(prefix, null)
+            watchProgressPreferences.migrateIdPrefix(prefix, null)
+            watchedItemsPreferences.migrateIdPrefix(prefix, null)
+            liveStore.migrateAccount(prefix, null)
             syncService.triggerRemoteSync()
         }
     }
@@ -403,6 +428,9 @@ class XtreamSettingsViewModel @Inject constructor(
         }.toSet()
         statusRequests.removeAll(ids)
         categoryRequests.removeAll(typeKeys)
+        // A creds edit keeps the same id when only the password changed — the search
+        // cache's stream URLs embed the OLD password, so drop it alongside the VM caches.
+        ids.forEach { searchIndex.evict(it) }
         _uiState.update { it.copy(accountStatus = it.accountStatus - ids, categoryLists = it.categoryLists - typeKeys) }
     }
 
@@ -412,10 +440,13 @@ class XtreamSettingsViewModel @Inject constructor(
             val key = "${account.id}|$type"
             if (!categoryRequests.add(key)) continue
             viewModelScope.launch {
+                // clientFor dispatches per source type — M3U reads the ingested catalog's
+                // categories, Stalker asks the portal; raw XtreamClient would 404 on both.
+                val sourceClient = clientFactory.clientFor(account)
                 val result = when (type) {
-                    XtreamAccount.TYPE_LIVE -> client.liveCategories(account)
-                    XtreamAccount.TYPE_MOVIES -> client.vodCategories(account)
-                    else -> client.seriesCategories(account)
+                    XtreamAccount.TYPE_LIVE -> sourceClient.liveCategories(account)
+                    XtreamAccount.TYPE_MOVIES -> sourceClient.vodCategories(account)
+                    else -> sourceClient.seriesCategories(account)
                 }
                 result
                     .onSuccess { cats -> _uiState.update { it.copy(categoryLists = it.categoryLists + (key to cats)) } }
@@ -463,9 +494,11 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /** Lazily fetch the account-status line for a settings row. Non-blocking, cached, silent on failure. */
     fun ensureAccountStatus(account: XtreamAccount) {
+        // M3U playlists have no account endpoint at all — don't burn a doomed request per row.
+        if (account.isM3UBacked()) return
         if (!statusRequests.add(account.id)) return
         viewModelScope.launch {
-            client.accountInfo(account)
+            clientFactory.clientFor(account).accountInfo(account)
                 .onSuccess { info ->
                     info.toStatusLine()?.let { line ->
                         _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to line)) }

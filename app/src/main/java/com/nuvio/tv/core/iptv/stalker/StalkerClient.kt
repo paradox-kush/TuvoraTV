@@ -42,7 +42,7 @@ class StalkerClient @Inject constructor(
     }
 
     /** Account status for the settings row. Stalker returns expiry as free text in `phone`. */
-    suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = runCatching {
+    override suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = runCatching {
         val js = sessions.sessionFor(acc)
             .request(mapOf("type" to "account_info", "action" to "get_main_info"))
         val obj = js as? JsonObject ?: JsonObject()

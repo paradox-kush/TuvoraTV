@@ -71,3 +71,10 @@ fun XtreamAccount.isM3UFile(): Boolean = sourceType == XtreamAccount.SOURCE_FILE
 
 /** True for either M3U-backed source (URL or File) — both browse/play through [M3UClient]. */
 fun XtreamAccount.isM3UBacked(): Boolean = isM3U() || isM3UFile()
+
+/**
+ * True for a real Xtream panel — the ONLY source type with a player_api catalog, so the only
+ * one the TMDB->stream match index (resolver/search/Radar) may be fed. M3U/Stalker accounts
+ * play through their own lanes.
+ */
+fun XtreamAccount.isXtream(): Boolean = sourceType == XtreamAccount.SOURCE_XTREAM

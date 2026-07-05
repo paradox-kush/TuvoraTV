@@ -45,6 +45,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     // it (its init observes the account store); otherwise a very-early first live/VOD play could
     // miss its playlist's DoH provider and fall back to system DNS.
     @Inject lateinit var playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver
+    @Inject lateinit var xtreamTmdbResolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -104,6 +105,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         androidTvChannelSyncService.start()
         // Keep the IPTV auto-refresh worker scheduled to the shortest enabled playlist interval.
         iptvRefreshScheduler.start()
+        // Warm the Xtream match indexes off the critical path so the first play/search
+        // doesn't pay the full-catalog download (minutes on budget boxes).
+        xtreamTmdbResolver.warmUpAll()
         // Load locale synchronously so it's available before Activity.attachBaseContext.
         // SharedPreferences reads are fast (cached in memory after first access).
         val tag = getSharedPreferences("app_locale", Context.MODE_PRIVATE)

@@ -7,7 +7,7 @@ import com.nuvio.tv.core.network.safeApiCall
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
-import com.nuvio.tv.core.iptv.isM3U
+import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.iptv.rebuildFromId
 import com.nuvio.tv.core.iptv.toMeta
 import com.nuvio.tv.domain.model.Meta
@@ -174,8 +174,9 @@ class MetaRepositoryImpl @Inject constructor(
         val base = item.toMeta()
         val account = runCatching { xtreamAccountStore.accounts.first() }.getOrNull()
             ?.firstOrNull { it.id == item.accountId } ?: return base
-        // M3U has no get_vod_info; its posters are already TMDB art, so use the bare meta as-is.
-        if (account.isM3U()) return base
+        // Only real Xtream panels have get_vod_info — M3U (url/file) and Stalker use the bare
+        // meta as-is (M3U posters are already TMDB art; a player_api call there is garbage).
+        if (!account.isXtream()) return base
         val tmdbId = xtreamClient.vodTmdbId(account, item.streamId).getOrNull() ?: return base
         val enrichment = runCatching {
             tmdbMetadataService.fetchEnrichment(tmdbId.toString(), item.type)

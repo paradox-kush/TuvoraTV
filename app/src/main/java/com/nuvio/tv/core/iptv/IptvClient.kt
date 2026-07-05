@@ -27,6 +27,10 @@ interface IptvClient {
     /** Now/next EPG for a channel. M3U has no per-channel EPG yet (P2c/XMLTV): returns empty. */
     suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int = 4): Result<List<XtreamProgram>>
 
+    /** Account status (expiry/connections) for the settings row. M3U has none — default failure. */
+    suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> =
+        Result.failure(UnsupportedOperationException("no account info for this source"))
+
     /**
      * Rebuilds a live/movie stream URL from a parsed content id on a registry cache miss
      * (deep link / saved library item). `kind` is "movie" or "live". Xtream derives it by

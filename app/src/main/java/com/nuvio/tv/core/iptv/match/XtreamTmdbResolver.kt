@@ -3,11 +3,18 @@ package com.nuvio.tv.core.iptv.match
 import android.util.Log
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamClient
+import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.tmdb.TmdbTitleBundle
+import com.nuvio.tv.data.local.XtreamAccountStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,15 +43,45 @@ class XtreamTmdbResolver @Inject constructor(
     private val client: XtreamClient,
     private val index: XtreamMatchIndex,
     private val sync: XtreamMatchSyncService,
+    private val accountStore: XtreamAccountStore,
 ) {
     private val buildLock = Mutex()
     private val inFlightBuilds = mutableMapOf<String, CompletableDeferred<Unit>>()
     private val lastFailedBuildMs = mutableMapOf<String, Long>()
 
+    // account ids whose catalog index is currently building — drives the
+    // "Preparing catalog…" status on the IPTV settings rows
+    private val indexingCounts = mutableMapOf<String, Int>()
+    private val _indexing = MutableStateFlow<Set<String>>(emptySet())
+    val indexing: StateFlow<Set<String>> = _indexing.asStateFlow()
+
     // index builds outlive the stream request that triggered them: a large catalog takes
     // ~a minute on-device, and users navigate away — cancelling the request must not
     // kill (and backoff-poison) the build
     private val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Fire-and-forget index warm-up (account add, app start, sync-in) so the first
+     * resolve/search doesn't pay the full-catalog download on demand — on budget boxes
+     * that's minutes, which reads as "finding the movie takes forever". Only pure Xtream
+     * accounts participate in TMDB matching (M3U/Stalker have no player_api catalog).
+     */
+    fun warmUp(accounts: List<XtreamAccount>, startDelayMs: Long = 0L) {
+        accounts.filter { it.enabled && it.isXtream() }.forEach { acc ->
+            buildScope.launch {
+                if (startDelayMs > 0) delay(startDelayMs)
+                ensureIndexed(acc, MatchKind.MOVIE)
+                ensureIndexed(acc, MatchKind.SERIES)
+            }
+        }
+    }
+
+    /** App-start warm-up for every enabled account, delayed so the home screen wins the cold-start bandwidth. */
+    fun warmUpAll() {
+        buildScope.launch {
+            warmUp(accountStore.accounts.first(), startDelayMs = STARTUP_WARM_DELAY_MS)
+        }
+    }
 
     suspend fun resolve(acc: XtreamAccount, kind: MatchKind, tmdbId: Int, titles: TmdbTitleBundle): XtreamMatch? {
         ensureIndexed(acc, kind)
@@ -125,14 +162,16 @@ class XtreamTmdbResolver @Inject constructor(
         }
 
     /**
-     * Builds the SQLite index from the full bulk list when missing or older than 24h.
-     * Single-flight per provider+kind; failures back off for an hour. Never throws —
-     * resolve degrades to whatever index exists.
+     * Syncs the SQLite index from the full bulk list when missing or older than the TTL
+     * (incremental diff — unchanged titles are validated by fingerprint, not re-indexed).
+     * [force] skips the TTL check and awaits the sync — the auto-refresh worker uses it to
+     * honor the playlist's own refresh interval. Single-flight per provider+kind; failures
+     * back off for an hour. Never throws — resolve degrades to whatever index exists.
      */
-    suspend fun ensureIndexed(acc: XtreamAccount, kind: MatchKind) {
+    suspend fun ensureIndexed(acc: XtreamAccount, kind: MatchKind, force: Boolean = false) {
         val key = "${acc.id}#${kind.slug}"
         val existing = index.builtAt(acc.id, kind)
-        if (existing != null && System.currentTimeMillis() - existing < INDEX_TTL_MS) return
+        if (!force && existing != null && System.currentTimeMillis() - existing < INDEX_TTL_MS) return
 
         val (deferred, isOwner) = buildLock.withLock {
             inFlightBuilds[key]?.let { return@withLock it to false }
@@ -141,6 +180,7 @@ class XtreamTmdbResolver @Inject constructor(
             if (System.currentTimeMillis() - (lastFailedBuildMs[key] ?: 0) < BUILD_BACKOFF_MS) return
             val d = CompletableDeferred<Unit>()
             inFlightBuilds[key] = d
+            markIndexingLocked(acc.id, +1)
             d to true
         }
 
@@ -155,25 +195,48 @@ class XtreamTmdbResolver @Inject constructor(
                             IndexedItem(it.seriesId, it.name, it.year ?: TitleNormalizer.yearOf(it.name), it.tmdb, null, it.poster)
                         }
                     }
-                    index.rebuild(acc.id, kind, items)
-                    Log.i(TAG, "indexed ${items.size} ${kind.slug} items for ${acc.name}")
+                    // An empty list where we previously indexed content is a panel glitch, not a
+                    // real catalog — fail into the 1h backoff instead of re-fetching every resolve.
+                    check(items.isNotEmpty() || index.builtAt(acc.id, kind) == null) {
+                        "panel returned an empty ${kind.slug} list"
+                    }
+                    val stats = index.sync(acc.id, kind, items)
+                    Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
                     buildLock.withLock { lastFailedBuildMs.remove(key) }
                 } catch (t: Throwable) {
                     Log.w(TAG, "index build failed for ${acc.name} ${kind.slug}", t)
                     buildLock.withLock { lastFailedBuildMs[key] = System.currentTimeMillis() }
                 } finally {
-                    buildLock.withLock { inFlightBuilds.remove(key) }
+                    buildLock.withLock {
+                        inFlightBuilds.remove(key)
+                        markIndexingLocked(acc.id, -1)
+                    }
                     deferred.complete(Unit)
                 }
             }
         }
+        // A stale-but-present index serves immediately — yesterday's catalog still
+        // resolves, and the sync lands in the background. Only a MISSING index (or a
+        // forced refresh, which wants the fresh result) is worth blocking the caller for.
+        if (existing != null && !force) return
         // await is cancellable (the caller's request may die); the build itself is not
         deferred.await()
     }
 
+    /** Callers hold [buildLock]. Tracks per-account in-flight build counts for [indexing]. */
+    private fun markIndexingLocked(accountId: String, delta: Int) {
+        val n = (indexingCounts[accountId] ?: 0) + delta
+        if (n <= 0) indexingCounts.remove(accountId) else indexingCounts[accountId] = n
+        _indexing.value = indexingCounts.keys.toSet()
+    }
+
     companion object {
-        private const val INDEX_TTL_MS = 24 * 60 * 60 * 1000L
+        // Passive staleness ceiling (resolve/search/app-start paths). The auto-refresh worker
+        // drives the USER-configured cadence (playlist autoRefreshHours, default 24h) with a
+        // cheap incremental sync; this TTL is just the fallback when that's off or never ran.
+        private const val INDEX_TTL_MS = 72 * 60 * 60 * 1000L
         private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
+        private const val STARTUP_WARM_DELAY_MS = 10_000L
         private const val NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000L
         private const val MAX_VERIFY_CALLS = 3
 

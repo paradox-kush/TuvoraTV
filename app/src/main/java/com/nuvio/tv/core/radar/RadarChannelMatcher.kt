@@ -6,6 +6,7 @@ import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamKind
 import com.nuvio.tv.core.iptv.XtreamProgram
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
+import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.domain.model.ContentType
 import kotlinx.coroutines.async
@@ -146,7 +147,8 @@ class RadarChannelMatcher @Inject constructor(
         }.distinct()
         if (queries.isEmpty()) return emptyList()
 
-        val accounts = accountStore.accounts.first().filter { it.enabled }
+        // Only real Xtream panels: the match index + player_api VOD URLs don't exist for M3U/Stalker.
+        val accounts = accountStore.accounts.first().filter { it.enabled && it.isXtream() }
         val hits = LinkedHashMap<String, RecordingHit>()
         for (account in accounts) {
             kotlinx.coroutines.withTimeoutOrNull(INDEX_WAIT_MS) {
@@ -198,7 +200,8 @@ class RadarChannelMatcher @Inject constructor(
     // --- source assembly (the ONLY source-specific part) ----------------------
 
     private suspend fun assembleCandidates(): List<CandidateChannel> {
-        val accounts = accountStore.accounts.first().filter { it.enabled }
+        // Only real Xtream panels: live lists here come from XtreamClient's player_api directly.
+        val accounts = accountStore.accounts.first().filter { it.enabled && it.isXtream() }
         return accounts.flatMap { account ->
             val channels = channelCache[account.id] ?: cacheMutex.withLock {
                 channelCache[account.id] ?: xtreamClient.liveChannels(account)

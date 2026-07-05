@@ -12,7 +12,7 @@ import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
-import com.nuvio.tv.core.iptv.isM3U
+import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.iptv.rebuildFromId
 import com.nuvio.tv.core.iptv.toAddonStreams
 import com.nuvio.tv.domain.model.AddonStreams
@@ -137,10 +137,11 @@ class StreamRepositoryImpl @Inject constructor(
             // Xtream IPTV as a stream source for TMDB content: each enabled account gets
             // its own group via the TMDB->stream matcher (index + verify + synced cache).
             // TMDB->stream matching (Sports Centre + addon-detail IPTV streams) needs a get_vod_info /
-            // get_series_info verify endpoint, which M3U sources don't have — so only Xtream accounts
-            // participate. M3U content still plays via its own namespaced hybrid lane (registry ids).
+            // get_series_info verify endpoint, which only real Xtream panels have — M3U (url/file) and
+            // Stalker sources must not reach the resolver (their player_api calls just fail into
+            // backoff). Their content still plays via its own namespaced hybrid lane (registry ids).
             val xtreamMatchTargets = if (type == "movie" || type == "series") {
-                xtreamAccountStore.accounts.first().filter { it.enabled && !it.isM3U() }
+                xtreamAccountStore.accounts.first().filter { it.enabled && it.isXtream() }
             } else {
                 emptyList()
             }

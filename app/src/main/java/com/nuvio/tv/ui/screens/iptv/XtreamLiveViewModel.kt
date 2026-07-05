@@ -6,7 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamChannel
-import com.nuvio.tv.core.iptv.XtreamClient
+import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.data.local.XtreamAccountStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,7 +33,7 @@ data class XtreamLiveUiState(
 @HiltViewModel
 class XtreamLiveViewModel @Inject constructor(
     private val store: XtreamAccountStore,
-    private val client: XtreamClient,
+    private val clientFactory: IptvClientFactory,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -54,7 +54,7 @@ class XtreamLiveViewModel @Inject constructor(
         }
         account = acc
         _uiState.update { it.copy(accountName = acc.name, loading = true, error = null) }
-        client.liveCategories(acc)
+        clientFactory.clientFor(acc).liveCategories(acc)
             .onSuccess { cats ->
                 // Deselected categories stay hidden here too (mirrors XtreamHubViewModel).
                 val visible = cats.filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.id) }
@@ -67,7 +67,7 @@ class XtreamLiveViewModel @Inject constructor(
         if (!requested.add(categoryId)) return
         val acc = account ?: return
         viewModelScope.launch {
-            client.liveChannels(acc, categoryId)
+            clientFactory.clientFor(acc).liveChannels(acc, categoryId)
                 .onSuccess { channels ->
                     _uiState.update { it.copy(channelsByCategory = it.channelsByCategory + (categoryId to channels)) }
                 }

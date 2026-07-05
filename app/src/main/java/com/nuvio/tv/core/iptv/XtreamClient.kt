@@ -238,7 +238,7 @@ class XtreamClient @Inject constructor(
     }
 
     /** Account status (expiry/connections) for the settings row. Same endpoint as [verify]. */
-    suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = call {
+    override suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = call {
         val info = apiFor(acc).getAccount(playerApi(acc)).requireBody().userInfo
         XtreamAccountInfo(
             status = info?.status?.takeIf { it.isNotBlank() },

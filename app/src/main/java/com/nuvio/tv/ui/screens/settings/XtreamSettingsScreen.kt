@@ -87,6 +87,7 @@ fun XtreamSettingsContent(
     initialFocusRequester: FocusRequester? = null
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val indexingAccounts by viewModel.indexingAccounts.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
     var editFor by remember { mutableStateOf<XtreamAccount?>(null) }
@@ -135,7 +136,11 @@ fun XtreamSettingsContent(
             LaunchedEffect(account.id) { viewModel.ensureAccountStatus(account) }
             SettingsActionRow(
                 title = account.name,
-                subtitle = listOfNotNull(account.baseUrl, uiState.accountStatus[account.id]).joinToString("\n"),
+                subtitle = listOfNotNull(
+                    account.baseUrl,
+                    "Preparing catalog for search & playback…".takeIf { account.id in indexingAccounts },
+                    uiState.accountStatus[account.id]
+                ).joinToString("\n"),
                 value = if (account.enabled) "On" else "Off",
                 onClick = { actionsFor = account }
             )

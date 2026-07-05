@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.iptv.IptvPairingManager
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
 import com.nuvio.tv.core.iptv.pairingPayloadToXtreamAccount
 import com.nuvio.tv.core.qr.QrCodeGenerator
 import com.nuvio.tv.core.sync.XtreamAccountSyncService
@@ -48,6 +49,7 @@ class IptvPairingViewModel @Inject constructor(
     private val pairingManager: IptvPairingManager,
     private val accountStore: XtreamAccountStore,
     private val syncService: XtreamAccountSyncService,
+    private val resolver: XtreamTmdbResolver,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(IptvPairingUiState())
@@ -156,6 +158,8 @@ class IptvPairingViewModel @Inject constructor(
         _uiState.update { it.copy(status = IptvPairingStatus.SAVING) }
         runCatching {
             accountStore.upsert(account)
+            // Start the catalog index now, not on first play — minutes on budget boxes.
+            resolver.warmUp(listOf(account))
             syncService.triggerRemoteSync()
         }.onSuccess {
             _uiState.update {

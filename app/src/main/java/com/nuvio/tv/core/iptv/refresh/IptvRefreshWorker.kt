@@ -9,6 +9,9 @@ import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.core.iptv.isM3UBacked
+import com.nuvio.tv.core.iptv.isXtream
+import com.nuvio.tv.core.iptv.match.MatchKind
+import com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
 import com.nuvio.tv.core.player.PlaybackActivityTracker
 import com.nuvio.tv.data.local.XtreamAccountStore
 import dagger.assisted.Assisted
@@ -40,6 +43,7 @@ class IptvRefreshWorker @AssistedInject constructor(
     private val contentDb: IptvContentDb,
     private val refreshStore: IptvRefreshStore,
     private val playbackActivity: PlaybackActivityTracker,
+    private val resolver: XtreamTmdbResolver,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -105,6 +109,13 @@ class IptvRefreshWorker @AssistedInject constructor(
                     async { client.vodCategories(acc) },
                     async { client.seriesCategories(acc) },
                 ).awaitAll()
+            }
+            // Sync the match index on the playlist's own cadence: an incremental diff, so
+            // unchanged titles cost a fingerprint check and only new/renamed ones re-index.
+            // ensureIndexed never throws (failures back off internally).
+            if (acc.isXtream()) {
+                resolver.ensureIndexed(acc, MatchKind.MOVIE, force = true)
+                resolver.ensureIndexed(acc, MatchKind.SERIES, force = true)
             }
             refreshStore.markChecked(acc.id)
         }

@@ -281,6 +281,14 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
+    /** Full removal (playlist deleted): [clear] plus its EPG rows — nothing left on disk. */
+    suspend fun purge(playlistId: String) {
+        clear(playlistId)
+        withContext(Dispatchers.IO) {
+            inTx { db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId)) }
+        }
+    }
+
     // --- Queries ------------------------------------------------------------
 
     suspend fun categoriesFor(playlistId: String, type: String): List<ContentCategory> = withContext(Dispatchers.IO) {

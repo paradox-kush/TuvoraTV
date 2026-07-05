@@ -46,14 +46,20 @@ class XtreamSearchIndex @Inject constructor(
 
     private val liveCache = ConcurrentHashMap<String, List<XtreamChannel>>()
 
+    /** Drop one account's session cache (account removed or its credentials replaced). */
+    fun evict(accountId: String) {
+        liveCache.remove(accountId)
+    }
+
     private suspend fun ensureLoaded() = coroutineScope {
         val accounts = store.accounts.first().filter { it.enabled }
         accounts.map { acc ->
             async {
-                // M3U: the whole catalog (live/vod/series) is in IptvContentDb once ingested —
-                // no per-type RAM cache or match index. Just ensure the ingest exists (bounded so a
-                // cold 192MB parse doesn't stall a keystroke; it fills in on a later search).
-                if (acc.isM3U()) {
+                // M3U (url or file): the whole catalog (live/vod/series) is in IptvContentDb once
+                // ingested — no per-type RAM cache or match index. Just ensure the ingest exists
+                // (bounded so a cold 192MB parse doesn't stall a keystroke; it fills in on a later
+                // search). A file playlist with no local copy skips cleanly inside ensureIngested.
+                if (acc.isM3UBacked()) {
                     withTimeoutOrNull(INDEX_WAIT_MS) { clientFactory.m3u().ensureIngested(acc) }
                     return@async
                 }
@@ -65,11 +71,13 @@ class XtreamSearchIndex @Inject constructor(
                     Log.d(TAG, "indexed live=${live.size} for ${acc.name}")
                 }
                 // a cold index build (huge catalogs) shouldn't stall a keystroke forever;
-                // a built index responds instantly, a building one fills in on a later search
-                if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) {
+                // a built index responds instantly, a building one fills in on a later search.
+                // Match-index builds need player_api, so only real Xtream panels — a Stalker
+                // account searching movies/series would just fire a doomed build into backoff.
+                if (acc.isXtream() && acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) {
                     withTimeoutOrNull(INDEX_WAIT_MS) { resolver.ensureIndexed(acc, MatchKind.MOVIE) }
                 }
-                if (acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) {
+                if (acc.isXtream() && acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) {
                     withTimeoutOrNull(INDEX_WAIT_MS) { resolver.ensureIndexed(acc, MatchKind.SERIES) }
                 }
             }
@@ -85,7 +93,7 @@ class XtreamSearchIndex @Inject constructor(
         val movies = ArrayList<Hit>()
         val series = ArrayList<Hit>()
         for (acc in accounts) {
-            if (acc.isM3U()) { searchM3U(acc, q, channels, movies, series); continue }
+            if (acc.isM3UBacked()) { searchM3U(acc, q, channels, movies, series); continue }
             // Live hits carry a categoryId -> category selections filter them per item; a
             // disabled content type (or an explicit "Deselect All") contributes nothing.
             if (acc.searchIncludesType(XtreamAccount.TYPE_LIVE)) liveCache[acc.id].orEmpty().asSequence()
@@ -100,7 +108,7 @@ class XtreamSearchIndex @Inject constructor(
                     )
                     channels += Hit(id, ch.name, ch.logo, isLive = true, streamUrl = ch.streamUrl, detailType = "tv")
                 }
-            if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, PER_ACCOUNT).forEach { m ->
+            if (acc.isXtream() && acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, PER_ACCOUNT).forEach { m ->
                 val id = XtreamItemRegistry.vodId(acc.id, m.sid)
                 val streamUrl = xtreamClient.buildStreamUrl(acc, "movie", m.sid, m.ext ?: "mp4")
                 registry.register(
@@ -111,7 +119,7 @@ class XtreamSearchIndex @Inject constructor(
                 )
                 movies += Hit(id, m.name, m.poster, isLive = false, streamUrl = null, detailType = "movie")
             }
-            if (acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) matchIndex.searchByName(acc.id, MatchKind.SERIES, q, PER_ACCOUNT).forEach { s ->
+            if (acc.isXtream() && acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) matchIndex.searchByName(acc.id, MatchKind.SERIES, q, PER_ACCOUNT).forEach { s ->
                 val id = XtreamItemRegistry.seriesId(acc.id, s.sid)
                 registry.register(
                     XtreamResolvedItem(

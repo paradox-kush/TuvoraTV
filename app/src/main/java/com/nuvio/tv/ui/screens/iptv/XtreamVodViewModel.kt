@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
-import com.nuvio.tv.core.iptv.XtreamClient
+import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamMovie
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
@@ -38,7 +38,7 @@ data class XtreamVodUiState(
 @HiltViewModel
 class XtreamVodViewModel @Inject constructor(
     private val store: XtreamAccountStore,
-    private val client: XtreamClient,
+    private val clientFactory: IptvClientFactory,
     private val registry: XtreamItemRegistry,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -62,7 +62,7 @@ class XtreamVodViewModel @Inject constructor(
         }
         account = acc
         _uiState.update { it.copy(accountId = acc.id, accountName = acc.name, loading = true, error = null) }
-        client.vodCategories(acc)
+        clientFactory.clientFor(acc).vodCategories(acc)
             .onSuccess { cats ->
                 // Deselected categories stay hidden here too (mirrors XtreamHubViewModel).
                 val visible = cats.filter { acc.allowsCategory(XtreamAccount.TYPE_MOVIES, it.id) }
@@ -77,7 +77,7 @@ class XtreamVodViewModel @Inject constructor(
         val acc = account ?: return
         _uiState.update { it.copy(loadingCategories = it.loadingCategories + categoryId) }
         viewModelScope.launch {
-            client.vodMovies(acc, categoryId)
+            clientFactory.clientFor(acc).vodMovies(acc, categoryId)
                 .onSuccess { movies ->
                     // Register each movie so the meta + stream short-circuits can resolve it
                     // when its native detail screen opens.

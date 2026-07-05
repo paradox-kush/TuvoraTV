@@ -7,6 +7,7 @@ import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
+import com.nuvio.tv.core.iptv.isM3UFile
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.data.local.XtreamLiveStore
@@ -70,7 +71,8 @@ class XtreamHubViewModel @Inject constructor(
     private val clientFactory: IptvClientFactory,
     private val registry: XtreamItemRegistry,
     private val liveStore: XtreamLiveStore,
-    private val libraryRepository: LibraryRepository
+    private val libraryRepository: LibraryRepository,
+    private val fileStore: com.nuvio.tv.core.iptv.content.M3UFileStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamHubUiState())
@@ -152,6 +154,17 @@ class XtreamHubViewModel @Inject constructor(
     private fun loadCategories() {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
+        // A file playlist synced from another device has no local copy (file contents don't
+        // sync) — say so instead of a misleading empty "Nothing here".
+        if (acc.isM3UFile() && !fileStore.exists(acc.id)) {
+            _uiState.update {
+                it.copy(
+                    categories = emptyList(), itemsByCategory = emptyMap(), loading = false,
+                    error = "Playlist file not on this device — re-import it in Settings → IPTV"
+                )
+            }
+            return
+        }
         // Disabled content type: hidden section, and its data is never fetched.
         if (!acc.typeEnabled(section.typeKey)) {
             _uiState.update { it.copy(categories = emptyList(), itemsByCategory = emptyMap(), loading = false, error = null) }
