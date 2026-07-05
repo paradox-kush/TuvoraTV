@@ -318,13 +318,19 @@ class TmdbService @Inject constructor(
                 TmdbImages(
                     backdropUrl = body.backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
                     posterUrl = body.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" },
-                    runtimeMinutes = body.runtime
+                    runtimeMinutes = body.runtime,
+                    name = body.title ?: body.name
                 )
             }.getOrNull()
         }
 }
 
-data class TmdbImages(val backdropUrl: String?, val posterUrl: String?, val runtimeMinutes: Int? = null)
+data class TmdbImages(
+    val backdropUrl: String?,
+    val posterUrl: String?,
+    val runtimeMinutes: Int? = null,
+    val name: String? = null
+)
 
 /** All names TMDB knows for a title, ordered strongest-first, plus release year. */
 data class TmdbTitleBundle(

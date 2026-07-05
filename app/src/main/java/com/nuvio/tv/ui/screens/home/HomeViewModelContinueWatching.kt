@@ -1177,6 +1177,8 @@ private fun deduplicateInProgress(items: List<WatchProgress>): List<WatchProgres
 }
 
 private fun shouldTreatAsInProgressForContinueWatching(progress: WatchProgress): Boolean {
+    // Live channels have no meaningful resume position — never show them as CW cards.
+    if (isLiveProgress(progress)) return false
     if (progress.isCompleted()) return false
     if (progress.isInProgress() && progress.progressPercentage >= 0.02f) return true
 
@@ -1186,6 +1188,10 @@ private fun shouldTreatAsInProgressForContinueWatching(progress: WatchProgress):
         progress.source != WatchProgress.SOURCE_TRAKT_HISTORY &&
         progress.source != WatchProgress.SOURCE_TRAKT_SHOW_PROGRESS
 }
+
+internal fun isLiveProgress(progress: WatchProgress): Boolean =
+    progress.contentType.equals("live", ignoreCase = true) ||
+        com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(progress.contentId)
 
 private fun shouldUseAsCompletedSeed(progress: WatchProgress): Boolean {
     if (isMalformedNextUpSeedContentId(progress.contentId)) return false

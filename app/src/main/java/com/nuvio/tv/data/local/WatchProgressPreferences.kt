@@ -354,6 +354,14 @@ class WatchProgressPreferences @Inject constructor(
                     if (localEntry != null && isNonTraktId != null && isNonTraktId(localEntry.contentId)) {
                         Log.d("WatchProgressPrefs", "  preserved key=$key (non-Trakt ID: ${localEntry.contentId})")
                         preservedLocalItems = true
+                    } else if (localEntry != null &&
+                        (localEntry.contentType.equals("live", ignoreCase = true) ||
+                            (localEntry.contentId.startsWith("xtream:") && localEntry.contentId.contains(":live:")))
+                    ) {
+                        // Live progress is local-only (never pushed) — its absence from
+                        // remote doesn't mean deletion on another device.
+                        Log.d("WatchProgressPrefs", "  preserved key=$key (live channel, local-only)")
+                        preservedLocalItems = true
                     } else if (localEntry != null && localEntry.lastWatched > lastSuccessfulPushMs) {
                         Log.d("WatchProgressPrefs", "  preserved key=$key (lastWatched=${localEntry.lastWatched} > lastPush=$lastSuccessfulPushMs)")
                         preservedLocalItems = true

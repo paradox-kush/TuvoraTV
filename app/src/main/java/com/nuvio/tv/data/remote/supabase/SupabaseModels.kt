@@ -171,7 +171,13 @@ data class SupabaseWatchProgress(
     val duration: Long,
     @SerialName("last_watched") val lastWatched: Long,
     @SerialName("progress_key") val progressKey: String,
-    @SerialName("profile_id") val profileId: Int = 1
+    @SerialName("profile_id") val profileId: Int = 1,
+    // Display metadata (defaults keep decoding compatible with a pre-migration backend)
+    val name: String = "",
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val logo: String? = null,
+    @SerialName("episode_title") val episodeTitle: String? = null
 )
 
 @Serializable
@@ -186,7 +192,13 @@ data class SupabaseWatchProgressEvent(
     val episode: Int? = null,
     val position: Long,
     val duration: Long,
-    @SerialName("last_watched") val lastWatched: Long
+    @SerialName("last_watched") val lastWatched: Long,
+    // Display metadata (defaults keep decoding compatible with a pre-migration backend)
+    val name: String = "",
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val logo: String? = null,
+    @SerialName("episode_title") val episodeTitle: String? = null
 )
 
 @Serializable

@@ -5,11 +5,13 @@ import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.sync.WatchProgressSyncService
 import com.nuvio.tv.core.sync.WatchedItemsSyncService
 import android.util.Log
+import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.data.local.TraktAuthDataStore
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressSource
 import com.nuvio.tv.data.local.WatchProgressPreferences
 import com.nuvio.tv.data.local.WatchedItemsPreferences
+import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.model.WatchedItem
 import com.nuvio.tv.core.tmdb.TmdbService
@@ -61,6 +63,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
     private val metaRepository: MetaRepository,
     private val tmdbService: TmdbService,
     private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
+    private val xtreamAccountStore: XtreamAccountStore,
 ) : WatchProgressRepository {
     companion object {
         private const val TAG = "WatchProgressRepo"
@@ -341,6 +344,22 @@ class WatchProgressRepositoryImpl @Inject constructor(
                         }
                 }
             }
+            .filterOrphanedXtreamProgress()
+
+    /**
+     * Hides `xtream:` progress whose account is no longer configured on this device
+     * (playlist URL edited/removed; entries synced from another device). The ids can't
+     * resolve meta or streams anymore, so they'd render as blank, unplayable cards.
+     * Entries stay in local/remote storage — re-adding the account brings them back.
+     */
+    private fun Flow<List<WatchProgress>>.filterOrphanedXtreamProgress(): Flow<List<WatchProgress>> =
+        combine(xtreamAccountStore.accounts) { items, accounts ->
+            val accountIds = accounts.mapTo(mutableSetOf()) { it.id }
+            items.filter { progress ->
+                val parsed = XtreamItemRegistry.parseId(progress.contentId)
+                parsed == null || parsed.accountId in accountIds
+            }
+        }
 
     override val continueWatching: Flow<List<WatchProgress>>
         get() = allProgress.map { list -> list.filter { it.isInProgress() } }
@@ -1058,36 +1077,42 @@ class WatchProgressRepositoryImpl @Inject constructor(
         items.take(10).forEach { progress ->
             hydratedProgressIds.add(progress.contentId)
             runCatching {
+                // Addon meta may be unavailable (no meta-capable addon installed for this id
+                // type) — still fall through to TMDB so cloud-synced entries get artwork+name.
                 val metadata = fetchContentMetadata(
                     contentId = progress.contentId,
                     contentType = progress.contentType
-                ) ?: return@runCatching
+                )
                 val episodeRuntimeMs = if (progress.season != null && progress.episode != null)
-                    metadata.episodes[progress.season to progress.episode]?.runtimeMs ?: 0L
+                    metadata?.episodes?.get(progress.season to progress.episode)?.runtimeMs ?: 0L
                 else 0L
                 val durationMs = progress.duration.takeIf { it > 0 }
                     ?: episodeRuntimeMs.takeIf { it > 0 }
-                    ?: metadata.runtimeMs
+                    ?: metadata?.runtimeMs
+                    ?: 0L
 
                 // If addon returned no backdrop or poster, fall back to TMDB
-                var backdropToSave = progress.backdrop ?: metadata.backdrop
-                var posterToSave = progress.poster ?: metadata.poster
+                var backdropToSave = progress.backdrop ?: metadata?.backdrop
+                var posterToSave = progress.poster ?: metadata?.poster
+                var nameToSave = progress.name.takeIf { it.isNotBlank() && it != progress.contentId }
+                    ?: metadata?.name
                 if (backdropToSave == null && posterToSave == null) {
                     val tmdbImages = tmdbService.fetchImdbImages(progress.contentId, progress.contentType)
                     backdropToSave = tmdbImages?.backdropUrl
                     posterToSave = tmdbImages?.posterUrl
+                    if (nameToSave.isNullOrBlank()) nameToSave = tmdbImages?.name
                 }
 
                 val hasNewData = posterToSave != null || backdropToSave != null
-                    || metadata.logo != null || durationMs > 0
+                    || metadata?.logo != null || durationMs > 0
+                    || (!nameToSave.isNullOrBlank() && nameToSave != progress.name)
                 if (hasNewData) {
                     watchProgressPreferences.saveProgress(
                         progress.copy(
                             poster = posterToSave,
                             backdrop = backdropToSave,
-                            logo = progress.logo ?: metadata.logo,
-                            name = progress.name.takeIf { it.isNotBlank() && it != progress.contentId }
-                                ?: metadata.name ?: progress.name,
+                            logo = progress.logo ?: metadata?.logo,
+                            name = nameToSave?.takeIf { it.isNotBlank() } ?: progress.name,
                             duration = if (durationMs > 0) durationMs else progress.duration
                         )
                     )

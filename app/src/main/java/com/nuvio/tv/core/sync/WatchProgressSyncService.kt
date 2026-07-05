@@ -2,6 +2,7 @@ package com.nuvio.tv.core.sync
 
 import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
+import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.TraktAuthDataStore
 import com.nuvio.tv.data.local.TraktSettingsDataStore
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -166,7 +168,8 @@ class WatchProgressSyncService @Inject constructor(
         try {
             val rawEntries = watchProgressPreferences.getAllRawEntries(profileId)
             val entries = canonicalizeForRemote(rawEntries).filterValues { progress ->
-                !(progress.position <= 1L && progress.duration <= 1L && progress.duration > 0L)
+                !(progress.position <= 1L && progress.duration <= 1L && progress.duration > 0L) &&
+                    !isLiveProgress(progress)
             }
             Log.d(TAG, "pushToRemote: ${rawEntries.size} local entries, ${entries.size} canonical entries to push for profile $profileId")
             entries.forEach { (key, progress) ->
@@ -176,17 +179,7 @@ class WatchProgressSyncService @Inject constructor(
             val params = buildJsonObject {
                 put("p_entries", buildJsonArray {
                     entries.forEach { (key, progress) ->
-                        addJsonObject {
-                            put("content_id", progress.contentId)
-                            put("content_type", progress.contentType)
-                            put("video_id", progress.videoId)
-                            progress.season?.let { put("season", it) }
-                            progress.episode?.let { put("episode", it) }
-                            put("position", progress.position)
-                            put("duration", progress.duration)
-                            put("last_watched", progress.lastWatched)
-                            put("progress_key", key)
-                        }
+                        addJsonObject { putProgressEntry(key, progress) }
                     }
                 })
                 put("p_profile_id", profileId)
@@ -218,19 +211,12 @@ class WatchProgressSyncService @Inject constructor(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            if (isLiveProgress(progress)) {
+                return@withContext Result.success(Unit)
+            }
             val params = buildJsonObject {
                 put("p_entries", buildJsonArray {
-                    addJsonObject {
-                        put("content_id", progress.contentId)
-                        put("content_type", progress.contentType)
-                        put("video_id", progress.videoId)
-                        progress.season?.let { put("season", it) }
-                        progress.episode?.let { put("episode", it) }
-                        put("position", progress.position)
-                        put("duration", progress.duration)
-                        put("last_watched", progress.lastWatched)
-                        put("progress_key", key)
-                    }
+                    addJsonObject { putProgressEntry(key, progress) }
                 })
                 put("p_profile_id", profileId)
                 putSyncOriginClientId(syncClientIdentity)
@@ -291,14 +277,14 @@ class WatchProgressSyncService @Inject constructor(
                 entry.progressKey to WatchProgress(
                     contentId = entry.contentId,
                     contentType = entry.contentType,
-                    name = "",
-                    poster = null,
-                    backdrop = null,
-                    logo = null,
+                    name = entry.name,
+                    poster = entry.poster,
+                    backdrop = entry.backdrop,
+                    logo = entry.logo,
                     videoId = entry.videoId,
                     season = entry.season,
                     episode = entry.episode,
-                    episodeTitle = null,
+                    episodeTitle = entry.episodeTitle,
                     position = entry.position,
                     duration = entry.duration,
                     lastWatched = entry.lastWatched,
@@ -582,18 +568,40 @@ class WatchProgressSyncService @Inject constructor(
         return WatchProgress(
             contentId = contentId,
             contentType = contentType,
-            name = "",
-            poster = null,
-            backdrop = null,
-            logo = null,
+            name = name,
+            poster = poster,
+            backdrop = backdrop,
+            logo = logo,
             videoId = videoId,
             season = season,
             episode = episode,
-            episodeTitle = null,
+            episodeTitle = episodeTitle,
             position = position,
             duration = duration,
             lastWatched = lastWatched,
             source = WatchProgress.SOURCE_LOCAL
         )
+    }
+
+    /** Live channels have no meaningful resume position — keep them out of remote sync. */
+    private fun isLiveProgress(progress: WatchProgress): Boolean =
+        progress.contentType.equals("live", ignoreCase = true) ||
+            XtreamItemRegistry.isLiveContentId(progress.contentId)
+
+    private fun JsonObjectBuilder.putProgressEntry(key: String, progress: WatchProgress) {
+        put("content_id", progress.contentId)
+        put("content_type", progress.contentType)
+        put("video_id", progress.videoId)
+        progress.season?.let { put("season", it) }
+        progress.episode?.let { put("episode", it) }
+        put("position", progress.position)
+        put("duration", progress.duration)
+        put("last_watched", progress.lastWatched)
+        put("progress_key", key)
+        put("name", progress.name)
+        progress.poster?.let { put("poster", it) }
+        progress.backdrop?.let { put("backdrop", it) }
+        progress.logo?.let { put("logo", it) }
+        progress.episodeTitle?.let { put("episode_title", it) }
     }
 }
