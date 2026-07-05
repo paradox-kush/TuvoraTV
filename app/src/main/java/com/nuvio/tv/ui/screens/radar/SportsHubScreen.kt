@@ -95,11 +95,7 @@ fun SportsHubScreen(
             MatchChannelsOverlay(
                 state = s.copy(hasPlaylists = hasPlaylistsNow),
                 isLive = viewModel.uiState.value.isLive(s.fixture, RadarTime.nowMs()),
-                onPlay = { match ->
-                    val (title, url, contentId) = viewModel.preparePlay(match)
-                    viewModel.closeMatch()
-                    onPlayChannel(title, url, contentId)
-                },
+                onPlay = { match -> viewModel.playMatch(match, onPlayChannel) },
                 onPlayReplay = { replay ->
                     viewModel.closeMatch()
                     onPlayChannel(replay.third, replay.second, replay.first)
@@ -246,11 +242,7 @@ fun SportsHubScreen(
         MatchChannelsOverlay(
             state = s.copy(hasPlaylists = hasPlaylistsNow),
             isLive = viewModel.uiState.value.isLive(s.fixture, RadarTime.nowMs()),
-            onPlay = { match ->
-                val (title, url, contentId) = viewModel.preparePlay(match)
-                viewModel.closeMatch()
-                onPlayChannel(title, url, contentId)
-            },
+            onPlay = { match -> viewModel.playMatch(match, onPlayChannel) },
             onPlayReplay = { replay ->
                 viewModel.closeMatch()
                 onPlayChannel(replay.third, replay.second, replay.first)
@@ -358,6 +350,8 @@ private fun MatchChannelsOverlay(
                     }
                 }
                 items(state.matches, key = { it.channel.contentId }) { match ->
+                    val isProbing = state.probingContentId == match.channel.contentId
+                    val isDead = match.channel.contentId in state.deadContentIds
                     FocusableRow(onClick = { onPlay(match) }) {
                         AsyncImage(
                             model = match.channel.logo,
@@ -369,16 +363,18 @@ private fun MatchChannelsOverlay(
                             Text(
                                 match.channel.name,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = NuvioTheme.colors.TextPrimary,
+                                color = if (isDead) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                             val programme = match.programme
                             Text(
-                                if (programme != null) {
-                                    "${programme.title} · ${RadarTime.formatTime(programme.startMs)} – ${RadarTime.formatTime(programme.endMs)}"
-                                } else {
-                                    match.channel.playlistName
+                                when {
+                                    isProbing -> "Checking channel…"
+                                    isDead -> "Offline · ${match.channel.playlistName}"
+                                    programme != null ->
+                                        "${programme.title} · ${RadarTime.formatTime(programme.startMs)} – ${RadarTime.formatTime(programme.endMs)}"
+                                    else -> match.channel.playlistName
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = NuvioTheme.colors.TextSecondary,
@@ -386,7 +382,10 @@ private fun MatchChannelsOverlay(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        Text("▶", color = NuvioTheme.colors.TextPrimary)
+                        Text(
+                            if (isProbing) "…" else if (isDead) "✕" else "▶",
+                            color = if (isDead) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
+                        )
                     }
                     // Archived channel + started fixture -> its catch-up Replay, indented
                     // under the channel as its own focusable row (no long-press on TV).
@@ -400,6 +399,18 @@ private fun MatchChannelsOverlay(
                                 modifier = Modifier.weight(1f),
                             )
                         }
+                    }
+                }
+                if (state.probingContentId == null && state.matches.isNotEmpty() &&
+                    state.matches.all { it.channel.contentId in state.deadContentIds }
+                ) {
+                    item(key = "all-offline") {
+                        Text(
+                            "All matched channels appear offline right now. Try a recording or replay if available.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NuvioTheme.colors.TextSecondary,
+                            modifier = Modifier.padding(NuvioTheme.spacing.sm),
+                        )
                     }
                 }
                 if (state.matching) {
