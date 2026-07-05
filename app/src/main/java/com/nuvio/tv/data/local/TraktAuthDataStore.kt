@@ -135,6 +135,51 @@ class TraktAuthDataStore @Inject constructor(
         }
     }
 
+    suspend fun saveSyncedAuthState(state: TraktAuthState) {
+        store().edit { preferences ->
+            if (!state.isAuthenticated) {
+                preferences.remove(accessTokenKey)
+                preferences.remove(refreshTokenKey)
+                preferences.remove(tokenTypeKey)
+                preferences.remove(createdAtKey)
+                preferences.remove(expiresInKey)
+                preferences.remove(usernameKey)
+                preferences.remove(userSlugKey)
+                preferences.remove(deviceCodeKey)
+                preferences.remove(userCodeKey)
+                preferences.remove(verificationUrlKey)
+                preferences.remove(expiresAtKey)
+                preferences.remove(pollIntervalKey)
+                return@edit
+            }
+
+            preferences[accessTokenKey] = state.accessToken.orEmpty()
+            preferences[refreshTokenKey] = state.refreshToken.orEmpty()
+            preferences[tokenTypeKey] = state.tokenType ?: "bearer"
+            preferences[createdAtKey] = state.createdAt ?: (System.currentTimeMillis() / 1000L)
+            preferences[expiresInKey] = normalizeTraktTokenLifetimeSeconds(
+                state.expiresIn ?: TRAKT_ACCESS_TOKEN_MAX_LIFETIME_SECONDS
+            )
+
+            if (state.username.isNullOrBlank()) {
+                preferences.remove(usernameKey)
+            } else {
+                preferences[usernameKey] = state.username
+            }
+            if (state.userSlug.isNullOrBlank()) {
+                preferences.remove(userSlugKey)
+            } else {
+                preferences[userSlugKey] = state.userSlug
+            }
+
+            preferences.remove(deviceCodeKey)
+            preferences.remove(userCodeKey)
+            preferences.remove(verificationUrlKey)
+            preferences.remove(expiresAtKey)
+            preferences.remove(pollIntervalKey)
+        }
+    }
+
     suspend fun saveDeviceFlow(data: TraktDeviceCodeResponseDto) {
         val now = System.currentTimeMillis()
         store().edit { preferences ->

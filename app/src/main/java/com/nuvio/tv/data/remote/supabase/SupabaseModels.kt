@@ -211,3 +211,10 @@ data class SupabaseHomeCatalogSettingsBlob(
     @SerialName("settings_json") val settingsJson: JsonObject = buildJsonObject { },
     @SerialName("updated_at") val updatedAt: String? = null
 )
+
+@Serializable
+data class SupabaseProviderCredential(
+    val provider: String,
+    @SerialName("credential_json") val credentialJson: JsonObject = buildJsonObject { },
+    @SerialName("updated_at") val updatedAt: String? = null
+)
