@@ -23,6 +23,7 @@ import com.nuvio.tv.data.remote.dto.trakt.TraktIdsDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktPlaybackItemDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktShowSeasonProgressDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktUserEpisodeHistoryItemDto
+import com.nuvio.tv.data.remote.dto.trakt.TraktWatchedMovieItemDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktWatchedShowItemDto
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.repository.MetaRepository
@@ -85,6 +86,9 @@ class TraktProgressService @Inject constructor(
 ) {
     companion object {
         private const val TAG = "TraktProgressSvc"
+        private const val WATCHED_PAGE_LIMIT = 250
+        private const val WATCHED_MAX_PAGES = 1_000
+        private const val WATCHED_SHOWS_EXTENDED = "progress"
         private val MAPPING_CONCURRENCY =
             maxOf(2, minOf(Runtime.getRuntime().availableProcessors() * 2, 16))
     }
@@ -1292,23 +1296,11 @@ class TraktProgressService @Inject constructor(
             }
 
             watchedMoviesLastAttemptAtMs = now
-            trace("watched-movies fetch: requesting /sync/watched/movies")
-            val response = traktAuthService.executeAuthorizedRequest { authHeader ->
-                traktApi.getWatched(
-                    authorization = authHeader,
-                    type = "movies"
-                )
-            } ?: run {
-                trace("watched-movies fetch: request returned null (network/auth failure)")
+            val watchedMovieItems = fetchWatchedMoviePages() ?: run {
                 return@withLock watchedMoviesState.value
             }
 
-            if (!response.isSuccessful) {
-                trace("watched-movies fetch: non-success code=${response.code()}")
-                return@withLock watchedMoviesState.value
-            }
-
-            val watchedMovies = response.body().orEmpty()
+            val watchedMovies = watchedMovieItems
                 .flatMap { item ->
                     watchedMovieLookupKeys(item.movie?.ids)
                 }
@@ -1339,22 +1331,10 @@ class TraktProgressService @Inject constructor(
             }
 
             watchedShowSeedsLastAttemptAtMs = now
-            trace("watched-shows fetch: requesting /sync/watched/shows")
-            val response = traktAuthService.executeAuthorizedRequest { authHeader ->
-                traktApi.getWatchedShows(
-                    authorization = authHeader
-                )
-            } ?: run {
-                trace("watched-shows fetch: request returned null (network/auth failure)")
+            val items = fetchWatchedShowPages() ?: run {
                 return@withLock watchedShowSeedsState.value
             }
 
-            if (!response.isSuccessful) {
-                trace("watched-shows fetch: non-success code=${response.code()}")
-                return@withLock watchedShowSeedsState.value
-            }
-
-            val items = response.body().orEmpty()
             val useFurthestEpisode = layoutPreferenceDataStore.nextUpFromFurthestEpisode.first()
             val watchedShowSeeds = items
                 .mapNotNull { mapWatchedShowSeed(it, useFurthestEpisode) }
@@ -1455,6 +1435,74 @@ class TraktProgressService @Inject constructor(
             trace("watched-shows cache refreshed: size=${fixedWatchedShowSeeds.size}")
             fixedWatchedShowSeeds
         }
+    }
+
+    private suspend fun fetchWatchedMoviePages(): List<TraktWatchedMovieItemDto>? {
+        val items = mutableListOf<TraktWatchedMovieItemDto>()
+        var page = 1
+        while (page <= WATCHED_MAX_PAGES) {
+            trace("watched-movies fetch: requesting /sync/watched/movies page=$page limit=$WATCHED_PAGE_LIMIT")
+            val response = traktAuthService.executeAuthorizedRequest { authHeader ->
+                traktApi.getWatched(
+                    authorization = authHeader,
+                    type = "movies",
+                    page = page,
+                    limit = WATCHED_PAGE_LIMIT
+                )
+            } ?: run {
+                trace("watched-movies fetch: request returned null on page=$page")
+                return null
+            }
+            if (!response.isSuccessful) {
+                trace("watched-movies fetch: non-success code=${response.code()} page=$page")
+                return null
+            }
+            val pageItems = response.body().orEmpty()
+            if (pageItems.isEmpty()) break
+            items.addAll(pageItems)
+            val pageCount = response.headers()["X-Pagination-Page-Count"]?.toIntOrNull()
+            if (pageCount != null && page >= pageCount) break
+            page += 1
+        }
+        if (page > WATCHED_MAX_PAGES) {
+            Log.w(TAG, "fetchWatchedMoviePages: exceeded max pages")
+            return null
+        }
+        return items
+    }
+
+    private suspend fun fetchWatchedShowPages(): List<TraktWatchedShowItemDto>? {
+        val items = mutableListOf<TraktWatchedShowItemDto>()
+        var page = 1
+        while (page <= WATCHED_MAX_PAGES) {
+            trace("watched-shows fetch: requesting /sync/watched/shows page=$page limit=$WATCHED_PAGE_LIMIT")
+            val response = traktAuthService.executeAuthorizedRequest { authHeader ->
+                traktApi.getWatchedShows(
+                    authorization = authHeader,
+                    extended = WATCHED_SHOWS_EXTENDED,
+                    page = page,
+                    limit = WATCHED_PAGE_LIMIT
+                )
+            } ?: run {
+                trace("watched-shows fetch: request returned null on page=$page")
+                return null
+            }
+            if (!response.isSuccessful) {
+                trace("watched-shows fetch: non-success code=${response.code()} page=$page")
+                return null
+            }
+            val pageItems = response.body().orEmpty()
+            if (pageItems.isEmpty()) break
+            items.addAll(pageItems)
+            val pageCount = response.headers()["X-Pagination-Page-Count"]?.toIntOrNull()
+            if (pageCount != null && page >= pageCount) break
+            page += 1
+        }
+        if (page > WATCHED_MAX_PAGES) {
+            Log.w(TAG, "fetchWatchedShowPages: exceeded max pages")
+            return null
+        }
+        return items
     }
 
     private fun mapWatchedShowSeed(item: TraktWatchedShowItemDto, useFurthestEpisode: Boolean): WatchProgress? {
