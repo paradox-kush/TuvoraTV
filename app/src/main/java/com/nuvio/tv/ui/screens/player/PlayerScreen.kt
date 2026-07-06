@@ -379,10 +379,11 @@ fun PlayerScreen(
         }
     }
     // Restore original display mode when leaving the player
-    DisposableEffect(activity, uiState.frameRateMatchingMode) {
+    val currentFrameRateMatchingMode by rememberUpdatedState(uiState.frameRateMatchingMode)
+    DisposableEffect(activity) {
         onDispose {
             if (activity != null) {
-                if (uiState.frameRateMatchingMode == com.nuvio.tv.data.local.FrameRateMatchingMode.START_STOP) {
+                if (currentFrameRateMatchingMode == com.nuvio.tv.data.local.FrameRateMatchingMode.START_STOP) {
                     com.nuvio.tv.core.player.FrameRateUtils.restoreOriginalDisplayMode(activity)
                 } else {
                     com.nuvio.tv.core.player.FrameRateUtils.cleanupDisplayListener()

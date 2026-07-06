@@ -62,7 +62,7 @@ internal suspend fun PlayerRuntimeController.runAfrPreflightIfEnabled(
     }
 
     try {
-        val cached = FrameRateUtils.getCachedFrameRate(url, headers)
+        val cached = FrameRateUtils.getCachedFrameRate(url, headers, currentFilename)
         if (cached != null) {
             Log.d(PlayerRuntimeController.TAG, "AFR preflight: cache hit! Using cached FPS=${cached.snapped}")
             _uiState.update {
@@ -148,7 +148,7 @@ internal suspend fun PlayerRuntimeController.runAfrPreflightIfEnabled(
             return
         }
 
-        FrameRateUtils.cacheFrameRate(url, headers, detection)
+        FrameRateUtils.cacheFrameRate(url, headers, detection, currentFilename)
 
         _uiState.update {
             it.copy(

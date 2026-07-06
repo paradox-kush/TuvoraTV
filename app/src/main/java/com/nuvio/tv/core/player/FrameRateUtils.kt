@@ -66,11 +66,18 @@ object FrameRateUtils {
         return sanitized
     }
 
-    private fun buildCacheKey(url: String, headers: Map<String, String>): String {
+    private fun buildCacheKey(url: String, headers: Map<String, String>, filename: String?): String {
         val sanitized = sanitizeHeaders(headers)
-        if (sanitized.isEmpty()) return url
+        val baseKey = if (!filename.isNullOrBlank()) {
+            val host = try { Uri.parse(url).host ?: "" } catch (_: Exception) { "" }
+            "file://$host/$filename"
+        } else {
+            url.substringBefore('?')
+        }
+
+        if (sanitized.isEmpty()) return baseKey
         return buildString {
-            append(url)
+            append(baseKey)
             sanitized.toSortedMap(String.CASE_INSENSITIVE_ORDER).forEach { (key, value) ->
                 append('|')
                 append(key)
@@ -80,15 +87,15 @@ object FrameRateUtils {
         }
     }
 
-    fun getCachedFrameRate(url: String, headers: Map<String, String>): FrameRateDetection? {
-        val key = buildCacheKey(url, headers)
+    fun getCachedFrameRate(url: String, headers: Map<String, String>, filename: String? = null): FrameRateDetection? {
+        val key = buildCacheKey(url, headers, filename)
         return synchronized(frameRateCache) {
             frameRateCache[key]
         }
     }
 
-    fun cacheFrameRate(url: String, headers: Map<String, String>, detection: FrameRateDetection) {
-        val key = buildCacheKey(url, headers)
+    fun cacheFrameRate(url: String, headers: Map<String, String>, detection: FrameRateDetection, filename: String? = null) {
+        val key = buildCacheKey(url, headers, filename)
         synchronized(frameRateCache) {
             frameRateCache[key] = detection
         }
@@ -571,7 +578,12 @@ object FrameRateUtils {
         // If the caller supplied any stream headers (auth tokens, cookies, etc.),
         // bypass NextLib since its MediaInfoBuilder cannot forward them.
         // Range is already stripped by the caller; no synthetic headers reach here.
-        val hasStreamHeaders = headers.any { (_, v) -> v.isNotBlank() }
+        val hasStreamHeaders = headers.any { (k, v) ->
+            v.isNotBlank() &&
+            !k.equals("Range", ignoreCase = true) &&
+            !k.equals("User-Agent", ignoreCase = true) &&
+            !k.equals("Connection", ignoreCase = true)
+        }
         if (hasStreamHeaders) return false
 
         if (isMkvSource(sourceUrl)) return true
