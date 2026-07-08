@@ -140,7 +140,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             }
             if (batch.isEmpty()) return@launch
             withContext(NonCancellable) {
-                watchedItemsSyncService.pushItemsToRemote(batch)
+                watchedItemsSyncService.pushItemsToRemote(batch, profileId = profileId)
             }
         }
     }
@@ -709,7 +709,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             } else {
                 traktProgressService.updateOptimisticProgressQuietly(progress)
             }
-            watchProgressPreferences.saveProgress(progress)
+            watchProgressPreferences.saveProgress(progress, profileId = profileId)
             if (progress.isCompleted()) {
                 val watchedItem = progress.toWatchedItem()
                 watchedItemsPreferences.markAsWatched(watchedItem, profileId = profileId)
@@ -728,7 +728,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             }
             return
         }
-        watchProgressPreferences.saveProgress(progress)
+        watchProgressPreferences.saveProgress(progress, profileId = profileId)
 
         if (syncRemote && authManager.isAuthenticated) {
             syncScope.launch(NonCancellable) {
@@ -757,7 +757,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
                     traktProgressService.applyOptimisticProgress(progress)
                 }
             }
-            watchProgressPreferences.saveProgressBatch(progressList)
+            watchProgressPreferences.saveProgressBatch(progressList, profileId = profileId)
             // Mirror to Nuvio Sync so data is ready if user switches source later.
             if (syncRemote && authManager.isAuthenticated) {
                 triggerRemoteSync()
@@ -765,7 +765,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             return
         }
 
-        watchProgressPreferences.saveProgressBatch(progressList)
+        watchProgressPreferences.saveProgressBatch(progressList, profileId = profileId)
 
         if (syncRemote && authManager.isAuthenticated) {
             triggerRemoteSync()
@@ -783,9 +783,10 @@ class WatchProgressRepositoryImpl @Inject constructor(
     }
 
     override suspend fun removeProgress(contentId: String, season: Int?, episode: Int?) {
+        val profileId = profileManager.activeProfileId.value
         val useTraktProgress = shouldUseTraktProgress()
         val hasEffectiveTraktConnection = hasEffectiveTraktConnection()
-        val remoteDeleteKeys = resolveRemoteDeleteKeys(contentId, season, episode)
+        val remoteDeleteKeys = resolveRemoteDeleteKeys(contentId, season, episode, profileId = profileId)
         if (hasEffectiveTraktConnection) {
             traktProgressService.applyOptimisticRemoval(contentId, season, episode)
             traktProgressService.removeProgress(contentId, season, episode)
@@ -812,9 +813,10 @@ class WatchProgressRepositoryImpl @Inject constructor(
     }
 
     override suspend fun removeFromHistory(contentId: String, videoId: String?, season: Int?, episode: Int?) {
+        val profileId = profileManager.activeProfileId.value
         val useTraktProgress = shouldUseTraktProgress()
         val remoteDeleteKeys = if (!useTraktProgress) {
-            resolveRemoteDeleteKeys(contentId, season, episode)
+            resolveRemoteDeleteKeys(contentId, season, episode, profileId = profileId)
         } else {
             emptyList()
         }
@@ -822,7 +824,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             traktProgressService.removeFromHistory(contentId, videoId, season, episode)
         }
         watchProgressPreferences.removeProgress(contentId, season, episode)
-        watchedItemsPreferences.unmarkAsWatched(contentId, season, episode)
+        watchedItemsPreferences.unmarkAsWatched(contentId, season, episode, profileId = profileId)
         if (useTraktProgress) {
             return
         }
@@ -847,12 +849,13 @@ class WatchProgressRepositoryImpl @Inject constructor(
         episodes: List<Pair<Int, Int>>
     ) {
         if (episodes.isEmpty()) return
+        val profileId = profileManager.activeProfileId.value
         val useTraktProgress = shouldUseTraktProgress()
         val hasEffectiveTraktConnection = hasEffectiveTraktConnection()
 
         // Batch local removes (single DataStore transaction each)
         watchProgressPreferences.removeProgressBatch(contentId, episodes)
-        watchedItemsPreferences.unmarkAsWatchedBatch(contentId, episodes)
+        watchedItemsPreferences.unmarkAsWatchedBatch(contentId, episodes, profileId = profileId)
 
         // Batch Trakt remove (single API call)
         if (hasEffectiveTraktConnection) {
@@ -1126,9 +1129,10 @@ class WatchProgressRepositoryImpl @Inject constructor(
     private suspend fun resolveRemoteDeleteKeys(
         contentId: String,
         season: Int?,
-        episode: Int?
+        episode: Int?,
+        profileId: Int = profileManager.activeProfileId.value
     ): List<String> {
-        val rawEntries = watchProgressPreferences.getAllRawEntries()
+        val rawEntries = watchProgressPreferences.getAllRawEntries(profileId)
         val keys = if (season != null && episode != null) {
             listOf("${contentId}_s${season}e${episode}", contentId)
         } else {

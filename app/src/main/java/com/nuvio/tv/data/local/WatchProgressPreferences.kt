@@ -187,8 +187,11 @@ class WatchProgressPreferences @Inject constructor(
     /**
      * Save or update watch progress
      */
-    suspend fun saveProgress(progress: WatchProgress) {
-        store().edit { preferences ->
+    suspend fun saveProgress(
+        progress: WatchProgress,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
+        store(profileId).edit { preferences ->
             val json = preferences[watchProgressKey] ?: "{}"
             val map = parseProgressMap(json).toMutableMap()
             upsertProgressEntries(map, listOf(progress))
@@ -198,9 +201,12 @@ class WatchProgressPreferences @Inject constructor(
         }
     }
 
-    suspend fun saveProgressBatch(progressList: List<WatchProgress>) {
+    suspend fun saveProgressBatch(
+        progressList: List<WatchProgress>,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
         if (progressList.isEmpty()) return
-        store().edit { preferences ->
+        store(profileId).edit { preferences ->
             val json = preferences[watchProgressKey] ?: "{}"
             val map = parseProgressMap(json).toMutableMap()
             upsertProgressEntries(map, progressList)
@@ -212,8 +218,13 @@ class WatchProgressPreferences @Inject constructor(
     /**
      * Remove watch progress for a specific item
      */
-    suspend fun removeProgress(contentId: String, season: Int? = null, episode: Int? = null) {
-        store().edit { preferences ->
+    suspend fun removeProgress(
+        contentId: String,
+        season: Int? = null,
+        episode: Int? = null,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
+        store(profileId).edit { preferences ->
             val json = preferences[watchProgressKey] ?: "{}"
             val map = parseProgressMap(json).toMutableMap()
 
@@ -247,9 +258,13 @@ class WatchProgressPreferences @Inject constructor(
     /**
      * Remove watch progress for multiple episodes in a single DataStore transaction.
      */
-    suspend fun removeProgressBatch(contentId: String, episodes: List<Pair<Int, Int>>) {
+    suspend fun removeProgressBatch(
+        contentId: String,
+        episodes: List<Pair<Int, Int>>,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
         if (episodes.isEmpty()) return
-        store().edit { preferences ->
+        store(profileId).edit { preferences ->
             val json = preferences[watchProgressKey] ?: "{}"
             val map = parseProgressMap(json).toMutableMap()
             for ((season, episode) in episodes) {
@@ -284,7 +299,7 @@ class WatchProgressPreferences @Inject constructor(
             duration = effectiveDuration,
             lastWatched = System.currentTimeMillis()
         )
-        saveProgress(completedProgress)
+        saveProgress(completedProgress, profileId = profileId)
     }
 
     /**
@@ -310,7 +325,7 @@ class WatchProgressPreferences @Inject constructor(
                 lastWatched = now
             )
         }
-        saveProgressBatch(completed)
+        saveProgressBatch(completed, profileId = profileId)
     }
 
     /**

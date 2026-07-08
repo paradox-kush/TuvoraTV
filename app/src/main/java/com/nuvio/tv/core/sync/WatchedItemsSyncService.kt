@@ -132,12 +132,12 @@ class WatchedItemsSyncService @Inject constructor(
 
     suspend fun pushItemsToRemote(
         items: Collection<WatchedItem>,
-        updateLastSuccessfulPush: Boolean = false
+        updateLastSuccessfulPush: Boolean = false,
+        profileId: Int = profileManager.activeProfileId.value
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             if (items.isEmpty()) return@withContext Result.success(Unit)
             Log.d(TAG, "pushItemsToRemote: ${items.size} watched items to push")
-            val profileId = profileManager.activeProfileId.value
             val params = buildJsonObject {
                 put("p_items", buildJsonArray {
                     items.forEach { item ->
