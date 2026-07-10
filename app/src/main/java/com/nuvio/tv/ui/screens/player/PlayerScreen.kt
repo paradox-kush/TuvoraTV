@@ -331,7 +331,8 @@ fun PlayerScreen(
                 }
                 Lifecycle.Event.ON_RESUME -> {
                     // Re-create the MediaSession so media controls work in foreground.
-                    // Don't auto-resume playback — let the user press play.
+                    // VOD stays paused (let the user press play); live channels rejoin the
+                    // live edge and resume — a paused live buffer is stale and would stall.
                     viewModel.resumeForLifecycle()
                 }
                 else -> {}

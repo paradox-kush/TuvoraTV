@@ -248,6 +248,29 @@ internal fun PlayerRuntimeController.resumeForLifecycle() {
         return
     }
 
+    // Live channels: the paused mpv buffer is stale and the upstream socket is likely dead —
+    // unpausing would play the leftover buffer then stall at the old position. Rejoin the
+    // live edge instead and resume (same pattern as XtreamLiveGuideScreen's ON_START).
+    if (isUsingMpvEngine() &&
+        _uiState.value.contentType.equals("live", ignoreCase = true) &&
+        currentStreamUrl.isNotBlank()
+    ) {
+        val view = mpvView ?: return
+        userPausedManually = false
+        scope.launch(Dispatchers.Default) {
+            runCatching {
+                // loadfile keeps mpv's pause property — unpause or the rejoin stays frozen.
+                view.setPaused(false)
+                view.setMediaUsingLoadfile(currentStreamUrl, currentHeaders)
+            }
+        }
+        _uiState.update { it.copy(isPlaying = true, isBuffering = true) }
+        cancelPauseOverlay()
+        startProgressUpdates()
+        startWatchProgressSaving()
+        return
+    }
+
     val player = _exoPlayer
     if (player != null && !isUsingMpvEngine()) {
         // Restore automatic audio focus handling that was disabled in pauseForLifecycle().
