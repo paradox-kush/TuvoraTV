@@ -9,6 +9,12 @@ name: Release
 #   RELEASE_KEY_ALIAS         key alias
 #   RELEASE_KEY_PASSWORD      key password
 #   SUPABASE_URL / SUPABASE_ANON_KEY   (optional) bake login into the release
+#
+# Play Store upload AAB (playstore flavor) signs with a SEPARATE dedicated key —
+# the GitHub-release key must never change (the in-app updater needs signature
+# continuity), while the Play upload key is rotatable via Play App Signing:
+#   PLAY_UPLOAD_KEYSTORE_BASE64 / PLAY_UPLOAD_STORE_PASSWORD
+#   PLAY_UPLOAD_KEY_ALIAS / PLAY_UPLOAD_KEY_PASSWORD
 
 on:
   push:
@@ -82,11 +88,26 @@ jobs:
             -PversionNameOverride="${{ steps.ver.outputs.version }}" \
             -PversionCodeOverride="${{ github.run_number }}" --stacktrace
 
+      - name: Decode Play upload keystore
+        run: echo "${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}" | base64 -d > "$GITHUB_WORKSPACE/play-upload.jks"
+
+      - name: Build Play Store AAB (playstore flavor, dedicated upload key)
+        env:
+          NUVIO_RELEASE_STORE_FILE: ${{ github.workspace }}/play-upload.jks
+          NUVIO_RELEASE_STORE_PASSWORD: ${{ secrets.PLAY_UPLOAD_STORE_PASSWORD }}
+          NUVIO_RELEASE_KEY_ALIAS: ${{ secrets.PLAY_UPLOAD_KEY_ALIAS }}
+          NUVIO_RELEASE_KEY_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEY_PASSWORD }}
+        run: |
+          ./gradlew :app:bundlePlaystoreRelease \
+            -PversionNameOverride="${{ steps.ver.outputs.version }}" \
+            -PversionCodeOverride="${{ github.run_number }}" --stacktrace
+
       - name: Collect artifacts
         run: |
           mkdir -p dist
           cp "$(find app/build/outputs/apk/full/release -name '*.apk' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}.apk"
-          cp "$(find app/build/outputs/bundle -name '*.aab' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}.aab"
+          cp "$(find app/build/outputs/bundle/fullRelease -name '*.aab' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}.aab"
+          cp "$(find app/build/outputs/bundle/playstoreRelease -name '*.aab' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}-playstore.aab"
           ls -la dist
 
       - name: Publish GitHub Release
