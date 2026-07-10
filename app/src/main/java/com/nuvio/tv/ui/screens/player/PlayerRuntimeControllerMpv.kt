@@ -213,7 +213,15 @@ internal fun PlayerRuntimeController.pauseForLifecycle() {
     shouldEnforceAutoplayOnFirstReady = false
 
     if (isUsingMpvEngine()) {
-        mpvView?.setPaused(true)
+        if (_uiState.value.contentType.equals("live", ignoreCase = true)) {
+            // Live: kill the demux now instead of pausing — a paused live socket goes
+            // stale and wedges the core, which then blocks the main thread inside the
+            // upcoming synchronous surface teardown. resumeForLifecycle reloads the
+            // stream anyway (rejoin-live-edge path), so nothing is lost.
+            mpvView?.stopPlayback()
+        } else {
+            mpvView?.setPaused(true)
+        }
         stopWatchProgressSaving()
         stopProgressUpdates()
         _uiState.update { it.copy(isPlaying = false) }
