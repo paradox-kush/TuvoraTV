@@ -95,7 +95,8 @@ class XmltvClient @Inject constructor(
         playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
             check(resp.isSuccessful) { "HTTP ${resp.code}" }
             // charStream() decodes the (possibly gunzipped) body incrementally — never fully buffered.
-            val reader = resp.body.charStream().buffered()
+            // checkNotNull: body is nullable on OkHttp 4 (playstore flavor) but not on 5 (full).
+            val reader = checkNotNull(resp.body) { "empty response body" }.charStream().buffered()
             val parser = android.util.Xml.newPullParser().apply {
                 setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
                 setInput(reader)

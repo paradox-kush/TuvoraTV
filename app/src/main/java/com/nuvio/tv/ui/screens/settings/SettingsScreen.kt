@@ -271,7 +271,8 @@ fun SettingsScreen(
                 SettingsCategory.PROFILES -> isPrimaryProfileActive
                 SettingsCategory.ACCOUNT -> isPrimaryProfileActive
                 SettingsCategory.LAYOUT -> true
-                SettingsCategory.CONTENT_DISCOVERY -> true
+                SettingsCategory.CONTENT_DISCOVERY ->
+                    AppFeaturePolicy.addonsEnabled || (AppFeaturePolicy.pluginsEnabled && !isEssentialMode)
                 SettingsCategory.INTEGRATION -> true
                 SettingsCategory.ADVANCED -> true
                 else -> true
@@ -834,6 +835,7 @@ private fun SettingsDetailPane(
         SettingsCategory.CONTENT_DISCOVERY -> ContentDiscoverySettingsContent(
             onNavigateToAddons = onNavigateToAddons,
             onNavigateToPlugins = onNavigateToPlugins,
+            showAddons = AppFeaturePolicy.addonsEnabled,
             showPlugins = AppFeaturePolicy.pluginsEnabled && !isEssentialMode,
             initialFocusRequester = if (allowDetailAutofocus) {
                 contentFocusRequesters[SettingsCategory.CONTENT_DISCOVERY]
@@ -858,6 +860,7 @@ private fun SettingsDetailPane(
 private fun ContentDiscoverySettingsContent(
     onNavigateToAddons: () -> Unit,
     onNavigateToPlugins: () -> Unit,
+    showAddons: Boolean,
     showPlugins: Boolean,
     initialFocusRequester: FocusRequester?
 ) {
@@ -870,23 +873,31 @@ private fun ContentDiscoverySettingsContent(
             subtitle = stringResource(R.string.settings_content_discovery_subtitle)
         )
         SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
-            SettingsActionRow(
-                title = stringResource(R.string.addon_title),
-                subtitle = stringResource(R.string.settings_content_discovery_addons_subtitle),
-                onClick = onNavigateToAddons,
-                leadingIcon = Icons.Default.GridView,
-                modifier = if (initialFocusRequester != null) {
-                    Modifier.focusRequester(initialFocusRequester)
-                } else {
-                    Modifier
-                }
-            )
+            if (showAddons) {
+                SettingsActionRow(
+                    title = stringResource(R.string.addon_title),
+                    subtitle = stringResource(R.string.settings_content_discovery_addons_subtitle),
+                    onClick = onNavigateToAddons,
+                    leadingIcon = Icons.Default.GridView,
+                    modifier = if (initialFocusRequester != null) {
+                        Modifier.focusRequester(initialFocusRequester)
+                    } else {
+                        Modifier
+                    }
+                )
+            }
             if (showPlugins) {
                 SettingsActionRow(
                     title = stringResource(R.string.plugin_title),
                     subtitle = stringResource(R.string.settings_content_discovery_plugins_subtitle),
                     onClick = onNavigateToPlugins,
-                    leadingIcon = Icons.Default.Build
+                    leadingIcon = Icons.Default.Build,
+                    // First visible row takes initial D-pad focus when addons are hidden.
+                    modifier = if (!showAddons && initialFocusRequester != null) {
+                        Modifier.focusRequester(initialFocusRequester)
+                    } else {
+                        Modifier
+                    }
                 )
             }
         }

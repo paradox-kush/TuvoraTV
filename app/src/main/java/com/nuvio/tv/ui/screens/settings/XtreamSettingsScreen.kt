@@ -798,6 +798,12 @@ private fun XtreamAddDialog(
             )
             FormHelperText("Periodically check this playlist for new movies and series.")
 
+            // Store policy: the app must state it ships no content of its own.
+            FormHelperText(
+                "Tuvora does not provide any channels, movies, or series. All content comes from " +
+                    "the playlist you add here, and you must have a valid subscription with that provider."
+            )
+
             // --- Save --------------------------------------------------------
             XtreamAddButton(
                 isValidating = isValidating,

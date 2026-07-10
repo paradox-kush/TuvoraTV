@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.home
 
+import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.animation.AnimatedVisibility
@@ -230,7 +231,11 @@ fun HomeScreen(
                     Unit
                 } else {
                     ErrorState(
-                        message = stringResource(R.string.home_no_addons),
+                        // Store builds hide the addon system, so point at IPTV setup instead.
+                        message = stringResource(
+                            if (AppFeaturePolicy.addonsEnabled) R.string.home_no_addons
+                            else R.string.home_empty_iptv_hint
+                        ),
                         onRetry = { viewModel.onEvent(HomeEvent.OnRetry) },
                         requestInitialFocus = true
                     )
@@ -242,7 +247,10 @@ fun HomeScreen(
                     Unit
                 } else {
                     ErrorState(
-                        message = stringResource(R.string.home_no_catalog_addons),
+                        message = stringResource(
+                            if (AppFeaturePolicy.addonsEnabled) R.string.home_no_catalog_addons
+                            else R.string.home_empty_iptv_hint
+                        ),
                         onRetry = { viewModel.onEvent(HomeEvent.OnRetry) },
                         requestInitialFocus = true
                     )

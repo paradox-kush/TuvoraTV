@@ -127,7 +127,8 @@ class M3UClient @Inject constructor(
         playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
             check(resp.isSuccessful) { "HTTP ${resp.code}" }
             // charStream() decodes the (possibly gunzipped) source incrementally — no full buffer.
-            val reader = resp.body.charStream().buffered()
+            // checkNotNull: body is nullable on OkHttp 4 (playstore flavor) but not on 5 (full).
+            val reader = checkNotNull(resp.body) { "empty response body" }.charStream().buffered()
             val writer = db.ingest(acc.id) { w -> parseInto(reader, w) }
             Log.i(TAG, "ingested M3U (url) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
         }
