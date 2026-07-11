@@ -137,8 +137,11 @@ class EpgMirrorRepository @Inject constructor(
                         for (slug in chosen) {
                             val want = idsBySlug[slug].orEmpty().minus(covered)
                             if (want.isEmpty()) continue
+                            // Feeds download from their ORIGIN (GitHub CDN etc.) — the
+                            // backend publishes pointers only, no bytes transit Supabase.
+                            val feedUrl = manifest.urlFor(slug) ?: continue
                             val seen = mutableSetOf<String>()
-                            streamFeed(base, manifest.pathFor(slug) ?: "$slug.xml.gz", want) { p ->
+                            streamFeed(feedUrl, want) { p ->
                                 if (p.endMs > windowStart && p.startMs < windowEnd) {
                                     writer.add(p)
                                     seen.add(p.channelId)
@@ -231,10 +234,10 @@ class EpgMirrorRepository @Inject constructor(
         }
     }.onFailure { Log.w(TAG, "channels index fetch failed: $it") }.getOrNull()
 
-    /** Stream-parse one mirrored feed, emitting programmes for [wantIds] (lowercase). */
-    private fun streamFeed(base: String, path: String, wantIds: Set<String>, onProgramme: (EpgProgramme) -> Unit) {
+    /** Stream-parse one feed from its origin URL, emitting programmes for [wantIds]. */
+    private fun streamFeed(url: String, wantIds: Set<String>, onProgramme: (EpgProgramme) -> Unit) {
         runCatching {
-            http.newCall(Request.Builder().url("$base/$path").get().build()).execute().use { resp ->
+            http.newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
                 check(resp.isSuccessful) { "feed HTTP ${resp.code}" }
                 val body = checkNotNull(resp.body) { "empty feed body" }
                 val reader = GZIPInputStream(body.byteStream()).bufferedReader()
@@ -244,7 +247,7 @@ class EpgMirrorRepository @Inject constructor(
                 }
                 XmltvParser.parseProgrammes(parser, wantIds, onProgramme)
             }
-        }.onFailure { Log.w(TAG, "feed $path failed: $it") }
+        }.onFailure { Log.w(TAG, "feed $url failed: $it") }
     }
 
     // --- wire models ------------------------------------------------------------------
@@ -255,13 +258,13 @@ class EpgMirrorRepository @Inject constructor(
         val files: List<MirrorFile> = emptyList(),
         val channelsIndexPath: String? = null,
     ) {
-        fun pathFor(slug: String): String? = files.firstOrNull { it.slug == slug && it.error == null }?.path
+        fun urlFor(slug: String): String? = files.firstOrNull { it.slug == slug && it.error == null }?.url
     }
 
     @Serializable
     private data class MirrorFile(
         val slug: String,
-        val path: String? = null,
+        val url: String? = null,
         val error: String? = null,
     )
 
