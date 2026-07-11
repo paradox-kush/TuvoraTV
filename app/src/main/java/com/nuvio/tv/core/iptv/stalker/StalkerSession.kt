@@ -38,7 +38,7 @@ class StalkerSession(
 
     private val authMutex = Mutex()
 
-    private val baseUrl: String = account.portalUrl.trimEnd('/')
+    private val baseUrl: String = StalkerProtocol.normalizePortalBase(account.portalUrl)
     private val identity: StalkerProtocol.DeviceIdentity =
         StalkerProtocol.deriveDeviceIdentity(
             mac = account.macAddress,

@@ -49,4 +49,18 @@ class StalkerProtocolTest {
     fun `mac cookie encoding replaces colons`() {
         assertEquals("00%3A1A%3A79%3A58%3AB3%3AA6", StalkerProtocol.encodeMacForCookie(mac))
     }
+
+    @Test
+    fun `normalize portal base reduces any pasted url to origin`() {
+        val origin = "http://host:8080"
+        // Whatever STB-UI path / trailing junk the user pastes, we probe from the origin.
+        assertEquals(origin, StalkerProtocol.normalizePortalBase("$origin/c/"))
+        assertEquals(origin, StalkerProtocol.normalizePortalBase("$origin/c/index.html"))
+        assertEquals(origin, StalkerProtocol.normalizePortalBase("$origin/portal.php"))
+        assertEquals(origin, StalkerProtocol.normalizePortalBase("$origin/"))
+        assertEquals(origin, StalkerProtocol.normalizePortalBase(origin))            // already bare
+        assertEquals(origin, StalkerProtocol.normalizePortalBase("$origin/c/index.html?foo=1"))
+        assertEquals("http://host:8080", StalkerProtocol.normalizePortalBase("host:8080/c/"))   // no scheme -> http
+        assertEquals("https://host", StalkerProtocol.normalizePortalBase("https://host/stalker_portal/c/"))
+    }
 }
