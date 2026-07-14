@@ -235,6 +235,8 @@ internal class DolbyVisionMatroskaTransformer(
             when {
                 // Enhancement-layer NAL that isn't the RPU: drop it.
                 layerId > 0 && nalType != NAL_TYPE_UNSPEC62 -> changed = true
+                // P7 single-track: EL is in type-63 NALs at layer 0.
+                nalType == NAL_TYPE_UNSPEC63 -> changed = true
                 // RPU NAL: convert directly from sample buffer without JVM allocations
                 nalType == NAL_TYPE_UNSPEC62 -> {
                     val outLen = DoviBridge.convertDv7RpuToDv81NonAllocating(sample, offset, nalSize, mode)
@@ -384,5 +386,6 @@ internal class DolbyVisionMatroskaTransformer(
 
     private companion object {
         const val NAL_TYPE_UNSPEC62 = 62
+        const val NAL_TYPE_UNSPEC63 = 63
     }
 }
