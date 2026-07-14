@@ -1750,6 +1750,7 @@ class TraktProgressService @Inject constructor(
         watchedEpisodes: Map<String, Set<Pair<Int, Int>>>,
         fullyWatchedSeries: Set<String>
     ): Boolean {
+        if (progress.isInProgress()) return false
         val keys = progressLookupKeys(progress)
         if (progress.contentType.equals("movie", ignoreCase = true)) {
             return keys.any { it in watchedMovies }
@@ -1761,8 +1762,11 @@ class TraktProgressService @Inject constructor(
         }
         val season = progress.season ?: return false
         val episode = progress.episode ?: return false
-        if (keys.any { it in fullyWatchedSeries }) return true
         val episodeKey = season to episode
+        if (keys.any { it in fullyWatchedSeries } &&
+            keys.any { key -> watchedEpisodes[key]?.contains(episodeKey) == true }) {
+            return true
+        }
         return keys.any { key -> watchedEpisodes[key]?.contains(episodeKey) == true }
     }
 
