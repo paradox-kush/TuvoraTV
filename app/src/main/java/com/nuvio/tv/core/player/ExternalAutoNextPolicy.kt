@@ -75,6 +75,9 @@ internal object ExternalAutoNextPolicy {
         hasConfirmedNextEpisode: Boolean
     ): Boolean = overlayShowing && handoffActive && hasConfirmedNextEpisode
 
+    fun shouldIgnoreLoaderRelease(externalPlaybackActive: Boolean): Boolean =
+        externalPlaybackActive
+
     private fun isSeriesEpisode(episode: Int?, contentType: String): Boolean =
         episode != null && contentType.lowercase() in SERIES_TYPES
 }

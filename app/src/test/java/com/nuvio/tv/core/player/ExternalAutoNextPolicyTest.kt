@@ -169,6 +169,12 @@ class ExternalAutoNextPolicyTest {
         )
     }
 
+    @Test
+    fun `settle release is ignored while external playback is active`() {
+        assertTrue(ExternalAutoNextPolicy.shouldIgnoreLoaderRelease(externalPlaybackActive = true))
+        assertFalse(ExternalAutoNextPolicy.shouldIgnoreLoaderRelease(externalPlaybackActive = false))
+    }
+
     private fun raise(
         episode: Int?,
         type: String,

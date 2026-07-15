@@ -139,6 +139,11 @@ class ExternalPlaybackTracker @Inject constructor(
         private const val AUTO_NEXT_SETTLE_RELEASE_GRACE_MS = 1_500L
         /** Max time to wait for series meta when resolving the next episode. */
         private const val META_FETCH_TIMEOUT_MS = 15_000L
+        /** Retry a failed background lookup while the current episode is still playing. */
+        private const val NEXT_EPISODE_PREFETCH_ATTEMPTS = 3
+        private const val NEXT_EPISODE_PREFETCH_RETRY_DELAY_MS = 5_000L
+        /** Do not let a retrying prefetch hold the completion handoff for the full retry window. */
+        private const val NEXT_EPISODE_PREFETCH_RETURN_WAIT_MS = 1_000L
         /** A "completed" playback shorter than this is treated as a debrid cache-sync placeholder
          *  (e.g. Comet's few-second clip), not a real episode: not marked watched, no auto-advance. */
         private const val MIN_REAL_PLAYBACK_DURATION_MS = 30_000L
@@ -617,14 +622,26 @@ class ExternalPlaybackTracker @Inject constructor(
             autoNextEnabledForPendingLaunch = enabled
             if (!enabled) return@launch
 
-            nextEpisodeLookup = resolveNextEpisodeLookup(metadata)
-            val lookup = nextEpisodeLookup
-            if (lookup?.metadataResolved == true) {
-                val next = lookup.nextVideo
-                if (next == null) {
-                    Log.d(AUTO_NEXT_TAG, "Prefetch confirmed no next episode after S${metadata.season}E${metadata.episode}")
-                } else {
-                    Log.d(AUTO_NEXT_TAG, "Prefetched next episode S${next.season}E${next.episode} videoId=${next.id}")
+            repeat(NEXT_EPISODE_PREFETCH_ATTEMPTS) { attempt ->
+                val lookup = resolveNextEpisodeLookup(metadata)
+                nextEpisodeLookup = lookup
+                if (lookup.metadataResolved) {
+                    val next = lookup.nextVideo
+                    if (next == null) {
+                        Log.d(AUTO_NEXT_TAG, "Prefetch confirmed no next episode after S${metadata.season}E${metadata.episode}")
+                    } else {
+                        Log.d(AUTO_NEXT_TAG, "Prefetched next episode S${next.season}E${next.episode} videoId=${next.id}")
+                    }
+                    return@launch
+                }
+
+                val attemptNumber = attempt + 1
+                Log.d(
+                    AUTO_NEXT_TAG,
+                    "Next episode prefetch attempt $attemptNumber/$NEXT_EPISODE_PREFETCH_ATTEMPTS failed"
+                )
+                if (attemptNumber < NEXT_EPISODE_PREFETCH_ATTEMPTS) {
+                    delay(NEXT_EPISODE_PREFETCH_RETRY_DELAY_MS)
                 }
             }
         }
@@ -715,7 +732,8 @@ class ExternalPlaybackTracker @Inject constructor(
             // Prefer the lookup started when playback launched. If it was still in flight, wait
             // for it here; after a process recreation or a failed prefetch, retry once now.
             nextEpisodePrefetchJob?.let { prefetchJob ->
-                withTimeoutOrNull(META_FETCH_TIMEOUT_MS) { prefetchJob.join() }
+                withTimeoutOrNull(NEXT_EPISODE_PREFETCH_RETURN_WAIT_MS) { prefetchJob.join() }
+                if (prefetchJob.isActive) prefetchJob.cancel()
             }
             val lookup = nextEpisodeLookup
                 ?.takeIf { it.metadataResolved }
@@ -806,6 +824,10 @@ class ExternalPlaybackTracker @Inject constructor(
      *  active handoff gets a short grace period so the old source screen cannot flash between the
      *  external player and the next launch. Manual mode still reveals its source list promptly. */
     fun releaseAutoNextOverlay() {
+        if (ExternalAutoNextPolicy.shouldIgnoreLoaderRelease(isTracking)) {
+            Log.d(AUTO_NEXT_TAG, "releaseAutoNextOverlay ignored while external player is active")
+            return
+        }
         val overlayShowing = _autoNextOverlay.value != null
         val delayRelease = ExternalAutoNextPolicy.shouldDelayLoaderRelease(
             overlayShowing = overlayShowing,
