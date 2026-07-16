@@ -7,6 +7,8 @@ import com.google.gson.JsonParser
 import com.nuvio.tv.core.iptv.XtreamAccount
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -40,6 +42,11 @@ class StalkerSession(
     @Volatile private var resolvedEndpoint: String? = null   // e.g. "/portal.php"
 
     private val authMutex = Mutex()
+
+    // Hard ceiling on concurrent requests to this portal. A real MAG box opens a couple of
+    // connections; magplex (the reference client) caps this at 3 explicitly "to prevent rate
+    // limiting". Ours is per-session so a busy UI can't fan out into a ban.
+    private val gate = Semaphore(MAX_CONCURRENT_REQUESTS)
 
     private val baseUrl: String = StalkerProtocol.normalizePortalBase(account.portalUrl)
     private val identity: StalkerProtocol.DeviceIdentity =
@@ -109,7 +116,7 @@ class StalkerSession(
     }
 
     /** Probe endpoints (if not resolved), handshake for a token, then get_profile to activate. */
-    private fun doHandshakeAndProfile() {
+    private suspend fun doHandshakeAndProfile() {
         val endpoint = resolvedEndpoint ?: probeEndpoint().also { resolvedEndpoint = it }
         val handshakeJs = rawRequestAt(
             endpoint,
@@ -141,7 +148,7 @@ class StalkerSession(
     }
 
     /** Try each candidate endpoint until one handshakes with a token. Throws if none do. */
-    private fun probeEndpoint(): String {
+    private suspend fun probeEndpoint(): String {
         var lastError: Throwable? = null
         for (candidate in StalkerProtocol.ENDPOINT_CANDIDATES) {
             val ok = runCatching {
@@ -161,12 +168,12 @@ class StalkerSession(
 
     // --- HTTP -----------------------------------------------------------------
 
-    private fun rawRequest(params: Map<String, String>): JsonElement =
+    private suspend fun rawRequest(params: Map<String, String>): JsonElement =
         rawRequestAt(resolvedEndpoint ?: StalkerProtocol.ENDPOINT_CANDIDATES.first(), params)
 
     /** One raw GET to [endpointPath] with full MAG headers. [tokenOverride] "" = the handshake call
      *  (no bearer yet); null = use the current session token. */
-    private fun rawRequestAt(
+    private suspend fun rawRequestAt(
         endpointPath: String,
         params: Map<String, String>,
         tokenOverride: String? = null
@@ -192,11 +199,13 @@ class StalkerSession(
             .header("Accept", "*/*")
         if (!bearer.isNullOrEmpty()) builder.header("Authorization", "Bearer $bearer")
 
-        http.newCall(builder.build()).execute().use { resp ->
+        // The gate is the backstop against UI fan-out (the hub fires one get_short_epg per channel
+        // tile as it composes). Nothing reaches the portal outside it.
+        return gate.withPermit { http.newCall(builder.build()).execute().use { resp ->
             val bodyStr = resp.body?.string().orEmpty()
             if (resp.code == 401 || resp.code == 403) {
                 // Signal a stale token to the retry path by returning an empty envelope.
-                return JsonObject()
+                return@use JsonObject()
             }
             if (!resp.isSuccessful) error("HTTP ${resp.code}")
             // A portal that rejects the STB identity replies HTTP 200 with the plain text
@@ -205,8 +214,8 @@ class StalkerSession(
             // only becomes terminal when re-auth can't fix it (MAC/Serial/Device ID genuinely wrong).
             if (bodyStr.contains(AUTH_FAILED_MARKER, ignoreCase = true))
                 throw StalkerAuthException("Stalker portal rejected this device for ${account.name} — check the MAC address (and Serial / Device ID if the portal requires them)")
-            return runCatching { JsonParser.parseString(bodyStr) }.getOrDefault(JsonObject())
-        }
+            runCatching { JsonParser.parseString(bodyStr) }.getOrDefault(JsonObject())
+        } }
     }
 
     // --- JSON helpers ---------------------------------------------------------
@@ -231,6 +240,9 @@ class StalkerSession(
         private const val TAG = "StalkerSession"
         // The reference server's rejection sentinel: `echo 'Authorization failed.'; exit;`
         private const val AUTH_FAILED_MARKER = "Authorization failed"
+        // ponytail: fixed ceiling, no adaptive backoff. Raise only with evidence a portal tolerates
+        // more; add backoff only if we start seeing 429s at this level.
+        private const val MAX_CONCURRENT_REQUESTS = 4
         private const val STB_VER =
             "ImageDescription: 0.2.18-r14-pub-250; ImageDate: Wed Aug 29 10:49:52 EEST 2018; PORTAL version: 5.6.1; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x58c"
         private const val USER_AGENT =
