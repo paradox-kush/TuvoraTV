@@ -83,12 +83,16 @@ class StreamRepositoryImpl @Inject constructor(
             "live" -> client.resolveStreamUrl(account, "live", parsed.streamId.toIntOrNull() ?: return emptyList())
             "vod" -> client.resolveStreamUrl(account, "movie", parsed.streamId.toIntOrNull() ?: return emptyList())
             "episode" -> {
-                // Stalker episode ids encode "seriesId:episodeNum" as the streamId segment.
+                // Stalker episode ids encode "seriesId:season:episodeNum" as the streamId segment.
+                // A legacy 2-part id ("seriesId:episodeNum") predates seasons -> season null.
                 val stalker = client as? com.nuvio.tv.core.iptv.stalker.StalkerClient
                 val parts = parsed.streamId.split(":")
                 val seriesId = parts.getOrNull(0)?.toIntOrNull()
-                val epNum = parts.getOrNull(1)?.toIntOrNull()
-                if (stalker != null && seriesId != null && epNum != null) stalker.resolveEpisodeUrl(account, seriesId, epNum) else null
+                val season = if (parts.size >= 3) parts.getOrNull(1)?.toIntOrNull() else null
+                val epNum = (if (parts.size >= 3) parts.getOrNull(2) else parts.getOrNull(1))?.toIntOrNull()
+                if (stalker != null && seriesId != null && epNum != null) {
+                    stalker.resolveEpisodeUrl(account, seriesId, season, epNum)
+                } else null
             }
             else -> null
         } ?: return emptyList()

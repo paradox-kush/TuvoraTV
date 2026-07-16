@@ -37,7 +37,7 @@ class XtreamStreamSource @Inject constructor(
         // Stalker has no match index — the resolver builds one from player_api bulk lists a portal
         // doesn't have, and paging its 63k-movie catalog is what got a portal to ban us. Instead ask
         // the PORTAL to find the title (get_ordered_list&search=, 1-2 requests).
-        if (acc.sourceType == XtreamAccount.SOURCE_STALKER) return stalkerStreams(acc, kind, titles)
+        if (acc.sourceType == XtreamAccount.SOURCE_STALKER) return stalkerStreams(acc, kind, titles, season, episode)
 
         val match = resolver.resolve(acc, kind, tmdbId, titles) ?: return emptyList()
 
@@ -78,27 +78,47 @@ class XtreamStreamSource @Inject constructor(
      * Stalker VOD for a TMDB title, via the portal's own search. Panels ship no tmdb ids, so the match
      * is name-key equality + a year guard — the same rule [sameNameEditions] uses for id-less panels.
      *
-     * MOVIES ONLY: these portals model a series as a flat episode list that all lands in season 1
-     * (see StalkerClient.seriesInfo), so a TMDB S/E can't be mapped to an episode reliably. Series
-     * stay browsable in the IPTV hub, where registry ids carry the real episode numbers.
+     * Series resolve the real season/episode: a portal models a series as a two-level tree and
+     * StalkerClient.seriesInfo walks it, so a TMDB S/E maps exactly.
      */
-    private suspend fun stalkerStreams(acc: XtreamAccount, kind: MatchKind, titles: com.nuvio.tv.core.tmdb.TmdbTitleBundle): List<Stream> {
-        if (kind != MatchKind.MOVIE) return emptyList()
+    private suspend fun stalkerStreams(
+        acc: XtreamAccount,
+        kind: MatchKind,
+        titles: com.nuvio.tv.core.tmdb.TmdbTitleBundle,
+        season: Int?,
+        episode: Int?,
+    ): List<Stream> {
         val query = titles.primary?.takeIf { it.isNotBlank() } ?: return emptyList()
         val wantKeys = listOfNotNull(titles.primary, titles.original)
             .map { TitleNormalizer.normKey(it) }.filter { it.isNotEmpty() }.toSet()
         if (wantKeys.isEmpty()) return emptyList()
 
-        return stalkerClient.searchMovies(acc, query)
-            .filter { TitleNormalizer.normKey(it.name) in wantKeys }
-            .filter { yearCompatible(TitleNormalizer.yearOf(it.name), titles.year) }
-            .take(MAX_STALKER_EDITIONS)   // a catalog carries 4K/HD/language cuts of the same film
-            .mapNotNull { movie ->
-                // create_link FRESH — the URL carries a single-use play_token, so it is never cached.
-                // searchMovies already cached the row, so this costs only the create_link itself.
-                val url = stalkerClient.resolveStreamUrl(acc, "movie", movie.streamId) ?: return@mapNotNull null
-                xtreamStream(acc = acc, label = movie.name, url = url)
+        return when (kind) {
+            MatchKind.MOVIE -> stalkerClient.searchMovies(acc, query)
+                .filter { TitleNormalizer.normKey(it.name) in wantKeys }
+                .filter { yearCompatible(TitleNormalizer.yearOf(it.name), titles.year) }
+                .take(MAX_STALKER_EDITIONS)   // a catalog carries 4K/HD/language cuts of one film
+                .mapNotNull { movie ->
+                    // create_link FRESH — single-use play_token, never cached. searchMovies already
+                    // cached the row, so this costs only the create_link itself.
+                    val url = stalkerClient.resolveStreamUrl(acc, "movie", movie.streamId) ?: return@mapNotNull null
+                    xtreamStream(acc = acc, label = movie.name, url = url)
+                }
+
+            MatchKind.SERIES -> {
+                val s = season ?: return emptyList()
+                val e = episode ?: return emptyList()
+                // Year is NOT guarded here: a panel names a series "Breaking Bad", rarely with a year,
+                // and TMDB's year is the FIRST-air year — guarding would drop later-season matches.
+                stalkerClient.searchSeries(acc, query)
+                    .filter { TitleNormalizer.normKey(it.name) in wantKeys }
+                    .take(MAX_STALKER_EDITIONS)   // language cuts ("Breaking Bad (Hindi)") are separate
+                    .mapNotNull { series ->
+                        val url = stalkerClient.resolveEpisodeUrl(acc, series.seriesId, s, e) ?: return@mapNotNull null
+                        xtreamStream(acc = acc, label = "S${s}E${e}", url = url, title = series.name)
+                    }
             }
+        }
     }
 
     private fun yearCompatible(a: Int?, b: Int?): Boolean =
