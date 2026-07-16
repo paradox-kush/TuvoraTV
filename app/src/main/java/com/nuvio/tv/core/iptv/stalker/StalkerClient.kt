@@ -136,7 +136,7 @@ class StalkerClient @Inject constructor(
     )
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = runCatching {
-        orderedList(acc, "vod", categoryId).map { item ->
+        orderedList(acc, "vod", categoryId, maxItems = CATEGORY_ITEMS).map { item ->
             XtreamMovie(
                 streamId = item.int("id") ?: 0,
                 name = item.str("name").orEmpty(),
@@ -151,7 +151,7 @@ class StalkerClient @Inject constructor(
     }
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = runCatching {
-        orderedList(acc, "series", categoryId).map { item ->
+        orderedList(acc, "series", categoryId, maxItems = CATEGORY_ITEMS).map { item ->
             XtreamSeriesItem(
                 seriesId = item.int("id") ?: 0,
                 name = item.str("name").orEmpty(),
@@ -329,13 +329,14 @@ class StalkerClient @Inject constructor(
         acc: XtreamAccount,
         type: String,
         categoryId: String?,
+        maxItems: Int = MAX_ITEMS,
         stopWhen: ((JsonObject) -> Boolean)? = null,
     ): List<JsonObject> {
         val session = sessions.sessionFor(acc)
         val out = ArrayList<JsonObject>()
         var page = 1
         var total = Int.MAX_VALUE
-        while (out.size < total && out.size < MAX_ITEMS && page <= MAX_PAGES) {
+        while (out.size < total && out.size < maxItems && page <= MAX_PAGES) {
             val params = buildMap {
                 put("type", type)
                 put("action", "get_ordered_list")
@@ -387,6 +388,13 @@ class StalkerClient @Inject constructor(
         private const val MAX_ITEMS = 8000    // ponytail: categories are the browse path; don't slurp 26k
         private const val MAX_PAGES = 200
         private const val MAX_CACHED_ROWS = 10_000
+
+        // A hub category is ONE poster row (no see-all), and a real portal serves get_ordered_list 14
+        // rows a page — so paging a 5,000-movie category cost ~200 requests to fill a row nobody
+        // scrolls to the end of. 70 items = 5 requests.
+        // ponytail: fixed cap, not incremental paging. If a row ever needs to go deeper, page it on
+        // demand as the row scrolls rather than raising this.
+        private const val CATEGORY_ITEMS = 70
     }
 }
 
