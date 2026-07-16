@@ -24,6 +24,7 @@ class IptvAccountPurge @Inject constructor(
     private val refreshStore: IptvRefreshStore,
     private val fileStore: M3UFileStore,
     private val epgMirrorDb: com.nuvio.tv.core.epg.EpgMirrorDb,
+    private val stalkerClient: com.nuvio.tv.core.iptv.stalker.StalkerClient,
 ) {
     suspend fun purgeCaches(accountId: String) {
         registry.clear() // global in-memory map; rebuilds lazily on next browse
@@ -33,5 +34,6 @@ class IptvAccountPurge @Inject constructor(
         runCatching { refreshStore.clear(accountId) }
         runCatching { fileStore.delete(accountId) }
         runCatching { epgMirrorDb.purgeProvider(accountId) }
+        runCatching { stalkerClient.evictCaches(accountId) }   // cached lineup + create_link cmds
     }
 }
