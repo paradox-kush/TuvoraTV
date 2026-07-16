@@ -35,8 +35,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.Response
 
-import com.nuvio.tv.core.sync.TraktCredentialSyncService
-
 class TraktPublicListSourceResolverTest {
     private val context = mockk<Context>(relaxed = true) {
         every { getString(R.string.collections_editor_trakt_list_with_id, any()) } answers {
