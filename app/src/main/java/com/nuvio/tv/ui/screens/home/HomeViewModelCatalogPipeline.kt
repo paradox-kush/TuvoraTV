@@ -9,6 +9,7 @@ import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.HomeLayout
+import com.nuvio.tv.domain.model.catalogRowStableKey
 import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.model.legacyKey
 import com.nuvio.tv.domain.model.mergeCatalogPage
@@ -721,6 +722,12 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                         if (currentLayout == HomeLayout.MODERN) {
                             add(HomeRow.PlaceholderCatalog(
                                 catalogKey = placeholder.catalogKey,
+                                stableCatalogKey = catalogRowStableKey(
+                                    placeholder.addonId,
+                                    placeholder.addonBaseUrl,
+                                    placeholder.apiType,
+                                    placeholder.catalogId
+                                ),
                                 addonId = placeholder.addonId,
                                 addonName = placeholder.addonName,
                                 addonBaseUrl = placeholder.addonBaseUrl,

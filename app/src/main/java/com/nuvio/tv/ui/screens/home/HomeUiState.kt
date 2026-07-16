@@ -124,6 +124,7 @@ sealed class HomeRow {
     @Immutable
     data class PlaceholderCatalog(
         val catalogKey: String,
+        val stableCatalogKey: String,
         val addonId: String,
         val addonName: String,
         val addonBaseUrl: String,
