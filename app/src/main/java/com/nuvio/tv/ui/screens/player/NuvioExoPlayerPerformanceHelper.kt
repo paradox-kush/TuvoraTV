@@ -271,11 +271,16 @@ object NuvioExoPlayerPerformanceHelper {
                 .setBackBuffer(backBufferMs, true)
                 .build()
         } else {
+            // On ≤2GB boxes the old 100MB/70s buffer pushed the whole device into
+            // swap-thrash (kernel direct reclaim + LMK kills observed on a 2GB
+            // Onn 4K while a movie played) — the buffer caused the stalls it was
+            // meant to prevent. Keep it small where RAM is scarce.
+            val lowRam = context != null && com.nuvio.tv.core.util.DeviceClass.isLowRam(context)
             DefaultLoadControl.Builder()
-                .setTargetBufferBytes(100 * 1024 * 1024)
+                .setTargetBufferBytes(if (lowRam) 40 * 1024 * 1024 else 100 * 1024 * 1024)
                 .setBufferDurationsMs(
                     DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-                    70_000,
+                    if (lowRam) 45_000 else 70_000,
                     DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
                     5_000
                 )

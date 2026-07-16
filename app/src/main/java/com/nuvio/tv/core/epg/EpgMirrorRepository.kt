@@ -7,7 +7,7 @@ import com.nuvio.tv.core.iptv.epg.XmltvParser
 import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.data.local.XtreamAccountStore
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
@@ -48,6 +48,17 @@ class EpgMirrorRepository @Inject constructor(
         .build()
     private val syncMutex = Mutex()
 
+    // Feed parsing burns ~100% of a core for a minute+ on budget boxes (multi-MB
+    // XMLTV pulls). Dispatchers.IO workers run at default priority and starve the
+    // UI on 4-core devices — run the whole sync on one THREAD_PRIORITY_BACKGROUND
+    // thread instead so playback/UI always win the cores.
+    private val syncDispatcher = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            r.run()
+        }, "epg-mirror-sync")
+    }.asCoroutineDispatcher()
+
     // --- public queries ---------------------------------------------------------
 
     /** Mirror now/next for a provider channel, or empty when unmapped/uncovered. */
@@ -58,6 +69,12 @@ class EpgMirrorRepository @Inject constructor(
 
     /** streamId → epgId for one playlist (empty until a sync has mapped it). */
     suspend fun mappingFor(providerKey: String): Map<Int, String> = db.mappingFor(providerKey)
+
+    /** Mirror programmes overlapping [fromMs, toMs) for a provider channel (guide timeline rows). */
+    suspend fun programmesWindow(providerKey: String, streamId: Int, fromMs: Long, toMs: Long): List<EpgProgramme> {
+        val epgId = db.mappingFor(providerKey)[streamId] ?: return emptyList()
+        return db.programmesWindow(epgId, fromMs, toMs)
+    }
 
     /** Candidate programmes for an event window; callers score them (see RadarChannelMatcher). */
     suspend fun programmesInWindow(tokens: List<String>, fromMs: Long, toMs: Long): List<EpgProgramme> =
@@ -76,7 +93,7 @@ class EpgMirrorRepository @Inject constructor(
      * Never throws; a failed sync leaves the previous data serving. Call fire-and-forget from
      * the surfaces that consume the mirror (Sports tab, live guide).
      */
-    suspend fun ensureFresh(force: Boolean = false): Unit = withContext(Dispatchers.IO) {
+    suspend fun ensureFresh(force: Boolean = false): Unit = withContext(syncDispatcher) {
         if (!syncMutex.tryLock()) return@withContext
         try {
             val now = System.currentTimeMillis()

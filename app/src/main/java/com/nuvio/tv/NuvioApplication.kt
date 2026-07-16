@@ -149,8 +149,12 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 )
             }
             .memoryCache {
+                // 0.33 of the largeHeap memory class allowed a ~127MB bitmap cache,
+                // which helped push 2GB boxes into swap-thrash. Hard-cap it; posters
+                // are RGB565+inexact so 64MB still fits several screens' worth.
+                val lowRam = com.nuvio.tv.core.util.DeviceClass.isLowRam(this)
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.33)
+                    .maxSizeBytes(if (lowRam) 32L * 1024 * 1024 else 64L * 1024 * 1024)
                     .build()
             }
             .diskCache {

@@ -144,6 +144,8 @@ fun PlayerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
+    // Budget boxes: skip decorative full-res bitmaps around playback (memory pressure).
+    val lowRamDevice = remember(context) { com.nuvio.tv.core.util.DeviceClass.isLowRam(context) }
     val containerFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
     val progressBarFocusRequester = remember { FocusRequester() }
@@ -724,7 +726,7 @@ fun PlayerScreen(
 
         LoadingOverlay(
             visible = uiState.showLoadingOverlay && uiState.error == null,
-            backdropUrl = uiState.backdrop,
+            backdropUrl = uiState.backdrop.takeUnless { lowRamDevice },
             logoUrl = uiState.logo,
             title = uiState.title,
             message = uiState.loadingMessage.takeIf { uiState.showPlayerLoadingStatus || uiState.isTorrentStream },
@@ -763,7 +765,7 @@ fun PlayerScreen(
             year = uiState.releaseYear,
             type = uiState.contentType,
             description = uiState.description,
-            cast = uiState.castMembers,
+            cast = if (lowRamDevice) emptyList() else uiState.castMembers,
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(2.5f)
@@ -1468,7 +1470,7 @@ private fun ExoPlayerSurface(
     }
 }
 
-private fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
+internal fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
     runCatching {
         javaClass
             .getMethod("setEnableComposeSurfaceSyncWorkaround", java.lang.Boolean.TYPE)
