@@ -150,6 +150,20 @@ class EpgMirrorDb @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
+    /** Programmes overlapping [fromMs, toMs) for one EPG channel, in start order (guide timeline). */
+    suspend fun programmesWindow(epgId: String, fromMs: Long, toMs: Long): List<EpgProgramme> = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT epg_id, start_ms, end_ms, title, desc FROM programmes WHERE epg_id = ? AND end_ms > ? AND start_ms < ? ORDER BY start_ms LIMIT 24",
+            arrayOf(epgId.lowercase(), fromMs.toString(), toMs.toString())
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), if (c.isNull(4)) null else c.getString(4)))
+                }
+            }
+        }
+    }
+
     /**
      * Programmes overlapping [fromMs, toMs) whose title contains ANY of [tokens]
      * (case-insensitive for ASCII — the callers pass normalized lowercase team tokens).

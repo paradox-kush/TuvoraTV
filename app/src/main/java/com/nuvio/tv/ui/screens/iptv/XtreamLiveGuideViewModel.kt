@@ -48,8 +48,12 @@ data class GuideChannel(
     val categoryId: String? = null
 )
 
-/** Now/next programs for a channel (from get_short_epg). */
-data class GuideEpg(val now: XtreamProgram?, val next: XtreamProgram?)
+/** Programs for a channel: now/next plus the raw list feeding the guide's timeline cells. */
+data class GuideEpg(
+    val now: XtreamProgram?,
+    val next: XtreamProgram?,
+    val programmes: List<XtreamProgram> = emptyList()
+)
 
 data class LiveGuideUiState(
     val categories: List<GuideCategory> = emptyList(),
@@ -336,16 +340,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
             val nowMs = System.currentTimeMillis()
             // Panel EPG first; when the panel has nothing (the common case on real panels —
             // Starshare fills 6%), fall back to the mirrored canonical EPG via the mapping.
+            // Panel short EPG first; else the mirror's programme window (the timeline needs more
+            // than now/next, and the windowed query is a superset of nowNext anyway).
             val programs = clientFactory.clientFor(acc).shortEpg(acc, streamId).getOrDefault(emptyList())
                 .ifEmpty {
-                    runCatching { epgMirror.nowNext(acc.id, streamId, nowMs) }.getOrDefault(emptyList())
+                    runCatching { epgMirror.programmesWindow(acc.id, streamId, nowMs, nowMs + GUIDE_EPG_WINDOW_MS) }
+                        .getOrDefault(emptyList())
                         .map { XtreamProgram(it.title, it.desc.orEmpty(), it.startMs, it.endMs, nowPlaying = nowMs in it.startMs until it.endMs) }
                 }
             val nowIdx = programs.indexOfFirst { it.nowPlaying || (nowMs in it.startMs until it.endMs) }
                 .takeIf { it >= 0 } ?: 0
             val now = programs.getOrNull(nowIdx)
             val next = programs.getOrNull(nowIdx + 1)
-            _uiState.update { it.copy(epg = it.epg + (streamId to GuideEpg(now, next))) }
+            _uiState.update { it.copy(epg = it.epg + (streamId to GuideEpg(now, next, programs))) }
         }
     }
 
@@ -379,7 +386,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
         private const val ALL_ID = "__all"
         private const val ALL_CAP = 600   // ponytail: don't render 26k rows; categories are the real browse path
         private const val EPG_FOCUS_DEBOUNCE_MS = 250L   // wait for focus to settle before fetching EPG
-        private const val EPG_PREFETCH_RADIUS = 3        // prefetch ±3 neighbours so scrolling has now/next ready
+        private const val EPG_PREFETCH_RADIUS = 8        // prefetch ±8 neighbours: timeline rows show cells, so cover a screenful
+        private const val GUIDE_EPG_WINDOW_MS = 3 * 60 * 60 * 1000L  // mirror-fallback fetch span for the timeline
         private const val RETRY_DELAY_MS = 1000L         // pause before the single panel-flake retry
     }
 }
