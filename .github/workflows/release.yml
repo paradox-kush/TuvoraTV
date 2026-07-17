@@ -15,6 +15,12 @@ name: Release
 # continuity), while the Play upload key is rotatable via Play App Signing:
 #   PLAY_UPLOAD_KEYSTORE_BASE64 / PLAY_UPLOAD_STORE_PASSWORD
 #   PLAY_UPLOAD_KEY_ALIAS / PLAY_UPLOAD_KEY_PASSWORD
+#
+# The playstore AAB is then published to Google Play automatically via the Play
+# Developer API (service account json in PLAY_SERVICE_ACCOUNT_JSON). A tag push
+# publishes to `internal`; pick another track on a manual run to promote further.
+# Production uploads stay blocked by Google until the closed-test requirement is
+# met and production access is granted — the pipeline is ready for that day.
 
 on:
   push:
@@ -24,6 +30,12 @@ on:
       version:
         description: 'Version, e.g. 1.2.3 (creates tag v<version>)'
         required: true
+      play_track:
+        description: 'Google Play track to publish the AAB to'
+        required: true
+        default: internal
+        type: choice
+        options: [internal, alpha, beta, production]
 
 permissions:
   contents: write
@@ -101,6 +113,16 @@ jobs:
           ./gradlew :app:bundlePlaystoreRelease \
             -PversionNameOverride="${{ steps.ver.outputs.version }}" \
             -PversionCodeOverride="${{ github.run_number }}" --stacktrace
+
+      - name: Publish AAB to Google Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.tuvora.tv
+          releaseFiles: app/build/outputs/bundle/playstoreRelease/*.aab
+          # Tag push -> internal (safe); manual run can choose alpha/beta/production.
+          track: ${{ github.event.inputs.play_track || 'internal' }}
+          status: completed
 
       - name: Collect artifacts
         run: |
