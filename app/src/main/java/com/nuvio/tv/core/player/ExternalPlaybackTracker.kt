@@ -25,11 +25,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -223,14 +220,13 @@ class ExternalPlaybackTracker @Inject constructor(
     private var nextEpisodeSnapshot: ExternalNextEpisodeSnapshot = ExternalNextEpisodeSnapshot.Unknown
     private var autoNextEnabledForPendingLaunch: Boolean? = null
 
-    // Fires on external-episode completion; collected by MainActivity to navigate to
-    // the next episode's Stream route. replay = 1 so the event still reaches the
-    // collector when the player killed our process and it re-subscribes after restart.
-    private val _autoPlayNext = MutableSharedFlow<ExternalAutoNextEpisode>(
-        replay = 1,
-        extraBufferCapacity = 1
+    private val autoPlayNextNavigationEvents = ExternalAutoNextNavigationEvents(
+        maxAgeMs = AUTO_NEXT_OVERLAY_TIMEOUT_MS
     )
-    val autoPlayNext: SharedFlow<ExternalAutoNextEpisode> = _autoPlayNext.asSharedFlow()
+    val autoPlayNext = autoPlayNextNavigationEvents.events
+
+    fun claimAutoPlayNextNavigation(event: ExternalAutoNextEpisode): Boolean =
+        autoPlayNextNavigationEvents.claim(event)
 
     // Non-null while auto-advancing: MainActivity shows a loader covering the
     // cold-start/source-resolution window. Cleared on the next launch, failure, or timeout.
@@ -910,7 +906,7 @@ class ExternalPlaybackTracker @Inject constructor(
             // continuation (and a user abort survives it).
             lastAutoNextEmitMs = System.currentTimeMillis()
             autoNextNavigationPending = true
-            _autoPlayNext.emit(
+            autoPlayNextNavigationEvents.publish(
                 ExternalAutoNextEpisode(
                     contentId = metadata.contentId,
                     contentType = metadata.contentType,
