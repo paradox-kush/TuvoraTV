@@ -236,14 +236,14 @@ fun GridHomeContent(
         gridItems.map { item ->
             val key = when (item) {
                 is GridItem.Hero -> "hero"
-                is GridItem.SectionDivider -> "divider_${item.catalogId}_${item.addonId}_${item.type}"
+                is GridItem.SectionDivider -> "divider_${item.addonBaseUrl.hashCode()}_${item.catalogId}_${item.addonId}_${item.type}"
                 is GridItem.Content -> {
-                    val base = "content_${item.catalogId}_${item.item.id}"
+                    val base = "content_${item.addonBaseUrl.hashCode()}_${item.catalogId}_${item.item.id}"
                     val count = occurrences.getOrDefault(base, 0)
                     occurrences[base] = count + 1
                     "${base}_$count"
                 }
-                is GridItem.SeeAll -> "see_all_${item.catalogId}_${item.addonId}_${item.type}"
+                is GridItem.SeeAll -> "see_all_${item.addonBaseUrl.hashCode()}_${item.catalogId}_${item.addonId}_${item.type}"
                 is GridItem.CollectionHeader -> "col_header_${item.collectionId}"
                 is GridItem.CollectionFolder -> "col_folder_${item.collectionId}_${item.folder.id}"
             }
