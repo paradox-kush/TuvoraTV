@@ -4,6 +4,9 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.network.NetworkResult
+import com.nuvio.tv.core.util.isEpisodeReleaseAired
+import com.nuvio.tv.core.util.parseEpisodeReleaseInstant
+import com.nuvio.tv.core.util.selectEpisodeReleaseValue
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
@@ -36,8 +39,6 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
 import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -90,20 +91,8 @@ internal data class CwMetaSummary(
     val videos: List<CwVideoSummary>
 ) {
     fun watchableEpisodes(): List<CwVideoSummary> {
-        val today = java.time.LocalDate.now()
         val candidates = videos.filter { it.season != null && it.episode != null && (it.season ?: 0) > 0 }
-        fun isFutureRelease(raw: String?): Boolean {
-            val released = raw?.substringBefore('T')?.trim()
-            if (released.isNullOrBlank()) return false
-            return try {
-                java.time.LocalDate.parse(
-                    released,
-                    java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
-                ).isAfter(today)
-            } catch (_: java.time.format.DateTimeParseException) {
-                false
-            }
-        }
+        fun isFutureRelease(raw: String?): Boolean = isEpisodeReleaseAired(raw) == false
         val unavailableSeasons = candidates.groupBy { it.season }
             .filter { (_, eps) ->
                 val first = eps.minByOrNull { it.episode ?: Int.MAX_VALUE } ?: return@filter false
@@ -131,19 +120,13 @@ internal data class CwMetaSummary(
             .mapNotNull { (_, eps) ->
                 val first = eps.minByOrNull { it.episode ?: Int.MAX_VALUE } ?: return@mapNotNull null
                 if (first.available == false) return@mapNotNull null
-                val released = first.released?.substringBefore('T')?.trim()
-                if (released.isNullOrBlank()) return@mapNotNull null
-                try {
-                    val date = java.time.LocalDate.parse(
-                        released,
-                        java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
-                    )
-                    if (date.isAfter(today)) {
-                        val premiereMs = date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        // Trigger revalidation 7 days before premiere so countdown badge shows up
-                        (premiereMs - sevenDaysMs).coerceAtLeast(System.currentTimeMillis())
-                    } else null
-                } catch (_: java.time.format.DateTimeParseException) { null }
+                val date = parseEpisodeReleaseDate(first.released)
+                if (date == null) return@mapNotNull null
+                if (date.isAfter(today)) {
+                    val premiereMs = date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    // Trigger revalidation 7 days before premiere so countdown badge shows up
+                    (premiereMs - sevenDaysMs).coerceAtLeast(System.currentTimeMillis())
+                } else null
             }
             .minOrNull()
     }
@@ -1912,9 +1895,11 @@ private suspend fun HomeViewModel.enrichNextUpItem(
     } else {
         null
     }
-    val released = (if (currentTmdbSettings.useReleaseDates) tmdbData?.airDate else null)
-        ?: video?.released?.trim()?.takeIf { it.isNotEmpty() }
-        ?: item.info.released
+    val released = selectEpisodeReleaseValue(
+        addonReleased = video?.released ?: item.info.released,
+        tmdbAirDate = tmdbData?.airDate,
+        useTmdbReleaseDates = currentTmdbSettings.useReleaseDates
+    )
     val releaseDate = parseEpisodeReleaseDate(released)
     val todayLocal = LocalDate.now(ZoneId.systemDefault())
     val hasAired = hasEpisodeAired(released, fallback = item.info.hasAired)
@@ -2734,36 +2719,12 @@ private fun HomeViewModel.publishBadgeUpdate(
     fullyWatchedSeriesIds.updateWithValidation(merged, allValidatedIds, revalidateAt)
 }
 
-private fun parseEpisodeReleaseInstant(raw: String?): Instant? {
-    if (raw.isNullOrBlank()) return null
-    val value = raw.trim()
-    val zone = ZoneId.systemDefault()
-
-    return runCatching {
-        Instant.parse(value)
-    }.getOrNull() ?: runCatching {
-        OffsetDateTime.parse(value).toInstant()
-    }.getOrNull() ?: runCatching {
-        LocalDateTime.parse(value).atZone(zone).toInstant()
-    }.getOrNull() ?: runCatching {
-        LocalDate.parse(value).atStartOfDay(zone).toInstant()
-    }.getOrNull() ?: runCatching {
-        val datePortion = Regex("\\b\\d{4}-\\d{2}-\\d{2}\\b").find(value)?.value
-            ?: return@runCatching null
-        LocalDate.parse(datePortion).atStartOfDay(zone).toInstant()
-    }.getOrNull()
-}
-
 /**
  * Determines whether an episode has actually aired by comparing the full release
- * instant (including time-of-day when available) against the current moment.
- * If the raw string only contains a date (no time component), falls back to
- * date-only comparison (start of day UTC) so episodes without a known air time
- * are still treated as aired once the calendar date arrives.
+ * instant when available. Date-only metadata becomes available on its local calendar day.
  */
 private fun hasEpisodeAired(raw: String?, fallback: Boolean = true): Boolean {
-    val instant = parseEpisodeReleaseInstant(raw) ?: return fallback
-    return !instant.isAfter(Instant.now())
+    return isEpisodeReleaseAired(raw) ?: fallback
 }
 
 private suspend fun HomeViewModel.resolveContinueWatchingTmdbData(
