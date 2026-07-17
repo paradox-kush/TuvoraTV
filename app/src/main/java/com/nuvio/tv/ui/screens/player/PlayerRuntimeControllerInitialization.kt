@@ -187,6 +187,8 @@ internal fun PlayerRuntimeController.initializePlayer(
             if (!applyPcmFallbackOnStartup) {
                 hasTriedAudioPcmFallback = false
             }
+            audioSinkErrorCount = 0
+            audioSinkErrorWindowStartMs = 0L
             hasTriedDv7HevcFallback = false
             forceDv7ToHevc = false
             mpvDelayStartAfterAfrSwitch = false
@@ -770,7 +772,14 @@ internal fun PlayerRuntimeController.initializePlayer(
             )
             val vc1SoftwareFallbackActive = vc1SoftwarePreferredStreamUrls.contains(url)
             isVc1SoftwareFallbackActiveForCurrentPlayback = vc1SoftwareFallbackActive
-            val isForcePassthroughActive = playerSettings.forceOpticalPassthrough && playerSettings.decoderPriority != 0
+            // PCM-fallback rebuilds must ALSO drop the AC3-transcode path: the force-PCM sink
+            // guard keys off the INPUT mime (e.g. AAC), so a transcoded AC3 output sails past it
+            // and re-wedges the HAL right after the rebuild (seen live on the Onn 4K — the
+            // Amlogic dcv decoder rejects the ffmpeg-encoded AC3 with "Unsupported bitstream id",
+            // freezing the audio clock and with it the video).
+            val isForcePassthroughActive = playerSettings.forceOpticalPassthrough &&
+                playerSettings.decoderPriority != 0 &&
+                !applyPcmFallbackOnStartup
             val effectiveDecoderPriority = if (vc1SoftwareFallbackActive || hasTriedAudioPcmFallback || isForcePassthroughActive) {
                 DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
             } else {
@@ -1534,6 +1543,13 @@ internal fun PlayerRuntimeController.initializePlayer(
                             bufferSizeMs = bufferSizeMs,
                             elapsedSinceLastFeedMs = elapsedSinceLastFeedMs
                         )
+                    }
+
+                    override fun onAudioSinkError(
+                        eventTime: AnalyticsListener.EventTime,
+                        audioSinkError: Exception
+                    ) {
+                        maybeRecoverFromWedgedAudioSink(audioSinkError)
                     }
 
                     override fun onBandwidthEstimate(

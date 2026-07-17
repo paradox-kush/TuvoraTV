@@ -106,6 +106,10 @@ class PlayerRuntimeController(
         // advancing during STATE_BUFFERING. Fires before OkHttp's readTimeout.
         internal const val STALL_WATCHDOG_THRESHOLD_MS = 15_000L
         internal const val STALL_WATCHDOG_POLL_INTERVAL_MS = 1_000L
+
+        /** A wedged passthrough sink errors continuously (~1/800ms); a transient one doesn't. */
+        internal const val AUDIO_SINK_ERROR_WINDOW_MS = 5_000L
+        internal const val AUDIO_SINK_ERROR_THRESHOLD = 3
         internal const val MAX_TIMEOUT_RECOVERY_ATTEMPTS = 2
         internal const val ADDON_SUBTITLE_TRACK_ID_PREFIX = "nuvio-addon-sub:"
         internal const val LONG_PAUSE_THRESHOLD_MS = 300_000L // 5 minutes
@@ -454,6 +458,8 @@ class PlayerRuntimeController(
     internal var cachedDecoderPriority: Int = 1
     internal var hasTriedAudioPcmFallback: Boolean = false
     internal var pendingAudioPcmFallbackRebuild: Boolean = false
+    internal var audioSinkErrorCount: Int = 0
+    internal var audioSinkErrorWindowStartMs: Long = 0L
     internal var hasTriedDv7HevcFallback: Boolean = false
     internal var forceDv7ToHevc: Boolean = false
     internal var startupRetryCount: Int = 0

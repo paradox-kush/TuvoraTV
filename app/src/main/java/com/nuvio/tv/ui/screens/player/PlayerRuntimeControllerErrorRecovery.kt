@@ -365,6 +365,53 @@ internal fun PlayerRuntimeController.tryAudioTrackPcmFallback(
     if (cachedDecoderPriority != 1) return false // Only for EXTENSION_RENDERER_MODE_ON
     if (_uiState.value.tunnelingEnabled) return false
 
+    return rebuildWithForcedPcmAudio("audio track init failed (5001)")
+}
+
+/**
+ * Passthrough can also fail *silently*, which the 5001 path above never sees: the
+ * AudioTrack opens fine, the HAL then rejects the bitstream, and its presentation
+ * position freezes. ExoPlayer slaves the media clock to that position, so the picture
+ * goes sticky and the audio dies with no PlaybackException to react to — and the
+ * offload output stays pinned even after playback ends, poisoning the next stream
+ * until the process is killed.
+ *
+ * Diagnosed on a 2GB Onn 4K (Amlogic S905Y4) with Force optical passthrough on:
+ * "audio_hw_decoder_dcv: Unsupported bitstream id", frames pinned at 32.2s, HDMI held
+ * in AC3 mode with no writes for 8 minutes. The only thing the player can observe is
+ * the resulting storm of sink errors (~1/800ms), so trigger on that: a few inside one
+ * window means the sink is wedged, not hiccuping.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun PlayerRuntimeController.maybeRecoverFromWedgedAudioSink(error: Exception): Boolean {
+    if (hasTriedAudioPcmFallback) return false
+    if (_uiState.value.tunnelingEnabled) return false
+
+    val tally = tallyAudioSinkError(
+        nowMs = System.currentTimeMillis(),
+        windowStartMs = audioSinkErrorWindowStartMs,
+        count = audioSinkErrorCount
+    )
+    audioSinkErrorWindowStartMs = tally.windowStartMs
+    audioSinkErrorCount = tally.count
+    if (!tally.tripped) return false
+
+    return rebuildWithForcedPcmAudio("audio sink wedged (${error.javaClass.simpleName} ×${tally.count})")
+}
+
+internal data class AudioSinkErrorTally(val windowStartMs: Long, val count: Int, val tripped: Boolean)
+
+/** Rolling tally: errors older than the window don't count toward the trip. */
+internal fun tallyAudioSinkError(nowMs: Long, windowStartMs: Long, count: Int): AudioSinkErrorTally {
+    val windowExpired = nowMs - windowStartMs > PlayerRuntimeController.AUDIO_SINK_ERROR_WINDOW_MS
+    val start = if (windowExpired) nowMs else windowStartMs
+    val next = (if (windowExpired) 0 else count) + 1
+    return AudioSinkErrorTally(start, next, next >= PlayerRuntimeController.AUDIO_SINK_ERROR_THRESHOLD)
+}
+
+/** Rebuild the player with the sink forced to PCM, keeping position. One shot per stream. */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun PlayerRuntimeController.rebuildWithForcedPcmAudio(reason: String): Boolean {
     hasTriedAudioPcmFallback = true
     pendingAudioPcmFallbackRebuild = true
 
@@ -372,7 +419,7 @@ internal fun PlayerRuntimeController.tryAudioTrackPcmFallback(
     val savedPosition = player.currentPosition.takeIf { it > 0L } ?: 0L
     val paused = userPausedManually
 
-    Log.d(PlayerRuntimeController.TAG, "Audio track init failed (5001) — rebuilding player with PCM forcing, position=${savedPosition}ms")
+    Log.w(PlayerRuntimeController.TAG, "AUDIO_PCM_FALLBACK: $reason — rebuilding with PCM forcing, position=${savedPosition}ms")
     showRecoveryOverlay()
 
     errorRetryJob?.cancel()
