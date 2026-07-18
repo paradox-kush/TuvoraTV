@@ -504,15 +504,17 @@ internal fun PlayerRuntimeController.initializePlayer(
                     allocator = allocator
                 ).also { currentBitrateAwareLoadControl = it }
             } else {
-                // Stock LoadControl: DefaultLoadControl's back buffer is 0 by default.
-                effectiveBackBufferDurationMs = 0
+                // Stock LoadControl: DefaultLoadControl configured with 1.5s back buffer so 1s rewind doesn't clear buffer.
+                effectiveBackBufferDurationMs = 1_500
                 currentBitrateAwareLoadControl = null
                 Log.i(
                     PlayerRuntimeController.TAG,
                     "BUFFER_GATE: engine=exo-stock master=off; DefaultLoadControl " +
-                            "(no back buffer, no VOD cache) host=${url.safeHost()}"
+                            "(1.5s back buffer, no VOD cache) host=${url.safeHost()}"
                 )
-                DefaultLoadControl.Builder().build()
+                DefaultLoadControl.Builder()
+                    .setBackBuffer(1_500, /* retainBackBufferFromKeyframe = */ true)
+                    .build()
             }
             _loadControl = loadControl
 
