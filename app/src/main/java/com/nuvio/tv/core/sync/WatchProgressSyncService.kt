@@ -66,17 +66,17 @@ class WatchProgressSyncService @Inject constructor(
         private set
 
     /** Called after a successful push to record the sync point. */
-    fun markPushSucceeded() {
+    fun markPushSucceeded(profileId: Int = profileManager.activeProfileId.value) {
         val now = System.currentTimeMillis()
         lastSuccessfulPushMs = now
         scope.launch {
-            watchProgressPreferences.setLastSuccessfulPushMs(now)
+            watchProgressPreferences.setLastSuccessfulPushMs(now, profileId)
         }
     }
 
     /** Restores persisted push timestamp on startup. */
-    suspend fun restoreLastPushTimestamp() {
-        lastSuccessfulPushMs = watchProgressPreferences.getLastSuccessfulPushMs()
+    suspend fun restoreLastPushTimestamp(profileId: Int = profileManager.activeProfileId.value) {
+        lastSuccessfulPushMs = watchProgressPreferences.getLastSuccessfulPushMs(profileId)
     }
     private suspend fun <T> withJwtRefreshRetry(block: suspend () -> T): T {
         return try {
@@ -190,7 +190,7 @@ class WatchProgressSyncService @Inject constructor(
             }
 
             Log.d(TAG, "Pushed ${entries.size} watch progress entries to remote for profile $profileId")
-            markPushSucceeded()
+            markPushSucceeded(profileId)
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to push watch progress to remote", e)
@@ -226,7 +226,7 @@ class WatchProgressSyncService @Inject constructor(
             }
 
             Log.d(TAG, "Pushed single watch progress entry to remote for profile $profileId (key=$key)")
-            markPushSucceeded()
+            markPushSucceeded(profileId)
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to push single watch progress to remote", e)

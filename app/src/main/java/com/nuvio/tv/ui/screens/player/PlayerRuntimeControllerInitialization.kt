@@ -534,15 +534,17 @@ internal fun PlayerRuntimeController.initializePlayer(
                     allocator = allocator
                 ).also { currentBitrateAwareLoadControl = it }
             } else {
-                // Stock LoadControl: DefaultLoadControl's back buffer is 0 by default.
-                effectiveBackBufferDurationMs = 0
+                // Stock LoadControl: DefaultLoadControl configured with 1.5s back buffer so 1s rewind doesn't clear buffer.
+                effectiveBackBufferDurationMs = 1_500
                 currentBitrateAwareLoadControl = null
                 Log.i(
                     PlayerRuntimeController.TAG,
                     "BUFFER_GATE: engine=exo-stock master=off; DefaultLoadControl " +
-                            "(no back buffer, no VOD cache) host=${url.safeHost()}"
+                            "(1.5s back buffer, no VOD cache) host=${url.safeHost()}"
                 )
-                DefaultLoadControl.Builder().build()
+                DefaultLoadControl.Builder()
+                    .setBackBuffer(1_500, /* retainBackBufferFromKeyframe = */ true)
+                    .build()
             }
             _loadControl = loadControl
 
@@ -2175,6 +2177,12 @@ private class CueNormalizingTextOutput(
         return false
     }
 
+    private fun mirrorPunctuation(c: Char): Char = when (c) {
+        '(' -> ')'
+        ')' -> '('
+        else -> c
+    }
+    
     // Take CharSequence instead of String -> preserve spans.
     private fun fixRtlPunctuationForLtr(line: CharSequence): CharSequence {
         if (line.isEmpty()) return line
@@ -2191,9 +2199,17 @@ private class CueNormalizingTextOutput(
         if (start == 0 && end == end0) return line
 
         val out = android.text.SpannableStringBuilder()
-        out.append(line.subSequence(end, end0))   // trailing punct -> front
-            .append(line.subSequence(start, end)) // middle
-            .append(line.subSequence(0, start))   // leading punct -> end
+        for (idx in end0 - 1 downTo end) {
+            val c = line[idx]
+            val m = mirrorPunctuation(c)
+            if (m != c) out.append(m) else out.append(line.subSequence(idx, idx + 1)) // trailing punct -> front, reversed
+        }
+        out.append(line.subSequence(start, end))                                      // middle
+        for (idx in start - 1 downTo 0) {
+            val c = line[idx]
+            val m = mirrorPunctuation(c)
+            if (m != c) out.append(m) else out.append(line.subSequence(idx, idx + 1)) // trailing punct -> end, reversed
+        }
         if (hasCr) out.append("\r")
         return out
     }

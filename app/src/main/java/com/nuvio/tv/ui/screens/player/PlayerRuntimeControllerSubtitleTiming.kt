@@ -7,12 +7,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.nuvio.tv.core.network.IPv4FirstDns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 private val subtitleAutoSyncHttpClient: OkHttpClient by lazy {
     OkHttpClient.Builder()
+        .dns(IPv4FirstDns())
         .connectTimeout(8000, TimeUnit.MILLISECONDS)
         .readTimeout(8000, TimeUnit.MILLISECONDS)
         .retryOnConnectionFailure(true)

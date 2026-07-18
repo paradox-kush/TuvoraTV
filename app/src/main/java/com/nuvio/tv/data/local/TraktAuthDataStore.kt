@@ -91,9 +91,12 @@ class TraktAuthDataStore @Inject constructor(
 
     val isEffectivelyAuthenticated: Flow<Boolean> = isAuthenticated
 
-    /** Direct read of auth state for the current active profile, bypassing flatMapLatest. */
     suspend fun getCurrentState(): TraktAuthState {
-        val prefs = store().data.first()
+        return getCurrentState(profileManager.activeProfileId.value)
+    }
+
+    suspend fun getCurrentState(profileId: Int): TraktAuthState {
+        val prefs = store(profileId).data.first()
         return TraktAuthState(
             accessToken = prefs[accessTokenKey],
             refreshToken = prefs[refreshTokenKey],
@@ -135,8 +138,11 @@ class TraktAuthDataStore @Inject constructor(
         }
     }
 
-    suspend fun saveSyncedAuthState(state: TraktAuthState) {
-        store().edit { preferences ->
+    suspend fun saveSyncedAuthState(
+        state: TraktAuthState,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
+        store(profileId).edit { preferences ->
             if (!state.isAuthenticated) {
                 preferences.remove(accessTokenKey)
                 preferences.remove(refreshTokenKey)
