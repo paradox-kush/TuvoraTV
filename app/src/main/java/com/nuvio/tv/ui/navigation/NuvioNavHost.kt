@@ -1166,7 +1166,9 @@ fun NuvioNavHost(
             com.nuvio.tv.ui.screens.radar.SportsHubScreen(
                 onPlayChannel = { title, streamUrl, contentId ->
                     // Same proven live path as Library/Search live clicks: contentType="live"
-                    // forces the mpv engine; returnToLiveGuideOrPop routes BACK to this hub.
+                    // drives live UI + DoH + returnToLiveGuideOrPop (routes BACK to this hub).
+                    // Engine is no longer forced to mpv here — live respects the engine setting
+                    // (AUTO → ExoPlayer) with mpv as failover; see PlayerRuntimeControllerInitialization.
                     navController.navigate(
                         Screen.Player.createRoute(
                             streamUrl = streamUrl,

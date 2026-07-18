@@ -218,11 +218,14 @@ internal fun PlayerRuntimeController.initializePlayer(
             if (effectiveInternalPlayerEngine == InternalPlayerEngine.AUTO) {
                 effectiveInternalPlayerEngine = resolveAutoInternalPlayerEngine()
             }
-            // IPTV live channels play continuous raw MPEG-TS, which ExoPlayer can't sustain
-            // (it buffers forever). libmpv handles it natively, so force it for live streams.
-            if (contentType.equals("live", ignoreCase = true)) {
-                effectiveInternalPlayerEngine = InternalPlayerEngine.MVP_PLAYER
-            }
+            // Live no longer force-selects mpv. The old reason ("ExoPlayer buffers forever on raw
+            // MPEG-TS") is handled now that PlayerMediaSourceFactory sets FLAG_DETECT_ACCESS_UNITS |
+            // FLAG_ALLOW_NON_IDR_KEYFRAMES — the same fix that lets the inline Live Guide play live on
+            // ExoPlayer smoothly. Forcing mpv here dragged live through vo=gpu + a 64MB demuxer cache +
+            // AFR-await, which is what made Sports Centre / Library / Search live clicks feel sticky on
+            // budget TVs. Live now respects the engine setting (AUTO → ExoPlayer); if a specific stream
+            // truly can't sustain on ExoPlayer, startup engine-failover switches it to mpv.
+            // ponytail: if a codec class regresses on ExoPlayer, narrow the force back by codec, not by "live".
             runtimeInternalPlayerEngineOverride = overrideInternalPlayerEngine
             if (overrideInternalPlayerEngine == null && playerSettings.internalPlayerEngine == InternalPlayerEngine.AUTO) {
                 resolvedAutoPlayerEngine = effectiveInternalPlayerEngine
