@@ -140,3 +140,33 @@ jobs:
             --title "Tuvora TV ${{ steps.ver.outputs.version }}" \
             --generate-notes || \
           gh release upload "${{ steps.ver.outputs.tag }}" dist/* --clobber
+
+      # Community announcements — no-ops until the DISCORD_/TELEGRAM_ secrets exist.
+      # Never fails the release (all curl errors are swallowed).
+      - name: Announce release (Discord + Telegram)
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          MSG=$(printf '%s\n' \
+            "Tuvora TV ${VERSION} is out! 🎉" \
+            "" \
+            "⬇️ APK: https://github.com/${{ github.repository }}/releases/tag/v${VERSION}" \
+            "🏪 Play beta: join https://groups.google.com/g/tuvora-testers then https://play.google.com/apps/testing/com.tuvora.tv" \
+            "📖 Guides: https://paradox-kush.github.io/tuvora-site/guides.html")
+          if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+            jq -n --arg c "$MSG" '{content: $c}' | \
+              curl -fsS -H 'Content-Type: application/json' -d @- "$DISCORD_WEBHOOK_URL" \
+              || echo "::warning::Discord announce failed"
+          else
+            echo "DISCORD_WEBHOOK_URL not set - skipping Discord announce"
+          fi
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${TELEGRAM_CHAT_ID}" --data-urlencode text="$MSG" >/dev/null \
+              || echo "::warning::Telegram announce failed"
+          else
+            echo "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set - skipping Telegram announce"
+          fi
