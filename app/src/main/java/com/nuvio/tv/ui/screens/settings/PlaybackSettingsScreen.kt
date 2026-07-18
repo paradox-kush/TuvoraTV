@@ -605,7 +605,6 @@ internal fun ToggleSettingsItem(
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val contentAlpha = if (enabled) 1f else 0.4f
-    val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
 
     Card(
         onClick = { if (enabled) onCheckedChange(!isChecked) },
@@ -948,6 +947,7 @@ private fun SliderSettingsItemLayout(
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val contentAlpha = if (enabled) 1f else 0.4f
+    val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl   // ✅ ADD it here instead
 
     Card(
         onClick = { },
