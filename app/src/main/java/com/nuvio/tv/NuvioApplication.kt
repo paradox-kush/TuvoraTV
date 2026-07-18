@@ -22,6 +22,7 @@ import com.nuvio.tv.core.runtime.PluginRuntimeHooks
 import com.nuvio.tv.core.sync.RealtimeSyncInvalidationService
 import com.nuvio.tv.core.sync.StartupSyncService
 import com.nuvio.tv.core.sync.androidtv.AndroidTvChannelSyncService
+import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.data.local.SentrySettingsDataStore
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.Cookie
@@ -94,6 +95,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
                     coil3.network.okhttp.OkHttpNetworkFetcherFactory(
                         callFactory = {
                             OkHttpClient.Builder()
+                                .dns(IPv4FirstDns())
                                 .followRedirects(true)
                                 .followSslRedirects(true)
                                 .build()

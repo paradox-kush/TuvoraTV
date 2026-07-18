@@ -190,7 +190,9 @@ class CollectionManagementViewModel @Inject constructor(
         _uiState.update { it.copy(isLoadingImport = true, importError = null) }
         viewModelScope.launch {
             try {
-                val client = okhttp3.OkHttpClient()
+                val client = okhttp3.OkHttpClient.Builder()
+                    .dns(com.nuvio.tv.core.network.IPv4FirstDns())
+                    .build()
                 val request = okhttp3.Request.Builder().url(url).build()
                 val response = withContext(Dispatchers.IO) {
                     client.newCall(request).execute()
