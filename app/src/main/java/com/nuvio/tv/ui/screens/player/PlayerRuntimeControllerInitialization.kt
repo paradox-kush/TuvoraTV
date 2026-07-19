@@ -1903,6 +1903,7 @@ private class SubtitleOffsetRenderersFactory(
     private val subtitleDelayUsProvider: () -> Long,
     private val audioDelayUsProvider: () -> Long,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
+    private val isBuiltInSubtitleProvider: () -> Boolean,
     private val gainAudioProcessor: GainAudioProcessor,
     private val downmixEnabled: Boolean,
     private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
@@ -1982,7 +1983,8 @@ private class SubtitleOffsetRenderersFactory(
     ) {
         val normalizingOutput = CueNormalizingTextOutput(
             delegate = output,
-            shouldNormalizeCuePositionProvider = shouldNormalizeCuePositionProvider
+            shouldNormalizeCuePositionProvider = shouldNormalizeCuePositionProvider,
+            isBuiltInSubtitleProvider = isBuiltInSubtitleProvider
         )
         val startIndex = out.size
         super.buildTextRenderers(context, normalizingOutput, outputLooper, extensionRendererMode, out)
@@ -2094,13 +2096,18 @@ private class CueNormalizingTextOutput(
 
         // Hebrew / other RTL: punctuation boundary-swap method (span preserving).
         if (containsRtlChars(text)) {
+            val isBuiltIn = isBuiltInSubtitleProvider()
             val builder = android.text.SpannableStringBuilder()
             val lines = text.splitByNewlines()
             var changed = false
             for (i in lines.indices) {
                 if (i > 0) builder.append("\n")
                 val line = lines[i]
-                val fixed = fixRtlPunctuationForLtr(line)
+                val fixed = if (isBuiltIn) {
+                    moveLeadingRtlPunctuationToEndForBuiltIn(line)
+                } else {
+                    fixRtlPunctuationForLtr(line)
+                }
                 if (fixed !== line) changed = true
                 builder.append(fixed)
             }
@@ -2162,6 +2169,23 @@ private class CueNormalizingTextOutput(
             val m = mirrorPunctuation(c)
             if (m != c) out.append(m) else out.append(line.subSequence(idx, idx + 1)) // trailing punct -> end, reversed
         }
+        if (hasCr) out.append("\r")
+        return out
+    }
+
+    private fun moveLeadingRtlPunctuationToEndForBuiltIn(line: CharSequence): CharSequence {
+        if (line.isEmpty()) return line
+        val hasCr = line[line.length - 1] == '\r'
+        val end0 = if (hasCr) line.length - 1 else line.length
+        if (end0 == 0) return line
+
+        var end = 0
+        while (end < end0 && line[end] in MOBILE_RTL_PUNCTUATION) end++
+        if (end == 0) return line
+
+        val out = android.text.SpannableStringBuilder()
+        out.append(line.subSequence(end, end0))
+            .append(line.subSequence(0, end))
         if (hasCr) out.append("\r")
         return out
     }
@@ -2229,6 +2253,7 @@ private class CueNormalizingTextOutput(
 
     companion object {
         private val RTL_PUNCTUATION = setOf('.', ',', '?', '!', '-', ':', ';', '…', ')', '(', '\'', '"')
+        private val MOBILE_RTL_PUNCTUATION = setOf('.', ',', '?', '!', '-', ':', ';', '…', ')', '(')
     }
 }
 
