@@ -756,6 +756,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                     val selectedAddonSubtitle = _uiState.value.selectedAddonSubtitle
                     selectedAddonSubtitle != null && PlayerSubtitleUtils.mimeTypeFromUrl(selectedAddonSubtitle.url) == MimeTypes.TEXT_VTT
                 },
+                isBuiltInSubtitleProvider = {
+                    _uiState.value.selectedAddonSubtitle == null
+                },
                 gainAudioProcessor = gainAudioProcessor,
                 downmixEnabled = playerSettings.downmixEnabled,
                 audioOutputChannels = playerSettings.audioOutputChannels,
