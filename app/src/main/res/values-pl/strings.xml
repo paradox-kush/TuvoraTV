@@ -13,6 +13,7 @@
     <!-- ContinueWatchingSection -->
     <string name="continue_watching">Kontynuuj oglądanie</string>
     <string name="cw_upcoming">Nadchodzące</string>
+    <string name="upcoming_section_title">Nadchodzące</string>
     <string name="cw_next_up">Następny odcinek</string>
     <string name="cw_resume">Wznów</string>
     <string name="cw_percent_watched">%1$d%% obejrzane</string>
@@ -2114,6 +2115,8 @@
     <string name="layout_cw_sort_mode_sub">Jak elementy Kontynuuj oglądanie są ułożone</string>
     <string name="layout_cw_sort_streaming">Styl streamingowy</string>
     <string name="layout_cw_sort_streaming_desc">Wydane elementy najpierw, nadchodzące na końcu</string>
+    <string name="layout_cw_sort_split_upcoming">Oddzielny rząd Nadchodzące</string>
+    <string name="layout_cw_sort_split_upcoming_desc">Przenieś niewydane odcinki do oddzielnego rzędu Nadchodzące</string>
     <string name="layout_discover_location_action">Lokalizacja Odkrywaj</string>
     <string name="layout_discover_location_dialog_title">Lokalizacja Odkrywaj</string>
     <string name="layout_discover_location_in_search">Pokaż w Szukaj</string>

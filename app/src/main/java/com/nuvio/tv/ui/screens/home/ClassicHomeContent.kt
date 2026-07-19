@@ -22,6 +22,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -54,6 +55,8 @@ import com.nuvio.tv.ui.components.ContinueWatchingSection
 import com.nuvio.tv.ui.components.HeroCarousel
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.PosterCardStyle
+import androidx.compose.ui.res.stringResource
+import com.nuvio.tv.R
 
 private class FocusSnapshot(
     var rowIndex: Int,
@@ -171,6 +174,10 @@ fun ClassicHomeContent(
     val rowFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val rowEntryFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val rowFocusedItemIndex = remember { mutableMapOf<String, Int>() }
+    val upcomingSectionFocusRequester = remember { FocusRequester() }
+    val cwItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+    val upcomingItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+    val lastFocusedUpcomingIndex = remember { mutableIntStateOf(-1) }
 
     var restoringFocus by remember { mutableStateOf(focusState.hasSavedFocus) }
     val heroFocusRequester = remember { FocusRequester() }
@@ -440,7 +447,9 @@ fun ClassicHomeContent(
                         is HomeRow.PlaceholderCatalog -> row.stableCatalogKey
                     }
                 }
-                val cwDownRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
+                val firstAddonRowRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
+                // When upcoming section is visible, CW should navigate down to it; otherwise go to first addon row
+                val cwDownRequester = if (uiState.upcomingItems.isNotEmpty()) upcomingSectionFocusRequester else firstAddonRowRequester
                 ContinueWatchingSection(
                     items = uiState.continueWatchingItems,
                     onItemClick = { item ->
@@ -494,6 +503,67 @@ fun ClassicHomeContent(
                     blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
                     useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
                     downFocusRequester = cwDownRequester,
+                    focusRequesters = cwItemFocusRequesters,
+                    cardWidth = classicContinueWatchingCardWidth,
+                    imageHeight = classicContinueWatchingImageHeight
+                )
+            }
+        }
+
+        if (uiState.upcomingItems.isNotEmpty()) {
+            item(key = "upcoming_section", contentType = "upcoming_section") {
+                val firstRowKey = visibleHomeRows.firstOrNull()?.let { row ->
+                    when (row) {
+                        is HomeRow.Catalog -> row.row.stableKey()
+                        is HomeRow.CollectionRow -> "collection_${row.collection.id}"
+                        is HomeRow.PlaceholderCatalog -> row.stableCatalogKey
+                    }
+                }
+                val upcomingDownRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
+                ContinueWatchingSection(
+                    items = uiState.upcomingItems,
+                    title = stringResource(R.string.upcoming_section_title),
+                    onItemClick = { item ->
+                        onContinueWatchingClick(item)
+                    },
+                    onStartFromBeginning = onContinueWatchingStartFromBeginning,
+                    showManualPlayOption = showContinueWatchingManualPlayOption,
+                    onPlayManually = onContinueWatchingPlayManually,
+                    onDetailsClick = { item ->
+                        onNavigateToDetail(
+                            when (item) {
+                                is ContinueWatchingItem.InProgress -> item.progress.contentId
+                                is ContinueWatchingItem.NextUp -> item.info.contentId
+                            },
+                            when (item) {
+                                is ContinueWatchingItem.InProgress -> item.progress.contentType
+                                is ContinueWatchingItem.NextUp -> item.info.contentType
+                            },
+                            ""
+                        )
+                    },
+                    onRemoveItem = { item ->
+                        val contentId = when (item) {
+                            is ContinueWatchingItem.InProgress -> item.progress.contentId
+                            is ContinueWatchingItem.NextUp -> item.info.contentId
+                        }
+                        val season = when (item) {
+                            is ContinueWatchingItem.InProgress -> item.progress.season
+                            is ContinueWatchingItem.NextUp -> item.info.seedSeason
+                        }
+                        val episode = when (item) {
+                            is ContinueWatchingItem.InProgress -> item.progress.episode
+                            is ContinueWatchingItem.NextUp -> item.info.seedEpisode
+                        }
+                        val isNextUp = item is ContinueWatchingItem.NextUp
+                        onRemoveContinueWatching(contentId, season, episode, isNextUp)
+                    },
+                    blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
+                    useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
+                    entryFocusRequester = upcomingSectionFocusRequester,
+                    downFocusRequester = upcomingDownRequester,
+                    focusRequesters = upcomingItemFocusRequesters,
+                    lastFocusedIndexState = lastFocusedUpcomingIndex,
                     cardWidth = classicContinueWatchingCardWidth,
                     imageHeight = classicContinueWatchingImageHeight
                 )

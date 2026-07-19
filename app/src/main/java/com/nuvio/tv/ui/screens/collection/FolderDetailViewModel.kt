@@ -495,6 +495,7 @@ class FolderDetailViewModel @Inject constructor(
                         homeRows = homeRows,
                         catalogRows = allRows,
                         continueWatchingItems = emptyList(),
+                        upcomingItems = emptyList(),
                         useLandscapePosters = state.modernLandscapePostersEnabled,
                         showCatalogTypeSuffix = state.catalogTypeSuffixEnabled,
                         showFullReleaseDate = state.showFullReleaseDate,
