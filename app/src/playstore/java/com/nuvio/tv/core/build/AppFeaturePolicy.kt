@@ -12,5 +12,7 @@ object AppFeaturePolicy {
     val externalTrailerPlaybackEnabled: Boolean = true
     val trailerPlaybackMode: TrailerPlaybackMode = TrailerPlaybackMode.EXTERNAL
     val imdbRatingLogoEnabled: Boolean = false
+    // Store builds ship without torrent streaming, same posture as addons above.
+    val p2pEnabled: Boolean = false
     val debugBackendSwitcherEnabled: Boolean = BuildConfig.IS_DEBUG_BUILD
 }

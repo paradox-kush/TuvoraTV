@@ -2,6 +2,7 @@ package com.nuvio.tv.core.torrent
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import com.nuvio.tv.core.build.AppFeaturePolicy
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -36,7 +37,8 @@ class TorrentSettings @Inject constructor(
 
     val settings: Flow<TorrentSettingsData> = context.torrentDataStore.data.map { prefs ->
         TorrentSettingsData(
-            p2pEnabled = prefs[Keys.P2P_ENABLED] ?: false,
+            // Policy gate first: store flavors force P2P off even if a stale pref says on.
+            p2pEnabled = AppFeaturePolicy.p2pEnabled && (prefs[Keys.P2P_ENABLED] ?: false),
             enableUpload = prefs[Keys.ENABLE_UPLOAD] ?: true,
             hideTorrentStats = prefs[Keys.HIDE_TORRENT_STATS] ?: true
         )
