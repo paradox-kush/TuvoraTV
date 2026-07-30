@@ -44,4 +44,23 @@ interface StreamRepository {
      * @return a fresh URL, or null when the id isn't an xtream id / account is gone / resolve failed
      */
     suspend fun refreshIptvStreamUrl(videoId: String): String?
+
+    /**
+     * Same recovery for a TMDB-MATCHED iptv stream — [videoId] is a tmdb/imdb id here, so
+     * [refreshIptvStreamUrl] can't help. Matched-lane streams are labeled with the owning
+     * account's display name ([addonName]); this re-runs the xtream/stalker matcher for that
+     * account and returns the rebuilt stream's fresh URL, preferring the edition whose label
+     * equals [streamName]. Null when the label doesn't belong to an iptv account, the matcher
+     * finds nothing, or the "fresh" URL is identical to [failedUrl] (stable Xtream URLs — a 401
+     * there is an account/provider problem no new link can fix).
+     */
+    suspend fun refreshMatchedIptvStreamUrl(
+        type: String,
+        videoId: String,
+        season: Int?,
+        episode: Int?,
+        addonName: String?,
+        streamName: String?,
+        failedUrl: String
+    ): String?
 }

@@ -353,30 +353,72 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(
  * through to the normal fatal-error path.
  */
 internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: String): Boolean {
-    val refreshId = refreshableIptvVideoId() ?: return false
+    val refreshId = refreshableIptvVideoId()
+    // TMDB-matched lane: the content id is a tmdb/imdb id, but the failing stream may still be an
+    // iptv one — matched-lane streams carry the ACCOUNT NAME as addonName, which the repository
+    // uses to decide (cheaply, no network for foreign labels) whether a re-match can mint a fresh
+    // link. Without at least an addon label there is nothing to re-match against.
+    val matchedLane = refreshId == null
+    if (matchedLane && currentAddonName.isNullOrBlank()) return false
     if (hasAttemptedIptvLinkRefresh) return false
     hasAttemptedIptvLinkRefresh = true
 
-    val isLive = com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(refreshId)
+    val isLive = refreshId != null && com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(refreshId)
     val paused = userPausedManually
     // Engine-aware: mpv VOD keeps its position too, live always rejoins the live edge.
     val savedPosition = if (isLive) 0L else (currentPlaybackPositionMs()?.takeIf { it > 0L } ?: 0L)
 
+    // Mirrors loadSourceStreams' request derivation so the re-match hits the same catalog entry.
+    val matchedType: String
+    val matchedVideoId: String?
+    val matchedSeason: Int?
+    val matchedEpisode: Int?
+    if (contentType in listOf("series", "tv") && currentSeason != null && currentEpisode != null) {
+        matchedType = contentType ?: "series"
+        matchedVideoId = currentVideoId ?: contentId
+        matchedSeason = currentSeason
+        matchedEpisode = currentEpisode
+    } else {
+        matchedType = contentType ?: "movie"
+        matchedVideoId = contentId
+        matchedSeason = null
+        matchedEpisode = null
+    }
+    if (matchedLane && matchedVideoId.isNullOrBlank()) {
+        hasAttemptedIptvLinkRefresh = false
+        return false
+    }
+
     Log.w(
         PlayerRuntimeController.TAG,
-        "IPTV_LINK_REFRESH: stream rejected ($detailedError) — minting a fresh link for $refreshId"
+        "IPTV_LINK_REFRESH: stream rejected ($detailedError) — minting a fresh link for " +
+            (refreshId ?: "matched:$matchedVideoId via $currentAddonName")
     )
 
     errorRetryJob?.cancel()
     errorRetryJob = scope.launch {
         showRecoveryOverlay()
-        val freshUrl = runCatching { streamRepository.refreshIptvStreamUrl(refreshId) }
+        val freshUrl = runCatching {
+            if (refreshId != null) {
+                streamRepository.refreshIptvStreamUrl(refreshId)
+            } else {
+                streamRepository.refreshMatchedIptvStreamUrl(
+                    type = matchedType,
+                    videoId = matchedVideoId.orEmpty(),
+                    season = matchedSeason,
+                    episode = matchedEpisode,
+                    addonName = currentAddonName,
+                    streamName = _uiState.value.currentStreamName ?: navigationArgs.streamName,
+                    failedUrl = currentStreamUrl
+                )
+            }
+        }
             .onFailure { Log.w(PlayerRuntimeController.TAG, "IPTV_LINK_REFRESH: resolve threw: ${it.message}") }
             .getOrNull()
         if (freshUrl.isNullOrBlank()) {
             Log.w(
                 PlayerRuntimeController.TAG,
-                "IPTV_LINK_REFRESH: no fresh link for $refreshId — surfacing the original error"
+                "IPTV_LINK_REFRESH: no fresh link for ${refreshId ?: "matched:$matchedVideoId"} — surfacing the original error"
             )
             _uiState.update {
                 it.copy(

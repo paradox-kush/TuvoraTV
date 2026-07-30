@@ -111,4 +111,73 @@ class StreamRepositoryRefreshIptvTest {
         assertNull(repository.refreshIptvStreamUrl("tt0111161"))
         assertNull(repository.refreshIptvStreamUrl(XtreamItemRegistry.liveId("someone-else", 7)))
     }
+
+    // --- TMDB-matched lane -----------------------------------------------------------------
+
+    private fun matchedStream(label: String, url: String) = com.nuvio.tv.domain.model.Stream(
+        name = label, title = null, description = null, url = url, ytId = null,
+        infoHash = null, fileIdx = null, externalUrl = null, behaviorHints = null,
+        addonName = account.name, addonLogo = null
+    )
+
+    @Test
+    fun `matched refresh re-runs the matcher and prefers the same edition label`() = runTest {
+        val source = mockk<com.nuvio.tv.core.iptv.match.XtreamStreamSource>()
+        coEvery { source.streamsFor(account, "movie", "tmdb:603", null, null) } returns listOf(
+            matchedStream("Movie 4K", "http://fresh/4k.ts"),
+            matchedStream("Movie HD", "http://fresh/hd.ts"),
+        )
+        val repo = repositoryWith(source)
+        val url = repo.refreshMatchedIptvStreamUrl(
+            type = "movie", videoId = "tmdb:603", season = null, episode = null,
+            addonName = account.name, streamName = "Movie HD", failedUrl = "http://dead/old.ts"
+        )
+        assertEquals("http://fresh/hd.ts", url)
+    }
+
+    @Test
+    fun `matched refresh bails without network for a foreign addon label`() = runTest {
+        val source = mockk<com.nuvio.tv.core.iptv.match.XtreamStreamSource>()
+        val repo = repositoryWith(source)
+        assertNull(
+            repo.refreshMatchedIptvStreamUrl(
+                type = "movie", videoId = "tmdb:603", season = null, episode = null,
+                addonName = "Torrentio", streamName = "Movie HD", failedUrl = "http://dead/old.ts"
+            )
+        )
+        coVerify(exactly = 0) { source.streamsFor(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `matched refresh returns null when the rebuilt URL is the same dead one`() = runTest {
+        val source = mockk<com.nuvio.tv.core.iptv.match.XtreamStreamSource>()
+        coEvery { source.streamsFor(account, "movie", "tmdb:603", null, null) } returns listOf(
+            matchedStream("Movie HD", "http://dead/old.ts"),
+        )
+        val repo = repositoryWith(source)
+        assertNull(
+            repo.refreshMatchedIptvStreamUrl(
+                type = "movie", videoId = "tmdb:603", season = null, episode = null,
+                addonName = account.name, streamName = "Movie HD", failedUrl = "http://dead/old.ts"
+            )
+        )
+    }
+
+    private fun repositoryWith(source: com.nuvio.tv.core.iptv.match.XtreamStreamSource): StreamRepositoryImpl {
+        val factory = mockk<IptvClientFactory> { every { clientFor(account) } returns client }
+        val accountStore = mockk<XtreamAccountStore> { every { accounts } returns flowOf(listOf(account)) }
+        return StreamRepositoryImpl(
+            context = mockk(relaxed = true),
+            api = mockk(relaxed = true),
+            addonRepository = mockk(relaxed = true),
+            pluginManager = mockk(relaxed = true),
+            tmdbService = mockk(relaxed = true),
+            debridStreamPresentation = mockk(relaxed = true),
+            localDebridAvailabilityService = mockk(relaxed = true),
+            xtreamRegistry = XtreamItemRegistry(),
+            iptvClientFactory = factory,
+            xtreamAccountStore = accountStore,
+            xtreamStreamSource = source
+        )
+    }
 }

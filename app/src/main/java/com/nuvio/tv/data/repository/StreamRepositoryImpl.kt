@@ -109,6 +109,33 @@ class StreamRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun refreshMatchedIptvStreamUrl(
+        type: String,
+        videoId: String,
+        season: Int?,
+        episode: Int?,
+        addonName: String?,
+        streamName: String?,
+        failedUrl: String
+    ): String? {
+        if (videoId.isBlank() || addonName.isNullOrBlank()) return null
+        if (xtreamRegistry.isXtreamId(videoId)) return null
+        // Matched-lane streams carry the account's display name as addonName — an unknown label
+        // means the failing stream isn't ours (addon/debrid), so bail before any network.
+        val candidates = xtreamAccountStore.accounts.first()
+            .filter { it.enabled && it.name == addonName }
+        if (candidates.isEmpty()) return null
+        for (account in candidates) {
+            val streams = runCatching { xtreamStreamSource.streamsFor(account, type, videoId, season, episode) }
+                .onFailure { Log.w(TAG, "matched-iptv refresh: matcher threw for ${account.name}: ${it.message}") }
+                .getOrDefault(emptyList())
+            val fresh = streams.firstOrNull { it.name == streamName && !it.url.isNullOrBlank() && it.url != failedUrl }
+                ?: streams.firstOrNull { !it.url.isNullOrBlank() && it.url != failedUrl }
+            if (fresh?.url != null) return fresh.url
+        }
+        return null
+    }
+
     override fun getStreamsFromAllAddons(
         type: String,
         videoId: String,
