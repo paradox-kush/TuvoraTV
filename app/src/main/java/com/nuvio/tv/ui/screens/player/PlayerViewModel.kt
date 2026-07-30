@@ -172,12 +172,26 @@ class PlayerViewModel @Inject constructor(
         val cur = currentLiveContentId ?: return
         val next = livePlaylist.relativeTo(cur, delta) ?: return
         currentLiveContentId = next.id
-        // Prepare the DoH-rewritten URL/headers off-main (no-op for system-DNS playlists), then swap.
         viewModelScope.launch {
-            val prepared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                playlistDnsResolver.prepareLive(next.id, next.streamUrl)
+            // Resolve FRESH at zap time: Stalker refs carry a blank browse-time URL (create_link
+            // is single-use), and any stored tokenized URL may already be consumed/expired.
+            // Xtream/M3U resolve locally (formula/DB), so this costs nothing for them.
+            val playable = controller.streamRepository.refreshIptvStreamUrl(next.id)
+                ?: next.streamUrl.takeIf { it.isNotBlank() }
+            if (playable.isNullOrBlank()) {
+                android.util.Log.w("PlayerViewModel", "zapLive: no playable URL for ${next.id}")
+                return@launch
             }
-            controller.switchToLiveChannel(name = next.name, url = prepared.url, extraHeaders = prepared.headers)
+            // Prepare the DoH-rewritten URL/headers off-main (no-op for system-DNS playlists), then swap.
+            val prepared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                playlistDnsResolver.prepareLive(next.id, playable)
+            }
+            controller.switchToLiveChannel(
+                name = next.name,
+                url = prepared.url,
+                extraHeaders = prepared.headers,
+                videoId = next.id
+            )
         }
     }
 

@@ -65,22 +65,32 @@ class XtreamItemRegistry @Inject constructor() {
         fun episodeId(accountId: String, episodeId: String): String = "$PREFIX$accountId:episode:$episodeId"
         fun liveId(accountId: String, streamId: Int): String = "$PREFIX$accountId:live:$streamId"
 
+        private val KIND_MARKERS = listOf("vod", "series", "episode", "live")
+
         /**
-         * Inverse of the id builders. The last two ':'-separated segments are kind + streamId;
-         * everything before them (after PREFIX) is the accountId, which may itself contain ':'.
+         * Inverse of the id builders. Both the accountId ("http://host:port|user") and a Stalker
+         * episode streamId ("seriesId:season:epNum") may contain ':', so the split anchors on the
+         * RIGHTMOST known ":kind:" marker — everything before it is the accountId, everything
+         * after it is the streamId. (Rightmost, because the kind marker always follows the
+         * accountId, and a streamId — digits/colon-digits — can never contain a kind marker.)
          * Returns null if the id isn't a well-formed xtream id.
          */
         fun parseId(id: String): ParsedId? {
             if (!id.startsWith(PREFIX)) return null
             val body = id.removePrefix(PREFIX)
-            val lastSep = body.lastIndexOf(':')
-            if (lastSep <= 0) return null
-            val kindSep = body.lastIndexOf(':', lastSep - 1)
-            if (kindSep <= 0) return null
-            val accountId = body.substring(0, kindSep)
-            val kind = body.substring(kindSep + 1, lastSep)
-            val streamId = body.substring(lastSep + 1)
-            if (accountId.isEmpty() || kind.isEmpty() || streamId.isEmpty()) return null
+            var markerIdx = -1
+            var kind: String? = null
+            for (candidate in KIND_MARKERS) {
+                val idx = body.lastIndexOf(":$candidate:")
+                if (idx > markerIdx) {
+                    markerIdx = idx
+                    kind = candidate
+                }
+            }
+            if (markerIdx <= 0 || kind == null) return null
+            val accountId = body.substring(0, markerIdx)
+            val streamId = body.substring(markerIdx + kind.length + 2)
+            if (accountId.isEmpty() || streamId.isEmpty()) return null
             return ParsedId(accountId, kind, streamId)
         }
         /** True for a live-channel content id. accountId can't be parsed (may contain ':'),

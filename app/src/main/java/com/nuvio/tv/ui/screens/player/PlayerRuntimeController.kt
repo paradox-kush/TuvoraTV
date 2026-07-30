@@ -462,6 +462,10 @@ class PlayerRuntimeController(
     internal var audioSinkErrorWindowStartMs: Long = 0L
     internal var hasTriedDv7HevcFallback: Boolean = false
     internal var forceDv7ToHevc: Boolean = false
+    // One fresh create_link per playback: a second 401 means the account/session is the problem,
+    // not the token, and re-resolving forever would hammer the portal.
+    internal var hasAttemptedIptvLinkRefresh: Boolean = false
+    internal var pendingIptvLinkRefreshReinit: Boolean = false
     internal var startupRetryCount: Int = 0
     internal var hasRetriedCurrentStreamAfterUnexpectedNpe: Boolean = false
     internal var hasRetriedCurrentStreamAfterMediaPeriodHolderCrash: Boolean = false

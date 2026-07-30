@@ -76,12 +76,23 @@ class StreamRepositoryImpl @Inject constructor(
         item: com.nuvio.tv.core.iptv.XtreamResolvedItem
     ): List<AddonStreams> {
         if (item.streamUrl.isNotBlank()) return item.toAddonStreams()
-        val parsed = com.nuvio.tv.core.iptv.XtreamItemRegistry.parseId(videoId) ?: return emptyList()
-        val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == parsed.accountId } ?: return emptyList()
+        val freshUrl = refreshIptvStreamUrl(videoId) ?: return emptyList()
+        return item.copy(streamUrl = freshUrl).toAddonStreams()
+    }
+
+    /**
+     * Always resolves FRESH — for Stalker this mints a new single-use create_link token, which is
+     * also the mid-playback recovery for an expired/rotated one (the player calls this on stream
+     * 401/403 before giving up). Xtream/M3U return their stable URL, so a "refresh" is a no-op
+     * round-trip at worst.
+     */
+    override suspend fun refreshIptvStreamUrl(videoId: String): String? {
+        val parsed = com.nuvio.tv.core.iptv.XtreamItemRegistry.parseId(videoId) ?: return null
+        val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == parsed.accountId } ?: return null
         val client = iptvClientFactory.clientFor(account)
-        val freshUrl = when (parsed.kind) {
-            "live" -> client.resolveStreamUrl(account, "live", parsed.streamId.toIntOrNull() ?: return emptyList())
-            "vod" -> client.resolveStreamUrl(account, "movie", parsed.streamId.toIntOrNull() ?: return emptyList())
+        return when (parsed.kind) {
+            "live" -> client.resolveStreamUrl(account, "live", parsed.streamId.toIntOrNull() ?: return null)
+            "vod" -> client.resolveStreamUrl(account, "movie", parsed.streamId.toIntOrNull() ?: return null)
             "episode" -> {
                 // Stalker episode ids encode "seriesId:season:episodeNum" as the streamId segment.
                 // A legacy 2-part id ("seriesId:episodeNum") predates seasons -> season null.
@@ -95,8 +106,7 @@ class StreamRepositoryImpl @Inject constructor(
                 } else null
             }
             else -> null
-        } ?: return emptyList()
-        return item.copy(streamUrl = freshUrl).toAddonStreams()
+        }
     }
 
     override fun getStreamsFromAllAddons(

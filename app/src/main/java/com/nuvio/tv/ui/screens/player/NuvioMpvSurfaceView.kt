@@ -16,6 +16,9 @@ import java.util.concurrent.Future
 import kotlin.math.pow
 import kotlin.math.roundToLong
 
+/** libmpv mpv_event_id: MPV_EVENT_END_FILE (stable ABI value). */
+private const val MPV_EVENT_END_FILE = 7
+
 class NuvioMpvSurfaceView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
@@ -26,6 +29,14 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     private var lastMediaRequestKey: String? = null
     private var pendingInitialMediaUrl: String? = null
     private var pendingInitialStartOption: String? = null
+
+    /**
+     * Invoked (on mpv's event thread — hop before touching UI/player state) when a file unloads
+     * because of an ERROR: libmpv end-file with reason "error"; [fileError] is mpv's error string
+     * (e.g. "loading failed"). Deliberately silent for eof/stop/quit/redirect unloads, so channel
+     * switches ("loadfile replace" → reason "stop") and natural EOF never fire it.
+     */
+    @Volatile var onPlaybackEndedWithError: ((fileError: String?) -> Unit)? = null
 
     // All mpv control calls (property writes, loadfile, seeks, teardown) run here,
     // serialized in submission order. mpv_set_property/mpv_command take the same core
@@ -131,7 +142,15 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             }
         }
 
-        override fun event(eventId: Int, data: MPVNode) = Unit
+        override fun event(eventId: Int, data: MPVNode) {
+            if (eventId != MPV_EVENT_END_FILE) return
+            // mpv_event_to_node shape: {"reason": "eof"|"stop"|"quit"|"error"|"redirect",
+            //  "file_error": "<mpv error string>" (only when reason == "error")}.
+            val map = runCatching { data.asMap() }.getOrNull() ?: return
+            if (runCatching { map["reason"]?.asString() }.getOrNull() != "error") return
+            val fileError = runCatching { map["file_error"]?.asString() }.getOrNull()
+            onPlaybackEndedWithError?.invoke(fileError)
+        }
     }
 
     fun ensureInitialized() {

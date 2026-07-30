@@ -310,8 +310,119 @@ internal fun PlayerRuntimeController.resetErrorRetryState() {
     startupRetryCount = 0
     errorRetryCount = 0
     pendingAudioPcmFallbackRebuild = false
+    hasAttemptedIptvLinkRefresh = false
+    pendingIptvLinkRefreshReinit = false
     errorRetryJob?.cancel()
     errorRetryJob = null
+}
+
+/**
+ * Stream-side HTTP statuses a fresh create_link can plausibly fix: the play token expired or was
+ * consumed by a reconnect (401/410), or the portal session was rotated — e.g. a second device
+ * handshaking with the same MAC (403). Everything else (404 removed, 5xx provider down) stays on
+ * the normal error path.
+ */
+internal fun isIptvRefreshableHttpStatus(code: Int): Boolean =
+    code == 401 || code == 403 || code == 410
+
+/**
+ * The xtream id to re-resolve for the current playback, or null when this isn't IPTV content.
+ * Live launches carry it as contentId (Screen.Player live routes pass no videoId); VOD/episode
+ * plays carry it as videoId.
+ */
+internal fun PlayerRuntimeController.refreshableIptvVideoId(): String? =
+    listOfNotNull(currentVideoId, contentId)
+        .firstOrNull { it.startsWith(com.nuvio.tv.core.iptv.XtreamItemRegistry.PREFIX) }
+
+/** ExoPlayer entry: refresh only for token-shaped HTTP failures (see [isIptvRefreshableHttpStatus]). */
+internal fun PlayerRuntimeController.attemptIptvLinkRefresh(
+    error: PlaybackException,
+    detailedError: String
+): Boolean {
+    val code = error.findInvalidResponseCodeException()?.responseCode ?: return false
+    if (!isIptvRefreshableHttpStatus(code)) return false
+    return attemptIptvLinkRefresh(detailedError)
+}
+
+/**
+ * One-shot recovery for IPTV streams whose tokenized link died mid-flight (Stalker create_link
+ * TTL, single-use token consumed by a reconnect, session rotated by another device on the same
+ * MAC): mint a FRESH link via the provider and swap it into whichever engine is active. Live
+ * rejoins the live edge; VOD/episodes resume at the position where the link died. Returns false
+ * when this playback isn't IPTV content or the one shot is already spent — callers then fall
+ * through to the normal fatal-error path.
+ */
+internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: String): Boolean {
+    val refreshId = refreshableIptvVideoId() ?: return false
+    if (hasAttemptedIptvLinkRefresh) return false
+    hasAttemptedIptvLinkRefresh = true
+
+    val isLive = com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(refreshId)
+    val paused = userPausedManually
+    // Engine-aware: mpv VOD keeps its position too, live always rejoins the live edge.
+    val savedPosition = if (isLive) 0L else (currentPlaybackPositionMs()?.takeIf { it > 0L } ?: 0L)
+
+    Log.w(
+        PlayerRuntimeController.TAG,
+        "IPTV_LINK_REFRESH: stream rejected ($detailedError) — minting a fresh link for $refreshId"
+    )
+
+    errorRetryJob?.cancel()
+    errorRetryJob = scope.launch {
+        showRecoveryOverlay()
+        val freshUrl = runCatching { streamRepository.refreshIptvStreamUrl(refreshId) }
+            .onFailure { Log.w(PlayerRuntimeController.TAG, "IPTV_LINK_REFRESH: resolve threw: ${it.message}") }
+            .getOrNull()
+        if (freshUrl.isNullOrBlank()) {
+            Log.w(
+                PlayerRuntimeController.TAG,
+                "IPTV_LINK_REFRESH: no fresh link for $refreshId — surfacing the original error"
+            )
+            _uiState.update {
+                it.copy(
+                    error = detailedError,
+                    isBuffering = false,
+                    showLoadingOverlay = false,
+                    showPauseOverlay = false
+                )
+            }
+            return@launch
+        }
+        // Live URLs may need the playlist's DoH rewrite (hostname → resolved IP + Host header),
+        // exactly like the launch path.
+        val prepared = if (isLive) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                playlistDnsResolver.prepareLive(refreshId, freshUrl)
+            }
+        } else null
+        val url = prepared?.url ?: freshUrl
+        val headers = if (prepared != null && prepared.headers.isNotEmpty()) {
+            currentHeaders + prepared.headers
+        } else currentHeaders
+
+        val view = mpvView
+        if (view != null && isUsingMpvEngine()) {
+            // mpv engine: swap in place (loadfile replace), the same path a live channel switch takes.
+            currentStreamUrl = url
+            currentHeaders = headers
+            hasRenderedFirstFrame = false
+            lastPlaybackIssueError = null
+            _uiState.update { it.copy(error = null, isBuffering = true, currentStreamUrl = url) }
+            runCatching {
+                view.setMedia(url, headers, startPositionMs = savedPosition)
+                view.setPaused(paused)
+            }
+        } else {
+            pendingIptvLinkRefreshReinit = true
+            releasePlayer(flushPlaybackState = false)
+            if (savedPosition > 0L) {
+                _uiState.update { it.copy(pendingSeekPosition = savedPosition) }
+            }
+            currentHeaders = headers
+            initializePlayer(url, headers, startPaused = paused)
+        }
+    }
+    return true
 }
 
 internal fun PlayerRuntimeController.scheduleStableProgressReset() {

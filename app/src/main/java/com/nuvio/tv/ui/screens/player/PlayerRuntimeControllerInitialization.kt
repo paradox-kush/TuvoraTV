@@ -191,6 +191,12 @@ internal fun PlayerRuntimeController.initializePlayer(
             audioSinkErrorWindowStartMs = 0L
             hasTriedDv7HevcFallback = false
             forceDv7ToHevc = false
+            // Keep the spent IPTV-refresh shot across the refresh's own re-init;
+            // a genuinely new stream starts with a fresh shot.
+            if (!pendingIptvLinkRefreshReinit) {
+                hasAttemptedIptvLinkRefresh = false
+            }
+            pendingIptvLinkRefreshReinit = false
             mpvDelayStartAfterAfrSwitch = false
             playerInitializationStartedAtMs = System.currentTimeMillis()
             // Reset per playback; only the ExoPlayer custom-buffer path sets a real value.
@@ -1357,6 +1363,15 @@ internal fun PlayerRuntimeController.initializePlayer(
                         val responseCode = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
                         if (responseCode == 416 && !hasRetriedCurrentStreamAfter416) {
                             retryCurrentStreamFromStartAfter416()
+                            return
+                        }
+
+                        // ── IPTV expired-link refresh ──
+                        // A 401/403/410 on an xtream/stalker stream means the tokenized link died
+                        // (create_link TTL, consumed single-use token, or the portal session was
+                        // rotated by another device). Only a FRESH link fixes that — engine
+                        // failover or retrying the same URL would just replay the dead token.
+                        if (attemptIptvLinkRefresh(error, detailedError)) {
                             return
                         }
 

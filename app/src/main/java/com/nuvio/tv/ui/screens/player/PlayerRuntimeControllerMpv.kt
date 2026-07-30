@@ -15,7 +15,9 @@ private const val MPV_RESUME_SEEK_TOLERANCE_MS = 1500L
 
 internal fun PlayerRuntimeController.attachMpvView(view: NuvioMpvSurfaceView?) {
     if (mpvView === view) return
+    mpvView?.onPlaybackEndedWithError = null
     mpvView = view
+    view?.onPlaybackEndedWithError = { fileError -> onMpvPlaybackEndedWithError(fileError) }
 
     if (view == null) return
     if (!isUsingMpvEngine()) return
@@ -187,6 +189,41 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
 
 internal fun PlayerRuntimeController.releaseMpvPlayer() {
     runCatching { mpvView?.releasePlayer() }
+}
+
+/**
+ * mpv end-file(reason=error) — the mpv-engine sibling of ExoPlayer's onPlayerError. Before this,
+ * a failed mpv load just left the core idle behind an endless buffering spinner. mpv can't tell a
+ * 401 from any other load failure (the HTTP status only appears in its logs), but for IPTV content
+ * a fresh create_link is the right first remedy regardless — expired/consumed tokens are by far
+ * the dominant cause. Non-IPTV content falls back to startup engine failover, then the error
+ * screen. Fires on mpv's event thread, so hop to the controller scope first.
+ */
+internal fun PlayerRuntimeController.onMpvPlaybackEndedWithError(fileError: String?) {
+    scope.launch {
+        if (isReleasingPlayer) return@launch
+        // In background the live demux is stopped deliberately; resume reloads the stream and a
+        // genuinely dead link will re-error in the foreground where we can recover visibly.
+        if (isInBackground) return@launch
+        val detailedError = context.getString(com.nuvio.tv.R.string.player_error_mpv_playback_failed) +
+            (fileError?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: "")
+        if (attemptIptvLinkRefresh(detailedError)) return@launch
+        if (!hasRenderedFirstFrame &&
+            maybeAutoSwitchInternalPlayerOnStartupError(detailedError = detailedError, allowEngineFailover = true)
+        ) {
+            return@launch
+        }
+        cancelFirstFrameWatchdog()
+        Log.w(PlayerRuntimeController.TAG, "mpv end-file error: $detailedError")
+        _uiState.update {
+            it.copy(
+                error = detailedError,
+                isBuffering = false,
+                showLoadingOverlay = false,
+                showPauseOverlay = false
+            )
+        }
+    }
 }
 
 private fun String.safeMpvTraceHost(): String {

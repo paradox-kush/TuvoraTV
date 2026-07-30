@@ -806,8 +806,14 @@ internal fun PlayerRuntimeController.switchToSourceStream(
 internal fun PlayerRuntimeController.switchToLiveChannel(
     name: String,
     url: String,
-    extraHeaders: Map<String, String> = emptyMap()
+    extraHeaders: Map<String, String> = emptyMap(),
+    videoId: String? = null
 ) {
+    // Keep identity current so a mid-watch expired link re-resolves the RIGHT channel,
+    // and give the new channel its own refresh shot.
+    if (videoId != null) currentVideoId = videoId
+    hasAttemptedIptvLinkRefresh = false
+    pendingIptvLinkRefreshReinit = false
     // Additive (e.g. a DoH Host header) — merged over the live stream's existing headers.
     val headers = if (extraHeaders.isEmpty()) currentHeaders else currentHeaders + extraHeaders
     val view = mpvView

@@ -74,6 +74,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.nuvio.tv.ui.screens.player.PlayerMediaSourceFactory
 import com.nuvio.tv.ui.screens.player.enableComposeSurfaceSyncWorkaroundIfAvailable
+import com.nuvio.tv.ui.screens.player.findInvalidResponseCodeException
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
 import java.util.Calendar
@@ -144,6 +145,11 @@ fun LiveGuide(
                     override fun onPlayerError(error: PlaybackException) {
                         // No engine failover here — OK on the row re-tunes. Log for field triage.
                         Log.w("LiveGuide", "preview playback error: ${error.errorCodeName}")
+                        // Token-shaped HTTP failures (Stalker create_link TTL, session rotated by
+                        // another device) get one fresh link + in-place re-tune from the VM.
+                        error.findInvalidResponseCodeException()?.responseCode?.let { code ->
+                            viewModel.onPreviewAuthError(code)
+                        }
                     }
                 })
             }

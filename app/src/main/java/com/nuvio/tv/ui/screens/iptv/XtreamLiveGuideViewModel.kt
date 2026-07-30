@@ -283,6 +283,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
      *  FRESH here so the placeholder never reaches mpv. Xtream/M3U have a stable URL, so
      *  [resolvedStreamUrl] returns it unchanged with no extra round-trip. */
     fun playPreview(channel: GuideChannel) {
+        // A user-initiated tune resolves fresh below, so it always deserves a new recovery shot.
+        previewLinkRefreshBurntForChannelId = null
         viewModelScope.launch {
             // Stalker needs a fresh create_link; Xtream/M3U reuse the browse-time URL. Then tunePreview
             // applies the playlist's DNS (resolve → rewrite) before handing the URL to the player.
@@ -303,6 +305,35 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (channel.streamUrl.isNotBlank()) return channel.streamUrl
         val acc = account ?: return null
         return clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId)
+    }
+
+    // One fresh link per user tune: a second token failure on the same channel means the
+    // account/session is the problem, not the link — stop re-minting so we don't hammer the portal.
+    private var previewLinkRefreshBurntForChannelId: String? = null
+
+    /**
+     * The guide's preview player hit a token-shaped HTTP failure (401/403/410): the Stalker
+     * create_link token expired mid-watch, a reconnect consumed a single-use link, or the portal
+     * session was rotated by another device on the same MAC. Mint ONE fresh link for the tuned
+     * channel and re-tune in place; a repeat failure surfaces the channel error instead.
+     */
+    fun onPreviewAuthError(httpStatus: Int) {
+        if (!com.nuvio.tv.ui.screens.player.isIptvRefreshableHttpStatus(httpStatus)) return
+        val channel = _uiState.value.previewChannel ?: return
+        if (previewLinkRefreshBurntForChannelId == channel.contentId) {
+            _uiState.update { it.copy(error = "Couldn't open \"${channel.name}\"") }
+            return
+        }
+        previewLinkRefreshBurntForChannelId = channel.contentId
+        viewModelScope.launch {
+            val acc = account ?: return@launch
+            val fresh = clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId)
+            if (fresh.isNullOrBlank()) {
+                _uiState.update { it.copy(error = "Couldn't open \"${channel.name}\"") }
+                return@launch
+            }
+            tunePreview(channel.copy(streamUrl = fresh))
+        }
     }
 
     /**

@@ -33,4 +33,15 @@ interface StreamRepository {
         type: String,
         videoId: String
     ): NetworkResult<List<Stream>>
+
+    /**
+     * Re-resolves a fresh playable URL for an xtream/stalker item mid-playback. Stalker play URLs
+     * carry a single-use/short-TTL create_link token, so a stream that 401s (expired token, session
+     * rotated by another device on the same MAC) can often be revived by minting a new link instead
+     * of surfacing the fatal error screen.
+     *
+     * @param videoId an [com.nuvio.tv.core.iptv.XtreamItemRegistry] id ("xtream:acc:kind:streamId")
+     * @return a fresh URL, or null when the id isn't an xtream id / account is gone / resolve failed
+     */
+    suspend fun refreshIptvStreamUrl(videoId: String): String?
 }
