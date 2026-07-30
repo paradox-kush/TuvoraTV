@@ -137,6 +137,16 @@ class StreamScreenViewModel @Inject constructor(
         ?: false
     private val streamCacheKey: String = "${contentType.lowercase()}|$videoId"
 
+    /**
+     * IPTV content must never reuse a cached link. A Stalker create_link URL is single-use, and an
+     * Xtream one only holds while the panel's catalog stands still — panels do renumber wholesale
+     * (observed live: one index sync removed 6253 movie ids and added 6249), after which the
+     * replayed URL answers 401. Play time re-resolves these anyway (StreamRepository), so reusing
+     * the stored link only ever costs a failed playback.
+     */
+    private val skipLinkCache: Boolean =
+        videoId.startsWith(com.nuvio.tv.core.iptv.XtreamItemRegistry.PREFIX)
+
     private val _uiState = MutableStateFlow(
         StreamScreenUiState(
             videoId = videoId,
@@ -391,7 +401,7 @@ class StreamScreenViewModel @Inject constructor(
                 }
             }
 
-            if (!autoPlayHandledForSession && playerSettings.streamReuseLastLinkEnabled) {
+            if (!autoPlayHandledForSession && playerSettings.streamReuseLastLinkEnabled && !skipLinkCache) {
                 val cached = streamLinkCacheDataStore.getValid(
                     contentKey = streamCacheKey,
                     maxAgeMs = playerSettings.streamReuseLastLinkCacheHours * 60L * 60L * 1000L
@@ -1181,7 +1191,7 @@ class StreamScreenViewModel @Inject constructor(
                     videoSize = result.videoSize ?: basePlaybackInfo.videoSize
                 )
                 // Save resolved URL to cache for reuse last link
-                if (!result.url.isNullOrBlank()) {
+                if (!result.url.isNullOrBlank() && !skipLinkCache) {
                     pendingCacheSaveJob = viewModelScope.launch {
                         streamLinkCacheDataStore.save(
                             contentKey = streamCacheKey,
@@ -1351,7 +1361,7 @@ class StreamScreenViewModel @Inject constructor(
         )
 
         val url = playbackInfo.url
-        if (!url.isNullOrBlank() && !playbackInfo.isExternal) {
+        if (!url.isNullOrBlank() && !playbackInfo.isExternal && !skipLinkCache) {
             pendingCacheSaveJob = viewModelScope.launch {
                 streamLinkCacheDataStore.save(
                     contentKey = streamCacheKey,
