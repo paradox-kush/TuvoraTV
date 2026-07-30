@@ -39,6 +39,8 @@ class StalkerSession(
     private val http: OkHttpClient
 ) {
     @Volatile private var token: String? = null
+    /** When a re-auth ran and the retry STILL came back empty (another device holds the MAC). */
+    @Volatile private var lastFailedReauthAtMs: Long = 0L
     @Volatile private var resolvedEndpoint: String? = null   // e.g. "/portal.php"
 
     private val authMutex = Mutex()
@@ -78,13 +80,29 @@ class StalkerSession(
         } catch (e: StalkerAuthException) {
             null   // fall through to the single re-auth + retry below
         }
-        if (js != null) return@withContext js
+        if (js != null) {
+            lastFailedReauthAtMs = 0L   // healthy again
+            return@withContext js
+        }
 
-        // Stale token (empty `js` / "Authorization failed." / 401 / 403) -> one handshake, retry once.
+        // Stale token (empty body / empty `js` / "Authorization failed." / 401 / 403) -> one
+        // handshake, retry once. Cooldown first: when two devices share a MAC (a phone and this TV
+        // on one Stalker line) each handshake evicts the other, so a re-auth that failed to recover
+        // must NOT have every following request handshake again — that pair would spin forever and
+        // the request storm is what gets a portal to ban the IP.
+        val now = System.currentTimeMillis()
+        if (lastFailedReauthAtMs != 0L && now - lastFailedReauthAtMs < REAUTH_COOLDOWN_MS) {
+            error("Stalker session for ${account.name} is held by another device — cooling down")
+        }
         Log.d(TAG, "Stalker request stale for ${account.name} (${params["action"]}) — re-authenticating")
         reauthenticate(staleToken)
-        rawRequest(params).jsOrNull()
-            ?: error("Stalker portal returned no data for ${params["action"]}")
+        val retried = rawRequest(params).jsOrNull()
+        if (retried == null) {
+            lastFailedReauthAtMs = now
+            error("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
+        }
+        lastFailedReauthAtMs = 0L
+        retried
     }
 
     /** Force re-auth on the next call (used when a create_link/browse hits a hard 401/403). */
@@ -240,6 +258,12 @@ class StalkerSession(
         private const val TAG = "StalkerSession"
         // The reference server's rejection sentinel: `echo 'Authorization failed.'; exit;`
         private const val AUTH_FAILED_MARKER = "Authorization failed"
+        /**
+         * How long to stop re-handshaking after a re-auth failed to recover. Two devices sharing a
+         * MAC evict each other on every handshake, so without this each request would handshake
+         * again and the pair would spin — a self-inflicted request storm, and portals ban for that.
+         */
+        private const val REAUTH_COOLDOWN_MS = 30_000L
         // ponytail: fixed ceiling, no adaptive backoff. Raise only with evidence a portal tolerates
         // more; add backoff only if we start seeing 429s at this level.
         private const val MAX_CONCURRENT_REQUESTS = 4
