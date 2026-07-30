@@ -8,7 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
+import java.time.ZoneOffset
 
 /**
  * Regression tests for currently-airing series leaving Continue Watching on air day.
@@ -166,8 +166,18 @@ class ContinueWatchingAiringRulesTest {
     @Test
     fun `watchableEpisodes excludes future mid-season episodes so checkmark can apply`() {
         // Documents a58809 behavior: only aired eps count → caught-up checkmark possible.
-        val tomorrow = LocalDate.now(ZoneId.systemDefault()).plusDays(1).toString()
-        val yesterday = LocalDate.now(ZoneId.systemDefault()).minusDays(1).toString()
+        //
+        // Date fixtures must follow prod's convention: isEpisodeReleaseAired parses
+        // date-only strings as UTC midnight (EpisodeReleaseDateParser), so derive them
+        // from the UTC calendar with a ±2-day margin. A LOCAL-calendar "tomorrow" is
+        // date-flaky: in UTC-negative zones its UTC midnight is already in the past
+        // during the local evening (e.g. 2026-07-29 23:30 CDT = 2026-07-30 04:30Z,
+        // after "2026-07-30" 00:00Z), so the future episode counted as aired.
+        // ±2 days also survives a UTC-day rollover between building the fixture and
+        // watchableEpisodes() reading its own system clock.
+        val utcToday = LocalDate.now(ZoneOffset.UTC)
+        val unaired = utcToday.plusDays(2).toString()
+        val aired = utcToday.minusDays(2).toString()
         val meta = CwMetaSummary(
             id = "tt-airing",
             name = "Airing",
@@ -181,9 +191,9 @@ class ContinueWatchingAiringRulesTest {
             language = null,
             country = null,
             videos = listOf(
-                episode(1, 1, yesterday),
-                episode(1, 2, yesterday),
-                episode(1, 3, tomorrow),
+                episode(1, 1, aired),
+                episode(1, 2, aired),
+                episode(1, 3, unaired),
             ),
         )
         val watchable = meta.watchableEpisodes().map { it.season to it.episode }
