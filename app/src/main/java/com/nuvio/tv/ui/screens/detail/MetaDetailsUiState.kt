@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.detail
 
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.ui.util.EpisodeBucket
 import com.nuvio.tv.domain.model.MetaTrailer
 import com.nuvio.tv.domain.model.NextToWatch
 import com.nuvio.tv.domain.model.TraktCommentReview
@@ -28,6 +29,10 @@ data class MetaDetailsUiState(
     val selectedSeason: Int = 1,
     val seasons: List<Int> = emptyList(),
     val episodesForSeason: List<Video> = emptyList(),
+    /** Every episode of the selected season, before range slicing. Empty ranges = no slicing. */
+    val allEpisodesForSeason: List<Video> = emptyList(),
+    val episodeRanges: List<EpisodeBucket> = emptyList(),
+    val selectedEpisodeRange: String? = null,
     val isInLibrary: Boolean = false,
     val nextToWatch: NextToWatch? = null,
     val episodeProgressMap: Map<Pair<Int, Int>, WatchProgress> = emptyMap(),
@@ -83,6 +88,7 @@ data class MetaDetailsUiState(
 
 sealed class MetaDetailsEvent {
     data class OnSeasonSelected(val season: Int) : MetaDetailsEvent()
+    data class OnEpisodeRangeSelected(val label: String) : MetaDetailsEvent()
     data class OnEpisodeClick(val video: Video) : MetaDetailsEvent()
     data class OnCommentsModeSelected(val mode: CommentsMode) : MetaDetailsEvent()
     data class OnCommentsEpisodeSelected(val video: Video) : MetaDetailsEvent()

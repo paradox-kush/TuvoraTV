@@ -14,6 +14,7 @@ import com.nuvio.tv.domain.model.MetaCastMember
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.Subtitle
 import com.nuvio.tv.domain.model.Video
+import com.nuvio.tv.ui.util.EpisodeBucket
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.components.SourceChipItem
 
@@ -130,6 +131,10 @@ data class PlayerUiState(
     val episodesAvailableSeasons: List<Int> = emptyList(),
     val episodesSelectedSeason: Int? = null,
     val episodes: List<Video> = emptyList(),
+    /** Every episode of the selected season, before range slicing. Empty ranges = no slicing. */
+    val episodesForSeasonAll: List<Video> = emptyList(),
+    val episodeRanges: List<EpisodeBucket> = emptyList(),
+    val selectedEpisodeRange: String? = null,
     val currentSeason: Int? = null,
     val currentEpisode: Int? = null,
     val currentVideoId: String? = null,
@@ -295,6 +300,7 @@ sealed class PlayerEvent {
     data object OnDismissEpisodesPanel : PlayerEvent()
     data object OnBackFromEpisodeStreams : PlayerEvent()
     data class OnEpisodeSeasonSelected(val season: Int) : PlayerEvent()
+    data class OnEpisodeRangeSelected(val label: String) : PlayerEvent()
     data class OnEpisodeSelected(val video: Video) : PlayerEvent()
     data object OnReloadEpisodeStreams : PlayerEvent()
     data class OnEpisodeAddonFilterSelected(val addonName: String?) : PlayerEvent()

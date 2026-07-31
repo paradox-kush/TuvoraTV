@@ -15,6 +15,9 @@ import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.StreamDebridCacheState
 import com.nuvio.tv.domain.model.Video
+import com.nuvio.tv.ui.util.bucketContaining
+import com.nuvio.tv.ui.util.episodeBuckets
+import com.nuvio.tv.ui.util.sliceForBucket
 import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
@@ -878,10 +881,34 @@ internal fun PlayerRuntimeController.selectEpisodesSeason(season: Int) {
         .filter { (it.season ?: -1) == season }
         .sortedWith(compareBy<Video> { it.episode ?: Int.MAX_VALUE }.thenBy { it.title })
 
+    // Long seasons slice into ranges here too — hunting for an episode mid-binge is exactly when
+    // walking a thousand rows with a D-pad hurts most.
+    val ranges = episodeBuckets(episodesForSeason)
+    val playingIndex = _uiState.value.currentEpisode
+        ?.takeIf { _uiState.value.currentSeason == season }
+        ?.let { number -> episodesForSeason.indexOfFirst { it.episode == number } }
+        ?.takeIf { it >= 0 }
+        ?: 0
+    val bucket = ranges.bucketContaining(playingIndex)
+
     _uiState.update {
         it.copy(
             episodesSelectedSeason = season,
-            episodes = episodesForSeason
+            episodesForSeasonAll = episodesForSeason,
+            episodeRanges = ranges,
+            selectedEpisodeRange = bucket?.label,
+            episodes = episodesForSeason.sliceForBucket(bucket)
+        )
+    }
+}
+
+internal fun PlayerRuntimeController.selectEpisodesRange(label: String) {
+    val state = _uiState.value
+    val bucket = state.episodeRanges.firstOrNull { it.label == label } ?: return
+    _uiState.update {
+        it.copy(
+            selectedEpisodeRange = bucket.label,
+            episodes = it.episodesForSeasonAll.sliceForBucket(bucket)
         )
     }
 }
@@ -989,13 +1016,24 @@ internal fun PlayerRuntimeController.loadEpisodesIfNeeded() {
                     .filter { (it.season ?: -1) == selectedSeason }
                     .sortedWith(compareBy<Video> { it.episode ?: Int.MAX_VALUE }.thenBy { it.title })
 
+                val ranges = episodeBuckets(episodesForSeason)
+                val playingIndex = currentEpisode
+                    ?.takeIf { currentSeason == selectedSeason }
+                    ?.let { number -> episodesForSeason.indexOfFirst { it.episode == number } }
+                    ?.takeIf { it >= 0 }
+                    ?: 0
+                val bucket = ranges.bucketContaining(playingIndex)
+
                 _uiState.update {
                     it.copy(
                         isLoadingEpisodes = false,
                         episodesAll = allEpisodes,
                         episodesAvailableSeasons = seasons,
                         episodesSelectedSeason = selectedSeason,
-                        episodes = episodesForSeason,
+                        episodesForSeasonAll = episodesForSeason,
+                        episodeRanges = ranges,
+                        selectedEpisodeRange = bucket?.label,
+                        episodes = episodesForSeason.sliceForBucket(bucket),
                         episodesError = null
                     )
                 }

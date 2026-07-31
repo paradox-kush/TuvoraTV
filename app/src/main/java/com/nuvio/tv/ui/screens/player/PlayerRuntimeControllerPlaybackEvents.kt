@@ -1324,6 +1324,9 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         is PlayerEvent.OnEpisodeSeasonSelected -> {
             selectEpisodesSeason(event.season)
         }
+        is PlayerEvent.OnEpisodeRangeSelected -> {
+            selectEpisodesRange(event.label)
+        }
         is PlayerEvent.OnEpisodeSelected -> {
             loadStreamsForEpisode(event.video)
         }

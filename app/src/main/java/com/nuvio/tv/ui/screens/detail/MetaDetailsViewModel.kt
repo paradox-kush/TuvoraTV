@@ -28,6 +28,9 @@ import com.nuvio.tv.domain.model.NextToWatch
 import com.nuvio.tv.domain.model.TmdbSettings
 import com.nuvio.tv.domain.model.TraktCommentReview
 import com.nuvio.tv.domain.model.Video
+import com.nuvio.tv.ui.util.bucketContaining
+import com.nuvio.tv.ui.util.episodeBuckets
+import com.nuvio.tv.ui.util.sliceForBucket
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.repository.LibraryRepository
 import com.nuvio.tv.domain.repository.MetaRepository
@@ -273,7 +276,9 @@ class MetaDetailsViewModel @Inject constructor(
                 state.copy(
                     nextToWatch = nextToWatch,
                     selectedSeason = nextSeason,
-                    episodesForSeason = getEpisodesForSeason(meta.videos, nextSeason)
+                ).withEpisodesForSeason(
+                    episodes = getEpisodesForSeason(meta.videos, nextSeason),
+                    resumeVideoId = nextToWatch?.nextVideoId,
                 )
             } else {
                 state.copy(nextToWatch = nextToWatch)
@@ -296,6 +301,7 @@ class MetaDetailsViewModel @Inject constructor(
     fun onEvent(event: MetaDetailsEvent) {
         when (event) {
             is MetaDetailsEvent.OnSeasonSelected -> selectSeason(event.season)
+            is MetaDetailsEvent.OnEpisodeRangeSelected -> selectEpisodeRange(event.label)
             is MetaDetailsEvent.OnEpisodeClick -> { /* Navigate to stream */ }
             is MetaDetailsEvent.OnCommentsModeSelected -> selectCommentsMode(event.mode)
             is MetaDetailsEvent.OnCommentsEpisodeSelected -> selectCommentsEpisode(event.video)
@@ -785,12 +791,11 @@ class MetaDetailsViewModel @Inject constructor(
             } else {
                 episodesForSeason
             }
-            it.copy(
+            it.withEpisodesForSeason(effectiveEpisodes).copy(
                 isLoading = false,
                 meta = meta,
                 seasons = seasons,
                 selectedSeason = effectiveSeason,
-                episodesForSeason = effectiveEpisodes,
                 error = null,
                 commentsEpisodeTarget = null,
                 shouldShowCommentsSection = traktCommentsEnabled && traktAuthenticated && supportsComments(meta)
@@ -1431,9 +1436,40 @@ class MetaDetailsViewModel @Inject constructor(
         val meta = _uiState.value.meta ?: return
         val episodes = getEpisodesForSeason(meta.videos, season)
         _uiState.update {
+            it.copy(selectedSeason = season).withEpisodesForSeason(episodes)
+        }
+    }
+
+    /**
+     * Applies a season's episodes, slicing them into ranges when the season is long enough that
+     * scrolling it whole is unreasonable. The range holding the next-to-watch episode is selected
+     * so resuming a long-running soap does not dump the viewer back at episode one.
+     */
+    private fun MetaDetailsUiState.withEpisodesForSeason(
+        episodes: List<Video>,
+        resumeVideoId: String? = nextToWatch?.nextVideoId,
+    ): MetaDetailsUiState {
+        val ranges = episodeBuckets(episodes)
+        val resumeIndex = resumeVideoId
+            ?.let { id -> episodes.indexOfFirst { it.id == id } }
+            ?.takeIf { it >= 0 }
+            ?: 0
+        val bucket = ranges.bucketContaining(resumeIndex)
+        return copy(
+            allEpisodesForSeason = episodes,
+            episodeRanges = ranges,
+            selectedEpisodeRange = bucket?.label,
+            episodesForSeason = episodes.sliceForBucket(bucket),
+        )
+    }
+
+    private fun selectEpisodeRange(label: String) {
+        val state = _uiState.value
+        val bucket = state.episodeRanges.firstOrNull { it.label == label } ?: return
+        _uiState.update {
             it.copy(
-                selectedSeason = season,
-                episodesForSeason = episodes
+                selectedEpisodeRange = bucket.label,
+                episodesForSeason = it.allEpisodesForSeason.sliceForBucket(bucket)
             )
         }
     }

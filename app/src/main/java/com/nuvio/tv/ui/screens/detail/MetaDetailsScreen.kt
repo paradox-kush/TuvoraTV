@@ -79,6 +79,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.nuvio.tv.ui.util.EpisodeBucket
 import com.nuvio.tv.ui.util.recompositionHighlighter
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
@@ -496,6 +497,11 @@ fun MetaDetailsScreen(
                     commentsEpisodeTarget = uiState.commentsEpisodeTarget,
                     selectedComment = uiState.selectedComment,
                     onSeasonSelected = { viewModel.onEvent(MetaDetailsEvent.OnSeasonSelected(it)) },
+                    episodeRanges = uiState.episodeRanges,
+                    selectedEpisodeRange = uiState.selectedEpisodeRange,
+                    onEpisodeRangeSelected = {
+                        viewModel.onEvent(MetaDetailsEvent.OnEpisodeRangeSelected(it))
+                    },
                     onEpisodeClick = { video ->
                         onPlayClick(
                             video.id,
@@ -823,6 +829,9 @@ private fun MetaDetailsContent(
     seasons: List<Int>,
     selectedSeason: Int,
     episodesForSeason: List<Video>,
+    episodeRanges: List<EpisodeBucket> = emptyList(),
+    selectedEpisodeRange: String? = null,
+    onEpisodeRangeSelected: (String) -> Unit = {},
     isInLibrary: Boolean,
     librarySourceMode: LibrarySourceMode,
     nextToWatch: NextToWatch?,
@@ -1681,6 +1690,17 @@ private fun MetaDetailsContent(
                             selectedTabFocusRequester = selectedSeasonFocusRequester,
                             upFocusRequester = heroPlayFocusRequester,
                             downFocusRequester = seasonDownFocusRequester
+                        )
+                    }
+                }
+            }
+            if (showEpisodesRow && episodeRanges.isNotEmpty()) {
+                item(key = "episode_ranges", contentType = "episode_ranges") {
+                    Box(modifier = Modifier.bringIntoViewResponder(noVerticalScrollResponder)) {
+                        EpisodeRangeTabs(
+                            ranges = episodeRanges,
+                            selectedRange = selectedEpisodeRange,
+                            onRangeSelected = onEpisodeRangeSelected,
                         )
                     }
                 }

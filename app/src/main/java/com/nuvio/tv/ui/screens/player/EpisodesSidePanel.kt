@@ -82,6 +82,7 @@ internal fun EpisodesSidePanel(
     onBackToEpisodes: () -> Unit,
     onReloadEpisodeStreams: () -> Unit,
     onSeasonSelected: (Int) -> Unit,
+    onRangeSelected: (String) -> Unit,
     onAddonFilterSelected: (String?) -> Unit,
     onEpisodeSelected: (Video) -> Unit,
     onStreamSelected: (Stream) -> Unit,
@@ -156,6 +157,7 @@ internal fun EpisodesSidePanel(
                         uiState = uiState,
                         episodesFocusRequester = episodesFocusRequester,
                         onSeasonSelected = onSeasonSelected,
+                        onRangeSelected = onRangeSelected,
                         onEpisodeSelected = onEpisodeSelected
                     )
                 }
@@ -278,6 +280,7 @@ private fun EpisodesListView(
     uiState: PlayerUiState,
     episodesFocusRequester: FocusRequester,
     onSeasonSelected: (Int) -> Unit,
+    onRangeSelected: (String) -> Unit,
     onEpisodeSelected: (Video) -> Unit
 ) {
     val seasonTabFocusRequester = remember { FocusRequester() }
@@ -352,6 +355,15 @@ private fun EpisodesListView(
                     Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
                 }
 
+                if (uiState.episodeRanges.isNotEmpty()) {
+                    EpisodeRangeChips(
+                        ranges = uiState.episodeRanges,
+                        selectedRange = uiState.selectedEpisodeRange,
+                        onRangeSelected = onRangeSelected,
+                    )
+                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
+                }
+
                 LazyColumn(
                     state = episodesListState,
                     verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
@@ -386,6 +398,55 @@ private fun EpisodesListView(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun EpisodeRangeChips(
+    ranges: List<com.nuvio.tv.ui.util.EpisodeBucket>,
+    selectedRange: String?,
+    onRangeSelected: (String) -> Unit
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRestorer(),
+        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+        contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xs, vertical = NuvioTheme.spacing.xs)
+    ) {
+        items(ranges, key = { it.label }) { range ->
+            val isSelected = range.label == selectedRange
+            var isFocused by remember { mutableStateOf(false) }
+
+            Card(
+                onClick = { onRangeSelected(range.label) },
+                modifier = Modifier.onFocusChanged { isFocused = it.isFocused },
+                shape = CardDefaults.shape(shape = RoundedCornerShape(NuvioTheme.spacing.xl)),
+                colors = CardDefaults.colors(
+                    containerColor = if (isSelected) NuvioTheme.colors.SurfaceVariant else NuvioTheme.colors.BackgroundCard,
+                    focusedContainerColor = NuvioTheme.colors.Secondary
+                ),
+                border = CardDefaults.border(
+                    focusedBorder = Border(
+                        border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                        shape = RoundedCornerShape(NuvioTheme.spacing.xl)
+                    )
+                ),
+                scale = CardDefaults.scale(focusedScale = 1.0f)
+            ) {
+                Text(
+                    text = range.label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when {
+                        isFocused -> NuvioTheme.colors.OnSecondary
+                        isSelected -> NuvioTheme.colors.TextPrimary
+                        else -> NuvioTheme.extendedColors.textSecondary
+                    },
+                    modifier = Modifier.padding(vertical = NuvioTheme.spacing.sm, horizontal = NuvioTheme.spacing.lg)
+                )
             }
         }
     }
