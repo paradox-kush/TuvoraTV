@@ -109,6 +109,14 @@ class StreamRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun mintDeferredIptvUrl(url: String): String? {
+        if (!com.nuvio.tv.core.iptv.match.XtreamStreamSource.isDeferred(url)) return url
+        val accounts = xtreamAccountStore.accounts.first()
+        return runCatching { xtreamStreamSource.resolveDeferredUrl(url, accounts) }
+            .onFailure { Log.w(TAG, "deferred stalker mint failed: ${it.message}") }
+            .getOrNull()
+    }
+
     override suspend fun refreshMatchedIptvStreamUrl(
         type: String,
         videoId: String,

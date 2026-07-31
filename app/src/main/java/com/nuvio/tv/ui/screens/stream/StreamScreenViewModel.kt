@@ -1141,6 +1141,16 @@ class StreamScreenViewModel @Inject constructor(
     }
 
     suspend fun resolveStreamForPlayback(stream: Stream): StreamPlaybackInfo? {
+        // A matched Stalker source is listed WITHOUT a play link (see XtreamStreamSource): mint it
+        // here, for the chosen edition only, so browsing never spends the line's connection budget.
+        if (com.nuvio.tv.core.iptv.match.XtreamStreamSource.isDeferred(stream.url)) {
+            val minted = streamRepository.mintDeferredIptvUrl(stream.url.orEmpty())
+            if (minted.isNullOrBlank()) {
+                Log.w(TAG, "resolveStreamForPlayback: portal would not issue a link for ${stream.name}")
+                return null
+            }
+            return resolveStreamForPlayback(stream.copy(url = minted))
+        }
         if (!directDebridResolver.shouldResolveToPlayableStream(stream)) {
             Log.d(TAG, "resolveStreamForPlayback: no debrid resolve needed, using direct URL")
             return getStreamForPlayback(stream)

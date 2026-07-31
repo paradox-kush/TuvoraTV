@@ -98,11 +98,10 @@ class XtreamStreamSource @Inject constructor(
                 .filter { TitleNormalizer.normKey(it.name) in wantKeys }
                 .filter { yearCompatible(TitleNormalizer.yearOf(it.name), titles.year) }
                 .take(MAX_STALKER_EDITIONS)   // a catalog carries 4K/HD/language cuts of one film
-                .mapNotNull { movie ->
-                    // create_link FRESH — single-use play_token, never cached. searchMovies already
-                    // cached the row, so this costs only the create_link itself.
-                    val url = stalkerClient.resolveStreamUrl(acc, "movie", movie.streamId) ?: return@mapNotNull null
-                    xtreamStream(acc = acc, label = movie.name, url = url)
+                .map { movie ->
+                    // DEFERRED — see [deferredMovie]: create_link runs when the viewer picks this
+                    // edition, not while the list is merely being built.
+                    xtreamStream(acc = acc, label = movie.name, url = deferredMovie(acc, movie.streamId, movie.name))
                 }
 
             MatchKind.SERIES -> {
@@ -113,8 +112,8 @@ class XtreamStreamSource @Inject constructor(
                 stalkerClient.searchSeries(acc, query)
                     .filter { TitleNormalizer.normKey(it.name) in wantKeys }
                     .take(MAX_STALKER_EDITIONS)   // language cuts ("Breaking Bad (Hindi)") are separate
-                    .mapNotNull { series ->
-                        val url = stalkerClient.resolveEpisodeUrl(acc, series.seriesId, s, e) ?: return@mapNotNull null
+                    .map { series ->
+                        val url = deferredEpisode(acc, series.seriesId, s, e)
                         // The label IS what's shown (name wins; title is only a fallback), so the
                         // portal's own name has to live there, exactly like the movie branch. Stalker
                         // episode titles are generic ("Episode 7"), so the series name is what
@@ -122,6 +121,44 @@ class XtreamStreamSource @Inject constructor(
                         xtreamStream(acc = acc, label = "${series.name} · S${s}E${e}", url = url, title = series.name)
                     }
             }
+        }
+    }
+
+    /**
+     * Scheme for a Stalker source whose play link has NOT been minted yet.
+     *
+     * A MAG box calls create_link once, when the viewer presses play. We used to call it while
+     * merely BUILDING the source list — up to [MAX_STALKER_EDITIONS] per account, so one movie with
+     * three portals fired a dozen. Panels register a session/connection per created link and lines
+     * are commonly sold with max_connections=1, so the eager calls could occupy the very slot the
+     * real playback then needed and the stream came back 401. Listing is now free;
+     * [resolveDeferredUrl] mints exactly one link, for the edition actually chosen.
+     */
+    private fun deferredMovie(acc: XtreamAccount, streamId: Int, name: String): String =
+        "$DEFERRED_PREFIX${acc.id}|movie|$streamId|${name.replace('|', ' ')}"
+
+    private fun deferredEpisode(acc: XtreamAccount, seriesId: Int, season: Int, episode: Int): String =
+        "$DEFERRED_PREFIX${acc.id}|episode|$seriesId|$season|$episode"
+
+    /** Mints the real play link for a [isDeferred] URL, or null when it can't be issued. */
+    suspend fun resolveDeferredUrl(url: String, accounts: List<XtreamAccount>): String? {
+        if (!isDeferred(url)) return url
+        val parts = url.removePrefix(DEFERRED_PREFIX).split("|")
+        // accountId itself contains '|' ("stalker|http://host|MAC"), so anchor on the kind marker.
+        val kindIdx = parts.indexOfFirst { it == "movie" || it == "episode" }
+        if (kindIdx <= 0) return null
+        val accountId = parts.subList(0, kindIdx).joinToString("|")
+        val acc = accounts.firstOrNull { it.id == accountId } ?: return null
+        return when (parts[kindIdx]) {
+            "movie" -> parts.getOrNull(kindIdx + 1)?.toIntOrNull()
+                ?.let { stalkerClient.resolveStreamUrl(acc, "movie", it) }
+            "episode" -> {
+                val seriesId = parts.getOrNull(kindIdx + 1)?.toIntOrNull() ?: return null
+                val season = parts.getOrNull(kindIdx + 2)?.toIntOrNull() ?: return null
+                val ep = parts.getOrNull(kindIdx + 3)?.toIntOrNull() ?: return null
+                stalkerClient.resolveEpisodeUrl(acc, seriesId, season, ep)
+            }
+            else -> null
         }
     }
 
@@ -158,5 +195,9 @@ class XtreamStreamSource @Inject constructor(
     companion object {
         private const val MAX_SERIES_EDITIONS = 5
         private const val MAX_STALKER_EDITIONS = 5
+        private const val DEFERRED_PREFIX = "stalker-deferred:"
+
+        /** True for a matched Stalker source that still needs its create_link minted. */
+        fun isDeferred(url: String?): Boolean = url != null && url.startsWith(DEFERRED_PREFIX)
     }
 }

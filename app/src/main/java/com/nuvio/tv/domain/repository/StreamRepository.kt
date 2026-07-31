@@ -54,6 +54,13 @@ interface StreamRepository {
      * finds nothing, or the "fresh" URL is identical to [failedUrl] (stable Xtream URLs — a 401
      * there is an account/provider problem no new link can fix).
      */
+    /**
+     * Mints the real play link for a matched Stalker source that was listed without one (see
+     * XtreamStreamSource's deferred scheme). Returns [url] unchanged when it isn't deferred, or
+     * null when the portal won't issue a link.
+     */
+    suspend fun mintDeferredIptvUrl(url: String): String?
+
     suspend fun refreshMatchedIptvStreamUrl(
         type: String,
         videoId: String,
