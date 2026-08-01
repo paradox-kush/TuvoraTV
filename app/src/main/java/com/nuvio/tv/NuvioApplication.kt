@@ -43,6 +43,7 @@ import javax.inject.Inject
 class NuvioApplication : Application(), SingletonImageLoader.Factory, Configuration.Provider {
 
     @Inject lateinit var startupSyncService: StartupSyncService
+    @Inject lateinit var recEventLogger: com.nuvio.tv.core.rec.RecEventLogger
     @Inject lateinit var androidTvChannelSyncService: AndroidTvChannelSyncService
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var iptvRefreshScheduler: IptvRefreshScheduler
@@ -118,6 +119,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         SentryInitializer.start(this, sentrySettingsDataStore)
         AppExitReporter.reportPendingExits(this)
         PluginRuntimeHooks.onApplicationCreate(this)
+        // Restores anything a previous process left unsent and starts the flush timer. Guarded
+        // because nothing about recommendation telemetry may ever prevent the app from starting.
+        runCatching { recEventLogger.start() }
         androidTvChannelSyncService.start()
         if (BuildConfig.REALTIME_SYNC_ENABLED) {
             realtimeSyncInvalidationService.start()

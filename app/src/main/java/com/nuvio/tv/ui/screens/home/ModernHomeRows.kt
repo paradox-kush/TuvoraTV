@@ -2,6 +2,7 @@
 
 package com.nuvio.tv.ui.screens.home
 
+import com.nuvio.tv.core.rec.toRecContentType
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import android.view.KeyEvent as AndroidKeyEvent
@@ -507,6 +508,25 @@ internal fun ModernRowSection(
                 prefetchStrategy = LazyListPrefetchStrategy(nestedPrefetchItemCount = NESTED_PREFETCH_COUNT)
             )
         }
+
+        // Recommendation impressions. Reads the same visibleItemsInfo the row already uses for
+        // prefetch, so this adds no measurement work; no-ops entirely when logging is off.
+        com.nuvio.tv.core.rec.RecRowImpressions(
+            listState = rowListState,
+            surface = com.nuvio.tv.core.rec.RecSurface.HOME,
+            rowId = row.catalogId?.let { catalogId ->
+                row.addonId?.let { "$it:$catalogId" } ?: catalogId
+            } ?: row.key,
+            rowIndex = row.globalRowIndex,
+            itemAt = { index ->
+                row.items.list.getOrNull(index)?.metaPreview?.let { preview ->
+                    com.nuvio.tv.core.rec.RecImpressionItem(
+                        itemId = preview.id,
+                        contentType = preview.type.toRecContentType(),
+                    )
+                }
+            },
+        )
 
         val firstItemKey = row.items.list.firstOrNull()?.key
 

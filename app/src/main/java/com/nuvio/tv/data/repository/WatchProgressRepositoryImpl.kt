@@ -78,6 +78,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
     private val xtreamAccountStore: XtreamAccountStore,
     private val trackingProgressProviders: TrackingProgressProviderRegistry,
     private val trackingHistoryWriters: TrackingHistoryWriterRegistry,
+    private val recPlaybackTracker: com.nuvio.tv.core.rec.RecPlaybackTracker,
 ) : WatchProgressRepository {
     companion object {
         private const val TAG = "WatchProgressRepo"
@@ -630,6 +631,9 @@ class WatchProgressRepositoryImpl @Inject constructor(
             traktSettingsDataStore.removeDismissedNextUpKeysForContent(progress.contentId)
         }
         val profileId = profileManager.activeProfileId.value
+        // Single choke point for every progress update, so the recommendation stream's playback
+        // events are derived from exactly the numbers Continue Watching shows. Cannot throw.
+        recPlaybackTracker.onProgress(progress)
         activeProgressProvider()?.applyOptimisticProgress(progress, quiet = !syncRemote)
         watchProgressPreferences.saveProgress(progress, profileId = profileId)
 
