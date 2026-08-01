@@ -141,6 +141,38 @@ jobs:
             --generate-notes || \
           gh release upload "${{ steps.ver.outputs.tag }}" dist/* --clobber
 
+      # The download links people actually use — tuvora.co/tv, and the aftv.news Downloader code
+      # pointing at it — are not a lookup. The site serves whatever a release last told it, so tell
+      # it now. This is the step that makes a released build reachable; if it fails the release is
+      # published but the short URL still serves the previous build, so it fails the job loudly.
+      - name: Publish the download pointer to tuvora.co
+        env:
+          RELEASE_TOKEN: ${{ secrets.TUVORA_RELEASE_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::warning::TUVORA_RELEASE_TOKEN is not set — tuvora.co/tv will keep serving the previous build"
+            exit 0
+          fi
+          ASSET="Tuvora-TV-${VERSION}.apk"
+          URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${ASSET}"
+          curl -fsS -X POST "https://tuvora.co/api/releases" \
+            -H "authorization: Bearer $RELEASE_TOKEN" \
+            -H "content-type: application/json" \
+            -d "$(jq -n --arg p "tv" --arg t "$TAG" --arg u "$URL" --arg n "$ASSET" \
+                  '{platform:$p, tag:$t, asset_url:$u, asset_name:$n}')"
+          echo
+
+          # One request, no retry loop: the pointer is stored, not cached, so it is either right now
+          # or something is wrong.
+          TARGET=$(curl -s -o /dev/null -w '%{redirect_url}' --max-time 20 "https://tuvora.co/tv")
+          echo "https://tuvora.co/tv -> $TARGET"
+          case "$TARGET" in
+            *"/download/${TAG}/"*) echo "✅ tuvora.co/tv serves ${TAG}" ;;
+            *) echo "::error::tuvora.co/tv serves '$TARGET', not ${TAG}"; exit 1 ;;
+          esac
+
       # Community announcements — no-ops until the DISCORD_/TELEGRAM_ secrets exist.
       # Never fails the release (all curl errors are swallowed).
       - name: Announce release (Discord + Telegram)
@@ -155,7 +187,7 @@ jobs:
             "" \
             "⬇️ APK: https://github.com/${{ github.repository }}/releases/tag/v${VERSION}" \
             "🏪 Play beta: join https://groups.google.com/g/tuvora-testers then https://play.google.com/apps/testing/com.tuvora.tv" \
-            "📖 Guides: https://paradox-kush.github.io/tuvora-site/guides.html")
+            "📖 Guides: https://tuvora.co/guides")
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
             jq -n --arg c "$MSG" '{content: $c}' | \
               curl -fsS -H 'Content-Type: application/json' -d @- "$DISCORD_WEBHOOK_URL" \

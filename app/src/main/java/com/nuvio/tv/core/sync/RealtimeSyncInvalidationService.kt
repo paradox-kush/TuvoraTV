@@ -7,18 +7,23 @@ import com.nuvio.tv.domain.model.AuthState
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.PostgresAction
+import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
@@ -47,9 +52,22 @@ class RealtimeSyncInvalidationService @Inject constructor(
     private val syncClientIdentity: SyncClientIdentity,
     private val startupSyncService: StartupSyncService
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Invalidation pulls are a convenience; nothing here is worth taking the process down for.
+    private val crashGuard = CoroutineExceptionHandler { _, error ->
+        Log.e(TAG, "Realtime sync invalidation failed", error)
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + crashGuard)
     private val pendingMutex = Mutex()
     private val pendingSurfaces = mutableSetOf<String>()
+
+    /**
+     * Channel names must never repeat for the lifetime of the process. `supabaseClient.channel(name)`
+     * hands back the *existing* channel when the name is already known to the realtime client, and a
+     * channel that has (re)joined refuses `postgresChangeFlow`. Restarting the subscription used to
+     * reset the attempt counter, so a restart could collide with a channel the client was still
+     * holding — and the throw crashed the app.
+     */
+    private val channelSequence = AtomicLong()
 
     private var observerJob: Job? = null
     private var subscriptionJob: Job? = null
@@ -99,37 +117,43 @@ class RealtimeSyncInvalidationService @Inject constructor(
         subscriptionJob = scope.launch {
             var attempt = 1
             while (isActive) {
-                val channelName = "sync-invalidations:$userId:$profileId:$attempt"
-                val channel = supabaseClient.channel(channelName)
-                val realtime = channel.realtime
-                val realtimeStatusJob = launch {
-                    realtime.status.collect { status ->
-                        Log.i(TAG, "Realtime client status=$status channel=$channelName")
-                    }
-                }
-                val channelStatusJob = launch {
-                    channel.status.collect { status ->
-                        Log.i(TAG, "Realtime channel status=$status channel=$channelName")
-                    }
-                }
-                val changesJob = channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
-                    table = "sync_invalidations"
-                    filter("user_id", FilterOperator.EQ, userId)
-                }.onEach { action ->
-                    handleInsert(profileId, action.record)
-                }.launchIn(this)
+                val channelName = "sync-invalidations:$userId:$profileId:${channelSequence.incrementAndGet()}"
+                var channel: RealtimeChannel? = null
+                var changesJob: Job? = null
+                var realtimeStatusJob: Job? = null
+                var channelStatusJob: Job? = null
 
                 try {
+                    val newChannel = supabaseClient.channel(channelName)
+                    channel = newChannel
+                    val realtime = newChannel.realtime
+                    realtimeStatusJob = launch {
+                        realtime.status.collect { status ->
+                            Log.i(TAG, "Realtime client status=$status channel=$channelName")
+                        }
+                    }
+                    channelStatusJob = launch {
+                        newChannel.status.collect { status ->
+                            Log.i(TAG, "Realtime channel status=$status channel=$channelName")
+                        }
+                    }
+                    changesJob = newChannel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
+                        table = "sync_invalidations"
+                        filter("user_id", FilterOperator.EQ, userId)
+                    }.onEach { action ->
+                        handleInsert(profileId, action.record)
+                    }.launchIn(this)
+
                     Log.i(TAG, "Subscribing to sync invalidations channel=$channelName attempt=$attempt user=$userId profile=$profileId")
                     withTimeout(REALTIME_SUBSCRIBE_TIMEOUT_MS) {
-                        channel.subscribe(blockUntilSubscribed = true)
+                        newChannel.subscribe(blockUntilSubscribed = true)
                     }
                     Log.i(TAG, "Subscribed to sync invalidations channel=$channelName profile=$profileId")
                     awaitCancellation()
                 } catch (error: TimeoutCancellationException) {
                     Log.e(
                         TAG,
-                        "Timed out subscribing to sync invalidations channel=$channelName realtimeStatus=${realtime.status.value} channelStatus=${channel.status.value}",
+                        "Timed out subscribing to sync invalidations channel=$channelName realtimeStatus=${channel?.realtime?.status?.value} channelStatus=${channel?.status?.value}",
                         error
                     )
                 } catch (error: CancellationException) {
@@ -137,16 +161,23 @@ class RealtimeSyncInvalidationService @Inject constructor(
                 } catch (error: Throwable) {
                     Log.e(
                         TAG,
-                        "Failed to subscribe to sync invalidations channel=$channelName realtimeStatus=${realtime.status.value} channelStatus=${channel.status.value}",
+                        "Failed to subscribe to sync invalidations channel=$channelName realtimeStatus=${channel?.realtime?.status?.value} channelStatus=${channel?.status?.value}",
                         error
                     )
                 } finally {
-                    changesJob.cancel()
-                    realtimeStatusJob.cancel()
-                    channelStatusJob.cancel()
-                    runCatching { channel.unsubscribe() }
-                        .onSuccess { Log.i(TAG, "Unsubscribed from sync invalidations channel=$channelName") }
-                        .onFailure { error -> Log.w(TAG, "Failed to unsubscribe from sync invalidations channel=$channelName", error) }
+                    changesJob?.cancel()
+                    realtimeStatusJob?.cancel()
+                    channelStatusJob?.cancel()
+                    channel?.let { doomed ->
+                        // removeChannel, not unsubscribe: unsubscribe leaves the channel registered
+                        // with the realtime client, which then rejoins it on every reconnect.
+                        // NonCancellable so a stop() still hands the channel back.
+                        withContext(NonCancellable) {
+                            runCatching { doomed.realtime.removeChannel(doomed) }
+                                .onSuccess { Log.i(TAG, "Removed sync invalidations channel=$channelName") }
+                                .onFailure { error -> Log.w(TAG, "Failed to remove sync invalidations channel=$channelName", error) }
+                        }
+                    }
                 }
 
                 if (isActive) {
