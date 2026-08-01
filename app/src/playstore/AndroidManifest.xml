@@ -5,10 +5,22 @@
     <uses-permission
         android:name="android.permission.REQUEST_INSTALL_PACKAGES"
         tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        tools:node="remove" />
 
     <uses-feature
         android:name="android.software.leanback"
         android:required="true"
         tools:replace="android:required" />
+
+    <application>
+        <service
+            android:name=".core.player.ExternalPlaybackKeepAliveService"
+            tools:node="remove" />
+    </application>
 
 </manifest>

@@ -38,11 +38,13 @@ internal object PlayerSubtitleCueParser {
             }
             val timing = lines.getOrNull(index) ?: continue
             if (!timing.contains("-->")) continue
-            val startTimeMs = parseStartTimeMs(timing) ?: continue
+            val (startTimeMs, endTimeMs) = parseStartEndTimeMs(timing) ?: continue
+            // Skip zero-duration cues that cause desync after scene transitions (#2757)
+            if (endTimeMs - startTimeMs <= 0) continue
             val textLines = lines.drop(index + 1)
             val cueText = normalizeCueText(textLines.joinToString(" "))
             if (cueText.isBlank()) continue
-            cues += SubtitleSyncCue(startTimeMs = startTimeMs, text = cueText)
+            cues += SubtitleSyncCue(startTimeMs = startTimeMs, endTimeMs = endTimeMs, text = cueText)
         }
         return cues
     }
@@ -77,8 +79,12 @@ internal object PlayerSubtitleCueParser {
                 continue
             }
 
-            val startTimeMs = parseStartTimeMs(timingLine)
-            if (startTimeMs == null) {
+            val (startTimeMs, endTimeMs) = parseStartEndTimeMs(timingLine) ?: run {
+                cursor++
+                continue
+            }
+            // Skip zero-duration cues that cause desync after scene transitions (#2757)
+            if (endTimeMs - startTimeMs <= 0) {
                 cursor++
                 continue
             }
@@ -91,12 +97,20 @@ internal object PlayerSubtitleCueParser {
             }
             val cueText = normalizeCueText(textParts.joinToString(" "))
             if (cueText.isNotBlank()) {
-                cues += SubtitleSyncCue(startTimeMs = startTimeMs, text = cueText)
+                cues += SubtitleSyncCue(startTimeMs = startTimeMs, endTimeMs = endTimeMs, text = cueText)
             }
             cursor = i + 1
         }
 
         return cues
+    }
+
+    private fun parseStartEndTimeMs(timingLine: String): Pair<Long, Long>? {
+        val parts = timingLine.split("-->")
+        if (parts.size != 2) return null
+        val startTimeMs = parseTimestampMs(parts[0].trim().substringBefore(' ')) ?: return null
+        val endTimeMs = parseTimestampMs(parts[1].trim().substringBefore(' ')) ?: return null
+        return startTimeMs to endTimeMs
     }
 
     private fun parseStartTimeMs(timingLine: String): Long? {
@@ -131,4 +145,3 @@ internal object PlayerSubtitleCueParser {
             .trim()
     }
 }
-

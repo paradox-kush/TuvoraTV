@@ -16,12 +16,9 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -50,20 +47,16 @@ class PosterOptionsControllerShowTest {
             isInLibrary = true,
             isWatched = false
         )
-        // the controller's launchIn collectors never complete (targetFlow is an infinite
-        // StateFlow), so bind them to a child scope the test cancels before runTest ends
-        val bindScope = CoroutineScope(coroutineContext + SupervisorJob())
-        controller.bind(bindScope)
+        controller.bind(backgroundScope)
 
         controller.show(samplePreview(), addonBaseUrl = null)
-        advanceUntilIdle()
+        runCurrent()
 
         val state = controller.state.value
         assertEquals(true, state.isInLibrary)
         assertEquals(false, state.isWatched)
         // Sanity: target was set so the dialog will actually render.
         assertTrue("target should be non-null after show()", state.target != null)
-        bindScope.cancel()
     }
 
     @Test
@@ -72,19 +65,15 @@ class PosterOptionsControllerShowTest {
             isInLibrary = false,
             isWatched = false
         )
-        // the controller's launchIn collectors never complete (targetFlow is an infinite
-        // StateFlow), so bind them to a child scope the test cancels before runTest ends
-        val bindScope = CoroutineScope(coroutineContext + SupervisorJob())
-        controller.bind(bindScope)
+        controller.bind(backgroundScope)
 
         controller.show(samplePreview(), addonBaseUrl = null)
-        advanceUntilIdle()
+        runCurrent()
 
         val state = controller.state.value
         assertEquals(false, state.isInLibrary)
         assertEquals(false, state.isWatched)
         assertTrue("target should be non-null after show()", state.target != null)
-        bindScope.cancel()
     }
 
     @Test
@@ -93,17 +82,13 @@ class PosterOptionsControllerShowTest {
             isInLibrary = false,
             isWatched = true
         )
-        // the controller's launchIn collectors never complete (targetFlow is an infinite
-        // StateFlow), so bind them to a child scope the test cancels before runTest ends
-        val bindScope = CoroutineScope(coroutineContext + SupervisorJob())
-        controller.bind(bindScope)
+        controller.bind(backgroundScope)
 
         controller.show(samplePreview(), addonBaseUrl = null)
-        advanceUntilIdle()
+        runCurrent()
 
         val state = controller.state.value
         assertEquals(true, state.isWatched)
-        bindScope.cancel()
     }
 
     @Test
@@ -112,6 +97,7 @@ class PosterOptionsControllerShowTest {
         val libraryRepository = mockk<LibraryRepository>(relaxed = true) {
             every { sourceMode } returns flowOf(LibrarySourceMode.LOCAL)
             every { listTabs } returns flowOf(emptyList())
+            every { membershipListTabs } returns flowOf(emptyList())
             every { isInLibrary(any(), any()) } returns flowOf(false)
         }
         val watchProgressRepository = mockk<WatchProgressRepository>(relaxed = true) {
@@ -136,18 +122,14 @@ class PosterOptionsControllerShowTest {
             watchedSeriesStateHolder = watchedSeriesStateHolder,
             tmdbService = tmdbService
         )
-        // the controller's launchIn collectors never complete (targetFlow is an infinite
-        // StateFlow), so bind them to a child scope the test cancels before runTest ends
-        val bindScope = CoroutineScope(coroutineContext + SupervisorJob())
-        controller.bind(bindScope)
+        controller.bind(backgroundScope)
 
         controller.show(samplePreview(id = "tmdb:111"), addonBaseUrl = null)
         controller.show(samplePreview(id = "tmdb:222"), addonBaseUrl = null)
-        advanceUntilIdle()
+        runCurrent()
 
         val state = controller.state.value
         assertEquals("tt0000002", state.target?.id)
-        bindScope.cancel()
     }
 
     @Test
@@ -158,6 +140,7 @@ class PosterOptionsControllerShowTest {
         val libraryRepository = mockk<LibraryRepository>(relaxed = true) {
             every { sourceMode } returns flowOf(LibrarySourceMode.LOCAL)
             every { listTabs } returns flowOf(emptyList())
+            every { membershipListTabs } returns flowOf(emptyList())
             // The item is stored under the canonical IMDB id; a query under the
             // raw TMDB id would miss.
             every { isInLibrary(tmdbId, any()) } returns flowOf(false)
@@ -181,18 +164,14 @@ class PosterOptionsControllerShowTest {
             watchedSeriesStateHolder = watchedSeriesStateHolder,
             tmdbService = tmdbService
         )
-        // the controller's launchIn collectors never complete (targetFlow is an infinite
-        // StateFlow), so bind them to a child scope the test cancels before runTest ends
-        val bindScope = CoroutineScope(coroutineContext + SupervisorJob())
-        controller.bind(bindScope)
+        controller.bind(backgroundScope)
 
         controller.show(samplePreview(id = tmdbId), addonBaseUrl = null)
-        advanceUntilIdle()
+        runCurrent()
 
         val state = controller.state.value
         assertEquals(true, state.isInLibrary)
         assertEquals(imdbId, state.target?.id)
-        bindScope.cancel()
     }
 
     private fun newController(isInLibrary: Boolean, isWatched: Boolean): PosterOptionsController {
@@ -200,6 +179,7 @@ class PosterOptionsControllerShowTest {
         val libraryRepository = mockk<LibraryRepository>(relaxed = true) {
             every { sourceMode } returns flowOf(LibrarySourceMode.LOCAL)
             every { listTabs } returns flowOf(emptyList())
+            every { membershipListTabs } returns flowOf(emptyList())
             every { isInLibrary(any(), any()) } returns flowOf(isInLibrary)
         }
         val watchProgressRepository = mockk<WatchProgressRepository>(relaxed = true) {

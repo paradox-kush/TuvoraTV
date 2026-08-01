@@ -282,6 +282,12 @@ internal fun PlayerRuntimeController.disableSubtitles() {
 }
 
 internal fun PlayerRuntimeController.refreshActiveSubtitleTrackAfterTimingChange() {
+    // MPV applies delay via setSubtitleDelayMs; live Exo delay is applied by
+    // SubtitleOffsetRenderer. This path only exists to flush any cue already on
+    // screen under the previous offset. It must re-apply the active override
+    // after re-enabling TEXT - otherwise the track stays selected in UI but
+    // ExoPlayer has no TEXT override and subtitles disappear (issue #2710).
+    if (isUsingMpvEngine()) return
     val player = _exoPlayer ?: return
     val state = _uiState.value
     if (state.selectedAddonSubtitle == null && state.selectedSubtitleTrackIndex < 0) return
@@ -292,17 +298,41 @@ internal fun PlayerRuntimeController.refreshActiveSubtitleTrackAfterTimingChange
         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
         .build()
 
-    scope.launch {
+    subtitleTimingRefreshJob?.cancel()
+    subtitleTimingRefreshJob = scope.launch {
         delay(90)
         if (_exoPlayer !== player) return@launch
         val latestState = _uiState.value
-        if (latestState.selectedAddonSubtitle == null && latestState.selectedSubtitleTrackIndex < 0) {
+        val latestAddon = latestState.selectedAddonSubtitle
+        val latestInternalIndex = latestState.selectedSubtitleTrackIndex
+        if (latestAddon == null && latestInternalIndex < 0) {
             return@launch
         }
+
+        // Re-enable TEXT, then restore the same selection override that was active
+        // before the bounce. setTrackTypeDisabled(false) alone is not enough when
+        // the previous selection was applied via TrackSelectionOverride.
         player.trackSelectionParameters = player.trackSelectionParameters
             .buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .build()
+
+        if (latestAddon != null) {
+            val trackId = buildAddonSubtitleTrackId(latestAddon)
+            val restored = applyAddonSubtitleOverride(trackId) ||
+                applyAddonSubtitleOverrideByLanguage(
+                    PlayerSubtitleUtils.normalizeLanguageCode(latestAddon.lang)
+                )
+            if (!restored) {
+                Log.w(
+                    PlayerRuntimeController.TAG,
+                    "refreshActiveSubtitleTrackAfterTimingChange: failed to restore addon " +
+                        "subtitle id=${latestAddon.id} lang=${latestAddon.lang}"
+                )
+            }
+        } else {
+            selectSubtitleTrack(latestInternalIndex)
+        }
     }
 }
 

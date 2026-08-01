@@ -6,6 +6,20 @@ import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.MetaPreview
 
+internal const val MIN_SEARCH_QUERY_LENGTH = 2
+
+internal fun submittedSearchQuery(rawQuery: String): String =
+    rawQuery.trim().takeIf { it.length >= MIN_SEARCH_QUERY_LENGTH }.orEmpty()
+
+internal fun shouldShowDiscoverInSearch(
+    discoverLocation: DiscoverLocation,
+    query: String,
+    submittedQuery: String
+): Boolean =
+    discoverLocation == DiscoverLocation.IN_SEARCH &&
+        query.trim().length < MIN_SEARCH_QUERY_LENGTH &&
+        submittedQuery.isBlank()
+
 @Immutable
 data class SearchUiState(
     val query: String = "",

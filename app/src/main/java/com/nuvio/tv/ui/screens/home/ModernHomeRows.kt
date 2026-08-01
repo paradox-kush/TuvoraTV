@@ -317,8 +317,13 @@ private fun ModernCatalogRowItem(
     val suppressCardExpansionForHeroTrailer =
         effectiveAutoplayEnabled &&
                 trailerPlaybackTarget == FocusedPosterTrailerPlaybackTarget.HERO_MEDIA
+    // Expansion is armed from a parent-level focusKey timer that can outlive real
+    // card focus (e.g. user moves left into the sidebar). Never show the expanded
+    // backdrop on a card that is not actually focused (#2815).
     val effectiveBackdropExpanded by remember(isBackdropExpanded, suppressCardExpansionForHeroTrailer) {
-        derivedStateOf { isBackdropExpanded() && !suppressCardExpansionForHeroTrailer }
+        derivedStateOf {
+            isCardFocused && isBackdropExpanded() && !suppressCardExpansionForHeroTrailer
+        }
     }
 
     val isSidebarExpanded = LocalSidebarExpanded.current
@@ -827,14 +832,7 @@ internal fun ModernRowSection(
                             ?: itemFocusRequesters[0]
                             ?: FocusRequester.Default
                     }
-                    .focusGroup()
-                    .then(
-                        if (row.isLoading) {
-                            Modifier.onPreviewKeyEvent { event ->
-                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight
-                            }
-                        } else Modifier
-                    ),
+                    .focusGroup(),
                 contentPadding = PaddingValues(horizontal = rowStartPadding),
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
             ) {
@@ -893,6 +891,8 @@ internal fun ModernRowSection(
                             val nextCatalogItem = row.items.list.getOrNull(index + 1)?.metaPreview
                             val prevCatalogItem = row.items.list.getOrNull(index - 1)?.metaPreview
                             val metaPreview = item.metaPreview
+                            val isPlaceholder = payload is ModernPayload.Catalog &&
+                                payload.itemId.startsWith("__placeholder_")
                             val onLongPress: () -> Unit = when {
                                 payload is ModernPayload.Catalog && metaPreview != null -> remember(metaPreview, payload.addonBaseUrl) {
                                     {
@@ -918,6 +918,10 @@ internal fun ModernRowSection(
                                         expandedCatalogFocusKey.value == expandedFocusKey
                                 }
                             }
+                            val placeholderFocusBlock = isPlaceholder && index > 0
+                            Box(modifier = if (placeholderFocusBlock) {
+                                Modifier.focusProperties { canFocus = false }
+                            } else Modifier) {
                             ModernCatalogRowItem(
                                 item = item,
                                 payload = payload,
@@ -955,6 +959,7 @@ internal fun ModernRowSection(
                                 onExpandedCatalogFocusKeyChange = onExpandedCatalogFocusKeyChange,
                                 enrichedPreviews = enrichedPreviews
                             )
+                            } // Box
                         }
                     }
                 }
@@ -1420,15 +1425,20 @@ private fun ModernCarouselCard(
 }
 
 
+/**
+ * Keys that should collapse an expanded poster so navigation can re-arm expand.
+ *
+ * Select keys (Center / Enter) are intentionally excluded: holding them opens the
+ * action menu / long-press options. Resetting the expand timer on those keys made
+ * the Expanded Card collapse and re-expand (and restart trailers) while the menu
+ * was opening (#2574).
+ */
 private fun shouldResetBackdropTimer(key: Key): Boolean {
     return when (key) {
         Key.DirectionUp,
         Key.DirectionDown,
         Key.DirectionLeft,
         Key.DirectionRight,
-        Key.DirectionCenter,
-        Key.Enter,
-        Key.NumPadEnter,
         Key.Back -> true
         else -> false
     }

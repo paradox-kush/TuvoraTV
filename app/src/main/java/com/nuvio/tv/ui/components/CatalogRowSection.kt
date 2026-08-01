@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.components
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +61,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.domain.model.CatalogRow
+import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.stableItemKey
 import com.nuvio.tv.ui.util.formatAddonTypeLabel
@@ -305,6 +307,7 @@ fun CatalogRowSection(
                 ) { FocusRequester() }
 
                 val isPlaceholder = item.id.startsWith("__placeholder_")
+                val isNonFirstPlaceholder = isPlaceholder && index > 0
                 val onItemClickStable = remember(item.id, catalogRow.addonBaseUrl) {
                     { if (!isPlaceholder) latestOnItemClick(item.id, item.apiType, catalogRow.addonBaseUrl) }
                 }
@@ -341,6 +344,10 @@ fun CatalogRowSection(
                     modifier = Modifier
                         .then(directionalFocusModifier)
                         .then(
+                            if (isNonFirstPlaceholder) Modifier.focusProperties { canFocus = false }
+                            else Modifier
+                        )
+                        .then(
                             if (isEntryTarget) Modifier.focusRequester(entryFocusRequester!!) else Modifier
                         ),
                     focusRequester = cardFocusRequester
@@ -349,18 +356,38 @@ fun CatalogRowSection(
 
             if (!showSeeAll && catalogRow.isLoading) {
                 item(key = "${catalogRow.type}_${catalogRow.catalogId}_loading") {
-                    Box(
+                    val cardDepthStyle = LocalCardDepthStyle.current
+                    Card(
+                        onClick = {},
                         modifier = Modifier
                             .width(posterCardStyle.width)
-                            .height(posterCardStyle.height),
-                        contentAlignment = Alignment.Center
+                            .height(posterCardStyle.height)
+                            .focusProperties { canFocus = false },
+                        shape = CardDefaults.shape(shape = seeAllCardShape),
+                        colors = CardDefaults.colors(
+                            containerColor = NuvioTheme.colors.BackgroundCard,
+                            focusedContainerColor = NuvioTheme.colors.BackgroundCard
+                        )
                     ) {
-                        LoadingIndicator()
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(seeAllCardShape)
+                                .nuvioCardDepth(
+                                    shape = seeAllCardShape,
+                                    surface = CardDepthSurface.POSTERS,
+                                    style = cardDepthStyle
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            LoadingIndicator()
+                        }
                     }
                 }
             }
             if (showSeeAll) {
                 item(key = "${catalogRow.type}_${catalogRow.catalogId}_see_all") {
+                    val cardDepthStyle = LocalCardDepthStyle.current
                     Card(
                         onClick = onSeeAll,
                         modifier = Modifier
@@ -381,7 +408,14 @@ fun CatalogRowSection(
                         scale = CardDefaults.scale(focusedScale = posterCardStyle.focusedScale)
                     ) {
                         Box(
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(seeAllCardShape)
+                                .nuvioCardDepth(
+                                    shape = seeAllCardShape,
+                                    surface = CardDepthSurface.POSTERS,
+                                    style = cardDepthStyle
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(

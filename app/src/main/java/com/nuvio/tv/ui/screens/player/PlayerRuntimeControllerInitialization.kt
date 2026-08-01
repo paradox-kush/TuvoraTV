@@ -2,14 +2,15 @@ package com.nuvio.tv.ui.screens.player
 
 import android.content.Context
 import android.content.res.Resources
+import android.graphics.RectF
+import android.media.MediaFormat
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.os.Build
-import android.util.Log
-import android.view.accessibility.CaptioningManager
-import android.media.MediaFormat
 import android.os.Handler
 import android.os.SystemClock
+import android.util.Log
+import android.view.accessibility.CaptioningManager
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -57,6 +58,8 @@ import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
 import androidx.media3.session.MediaSession
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.nuvio.tv.R
 import com.nuvio.tv.core.player.DolbyVisionCodecFallback
 import com.nuvio.tv.core.player.DolbyVisionBaseLayerPolicy
@@ -66,6 +69,7 @@ import com.nuvio.tv.core.player.DolbyVisionConversionStats
 import com.nuvio.tv.core.player.DolbyVisionExtractorsFactory
 import com.nuvio.tv.core.player.DoviBridge
 import com.nuvio.tv.core.player.LastPlaybackDiagnostics
+import com.nuvio.tv.core.tracking.TrackingScrobbleAction
 import com.nuvio.tv.ui.screens.settings.MemoryBudget
 import com.nuvio.tv.data.local.AddonSubtitleStartupMode
 import com.nuvio.tv.data.local.AudioLanguageOption
@@ -266,18 +270,30 @@ internal fun PlayerRuntimeController.initializePlayer(
                 message = context.getString(R.string.player_loading_detecting_format)
             )
 
+            resolveCurrentStreamMimeType(
+                url = url,
+                headers = headers
+            )
+
             val afrJob = async {
                 runAfrPreflightIfEnabled(
                     url = url,
                     headers = headers,
                     frameRateMatchingMode = playerSettings.frameRateMatchingMode,
-                    resolutionMatchingEnabled = playerSettings.resolutionMatchingEnabled
+                    resolutionMatchingEnabled = playerSettings.resolutionMatchingEnabled,
+                    mimeType = currentStreamMimeType
                 )
             }
             if (effectiveInternalPlayerEngine == InternalPlayerEngine.MVP_PLAYER) {
                 mpvInitializationInProgress = true
                 try {
-                    afrJob.await()
+                    val awaitedAfr = withTimeoutOrNull(AFR_PREFLIGHT_TOTAL_TIMEOUT_MS) {
+                        afrJob.await()
+                    }
+                    if (awaitedAfr == null) {
+                        Log.w(PlayerRuntimeController.TAG, "AFR preflight await timed out in MPV branch; cancelling afrJob")
+                        afrJob.cancel()
+                    }
                     if (mpvDelayStartAfterAfrSwitch) {
                         Log.d(PlayerRuntimeController.TAG, "AFR display mode switched; delaying MPV start by ${MPV_AFR_SETTLE_DELAY_MS}ms")
                         delay(MPV_AFR_SETTLE_DELAY_MS)
@@ -311,10 +327,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                 }
                 return@launch
             }
-            resolveCurrentStreamMimeType(
-                url = url,
-                headers = headers
-            )
             mpvInitializationInProgress = false
 
             // ── ExoPlayer Dolby Vision Logic (mode-driven via Dv7HandlingMode) ──
@@ -395,7 +407,13 @@ internal fun PlayerRuntimeController.initializePlayer(
                     selfTest = DoviBridge.SelfTestResult(false, "not-run", 0, 0)
                 )
             }
-            isExperimentalDv7ToDv81ActiveForCurrentPlayback = dv7ToDv81SettingActive && dv7ToDv81Probe.supported
+            // A stream that previously failed with conversion armed is forced to the HEVC
+            // base layer via dv7ToHevcForcedStreamUrls; that override must also disarm the
+            // conversion/extractor path, otherwise the retry rebuilds the exact same broken
+            // pipeline (stock extractor + no vendored MKV path) and fails identically.
+            val dv7ConversionDisarmedForUrl = dv7ToHevcForcedStreamUrls.contains(url)
+            isExperimentalDv7ToDv81ActiveForCurrentPlayback =
+                dv7ToDv81SettingActive && dv7ToDv81Probe.supported && !dv7ConversionDisarmedForUrl
             // AUTO fallback: if AUTO chose DV81 but the probe failed for this stream,
             // downgrade to HDR10_BASE_LAYER so the user still gets a picture.
             if (playerSettings.dv7HandlingMode == Dv7HandlingMode.AUTO &&
@@ -608,7 +626,13 @@ internal fun PlayerRuntimeController.initializePlayer(
             isVc1TrackSelectionBypassActiveForCurrentPlayback = vc1TrackSelectionBypassActive
 
             val startupSubtitlePreparation = prepareStreamStartSubtitles(playerSettings)
-            afrJob.await()
+            val awaitedAfr = withTimeoutOrNull(AFR_PREFLIGHT_TOTAL_TIMEOUT_MS) {
+                afrJob.await()
+            }
+            if (awaitedAfr == null) {
+                Log.w(PlayerRuntimeController.TAG, "AFR preflight await timed out in ExoPlayer branch; cancelling afrJob")
+                afrJob.cancel()
+            }
 
             // ── Libass Setup (From 0.5.7-beta/Left) ──
             requestedUseLibassByUser = playerSettings.useLibass
@@ -809,6 +833,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                 isBuiltInSubtitleProvider = {
                     _uiState.value.selectedAddonSubtitle == null
                 },
+                videoBoundsFractionProvider = {
+                    val pv = exoPlayerView
+                    if (pv != null) pv.videoBoundsFraction(videoAspectRatio) else null
+                },
                 gainAudioProcessor = gainAudioProcessor,
                 downmixEnabled = playerSettings.downmixEnabled,
                 audioOutputChannels = playerSettings.audioOutputChannels,
@@ -991,20 +1019,23 @@ internal fun PlayerRuntimeController.initializePlayer(
                     message = context.getString(R.string.player_loading_starting)
                 )
                 val isTunneledPlayback = playerSettings.tunnelingEnabled
-                // Always start paused — playback begins in onRenderedFirstFrame()
-                // so audio and video start in perfect sync. Without this, the
-                // audio renderer races ahead by 1-2s while the video decoder
-                // is still decoding the first I-frame.
+                // Hold playWhenReady=false through prepare() so audio does not race ahead
+                // while the video decoder is still opening. The first STATE_READY primes the
+                // pipeline (ColdStartPrime); synchronized play() begins in onRenderedFirstFrame().
                 //
-                // Exception: tunneled playback bypasses the normal video
-                // rendering pipeline so onRenderedFirstFrame() never fires.
-                // In that case we fall back to starting on STATE_READY.
-                playWhenReady = !startPaused && !userPausedManually
+                // Exception: tunneled playback bypasses the normal video rendering pipeline
+                // so onRenderedFirstFrame() never fires — TunneledFirstReady starts on READY.
+                playWhenReady = false
                 prepare()
 
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (isReleasingPlayer) return
+                        logScrobbleDiagnostic(
+                            "exo_playback_state",
+                            "playbackState=$playbackState playWhenReady=$playWhenReady isPlaying=$isPlaying " +
+                                "userPaused=$userPausedManually"
+                        )
                         if (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY) {
                             mediaSourceFactory.unlockStartupPrefetch()
                         }
@@ -1012,12 +1043,22 @@ internal fun PlayerRuntimeController.initializePlayer(
                         if (playerDuration > lastKnownDuration) { lastKnownDuration = playerDuration }
                         val isBuffering = playbackState == Player.STATE_BUFFERING
                         updatePlaybackTimeline(duration = playerDuration.coerceAtLeast(0L))
+                        // Only mark playbackEnded for real finishes so PlayerScreen does not
+                        // dispatch next-episode navigation for short debrid/error placeholders.
+                        val naturalEnded = playbackState == Player.STATE_ENDED &&
+                            shouldTreatAsNaturalPlaybackCompletion(
+                                hasRenderedFirstFrame = hasRenderedFirstFrame,
+                                hasFatalError = !_uiState.value.error.isNullOrBlank(),
+                                durationMs = playerDuration.coerceAtLeast(0L).let { d ->
+                                    maxOf(d, lastKnownDuration)
+                                }
+                            )
                         _uiState.update {
                             it.copy(
                                 isBuffering = if (NuvioExoPlayerPerformanceHelper.shouldSuppressBufferingUi(
                                     suppressBufferingUiForSeek, seekBufferingUiDeferred, isBuffering
                                 )) false else isBuffering,
-                                playbackEnded = playbackState == Player.STATE_ENDED
+                                playbackEnded = naturalEnded
                             )
                         }
                         updateAudioControlAvailability()
@@ -1094,19 +1135,31 @@ internal fun PlayerRuntimeController.initializePlayer(
                             // for onRenderedFirstFrame() to ensure A/V sync.
                             // Exception: tunneled playback never fires
                             // onRenderedFirstFrame(), so we must start here.
-                            if (shouldEnforceAutoplayOnFirstReady) {
-                                shouldEnforceAutoplayOnFirstReady = false
-                                if (isTunneledPlayback) {
-                                    // Tunneled mode — onRenderedFirstFrame() won't
-                                    // fire; treat STATE_READY as the sync point.
-                                    hasRenderedFirstFrame = true
+                            val readyTransition = PlayerStartupPlaybackPolicy.onStateReady(
+                                PlayerStartupPlaybackPolicy.ReadyState(
+                                    shouldEnforceAutoplayOnFirstReady = shouldEnforceAutoplayOnFirstReady,
+                                    hasRenderedFirstFrame = hasRenderedFirstFrame,
+                                    userPausedManually = userPausedManually,
+                                    startPaused = startPaused,
+                                    isTunneledPlayback = isTunneledPlayback,
+                                )
+                            )
+                            shouldEnforceAutoplayOnFirstReady =
+                                readyTransition.nextState.shouldEnforceAutoplayOnFirstReady
+                            if (readyTransition.nextState.hasRenderedFirstFrame && isTunneledPlayback) {
+                                hasRenderedFirstFrame = true
+                            }
+                            when (val action = readyTransition.action) {
+                                is PlayerStartupPlaybackPolicy.ReadyAction.TunneledFirstReady -> {
                                     mediaSourceFactory.unlockStartupPrefetch()
                                     playbackAnalyticsDiagnostics.onSyntheticFirstFrame(this@apply)
                                     if (_uiState.value.postPlayDismissedForCurrentEpisode) {
                                         _uiState.update { it.copy(postPlayDismissedForCurrentEpisode = false) }
                                     }
-                                    if (!startPaused && !userPausedManually) {
+                                    if (action.setPlayWhenReady) {
                                         playWhenReady = true
+                                    }
+                                    if (action.callPlay) {
                                         play()
                                     }
                                     finishLoadingDiagnostics("first_frame_ready")
@@ -1120,9 +1173,28 @@ internal fun PlayerRuntimeController.initializePlayer(
                                         )
                                     }
                                 }
-                                // Non-tunneled: playback will start in onRenderedFirstFrame().
-                            } else if (!userPausedManually && hasRenderedFirstFrame) {
-                                play()
+                                is PlayerStartupPlaybackPolicy.ReadyAction.ColdStartPrime -> {
+                                    if (action.setPlayWhenReady) {
+                                        playWhenReady = true
+                                    }
+                                    if (action.callPlay) {
+                                        play()
+                                    }
+                                }
+                                is PlayerStartupPlaybackPolicy.ReadyAction.PreFirstFrameResume -> {
+                                    if (action.setPlayWhenReady) {
+                                        playWhenReady = true
+                                    }
+                                    if (action.callPlay) {
+                                        play()
+                                    }
+                                }
+                                is PlayerStartupPlaybackPolicy.ReadyAction.PostFirstFrameResume -> {
+                                    if (action.callPlay) {
+                                        play()
+                                    }
+                                }
+                                PlayerStartupPlaybackPolicy.ReadyAction.None -> Unit
                             }
                             tryApplyPendingResumeProgress(this@apply)
                             _uiState.value.pendingSeekPosition?.let { position ->
@@ -1150,7 +1222,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                         }
 
                         if (playbackState == Player.STATE_ENDED) {
-                            emitCompletionScrobbleStop(progressPercent = 99.5f)
                             // Re-persist diagnostics with the final rebuffer totals (the
                             // first-frame snapshot captured 0, since rebuffers accrue after).
                             Log.i(
@@ -1169,14 +1240,20 @@ internal fun PlayerRuntimeController.initializePlayer(
                                     runCatching { playerSettingsDataStore.setLastPlaybackDiagnostics(endDiagnostics) }
                                 }
                             }
-                            saveWatchProgress()
-                            resetPostPlayStateAfterPlaybackEnded()
+                            // Marks watched + auto-play next only for real episode finishes;
+                            // short debrid/error placeholders are ignored (see #2819).
+                            handleNaturalPlaybackEnded()
                         }
 
                         refreshStableProgressResetGate()
                     }
 
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        logScrobbleDiagnostic(
+                            "exo_is_playing_changed",
+                            "isPlaying=$isPlaying playbackState=$playbackState playWhenReady=$playWhenReady " +
+                                "userPaused=$userPausedManually"
+                        )
                         _uiState.update { it.copy(isPlaying = isPlaying) }
                         if (isPlaying) {
                             userPausedManually = false
@@ -1195,7 +1272,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                             if (playbackState == Player.STATE_BUFFERING) {
                                 saveWatchProgressIfNeeded()
                             } else {
-                                emitStopScrobbleForCurrentProgress()
+                                when (trackingActionForNonPlayingState(playbackState)) {
+                                    TrackingScrobbleAction.PAUSE -> emitPauseScrobbleForCurrentProgress()
+                                    TrackingScrobbleAction.STOP -> emitStopScrobbleForCurrentProgress()
+                                    TrackingScrobbleAction.START, null -> Unit
+                                }
                                 saveWatchProgress()
                             }
                         }
@@ -1296,11 +1377,58 @@ internal fun PlayerRuntimeController.initializePlayer(
                             return
                         }
 
+                        // DV conversion armed for this stream but the player hit a
+                        // FAILED_RUNTIME_CHECK (8000): the converted bitstream trips a
+                        // renderer/extractor assertion before the codec ever reports a
+                        // decoding failure. That is a video-path failure, so take the same
+                        // fallback ladder as a DV decoder failure instead of burning the
+                        // audio fallbacks (safe-audio/audio-disabled) on it — they rebuild
+                        // the player with the same broken conversion and fail identically.
+                        if (error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK &&
+                            (isExperimentalDv7ToDv81ActiveForCurrentPlayback ||
+                                isManualDv81Mode2ActiveForCurrentPlayback) &&
+                            !isMapDv7ToHevcActiveForCurrentPlayback
+                        ) {
+                            if (isManualDv81Mode2ActiveForCurrentPlayback &&
+                                !dv7Mode1ForcedStreamUrls.contains(currentStreamUrl)
+                            ) {
+                                dv7Mode1ForcedStreamUrls.add(currentStreamUrl)
+                                Log.i(
+                                    PlayerRuntimeController.TAG,
+                                    "DV7_MODE2_RUNTIME_CHECK_FALLBACK: mode 2 hit FAILED_RUNTIME_CHECK; " +
+                                            "retrying stream at mode 1 host=${currentStreamUrl.safeHost()}"
+                                )
+                                retryCurrentStreamWithDv7Mode1Fallback(currentPosition)
+                                return
+                            }
+                            if (isExperimentalDv7ToDv81ActiveForCurrentPlayback &&
+                                !hasAttemptedDv7ToDv81ForCurrentPlayback
+                            ) {
+                                hasAttemptedDv7ToDv81ForCurrentPlayback = true
+                                val probe = DoviBridge.probeRealtimeConversionSupport(currentStreamUrl)
+                                dv7ToDv81LastProbeReasonForCurrentPlayback = probe.reason
+                                dv7ToDv81BridgeVersionForCurrentPlayback = probe.bridgeVersion
+                            }
+                            Log.i(
+                                PlayerRuntimeController.TAG,
+                                "DV_RUNTIME_CHECK_FALLBACK: FAILED_RUNTIME_CHECK with DV conversion active; " +
+                                        "forcing HDR10 base layer for host=${currentStreamUrl.safeHost()}"
+                            )
+                            dv7ToHevcForcedStreamUrls.add(currentStreamUrl)
+                            retryCurrentStreamWithDolbyVisionFallback(currentPosition)
+                            return
+                        }
+
                         if ((error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
                              error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK) &&
                             !autoSwitchInternalPlayerOnErrorEnabled) {
                             if (!isSafeAudioModeActiveForCurrentPlayback) {
                                 safeAudioForcedStreamUrls.add(currentStreamUrl)
+                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
+                                return
+                            }
+                            if (!hasTriedAudioPcmFallback) {
+                                hasTriedAudioPcmFallback = true
                                 retryCurrentStreamWithSafeAudioFallback(currentPosition)
                                 return
                             }
@@ -1322,6 +1450,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 retryCurrentStreamWithSafeAudioFallback(currentPosition)
                                 return
                             }
+                            if (!hasTriedAudioPcmFallback) {
+                                hasTriedAudioPcmFallback = true
+                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
+                                return
+                            }
                             if (!isAudioDisabledForCurrentPlayback) {
                                 audioDisabledForcedStreamUrls.add(currentStreamUrl)
                                 retryCurrentStreamWithAudioDisabled(currentPosition)
@@ -1332,6 +1465,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                         if (error.isStuckPlayingNoProgress()) {
                             if (!isSafeAudioModeActiveForCurrentPlayback) {
                                 safeAudioForcedStreamUrls.add(currentStreamUrl)
+                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
+                                return
+                            }
+                            if (!hasTriedAudioPcmFallback) {
+                                hasTriedAudioPcmFallback = true
                                 retryCurrentStreamWithSafeAudioFallback(currentPosition)
                                 return
                             }
@@ -1362,7 +1500,7 @@ internal fun PlayerRuntimeController.initializePlayer(
 
                         val responseCode = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
                         if (responseCode == 416 && !hasRetriedCurrentStreamAfter416) {
-                            retryCurrentStreamFromStartAfter416()
+                            retryCurrentStreamFromStartAfter416(currentPosition)
                             return
                         }
 
@@ -1374,6 +1512,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                         if (attemptIptvLinkRefresh(error, detailedError)) {
                             return
                         }
+
+                        // Upstream: on a container/manifest parsing error, retry as HLS
+                        // (debrid caching streams mislabel their container).
+                        handleParsingErrorFallback(error)
 
                         // ── Main Engine Failover ──
                         if (maybeAutoSwitchInternalPlayerOnStartupError(detailedError = detailedError, allowEngineFailover = allowEngineFailover)) {
@@ -1411,13 +1553,18 @@ internal fun PlayerRuntimeController.initializePlayer(
                             }
                         }
 
+                        // Fatal error: stop any next-episode auto-play that may have been
+                        // armed by a short placeholder ENDED or residual post-play state.
+                        cancelNextEpisodeAutoPlayOnFatalError()
                         _uiState.update {
                             it.copy(
                                 error = detailedError,
                                 showLoadingOverlay = false,
                                 showPauseOverlay = false,
                                 loadingIssueReportVisible = false,
-                                loadingIssueElapsedMs = 0L
+                                loadingIssueElapsedMs = 0L,
+                                playbackEnded = false,
+                                postPlayMode = null
                             )
                         }
                     }
@@ -1970,6 +2117,7 @@ private class SubtitleOffsetRenderersFactory(
     private val audioDelayUsProvider: () -> Long,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
     private val isBuiltInSubtitleProvider: () -> Boolean,
+    private val videoBoundsFractionProvider: () -> RectF?,
     private val gainAudioProcessor: GainAudioProcessor,
     private val downmixEnabled: Boolean,
     private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
@@ -2050,7 +2198,8 @@ private class SubtitleOffsetRenderersFactory(
         val normalizingOutput = CueNormalizingTextOutput(
             delegate = output,
             shouldNormalizeCuePositionProvider = shouldNormalizeCuePositionProvider,
-            isBuiltInSubtitleProvider = isBuiltInSubtitleProvider
+            isBuiltInSubtitleProvider = isBuiltInSubtitleProvider,
+            videoBoundsFractionProvider = videoBoundsFractionProvider
         )
         val startIndex = out.size
         super.buildTextRenderers(context, normalizingOutput, outputLooper, extensionRendererMode, out)
@@ -2098,26 +2247,53 @@ private fun FfmpegAudioRenderer.applyDownmixSettings(
 private class CueNormalizingTextOutput(
     private val delegate: TextOutput,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
-    private val isBuiltInSubtitleProvider: () -> Boolean
+    private val isBuiltInSubtitleProvider: () -> Boolean,
+    private val videoBoundsFractionProvider: () -> RectF?
 ) : TextOutput {
 
     override fun onCues(cueGroup: CueGroup) {
-        val processed = cueGroup.cues.map { cue ->
-            var c = fixRtlCueText(cue)
-            if (shouldNormalizeCuePositionProvider()) c = normalizeCuePosition(c)
-            c
-        }
+        val processed = cueGroup.cues.map(::processCue)
         delegate.onCues(CueGroup(processed, cueGroup.presentationTimeUs))
     }
 
     @Deprecated("Uses the deprecated Media3 callback for text outputs.")
     override fun onCues(cues: List<Cue>) {
-        val processed = cues.map { cue ->
-            var c = fixRtlCueText(cue)
-            if (shouldNormalizeCuePositionProvider()) c = normalizeCuePosition(c)
-            c
+        delegate.onCues(cues.map(::processCue))
+    }
+
+    private fun processCue(cue: Cue): Cue {
+        var processed = fixRtlCueText(cue)
+        if (shouldNormalizeCuePositionProvider()) {
+            processed = normalizeCuePosition(processed)
         }
-        delegate.onCues(processed)
+        if (processed.bitmap != null) {
+            val bounds = videoBoundsFractionProvider()
+            if (bounds != null && bounds.width() > 0f && bounds.height() > 0f) {
+                val isIdentity = bounds.left == 0f && bounds.top == 0f
+                    && bounds.width() == 1f && bounds.height() == 1f
+                if (!isIdentity) {
+                    processed = remapBitmapCueToVideoBounds(processed, bounds)
+                }
+            }
+        }
+        return processed
+    }
+
+    private fun remapBitmapCueToVideoBounds(cue: Cue, bounds: RectF): Cue {
+        val builder = cue.buildUpon()
+        if (cue.position != Cue.DIMEN_UNSET) {
+            builder.setPosition(bounds.left + cue.position * bounds.width())
+        }
+        if (cue.size != Cue.DIMEN_UNSET) {
+            builder.setSize(cue.size * bounds.width())
+        }
+        if (cue.lineType == Cue.LINE_TYPE_FRACTION && cue.line != Cue.DIMEN_UNSET) {
+            builder.setLine(bounds.top + cue.line * bounds.height(), Cue.LINE_TYPE_FRACTION)
+        }
+        if (cue.bitmapHeight != Cue.DIMEN_UNSET) {
+            builder.setBitmapHeight(cue.bitmapHeight * bounds.height())
+        }
+        return builder.build()
     }
 
     private fun normalizeCuePosition(cue: Cue): Cue {
@@ -2217,14 +2393,30 @@ private class CueNormalizingTextOutput(
     ) {
         if (from >= toExclusive) return
     
-        // 1. Split [from, toExclusive) into chunks: digit-runs stay together, everything else is its own chunk
+        fun isNumberSeparator(c: Char) = c == ',' || c == ':' || c == '.' || c == '-'
+    
+        // 1. Split [from, toExclusive) into chunks: number-runs (digits + embedded , : .) stay together
         val chunks = ArrayList<IntRange>()
         var i = from
         while (i < toExclusive) {
             if (line[i].isDigit()) {
                 val start = i
-                while (i < toExclusive && line[i].isDigit()) i++
-                chunks.add(start until i)          // whole number as one chunk
+                i++
+                while (i < toExclusive) {
+                    if (line[i].isDigit()) {
+                        i++
+                    } else if (
+                        isNumberSeparator(line[i]) &&
+                        i + 1 < toExclusive &&
+                        line[i + 1].isDigit()
+                    ) {
+                        // separator sandwiched between digits, e.g. 16,300 / 10:50 / 1.23
+                        i++ // consume separator, loop will consume following digits
+                    } else {
+                        break
+                    }
+                }
+                chunks.add(start until i)          // whole number (with separators) as one chunk
             } else {
                 chunks.add(i until i + 1)           // single char chunk
                 i++
@@ -2235,7 +2427,7 @@ private class CueNormalizingTextOutput(
         for (idx in chunks.indices.reversed()) {
             val range = chunks[idx]
             if (range.last - range.first + 1 > 1) {
-                // digit run -> keep as-is, don't reverse the digits themselves
+                // number run -> keep as-is, don't reverse the digits/separators themselves
                 out.append(line.subSequence(range.first, range.last + 1))
             } else {
                 val c = line[range.first]
@@ -2246,7 +2438,6 @@ private class CueNormalizingTextOutput(
     }
     
     // Take CharSequence instead of String -> preserve spans.
-    // There is a specific issue affecting Hebrew text, for example: "- 4 בדצמבר 1981 -" (Series "Dark", S1E2, 18:11).
     private fun fixRtlPunctuationForLtr(line: CharSequence): CharSequence {
         if (line.isEmpty()) return line
         val hasCr = line[line.length - 1] == '\r'
@@ -2254,10 +2445,10 @@ private class CueNormalizingTextOutput(
         if (end0 == 0) return line
 
         var start = 0
-        while (start < end0 && isRtlPunctuation(line[start])) start++
+        while (start < end0 && isRtlPunctuation(line[start], isEnd = false)) start++
 
         var end = end0
-        while (end > start && isRtlPunctuation(line[end - 1])) end--
+        while (end > start && isRtlPunctuation(line[end - 1], isEnd = true)) end--
 
         if (start == 0 && end == end0) return line
 
@@ -2317,7 +2508,8 @@ private class CueNormalizingTextOutput(
         return result
     }
 
-    private fun isRtlPunctuation(ch: Char): Boolean {
+    private fun isRtlPunctuation(ch: Char, isEnd: Boolean): Boolean {
+        if (isEnd && ch.isDigit()) return false
         return ch in RTL_PUNCTUATION || ch.isWhitespace()
     }
 
@@ -2719,4 +2911,42 @@ private fun PlayerRuntimeController.recordFirstFrameDiagnostics(
         }
     }
     return finalDiagnostics
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun PlayerView.videoBoundsFraction(aspectRatio: Float): RectF? {
+    val subtitleView = this.subtitleView ?: return null
+    val viewWidth = subtitleView.width.toFloat()
+    val viewHeight = subtitleView.height.toFloat()
+    if (viewWidth <= 0f || viewHeight <= 0f) return null
+
+    if (aspectRatio > 0f) {
+        val parentRatio = viewWidth / viewHeight
+        return if (parentRatio > aspectRatio) {
+            val fitW = viewHeight * aspectRatio
+            val leftPx = (viewWidth - fitW) / 2f
+            RectF(leftPx / viewWidth, 0f, (leftPx + fitW) / viewWidth, 1f)
+        } else {
+            val fitH = viewWidth / aspectRatio
+            val topPx = (viewHeight - fitH) / 2f
+            RectF(0f, topPx / viewHeight, 1f, (topPx + fitH) / viewHeight)
+        }
+    }
+
+    val contentFrame = getTag(androidx.media3.ui.R.id.exo_content_frame) as? AspectRatioFrameLayout
+        ?: findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+            ?.also { setTag(androidx.media3.ui.R.id.exo_content_frame, it) }
+        ?: return null
+    val frameWidth = contentFrame.width.toFloat()
+    val frameHeight = contentFrame.height.toFloat()
+    if (frameWidth <= 0f || frameHeight <= 0f) return null
+    if (frameWidth > viewWidth || frameHeight > viewHeight) return null
+    val left = contentFrame.x / viewWidth
+    val top = contentFrame.y / viewHeight
+    return RectF(
+        left,
+        top,
+        left + frameWidth / viewWidth,
+        top + frameHeight / viewHeight,
+    )
 }

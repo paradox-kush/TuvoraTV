@@ -498,18 +498,20 @@ fun ContinueWatchingCard(
         ),
         scale = CardDefaults.scale(focusedScale = 1f)
     ) {
-        Column {
+        Column(
+            modifier = Modifier
+                .nuvioCardDepth(
+                    shape = CwCardShape,
+                    surface = CardDepthSurface.CONTINUE_WATCHING,
+                    style = cardDepthStyle
+                )
+        ) {
             // Thumbnail with progress overlay
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(imageHeight)
                     .clip(CwClipShape)
-                    .nuvioCardDepth(
-                        shape = CwClipShape,
-                        surface = CardDepthSurface.CONTINUE_WATCHING,
-                        style = cardDepthStyle
-                    )
             ) {
                 // Background image with size hints for efficient decoding
                 if (effectiveImageModel.isNullOrBlank()) {

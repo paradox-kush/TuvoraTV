@@ -28,6 +28,7 @@ import com.nuvio.tv.core.sync.StartupSyncService
 import com.nuvio.tv.core.sync.androidtv.AndroidTvChannelSyncService
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.data.local.SentrySettingsDataStore
+import com.nuvio.tv.data.simkl.SimklAnimeIdPreferenceHolder
 import com.posthog.android.PostHogAndroid
 import com.posthog.android.PostHogAndroidConfig
 import dagger.hilt.android.HiltAndroidApp
@@ -52,6 +53,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var xtreamTmdbResolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
     @Inject lateinit var realtimeSyncInvalidationService: RealtimeSyncInvalidationService
     @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
+    @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -73,16 +75,21 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
 
             override fun loadForRequest(url: HttpUrl): List<Cookie> {
-                return store[url.host]?.filter { cookie ->
-                    cookie.expiresAt > System.currentTimeMillis()
-                } ?: emptyList()
+                val hostCookies = store[url.host] ?: return emptyList()
+                synchronized(hostCookies) {
+                    return hostCookies.filter { cookie ->
+                        cookie.expiresAt > System.currentTimeMillis()
+                    }
+                }
             }
 
             override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
                 val hostCookies = store.getOrPut(url.host) { mutableListOf() }
-                cookies.forEach { newCookie ->
-                    hostCookies.removeAll { it.name == newCookie.name }
-                    hostCookies.add(newCookie)
+                synchronized(hostCookies) {
+                    cookies.forEach { newCookie ->
+                        hostCookies.removeAll { it.name == newCookie.name }
+                        hostCookies.add(newCookie)
+                    }
                 }
             }
         }

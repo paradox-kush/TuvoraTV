@@ -63,6 +63,8 @@ val doviExtractorHookReady = parseBooleanProperty(
 val doviEnableRealLink = parseBooleanProperty(
     resolveProperty(devProperties, localProperties, "DOVI_ENABLE_REAL_LINK")
 )
+// Fork-only: upstream removed realtime sync (their backend dropped it); the Tuvora backend
+// publishes sync_invalidations, so the flag and the service stay.
 val realtimeSyncEnabled = parseBooleanProperty(
     resolveProperty(devProperties, localProperties, "NUVIO_REALTIME_SYNC_ENABLED", "true")
 )
@@ -118,8 +120,8 @@ android {
         applicationId = "com.tuvora.tv"
         minSdk = 24
         targetSdk = 36
-        versionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull() ?: 1037
-        versionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() } ?: "0.7.19-beta"
+        versionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull() ?: 1039
+        versionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() } ?: "0.8.0-beta"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -130,6 +132,8 @@ android {
         buildConfigField("String", "TRAKT_CLIENT_SECRET", "\"${localProperties.getProperty("TRAKT_CLIENT_SECRET", "")}\"")
         buildConfigField("String", "TRAKT_API_URL", "\"${localProperties.getProperty("TRAKT_API_URL", "https://api.trakt.tv/")}\"")
         buildConfigField("String", "TRAKT_REDIRECT_URI", "\"${localProperties.getProperty("TRAKT_REDIRECT_URI", "urn:ietf:wg:oauth:2.0:oob")}\"")
+        buildConfigField("String", "SIMKL_CLIENT_ID", buildConfigString(resolveProperty(devProperties, localProperties, "SIMKL_CLIENT_ID")))
+        buildConfigField("String", "SIMKL_APP_NAME", buildConfigString(resolveProperty(devProperties, localProperties, "SIMKL_APP_NAME", "nuvio")))
         buildConfigField("String", "TMDB_API_KEY", "\"${localProperties.getProperty("TMDB_API_KEY", "")}\"")
         // Fork keeps its own TV-login approver + IPTV pairing page (upstream's nuvio.tv host
         // serves THEIR backend).
@@ -173,6 +177,7 @@ android {
             buildConfigField("boolean", "FEATURE_IN_APP_UPDATES_ENABLED", "true")
             buildConfigField("boolean", "FEATURE_IN_APP_TRAILERS_ENABLED", "true")
             buildConfigField("boolean", "FEATURE_EXTERNAL_TRAILERS_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_EXTERNAL_PLAYBACK_KEEP_ALIVE_ENABLED", "true")
         }
         create("playstore") {
             dimension = "distribution"
@@ -181,6 +186,7 @@ android {
             buildConfigField("boolean", "FEATURE_IN_APP_UPDATES_ENABLED", "false")
             buildConfigField("boolean", "FEATURE_IN_APP_TRAILERS_ENABLED", "false")
             buildConfigField("boolean", "FEATURE_EXTERNAL_TRAILERS_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_EXTERNAL_PLAYBACK_KEEP_ALIVE_ENABLED", "false")
         }
     }
 
@@ -529,9 +535,9 @@ dependencies {
     // Local decoder AARs (AV1, IAMF, MPEG-H)
     implementation(files(
         "libs/lib-decoder-av1-release.aar",
-        "libs/lib-decoder-iamf-release.aar",
         "libs/lib-decoder-mpegh-release.aar"
     ))
+    add("fullImplementation", files("libs/lib-decoder-iamf-release.aar"))
     if (useLocalFfmpegDecoder) {
         implementation(project(":ffmpeg-decoder-downmix"))
     } else {
@@ -592,6 +598,8 @@ dependencies {
 
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("io.mockk:mockk:1.13.12")

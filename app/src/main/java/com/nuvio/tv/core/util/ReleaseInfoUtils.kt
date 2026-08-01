@@ -33,3 +33,11 @@ fun CatalogRow.filterReleasedItems(
     val filtered = items.filterNot { it.isUnreleased(today, clock) }
     return if (filtered.size == items.size) this else copy(items = filtered)
 }
+
+/**
+ * True when the item carries no release information at all. Only meaningful for
+ * sources where dates are authoritative (e.g. TMDB, where a movie without a
+ * release_date is unannounced); addon metadata often legitimately omits dates.
+ */
+fun MetaPreview.hasNoReleaseInfo(): Boolean =
+    released.isNullOrBlank() && releaseInfo.isNullOrBlank()

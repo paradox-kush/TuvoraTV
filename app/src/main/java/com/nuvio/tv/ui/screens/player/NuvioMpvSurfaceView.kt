@@ -187,7 +187,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             ?.let { String.format(Locale.US, "start=%.3f", it / 1000.0) }
         if (startOption != null && holder.surface?.isValid == true) {
             ensureSurfaceAttachedIfAlreadyAvailable()
-            ctl { mpv.command("loadfile", url, "replace", startOption) }
+            ctl { loadFileWithOptions(url, startOption) }
             hasQueuedInitialMedia = true
             pendingInitialMediaUrl = null
             pendingInitialStartOption = null
@@ -223,10 +223,19 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         pendingInitialMediaUrl = null
         pendingInitialStartOption = null
         if (startOption != null) {
-            ctl { mpv.command("loadfile", url, "replace", startOption) }
+            ctl { loadFileWithOptions(url, startOption) }
         } else {
             ctl { mpv.command("loadfile", url, "replace") }
         }
+    }
+
+    /**
+     * mpv's `loadfile` signature is `<url> [<flags> [<index> [<options>]]]`, so the per-file option
+     * list belongs in the fifth argument. Passing it where `<index>` is expected makes mpv reject
+     * the whole command and stay idle, i.e. resuming at a position would never load the file.
+     */
+    private fun loadFileWithOptions(url: String, options: String) {
+        mpv.command("loadfile", url, "replace", LOADFILE_DEFAULT_INDEX, options)
     }
 
     fun setMediaUsingLoadfile(url: String, headers: Map<String, String>) {
@@ -809,6 +818,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "NuvioMpvSurfaceView"
+        /** `loadfile` insertion index; only meaningful for insert-at flags, -1 is mpv's default. */
+        private const val LOADFILE_DEFAULT_INDEX = "-1"
         private const val MPV_COVER_FALLBACK_SCALE = 1.15f
         private const val MPV_MAX_VOLUME_PERCENT = 400.0
         private const val ASPECT_RETRY_DELAY_MS = 120L

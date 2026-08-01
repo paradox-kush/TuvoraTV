@@ -39,7 +39,7 @@ import com.nuvio.tv.ui.screens.settings.PlaybackSettingsScreen
 import com.nuvio.tv.ui.screens.settings.SettingsScreen
 import com.nuvio.tv.ui.screens.settings.SupportersContributorsScreen
 import com.nuvio.tv.ui.screens.settings.ThemeSettingsScreen
-import com.nuvio.tv.ui.screens.settings.TraktScreen
+import com.nuvio.tv.ui.screens.settings.TrackingSettingsScreen
 import com.nuvio.tv.ui.screens.settings.TmdbSettingsScreen
 import com.nuvio.tv.ui.screens.stream.StreamScreen
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
@@ -280,6 +280,10 @@ fun NuvioNavHost(
                 returnFocusEpisode = returnFocusEpisode,
                 heroRestoreToken = heroRestoreToken,
                 heroBackdropUrl = heroBackdropUrl,
+                onReturnFocusConsumed = {
+                    savedState["returnFocusSeason"] = null
+                    savedState["returnFocusEpisode"] = null
+                },
                 onBackPress = {
                     if (returnToHomeOnBack) {
                         val popped = navController.popBackStack(Screen.Home.route, inclusive = false)
@@ -1118,7 +1122,7 @@ fun NuvioNavHost(
         composable(Screen.Settings.route) {
             SettingsScreen(
                 showBuiltInHeader = !hideBuiltInHeaders,
-                onNavigateToTrakt = { navController.navigate(Screen.Trakt.route) },
+                onNavigateToTracking = { navController.navigate(Screen.Tracking.route) },
                 onNavigateToAddons = { navController.navigate(Screen.AddonManager.route) },
                 onNavigateToPlugins = { navController.navigate(Screen.Plugins.route) },
                 onNavigateToAuthQrSignIn = { navController.navigate(Screen.AuthQrSignIn.route) },
@@ -1221,8 +1225,8 @@ fun NuvioNavHost(
             )
         }
 
-        composable(Screen.Trakt.route) {
-            TraktScreen(
+        composable(Screen.Tracking.route) {
+            TrackingSettingsScreen(
                 onBackPress = { navController.popBackStack() }
             )
         }

@@ -8,6 +8,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.core.debrid.DirectDebridResolver
 import com.nuvio.tv.core.debrid.DirectDebridStreamPreparer
 import com.nuvio.tv.core.plugin.PluginManager
+import com.nuvio.tv.core.tracking.TrackingScrobbleCoordinator
 import com.nuvio.tv.core.torrent.TorrentService
 import com.nuvio.tv.core.torrent.TorrentSettings
 import com.nuvio.tv.data.local.AudioDelayRouteDataStore
@@ -18,7 +19,6 @@ import com.nuvio.tv.data.local.StreamBadgeSettingsDataStore
 import com.nuvio.tv.data.repository.ParentalGuideRepository
 import com.nuvio.tv.data.repository.SkipIntroRepository
 import com.nuvio.tv.data.repository.TraktEpisodeMappingService
-import com.nuvio.tv.data.repository.TraktScrobbleService
 import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.domain.repository.StreamRepository
@@ -42,7 +42,7 @@ class PlayerViewModel @Inject constructor(
     private val pluginManager: PluginManager,
     private val subtitleRepository: com.nuvio.tv.domain.repository.SubtitleRepository,
     private val parentalGuideRepository: ParentalGuideRepository,
-    private val traktScrobbleService: TraktScrobbleService,
+    private val trackingScrobbleCoordinator: TrackingScrobbleCoordinator,
     private val traktEpisodeMappingService: TraktEpisodeMappingService,
     private val skipIntroRepository: SkipIntroRepository,
     private val playerSettingsDataStore: PlayerSettingsDataStore,
@@ -83,7 +83,7 @@ class PlayerViewModel @Inject constructor(
         playbackActivityTracker.onPlayerStarted()
     }
 
-    private val controller = PlayerRuntimeController(
+    internal val controller = PlayerRuntimeController(
         context = context,
         watchProgressRepository = watchProgressRepository,
         metaRepository = metaRepository,
@@ -92,7 +92,7 @@ class PlayerViewModel @Inject constructor(
         pluginManager = pluginManager,
         subtitleRepository = subtitleRepository,
         parentalGuideRepository = parentalGuideRepository,
-        traktScrobbleService = traktScrobbleService,
+        trackingScrobbleCoordinator = trackingScrobbleCoordinator,
         traktEpisodeMappingService = traktEpisodeMappingService,
         skipIntroRepository = skipIntroRepository,
         playerSettingsDataStore = playerSettingsDataStore,

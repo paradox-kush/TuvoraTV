@@ -127,6 +127,8 @@ import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.sync.ProfileSettingsSyncService
 import com.nuvio.tv.core.sync.ProfileSyncService
 import com.nuvio.tv.core.sync.StartupSyncService
+import com.nuvio.tv.core.tracking.TrackingProgressRefreshCoordinator
+import com.nuvio.tv.core.tracking.TrackingRefreshIntent
 import com.nuvio.tv.data.local.AppOnboardingDataStore
 import com.nuvio.tv.data.local.AuthSessionNoticeDataStore
 import com.nuvio.tv.data.local.ExperienceModeDataStore
@@ -134,7 +136,6 @@ import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.StartupAuthNotice
 import com.nuvio.tv.data.local.ThemeDataStore
 import com.nuvio.tv.data.remote.supabase.AvatarRepository
-import com.nuvio.tv.data.repository.TraktProgressService
 import com.nuvio.tv.domain.model.AppFont
 import com.nuvio.tv.domain.model.AppTheme
 import com.nuvio.tv.domain.model.AuthState
@@ -223,7 +224,7 @@ class MainActivity : ComponentActivity() {
     lateinit var addonRepository: AddonRepository
 
     @Inject
-    lateinit var traktProgressService: TraktProgressService
+    lateinit var trackingProgressRefreshCoordinator: TrackingProgressRefreshCoordinator
 
     @Inject
     lateinit var startupSyncService: StartupSyncService
@@ -929,14 +930,20 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (::jankStats.isInitialized) jankStats.isTrackingEnabled = true
-        startupSyncService.requestForegroundSync()
         lifecycleScope.launch {
-            if (isFirstResumeAfterCreate) {
+            // Upstream's DeviceSessionRegistration (RPC register_current_device) is NOT wired here:
+            // the Tuvora backend reports devices through SyncDeviceReporter (RPC report_device),
+            // and that RPC doesn't exist self-hosted. The upstream class stays inert for merges.
+            startupSyncService.requestForegroundSync()
+        }
+        lifecycleScope.launch {
+            val refreshIntent = if (isFirstResumeAfterCreate) {
                 isFirstResumeAfterCreate = false
-                traktProgressService.invalidateAndRefresh()
+                TrackingRefreshIntent.INVALIDATED
             } else {
-                traktProgressService.refreshNow()
+                TrackingRefreshIntent.AUTOMATIC
             }
+            trackingProgressRefreshCoordinator.refreshConnected(refreshIntent)
         }
     }
 
@@ -1907,7 +1914,12 @@ private fun navigateToDrawerRoute(
     if (currentRoute == targetRoute) {
         if (targetRoute == Screen.Home.route) {
             // Scroll Home to top by clearing saved focus/scroll state on the ViewModel.
-            val homeEntry = navController.getBackStackEntry(Screen.Home.route)
+            val homeEntry = try {
+                navController.getBackStackEntry(Screen.Home.route)
+            } catch (_: IllegalArgumentException) {
+                // "home" not yet on the back stack (e.g. nav graph not fully initialized).
+                return
+            }
             val homeViewModel = androidx.lifecycle.ViewModelProvider(homeEntry)[com.nuvio.tv.ui.screens.home.HomeViewModel::class.java]
             homeViewModel.requestScrollToTop()
         }

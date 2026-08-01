@@ -1,12 +1,23 @@
 package com.nuvio.tv.data.local
 
-import android.util.Log
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
-import com.nuvio.tv.core.profile.ProfileManager
 import com.google.gson.Gson
+import com.nuvio.tv.core.profile.ProfileManager
+import com.nuvio.tv.core.sync.library.LibrarySyncLocalStore
+import com.nuvio.tv.domain.model.LibraryDeltaApplyResult
+import com.nuvio.tv.domain.model.LibraryDeltaEvent
+import com.nuvio.tv.domain.model.LibrarySnapshotApplyResult
+import com.nuvio.tv.domain.model.LibrarySyncKey
+import com.nuvio.tv.domain.model.LibrarySyncReducer
+import com.nuvio.tv.domain.model.LibrarySyncState
 import com.nuvio.tv.domain.model.SavedLibraryItem
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -15,27 +26,35 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
+@OptIn(ExperimentalCoroutinesApi::class)
 class LibraryPreferences @Inject constructor(
     private val factory: ProfileDataStoreFactory,
     private val profileManager: ProfileManager
-) {
-    companion object {
-        private const val FEATURE = "library_preferences"
-        private const val TAG = "LibraryPrefs"
-    }
+) : LibrarySyncLocalStore {
+    private val gson = Gson()
+    private val libraryItemsKey = stringSetPreferencesKey("library_items")
+    private val sortOptionKey = stringPreferencesKey("library_sort_option")
+    private val deltaCursorKey = longPreferencesKey("library_delta_cursor")
+    private val deltaInitializedKey = booleanPreferencesKey("library_delta_initialized")
+    private val pendingUpsertKeysKey = stringSetPreferencesKey("library_pending_upserts")
+    private val pendingDeleteKeysKey = stringSetPreferencesKey("library_pending_deletes")
+    private val mutationRevisionKey = longPreferencesKey("library_mutation_revision")
 
     private fun store(profileId: Int = profileManager.activeProfileId.value) =
         factory.get(profileId, FEATURE)
 
-    private val gson = Gson()
-    private val libraryItemsKey = stringSetPreferencesKey("library_items")
-    private val sortOptionKey = stringPreferencesKey("library_sort_option")
-
-    val sortOption: Flow<String?> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { preferences ->
+    val sortOption: Flow<String?> = profileManager.activeProfileId.flatMapLatest { profileId ->
+        factory.get(profileId, FEATURE).data.map { preferences ->
             preferences[sortOptionKey]
         }
     }
+
+    val libraryItems: Flow<List<SavedLibraryItem>> =
+        profileManager.activeProfileId.flatMapLatest { profileId ->
+            factory.get(profileId, FEATURE).data.map { preferences ->
+                preferences.toLibrarySyncState().items
+            }
+        }
 
     suspend fun setSortOption(key: String) {
         store().edit { preferences ->
@@ -43,103 +62,206 @@ class LibraryPreferences @Inject constructor(
         }
     }
 
-    val libraryItems: Flow<List<SavedLibraryItem>> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { preferences ->
-            val raw = preferences[libraryItemsKey] ?: emptySet()
-            raw.mapNotNull { json ->
-                runCatching { gson.fromJson(json, SavedLibraryItem::class.java) }.getOrNull()
-            }
-        }
-    }
-
     fun isInLibrary(itemId: String, itemType: String): Flow<Boolean> {
         return libraryItems.map { items ->
-            items.any { it.id == itemId && it.type.equals(itemType, ignoreCase = true) }
-        }
-    }
-
-    suspend fun addItem(item: SavedLibraryItem) {
-        store().edit { preferences ->
-            val current = preferences[libraryItemsKey] ?: emptySet()
-            val filtered = current.filterNot { json ->
-                runCatching {
-                    gson.fromJson(json, SavedLibraryItem::class.java)
-                }.getOrNull()?.let { saved ->
-                    saved.id == item.id && saved.type.equals(item.type, ignoreCase = true)
-                } ?: false
+            items.any { item ->
+                item.id == itemId && item.type.equals(itemType, ignoreCase = true)
             }
-            val itemWithTimestamp = if (item.addedAt == 0L) item.copy(addedAt = System.currentTimeMillis()) else item
-            preferences[libraryItemsKey] = filtered.toSet() + gson.toJson(itemWithTimestamp)
         }
     }
 
-    suspend fun removeItem(itemId: String, itemType: String) {
-        store().edit { preferences ->
-            val current = preferences[libraryItemsKey] ?: emptySet()
-            val filtered = current.filterNot { json ->
-                runCatching {
-                    gson.fromJson(json, SavedLibraryItem::class.java)
-                }.getOrNull()?.let { saved ->
-                    saved.id == itemId && saved.type.equals(itemType, ignoreCase = true)
-                } ?: false
+    suspend fun containsItem(
+        itemId: String,
+        itemType: String,
+        profileId: Int = profileManager.activeProfileId.value
+    ): Boolean {
+        return getSyncState(profileId).items.any { item ->
+            item.id == itemId && item.type.equals(itemType, ignoreCase = true)
+        }
+    }
+
+    suspend fun addItem(
+        item: SavedLibraryItem,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
+        store(profileId).edit { preferences ->
+            val updated = LibrarySyncReducer.upsertLocal(
+                state = preferences.toLibrarySyncState(),
+                item = item,
+                nowEpochMs = System.currentTimeMillis()
+            )
+            preferences.writeLibrarySyncState(updated)
+        }
+    }
+
+    suspend fun removeItem(
+        itemId: String,
+        itemType: String,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
+        store(profileId).edit { preferences ->
+            val updated = LibrarySyncReducer.deleteLocal(
+                state = preferences.toLibrarySyncState(),
+                contentId = itemId,
+                contentType = itemType
+            )
+            preferences.writeLibrarySyncState(updated)
+        }
+    }
+
+    suspend fun getAllItems(
+        profileId: Int = profileManager.activeProfileId.value
+    ): List<SavedLibraryItem> {
+        return getSyncState(profileId).items
+    }
+
+    suspend fun updateLogo(
+        id: String,
+        type: String,
+        logo: String,
+        profileId: Int = profileManager.activeProfileId.value
+    ) {
+        store(profileId).edit { preferences ->
+            val state = preferences.toLibrarySyncState()
+            val updatedItems = state.items.map { item ->
+                if (item.id == id && item.type.equals(type, ignoreCase = true)) {
+                    item.copy(logo = logo)
+                } else {
+                    item
+                }
             }
-            preferences[libraryItemsKey] = filtered.toSet()
+            preferences.writeLibrarySyncState(state.copy(items = updatedItems))
         }
     }
 
-    suspend fun getAllItems(): List<SavedLibraryItem> {
-        return libraryItems.first()
+    override suspend fun getSyncState(profileId: Int): LibrarySyncState {
+        return store(profileId).data.first().toLibrarySyncState()
     }
 
     /**
      * IPTV playlist edit: rewrites every saved item under an old `xtream:{accountId}:` id
      * prefix to the new one, or drops them when newPrefix is null (different playlist).
+     * Goes through the sync reducer so the delta queues (pending upserts/deletes) follow the
+     * rename instead of stranding the old ids on the server.
      */
     suspend fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
         store().edit { preferences ->
-            val current = preferences[libraryItemsKey] ?: return@edit
-            val updated = current.mapNotNull { json ->
-                val item = runCatching { gson.fromJson(json, SavedLibraryItem::class.java) }.getOrNull()
-                    ?: return@mapNotNull json
-                when {
-                    !item.id.startsWith(oldPrefix) -> json
-                    newPrefix == null -> null
-                    else -> gson.toJson(item.copy(id = newPrefix + item.id.removePrefix(oldPrefix)))
+            var state = preferences.toLibrarySyncState()
+            val affected = state.items.filter { it.id.startsWith(oldPrefix) }
+            if (affected.isEmpty()) return@edit
+            val now = System.currentTimeMillis()
+            affected.forEach { item ->
+                state = LibrarySyncReducer.deleteLocal(
+                    state = state,
+                    contentId = item.id,
+                    contentType = item.type
+                )
+                if (newPrefix != null) {
+                    state = LibrarySyncReducer.upsertLocal(
+                        state = state,
+                        item = item.copy(id = newPrefix + item.id.removePrefix(oldPrefix)),
+                        nowEpochMs = now
+                    )
                 }
-            }.toSet()
-            preferences[libraryItemsKey] = updated
+            }
+            preferences.writeLibrarySyncState(state)
         }
     }
 
-    suspend fun updateLogo(id: String, type: String, logo: String) {
-        store().edit { preferences ->
-            val current = preferences[libraryItemsKey] ?: emptySet()
-            val updated = current.map { json ->
-                val item = runCatching {
-                    gson.fromJson(json, SavedLibraryItem::class.java)
-                }.getOrNull() ?: return@map json
-                if (item.id == id && item.type.equals(type, ignoreCase = true))
-                    gson.toJson(item.copy(logo = logo))
-                else json
-            }.toSet()
-            preferences[libraryItemsKey] = updated
+    override suspend fun applyRemoteSnapshot(
+        profileId: Int,
+        remoteItems: Collection<SavedLibraryItem>,
+        cursorEventId: Long
+    ): LibrarySnapshotApplyResult {
+        lateinit var result: LibrarySnapshotApplyResult
+        store(profileId).edit { preferences ->
+            result = LibrarySyncReducer.applySnapshot(
+                state = preferences.toLibrarySyncState(),
+                remoteItems = remoteItems,
+                cursorEventId = cursorEventId
+            )
+            preferences.writeLibrarySyncState(result.state)
+        }
+        return result
+    }
+
+    override suspend fun applyRemoteDelta(
+        profileId: Int,
+        events: Collection<LibraryDeltaEvent>
+    ): LibraryDeltaApplyResult {
+        lateinit var result: LibraryDeltaApplyResult
+        store(profileId).edit { preferences ->
+            result = LibrarySyncReducer.applyDelta(
+                state = preferences.toLibrarySyncState(),
+                events = events
+            )
+            preferences.writeLibrarySyncState(result.state)
+        }
+        return result
+    }
+
+    override suspend fun queueAllItemsForPush(profileId: Int): LibrarySyncState {
+        lateinit var result: LibrarySyncState
+        store(profileId).edit { preferences ->
+            result = LibrarySyncReducer.queueAllItemsForPush(
+                preferences.toLibrarySyncState()
+            )
+            preferences.writeLibrarySyncState(result)
+        }
+        return result
+    }
+
+    override suspend fun acknowledgePush(
+        profileId: Int,
+        expectedMutationRevision: Long
+    ): Boolean {
+        var acknowledged = false
+        store(profileId).edit { preferences ->
+            val updated = LibrarySyncReducer.acknowledgePush(
+                state = preferences.toLibrarySyncState(),
+                expectedMutationRevision = expectedMutationRevision
+            )
+            if (updated != null) {
+                preferences.writeLibrarySyncState(updated)
+                acknowledged = true
+            }
+        }
+        return acknowledged
+    }
+
+    private fun Preferences.toLibrarySyncState(): LibrarySyncState {
+        return LibrarySyncReducer.sanitize(
+            LibrarySyncState(
+                items = decodeSet(libraryItemsKey, SavedLibraryItem::class.java),
+                deltaCursorEventId = this[deltaCursorKey] ?: 0L,
+                deltaInitialized = this[deltaInitializedKey] ?: false,
+                pendingUpsertKeys = decodeSet(pendingUpsertKeysKey, LibrarySyncKey::class.java),
+                pendingDeleteKeys = decodeSet(pendingDeleteKeysKey, LibrarySyncKey::class.java),
+                mutationRevision = this[mutationRevisionKey] ?: 0L
+            )
+        )
+    }
+
+    private fun MutablePreferences.writeLibrarySyncState(state: LibrarySyncState) {
+        val sanitized = LibrarySyncReducer.sanitize(state)
+        this[libraryItemsKey] = sanitized.items.map(gson::toJson).toSet()
+        this[deltaCursorKey] = sanitized.deltaCursorEventId
+        this[deltaInitializedKey] = sanitized.deltaInitialized
+        this[pendingUpsertKeysKey] = sanitized.pendingUpsertKeys.map(gson::toJson).toSet()
+        this[pendingDeleteKeysKey] = sanitized.pendingDeleteKeys.map(gson::toJson).toSet()
+        this[mutationRevisionKey] = sanitized.mutationRevision
+    }
+
+    private fun <T> Preferences.decodeSet(
+        key: Preferences.Key<Set<String>>,
+        type: Class<T>
+    ): List<T> {
+        return this[key].orEmpty().mapNotNull { value ->
+            runCatching { gson.fromJson(value, type) }.getOrNull()
         }
     }
 
-    suspend fun mergeRemoteItems(remoteItems: List<SavedLibraryItem>) {
-        store().edit { preferences ->
-            val current = preferences[libraryItemsKey] ?: emptySet()
-            if (remoteItems.isEmpty() && current.isNotEmpty()) {
-                Log.w(TAG, "mergeRemoteItems: remote list empty while local has ${current.size} entries; preserving local library")
-                return@edit
-            }
-            val dedupedRemote = linkedMapOf<Pair<String, String>, SavedLibraryItem>()
-            remoteItems.forEach { item ->
-                dedupedRemote[item.id to item.type.lowercase()] = item
-            }
-            preferences[libraryItemsKey] = dedupedRemote.values
-                .map { gson.toJson(it) }
-                .toSet()
-        }
+    private companion object {
+        const val FEATURE = "library_preferences"
     }
 }

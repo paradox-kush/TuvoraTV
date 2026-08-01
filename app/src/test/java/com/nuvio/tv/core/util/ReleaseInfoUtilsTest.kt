@@ -52,7 +52,32 @@ class ReleaseInfoUtilsTest {
         )
     }
 
-    private fun preview(released: String): MetaPreview = MetaPreview(
+    // --- #2793: TMDB titles with no release information at all ---
+    // A TMDB collection can contain announced-but-undated titles (e.g.
+    // "Untitled Top Gun 3": release_date is empty on TMDB). Those map to
+    // released == null and releaseInfo == null, which the date-based
+    // isUnreleased() cannot flag — the strict TMDB collection path catches
+    // them via hasNoReleaseInfo() instead.
+
+    @Test
+    fun `undated item is not caught by date-based isUnreleased`() {
+        val item = preview(released = null)
+        assertFalse(item.isUnreleased(today = LocalDate.of(2026, 7, 28)))
+    }
+
+    @Test
+    fun `undated item is flagged by hasNoReleaseInfo`() {
+        assertTrue(preview(released = null).hasNoReleaseInfo())
+        assertTrue(preview(released = " ", releaseInfo = "").hasNoReleaseInfo())
+    }
+
+    @Test
+    fun `dated items are not flagged by hasNoReleaseInfo`() {
+        assertFalse(preview(released = "2022-05-27").hasNoReleaseInfo())
+        assertFalse(preview(released = null, releaseInfo = "2022").hasNoReleaseInfo())
+    }
+
+    private fun preview(released: String?, releaseInfo: String? = null): MetaPreview = MetaPreview(
         id = "tt1",
         type = ContentType.MOVIE,
         name = "Title",
@@ -61,7 +86,7 @@ class ReleaseInfoUtilsTest {
         background = null,
         logo = null,
         description = null,
-        releaseInfo = null,
+        releaseInfo = releaseInfo,
         imdbRating = null,
         genres = emptyList(),
         released = released,

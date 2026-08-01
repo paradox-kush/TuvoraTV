@@ -239,6 +239,11 @@ public class MatroskaExtractor implements Extractor {
   private static final int BLOCK_STATE_HEADER = 1;
   private static final int BLOCK_STATE_DATA = 2;
 
+  // Bounds for the early DTS mime scan that peeks ahead right after the Tracks element.
+  private static final int MAX_EARLY_DTS_SCAN_BYTES = 8 * 1024 * 1024;
+  private static final int MAX_EARLY_DTS_FRAME_BYTES = 256 * 1024;
+  private static final int MAX_EBML_HEADER_SIZE = 12; // 4-byte id + 8-byte data size.
+
   private static final String DOC_TYPE_MATROSKA = "matroska";
   private static final String DOC_TYPE_WEBM = "webm";
   private static final String CODEC_ID_VP8 = "V_VP8";
@@ -565,6 +570,16 @@ public class MatroskaExtractor implements Extractor {
   private boolean isWebm;
   private boolean pendingEndTracks;
 
+  /**
+   * Set when the Tracks master element has been parsed but its publish/finish step is
+   * deferred until {@link #read} regains control, so the early DTS scan can refine DTS mime
+   * types from the upcoming cluster data before formats reach the track selector.
+   */
+  private boolean pendingFinishTracks;
+
+  // Reused scratch for the early DTS peek scan; grows on demand up to the scan budget.
+  private byte[] earlyDtsScanBuffer = new byte[64 * 1024];
+
   // The track corresponding to the current TrackEntry element, or null.
   @Nullable private Track currentTrack;
 
@@ -772,11 +787,22 @@ public class MatroskaExtractor implements Extractor {
     boolean continueReading = true;
     while (continueReading && !haveOutputSample) {
       continueReading = reader.read(input);
+      if (pendingFinishTracks) {
+        pendingFinishTracks = false;
+        // Input is positioned right after the Tracks element (typically the first cluster),
+        // so the early scan can peek the first DTS block before formats are published.
+        analyzePendingDtsTracksEarly(input);
+        finishTracksElement();
+      }
       if (continueReading && maybeSeekForCues(seekPosition, input.getPosition())) {
         return Extractor.RESULT_SEEK;
       }
     }
     if (!continueReading) {
+      if (pendingFinishTracks) {
+        pendingFinishTracks = false;
+        finishTracksElement();
+      }
       for (int i = 0; i < tracks.size(); i++) {
         Track track = tracks.valueAt(i);
         track.assertOutputInitialized();
@@ -1045,10 +1071,8 @@ public class MatroskaExtractor implements Extractor {
             Track track = tracks.valueAt(i);
             track.maybeAddThumbnailMetadata(
                 perTrackCues, durationUs, segmentContentPosition, segmentContentSize);
-            if (!track.waitingForDtsAnalysis) {
-              track.assertOutputInitialized();
-              track.output.format(checkNotNull(track.format));
-            }
+            track.assertOutputInitialized();
+            track.output.format(checkNotNull(track.format));
           }
           maybeEndTracks();
         }
@@ -1136,9 +1160,11 @@ public class MatroskaExtractor implements Extractor {
           if (isCodecSupported(currentTrack.codecId)) {
             currentTrack.initializeFormat(currentTrack.number, dolbyVisionSampleTransformer);
             currentTrack.output = extractorOutput.track(currentTrack.number, currentTrack.type);
-            if (!currentTrack.waitingForDtsAnalysis) {
-              currentTrack.output.format(checkNotNull(currentTrack.format));
-            }
+            // Publish a provisional format even when DTS analysis is pending. Withholding it
+            // blocks endTracks() until the first DTS sample is read, but the loader can stop
+            // before reaching it (LoadControl target reached with an unprepared period),
+            // deadlocking startup: no endTracks -> no preparation -> no loading.
+            currentTrack.output.format(checkNotNull(currentTrack.format));
             tracks.put(currentTrack.number, currentTrack);
           }
         }
@@ -1149,62 +1175,73 @@ public class MatroskaExtractor implements Extractor {
           throw ParserException.createForMalformedContainer(
               "No valid tracks were found", /* cause= */ null);
         }
-
-        // Determine the track to use for default seeking.
-        int defaultVideoTrackNumber = C.INDEX_UNSET;
-        int firstVideoTrackNumber = C.INDEX_UNSET;
-        int defaultAudioTrackNumber = C.INDEX_UNSET;
-        int firstAudioTrackNumber = C.INDEX_UNSET;
-
-        // If we're not going to seek for cues, output the formats immediately.
-        boolean mayBeSendFormatsEarly = !seekForCuesEnabled || cuesContentPosition == C.INDEX_UNSET;
-
-        for (int i = 0; i < tracks.size(); i++) {
-          Track trackItem = tracks.valueAt(i);
-
-          @C.TrackType int trackType = trackItem.type;
-          if (trackType == C.TRACK_TYPE_VIDEO) {
-            if (trackItem.flagDefault) {
-              defaultVideoTrackNumber = trackItem.number;
-            }
-            if (firstVideoTrackNumber == C.INDEX_UNSET) {
-              firstVideoTrackNumber = trackItem.number;
-            }
-          } else if (trackType == C.TRACK_TYPE_AUDIO) {
-            if (trackItem.flagDefault) {
-              defaultAudioTrackNumber = trackItem.number;
-            }
-            if (firstAudioTrackNumber == C.INDEX_UNSET) {
-              firstAudioTrackNumber = trackItem.number;
-            }
-          }
-
-          if (mayBeSendFormatsEarly) {
-            trackItem.assertOutputInitialized();
-            if (!trackItem.waitingForDtsAnalysis) {
-              trackItem.output.format(checkNotNull(trackItem.format));
-            }
-          }
-        }
-
-        if (defaultVideoTrackNumber != C.INDEX_UNSET) {
-          primarySeekTrackNumber = defaultVideoTrackNumber;
-        } else if (firstVideoTrackNumber != C.INDEX_UNSET) {
-          primarySeekTrackNumber = firstVideoTrackNumber;
-        } else if (defaultAudioTrackNumber != C.INDEX_UNSET) {
-          primarySeekTrackNumber = defaultAudioTrackNumber;
-        } else if (firstAudioTrackNumber != C.INDEX_UNSET) {
-          primarySeekTrackNumber = firstAudioTrackNumber;
-        } else {
-          primarySeekTrackNumber = tracks.size() > 0 ? tracks.valueAt(0).number : C.INDEX_UNSET;
-        }
-
-        if (mayBeSendFormatsEarly) {
-          maybeEndTracks();
-        }
+        // Defer the publish/finish step until read() regains control: at that point the
+        // input sits right after the Tracks element, so the early DTS scan can refine DTS
+        // mime types from the upcoming cluster data BEFORE formats reach the track
+        // selector. Publishing here would lock the selector to the provisional audio/dts
+        // mime and force a late passthrough reconfiguration.
+        pendingFinishTracks = true;
         break;
       default:
         break;
+    }
+  }
+
+  /**
+   * Publishes parsed track formats (early, when not seeking for cues) and computes the
+   * primary seek track. Runs from {@link #read} once the Tracks element has been consumed,
+   * after the early DTS analysis had a chance to refine DTS mime types.
+   */
+  private void finishTracksElement() {
+    // Determine the track to use for default seeking.
+    int defaultVideoTrackNumber = C.INDEX_UNSET;
+    int firstVideoTrackNumber = C.INDEX_UNSET;
+    int defaultAudioTrackNumber = C.INDEX_UNSET;
+    int firstAudioTrackNumber = C.INDEX_UNSET;
+
+    // If we're not going to seek for cues, output the formats immediately.
+    boolean mayBeSendFormatsEarly = !seekForCuesEnabled || cuesContentPosition == C.INDEX_UNSET;
+
+    for (int i = 0; i < tracks.size(); i++) {
+      Track trackItem = tracks.valueAt(i);
+
+      @C.TrackType int trackType = trackItem.type;
+      if (trackType == C.TRACK_TYPE_VIDEO) {
+        if (trackItem.flagDefault) {
+          defaultVideoTrackNumber = trackItem.number;
+        }
+        if (firstVideoTrackNumber == C.INDEX_UNSET) {
+          firstVideoTrackNumber = trackItem.number;
+        }
+      } else if (trackType == C.TRACK_TYPE_AUDIO) {
+        if (trackItem.flagDefault) {
+          defaultAudioTrackNumber = trackItem.number;
+        }
+        if (firstAudioTrackNumber == C.INDEX_UNSET) {
+          firstAudioTrackNumber = trackItem.number;
+        }
+      }
+
+      if (mayBeSendFormatsEarly) {
+        trackItem.assertOutputInitialized();
+        trackItem.output.format(checkNotNull(trackItem.format));
+      }
+    }
+
+    if (defaultVideoTrackNumber != C.INDEX_UNSET) {
+      primarySeekTrackNumber = defaultVideoTrackNumber;
+    } else if (firstVideoTrackNumber != C.INDEX_UNSET) {
+      primarySeekTrackNumber = firstVideoTrackNumber;
+    } else if (defaultAudioTrackNumber != C.INDEX_UNSET) {
+      primarySeekTrackNumber = defaultAudioTrackNumber;
+    } else if (firstAudioTrackNumber != C.INDEX_UNSET) {
+      primarySeekTrackNumber = firstAudioTrackNumber;
+    } else {
+      primarySeekTrackNumber = tracks.size() > 0 ? tracks.valueAt(0).number : C.INDEX_UNSET;
+    }
+
+    if (mayBeSendFormatsEarly) {
+      maybeEndTracks();
     }
   }
 
@@ -2529,13 +2566,208 @@ public class MatroskaExtractor implements Extractor {
     if (!pendingEndTracks) {
       return;
     }
-    for (int i = 0; i < tracks.size(); i++) {
-      if (tracks.valueAt(i).waitingForDtsAnalysis) {
-        return;
-      }
-    }
+    // Never gate endTracks() on waitingForDtsAnalysis: refining the DTS mime requires
+    // reading media samples, but the loader is allowed to stop before the first sample
+    // when the LoadControl target fills with an unprepared period. Gating here deadlocks
+    // startup (observed as "Playback stuck buffering and not loading"). Instead, the early
+    // peek scan in analyzePendingDtsTracksEarly() usually refines the mime before formats
+    // are published; tracks that escape it publish provisional audio/dts and get a late
+    // format update from writeSampleData().
     checkNotNull(extractorOutput).endTracks();
     pendingEndTracks = false;
+  }
+
+  /**
+   * Best-effort refinement of DTS mime types before track formats are published. The input
+   * must be positioned right after the Tracks element (typically at the first cluster).
+   * Peeks forward up to {@link #MAX_EARLY_DTS_SCAN_BYTES} looking for the first block of
+   * each DTS track that is still awaiting analysis, and refines its format mime in place.
+   * Any failure leaves tracks provisional; the late refinement in writeSampleData() still
+   * applies in that case. Never consumes input; always resets the peek position.
+   */
+  private void analyzePendingDtsTracksEarly(ExtractorInput input) {
+    if (!hasWaitingDtsTrack()) {
+      return;
+    }
+    try {
+      scanElementSequence(input, 0, MAX_EARLY_DTS_SCAN_BYTES);
+    } catch (IOException | RuntimeException e) {
+      Log.w(TAG, "Early DTS analysis aborted, keeping provisional mime: " + e.getMessage());
+    } finally {
+      try {
+        input.resetPeekPosition();
+      } catch (RuntimeException ignored) {
+        // Nothing to reset.
+      }
+    }
+  }
+
+  private boolean hasWaitingDtsTrack() {
+    for (int i = 0; i < tracks.size(); i++) {
+      if (tracks.valueAt(i).waitingForDtsAnalysis) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private boolean ensureScanBytes(ExtractorInput input, int length) throws IOException {
+    if (earlyDtsScanBuffer.length < length) {
+      int newSize = earlyDtsScanBuffer.length;
+      while (newSize < length) {
+        newSize *= 2;
+      }
+      earlyDtsScanBuffer = Arrays.copyOf(earlyDtsScanBuffer, newSize);
+    }
+    return input.peekFully(earlyDtsScanBuffer, 0, length, true);
+  }
+
+  /**
+   * Walks a sequence of EBML elements starting at {@code cursor} (a peek offset), descending
+   * into clusters and block groups and analyzing blocks of DTS tracks. Stops at {@code
+   * sequenceEnd}, at the scan budget, or once every DTS track has been analyzed.
+   */
+  private void scanElementSequence(ExtractorInput input, int cursor, int sequenceEnd)
+      throws IOException {
+    while (cursor < sequenceEnd && hasWaitingDtsTrack()) {
+      if (!ensureScanBytes(input, cursor + MAX_EBML_HEADER_SIZE)) {
+        return;
+      }
+      int idLength = ebmlVintLength(earlyDtsScanBuffer[cursor] & 0xFF);
+      if (idLength == 0 || idLength > 4) {
+        return;
+      }
+      long id = readEbmlElementId(cursor, idLength);
+      int sizeOffset = cursor + idLength;
+      int sizeLength = ebmlVintLength(earlyDtsScanBuffer[sizeOffset] & 0xFF);
+      if (sizeLength == 0) {
+        return;
+      }
+      long dataSize = readEbmlVintValue(sizeOffset, sizeLength);
+      boolean unknownSize = dataSize == (1L << (7 * sizeLength)) - 1;
+      int dataStart = sizeOffset + sizeLength;
+      long dataEndLong = unknownSize ? Long.MAX_VALUE : (long) dataStart + dataSize;
+      int dataEnd = dataEndLong > sequenceEnd ? sequenceEnd : (int) dataEndLong;
+
+      if (id == ID_CLUSTER || id == ID_BLOCK_GROUP) {
+        scanElementSequence(input, dataStart, dataEnd);
+        cursor = unknownSize ? sequenceEnd : dataEnd;
+      } else if (id == ID_SIMPLE_BLOCK || id == ID_BLOCK) {
+        analyzeDtsBlock(input, dataStart, dataEnd);
+        if (unknownSize) {
+          return;
+        }
+        cursor = dataEnd;
+      } else {
+        if (unknownSize) {
+          return;
+        }
+        cursor = dataEnd;
+      }
+    }
+  }
+
+  /**
+   * Parses the header of one SimpleBlock/Block at the given peek range and, if it belongs to
+   * a DTS track awaiting analysis, refines that track's mime type from the frame data.
+   */
+  private void analyzeDtsBlock(ExtractorInput input, int dataStart, int dataEnd)
+      throws IOException {
+    if (dataEnd <= dataStart || !ensureScanBytes(input, dataStart + 8)) {
+      return;
+    }
+    int trackNumberLength = ebmlVintLength(earlyDtsScanBuffer[dataStart] & 0xFF);
+    if (trackNumberLength == 0) {
+      return;
+    }
+    int trackNumber = (int) readEbmlVintValue(dataStart, trackNumberLength);
+    Track track = tracks.get(trackNumber);
+    if (track == null || !track.waitingForDtsAnalysis) {
+      return;
+    }
+    int pos = dataStart + trackNumberLength;
+    if (pos + 3 > dataEnd) {
+      return;
+    }
+    int flags = earlyDtsScanBuffer[pos + 2] & 0xFF;
+    pos += 3; // Skip the 2-byte timecode and the flags byte.
+    switch ((flags & 0x06) >> 1) {
+      case 1: { // Xiph lacing.
+        if (pos >= dataEnd) {
+          return;
+        }
+        int laces = earlyDtsScanBuffer[pos++] & 0xFF;
+        for (int i = 0; i < laces && pos < dataEnd; i++) {
+          while (pos < dataEnd && (earlyDtsScanBuffer[pos] & 0xFF) == 0xFF) {
+            pos++;
+          }
+          pos++;
+        }
+        break;
+      }
+      case 2: { // EBML lacing.
+        if (pos >= dataEnd) {
+          return;
+        }
+        pos++; // Lace count.
+        if (pos >= dataEnd) {
+          return;
+        }
+        int firstSizeLength = ebmlVintLength(earlyDtsScanBuffer[pos] & 0xFF);
+        if (firstSizeLength == 0) {
+          return;
+        }
+        pos += firstSizeLength; // First frame's signed size; frame data follows.
+        break;
+      }
+      case 3: { // Fixed-size lacing.
+        if (pos >= dataEnd) {
+          return;
+        }
+        pos++; // Lace count.
+        break;
+      }
+      default:
+        break; // No lacing.
+    }
+    int frameLength = Math.min(dataEnd - pos, MAX_EARLY_DTS_FRAME_BYTES);
+    if (frameLength < 16 || !ensureScanBytes(input, pos + frameLength)) {
+      return;
+    }
+    String mimeType =
+        DtsUtil.getDtsAudioMimeType(Arrays.copyOfRange(earlyDtsScanBuffer, pos, pos + frameLength));
+    if (mimeType != null && !mimeType.equals(track.format.sampleMimeType)) {
+      track.format = track.format.buildUpon().setSampleMimeType(mimeType).build();
+    }
+    track.waitingForDtsAnalysis = false;
+  }
+
+  private static int ebmlVintLength(int firstByte) {
+    int mask = 0x80;
+    for (int length = 1; length <= 8; length++) {
+      if ((firstByte & mask) != 0) {
+        return length;
+      }
+      mask >>= 1;
+    }
+    return 0;
+  }
+
+  private long readEbmlElementId(int offset, int length) {
+    long value = 0;
+    for (int i = 0; i < length; i++) {
+      value = (value << 8) | (earlyDtsScanBuffer[offset + i] & 0xFF);
+    }
+    return value;
+  }
+
+  /** Reads an EBML variable-size integer value with the marker bit stripped. */
+  private long readEbmlVintValue(int offset, int length) {
+    long value = earlyDtsScanBuffer[offset] & (0xFF >>> length);
+    for (int i = 1; i < length; i++) {
+      value = (value << 8) | (earlyDtsScanBuffer[offset + i] & 0xFF);
+    }
+    return value;
   }
 
   /** Passes events through to the outer {@link MatroskaExtractor}. */

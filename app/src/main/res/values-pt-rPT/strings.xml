@@ -2515,7 +2515,7 @@
     <string name="playback_buffer_managed_sub">Limita o buffer a uma parte segura da memória deste dispositivo. Desativa para definires manualmente o tamanho alvo do buffer (avançado — valores altos podem fazer a app falhar em dispositivos com pouca memória).</string>
     <string name="playback_buffer_target">Tamanho alvo do buffer</string>
     <string name="playback_buffer_target_sub">RAM máxima utilizada para buffer antecipado. O máximo é calculado a partir da memória disponível do dispositivo (limite de heap por app no Android), por isso dispositivos com mais RAM desbloqueiam limites maiores automaticamente.</string>
-    <string name="playback_buffer_target_managed_hint">Gerido pelo orçamento de memória do dispositivo. Desativa Orçamento de memória gerido para alterares isto.</string>
+    <string name="playback_buffer_target_managed_hint">Gerenciado pelo orçamento de memória do dispositivo. Desative o Gerenciamento de uso de memória para definir isso.</string>
     <string name="playback_buffer_target_warning">Aviso: acima do limite seguro do dispositivo (%1$d MB). A app pode falhar durante a reprodução.</string>
     <string name="playback_buffer_allow_large">Permitir buffer alvo maior</string>
     <string name="playback_buffer_allow_large_sub">Remove o limite de memória do dispositivo no controlo de tamanho alvo do buffer, permitindo valores até 2 GB. Pode fazer a app falhar em dispositivos com menos de 2 GB de RAM.</string>

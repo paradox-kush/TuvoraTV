@@ -140,6 +140,19 @@ class ProfileDataStoreFactory @Inject constructor(
         } else {
             emptyList()
         }
+        // Ensure the datastore directory exists — prevents ENOENT on first read
+        // when a profile-scoped file hasn't been created yet.
+        val dataStoreDir = File(context.filesDir, "datastore")
+        if (!dataStoreDir.exists()) {
+            dataStoreDir.mkdirs()
+        }
+        // DataStore 1.1.x (okio-based) can throw FileNotFoundException if the file
+        // doesn't exist yet and a race condition occurs. Pre-create an empty file
+        // to avoid this edge case (DataStore will overwrite on first write).
+        val targetFile = File(dataStoreDir, "$fileName.preferences_pb")
+        if (!targetFile.exists()) {
+            try { targetFile.createNewFile() } catch (_: Exception) { }
+        }
         val store = PreferenceDataStoreFactory.create(
             corruptionHandler = androidx.datastore.core.handlers.ReplaceFileCorruptionHandler { ex ->
                 Log.e("ProfileDataStoreFactory", "DataStore corrupted ($fileName): ${ex.message} — attempting shadow copy recovery")

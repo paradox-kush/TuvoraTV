@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.runtime.Immutable
+import com.nuvio.tv.core.tracking.TrackingMembershipRemovalConfirmation
 import com.nuvio.tv.data.local.StartupAuthNotice
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.Collection
@@ -49,9 +50,11 @@ data class HomeUiState(
     val movieWatchedPending: Set<String> = emptySet(),
     val showPosterListPicker: Boolean = false,
     val posterListPickerTitle: String? = null,
+    val posterListPickerContentType: String? = null,
     val posterListPickerMembership: Map<String, Boolean> = emptyMap(),
     val posterListPickerPending: Boolean = false,
     val posterListPickerError: String? = null,
+    val posterListPickerRemovalConfirmations: List<TrackingMembershipRemovalConfirmation> = emptyList(),
     val gridItems: List<GridItem> = emptyList(),
     val hideUnreleasedContent: Boolean = false,
     val showFullReleaseDate: Boolean = true,

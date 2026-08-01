@@ -261,10 +261,15 @@ fun ModernHomeContent(
         shouldActivateFocusedPosterFlow,
         trailerPlaybackTarget,
         uiState.focusedPosterBackdropExpandDelaySeconds,
-        verticalRowListState.isScrollInProgress
+        verticalRowListState.isScrollInProgress,
+        // Re-run when the sidebar takes/returns focus so a pending expand cannot
+        // complete while the user is on the Home button (#2815).
+        isSidebarExpanded.value
     ) {
+        // Always clear first so sidebar open / selection change collapses immediately.
         expandedCatalogFocusKey.value = null
         if (!shouldActivateFocusedPosterFlow) return@LaunchedEffect
+        if (isSidebarExpanded.value) return@LaunchedEffect
         if (verticalRowListState.isScrollInProgress) return@LaunchedEffect
         val selection = focusedCatalogSelection.value ?: return@LaunchedEffect
         if (selection.payload !is ModernPayload.Catalog) return@LaunchedEffect
@@ -272,6 +277,7 @@ fun ModernHomeContent(
         delay(expansionDelayMs)
         if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@LaunchedEffect
         if (shouldActivateFocusedPosterFlow &&
+            !isSidebarExpanded.value &&
             !verticalRowListState.isScrollInProgress &&
             focusedCatalogSelection.value?.focusKey == selection.focusKey
         ) {
@@ -729,8 +735,19 @@ fun ModernHomeContent(
                 heroTrailerFirstFrameRendered = false
             }
 
-            val isTrailerPlayingFullscreenState = remember(fullScreenBackdrop, shouldPlayCatalogHeroTrailerState) {
-                derivedStateOf { fullScreenBackdrop && shouldPlayCatalogHeroTrailerState.value && heroTrailerFirstFrameRendered }
+            // Collection hero videos should trigger the same fullscreen layout
+            // and content fade as catalog trailers — otherwise the video plays
+            // "behind" the collection cards instead of expanding into the hero area (#2683).
+            val isTrailerPlayingFullscreenState = remember(
+                fullScreenBackdrop,
+                shouldPlayCatalogHeroTrailerState,
+                shouldPlayCollectionHeroVideoState
+            ) {
+                derivedStateOf {
+                    fullScreenBackdrop &&
+                        (shouldPlayCatalogHeroTrailerState.value || shouldPlayCollectionHeroVideoState.value) &&
+                        heroTrailerFirstFrameRendered
+                }
             }
             BackHandler(enabled = isTrailerPlayingFullscreenState.value) {
                 focusedCatalogSelection.value = null
@@ -908,6 +925,7 @@ fun ModernHomeContent(
 
             val fullScreenBackdropUpdated by rememberUpdatedState(fullScreenBackdrop)
             val shouldPlayCatalogHeroTrailerUpdated by rememberUpdatedState(shouldPlayCatalogHeroTrailerState.value)
+            val shouldPlayCollectionHeroVideoUpdated by rememberUpdatedState(shouldPlayCollectionHeroVideoState.value)
             val heroTrailerFirstFrameRenderedUpdated by rememberUpdatedState(heroTrailerFirstFrameRendered)
 
             val onTrailerEndedLambda = remember {
@@ -931,13 +949,15 @@ fun ModernHomeContent(
                 onFirstFrameRendered = onFirstFrameRenderedLambda
             )
 
+            // Fade content rows when ANY hero media (catalog trailer or collection
+            // hero video) is playing in fullscreen — not just catalog trailers.
             val trailerContentAlphaState = animateFloatAsState(
-                targetValue = if (fullScreenBackdropUpdated && shouldPlayCatalogHeroTrailerUpdated && heroTrailerFirstFrameRenderedUpdated) 0f else 1f,
+                targetValue = if (fullScreenBackdropUpdated && (shouldPlayCatalogHeroTrailerUpdated || shouldPlayCollectionHeroVideoUpdated) && heroTrailerFirstFrameRenderedUpdated) 0f else 1f,
                 animationSpec = tween(durationMillis = 480),
                 label = "trailerContentFade"
             )
 
-            val shouldPlayTrailerLambda = remember { { shouldPlayCatalogHeroTrailerUpdated } }
+            val shouldPlayTrailerLambda = remember { { shouldPlayCatalogHeroTrailerUpdated || shouldPlayCollectionHeroVideoUpdated } }
             val heroTrailerRenderedLambda = remember { { heroTrailerFirstFrameRenderedUpdated } }
 
             val heroMetadataModifier = remember(rowHorizontalPadding, rowsViewportHeight) {

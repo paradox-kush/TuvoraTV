@@ -8,6 +8,7 @@ import com.nuvio.tv.R
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.tmdb.TmdbCollectionSourceResolver
+import com.nuvio.tv.core.util.hasNoReleaseInfo
 import com.nuvio.tv.core.util.isUnreleased
 import com.nuvio.tv.core.trakt.TraktPublicListSourceResolver
 import com.nuvio.tv.data.trailer.TrailerService
@@ -361,7 +362,9 @@ class FolderDetailViewModel @Inject constructor(
         val state = _uiState.value
         if (!hasAllTab) return
         val sourceTabs = state.tabs.drop(1) // skip the All tab
-        val anyLoading = sourceTabs.any { it.isLoading }
+        val anyLoading = sourceTabs.any { tab ->
+            tab.catalogRow?.isLoading == true || tab.isLoading
+        }
         // Only include real loaded rows (exclude placeholder shimmer rows)
         val loadedRows = sourceTabs.mapNotNull { tab ->
             tab.catalogRow?.takeIf { !it.isLoading }
@@ -369,20 +372,42 @@ class FolderDetailViewModel @Inject constructor(
 
         if (loadedRows.isEmpty()) return
 
-        // Round-robin interleave items from all loaded catalog rows
+        val currentAllRow = state.tabs.getOrNull(0)?.catalogRow
+
+        if (anyLoading && currentAllRow != null && currentAllRow.items.isNotEmpty()) {
+            _uiState.update { s ->
+                val tabs = s.tabs.toMutableList()
+                tabs[0] = tabs[0].copy(
+                    isLoading = false,
+                    catalogRow = currentAllRow.copy(isLoading = true)
+                )
+                s.copy(tabs = tabs)
+            }
+            return
+        }
+
+        // All pending loads completed — compute the new batch of items via round-robin
+        // and APPEND them to the existing ALL tab content (stable scroll position).
         val mergedItems = roundRobinMerge(loadedRows.map { it.items })
-        // Use the first loaded row as a template for the merged CatalogRow
+        val existingItems = currentAllRow?.items.orEmpty()
+        val existingIds = existingItems.mapTo(mutableSetOf()) { it.id }
+        val newItems = mergedItems.filter { it.id !in existingIds }
+        val finalItems = existingItems + newItems
+
         val templateRow = loadedRows.first()
+        val hasMore = sourceTabs.any { tab -> tab.catalogRow?.hasMore == true }
         val mergedRow = templateRow.copy(
             catalogName = "All",
-            items = mergedItems
+            items = finalItems,
+            hasMore = hasMore,
+            isLoading = false
         )
 
         _uiState.update { s ->
             val tabs = s.tabs.toMutableList()
             tabs[0] = tabs[0].copy(
                 catalogRow = mergedRow,
-                isLoading = anyLoading
+                isLoading = false
             )
             s.copy(tabs = tabs)
         }
@@ -624,7 +649,9 @@ class FolderDetailViewModel @Inject constructor(
                 }
             }
             val tab = _uiState.value.tabs.getOrNull(tabIndex)
-            val catalogName = catalog?.name ?: tab?.label?.takeIf { it != tab?.typeLabel } ?: source.catalogId
+            val catalogName = catalog?.name
+                ?: tab?.label?.takeIf { it.isNotBlank() }
+                ?: source.catalogId
 
             val supportsSkip = catalog?.supportsExtra("skip") ?: false
             val skipStep = catalog?.skipStep() ?: 100
@@ -881,7 +908,10 @@ class FolderDetailViewModel @Inject constructor(
                         _uiState.update { s ->
                             val tabs = s.tabs.toMutableList()
                             val currentRow = tabs.getOrNull(tabIndex)?.catalogRow
-                            val filteredData = result.data.filteredForRelease(s.hideUnreleasedContent)
+                            val filteredData = result.data.filteredForRelease(
+                                hideUnreleased = s.hideUnreleasedContent,
+                                treatMissingDateAsUnreleased = true
+                            )
                             val row = if (append && currentRow != null) {
                                 val existingIds = currentRow.items.map { "${it.apiType}:${it.id}" }.toHashSet()
                                 val newItems = filteredData.items.filter { "${it.apiType}:${it.id}" !in existingIds }
@@ -939,7 +969,10 @@ class FolderDetailViewModel @Inject constructor(
                         _uiState.update { s ->
                             val tabs = s.tabs.toMutableList()
                             val currentRow = tabs.getOrNull(tabIndex)?.catalogRow
-                            val filteredData = result.data.filteredForRelease(s.hideUnreleasedContent)
+                            val filteredData = result.data.filteredForRelease(
+                                hideUnreleased = s.hideUnreleasedContent,
+                                treatMissingDateAsUnreleased = true
+                            )
                             val row = if (append && currentRow != null) {
                                 val existingIds = currentRow.items.map { "${it.apiType}:${it.id}" }.toHashSet()
                                 val newItems = filteredData.items.filter { "${it.apiType}:${it.id}" !in existingIds }
@@ -1510,10 +1543,22 @@ class FolderDetailViewModel @Inject constructor(
 
 }
 
-/** Drops unreleased items from a freshly-loaded row when the user toggle is on. */
-private fun CatalogRow.filteredForRelease(hideUnreleased: Boolean): CatalogRow {
+/**
+ * Drops unreleased items from a freshly-loaded row when the user toggle is on.
+ * [treatMissingDateAsUnreleased] additionally drops items that have no release
+ * information at all — used for TMDB- and Trakt-resolved rows, where a missing
+ * release date means the title is unannounced (#2793). Addon rows keep the
+ * lenient behavior because sparse addon metadata often omits dates for
+ * released content.
+ */
+private fun CatalogRow.filteredForRelease(
+    hideUnreleased: Boolean,
+    treatMissingDateAsUnreleased: Boolean = false
+): CatalogRow {
     if (!hideUnreleased) return this
     val today = java.time.LocalDate.now()
-    val filtered = items.filterNot { it.isUnreleased(today) }
+    val filtered = items.filterNot { item ->
+        item.isUnreleased(today) || (treatMissingDateAsUnreleased && item.hasNoReleaseInfo())
+    }
     return if (filtered.size == items.size) this else copy(items = filtered)
 }

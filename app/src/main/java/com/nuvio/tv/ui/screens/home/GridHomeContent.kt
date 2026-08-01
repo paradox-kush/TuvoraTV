@@ -60,6 +60,7 @@ import androidx.tv.material3.Text
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.tv.material3.Card
@@ -277,6 +278,65 @@ fun GridHomeContent(
         val contentFocusRequester = LocalContentFocusRequester.current
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val gridWidth = maxWidth
+        // Calculate actual columns from available width (matching GridCells.Adaptive logic)
+        val horizontalPadding = NuvioTheme.spacing.xxxl + NuvioTheme.spacing.xl
+        val spacing = NuvioTheme.spacing.md
+        val availableWidth = gridWidth - horizontalPadding
+        val actualColumnsPerRow = remember(availableWidth, posterCardStyle.width, spacing) {
+            val cols = ((availableWidth + spacing) / (posterCardStyle.width + spacing)).toInt()
+            cols.coerceAtLeast(1)
+        }
+        val gridRowCount = if (posterCardStyle.width.value.toInt() <= 104) 2 else 3
+
+        // Trim content items per section so SeeAll never ends up alone on a new row.
+        val trimmedPostItems = remember(postItems, actualColumnsPerRow, gridRowCount) {
+            if (actualColumnsPerRow <= 1) return@remember postItems
+            val maxItems = actualColumnsPerRow * gridRowCount
+            val result = mutableListOf<Pair<GridItem, String>>()
+            // Process sections: collect items between dividers, then trim if needed
+            var i = 0
+            while (i < postItems.size) {
+                val (item, _) = postItems[i]
+                if (item is GridItem.SectionDivider || item is GridItem.CollectionHeader) {
+                    // Collect all items in this section
+                    result.add(postItems[i])
+                    i++
+                    val sectionContent = mutableListOf<Pair<GridItem, String>>()
+                    var seeAllItem: Pair<GridItem, String>? = null
+                    while (i < postItems.size && postItems[i].first !is GridItem.SectionDivider && postItems[i].first !is GridItem.CollectionHeader) {
+                        if (postItems[i].first is GridItem.SeeAll) {
+                            seeAllItem = postItems[i]
+                        } else if (postItems[i].first is GridItem.Content) {
+                            sectionContent.add(postItems[i])
+                        } else {
+                            sectionContent.add(postItems[i])
+                        }
+                        i++
+                    }
+                    if (seeAllItem != null) {
+                        // Limit content and ensure SeeAll isn't alone on last row
+                        val capped = sectionContent.take(maxItems - 1)
+                        val totalWithSeeAll = capped.size + 1
+                        val lastRowCount = totalWithSeeAll % actualColumnsPerRow
+                        val trimmed = if (lastRowCount == 1 && capped.size >= actualColumnsPerRow) {
+                            // SeeAll would be alone — drop one item so it joins previous row
+                            capped.dropLast(1)
+                        } else {
+                            capped
+                        }
+                        result.addAll(trimmed)
+                        result.add(seeAllItem)
+                    } else {
+                        result.addAll(sectionContent.take(maxItems))
+                    }
+                } else {
+                    result.add(postItems[i])
+                    i++
+                }
+            }
+            result
+        }
+
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Adaptive(minSize = posterCardStyle.width),
@@ -451,9 +511,9 @@ fun GridHomeContent(
             }
 
             // Emit post-section items (SectionDividers, Content, SeeAll, Collections)
-            if (postItems.isNotEmpty()) {
+            if (trimmedPostItems.isNotEmpty()) {
                 items(
-                    items = postItems,
+                    items = trimmedPostItems,
                     key = { it.second },
                     span = { pair ->
                         val spanCount = when (pair.first) {
@@ -693,52 +753,71 @@ private fun SeeAllGridCard(
     modifier: Modifier = Modifier
 ) {
     val seeAllCardShape = RoundedCornerShape(posterCardStyle.cornerRadius)
-    Card(
-        onClick = onClick,
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(posterCardStyle.aspectRatio)
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
-        shape = CardDefaults.shape(
-            shape = seeAllCardShape
-        ),
-        colors = CardDefaults.colors(
-            containerColor = NuvioTheme.colors.BackgroundCard,
-            focusedContainerColor = NuvioTheme.colors.BackgroundCard
-        ),
-        border = CardDefaults.border(
-            focusedBorder = Border(
-                border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioTheme.colors.FocusRing),
-                shape = seeAllCardShape
-            )
-        ),
-        scale = CardDefaults.scale(
-            focusedScale = posterCardStyle.focusedScale
-        )
+    val cardDepthStyle = LocalCardDepthStyle.current
+    Column(
+        modifier = modifier.width(posterCardStyle.width)
     ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
+        Card(
+            onClick = onClick,
+            modifier = Modifier
+                .width(posterCardStyle.width)
+                .height(posterCardStyle.height)
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
+            shape = CardDefaults.shape(
+                shape = seeAllCardShape
+            ),
+            colors = CardDefaults.colors(
+                containerColor = NuvioTheme.colors.BackgroundCard,
+                focusedContainerColor = NuvioTheme.colors.BackgroundCard
+            ),
+            border = CardDefaults.border(
+                focusedBorder = Border(
+                    border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioTheme.colors.FocusRing),
+                    shape = seeAllCardShape
+                )
+            ),
+            scale = CardDefaults.scale(
+                focusedScale = posterCardStyle.focusedScale
+            )
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(seeAllCardShape)
+                    .nuvioCardDepth(
+                        shape = seeAllCardShape,
+                        surface = CardDepthSurface.POSTERS,
+                        style = cardDepthStyle
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = label ?: stringResource(R.string.action_see_all),
-                    modifier = Modifier.size(NuvioTheme.spacing.xxl),
-                    tint = NuvioTheme.colors.TextSecondary
-                )
-                Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
-                Text(
-                    text = label ?: stringResource(R.string.action_see_all),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = NuvioTheme.colors.TextSecondary,
-                    textAlign = TextAlign.Center
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = label ?: stringResource(R.string.action_see_all),
+                        modifier = Modifier.size(NuvioTheme.spacing.xxl),
+                        tint = NuvioTheme.colors.TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+                    Text(
+                        text = label ?: stringResource(R.string.action_see_all),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = NuvioTheme.colors.TextSecondary,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
+        // Reserve space for label to match other grid cards
+        Spacer(
+            modifier = Modifier
+                .width(posterCardStyle.width)
+                .padding(top = NuvioTheme.spacing.sm)
+                .height(MaterialTheme.typography.titleMedium.lineHeight.value.dp)
+        )
     }
 }
 

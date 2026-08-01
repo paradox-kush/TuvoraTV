@@ -204,25 +204,6 @@ data class SupabaseWatchProgressEvent(
 )
 
 @Serializable
-data class SupabaseLibraryItem(
-    val id: String? = null,
-    @SerialName("user_id") val userId: String? = null,
-    @SerialName("content_id") val contentId: String,
-    @SerialName("content_type") val contentType: String,
-    val name: String = "",
-    val poster: String? = null,
-    @SerialName("poster_shape") val posterShape: String = "POSTER",
-    val background: String? = null,
-    val description: String? = null,
-    @SerialName("release_info") val releaseInfo: String? = null,
-    @SerialName("imdb_rating") val imdbRating: Float? = null,
-    val genres: List<String> = emptyList(),
-    @SerialName("addon_base_url") val addonBaseUrl: String? = null,
-    @SerialName("added_at") val addedAt: Long = 0,
-    @SerialName("profile_id") val profileId: Int = 1
-)
-
-@Serializable
 data class SupabaseWatchedItem(
     val id: String? = null,
     @SerialName("user_id") val userId: String? = null,

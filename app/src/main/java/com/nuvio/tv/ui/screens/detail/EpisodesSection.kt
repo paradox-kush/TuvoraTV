@@ -100,6 +100,7 @@ import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 
 private const val EPISODE_CARD_CONTENT_TYPE = "episode_card"
 private const val EPISODE_SCROLL_REPEAT_THROTTLE_MS = 80L
+private const val EPISODE_RESTORE_FALLBACK_MS = 250L
 
 @OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -110,7 +111,8 @@ fun SeasonTabs(
     onSeasonLongPress: (Int) -> Unit = {},
     selectedTabFocusRequester: FocusRequester,
     upFocusRequester: FocusRequester? = null,
-    downFocusRequester: FocusRequester? = null
+    downFocusRequester: FocusRequester? = null,
+    isFocusEnabled: Boolean = true
 ) {
     // Move season 0 (specials) to the end
     val sortedSeasons = remember(seasons) {
@@ -182,6 +184,7 @@ fun SeasonTabs(
                 modifier = Modifier
                     .then(if (isSelected) Modifier.focusRequester(selectedTabFocusRequester) else Modifier)
                     .focusProperties {
+                        canFocus = isFocusEnabled
                         if (isSelected && downFocusRequester != null) {
                             down = downFocusRequester
                         }
@@ -284,7 +287,19 @@ fun EpisodesRow(
     val cardMetrics = rememberEpisodeCardMetrics()
     val density = LocalDensity.current
     val rowPrefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 2) }
-    val lazyListState = rememberLazyListState(prefetchStrategy = rowPrefetchStrategy)
+    val initialEpisodeIndex = remember(dedupedEpisodes, restoreEpisodeId, scrollToEpisodeId) {
+        val initialEpisodeId = restoreEpisodeId ?: scrollToEpisodeId
+        val targetIndex = dedupedEpisodes.indexOfFirst { it.id == initialEpisodeId }
+        if (restoreEpisodeId != null) {
+            (targetIndex - 1).coerceAtLeast(0)
+        } else {
+            targetIndex.coerceAtLeast(0)
+        }
+    }
+    val lazyListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = initialEpisodeIndex,
+        prefetchStrategy = rowPrefetchStrategy
+    )
     var lastHorizontalKeyRepeatTime by remember { mutableStateOf(0L) }
     val episodeIds = remember(dedupedEpisodes) { dedupedEpisodes.mapTo(mutableSetOf()) { it.id } }
     LaunchedEffect(episodeIds, episodeFocusRequesters) {
@@ -293,13 +308,23 @@ fun EpisodesRow(
 
     LaunchedEffect(restoreFocusToken, restoreEpisodeId, restoreTargetRequester, dedupedEpisodes) {
         if (restoreFocusToken <= 0 || restoreEpisodeId.isNullOrBlank()) return@LaunchedEffect
-        if (dedupedEpisodes.none { it.id == restoreEpisodeId }) return@LaunchedEffect
+        if (dedupedEpisodes.none { it.id == restoreEpisodeId }) {
+            delay(EPISODE_RESTORE_FALLBACK_MS)
+            onRestoreFocusHandled()
+            return@LaunchedEffect
+        }
         val index = dedupedEpisodes.indexOfFirst { it.id == restoreEpisodeId }
         if (index >= 0) {
             val offsetPx = with(density) { (cardMetrics.cardWidth * 2f / 3f - cardMetrics.itemSpacing).roundToPx() }
             lazyListState.scrollToItem(index, scrollOffset = -offsetPx)
         }
-        restoreTargetRequester?.requestFocusAfterFrames()
+        val focusRequested = restoreTargetRequester?.requestFocusAfterFrames(frames = 1) == true
+        if (!focusRequested) {
+            onRestoreFocusHandled()
+            return@LaunchedEffect
+        }
+        delay(EPISODE_RESTORE_FALLBACK_MS)
+        onRestoreFocusHandled()
     }
 
     LaunchedEffect(scrollToEpisodeId, dedupedEpisodes) {
@@ -350,9 +375,7 @@ fun EpisodesRow(
             val episodeFocusRequester = remember(episode.id) { episodeFocusRequesters.getOrPut(episode.id) { FocusRequester() } }
             val episodeOnClick = remember(episode.id) { { onEpisodeClick(episode) } }
             val episodeOnLongPress = remember(episode.id) { { optionsEpisode = episode } }
-            val episodeOnFocused = remember(episode.id) { {
-                onEpisodeFocused(episode.id)
-            } }
+            val episodeOnFocused = remember(episode.id) { { onEpisodeFocused(episode.id) } }
             val isRestoreTarget = episode.id == restoreEpisodeId
             val episodeOnFocusRestored = remember(isRestoreTarget, onRestoreFocusHandled) {
                 if (isRestoreTarget) onRestoreFocusHandled else null
@@ -369,6 +392,7 @@ fun EpisodesRow(
                 upFocusRequester = upFocusRequester,
                 downFocusRequester = downFocusRequester,
                 focusRequester = episodeFocusRequester,
+                isFocusEnabled = restoreEpisodeId.isNullOrBlank() || isRestoreTarget,
                 onFocused = episodeOnFocused,
                 onFocusRestored = episodeOnFocusRestored
             )
@@ -454,6 +478,7 @@ private fun EpisodeCard(
     upFocusRequester: FocusRequester,
     downFocusRequester: FocusRequester? = null,
     focusRequester: FocusRequester,
+    isFocusEnabled: Boolean = true,
     onFocused: (() -> Unit)? = null,
     onFocusRestored: (() -> Unit)? = null
 ) {
@@ -632,6 +657,7 @@ private fun EpisodeCard(
                 false
             }
             .focusProperties {
+                canFocus = isFocusEnabled
                 up = upFocusRequester
                 if (downFocusRequester != null) {
                     down = downFocusRequester

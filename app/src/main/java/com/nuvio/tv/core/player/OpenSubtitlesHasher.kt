@@ -1,10 +1,12 @@
 package com.nuvio.tv.core.player
 
+import com.nuvio.tv.ui.screens.player.PlayerMediaSourceFactory
+import com.nuvio.tv.ui.screens.player.PlayerPlaybackNetworking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * Calculates the OpenSubtitles file hash for a video stream.
@@ -18,29 +20,36 @@ object OpenSubtitlesHasher {
 
     data class Result(val hash: String, val fileSize: Long)
 
-    suspend fun compute(url: String, headers: Map<String, String>): Result? =
-        withContext(Dispatchers.IO) {
-            try {
-                val fileSize = getContentLength(url, headers) ?: return@withContext null
-                if (fileSize < CHUNK_SIZE * 2) return@withContext null
+    suspend fun compute(
+        url: String,
+        headers: Map<String, String>,
+        client: OkHttpClient = PlayerPlaybackNetworking.playbackHttpClient
+    ): Result? = withContext(Dispatchers.IO) {
+        try {
+            val fileSize = getContentLength(url, headers, client) ?: return@withContext null
+            if (fileSize < CHUNK_SIZE * 2) return@withContext null
 
-                var hash = fileSize
-                hash += readChunkSum(url, headers, offset = 0, length = CHUNK_SIZE)
-                hash += readChunkSum(url, headers, offset = fileSize - CHUNK_SIZE, length = CHUNK_SIZE)
+            var hash = fileSize
+            hash += readChunkSum(url, headers, offset = 0, length = CHUNK_SIZE, client = client)
+            hash += readChunkSum(url, headers, offset = fileSize - CHUNK_SIZE, length = CHUNK_SIZE, client = client)
 
-                Result(
-                    hash = "%016x".format(hash),
-                    fileSize = fileSize
-                )
-            } catch (_: Exception) {
-                null
-            }
+            Result(
+                hash = "%016x".format(hash),
+                fileSize = fileSize
+            )
+        } catch (_: Exception) {
+            null
         }
+    }
 
-    private fun getContentLength(url: String, headers: Map<String, String>): Long? {
+    private fun getContentLength(
+        url: String,
+        headers: Map<String, String>,
+        client: OkHttpClient
+    ): Long? {
         // Query the static probeInfoCache in PlayerMediaSourceFactory to bypass connection if possible
         try {
-            val cacheInfo = com.nuvio.tv.ui.screens.player.PlayerMediaSourceFactory.getProbeInfo(url, headers)
+            val cacheInfo = PlayerMediaSourceFactory.getProbeInfo(url, headers)
             if (cacheInfo != null) {
                 // If the stream doesn't accept range requests, we cannot calculate OpenSubtitles hash (which requires reading the end of the file).
                 // Abort early to avoid throwing exceptions and wasting network calls.
@@ -55,23 +64,57 @@ object OpenSubtitlesHasher {
             // Fallback to active network request if package/class is unresolved in tests or background scenarios
         }
 
-        val conn = openConnection(url, headers, method = "HEAD")
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .head()
+        headers.forEach { (k, v) ->
+            if (!k.equals("Range", ignoreCase = true)) {
+                requestBuilder.header(k, v)
+            }
+        }
+        if (headers.none { it.key.equals("User-Agent", ignoreCase = true) }) {
+            requestBuilder.header("User-Agent", PlayerMediaSourceFactory.DEFAULT_USER_AGENT)
+        }
+
         return try {
-            conn.connect()
-            conn.contentLengthLong.takeIf { it > 0 }
-        } finally {
-            conn.disconnect()
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val lenStr = response.header("Content-Length")
+                val len = lenStr?.toLongOrNull() ?: response.body?.contentLength()
+                if (len == null) return null
+                if (len > 0) len else null
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 
-    private fun readChunkSum(url: String, headers: Map<String, String>, offset: Long, length: Long): Long {
-        val conn = openConnection(url, headers, method = "GET")
-        conn.setRequestProperty("Range", "bytes=$offset-${offset + length - 1}")
-        var sum = 0L
-        try {
-            conn.connect()
-            val stream: InputStream = conn.inputStream
+    private fun readChunkSum(
+        url: String,
+        headers: Map<String, String>,
+        offset: Long,
+        length: Long,
+        client: OkHttpClient
+    ): Long {
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .get()
+            .header("Range", "bytes=$offset-${offset + length - 1}")
+        headers.forEach { (k, v) ->
+            if (!k.equals("Range", ignoreCase = true)) {
+                requestBuilder.header(k, v)
+            }
+        }
+        if (headers.none { it.key.equals("User-Agent", ignoreCase = true) }) {
+            requestBuilder.header("User-Agent", PlayerMediaSourceFactory.DEFAULT_USER_AGENT)
+        }
+
+        val request = requestBuilder.build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful && response.code != 206) return 0L
+            val stream: InputStream = response.body?.byteStream() ?: return 0L
             val buf = ByteArray(LONG_SIZE)
+            var sum = 0L
             var remaining = length
             while (remaining >= LONG_SIZE) {
                 var read = 0
@@ -84,25 +127,8 @@ object OpenSubtitlesHasher {
                 sum += buf.toLongLE()
                 remaining -= LONG_SIZE
             }
-            stream.close()
-        } finally {
-            conn.disconnect()
+            return sum
         }
-        return sum
-    }
-
-    private fun openConnection(url: String, headers: Map<String, String>, method: String): HttpURLConnection {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.requestMethod = method
-        conn.connectTimeout = 8_000
-        conn.readTimeout = 8_000
-        headers.forEach { (k, v) -> 
-            if (!k.equals("Range", ignoreCase = true)) {
-                conn.setRequestProperty(k, v)
-            }
-        }
-        conn.setRequestProperty("Connection", "close")
-        return conn
     }
 
     private fun ByteArray.toLongLE(): Long {

@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -52,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.withFrameNanos
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Card
+import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Tab
@@ -67,6 +70,9 @@ import com.nuvio.tv.R
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.ui.components.PosterCardDefaults
 import com.nuvio.tv.ui.components.PosterCardStyle
+import com.nuvio.tv.ui.components.LocalCardDepthStyle
+import com.nuvio.tv.ui.components.nuvioCardDepth
+import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.ui.screens.home.ClassicHomeContent
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.ui.screens.home.GridHomeContent
@@ -468,15 +474,49 @@ private fun TabbedGridContent(
                 }
                 if (catalogRow != null && catalogRow.isLoading) {
                     item(
-                        span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }
+                        key = "loading_more"
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = NuvioTheme.spacing.xl),
-                            contentAlignment = Alignment.Center
+                        val cardShape = RoundedCornerShape(posterCardStyle.cornerRadius)
+                        val cardDepthStyle = LocalCardDepthStyle.current
+                        Column(
+                            modifier = Modifier.width(posterCardStyle.width)
                         ) {
-                            LoadingIndicator()
+                            Card(
+                                onClick = {},
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(posterCardStyle.height)
+                                    .focusProperties { canFocus = false },
+                                shape = CardDefaults.shape(shape = cardShape),
+                                colors = CardDefaults.colors(
+                                    containerColor = NuvioTheme.colors.BackgroundCard,
+                                    focusedContainerColor = NuvioTheme.colors.BackgroundCard
+                                )
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(cardShape)
+                                        .nuvioCardDepth(
+                                            shape = cardShape,
+                                            surface = CardDepthSurface.POSTERS,
+                                            style = cardDepthStyle
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    LoadingIndicator()
+                                }
+                            }
+                            // Reserve space for title + release date to match ContentCard height
+                            Spacer(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = NuvioTheme.spacing.sm)
+                                    .height(
+                                        MaterialTheme.typography.titleMedium.lineHeight.value.dp +
+                                            MaterialTheme.typography.labelMedium.lineHeight.value.dp
+                                    )
+                            )
                         }
                     }
                 }
@@ -497,7 +537,14 @@ private fun RowsContent(
     onItemFocus: (MetaPreview) -> Unit = {},
     onItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> }
 ) {
-    val sourceTabs = uiState.tabs.filter { !it.isAllTab }
+    val sourceTabs = uiState.tabs.filter { tab ->
+        if (tab.isAllTab) return@filter false
+        // Hide sources that returned zero results after loading completed
+        if (!tab.isLoading && tab.error == null &&
+            tab.catalogRow != null && tab.catalogRow.items.isEmpty()
+        ) return@filter false
+        true
+    }
     
     // Nested prefetch: pre-compose cards in nested LazyRows to prevent frame spikes
     val nestedPrefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 2) }

@@ -52,7 +52,10 @@ import com.nuvio.tv.ui.components.PosterCardDefaults
 import com.nuvio.tv.ui.components.PosterCardStyle
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
+import com.nuvio.tv.core.tracking.LOCAL_LIBRARY_LIST_KEY
+import com.nuvio.tv.core.tracking.supportsMembershipFor
 import com.nuvio.tv.data.local.StartupAuthNotice
+import com.nuvio.tv.ui.components.posteroptions.TrackingRemovalConfirmationDialog
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -412,7 +415,7 @@ fun HomeScreen(
             title = item.name,
             isInLibrary = uiState.posterLibraryMembership[statusKey] == true,
             isLibraryPending = statusKey in uiState.posterLibraryPending,
-            showManageLists = uiState.librarySourceMode == LibrarySourceMode.TRAKT,
+            showManageLists = uiState.librarySourceMode != LibrarySourceMode.LOCAL,
             isMovie = isMovie,
             isSeries = isSeries,
             isWatched = movieWatchedStatus[statusKey] == true,
@@ -423,7 +426,7 @@ fun HomeScreen(
                 posterOptionsTarget = null
             },
             onToggleLibrary = {
-                if (uiState.librarySourceMode == LibrarySourceMode.TRAKT) {
+                if (uiState.librarySourceMode != LibrarySourceMode.LOCAL) {
                     viewModel.openPosterListPicker(item, selectedPoster.addonBaseUrl)
                 } else {
                     viewModel.togglePosterLibrary(item, selectedPoster.addonBaseUrl)
@@ -442,15 +445,34 @@ fun HomeScreen(
     }
 
     if (uiState.showPosterListPicker) {
+        val localTab = LibraryListTab(
+            key = LOCAL_LIBRARY_LIST_KEY,
+            title = stringResource(R.string.trakt_library_source_nuvio),
+            type = LibraryListTab.Type.WATCHLIST
+        )
+        val contentType = uiState.posterListPickerContentType.orEmpty()
+        val destinationTabs = uiState.libraryListTabs.filter { tab ->
+            tab.supportsMembershipFor(contentType)
+        }
         HomeLibraryListPickerDialog(
             title = uiState.posterListPickerTitle ?: stringResource(R.string.detail_lists_fallback),
-            tabs = uiState.libraryListTabs,
+            tabs = listOf(localTab) + destinationTabs,
             membership = uiState.posterListPickerMembership,
             isPending = uiState.posterListPickerPending,
             error = uiState.posterListPickerError,
             onToggle = { key -> viewModel.togglePosterListPickerMembership(key) },
             onSave = { viewModel.savePosterListPickerMembership() },
             onDismiss = { viewModel.dismissPosterListPicker() }
+        )
+    }
+
+    if (uiState.posterListPickerRemovalConfirmations.isNotEmpty()) {
+        TrackingRemovalConfirmationDialog(
+            itemTitle = uiState.posterListPickerTitle.orEmpty(),
+            confirmations = uiState.posterListPickerRemovalConfirmations,
+            isPending = uiState.posterListPickerPending,
+            onConfirm = viewModel::confirmPosterListPickerRemoval,
+            onDismiss = viewModel::cancelPosterListPickerRemoval
         )
     }
 }

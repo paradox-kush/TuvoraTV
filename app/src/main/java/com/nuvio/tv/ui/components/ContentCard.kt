@@ -566,6 +566,13 @@ fun ContentCard(
     }
 }
 
+/**
+ * Keys that should collapse an expanded poster so navigation can re-arm expand.
+ *
+ * Select keys (Center / Enter) are intentionally excluded: holding them opens the
+ * action menu. Resetting the expand timer on those keys collapsed and re-expanded
+ * the card while the menu was opening (#2574).
+ */
 private fun shouldResetBackdropTimer(nativeEvent: AndroidKeyEvent): Boolean {
     val key = nativeEvent.keyCode
     return when (key) {
@@ -573,9 +580,6 @@ private fun shouldResetBackdropTimer(nativeEvent: AndroidKeyEvent): Boolean {
         AndroidKeyEvent.KEYCODE_DPAD_DOWN,
         AndroidKeyEvent.KEYCODE_DPAD_LEFT,
         AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-        AndroidKeyEvent.KEYCODE_ENTER,
-        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
         AndroidKeyEvent.KEYCODE_BACK -> true
         else -> false
     }

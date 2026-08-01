@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,6 +47,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
@@ -66,7 +69,10 @@ import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.ui.components.EmptyScreenState
 import com.nuvio.tv.ui.components.GridContentCard
 import com.nuvio.tv.ui.components.LoadingIndicator
+import com.nuvio.tv.ui.components.LocalCardDepthStyle
 import com.nuvio.tv.ui.components.PosterCardStyle
+import com.nuvio.tv.ui.components.nuvioCardDepth
+import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.ui.util.dpadVerticalFastScroll
 import com.nuvio.tv.ui.util.formatAddonTypeLabel
 import com.nuvio.tv.ui.util.localizedContentType
@@ -288,6 +294,16 @@ private fun DiscoverDropdownPicker(
     var isFocused by remember { mutableStateOf(false) }
     var anchorSize by remember { mutableStateOf(IntSize.Zero) }
     var focusedOptionValue by remember(expanded) { mutableStateOf<String?>(null) }
+    val selectedItemFocusRequester = remember { FocusRequester() }
+
+    // When the dropdown opens, request focus on the currently selected item
+    // so the user can navigate from the correct position (#2507).
+    LaunchedEffect(expanded) {
+        if (expanded && selectedValue != null) {
+            kotlinx.coroutines.delay(50)
+            try { selectedItemFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
 
     Box(modifier = modifier) {
         Card(
@@ -386,6 +402,7 @@ private fun DiscoverDropdownPicker(
 
                 DropdownMenuItem(
                     modifier = Modifier
+                        .then(if (isSelected) Modifier.focusRequester(selectedItemFocusRequester) else Modifier)
                         .padding(horizontal = 6.dp, vertical = NuvioTheme.spacing.xxs)
                         .background(
                             color = itemBackgroundColor,
@@ -641,7 +658,9 @@ internal fun DiscoverGrid(
                 DiscoverActionCard(
                     actionType = actionType,
                     posterCardStyle = adaptiveStyle,
-                    modifier = Modifier.width(adaptiveStyle.width),
+                    modifier = Modifier
+                        .padding(top = 3.dp)
+                        .width(adaptiveStyle.width),
                     focusRequester = focusReq,
                     onFocused = { onItemFocused(actionIndex) },
                     onClick = {
@@ -688,57 +707,69 @@ private fun DiscoverActionCard(
         DiscoverGridAction.Loading -> stringResource(R.string.discover_loading)
         DiscoverGridAction.None -> ""
     }
+    val cardDepthStyle = LocalCardDepthStyle.current
 
-    Card(
-        onClick = onClick,
-        modifier = modifier
-            .width(posterCardStyle.width)
-            .focusProperties { canFocus = actionType != DiscoverGridAction.Loading }
-            .onPreviewKeyEvent { event ->
-                actionType != DiscoverGridAction.None &&
-                    event.nativeKeyEvent.action == AndroidKeyEvent.ACTION_DOWN &&
-                    event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT
-            }
-            .onFocusChanged { state -> if (state.isFocused) onFocused() }
-            .then(
-                if (focusRequester != null) Modifier.focusRequester(focusRequester)
-                else Modifier
-            ),
-        shape = CardDefaults.shape(shape = cardShape),
-        colors = CardDefaults.colors(
-            containerColor = NuvioTheme.colors.BackgroundCard,
-            focusedContainerColor = NuvioTheme.colors.FocusBackground
-        ),
-        border = CardDefaults.border(
-            border = Border(
-                border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border),
-                shape = cardShape
-            ),
-            focusedBorder = Border(
-                border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioTheme.colors.FocusRing),
-                shape = cardShape
-            )
-        ),
-        scale = CardDefaults.scale(focusedScale = posterCardStyle.focusedScale)
+    Column(
+        modifier = modifier.width(posterCardStyle.width)
     ) {
-        Box(
+        Card(
+            onClick = onClick,
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(NuvioTheme.spacing.sm)
                 .width(posterCardStyle.width)
-                .aspectRatio(posterCardStyle.aspectRatio),
-            contentAlignment = Alignment.Center
-        ) {
-            if (actionType == DiscoverGridAction.Loading) {
-                LoadingIndicator()
-            } else {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = NuvioTheme.colors.TextPrimary,
-                    textAlign = TextAlign.Center
+                .height(posterCardStyle.height)
+                .focusProperties { canFocus = actionType != DiscoverGridAction.Loading }
+                .onPreviewKeyEvent { event ->
+                    actionType != DiscoverGridAction.None &&
+                        event.nativeKeyEvent.action == AndroidKeyEvent.ACTION_DOWN &&
+                        event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT
+                }
+                .onFocusChanged { state -> if (state.isFocused) onFocused() }
+                .then(
+                    if (focusRequester != null) Modifier.focusRequester(focusRequester)
+                    else Modifier
+                ),
+            shape = CardDefaults.shape(shape = cardShape),
+            colors = CardDefaults.colors(
+                containerColor = NuvioTheme.colors.BackgroundCard,
+                focusedContainerColor = NuvioTheme.colors.FocusBackground
+            ),
+            border = CardDefaults.border(
+                focusedBorder = Border(
+                    border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioTheme.colors.FocusRing),
+                    shape = cardShape
                 )
+            ),
+            scale = CardDefaults.scale(focusedScale = posterCardStyle.focusedScale)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(cardShape)
+                    .nuvioCardDepth(
+                        shape = cardShape,
+                        surface = CardDepthSurface.POSTERS,
+                        style = cardDepthStyle
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                if (actionType == DiscoverGridAction.Loading) {
+                    LoadingIndicator()
+                } else {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = NuvioTheme.colors.TextPrimary,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
+        // Reserve space for label to match GridContentCard height
+        Spacer(
+            modifier = Modifier
+                .width(posterCardStyle.width)
+                .padding(top = NuvioTheme.spacing.sm)
+                .height(MaterialTheme.typography.titleMedium.lineHeight.value.dp)
+        )
     }
 }

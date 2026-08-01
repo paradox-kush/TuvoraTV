@@ -3,19 +3,18 @@ package com.nuvio.tv.core.player
 import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
+import com.nuvio.tv.core.tracking.TrackingMediaKind
+import com.nuvio.tv.core.tracking.TrackingMediaReference
+import com.nuvio.tv.core.tracking.TrackingScrobbleAction
+import com.nuvio.tv.core.tracking.TrackingScrobbleCoordinator
+import com.nuvio.tv.core.tracking.TrackingScrobbleEvent
+import com.nuvio.tv.core.tracking.buildTrackingMediaReference
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
 import com.nuvio.tv.domain.model.Video
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.domain.repository.WatchProgressRepository
-import com.nuvio.tv.data.repository.TraktScrobbleService
-import com.nuvio.tv.data.repository.TraktScrobbleItem
-import com.nuvio.tv.data.repository.TraktEpisodeMappingService
-import com.nuvio.tv.data.repository.TraktAuthService
 import com.nuvio.tv.data.repository.SkipIntroRepository
-import com.nuvio.tv.data.repository.parseContentIds
-import com.nuvio.tv.data.repository.extractYear
-import com.nuvio.tv.data.repository.toTraktIds
 import com.nuvio.tv.ui.screens.player.PlayerNextEpisodeRules
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -163,9 +162,7 @@ internal fun resolveExternalNextEpisodeSnapshot(
 class ExternalPlaybackTracker @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val watchProgressRepository: WatchProgressRepository,
-    private val traktScrobbleService: TraktScrobbleService,
-    private val traktEpisodeMappingService: TraktEpisodeMappingService,
-    private val traktAuthService: TraktAuthService,
+    private val trackingScrobbleCoordinator: TrackingScrobbleCoordinator,
     private val metaRepository: MetaRepository,
     private val playerSettingsDataStore: PlayerSettingsDataStore,
     private val skipIntroRepository: SkipIntroRepository
@@ -187,12 +184,22 @@ class ExternalPlaybackTracker @Inject constructor(
         private const val MIN_REAL_PLAYBACK_DURATION_MS = 30_000L
         /** A launch within this of an auto-next emit counts as a chain continuation. */
         private const val CONTINUATION_WINDOW_MS = 12_000L
+        /** After returning to the app with a persisted (process-recreated) session, how long to
+         *  wait for the player's ActivityResult before treating the session as dead and clearing
+         *  the orphaned loader. A redelivered result arrives within ~1s of resume; if none comes
+         *  the external session died without ever returning, so the loader must not stay stuck. */
+        private const val STALE_RETURN_WATCHDOG_MS = 8_000L
         /** Upper bound on how long resolving skip segments may delay an external launch. */
         private const val SKIP_RESOLVE_TIMEOUT_MS = 4_000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var zidooMonitorJob: Job? = null
+    // Armed only when the loader is raised on return from a persisted (process-recreated) session,
+    // where onActivityResult may never fire because the external player killed us and left no
+    // pending result. If the result does not arrive within STALE_RETURN_WATCHDOG_MS the session is
+    // dead: clear the orphaned persisted copy and drop the loader so it can't get permanently stuck.
+    private var staleReturnWatchdogJob: Job? = null
     // The in-flight auto-next resolution (meta fetch -> emit next episode). Held so the user can
     // cancel it by backing out of the "Loading next episode" loader before it navigates.
     private var autoNextJob: Job? = null
@@ -272,6 +279,9 @@ class ExternalPlaybackTracker @Inject constructor(
             autoNextJob = null
             autoNextNavigationPending = false
         }
+        // A fresh launch supersedes any dead-session recovery still being watched for.
+        staleReturnWatchdogJob?.cancel()
+        staleReturnWatchdogJob = null
         pendingMetadata = metadata
         isAutoLaunch = autoLaunch
         // A manual launch is always fresh; only an auto-launch within the window is a continuation
@@ -503,6 +513,10 @@ class ExternalPlaybackTracker @Inject constructor(
     /** Entry point for the player's ActivityResult: recover metadata, backfill a missing
      *  duration if needed, save progress, and auto-advance on completion. */
     fun onActivityResult(result: ExternalPlayerResult?) {
+        // The result arrived, so this is a live session, not a dead one — stand down the watchdog
+        // before it can clear the persisted copy out from under the recovery below.
+        staleReturnWatchdogJob?.cancel()
+        staleReturnWatchdogJob = null
         // If the player killed our process, pendingMetadata is null after recreation —
         // fall back to the persisted copy so we still save progress and auto-advance.
         val metadata = pendingMetadata ?: loadPersistedMetadata()
@@ -946,6 +960,12 @@ class ExternalPlaybackTracker @Inject constructor(
         Log.d(AUTO_NEXT_TAG, "dismissAutoNextOverlay (user back) overlayWasShowing=${_autoNextOverlay.value != null}")
         autoNextCancelled = true
         autoNextChainAborted = true
+        // Backing out ends the pending handoff. Clear it so the non-windowed launch guard
+        // (shouldCancelPendingAutoLaunch) can't stay armed forever: with it stuck true, every later
+        // auto-launch was cancelled before startTracking could reset the abort, so a fresh re-click
+        // never auto-played. Cleared here, the in-flight continuation is still blocked by the
+        // windowed isAutoNextContinuationAborted check, while a later launch is treated as fresh.
+        autoNextNavigationPending = false
         autoNextJob?.cancel()
         autoNextJob = null
         _autoNextOverlay.value = null
@@ -1031,12 +1051,34 @@ class ExternalPlaybackTracker @Inject constructor(
      *  parsed and the window repaints) so there's no episode-list flash. No-op for non-episodes;
      *  idempotent. Kept for a completion, dismissed by onActivityResult otherwise. */
     fun raiseAutoNextOverlayOnReturn() {
+        val recoveredFromDisk = pendingMetadata == null
         val metadata = pendingMetadata ?: loadPersistedMetadata() ?: return
-        if (pendingMetadata == null) {
+        if (recoveredFromDisk) {
             nextEpisodeSnapshot = loadPersistedNextEpisodeSnapshot()
             autoNextEnabledForPendingLaunch = loadPersistedAutoNextEnabled()
         }
         raiseAutoNextOverlay(metadata, allowUnknownNextEpisode = true)
+        // In-process handoffs keep pendingMetadata, so onActivityResult is guaranteed to run and
+        // clear the loader. A disk-recovered session has no in-memory state: if the player killed us
+        // without leaving a redeliverable result, onActivityResult never fires and this loader would
+        // re-raise on every launch forever. Guard that dead case with a watchdog; a live redelivered
+        // result cancels it at the top of onActivityResult before it can fire.
+        if (recoveredFromDisk) armStaleReturnWatchdog()
+    }
+
+    private fun armStaleReturnWatchdog() {
+        staleReturnWatchdogJob?.cancel()
+        staleReturnWatchdogJob = scope.launch {
+            delay(STALE_RETURN_WATCHDOG_MS)
+            Log.d(
+                AUTO_NEXT_TAG,
+                "stale-return watchdog fired: no ActivityResult after recovery -> clearing dead session"
+            )
+            clearPersistedMetadata()
+            nextEpisodeSnapshot = ExternalNextEpisodeSnapshot.Unknown
+            autoNextEnabledForPendingLaunch = null
+            _autoNextOverlay.value = null
+        }
     }
 
     private fun raiseAutoNextOverlay(
@@ -1154,60 +1196,40 @@ class ExternalPlaybackTracker @Inject constructor(
                 "progressPct=${progress.progressPercentage}, isInProgress=${progress.isInProgress()}")
             watchProgressRepository.saveProgress(progress)
 
-            // Trakt scrobble
-            if (traktAuthService.getCurrentAuthState().isAuthenticated &&
-                traktAuthService.hasRequiredCredentials()) {
-                val progressPercent = if (effectiveDuration > 0L) {
-                    (positionMs.toFloat() / effectiveDuration.toFloat() * 100f).coerceIn(0f, 100f)
-                } else {
-                    0f
-                }
-                if (progressPercent > 0f) {
-                    val scrobbleItem = buildScrobbleItem(metadata)
-                    if (scrobbleItem != null) {
-                        Log.d(TAG, "Sending Trakt scrobble: ${progressPercent}%")
-                        traktScrobbleService.scrobbleStart(scrobbleItem, progressPercent = 0f)
-                        traktScrobbleService.scrobbleStop(scrobbleItem, progressPercent = progressPercent)
-                    }
+            val progressPercent = if (effectiveDuration > 0L) {
+                (positionMs.toFloat() / effectiveDuration.toFloat() * 100f).coerceIn(0f, 100f)
+            } else {
+                0f
+            }
+            if (progressPercent > 0f) {
+                val scrobbleItem = buildScrobbleItem(metadata)
+                if (scrobbleItem != null) {
+                    trackingScrobbleCoordinator.scrobble(
+                        TrackingScrobbleAction.START,
+                        TrackingScrobbleEvent(scrobbleItem, 0.0)
+                    )
+                    trackingScrobbleCoordinator.scrobble(
+                        TrackingScrobbleAction.STOP,
+                        TrackingScrobbleEvent(scrobbleItem, progressPercent.toDouble())
+                    )
                 }
             }
         }
     }
 
-    private suspend fun buildScrobbleItem(metadata: ExternalPlaybackMetadata): TraktScrobbleItem? {
-        val parsedIds = parseContentIds(metadata.contentId)
-        val ids = toTraktIds(parsedIds)
-        if (ids.trakt == null && ids.imdb.isNullOrBlank() && ids.tmdb == null) return null
-
-        val parsedYear = extractYear(metadata.year)
-        val isEpisode = metadata.contentType.lowercase() in listOf("series", "tv") &&
-            metadata.season != null && metadata.episode != null
-
-        return if (isEpisode) {
-            val mapped = traktEpisodeMappingService.prefetchEpisodeMapping(
-                contentId = metadata.contentId,
-                contentType = metadata.contentType,
-                videoId = metadata.videoId,
-                season = metadata.season,
-                episode = metadata.episode
-            )
-            val effectiveSeason = mapped?.season ?: metadata.season ?: return null
-            val effectiveEpisode = mapped?.episode ?: metadata.episode ?: return null
-
-            TraktScrobbleItem.Episode(
-                showTitle = metadata.contentName,
-                showYear = parsedYear,
-                showIds = ids,
-                season = effectiveSeason,
-                number = effectiveEpisode,
-                episodeTitle = metadata.episodeTitle
-            )
-        } else {
-            TraktScrobbleItem.Movie(
-                title = metadata.contentName,
-                year = parsedYear,
-                ids = ids
-            )
-        }
-    }
+    private fun buildScrobbleItem(metadata: ExternalPlaybackMetadata): TrackingMediaReference? =
+        buildTrackingMediaReference(
+            contentType = metadata.contentType,
+            parentMetaId = metadata.contentId,
+            videoId = metadata.videoId,
+            title = metadata.contentName,
+            releaseInfo = metadata.year,
+            seasonNumber = metadata.season,
+            episodeNumber = metadata.episode,
+            episodeTitle = metadata.episodeTitle
+        )
+            .takeIf { media ->
+                media.hasResolvableIdentity &&
+                    (media.kind == TrackingMediaKind.MOVIE || media.episode != null)
+            }
 }
