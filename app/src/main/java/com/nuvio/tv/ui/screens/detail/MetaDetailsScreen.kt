@@ -961,6 +961,7 @@ private fun MetaDetailsContent(
         }
     }
     val selectedSeasonFocusRequester = remember { FocusRequester() }
+    val episodeRangeFocusRequester = remember { FocusRequester() }
     val heroPlayFocusRequester = remember { FocusRequester() }
     val castTabFocusRequester = remember { FocusRequester() }
     val moreLikeTabFocusRequester = remember { FocusRequester() }
@@ -1679,6 +1680,14 @@ private fun MetaDetailsContent(
             // Season tabs and episodes for series
             val showSeasonTabs = isSeries && seasons.isNotEmpty() && !(seasons.size == 1 && meta.apiType.equals("other", ignoreCase = true))
             val showEpisodesRow = isSeries && seasons.isNotEmpty()
+            // Only aim focus at the range row when it is actually composed — an unattached
+            // FocusRequester throws the moment something tries to move into it.
+            val hasEpisodeRangeRow = showEpisodesRow && episodeRanges.isNotEmpty()
+            val aboveEpisodesFocusRequester = when {
+                hasEpisodeRangeRow -> episodeRangeFocusRequester
+                showSeasonTabs -> selectedSeasonFocusRequester
+                else -> heroPlayFocusRequester
+            }
             if (showSeasonTabs) {
                 item(key = "season_tabs", contentType = "season_tabs") {
                     Box(modifier = Modifier.bringIntoViewResponder(noVerticalScrollResponder)) {
@@ -1689,7 +1698,11 @@ private fun MetaDetailsContent(
                             onSeasonLongPress = { seasonOptionsDialogSeason = it },
                             selectedTabFocusRequester = selectedSeasonFocusRequester,
                             upFocusRequester = heroPlayFocusRequester,
-                            downFocusRequester = seasonDownFocusRequester
+                            downFocusRequester = if (hasEpisodeRangeRow) {
+                                episodeRangeFocusRequester
+                            } else {
+                                seasonDownFocusRequester
+                            }
                         )
                     }
                 }
@@ -1701,6 +1714,13 @@ private fun MetaDetailsContent(
                             ranges = episodeRanges,
                             selectedRange = selectedEpisodeRange,
                             onRangeSelected = onEpisodeRangeSelected,
+                            selectedTabFocusRequester = episodeRangeFocusRequester,
+                            upFocusRequester = if (showSeasonTabs) {
+                                selectedSeasonFocusRequester
+                            } else {
+                                heroPlayFocusRequester
+                            },
+                            downFocusRequester = seasonDownFocusRequester,
                         )
                     }
                 }
@@ -1730,7 +1750,7 @@ private fun MetaDetailsContent(
                             onOpenEpisodeComments = episodeCommentsClick,
                             showOpenEpisodeComments = shouldShowCommentsSection,
                             onMarkPreviousEpisodesWatched = onMarkPreviousEpisodesWatched,
-                            upFocusRequester = if (showSeasonTabs) selectedSeasonFocusRequester else heroPlayFocusRequester,
+                            upFocusRequester = aboveEpisodesFocusRequester,
                             downFocusRequester = episodesDownFocusRequester,
                             episodeFocusRequesters = seasonEpisodeFocusRequesters,
                             restoreEpisodeId = if (pendingRestoreType == RestoreTarget.EPISODE) pendingRestoreEpisodeId else null,

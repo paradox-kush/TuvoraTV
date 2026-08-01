@@ -284,6 +284,7 @@ private fun EpisodesListView(
     onEpisodeSelected: (Video) -> Unit
 ) {
     val seasonTabFocusRequester = remember { FocusRequester() }
+    val rangeChipsFocusRequester = remember { FocusRequester() }
     val episodesListState = rememberLazyListState()
     val lastOpenedEpisodeIndex = remember(
         uiState.episodes,
@@ -360,6 +361,12 @@ private fun EpisodesListView(
                         ranges = uiState.episodeRanges,
                         selectedRange = uiState.selectedEpisodeRange,
                         onRangeSelected = onRangeSelected,
+                        selectedChipFocusRequester = rangeChipsFocusRequester,
+                        upFocusRequester = if (uiState.episodesAvailableSeasons.isNotEmpty()) {
+                            seasonTabFocusRequester
+                        } else {
+                            null
+                        },
                     )
                     Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
                 }
@@ -370,7 +377,15 @@ private fun EpisodesListView(
                     contentPadding = PaddingValues(top = NuvioTheme.spacing.xs),
                     modifier = Modifier
                         .fillMaxHeight()
-                        .focusProperties { up = seasonTabFocusRequester }
+                        // Up must land on the range chips when they exist, or they become a
+                        // one-way door: reachable coming down, never coming back up.
+                        .focusProperties {
+                            up = if (uiState.episodeRanges.isNotEmpty()) {
+                                rangeChipsFocusRequester
+                            } else {
+                                seasonTabFocusRequester
+                            }
+                        }
                 ) {
                     itemsIndexed(uiState.episodes) { index, episode ->
                         val isCurrent = episode.season == uiState.currentSeason &&
@@ -408,7 +423,9 @@ private fun EpisodesListView(
 private fun EpisodeRangeChips(
     ranges: List<com.nuvio.tv.ui.util.EpisodeBucket>,
     selectedRange: String?,
-    onRangeSelected: (String) -> Unit
+    onRangeSelected: (String) -> Unit,
+    selectedChipFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null
 ) {
     LazyRow(
         modifier = Modifier
@@ -423,7 +440,16 @@ private fun EpisodeRangeChips(
 
             Card(
                 onClick = { onRangeSelected(range.label) },
-                modifier = Modifier.onFocusChanged { isFocused = it.isFocused },
+                modifier = Modifier
+                    .onFocusChanged { isFocused = it.isFocused }
+                    .then(
+                        if (isSelected && selectedChipFocusRequester != null) {
+                            Modifier.focusRequester(selectedChipFocusRequester)
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .focusProperties { upFocusRequester?.let { up = it } },
                 shape = CardDefaults.shape(shape = RoundedCornerShape(NuvioTheme.spacing.xl)),
                 colors = CardDefaults.colors(
                     containerColor = if (isSelected) NuvioTheme.colors.SurfaceVariant else NuvioTheme.colors.BackgroundCard,

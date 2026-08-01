@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Shape
@@ -42,6 +43,9 @@ fun EpisodeRangeTabs(
     selectedRange: String?,
     onRangeSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
+    selectedTabFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
 ) {
     if (ranges.isEmpty()) return
 
@@ -83,7 +87,21 @@ fun EpisodeRangeTabs(
 
             Card(
                 onClick = { onRangeSelected(range.label) },
-                modifier = Modifier.onFocusChanged { isFocused = it.isFocused },
+                // The neighbouring rows override their up/down with focusProperties, which wins over
+                // geometric search — so this row has to claim its own edges or it is unreachable.
+                modifier = Modifier
+                    .onFocusChanged { isFocused = it.isFocused }
+                    .then(
+                        if (isSelected && selectedTabFocusRequester != null) {
+                            Modifier.focusRequester(selectedTabFocusRequester)
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .focusProperties {
+                        upFocusRequester?.let { up = it }
+                        downFocusRequester?.let { down = it }
+                    },
                 shape = CardDefaults.shape(shape = tabShape),
                 colors = CardDefaults.colors(
                     containerColor = if (isSelected) {
