@@ -150,18 +150,28 @@ fun AboutSettingsContent(
                     onClick = {
                         val intent = Intent(
                             Intent.ACTION_VIEW,
-                            Uri.parse("https://nuvio.tv/privacy-policy")
+                            Uri.parse("https://tuvora.co/privacy")
                         )
                         context.startActivity(intent)
                     }
                 )
 
-                SettingsActionRow(
-                    title = stringResource(R.string.about_supporters_contributors),
-                    subtitle = stringResource(R.string.about_supporters_contributors_subtitle),
-                    trailingIcon = Icons.Default.ChevronRight,
-                    onClick = onNavigateToSupportersContributors
-                )
+                // Upstream's Supporters & Contributors screen fetches THEIR donation/contributor
+                // feeds, which this fork doesn't configure - it could only ever show an error.
+                // Replaced by a Donate row that appears once DONATIONS_DONATE_URL is set.
+                val donateUrl = BuildConfig.DONATIONS_DONATE_URL.trim()
+                if (donateUrl.isNotBlank()) {
+                    SettingsActionRow(
+                        title = stringResource(R.string.supporters_contributors_donate_button),
+                        subtitle = stringResource(R.string.settings_donate_description),
+                        trailingIcon = Icons.Default.ChevronRight,
+                        onClick = {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(donateUrl))
+                            )
+                        }
+                    )
+                }
 
                 SettingsActionRow(
                     title = stringResource(R.string.about_licenses_attributions),

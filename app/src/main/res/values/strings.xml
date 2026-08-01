@@ -2975,4 +2975,5 @@
     <string name="debug_backend_switch_confirm_title">Switch sync server?</string>
     <string name="debug_backend_switch_confirm_message">Switch to %1$s and sign out? You can sign in again on the selected sync server.</string>
     <string name="debug_backend_switching">Switching…</string>
+    <string name="settings_donate_description">Support the development of Tuvora</string>
 </resources>
