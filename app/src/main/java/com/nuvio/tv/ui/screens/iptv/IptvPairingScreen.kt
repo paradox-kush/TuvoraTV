@@ -200,8 +200,7 @@ private fun PairingQrBlock(uiState: IptvPairingUiState) {
 private fun PairingCodeColumn(uiState: IptvPairingUiState, remainingMillis: Long) {
     Column(
         horizontalAlignment = Alignment.Start,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier.widthIn(max = 320.dp)
+        verticalArrangement = Arrangement.Center
     ) {
         if (uiState.status == IptvPairingStatus.LOADING || uiState.code == null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -235,10 +234,17 @@ private fun PairingCodeColumn(uiState: IptvPairingUiState, remainingMillis: Long
                 text = uiState.code,
                 style = MaterialTheme.typography.displaySmall.copy(
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 6.sp
+                    letterSpacing = 4.sp
                 ),
                 color = NuvioTheme.colors.Primary,
-                maxLines = 1
+                // The code is the whole point of this screen: never wrap it. With softWrap on, a
+                // container a few dp too narrow pushed the last character onto a second line that
+                // maxLines then dropped — the code read as 5 characters and pairing failed.
+                softWrap = false,
+                maxLines = 1,
+                // Compose does not reserve the trailing letterSpacing, so the last glyph lands on
+                // the measured edge and loses its right side to the clip. Hand that width back.
+                modifier = Modifier.padding(end = 4.dp)
             )
         }
 
@@ -253,7 +259,10 @@ private fun PairingCodeColumn(uiState: IptvPairingUiState, remainingMillis: Long
             Text(
                 text = url,
                 style = MaterialTheme.typography.bodySmall,
-                color = NuvioTheme.colors.TextPrimary
+                color = NuvioTheme.colors.TextPrimary,
+                // The URL is the only thing here long enough to need a cap; it used to sit on the
+                // column and squeeze the code box with it.
+                modifier = Modifier.widthIn(max = 320.dp)
             )
         }
 

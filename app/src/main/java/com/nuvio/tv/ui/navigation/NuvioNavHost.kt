@@ -1103,6 +1103,18 @@ fun NuvioNavHost(
             )
         }
 
+        composable(Screen.IptvSettings.route) {
+            com.nuvio.tv.ui.screens.settings.XtreamSettingsContent(
+                onBrowseVod = { accountId ->
+                    navController.navigate(Screen.XtreamVod.createRoute(accountId))
+                },
+                onBrowseLive = { accountId ->
+                    navController.navigate(Screen.XtreamLive.createRoute(accountId))
+                },
+                onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) }
+            )
+        }
+
         composable(Screen.Settings.route) {
             SettingsScreen(
                 showBuiltInHeader = !hideBuiltInHeaders,
@@ -1144,7 +1156,7 @@ fun NuvioNavHost(
                 onOpenDetail = { contentId, type ->
                     navController.navigate(Screen.Detail.createRoute(contentId, type))
                 },
-                onAddProvider = { navController.navigate(Screen.Settings.route) },
+                onAddProvider = { navController.navigate(Screen.IptvSettings.route) },
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) }
             )
         }
@@ -1179,7 +1191,7 @@ fun NuvioNavHost(
                         )
                     )
                 },
-                onAddProvider = { navController.navigate(Screen.Settings.route) },
+                onAddProvider = { navController.navigate(Screen.IptvSettings.route) },
                 // Recordings are registry-registered VOD ids — native detail pipeline.
                 onOpenDetail = { contentId, type ->
                     navController.navigate(Screen.Detail.createRoute(contentId, type))

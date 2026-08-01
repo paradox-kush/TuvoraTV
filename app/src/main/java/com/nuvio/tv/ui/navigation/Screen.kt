@@ -142,6 +142,12 @@ sealed class Screen(val route: String) {
     data object LicensesAttributions : Screen("licenses_attributions")
     data object AddonManager : Screen("addon_manager")
     data object XtreamHub : Screen("xtream_hub")
+
+    // The IPTV settings screen as a destination in its own right. XtreamSettingsContent draws its
+    // own title and the "Add IPTV account" row, so it stands alone; it previously existed only as
+    // an IntegrationSettingsSection inside SettingsScreen, leaving "Add IPTV provider" no target
+    // closer than the root of Settings.
+    data object IptvSettings : Screen("iptv_settings")
     data object IptvPairing : Screen("iptv_pairing")
     data object SportsHub : Screen("sports_hub")
     data object XtreamVod : Screen("xtream_vod/{accountId}") {
