@@ -57,6 +57,7 @@ class StartupSyncService @Inject constructor(
     private val libraryPreferences: LibraryPreferences,
     private val profileManager: ProfileManager,
     private val startupSyncPreferences: StartupSyncPreferences,
+    private val syncDeviceReporter: SyncDeviceReporter,
     private val cwEnrichmentCache: com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -80,6 +81,8 @@ class StartupSyncService @Inject constructor(
             authManager.authState.collect { state ->
                 when (state) {
                     is AuthState.FullAccount -> {
+                        // Rides the sign-in we already react to; a no-op after the first call.
+                        syncDeviceReporter.reportOnce()
                         val force = forceSyncRequested
                         val includeProfileSettings = if (force) forceSyncIncludesProfileSettings else true
                         val started = scheduleStartupPull(
@@ -90,6 +93,7 @@ class StartupSyncService @Inject constructor(
                         if (force && started) forceSyncRequested = false
                     }
                     is AuthState.SignedOut -> {
+                        syncDeviceReporter.clearAccountState()
                         startupPullJob?.cancel()
                         startupPullJob = null
                         lastPulledKey = null
