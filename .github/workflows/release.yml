@@ -130,16 +130,6 @@ jobs:
             -PversionNameOverride="${{ steps.ver.outputs.version }}" \
             -PversionCodeOverride="${{ github.run_number }}" --stacktrace
 
-      - name: Publish AAB to Google Play
-        uses: r0adkll/upload-google-play@v1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: com.tuvora.tv
-          releaseFiles: app/build/outputs/bundle/playstoreRelease/*.aab
-          # Tag push -> internal (safe); manual run can choose alpha/beta/production.
-          track: ${{ github.event.inputs.play_track || 'internal' }}
-          status: completed
-
       - name: Collect artifacts
         run: |
           mkdir -p dist
@@ -156,6 +146,20 @@ jobs:
             --title "Tuvora TV ${{ steps.ver.outputs.version }}" \
             --generate-notes || \
           gh release upload "${{ steps.ver.outputs.tag }}" dist/* --clobber
+
+      # Play publishing runs LAST on purpose. It used to sit before the GitHub release,
+      # so a Play rejection (a re-run reuses github.run_number, and Play refuses a
+      # duplicate version code) skipped the release upload entirely and the artifacts
+      # were silently never replaced. Artifacts first; Play failures still fail the job.
+      - name: Publish AAB to Google Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.tuvora.tv
+          releaseFiles: app/build/outputs/bundle/playstoreRelease/*.aab
+          # Tag push -> internal (safe); manual run can choose alpha/beta/production.
+          track: ${{ github.event.inputs.play_track || 'internal' }}
+          status: completed
 
       # The download links people actually use — tuvora.co/tv, and the aftv.news Downloader code
       # pointing at it — are not a lookup. The site serves whatever a release last told it, so tell
