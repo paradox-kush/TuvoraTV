@@ -91,6 +91,17 @@ jobs:
             echo "DONATIONS_DONATE_URL=${{ secrets.DONATIONS_DONATE_URL }}"
           } >> local.properties
 
+      - name: Verify local.properties keys reached the build
+        run: |
+          # Names only - never values. Proves whether the credential lines are present
+          # at the moment Gradle reads the file, which a masked echo cannot.
+          echo "keys in local.properties:"
+          sed -n 's/^\([A-Za-z0-9_]*\)=.*/  \1/p' local.properties | sort
+          for k in SIMKL_CLIENT_ID SIMKL_CLIENT_SECRET TRAKT_CLIENT_ID DONATIONS_DONATE_URL; do
+            v=$(sed -n "s/^$k=//p" local.properties | head -1)
+            echo "  $k length=${#v}"
+          done
+
       - name: Raise Gradle heap
         run: printf '\norg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8\n' >> gradle.properties
 
