@@ -504,7 +504,7 @@
     <string name="supporters_contributors_donate_copy">A Nuvio ingyenes és nyílt forráskódú marad. Ha szeretnéd támogatni a projektet, segíthetsz a ráfordított idő és az infrastruktúra költségeinek fedezésében.</string>
     <string name="supporters_contributors_donate_button">Nuvio támogatása</string>
     <string name="supporters_contributors_qr_title">Beolvasás a támogatáshoz</string>
-    <string name="supporters_contributors_qr_subtitle">Nyisd meg a linket a telefonodon, és támogasd a Nuviót Ko-fin keresztül.</string>
+    <string name="supporters_contributors_qr_subtitle">Nyisd meg a linket a telefonodon, és támogasd a Nuviót.</string>
     <string name="supporters_contributors_qr_hint">Irányítsd a kamerád a QR-kódra, vagy használd az alábbi gombot.</string>
     <string name="supporters_contributors_back_button">Vissza a részletekhez</string>
     <string name="supporters_tab">Támogatók</string>

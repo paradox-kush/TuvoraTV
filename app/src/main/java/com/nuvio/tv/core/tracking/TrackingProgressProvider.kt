@@ -29,7 +29,7 @@ interface TrackingProgressProvider {
     ): Flow<Boolean>
     suspend fun watchedShowEpisodes(): Map<String, Set<Pair<Int, Int>>>
     suspend fun showIdSiblings(): Map<String, Set<String>>
-    fun isWatchedByVideoId(videoId: String, episode: Int): Boolean = false
+    fun isWatchedByVideoId(videoId: String, episode: Int): Boolean? = null
     suspend fun refresh(intent: TrackingRefreshIntent)
     suspend fun removeProgress(contentId: String, season: Int?, episode: Int?)
     fun applyOptimisticProgress(progress: WatchProgress, quiet: Boolean)

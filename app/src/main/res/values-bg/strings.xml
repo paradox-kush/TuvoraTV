@@ -326,7 +326,7 @@
 
     <string name="about_title">Относно</string>
     <string name="about_subtitle">Информация за приложението, актуализации и правни връзки</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">Направено с ❤️ от Tapframe и приятели</string>
     <string name="about_version">Версия %1$s</string>
     <string name="about_check_updates">Провери за актуализации</string>
     <string name="about_check_updates_subtitle">Изтегли най-новата версия</string>

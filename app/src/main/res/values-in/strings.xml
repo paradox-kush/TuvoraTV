@@ -339,7 +339,7 @@
     <!-- AboutScreen -->
     <string name="about_title">Tentang</string>
     <string name="about_subtitle">Informasi aplikasi, pembaruan, dan tautan hukum</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">Dibuat dengan ❤️ oleh Tapframe dan teman-teman</string>
     <string name="about_version">Versi %1$s</string>
     <string name="about_check_updates">Periksa pembaruan</string>
     <string name="about_check_updates_subtitle">Unduh rilis terbaru</string>

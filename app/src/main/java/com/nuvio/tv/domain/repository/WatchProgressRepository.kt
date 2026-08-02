@@ -82,7 +82,7 @@ interface WatchProgressRepository {
      */
     suspend fun getShowIdSiblings(): Map<String, Set<String>>
 
-    fun isWatchedByVideoId(videoId: String, episode: Int): Boolean = false
+    fun isWatchedByVideoId(videoId: String, episode: Int): Boolean? = null
 
     /**
      * Save or update watch progress

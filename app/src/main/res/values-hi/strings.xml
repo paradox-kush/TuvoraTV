@@ -168,7 +168,7 @@
     <!-- AboutScreen -->
     <string name="about_title">ऐप के बारे में</string>
     <string name="about_subtitle">ऐप जानकारी, अपडेट और कानूनी लिंक</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">Tapframe और दोस्तों द्वारा ❤️ के साथ बनाया गया</string>
     <string name="about_version">वर्ज़न %1$s</string>
     <string name="about_check_updates">अपडेट जांचें</string>
     <string name="about_check_updates_subtitle">नवीनतम रिलीज़ डाउनलोड करें</string>

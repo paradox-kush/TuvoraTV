@@ -550,7 +550,7 @@
     <string name="supporters_contributors_donate_copy">Tuvora zůstane zdarma a open source. Pokud chcete projekt podpořit, můžete pomoci pokrýt čas a infrastrukturu za ním.</string>
     <string name="supporters_contributors_donation_progress_title">Server a údržba tento měsíc</string>
     <string name="supporters_contributors_donation_progress_complete">Pokryto. Další podpora nyní jde na vývoj.</string>
-    <string name="supporters_contributors_donation_progress_remaining">Po dosažení 100%% jde další podpora na vývoj.</string>
+    <string name="supporters_contributors_donation_progress_remaining">Po dosažení 100% jde další podpora na vývoj.</string>
     <string name="supporters_contributors_loading_donation_progress">Načítání stavu financování...</string>
     <string name="supporters_contributors_donate_button">Přispět Tuvora</string>
     <string name="supporters_contributors_qr_title">Naskenujte pro darování</string>

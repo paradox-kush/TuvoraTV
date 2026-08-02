@@ -548,7 +548,7 @@
     <string name="supporters_contributors_donate_copy">Tuvora seguirá siendo gratuito y de código abierto. Si quieres apoyar el proyecto, puedes ayudar a cubrir el tiempo y la infraestructura necesarios para mantenerlo.</string>
     <string name="supporters_contributors_donation_progress_title">Servidores y mantenimiento de este mes</string>
     <string name="supporters_contributors_donation_progress_complete">Cubierto. El apoyo adicional ahora se destina al desarrollo.</string>
-    <string name="supporters_contributors_donation_progress_remaining">Después del 100%%, el apoyo adicional se destina al desarrollo.</string>
+    <string name="supporters_contributors_donation_progress_remaining">Después del 100%, el apoyo adicional se destina al desarrollo.</string>
     <string name="supporters_contributors_loading_donation_progress">Cargando progreso de financiación...</string>
     <string name="supporters_contributors_donate_button">Donar a Tuvora</string>
     <string name="supporters_contributors_qr_title">Escanear para donar</string>

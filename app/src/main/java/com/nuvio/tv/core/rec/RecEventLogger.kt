@@ -110,6 +110,7 @@ class RecEventLogger @Inject constructor(
     fun start() {
         if (started) return
         started = true
+        if (BuildConfig.IS_DEBUG_BUILD) Log.d(TAG, "start(): logger running")
         scope.launch {
             runCatching { restoreQueue() }
             while (isActive) {
@@ -145,6 +146,15 @@ class RecEventLogger @Inject constructor(
                 queue.addLast(record)
                 shouldFlush = queue.size >= FLUSH_AT_EVENTS
             }
+            if (BuildConfig.IS_DEBUG_BUILD) {
+                Log.d(
+                    TAG,
+                    "queued ${record.event.eventType} ${record.event.itemId} " +
+                        "row=${record.event.rowId}#${record.event.itemPosition} " +
+                        "type=${record.event.contentType} pct=${record.event.progressPct} " +
+                        "profile=${record.event.profileId}",
+                )
+            }
             if (shouldFlush) scope.launch { flush("threshold") }
         } catch (e: Throwable) {
             Log.d(TAG, "Dropped event: ${e.message}")
@@ -179,6 +189,9 @@ class RecEventLogger @Inject constructor(
                         backoffMs = (backoffMs * 2).coerceAtMost(BACKOFF_MAX_MS)
                         Log.d(TAG, "Flush ($reason) deferred; retrying in ${backoffMs}ms")
                         return
+                    }
+                    if (BuildConfig.IS_DEBUG_BUILD) {
+                        Log.d(TAG, "flush($reason) sent ${chunk.size} events -> $outcome")
                     }
                     drop(chunk)
                     if (outcome == SendOutcome.DISABLED) {

@@ -265,7 +265,7 @@
     <!-- AboutScreen -->
 <string name="about_title">Informazioni</string>
 <string name="about_subtitle">Informazioni sull\'app, aggiornamenti e link legali</string>
-<string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+<string name="about_made_with_love">Fatto con ❤️ da Tapframe e amici</string>
 <string name="about_version">Versione %1$s</string>
 <string name="about_check_updates">Controlla aggiornamenti</string>
 <string name="about_check_updates_subtitle">Scarica l\'ultima versione</string>
@@ -2408,7 +2408,7 @@
   <string name="action_switch">Cambia</string>
   <string name="supporters_contributors_donation_progress_title">Server e manutenzione di questo mese</string>
   <string name="supporters_contributors_donation_progress_complete">Coperto. Il supporto aggiuntivo ora va allo sviluppo.</string>
-  <string name="supporters_contributors_donation_progress_remaining">Dopo il 100%%, il supporto aggiuntivo va allo sviluppo.</string>
+  <string name="supporters_contributors_donation_progress_remaining">Dopo il 100%, il supporto aggiuntivo va allo sviluppo.</string>
   <string name="supporters_contributors_loading_donation_progress">Caricamento dell\'avanzamento del finanziamento...</string>
   <string name="playback_external_forward_subtitles">Inoltra i sottotitoli al player esterno</string>
   <string name="playback_external_forward_subtitles_sub">Recupera dagli add-on i sottotitoli nella tua lingua preferita e passali al player esterno.</string>

@@ -333,7 +333,7 @@
     <!-- AboutScreen -->
     <string name="about_title">பற்றி</string>
     <string name="about_subtitle">செயலி தகவல், புதுப்பிப்புகள் மற்றும் சட்ட இணைப்புகள்</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">❤️ உடன் டாப்ஃப்ரேம் மற்றும் நண்பர்களால் உருவாக்கப்பட்டது</string>
     <string name="about_version">பதிப்பு %1$s</string>
     <string name="about_check_updates">புதுப்பிப்புகளை சரிபார்</string>
     <string name="about_check_updates_subtitle">சமீபத்திய வெளியீட்டை பதிவிறக்கு</string>

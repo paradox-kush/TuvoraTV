@@ -49,12 +49,11 @@ import androidx.tv.material3.Text
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
 import com.nuvio.tv.data.repository.SkipInterval
-import kotlinx.coroutines.delay
 
 /**
  * Skip Intro/Outro/Recap button for the player.
  * Appears at bottom-left when playback is within a skip interval.
- * Auto-hides after 15 seconds. Focusable for D-pad navigation.
+ * Auto-hides after 10 seconds. Focusable for D-pad navigation.
  */
 @Composable
 fun SkipIntroButton(
@@ -75,7 +74,8 @@ fun SkipIntroButton(
 
     var lastType by remember { mutableStateOf(interval?.type) }
     if (interval != null) lastType = interval.type
-    val shouldShow = interval != null && (!dismissed || controlsVisible)
+    val hasActiveInterval = interval != null
+    val shouldShow = hasActiveInterval && (!dismissed || controlsVisible)
 
     var autoHidden by remember { mutableStateOf(false) }
     var manuallyDismissed by remember { mutableStateOf(false) }
@@ -106,7 +106,7 @@ fun SkipIntroButton(
     LaunchedEffect(shouldShow, autoHidden, controlsVisible) {
         if (shouldShow && !autoHidden && !controlsVisible) {
             progress.animateTo(1f, animationSpec = tween(
-                durationMillis = ((1f - progress.value) * 10000).toInt().coerceAtLeast(1),
+                durationMillis = skipIntroAutoHideRemainingMs(progress.value),
                 easing = LinearEasing
             ))
             autoHidden = true
@@ -121,7 +121,12 @@ fun SkipIntroButton(
         }
     }
 
-    val isVisible = shouldShow && (!autoHidden || controlsVisible)
+    val isVisible = isSkipIntroButtonVisible(
+        hasActiveInterval = hasActiveInterval,
+        dismissed = dismissed,
+        controlsVisible = controlsVisible,
+        autoHidden = autoHidden,
+    )
 
     LaunchedEffect(isVisible) { onVisibilityChanged(isVisible) }
 

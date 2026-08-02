@@ -1,6 +1,5 @@
 package com.nuvio.tv.data.simkl
 
-import android.util.Log
 import com.nuvio.tv.core.tracking.TrackingDiagnosticIdentity
 import com.nuvio.tv.domain.model.WatchProgress
 import java.util.Locale
@@ -261,39 +260,6 @@ internal fun buildSimklSeedDiagnosticReport(
         playbackCount = snapshot.playback.size,
         records = records
     )
-}
-
-internal object SimklContinueWatchingProjectionLogger {
-    private const val TAG = "SimklCwDiag"
-    private const val DETAIL_LIMIT = 80
-    private var lastSnapshot: SimklSyncSnapshot? = null
-    private var lastPreference: Boolean? = null
-    private var lastReportHash: Int? = null
-
-    @Synchronized
-    fun log(
-        snapshot: SimklSyncSnapshot,
-        watchedProjection: SimklWatchedProjection,
-        seeds: List<WatchProgress>,
-        preferFurthestEpisode: Boolean
-    ) {
-        if (lastSnapshot === snapshot && lastPreference == preferFurthestEpisode) return
-        val report = buildSimklSeedDiagnosticReport(
-            snapshot = snapshot,
-            seeds = seeds,
-            preferFurthestEpisode = preferFurthestEpisode,
-            watchedProjection = watchedProjection
-        )
-        val reportHash = report.hashCode()
-        lastSnapshot = snapshot
-        lastPreference = preferFurthestEpisode
-        if (lastReportHash == reportHash) return
-        lastReportHash = reportHash
-        Log.d(TAG, report.summaryLine(DETAIL_LIMIT))
-        report.records.take(DETAIL_LIMIT).forEach { record ->
-            Log.d(TAG, record.logLine())
-        }
-    }
 }
 
 private fun String.diagnosticKey(): String = trim().lowercase(Locale.ROOT)

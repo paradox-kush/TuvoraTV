@@ -326,7 +326,7 @@
 
     <string name="about_title">このアプリについて</string>
     <string name="about_subtitle">アプリ情報、アップデート、法的リンク</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">Tapframe と仲間たちが ❤️ を込めて開発</string>
     <string name="about_version">バージョン %1$s</string>
     <string name="about_check_updates">アップデートを確認</string>
     <string name="about_check_updates_subtitle">最新リリースをダウンロード</string>
@@ -513,7 +513,7 @@
     <string name="supporters_contributors_donate_copy">Tuvoraは無料のオープンソースプロジェクトです。サポートしたい方は、開発・インフラの維持にご協力いただけます</string>
     <string name="supporters_contributors_donation_progress_title">今月のサーバー &amp; メンテナンス</string>
     <string name="supporters_contributors_donation_progress_complete">達成済み。追加のサポートは開発に充てられます。</string>
-    <string name="supporters_contributors_donation_progress_remaining">100%% を超えると、追加のサポートは開発に充てられます。</string>
+    <string name="supporters_contributors_donation_progress_remaining">100% を超えると、追加のサポートは開発に充てられます。</string>
     <string name="supporters_contributors_loading_donation_progress">資金調達の進捗を読み込み中…</string>
     <string name="supporters_contributors_donate_button">Tuvoraに寄付</string>
     <string name="supporters_contributors_qr_title">QRをスキャンして寄付</string>

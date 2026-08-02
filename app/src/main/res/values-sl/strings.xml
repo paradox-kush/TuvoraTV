@@ -322,7 +322,7 @@
     <!-- AboutScreen -->
     <string name="about_title">O aplikaciji</string>
     <string name="about_subtitle">Informacije o aplikaciji, posodobitve in pravne povezave</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">Ustvarjeno z ❤️ (Tapframe in prijatelji)</string>
     <string name="about_version">Različica %1$s</string>
     <string name="about_check_updates">Preveri za posodobitve</string>
     <string name="about_check_updates_subtitle">Prenesi najnovejšo različico</string>

@@ -336,7 +336,7 @@
 
     <string name="about_title">关于</string>
     <string name="about_subtitle">应用信息、更新和法律链接</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">由 Tapframe 和朋友们 ❤️ 制作</string>
     <string name="about_version">版本 %1$s</string>
     <string name="about_check_updates">检查更新</string>
     <string name="about_check_updates_subtitle">下载最新版本</string>
@@ -497,8 +497,6 @@
     <string name="advanced_section_dv_diagnostics" translatable="false">DV Diagnostics</string>
     <string name="advanced_fast_horizontal_navigation">快速水平导航</string>
     <string name="advanced_fast_horizontal_navigation_subtitle">提高 D-pad 在行内的重复速度，同时保留重复节流功能。</string>
-    <string name="advanced_nuvio_focus_scroll">Tuvora 焦点滚动</string>
-    <string name="advanced_nuvio_focus_scroll_subtitle">使用 Tuvora 的自定义全局焦点滚动动画和定位。</string>
     <string name="advanced_nuvio_performance_mode">ExoPlayer 原生内存</string>
     <string name="advanced_nuvio_performance_mode_subtitle">启用高性能原生分配器、堆外内存和网络优化，实现更流畅的播放</string>
     <string name="buffer_device_ram_info">设备内存：%s</string>
@@ -506,6 +504,8 @@
     <string name="buffer_safe_status">安全：在您设备的建议限制内。</string>
     <string name="buffer_unsafe_warning">警告：超出您的 %2$s 设备的建议安全限制 (%1$d MB)。可能导致应用崩溃。</string>
     <string name="buffer_auto_limit_active">自动缩放安全限制：%d MB</string>
+    <string name="advanced_nuvio_focus_scroll">Tuvora 焦点滚动</string>
+    <string name="advanced_nuvio_focus_scroll_subtitle">使用 Tuvora 的自定义全局焦点滚动动画和定位。</string>
     <string name="advanced_memory_only_vertical_scroll">仅内存垂直滚动</string>
     <string name="advanced_memory_only_vertical_scroll_subtitle">在垂直滚动首页行时跳过磁盘和网络的图片请求。</string>
     <string name="advanced_compose_highlighter">Compose 高亮器</string>
@@ -546,11 +546,11 @@
     <string name="supporters_contributors_subtitle">支持 Tuvora 的人们，以及在电视和移动设备上共同构建的贡献者。</string>
     <string name="supporters_contributors_supporters_copy">支持者和捐赠者帮助项目持续推进，资助基础设施，并为雄心勃勃的功能创造空间。</string>
     <string name="supporters_contributors_donate_copy">Tuvora 将保持免费和开源。如果您想支持项目，可以帮助支付其背后的时间和基础设施费用。</string>
-    <string name="supporters_contributors_donate_button">赞助 Tuvora</string>
     <string name="supporters_contributors_donation_progress_title">本月的服务器与维护</string>
     <string name="supporters_contributors_donation_progress_complete">已覆盖。额外的支持现在用于开发。</string>
-    <string name="supporters_contributors_donation_progress_remaining">达到 100%% 后，额外的支持将用于开发。</string>
+    <string name="supporters_contributors_donation_progress_remaining">达到 100% 后，额外的支持将用于开发。</string>
     <string name="supporters_contributors_loading_donation_progress">正在加载资金进度...</string>
+    <string name="supporters_contributors_donate_button">赞助 Tuvora</string>
     <string name="supporters_contributors_qr_title">扫描以赞助</string>
     <string name="supporters_contributors_qr_subtitle">在手机上打开链接，通过 Ko-fi 支持 Tuvora。</string>
     <string name="supporters_contributors_qr_hint">将相机对准 QR 码或使用下方的按钮。</string>

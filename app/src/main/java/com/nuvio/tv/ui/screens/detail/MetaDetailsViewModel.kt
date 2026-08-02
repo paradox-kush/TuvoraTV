@@ -516,11 +516,14 @@ class MetaDetailsViewModel @Inject constructor(
                         val e = video.episode ?: continue
                         val key = s to e
                         val watchedByVideoId = watchProgressRepository.isWatchedByVideoId(video.id, e)
-                        if (watchedByVideoId && key !in merged && key !in _optimisticUnmarks) {
-                            merged += key
-                        } else if (!watchedByVideoId && key in merged && key !in fromProgress && key !in _optimisticMarks) {
-                            merged -= key
-                        }
+                        val isWatched = resolveEpisodeWatchedState(
+                            currentlyWatched = key in merged,
+                            completedByProgress = key in fromProgress,
+                            optimisticallyMarked = key in _optimisticMarks,
+                            optimisticallyUnmarked = key in _optimisticUnmarks,
+                            watchedByVideoId = watchedByVideoId
+                        )
+                        if (isWatched) merged += key else merged -= key
                     }
                     merged as Set<Pair<Int, Int>>
                 }

@@ -170,7 +170,7 @@
     <!-- AboutScreen -->
     <string name="about_title">Apie</string>
     <string name="about_subtitle">Programos informacija, atnaujinimai ir teisinės nuorodos</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">Sukurta su ❤️ „Tapframe“ ir draugų</string>
     <string name="about_version">Versija %1$s</string>
     <string name="about_check_updates">Tikrinti atnaujinimus</string>
     <string name="about_check_updates_subtitle">Atsisiųsti naujausią versiją</string>

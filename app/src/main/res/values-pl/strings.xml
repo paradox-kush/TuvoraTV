@@ -125,7 +125,7 @@
     <!-- AboutScreen -->
     <string name="about_title">O aplikacji</string>
     <string name="about_subtitle">Informacje, aktualizacje i linki prawne</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">Stworzone z ❤️ przez Tapframe i przyjaciół</string>
     <string name="about_version">Wersja %1$s</string>
     <string name="about_check_updates">Sprawdź aktualizacje</string>
     <string name="about_check_updates_subtitle">Pobierz najnowsze wydanie</string>
@@ -2906,6 +2906,6 @@
     <!-- Supporters / donation progress -->
     <string name="supporters_contributors_donation_progress_title">Serwer i utrzymanie w tym miesiącu</string>
     <string name="supporters_contributors_donation_progress_complete">Pokryto. Dodatkowe wsparcie idzie teraz na rozwój.</string>
-    <string name="supporters_contributors_donation_progress_remaining">Po 100%%, dodatkowe wsparcie idzie na rozwój.</string>
+    <string name="supporters_contributors_donation_progress_remaining">Po 100%, dodatkowe wsparcie idzie na rozwój.</string>
     <string name="supporters_contributors_loading_donation_progress">Ładowanie postępu finansowania...</string>
 </resources>

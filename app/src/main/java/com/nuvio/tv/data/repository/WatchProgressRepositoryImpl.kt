@@ -589,9 +589,9 @@ class WatchProgressRepositoryImpl @Inject constructor(
         return activeProgressProvider()?.showIdSiblings().orEmpty()
     }
 
-    override fun isWatchedByVideoId(videoId: String, episode: Int): Boolean {
-        val providerId = activeProgressProviderId ?: return false
-        return trackingProgressProviders.provider(providerId)?.isWatchedByVideoId(videoId, episode) ?: false
+    override fun isWatchedByVideoId(videoId: String, episode: Int): Boolean? {
+        val providerId = activeProgressProviderId ?: return null
+        return trackingProgressProviders.provider(providerId)?.isWatchedByVideoId(videoId, episode)
     }
 
     override fun isWatched(contentId: String, videoId: String?, season: Int?, episode: Int?): Flow<Boolean> {

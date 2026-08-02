@@ -28,13 +28,13 @@ class SimklLibraryService @Inject constructor(
         .distinctUntilChanged()
     override val isRefreshing = syncRepository.state.map { state -> state.isLoading }
         .distinctUntilChanged()
-    override val items = syncRepository.state.map { state ->
-        state.snapshot.toSimklLibraryProjection().items
+    override val items = syncRepository.projection.map { projection ->
+        projection.library.items
     }.onStart { syncRepository.refresh(TrackingRefreshIntent.AUTOMATIC) }
         .distinctUntilChanged()
     override val tabs = isAuthenticated.map { authenticated ->
         if (authenticated) {
-            syncRepository.state.value.snapshot.toSimklLibraryProjection().tabs
+            syncRepository.projection.value.library.tabs
         } else {
             emptyList()
         }
@@ -43,14 +43,10 @@ class SimklLibraryService @Inject constructor(
     override fun recognizesListKey(key: String): Boolean = simklLibraryStatusDefinition(key) != null
 
     override fun observeMembership(itemId: String, itemType: String): Flow<Set<String>> =
-        syncRepository.state.map { state ->
-            val entry = state.snapshot.entries.firstOrNull { candidate ->
-                candidate.matchesSimklContentId(itemId) &&
-                    candidate.contentType().equals(itemType.normalizedContentType(), ignoreCase = true)
-            }
-            entry?.status?.let { status ->
-                simklLibraryStatusDefinitions.firstOrNull { it.status == status }?.key
-            }?.let(::setOf).orEmpty()
+        syncRepository.projection.map { projection ->
+            projection.membershipKey(itemId, itemType.normalizedContentType())
+                ?.let(::setOf)
+                .orEmpty()
         }.onStart { syncRepository.refresh(TrackingRefreshIntent.AUTOMATIC) }
             .distinctUntilChanged()
 
@@ -156,9 +152,6 @@ class SimklLibraryService @Inject constructor(
             TrackingMembershipRemovalConfirmation(TrackingProviderId.SIMKL, it)
         }
     }
-
-    private fun SimklLibraryEntry.contentType(): String =
-        if (mediaType == SimklMediaType.MOVIES) "movie" else "series"
 
     private fun String.normalizedContentType(): String = when (trim().lowercase()) {
         "tv", "show", "anime" -> "series"

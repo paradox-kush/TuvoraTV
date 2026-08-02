@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -55,9 +56,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -124,7 +128,10 @@ import com.nuvio.tv.ui.components.posteroptions.TrackingRemovalConfirmationDialo
 import com.nuvio.tv.core.tracking.LOCAL_LIBRARY_LIST_KEY
 import com.nuvio.tv.core.tracking.supportsMembershipFor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.exp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.rememberCoroutineScope
@@ -2180,9 +2187,42 @@ private fun SynopsisOverlay(
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
     val contentFocusRequester = remember { FocusRequester() }
+    var requestedScrollPosition by remember { mutableIntStateOf(0) }
+    var scrollAnimationJob by remember { mutableStateOf<Job?>(null) }
 
-    LaunchedEffect(Unit) {
-        contentFocusRequester.requestFocus()
+    fun requestSmoothScroll(target: Int) {
+        requestedScrollPosition = target.coerceIn(0, scrollState.maxValue)
+        if (scrollAnimationJob?.isActive == true) return
+
+        scrollAnimationJob = coroutineScope.launch {
+            scrollState.scroll {
+                var previousFrame = withFrameNanos { it }
+                while (true) {
+                    val frame = withFrameNanos { it }
+                    val elapsedSeconds = ((frame - previousFrame) / 1_000_000_000f)
+                        .coerceIn(0f, 0.05f)
+                    previousFrame = frame
+
+                    val targetPosition = requestedScrollPosition.toFloat()
+                    val distance = targetPosition - scrollState.value.toFloat()
+                    if (abs(distance) < 0.5f) {
+                        scrollBy(distance)
+                        if (requestedScrollPosition == targetPosition.toInt()) break
+                        continue
+                    }
+
+                    val smoothing = 1f - exp(-12f * elapsedSeconds)
+                    scrollBy(distance * smoothing)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(description) {
+        scrollAnimationJob?.cancel()
+        requestedScrollPosition = 0
+        scrollState.scrollTo(0)
+        contentFocusRequester.requestFocusAfterFrames()
         scrollState.scrollTo(0)
     }
 
@@ -2219,37 +2259,67 @@ private fun SynopsisOverlay(
                     modifier = Modifier
                         .fillMaxWidth(0.78f)
                         .weight(1f)
-                        .verticalScroll(scrollState)
-                        .focusRequester(contentFocusRequester)
-                        .focusable()
+                        .drawWithContent {
+                            drawContent()
+
+                            val maxScroll = scrollState.maxValue.toFloat()
+                            if (maxScroll > 0f) {
+                                val viewportHeight = size.height
+                                val trackInset = 8.dp.toPx()
+                                val trackHeight = (viewportHeight - trackInset * 2f).coerceAtLeast(0f)
+                                val contentHeight = viewportHeight + maxScroll
+                                val thumbHeight = (trackHeight * viewportHeight / contentHeight)
+                                    .coerceAtLeast(36.dp.toPx())
+                                    .coerceAtMost(trackHeight)
+                                val thumbTop = trackInset + (trackHeight - thumbHeight) *
+                                    (scrollState.value.toFloat() / maxScroll)
+                                val scrollbarX = size.width - 6.dp.toPx()
+
+                                drawLine(
+                                    color = Color.White.copy(alpha = 0.07f),
+                                    start = Offset(scrollbarX, trackInset),
+                                    end = Offset(scrollbarX, viewportHeight - trackInset),
+                                    strokeWidth = 1.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                                drawLine(
+                                    color = Color.White.copy(alpha = 0.30f),
+                                    start = Offset(scrollbarX, thumbTop),
+                                    end = Offset(scrollbarX, thumbTop + thumbHeight),
+                                    strokeWidth = 2.5.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                            }
+                        }
                         .onPreviewKeyEvent { event ->
                             when {
                                 event.type != KeyEventType.KeyDown -> false
                                 event.key == Key.DirectionDown && scrollState.value < scrollState.maxValue -> {
-                                    coroutineScope.launch {
-                                        scrollState.animateScrollTo(
-                                            (scrollState.value + 260).coerceAtMost(scrollState.maxValue)
-                                        )
-                                    }
+                                    requestSmoothScroll((
+                                        maxOf(requestedScrollPosition, scrollState.value) + 260
+                                    ).coerceAtMost(scrollState.maxValue))
                                     true
                                 }
                                 event.key == Key.DirectionUp && scrollState.value > 0 -> {
-                                    coroutineScope.launch {
-                                        scrollState.animateScrollTo(
-                                            (scrollState.value - 260).coerceAtLeast(0)
-                                        )
-                                    }
+                                    requestSmoothScroll((
+                                        minOf(requestedScrollPosition, scrollState.value) - 260
+                                    ).coerceAtLeast(0))
                                     true
                                 }
                                 else -> false
                             }
                         }
+                        .focusRequester(contentFocusRequester)
+                        .focusable()
+                        .verticalScroll(scrollState)
                 ) {
                     Text(
                         text = description,
                         style = MaterialTheme.typography.bodyLarge,
                         color = Color.White.copy(alpha = 0.92f),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = NuvioTheme.spacing.lg)
                     )
                 }
 

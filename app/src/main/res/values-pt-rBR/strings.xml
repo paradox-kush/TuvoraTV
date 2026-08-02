@@ -336,7 +336,7 @@
 
     <string name="about_title">Sobre</string>
     <string name="about_subtitle">Informações, atualizações e termos legais</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">Feito com ❤️ por Tapframe e amigos</string>
     <string name="about_version">Versão %1$s</string>
     <string name="about_check_updates">Verificar atualizações</string>
     <string name="about_check_updates_subtitle">Baixar a versão mais recente</string>
@@ -548,7 +548,7 @@
     <string name="supporters_contributors_donate_copy">O Tuvora continuará sendo gratuito e de código aberto. Se você quiser apoiar o projeto, pode ajudar com os custos de tempo e infraestrutura.</string>
     <string name="supporters_contributors_donation_progress_title">Servidores e manutenção deste mês</string>
     <string name="supporters_contributors_donation_progress_complete">Coberto. Apoio adicional será direcionado ao desenvolvimento.</string>
-    <string name="supporters_contributors_donation_progress_remaining">Após 100%%, o apoio adicional será direcionado ao desenvolvimento.</string>
+    <string name="supporters_contributors_donation_progress_remaining">Após 100%, o apoio adicional será direcionado ao desenvolvimento.</string>
     <string name="supporters_contributors_loading_donation_progress">Carregando progresso do financiamento...</string>
     <string name="supporters_contributors_donate_button">Apoiar o Tuvora</string>
     <string name="supporters_contributors_qr_title">Escaneie para apoiar</string>

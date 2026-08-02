@@ -2,7 +2,9 @@
 
 package com.nuvio.tv.ui.screens.home
 
+import com.nuvio.tv.core.rec.logClick
 import com.nuvio.tv.core.rec.toRecContentType
+import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import android.view.KeyEvent as AndroidKeyEvent
@@ -509,14 +511,22 @@ internal fun ModernRowSection(
             )
         }
 
+        // addon + apiType + catalogId. apiType is NOT optional here: Cinemeta exposes the same
+        // catalogId ("top") for both its movie and its series row, so omitting it gave both rows
+        // the same id — colliding the impression dedupe key and making the two rows
+        // indistinguishable in training. Falls back to row.key, which is unique but less readable.
+        val recRowId = remember(row.key, row.addonId, row.apiType, row.catalogId) {
+            row.catalogId?.let { catalogId ->
+                listOfNotNull(row.addonId, row.apiType, catalogId).joinToString(":")
+            } ?: row.key
+        }
+
         // Recommendation impressions. Reads the same visibleItemsInfo the row already uses for
         // prefetch, so this adds no measurement work; no-ops entirely when logging is off.
         com.nuvio.tv.core.rec.RecRowImpressions(
             listState = rowListState,
             surface = com.nuvio.tv.core.rec.RecSurface.HOME,
-            rowId = row.catalogId?.let { catalogId ->
-                row.addonId?.let { "$it:$catalogId" } ?: catalogId
-            } ?: row.key,
+            rowId = recRowId,
             rowIndex = row.globalRowIndex,
             itemAt = { index ->
                 row.items.list.getOrNull(index)?.metaPreview?.let { preview ->
@@ -527,6 +537,34 @@ internal fun ModernRowSection(
                 }
             },
         )
+
+        // Clicks carry the row context that playback events cannot: a play_start knows only the
+        // item, so without this there is no way to answer "which row caused this watch?" — the
+        // question the recommender is actually being trained to answer.
+        //
+        // Wrapped once per ROW rather than per item: a lambda per poster would churn on every
+        // scroll, and the slot lookup is an index scan over at most a rowful of items, paid only
+        // on an actual click.
+        val recTelemetry = com.nuvio.tv.core.rec.rememberRecTelemetry()
+        val onNavigateToDetailLogged: (String, String, String) -> Unit =
+            remember(recTelemetry, recRowId, row.items, row.globalRowIndex, onNavigateToDetail) {
+                { itemId, itemType, addonBaseUrl ->
+                    if (recTelemetry != null) {
+                        val slot = row.items.list.indexOfFirst { it.metaPreview?.id == itemId }
+                        recTelemetry.logClick(
+                            surface = com.nuvio.tv.core.rec.RecSurface.HOME,
+                            rowId = recRowId,
+                            rowIndex = row.globalRowIndex,
+                            itemPosition = slot.takeIf { it >= 0 },
+                            item = com.nuvio.tv.core.rec.RecImpressionItem(
+                                itemId = itemId,
+                                contentType = ContentType.fromString(itemType).toRecContentType(),
+                            ),
+                        )
+                    }
+                    onNavigateToDetail(itemId, itemType, addonBaseUrl)
+                }
+            }
 
         val firstItemKey = row.items.list.firstOrNull()?.key
 
@@ -972,7 +1010,7 @@ internal fun ModernRowSection(
                                      }
                                 },
                                 onCatalogSelectionFocused = onCatalogSelectionFocused,
-                                onNavigateToDetail = onNavigateToDetail,
+                                onNavigateToDetail = onNavigateToDetailLogged,
                                 onNavigateToFolderDetail = onNavigateToFolderDetail,
                                 onLongPress = onLongPress,
                                 onBackdropInteraction = onBackdropInteraction,

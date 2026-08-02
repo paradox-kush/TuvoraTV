@@ -339,7 +339,7 @@
     <!-- AboutScreen -->
     <string name="about_title">حول</string>
     <string name="about_subtitle">معلومات التطبيق، التحديثات، والروابط القانونية</string>
-    <string name="about_made_with_love">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
+    <string name="about_made_with_love">صنع بكل ❤️ بواسطة Tapframe والأصدقاء</string>
     <string name="about_version">الإصدار %1$s</string>
     <string name="about_check_updates">التحقق من التحديثات</string>
     <string name="about_check_updates_subtitle">تحميل أحدث إصدار</string>

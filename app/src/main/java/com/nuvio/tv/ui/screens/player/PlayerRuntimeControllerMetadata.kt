@@ -364,7 +364,7 @@ internal fun PlayerRuntimeController.showStreamSourceIndicator(stream: Stream) {
 internal fun PlayerRuntimeController.updateActiveSkipInterval(positionMs: Long) {
     if (skipIntervals.isEmpty()) {
         if (_uiState.value.activeSkipInterval != null) {
-            _uiState.update { it.copy(activeSkipInterval = null) }
+            _uiState.update { it.copy(activeSkipInterval = null, skipIntervalDismissed = false) }
         }
         return
     }
@@ -374,11 +374,7 @@ internal fun PlayerRuntimeController.updateActiveSkipInterval(positionMs: Long) 
     // skip button to appear instead of auto-skipping.
     if (!playerSettingsInitialized) return
 
-    val positionSec = positionMs / 1000.0
-    val active = skipIntervals.find { interval ->
-        positionSec >= interval.startTime && positionSec < interval.endTime
-    }
-
+    val active = nextActiveSkipInterval(skipIntervals, positionMs)
     val currentActive = _uiState.value.activeSkipInterval
 
     if (active != null) {
@@ -396,6 +392,8 @@ internal fun PlayerRuntimeController.updateActiveSkipInterval(positionMs: Long) 
             autoSkippedIntervalKeys.add(activeKey)
             skipInterval(active)
         }
+    } else if (currentActive != null) {
+        _uiState.update { it.copy(activeSkipInterval = null, skipIntervalDismissed = false) }
     }
 }
 

@@ -95,7 +95,7 @@ class TrackingSettingsViewModel @Inject constructor(
     fun selectSimklAnimeIdPreference(preference: SimklAnimeIdPreference) {
         viewModelScope.launch {
             settingsDataStore.setSimklAnimeIdPreference(preference)
-            simklSyncRepository.invalidateProjections()
+            simklSyncRepository.invalidateProjections(preference)
         }
     }
 }

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -32,10 +33,12 @@ class SimklSyncRepository @Inject constructor(
     private val snapshotMutex = Mutex()
     private val refreshGate = SimklRefreshGate()
     private val _state = MutableStateFlow(SimklSyncState())
+    private val _projection = MutableStateFlow(SimklSnapshotProjection.Empty)
     private var loadedProfileId: Int? = null
     private var profileGeneration = 0L
 
     val state: StateFlow<SimklSyncState> = _state.asStateFlow()
+    internal val projection: StateFlow<SimklSnapshotProjection> = _projection.asStateFlow()
 
     init {
         scope.launch {
@@ -44,13 +47,14 @@ class SimklSyncRepository @Inject constructor(
                     profileGeneration += 1L
                     loadedProfileId = null
                     _state.value = SimklSyncState()
+                    _projection.value = SimklSnapshotProjection.Empty
                     loadProfile(profileId)
                 }
             }
         }
     }
 
-    suspend fun ensureLoaded() {
+    suspend fun ensureLoaded() = withContext(Dispatchers.IO) {
         val profileId = profileManager.activeProfileId.value
         if (loadedProfileId != profileId) loadProfile(profileId)
     }
@@ -59,7 +63,7 @@ class SimklSyncRepository @Inject constructor(
         scope.launch { refresh(intent) }
     }
 
-    suspend fun refresh(intent: TrackingRefreshIntent) {
+    suspend fun refresh(intent: TrackingRefreshIntent) = withContext(Dispatchers.IO) {
         ensureLoaded()
         val profileId = profileManager.activeProfileId.value
         val generation = profileGeneration
@@ -82,17 +86,18 @@ class SimklSyncRepository @Inject constructor(
         }
     }
 
-    suspend fun clearCurrentProfile() {
+    suspend fun clearCurrentProfile() = withContext(Dispatchers.IO) {
         val profileId = profileManager.activeProfileId.value
         profileGeneration += 1L
         storage.remove(profileId)
         if (profileId == profileManager.activeProfileId.value) {
             loadedProfileId = profileId
+            _projection.value = SimklSnapshotProjection.Empty
             _state.value = SimklSyncState(hasLoaded = true)
         }
     }
 
-    suspend fun removeProfile(profileId: Int) {
+    suspend fun removeProfile(profileId: Int) = withContext(Dispatchers.IO) {
         if (profileId == profileManager.activeProfileId.value) {
             clearCurrentProfile()
         } else {
@@ -100,8 +105,8 @@ class SimklSyncRepository @Inject constructor(
         }
     }
 
-    suspend fun removePlaybackSessions(sessionIds: Set<Long>) {
-        if (sessionIds.isEmpty()) return
+    suspend fun removePlaybackSessions(sessionIds: Set<Long>) = withContext(Dispatchers.IO) {
+        if (sessionIds.isEmpty()) return@withContext
         ensureLoaded()
         snapshotMutex.withLock {
             val profileId = profileManager.activeProfileId.value
@@ -109,14 +114,16 @@ class SimklSyncRepository @Inject constructor(
             val playback = current.snapshot.playback.filterNot { session -> session.id in sessionIds }
             if (playback.size == current.snapshot.playback.size) return@withLock
             val snapshot = current.snapshot.copy(playback = playback)
-            storage.save(profileId, json.encodeToString(snapshot))
+            val projection = buildProjection(snapshot)
+            storage.save(profileId, encodeSnapshot(snapshot))
             if (profileId == profileManager.activeProfileId.value) {
+                _projection.value = projection
                 _state.value = current.copy(snapshot = snapshot)
             }
         }
     }
 
-    internal suspend fun commitScrobble(result: SimklScrobbleResult) {
+    internal suspend fun commitScrobble(result: SimklScrobbleResult) = withContext(Dispatchers.IO) {
         ensureLoaded()
         val profileId = profileManager.activeProfileId.value
         val generation = profileGeneration
@@ -128,14 +135,16 @@ class SimklSyncRepository @Inject constructor(
                 committedAtEpochMs = System.currentTimeMillis()
             )
             if (snapshot == current.snapshot) return@withLock
-            storage.save(profileId, json.encodeToString(snapshot))
+            val projection = buildProjection(snapshot)
+            storage.save(profileId, encodeSnapshot(snapshot))
             if (isCurrent(profileId, generation)) {
+                _projection.value = projection
                 _state.value = current.copy(snapshot = snapshot)
             }
         }
     }
 
-    internal suspend fun commitMutation(receipt: SimklMutationReceipt) {
+    internal suspend fun commitMutation(receipt: SimklMutationReceipt) = withContext(Dispatchers.IO) {
         ensureLoaded()
         val profileId = profileManager.activeProfileId.value
         val generation = profileGeneration
@@ -147,8 +156,10 @@ class SimklSyncRepository @Inject constructor(
                 committedAtEpochMs = System.currentTimeMillis()
             )
             if (snapshot == current.snapshot) return@withLock
-            storage.save(profileId, json.encodeToString(snapshot))
+            val projection = buildProjection(snapshot)
+            storage.save(profileId, encodeSnapshot(snapshot))
             if (isCurrent(profileId, generation)) {
+                _projection.value = projection
                 _state.value = current.copy(snapshot = snapshot)
             }
         }
@@ -160,13 +171,15 @@ class SimklSyncRepository @Inject constructor(
             ?.trim()
             ?.takeIf(String::isNotEmpty)
             ?.let { payload ->
-                runCatching { json.decodeFromString<SimklSyncSnapshot>(payload) }
+                runCatching { decodeSnapshot(payload) }
                     .onFailure { error -> Log.w(TAG, "Unable to decode Simkl snapshot", error) }
                     .getOrNull()
             }
             ?: SimklSyncSnapshot()
+        val projection = buildProjection(snapshot)
         if (profileId == profileManager.activeProfileId.value) {
             loadedProfileId = profileId
+            _projection.value = projection
             _state.value = SimklSyncState(snapshot = snapshot, hasLoaded = true)
         }
     }
@@ -190,10 +203,19 @@ class SimklSyncRepository @Inject constructor(
             return@withLock
         }
         if (!isCurrent(profileId, generation)) return@withLock
+        val projection = if (
+            result.entries === previous.snapshot.entries &&
+            result.playback === previous.snapshot.playback
+        ) {
+            _projection.value
+        } else {
+            buildProjection(result)
+        }
         authRepository.synchronizeUserSettings(result.activities?.settings?.all)
         if (!isCurrent(profileId, generation)) return@withLock
-        storage.save(profileId, json.encodeToString(result))
+        storage.save(profileId, encodeSnapshot(result))
         if (isCurrent(profileId, generation)) {
+            _projection.value = projection
             _state.value = SimklSyncState(snapshot = result, hasLoaded = true)
         }
     }
@@ -201,14 +223,32 @@ class SimklSyncRepository @Inject constructor(
     private fun isCurrent(profileId: Int, generation: Long): Boolean =
         profileId == profileManager.activeProfileId.value && generation == profileGeneration
 
-    /**
-     * Bumps the projection version to force downstream collectors (CW, library, watched badges)
-     * to recompute their projections without re-fetching from the network.
-     */
-    fun invalidateProjections() {
-        val current = _state.value
-        _state.value = current.copy(projectionVersion = current.projectionVersion + 1L)
+    fun invalidateProjections(animeIdPreference: SimklAnimeIdPreference? = null) {
+        animeIdPreference?.let { preference -> SimklAnimeIdPreferenceHolder.current = preference }
+        val profileId = profileManager.activeProfileId.value
+        val generation = profileGeneration
+        scope.launch {
+            snapshotMutex.withLock {
+                if (!isCurrent(profileId, generation)) return@withLock
+                val current = _state.value
+                val projection = buildProjection(current.snapshot)
+                if (!isCurrent(profileId, generation) || current.snapshot !== _state.value.snapshot) {
+                    return@withLock
+                }
+                _projection.value = projection
+                _state.value = current.copy(projectionVersion = current.projectionVersion + 1L)
+            }
+        }
     }
+
+    private suspend fun buildProjection(snapshot: SimklSyncSnapshot): SimklSnapshotProjection =
+        withContext(Dispatchers.Default) { SimklSnapshotProjection.create(snapshot) }
+
+    private suspend fun decodeSnapshot(payload: String): SimklSyncSnapshot =
+        withContext(Dispatchers.Default) { json.decodeFromString(payload) }
+
+    private suspend fun encodeSnapshot(snapshot: SimklSyncSnapshot): String =
+        withContext(Dispatchers.Default) { json.encodeToString(snapshot) }
 
     private companion object {
         const val TAG = "SimklSync"
