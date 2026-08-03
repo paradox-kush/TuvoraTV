@@ -66,6 +66,7 @@ class RadarChannelMatcherReplayTest {
             matchIndex = mockk(relaxed = true),
             resolver = mockk(relaxed = true),
             epgMirror = mockk(relaxed = true),
+            clientFactory = mockk(relaxed = true),
         )
     }
 

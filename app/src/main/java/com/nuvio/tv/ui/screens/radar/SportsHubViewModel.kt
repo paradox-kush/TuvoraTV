@@ -40,6 +40,15 @@ data class MatchSheetState(
     val deadContentIds: Set<String> = emptySet(),
 )
 
+/**
+ * Whether a matched channel's stream may be health-probed before playback, from the URL its
+ * source listed it with. Xtream and M3U list a reusable URL — probing it costs nothing. Stalker
+ * lists a blank one and mints a single-use link per play, so probing would consume the link the
+ * player is about to use.
+ */
+internal fun radarChannelNeedsHealthProbe(browseStreamUrl: String): Boolean =
+    browseStreamUrl.isNotBlank()
+
 @HiltViewModel
 class SportsHubViewModel @Inject constructor(
     val repository: RadarRepository,
@@ -124,10 +133,11 @@ class SportsHubViewModel @Inject constructor(
         probeJob = viewModelScope.launch {
             for (candidate in queue) {
                 _sheet.update { it?.copy(probingContentId = candidate.channel.contentId) }
-                if (isStreamAlive(candidate.channel.streamUrl)) {
-                    matcher.ensurePlayable(candidate)
+                val url = runCatching { matcher.playbackUrlFor(candidate) }.getOrNull()
+                if (url != null && isChannelPlayable(candidate, url)) {
+                    matcher.ensurePlayable(candidate, url)
                     closeMatch()
-                    onPlay(candidate.channel.name, candidate.channel.streamUrl, candidate.channel.contentId)
+                    onPlay(candidate.channel.name, url, candidate.channel.contentId)
                     return@launch
                 }
                 _sheet.update {
@@ -140,6 +150,18 @@ class SportsHubViewModel @Inject constructor(
             _sheet.update { it?.copy(probingContentId = null) }
         }
     }
+
+    /**
+     * A channel that lists WITH a URL (Xtream, M3U) gets health-probed. A channel that lists
+     * without one (Stalker) must not be: [RadarChannelMatcher.playbackUrlFor] just minted a
+     * single-use create_link, and reading a byte off it burns the very link the player is about
+     * to open. Resolving at all is the liveness signal there, and a channel that dies between
+     * resolve and play still hits the player's one-shot link refresh.
+     */
+    private suspend fun isChannelPlayable(
+        candidate: RadarChannelMatcher.ChannelMatch,
+        resolvedUrl: String,
+    ): Boolean = !radarChannelNeedsHealthProbe(candidate.channel.streamUrl) || isStreamAlive(resolvedUrl)
 
     /** True when the URL streams at least one byte of non-HTML content within the timeout. */
     private suspend fun isStreamAlive(url: String): Boolean = withContext(Dispatchers.IO) {

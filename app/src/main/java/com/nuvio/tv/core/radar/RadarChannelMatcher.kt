@@ -3,6 +3,7 @@ package com.nuvio.tv.core.radar
 import com.nuvio.tv.core.epg.EpgLang
 import com.nuvio.tv.core.epg.EpgMirrorRepository
 import com.nuvio.tv.core.epg.EpgNorm
+import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamChannel
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
@@ -37,9 +38,11 @@ import javax.inject.Singleton
  *  3. Channel-NAME matching (the original path) — still the only signal for panels whose
  *     channels map onto nothing and for league-branded 24/7 channels.
  *
- * Core scoring is source-agnostic over [CandidateChannel]s; the single assembly function is
- * Xtream-specific today and gains M3U/Stalker when the playlist-manager feature lands
- * (see radar-feature-requirements.md §5).
+ * Core scoring is source-agnostic over [CandidateChannel]s, and so is assembly: every enabled
+ * playlist contributes its live lineup through [IptvClientFactory], so Xtream panels, M3U
+ * playlists and Stalker portals all get matched (see radar-feature-requirements.md §5). The two
+ * paths that stay Xtream-only are [replayFor] (timeshift has no Stalker/M3U equivalent) and
+ * [findRecordings] (the TMDB match index only ever indexes Xtream catalogs).
  */
 @Singleton
 class RadarChannelMatcher @Inject constructor(
@@ -49,6 +52,7 @@ class RadarChannelMatcher @Inject constructor(
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val resolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver,
     private val epgMirror: EpgMirrorRepository,
+    private val clientFactory: IptvClientFactory,
 ) {
     data class CandidateChannel(
         val playlistId: String,
@@ -308,8 +312,27 @@ class RadarChannelMatcher @Inject constructor(
         return hits.values.take(RECORDING_CAP)
     }
 
-    /** Registers the match's channel so the player route can resolve it like any live id. */
-    fun ensurePlayable(match: ChannelMatch) {
+    /**
+     * The URL to hand the player for a matched channel. Xtream and M3U carry a browse-time URL;
+     * Stalker channels list with a blank one because the portal mints a single-use link per play,
+     * so those resolve a FRESH `create_link` here — the same rule the live guide plays by. Null
+     * when the source can't produce one (dead portal session, item gone from an M3U catalog).
+     */
+    suspend fun playbackUrlFor(match: ChannelMatch): String? {
+        if (match.channel.streamUrl.isNotBlank()) return match.channel.streamUrl
+        val account = accountStore.accounts.first().firstOrNull { it.id == match.channel.playlistId }
+            ?: return null
+        return clientFactory.clientFor(account)
+            .resolveStreamUrl(account, "live", match.channel.streamId)
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Registers the match's channel so the player route can resolve it like any live id.
+     * [streamUrl] is the resolved URL from [playbackUrlFor] — never `match.channel.streamUrl`,
+     * which is blank for Stalker.
+     */
+    fun ensurePlayable(match: ChannelMatch, streamUrl: String) {
         if (registry.get(match.channel.contentId) != null) return
         registry.register(
             XtreamResolvedItem(
@@ -317,7 +340,7 @@ class RadarChannelMatcher @Inject constructor(
                 type = ContentType.TV,
                 name = match.channel.name,
                 poster = match.channel.logo,
-                streamUrl = match.channel.streamUrl,
+                streamUrl = streamUrl,
                 kind = XtreamKind.LIVE,
                 accountId = match.channel.playlistId,
                 streamId = match.channel.streamId,
@@ -329,14 +352,15 @@ class RadarChannelMatcher @Inject constructor(
         channelCache.clear()
     }
 
-    // --- source assembly (the ONLY source-specific part) ----------------------
+    // --- source assembly ------------------------------------------------------
 
     private suspend fun assembleCandidates(): List<CandidateChannel> {
-        // Only real Xtream panels: live lists here come from XtreamClient's player_api directly.
-        val accounts = accountStore.accounts.first().filter { it.enabled && it.isXtream() }
+        // Every enabled playlist, whatever its source: the factory hands back the Xtream
+        // player_api client, the M3U catalog client, or the Stalker portal session as needed.
+        val accounts = accountStore.accounts.first().filter { it.enabled }
         return accounts.flatMap { account ->
             val channels = channelCache[account.id] ?: cacheMutex.withLock {
-                channelCache[account.id] ?: xtreamClient.liveChannels(account)
+                channelCache[account.id] ?: clientFactory.clientFor(account).liveChannels(account)
                     .getOrDefault(emptyList())
                     // Only cache success — this is an app-lifetime singleton, and caching a
                     // transient panel failure would leave matching dead until restart.
@@ -360,7 +384,10 @@ class RadarChannelMatcher @Inject constructor(
     private suspend fun epgFor(channel: CandidateChannel): List<XtreamProgram> {
         val account = accountStore.accounts.first().firstOrNull { it.id == channel.playlistId }
             ?: return emptyList()
-        return xtreamClient.shortEpg(account, channel.streamId, limit = 8).getOrDefault(emptyList())
+        // Source-correct: Stalker answers get_short_epg (or its bulk EPG), M3U has no per-channel
+        // guide and returns empty — the mirror tier still covers M3U channels that map to an id.
+        return clientFactory.clientFor(account).shortEpg(account, channel.streamId, limit = 8)
+            .getOrDefault(emptyList())
     }
 
     // --- scoring (pure) --------------------------------------------------------
