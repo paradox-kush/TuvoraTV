@@ -498,6 +498,17 @@ fun AdvancedSettingsContent(
                     checked = uiState.sentryEnabled,
                     onToggle = { showSentryDialog = true }
                 )
+                // Applied immediately with no confirmation dialog — see the ViewModel for why.
+                SettingsToggleRow(
+                    title = stringResource(R.string.advanced_rec_events),
+                    subtitle = stringResource(R.string.advanced_rec_events_subtitle),
+                    checked = uiState.recEventsEnabled,
+                    onToggle = {
+                        viewModel.onEvent(
+                            AdvancedSettingsEvent.SetRecEventsEnabled(!uiState.recEventsEnabled)
+                        )
+                    }
+                )
                 SettingsToggleRow(
                     title = stringResource(R.string.advanced_playback_issue_reports),
                     subtitle = stringResource(R.string.advanced_playback_issue_reports_subtitle),

@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -908,9 +909,11 @@ private fun ContentDiscoverySettingsContent(
 @Composable
 private fun EssentialAdvancedSettingsContent(
     experienceModeViewModel: ExperienceModeSettingsViewModel,
-    initialFocusRequester: FocusRequester?
+    initialFocusRequester: FocusRequester?,
+    advancedSettingsViewModel: AdvancedSettingsViewModel = hiltViewModel()
 ) {
     var showConfirmation by remember { mutableStateOf(false) }
+    val advancedUiState by advancedSettingsViewModel.uiState.collectAsState()
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -930,6 +933,26 @@ private fun EssentialAdvancedSettingsContent(
                     Modifier.focusRequester(initialFocusRequester)
                 } else {
                     Modifier
+                }
+            )
+        }
+
+        // The recommendation opt-out is repeated here on purpose. Its real home is Advanced ->
+        // Diagnostics, but that whole surface is hidden in Essential mode — which would leave
+        // Essential users with no way to stop data collection at all, behind a mode switch they
+        // have no reason to look behind. A privacy control that some users cannot reach is not a
+        // privacy control.
+        SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
+            SettingsToggleRow(
+                title = stringResource(R.string.advanced_rec_events),
+                subtitle = stringResource(R.string.advanced_rec_events_subtitle),
+                checked = advancedUiState.recEventsEnabled,
+                onToggle = {
+                    advancedSettingsViewModel.onEvent(
+                        AdvancedSettingsEvent.SetRecEventsEnabled(
+                            !advancedUiState.recEventsEnabled
+                        )
+                    )
                 }
             )
         }

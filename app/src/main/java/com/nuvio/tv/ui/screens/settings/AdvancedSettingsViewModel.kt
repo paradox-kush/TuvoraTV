@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
+import com.nuvio.tv.core.rec.RecEventSettings
 import com.nuvio.tv.data.local.SentrySettingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -19,7 +20,8 @@ data class AdvancedSettingsUiState(
     val smoothBringIntoViewEnabled: Boolean = true,
     val composeHighlighterEnabled: Boolean = false,
     val playbackIssueReportsEnabled: Boolean = false,
-    val sentryEnabled: Boolean = true
+    val sentryEnabled: Boolean = true,
+    val recEventsEnabled: Boolean = true
 )
 
 sealed class AdvancedSettingsEvent {
@@ -28,13 +30,15 @@ sealed class AdvancedSettingsEvent {
     data class SetComposeHighlighterEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetPlaybackIssueReportsEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetSentryEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
+    data class SetRecEventsEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
 }
 
 @HiltViewModel
 class AdvancedSettingsViewModel @Inject constructor(
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
     private val playerSettingsDataStore: PlayerSettingsDataStore,
-    private val sentrySettingsDataStore: SentrySettingsDataStore
+    private val sentrySettingsDataStore: SentrySettingsDataStore,
+    private val recEventSettings: RecEventSettings
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AdvancedSettingsUiState())
     val uiState: StateFlow<AdvancedSettingsUiState> = _uiState.asStateFlow()
@@ -65,6 +69,11 @@ class AdvancedSettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(sentryEnabled = enabled) }
             }
         }
+        viewModelScope.launch {
+            recEventSettings.enabled.collectLatest { enabled ->
+                _uiState.update { it.copy(recEventsEnabled = enabled) }
+            }
+        }
     }
 
     fun onEvent(event: AdvancedSettingsEvent) {
@@ -93,6 +102,13 @@ class AdvancedSettingsViewModel @Inject constructor(
                 viewModelScope.launch {
                     sentrySettingsDataStore.setEnabled(event.enabled)
                 }
+            }
+            // No confirmation dialog, unlike the Sentry toggle beside it: interrupting someone
+            // who is trying to STOP data collection is friction pointed the wrong way. Applies
+            // immediately and rotates the device id, so the next stream cannot be joined to the
+            // previous one.
+            is AdvancedSettingsEvent.SetRecEventsEnabled -> {
+                recEventSettings.setEnabled(event.enabled)
             }
         }
     }
