@@ -242,6 +242,10 @@ class RadarChannelMatcher @Inject constructor(
         if (!match.channel.hasArchive || start > RadarTime.nowMs()) return null
         val account = accountStore.accounts.first().firstOrNull { it.id == match.channel.playlistId }
             ?: return null
+        // Timeshift/catch-up is an Xtream-only feature — there's no interface method for Stalker/M3U.
+        // Offering Replay for those would register a bogus fabricated URL, so skip it. (Assembly is
+        // Xtream-only today, so this is the guard that keeps Replay honest once it isn't.)
+        if (!account.isXtream()) return null
         val programme = match.programme
         val replayStart = programme?.startMs?.takeIf { it > 0 } ?: (start - 15 * 60 * 1000L)
         val durationMin = (((programme?.endMs ?: 0L) - (programme?.startMs ?: 0L)) / 60_000L)
