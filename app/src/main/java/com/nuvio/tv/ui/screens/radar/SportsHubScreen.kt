@@ -52,7 +52,9 @@ import com.nuvio.tv.core.radar.RadarLeague
 import com.nuvio.tv.core.radar.RadarTime
 import com.nuvio.tv.core.radar.radarWhenLabel
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.screens.collection.NuvioTextField
 import com.nuvio.tv.ui.theme.NuvioTheme
+import kotlinx.coroutines.delay
 
 /**
  * Sports Centre hub (drawer destination): featured event banners, live & upcoming fixtures for
@@ -226,25 +228,57 @@ fun SportsHubScreen(
     // Sport first, then country, then the leagues themselves — a country alone would mix
     // every sport together, and TheSportsDB filters on both.
     if (pickingSport) {
+        val nameSearch by viewModel.leagueSearch.collectAsStateWithLifecycle()
+        var leagueQuery by remember { mutableStateOf("") }
+        // Debounced: on a D-pad keyboard every character is a deliberate press, but an IME
+        // with autocomplete can still emit bursts.
+        LaunchedEffect(leagueQuery) {
+            delay(SEARCH_DEBOUNCE_MS)
+            viewModel.searchLeaguesByName(leagueQuery)
+        }
         NuvioDialog(
-            onDismiss = { pickingSport = false },
+            onDismiss = { pickingSport = false; viewModel.clearLeagueSearch() },
             title = "Add a league",
-            subtitle = "Pick a sport — leagues you add here are on your account only",
+            subtitle = "Search by name, or pick a sport — leagues you add here are on your account only",
         ) {
-            LazyColumn(modifier = Modifier.height(400.dp)) {
-                items(RADAR_LEAGUE_SPORTS, key = { it }) { sport ->
-                    FocusableRow(onClick = {
-                        pickingSport = false
-                        viewModel.clearLeagueSearch()
-                        pickedSport = sport
-                    }) {
-                        Text(
-                            sport,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = NuvioTheme.colors.TextPrimary,
-                            modifier = Modifier.weight(1f),
+            NuvioTextField(
+                value = leagueQuery,
+                onValueChange = { leagueQuery = it },
+                placeholder = "Search leagues",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),
+            )
+            LazyColumn(modifier = Modifier.height(360.dp)) {
+                // A typed query takes over the list; clearing it returns the sport picker.
+                if (nameSearch.query.isNotBlank()) {
+                    if (nameSearch.loading) {
+                        item { DialogHintText("Finding leagues…") }
+                    } else if (nameSearch.results.isEmpty()) {
+                        item { DialogHintText(nameSearch.emptyText) }
+                    }
+                    items(nameSearch.results, key = { it.id }) { league ->
+                        LeagueFollowRow(
+                            league = league,
+                            followed = league.id in state.followedLeagueIds,
+                            onClick = { viewModel.toggleFollow(league) },
                         )
-                        Text("›", style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary)
+                    }
+                } else {
+                    items(RADAR_LEAGUE_SPORTS, key = { it }) { sport ->
+                        FocusableRow(onClick = {
+                            pickingSport = false
+                            viewModel.clearLeagueSearch()
+                            pickedSport = sport
+                        }) {
+                            Text(
+                                sport,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = NuvioTheme.colors.TextPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text("›", style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary)
+                        }
                     }
                 }
             }
@@ -285,32 +319,14 @@ fun SportsHubScreen(
         ) {
             LazyColumn(modifier = Modifier.height(400.dp)) {
                 if (!search.loading && search.results.isEmpty()) {
-                    item {
-                        Text(
-                            "No leagues found for ${search.sport} in ${search.country}.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = NuvioTheme.colors.TextSecondary,
-                            modifier = Modifier.padding(NuvioTheme.spacing.md),
-                        )
-                    }
+                    item { DialogHintText(search.emptyText) }
                 }
                 items(search.results, key = { it.id }) { league ->
-                    val followed = league.id in state.followedLeagueIds
-                    FocusableRow(onClick = { viewModel.toggleFollow(league) }) {
-                        AsyncImage(model = league.badge, contentDescription = null, modifier = Modifier.size(32.dp))
-                        Spacer(Modifier.width(NuvioTheme.spacing.md))
-                        Text(
-                            league.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = NuvioTheme.colors.TextPrimary,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            if (followed) "★ Following" else "+ Follow",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
-                        )
-                    }
+                    LeagueFollowRow(
+                        league = league,
+                        followed = league.id in state.followedLeagueIds,
+                        onClick = { viewModel.toggleFollow(league) },
+                    )
                 }
             }
         }
@@ -933,3 +949,45 @@ private fun RowTitle(text: String) {
     )
 }
 
+
+private const val SEARCH_DEBOUNCE_MS = 350L
+
+/** Follow/unfollow row shared by the name-search and country-browse league lists. */
+@Composable
+private fun LeagueFollowRow(league: RadarLeague, followed: Boolean, onClick: () -> Unit) {
+    FocusableRow(onClick = onClick) {
+        AsyncImage(model = league.badge, contentDescription = null, modifier = Modifier.size(32.dp))
+        Spacer(Modifier.width(NuvioTheme.spacing.md))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                league.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = NuvioTheme.colors.TextPrimary,
+            )
+            // Name search spans every country, so the sport is what separates lookalikes.
+            league.sport?.takeIf { it.isNotBlank() }?.let { sport ->
+                Text(
+                    sport,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioTheme.colors.TextSecondary,
+                )
+            }
+        }
+        Text(
+            if (followed) "★ Following" else "+ Follow",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
+        )
+    }
+}
+
+/** Non-focusable explanatory line inside a picker dialog (loading / empty states). */
+@Composable
+private fun DialogHintText(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = NuvioTheme.colors.TextSecondary,
+        modifier = Modifier.padding(NuvioTheme.spacing.md),
+    )
+}

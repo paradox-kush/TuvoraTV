@@ -47,13 +47,24 @@ data class MatchSheetState(
  * lists a blank one and mints a single-use link per play, so probing would consume the link the
  * player is about to use.
  */
-/** Sport -> country -> league browse state for the "add a league" picker. */
+/**
+ * Results state for the "add a league" picker, from either route into it: the
+ * sport -> country browse, or a free-text [query]. [isOpen] is what the screen shows the
+ * results dialog on, since a text search has no sport/country to key off.
+ */
 data class LeagueSearchState(
     val sport: String = "",
     val country: String = "",
+    val query: String = "",
     val loading: Boolean = false,
     val results: List<RadarLeague> = emptyList(),
-)
+) {
+    val isOpen: Boolean get() = query.isNotBlank() || (sport.isNotBlank() && country.isNotBlank())
+    val title: String get() = if (query.isNotBlank()) "\"$query\"" else "$sport · $country"
+    val emptyText: String
+        get() = if (query.isNotBlank()) "No leagues match \"$query\"."
+        else "No leagues found for $sport in $country."
+}
 
 /**
  * Sports to offer, in TheSportsDB's own spelling — the discovery endpoint filters on these
@@ -65,6 +76,9 @@ val RADAR_LEAGUE_SPORTS: List<String> = listOf(
     "Cycling", "Australian Football", "Handball", "Volleyball", "Netball",
     "Darts", "Snooker", "Esports",
 )
+
+/** Shortest query worth a round trip — one or two letters match half the database. */
+internal const val MIN_LEAGUE_QUERY = 3
 
 /**
  * Countries worth offering on a remote. Deliberately a short, ordered list rather than every
@@ -125,6 +139,25 @@ class SportsHubViewModel @Inject constructor(
         searchJob = viewModelScope.launch {
             val results = catalogClient.searchLeagues(country = country, sport = sport)
             _leagueSearch.update { it.copy(loading = false, results = results) }
+        }
+    }
+
+    /**
+     * Free-text league search, for when the user knows the name but not which country
+     * TheSportsDB files it under (Primeira Liga sits under Portugal, the Champions League
+     * under no country at all).
+     */
+    fun searchLeaguesByName(query: String) {
+        val text = query.trim()
+        searchJob?.cancel()
+        if (text.length < MIN_LEAGUE_QUERY) {
+            _leagueSearch.value = LeagueSearchState()
+            return
+        }
+        _leagueSearch.value = LeagueSearchState(query = text, loading = true)
+        searchJob = viewModelScope.launch {
+            val results = catalogClient.searchLeagues(text = text)
+            _leagueSearch.update { if (it.query == text) it.copy(loading = false, results = results) else it }
         }
     }
 
