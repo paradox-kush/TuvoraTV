@@ -5,6 +5,8 @@ import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamChannel
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
+import com.nuvio.tv.core.iptv.content.EpgProgramme
+import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.data.local.XtreamAccountStore
 import io.mockk.coEvery
 import io.mockk.every
@@ -83,9 +85,74 @@ class RadarChannelMatcherSourcesTest {
         assertEquals(emptyList<RadarChannelMatcher.ChannelMatch>(), matcher.match(FIXTURE, league = null))
     }
 
+
+    /**
+     * The bug the provider-EPG tier exists for: a channel whose NAME says nothing about the
+     * fixture used to be dropped before any guide was consulted, so a Liga MX match on a
+     * Mexican channel was unfindable and the sheet fell through to generic "has the word
+     * sport in it" hits. A guide entry naming the teams must be enough on its own.
+     */
+    @Test
+    fun `a channel matches on the provider guide even when its name says nothing`() = runTest {
+        val epg = mockk<IptvContentDb>()
+        coEvery { epg.epgSearch(any(), any(), any(), any(), any()) } returns listOf(
+            EpgProgramme(
+                channelId = "canal5.mx",
+                startMs = FIXTURE.startEpochMs!!,
+                endMs = FIXTURE.startEpochMs!! + 2 * 60 * 60 * 1000L,
+                title = "Futbol: Spain vs Austria",
+                desc = null,
+            ),
+        )
+        val matcher = matcher(
+            xtreamAccount() to clientWith(
+                channel(1, "Canal 5", XTREAM_URL).copy(epgChannelId = "canal5.mx"),
+            ),
+            contentDb = epg,
+        )
+
+        val match = matcher.match(FIXTURE, league = null).single()
+
+        assertEquals("Canal 5", match.channel.name)
+        assertEquals(RadarChannelMatcher.MatchVia.EPG, match.via)
+    }
+
+    /**
+     * The guide hit is attributed to the channel whose guide id it names, and only that one.
+     * Asserting the emptiness of the other channel alone would pass just as well if the whole
+     * tier were dead — which is how the dead-string bug above survived.
+     */
+    @Test
+    fun `a guide hit lands only on the channel whose guide id it names`() = runTest {
+        val epg = mockk<IptvContentDb>()
+        coEvery { epg.epgSearch(any(), any(), any(), any(), any()) } returns listOf(
+            EpgProgramme(
+                channelId = "canal5.mx",
+                startMs = FIXTURE.startEpochMs!!,
+                endMs = FIXTURE.startEpochMs!! + 2 * 60 * 60 * 1000L,
+                title = "Futbol: Spain vs Austria",
+                desc = null,
+            ),
+        )
+        val matcher = matcher(
+            xtreamAccount() to clientWith(
+                channel(1, "Canal 5", XTREAM_URL).copy(epgChannelId = "canal5.mx"),
+                channel(2, "Canal 7", XTREAM_URL).copy(epgChannelId = "canal7.mx"),
+            ),
+            contentDb = epg,
+        )
+
+        val match = matcher.match(FIXTURE, league = null).single()
+
+        assertEquals("Canal 5", match.channel.name)
+    }
+
     // --- helpers ---------------------------------------------------------------
 
-    private fun matcher(vararg playlists: Pair<XtreamAccount, IptvClient>): RadarChannelMatcher {
+    private fun matcher(
+        vararg playlists: Pair<XtreamAccount, IptvClient>,
+        contentDb: IptvContentDb = mockk(relaxed = true),
+    ): RadarChannelMatcher {
         val store = mockk<XtreamAccountStore>()
         every { store.accounts } returns flowOf(playlists.map { it.first })
         val factory = mockk<IptvClientFactory>()
@@ -97,6 +164,9 @@ class RadarChannelMatcherSourcesTest {
             matchIndex = mockk(relaxed = true),
             resolver = mockk(relaxed = true),
             epgMirror = mockk(relaxed = true),
+            // Defaults to relaxed, i.e. epgSearch finds nothing: most cases here are about
+            // the name/keyword tiers underneath the guide.
+            contentDb = contentDb,
             clientFactory = factory,
         )
     }

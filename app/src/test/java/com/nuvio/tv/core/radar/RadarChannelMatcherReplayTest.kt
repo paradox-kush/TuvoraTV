@@ -66,6 +66,10 @@ class RadarChannelMatcherReplayTest {
             matchIndex = mockk(relaxed = true),
             resolver = mockk(relaxed = true),
             epgMirror = mockk(relaxed = true),
+            // Relaxed: epgSearch returns an empty list, i.e. the provider's own EPG had no
+            // hit, which is the path these cases are about — they cover the name/keyword
+            // tiers underneath it.
+            contentDb = mockk(relaxed = true),
             clientFactory = mockk(relaxed = true),
         )
     }

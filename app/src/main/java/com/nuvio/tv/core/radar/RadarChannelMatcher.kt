@@ -199,7 +199,7 @@ class RadarChannelMatcher @Inject constructor(
                 for (p in hits) {
                     val channel = byEpgId[p.channelId] ?: continue
                     val score = programmeScore(
-                        normalize("${'$'}{p.title} ${'$'}{p.desc.orEmpty()}"),
+                        normalize("${p.title} ${p.desc.orEmpty()}"),
                         keywords, homeTokens, awayTokens, eventTokens,
                     )
                     if (score <= 0) continue
