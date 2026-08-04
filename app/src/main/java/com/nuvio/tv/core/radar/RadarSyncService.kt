@@ -55,6 +55,19 @@ class RadarSyncService @Inject constructor(
         val custom: Boolean = false,
     )
 
+    /** A followed club. Every column is populated — there is no team catalog to defer to. */
+    @Serializable
+    private data class TeamFollowRow(
+        @SerialName("team_id") val teamId: String,
+        val name: String = "",
+        val sport: String = "",
+        val badge: String? = null,
+        @SerialName("league_id") val leagueId: String? = null,
+        val league: String? = null,
+        val keywords: List<String>? = null,
+        @SerialName("sort_order") val sortOrder: Int = 0,
+    )
+
     @Serializable
     private data class PrefsRow(
         @SerialName("featured_event_id") val featuredEventId: String = "",
@@ -110,9 +123,28 @@ class RadarSyncService @Inject constructor(
                     put("opt_in_state", state.prefs.optInState)
                     put("promo_dismissed", state.prefs.promoDismissed)
                 }
+                // Always sent, even when empty: the RPC reads a MISSING p_teams as "this
+                // client has nothing to say about teams" and leaves the remote rows alone, so
+                // omitting it here would make unfollowing your last club un-syncable.
+                put("p_teams", buildJsonArray {
+                    state.teams.forEachIndexed { index, team ->
+                        addJsonObject {
+                            put("team_id", team.teamId)
+                            put("name", team.name)
+                            put("sport", team.sport)
+                            put("sort_order", index)
+                            team.badge?.let { put("badge", it) }
+                            team.leagueId?.let { put("league_id", it) }
+                            team.league?.let { put("league", it) }
+                            if (team.keywords.isNotEmpty()) {
+                                put("keywords", buildJsonArray { team.keywords.forEach { add(it) } })
+                            }
+                        }
+                    }
+                })
             }
             withJwtRefreshRetry { postgrest.rpc("sync_push_radar", params) }
-            Log.d(TAG, "Pushed ${state.follows.size} radar follows for profile $profileId")
+            Log.d(TAG, "Pushed ${state.follows.size} radar follows, ${state.teams.size} teams for profile $profileId")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to push radar state", e)
@@ -136,6 +168,14 @@ class RadarSyncService @Inject constructor(
                     } }
                     .decodeList<FollowRow>()
             }
+            val teamRows = withJwtRefreshRetry {
+                postgrest.from("radar_team_follows")
+                    .select { filter {
+                        eq("user_id", effectiveUserId)
+                        eq("profile_id", profileId)
+                    } }
+                    .decodeList<TeamFollowRow>()
+            }
             val prefsRow = withJwtRefreshRetry {
                 postgrest.from("radar_prefs")
                     .select { filter {
@@ -145,9 +185,9 @@ class RadarSyncService @Inject constructor(
                     .decodeList<PrefsRow>()
                     .firstOrNull()
             }
-            if (followRows.isEmpty() && prefsRow == null) {
+            if (followRows.isEmpty() && teamRows.isEmpty() && prefsRow == null) {
                 val local = store.state.first()
-                if (local.follows.isNotEmpty() || local.prefs != RadarPrefs()) pushToRemote()
+                if (local.follows.isNotEmpty() || local.teams.isNotEmpty() || local.prefs != RadarPrefs()) pushToRemote()
                 return@withContext Result.success(Unit)
             }
             isSyncingFromRemote = true
@@ -168,10 +208,23 @@ class RadarSyncService @Inject constructor(
                         },
                     prefs = prefsRow?.let { RadarPrefs(it.featuredEventId, it.optInState, it.promoDismissed) }
                         ?: store.state.first().prefs,
+                    teams = teamRows.sortedBy { it.sortOrder }
+                        .map {
+                            RadarTeamFollow(
+                                teamId = it.teamId,
+                                name = it.name,
+                                sport = it.sport,
+                                badge = it.badge,
+                                leagueId = it.leagueId,
+                                league = it.league,
+                                keywords = it.keywords.orEmpty(),
+                                sortOrder = it.sortOrder,
+                            )
+                        },
                 )
             )
             isSyncingFromRemote = false
-            Log.d(TAG, "Pulled ${followRows.size} radar follows for profile $profileId")
+            Log.d(TAG, "Pulled ${followRows.size} radar follows, ${teamRows.size} teams for profile $profileId")
             Result.success(Unit)
         } catch (e: Exception) {
             isSyncingFromRemote = false

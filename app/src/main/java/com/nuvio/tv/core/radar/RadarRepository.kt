@@ -31,8 +31,29 @@ data class RadarUiState(
      *  the time-window inference). */
     val livescoreSports: Set<String> = emptySet(),
     val loadingFixtures: Boolean = false,
+    /** Followed clubs (always user-added — there is no published team catalog). */
+    val teamFollows: List<RadarTeamFollow> = emptyList(),
+    /** teamId -> that club's own schedule, from the team lane of radar-fixtures. */
+    val fixturesByTeam: Map<String, List<RadarFixture>> = emptyMap(),
 ) {
     val followedLeagueIds: Set<String> get() = follows.map { it.leagueId }.toSet()
+    val followedTeamIds: Set<String> get() = teamFollows.map { it.teamId }.toSet()
+
+    /** Followed clubs in follow order, as the picker/search shape. */
+    val followedTeams: List<RadarTeam> get() = teamFollows.sortedBy { it.sortOrder }.map { it.asTeam() }
+
+    /** Fixtures of the given clubs that are live or upcoming, soonest first. */
+    fun upcomingForTeams(teamIds: Collection<String>, nowMs: Long, cap: Int = 20): List<RadarFixture> =
+        teamIds.asSequence()
+            .flatMap { fixturesByTeam[it].orEmpty() }
+            .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
+            .filter { fx ->
+                val start = fx.startEpochMs ?: return@filter false
+                start >= nowMs - 4 * 60 * 60 * 1000L || isLive(fx, nowMs)
+            }
+            .sortedBy { it.startEpochMs }
+            .take(cap)
+            .toList()
 
     /**
      * Catalog first, then the user's own follows — a league someone added themselves isn't in
@@ -125,7 +146,11 @@ class RadarRepository @Inject constructor(
                 refreshCatalog()
                 store.loadFixtures()?.let { cached ->
                     _uiState.update {
-                        it.copy(fixturesByLeague = cached.fixtures, liveEventIds = liveIds(cached))
+                        it.copy(
+                            fixturesByLeague = cached.fixtures,
+                            fixturesByTeam = cached.teamFixtures,
+                            liveEventIds = liveIds(cached),
+                        )
                     }
                 }
                 // Profile-reactive: any follows/prefs change (local edit, sync pull, profile
@@ -133,8 +158,11 @@ class RadarRepository @Inject constructor(
                 // when a followed league has NO cached fixtures yet (new follow / profile
                 // switch to different follows) so it doesn't sit empty for a TTL.
                 store.state.collect { local ->
-                    _uiState.update { it.copy(follows = local.follows, prefs = local.prefs) }
-                    val uncovered = local.follows.any { it.leagueId !in _uiState.value.fixturesByLeague }
+                    _uiState.update {
+                        it.copy(follows = local.follows, prefs = local.prefs, teamFollows = local.teams)
+                    }
+                    val uncovered = local.follows.any { it.leagueId !in _uiState.value.fixturesByLeague } ||
+                        local.teams.any { it.teamId !in _uiState.value.fixturesByTeam }
                     refreshFixtures(force = uncovered)
                 }
             }
@@ -172,13 +200,17 @@ class RadarRepository @Inject constructor(
         val nowMs = RadarTime.nowMs()
         val state = _uiState.value
         val leagues = state.followedLeagueIds + state.activeFeatured(nowMs).map { it.leagueId }
-        if (leagues.isEmpty()) return
+        val teams = state.followedTeamIds
+        if (leagues.isEmpty() && teams.isEmpty()) return
         lastFetchMark = TimeSource.Monotonic.markNow()
-        val sports = leagues.mapNotNull { id -> state.leagueById(id)?.sport?.lowercase() }
-            .filter { it in RADAR_LIVESCORE_SPORTS }.toSet()
+        val sports = (
+            leagues.mapNotNull { id -> state.leagueById(id)?.sport?.lowercase() } +
+                // A followed club may be the only reason a sport is on screen at all.
+                state.teamFollows.map { it.sport.lowercase() }
+            ).filter { it in RADAR_LIVESCORE_SPORTS }.toSet()
         _uiState.update { it.copy(loadingFixtures = true) }
         scope.launch {
-            val response = fixturesClient.fetch(leagues, sports)
+            val response = fixturesClient.fetch(leagues, sports, teams)
             if (response == null) {
                 _uiState.update { it.copy(loadingFixtures = false) }
                 lastFetchMark = null // failed: retry on next entry instead of waiting out the TTL
@@ -187,6 +219,7 @@ class RadarRepository @Inject constructor(
             _uiState.update {
                 it.copy(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
+                    fixturesByTeam = it.fixturesByTeam + response.teamFixtures,
                     liveEventIds = liveIds(response),
                     livescoreSports = response.livescore.keys.map { s -> s.lowercase() }.toSet(),
                     loadingFixtures = false,
@@ -194,7 +227,12 @@ class RadarRepository @Inject constructor(
             }
             // Persist the MERGED map — persisting only the raw response would drop leagues
             // this (possibly partial) response omitted from the offline cache.
-            store.saveFixtures(response.copy(fixtures = _uiState.value.fixturesByLeague))
+            store.saveFixtures(
+                response.copy(
+                    fixtures = _uiState.value.fixturesByLeague,
+                    teamFixtures = _uiState.value.fixturesByTeam,
+                ),
+            )
         }
     }
 
@@ -223,6 +261,27 @@ class RadarRepository @Inject constructor(
                 without
             }
             store.saveState(current.copy(follows = follows))
+            syncService.triggerRemoteSync()
+            refreshFixtures(force = true)
+        }
+    }
+
+    /**
+     * Follow/unfollow a club. Unlike a league there is no catalog to fall back on, so the
+     * whole team travels onto the follow row — dropping it would leave nothing to name,
+     * draw or channel-match the club with later.
+     */
+    fun toggleFollowTeam(team: RadarTeam) {
+        scope.launch {
+            // Read the STORE, not _uiState — same reason as toggleFollow.
+            val current = store.state.first()
+            val without = current.teams.filterNot { it.teamId == team.id }
+            val teams = if (without.size == current.teams.size) {
+                without + team.asFollow(sortOrder = without.size)
+            } else {
+                without
+            }
+            store.saveState(current.copy(teams = teams))
             syncService.triggerRemoteSync()
             refreshFixtures(force = true)
         }

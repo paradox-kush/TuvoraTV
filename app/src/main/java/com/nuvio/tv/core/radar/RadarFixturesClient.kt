@@ -32,13 +32,18 @@ class RadarFixturesClient @Inject constructor(
     suspend fun fetch(
         leagueIds: Collection<String>,
         livescoreSports: Collection<String>,
+        teamIds: Collection<String> = emptyList(),
     ): RadarFixturesResponse? = withContext(Dispatchers.IO) {
-        if (leagueIds.isEmpty() && livescoreSports.isEmpty()) return@withContext null
+        if (leagueIds.isEmpty() && livescoreSports.isEmpty() && teamIds.isEmpty()) return@withContext null
         runCatching {
             val base = supabaseProvider.selectedBackend.normalizedSupabaseUrl
             val url = buildString {
                 append(base).append("/functions/v1/radar-fixtures?league_ids=")
                 append(URLEncoder.encode(leagueIds.joinToString(","), "UTF-8"))
+                if (teamIds.isNotEmpty()) {
+                    append("&team_ids=")
+                    append(URLEncoder.encode(teamIds.joinToString(","), "UTF-8"))
+                }
                 if (livescoreSports.isNotEmpty()) {
                     append("&livescore_sports=")
                     append(URLEncoder.encode(livescoreSports.joinToString(","), "UTF-8"))

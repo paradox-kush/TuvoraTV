@@ -61,6 +61,23 @@ class RadarCatalogClient @Inject constructor(
         }.onFailure { e -> Log.w(TAG, "league search failed", e) }.getOrDefault(emptyList())
     }
 
+    /**
+     * Free-text club search for the "follow a team" picker. There is no browse-by-country
+     * fallback here as there is for leagues: nobody scrolls to their club through a list of
+     * every team in a country, they type its name.
+     */
+    suspend fun searchTeams(text: String): List<RadarTeam> = withContext(Dispatchers.IO) {
+        if (text.isBlank()) return@withContext emptyList()
+        runCatching {
+            val base = supabaseProvider.selectedBackend.normalizedSupabaseUrl
+            val url = "$base/functions/v1/radar-fixtures?team_search=" + URLEncoder.encode(text, "UTF-8")
+            http.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+                check(response.isSuccessful) { "team search HTTP ${response.code}" }
+                json.decodeFromString<RadarTeamSearchResponse>(response.body?.string().orEmpty()).teams
+            }
+        }.onFailure { e -> Log.w(TAG, "team search failed", e) }.getOrDefault(emptyList())
+    }
+
     suspend fun fetch(): RadarCatalogEnvelope? = withContext(Dispatchers.IO) {
         runCatching {
             val base = supabaseProvider.selectedBackend.normalizedSupabaseUrl

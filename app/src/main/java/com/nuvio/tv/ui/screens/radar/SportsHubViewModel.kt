@@ -6,6 +6,7 @@ import com.nuvio.tv.core.radar.RadarChannelMatcher
 import com.nuvio.tv.core.radar.RadarFixture
 import com.nuvio.tv.core.radar.RadarLeague
 import com.nuvio.tv.core.radar.RadarRepository
+import com.nuvio.tv.core.radar.RadarTeam
 import com.nuvio.tv.core.radar.RadarUiState
 import com.nuvio.tv.data.local.XtreamAccountStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -64,6 +65,16 @@ data class LeagueSearchState(
     val emptyText: String
         get() = if (query.isNotBlank()) "No leagues match \"$query\"."
         else "No leagues found for $sport in $country."
+}
+
+/** Free-text club search state for the "follow a team" picker. */
+data class TeamSearchState(
+    val query: String = "",
+    val loading: Boolean = false,
+    val results: List<RadarTeam> = emptyList(),
+) {
+    val emptyText: String
+        get() = if (query.isBlank()) "Type a club's name to find it." else "No teams match \"$query\"."
 }
 
 /**
@@ -160,6 +171,34 @@ class SportsHubViewModel @Inject constructor(
             _leagueSearch.update { if (it.query == text) it.copy(loading = false, results = results) else it }
         }
     }
+
+    // --- follow a team --------------------------------------------------------
+
+    private val _teamSearch = MutableStateFlow(TeamSearchState())
+    val teamSearch: StateFlow<TeamSearchState> = _teamSearch.asStateFlow()
+
+    private var teamSearchJob: Job? = null
+
+    fun searchTeams(query: String) {
+        val text = query.trim()
+        teamSearchJob?.cancel()
+        if (text.length < MIN_LEAGUE_QUERY) {
+            _teamSearch.value = TeamSearchState()
+            return
+        }
+        _teamSearch.value = TeamSearchState(query = text, loading = true)
+        teamSearchJob = viewModelScope.launch {
+            val results = catalogClient.searchTeams(text)
+            _teamSearch.update { if (it.query == text) it.copy(loading = false, results = results) else it }
+        }
+    }
+
+    fun clearTeamSearch() {
+        teamSearchJob?.cancel()
+        _teamSearch.value = TeamSearchState()
+    }
+
+    fun toggleFollowTeam(team: RadarTeam) = repository.toggleFollowTeam(team)
 
     fun clearLeagueSearch() {
         searchJob?.cancel()

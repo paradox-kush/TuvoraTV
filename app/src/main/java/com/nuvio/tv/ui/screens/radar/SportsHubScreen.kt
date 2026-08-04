@@ -76,9 +76,19 @@ fun SportsHubScreen(
 
     val nowMs = RadarTime.nowMs()
     val featured = state.activeFeatured(nowMs)
-    val upcoming = state.upcoming(state.followedLeagueIds + featured.map { it.leagueId }, nowMs)
+    // Followed clubs feed the same Live & Upcoming row as followed leagues — someone who
+    // follows only Arsenal still expects their match at the top, not buried under Browse.
+    val upcoming = remember(state, nowMs) {
+        (
+            state.upcoming(state.followedLeagueIds + featured.map { it.leagueId }, nowMs) +
+                state.upcomingForTeams(state.followedTeamIds, nowMs)
+            )
+            .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
+            .sortedBy { it.startEpochMs }
+    }
     var browseCategory by remember { mutableStateOf<RadarCategory?>(null) }
     var pickingSport by remember { mutableStateOf(false) }
+    var pickingTeam by remember { mutableStateOf(false) }
     // Set once a sport is chosen; the country list is the second step.
     var pickedSport by remember { mutableStateOf<String?>(null) }
     // Discovery drill-in: a league/event page listing everything happening in it.
@@ -157,6 +167,15 @@ fun SportsHubScreen(
                     MatchRow(upcoming, state.isLiveCheck(nowMs), onMatch = { viewModel.openMatch(it) })
                 }
             }
+            state.followedTeams.forEach { team ->
+                val fixtures = state.upcomingForTeams(listOf(team.id), nowMs, cap = 12)
+                if (fixtures.isNotEmpty()) {
+                    item(key = "team-${team.id}") {
+                        RowTitle(team.name)
+                        MatchRow(fixtures, state.isLiveCheck(nowMs), onMatch = { viewModel.openMatch(it) })
+                    }
+                }
+            }
             state.follows.forEach { follow ->
                 val league = state.leagueById(follow.leagueId) ?: return@forEach
                 val fixtures = state.upcoming(listOf(league.id), nowMs, cap = 12)
@@ -198,8 +217,10 @@ fun SportsHubScreen(
                     // Anything we didn't curate. Lives at the END of the row so the popular
                     // leagues stay first — this is the escape hatch, not the main path.
                     item(key = "__add_league__") {
-                        AddLeagueTile(
-                            customCount = state.customLeagues.size,
+                        AddFollowTile(
+                            title = "Add a league",
+                            subtitle = state.customLeagues.size
+                                .let { if (it > 0) "$it added" else "Not in the list?" },
                             onClick = {
                                 // Start clean: leaving the results dialog by any route other
                                 // than its own dismiss used to leave the last search sitting in
@@ -207,6 +228,17 @@ fun SportsHubScreen(
                                 viewModel.clearLeagueSearch()
                                 pickedSport = null
                                 pickingSport = true
+                            },
+                        )
+                    }
+                    item(key = "__add_team__") {
+                        AddFollowTile(
+                            title = "Follow a team",
+                            subtitle = state.teamFollows.size
+                                .let { if (it > 0) "$it followed" else "Just your club" },
+                            onClick = {
+                                viewModel.clearTeamSearch()
+                                pickingTeam = true
                             },
                         )
                     }
@@ -279,6 +311,67 @@ fun SportsHubScreen(
                             )
                             Text("›", style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary)
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    if (pickingTeam) {
+        val teamSearch by viewModel.teamSearch.collectAsStateWithLifecycle()
+        var teamQuery by remember { mutableStateOf("") }
+        LaunchedEffect(teamQuery) {
+            delay(SEARCH_DEBOUNCE_MS)
+            viewModel.searchTeams(teamQuery)
+        }
+        NuvioDialog(
+            onDismiss = { pickingTeam = false; viewModel.clearTeamSearch() },
+            title = "Follow a team",
+            // Search-only: nobody finds their club by scrolling every team in a country, and
+            // unlike leagues there is no curated set to browse in the first place.
+            subtitle = "Search for a club — teams you follow here are on your account only",
+        ) {
+            NuvioTextField(
+                value = teamQuery,
+                onValueChange = { teamQuery = it },
+                placeholder = "Search teams",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),
+            )
+            LazyColumn(modifier = Modifier.height(360.dp)) {
+                if (teamSearch.loading) {
+                    item { DialogHintText("Finding teams…") }
+                } else if (teamSearch.results.isEmpty()) {
+                    item { DialogHintText(teamSearch.emptyText) }
+                }
+                items(teamSearch.results, key = { it.id }) { team ->
+                    val followed = team.id in state.followedTeamIds
+                    FocusableRow(onClick = { viewModel.toggleFollowTeam(team) }) {
+                        AsyncImage(model = team.badge, contentDescription = null, modifier = Modifier.size(32.dp))
+                        Spacer(Modifier.width(NuvioTheme.spacing.md))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                team.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = NuvioTheme.colors.TextPrimary,
+                            )
+                            // Many clubs share a short name; the league separates them.
+                            listOfNotNull(team.league, team.country)
+                                .firstOrNull { it.isNotBlank() }
+                                ?.let { subtitle ->
+                                    Text(
+                                        subtitle,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = NuvioTheme.colors.TextSecondary,
+                                    )
+                                }
+                        }
+                        Text(
+                            if (followed) "★ Following" else "+ Follow",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
+                        )
                     }
                 }
             }
@@ -827,7 +920,7 @@ private fun FeaturedBannerCard(
  * it reads as "one more category", but it opens the country picker instead of a league list.
  */
 @Composable
-private fun AddLeagueTile(customCount: Int, onClick: () -> Unit) {
+private fun AddFollowTile(title: String, subtitle: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -854,13 +947,13 @@ private fun AddLeagueTile(customCount: Int, onClick: () -> Unit) {
         )
         Spacer(Modifier.height(NuvioTheme.spacing.sm))
         Text(
-            "Add a league",
+            title,
             style = MaterialTheme.typography.titleSmall,
             color = NuvioTheme.colors.TextPrimary,
             maxLines = 1,
         )
         Text(
-            if (customCount > 0) "$customCount added" else "Not in the list?",
+            subtitle,
             style = MaterialTheme.typography.labelMedium,
             color = NuvioTheme.colors.TextSecondary,
             maxLines = 1,

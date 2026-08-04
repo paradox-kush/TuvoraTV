@@ -24,6 +24,30 @@ data class RadarLeagueSearchResponse(
     val leagues: List<RadarLeague> = emptyList(),
 )
 
+/** What the team-discovery mode returns. */
+@Serializable
+data class RadarTeamSearchResponse(
+    val teams: List<RadarTeam> = emptyList(),
+)
+
+/**
+ * A club, from the team-search endpoint. There is no published team catalog to look one up
+ * in, so unlike [RadarLeague] every field a followed team needs travels with it here.
+ */
+@Serializable
+data class RadarTeam(
+    val id: String,
+    val name: String,
+    val sport: String? = null,
+    val country: String? = null,
+    val badge: String? = null,
+    /** The club's own league — display context, and how lookalike names are told apart. */
+    val leagueId: String? = null,
+    val league: String? = null,
+    /** Channel-matching keywords ("arsenal", "afc") — data, not code. */
+    val keywords: List<String> = emptyList(),
+)
+
 /** What `radar-fixtures?catalog=1` returns. [payload] is null before the first publish. */
 @Serializable
 data class RadarCatalogEnvelope(
@@ -174,6 +198,8 @@ data class RadarFixturesResponse(
     val livescore: Map<String, List<RadarLiveScore>> = emptyMap(),
     /** eventId → broadcasters; present only when tv_event_ids was requested. */
     val tv: Map<String, List<RadarTvStation>> = emptyMap(),
+    /** teamId → that club's own schedule; present only when team_ids was requested. */
+    val teamFixtures: Map<String, List<RadarFixture>> = emptyMap(),
     val fetchedAt: String? = null,
 )
 
@@ -230,6 +256,47 @@ data class RadarPrefs(
 data class RadarLocalState(
     val follows: List<RadarFollow> = emptyList(),
     val prefs: RadarPrefs = RadarPrefs(),
+    val teams: List<RadarTeamFollow> = emptyList(),
+)
+
+/**
+ * A followed club.
+ *
+ * Always carries its own display + matching metadata, because there is no team catalog to
+ * resolve an id against — the opposite of [RadarFollow], where a catalog league deliberately
+ * leaves those null so the catalog stays the single source of truth.
+ */
+@Serializable
+data class RadarTeamFollow(
+    @SerialName("team_id") val teamId: String,
+    val name: String = "",
+    val sport: String = "",
+    val badge: String? = null,
+    @SerialName("league_id") val leagueId: String? = null,
+    val league: String? = null,
+    val keywords: List<String> = emptyList(),
+    @SerialName("sort_order") val sortOrder: Int = 0,
+)
+
+fun RadarTeam.asFollow(sortOrder: Int): RadarTeamFollow = RadarTeamFollow(
+    teamId = id,
+    name = name,
+    sport = sport.orEmpty(),
+    badge = badge,
+    leagueId = leagueId,
+    league = league,
+    keywords = keywords,
+    sortOrder = sortOrder,
+)
+
+fun RadarTeamFollow.asTeam(): RadarTeam = RadarTeam(
+    id = teamId,
+    name = name,
+    sport = sport.ifBlank { null },
+    badge = badge,
+    leagueId = leagueId,
+    league = league,
+    keywords = keywords,
 )
 
 // --- Time helpers (no kotlinx-datetime dependency; UTC civil-date math) --------
