@@ -452,6 +452,48 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
      * normalized (trim+lowercase) by the caller — the stored ids are. Returns up to 2 rows ordered
      * by start; empty when the channel has no EPG. Cheap (indexed range scan, LIMIT 2).
      */
+    /**
+     * Programmes in a time window whose title or description mentions any of [tokens].
+     *
+     * The provider's own guide, searched in BULK — the counterpart to the mirror's
+     * programmesInWindow. Sports matching previously had no way to ask "which of my channels
+     * is showing this match?" of the provider's EPG: the only entry point was a per-channel
+     * lookup, so the matcher fell back to one get_short_epg network call per channel and had
+     * to gate that behind a channel-NAME filter to stay affordable. A channel whose name says
+     * nothing useful ("BG: Diema Sport 2") was therefore never asked, even when this table
+     * already knew it was airing the fixture.
+     *
+     * Bounded by the window (a few hours), so the scan stays small even on a 26k-channel panel.
+     */
+    suspend fun epgSearch(
+        playlistId: String,
+        tokens: List<String>,
+        fromMs: Long,
+        toMs: Long,
+        limit: Int = 400,
+    ): List<EpgProgramme> = withContext(Dispatchers.IO) {
+        if (tokens.isEmpty()) return@withContext emptyList()
+        val terms = tokens.take(8)
+        val where = terms.joinToString(" OR ") { "(lower(title) LIKE ? OR lower(coalesce(desc,'')) LIKE ?)" }
+        val args = buildList {
+            add(playlistId); add(toMs.toString()); add(fromMs.toString())
+            terms.forEach { add("%${it.lowercase()}%"); add("%${it.lowercase()}%") }
+            add(limit.toString())
+        }.toTypedArray()
+        db.rawQuery(
+            "SELECT channel_id, start_ms, end_ms, title, desc FROM epg_programmes " +
+                "WHERE playlist_id = ? AND start_ms < ? AND end_ms > ? AND ($where) " +
+                "ORDER BY start_ms LIMIT ?",
+            args,
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4)))
+                }
+            }
+        }
+    }
+
     suspend fun epgNowNext(playlistId: String, channelId: String, nowMs: Long): List<EpgProgramme> = withContext(Dispatchers.IO) {
         // The current programme (latest one that started at/before now and hasn't ended) + the next.
         // A single query: everything ending after now, ordered by start, take 2. The first is "now"
