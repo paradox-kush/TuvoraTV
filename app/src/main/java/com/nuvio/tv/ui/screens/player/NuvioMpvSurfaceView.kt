@@ -227,6 +227,23 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         scheduleAspectModeRefresh(resetRetryCount = true)
     }
 
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        // BaseMPVView writes android-surface-size straight from this callback, and
+        // mpv_set_property takes the core lock — which a live demuxer holds for seconds at a
+        // time. SurfaceView resizes synchronously inside View.layout, so that stalls main:
+        //
+        //   main  pthread_cond_wait <- mpv_set_property <- MPV.setPropertyString
+        //         <- SurfaceView.updateSurface <- SurfaceView.setFrame <- View.layout
+        //
+        // Rarer here than on phones (no docked <-> fullscreen toggle), but the surface still
+        // resizes on display-mode/AFR switches, and this is the same rule the rest of this
+        // class follows: no mpv call ever runs on Main.
+        //
+        // Deliberately does NOT call super: the whole of BaseMPVView.surfaceChanged is that
+        // one property write, which is what we are re-issuing off the main thread.
+        ctl { mpv.setPropertyString("android-surface-size", "${width}x$height") }
+    }
+
     override fun surfaceCreated(holder: SurfaceHolder) {
         super.surfaceCreated(holder)
         val url = pendingInitialMediaUrl ?: return
