@@ -349,8 +349,10 @@ internal fun PlayerRuntimeController.updateMpvAvailableTracks() {
     mpvTrackRefreshJob = scope.launch {
         try {
             val snapshot = view.readTrackSnapshot()
+            val videoSnapshot = view.readVideoSnapshot()
             if (!isUsingMpvEngine() || mpvView !== view || currentStreamUrl != streamUrlAtRefresh) return@launch
             applyMpvTrackSnapshot(snapshot)
+            applyMpvVideoSnapshot(videoSnapshot)
             tryAutoSelectPreferredSubtitleFromAvailableTracks()
         } catch (error: CancellationException) {
             throw error
@@ -360,6 +362,24 @@ internal fun PlayerRuntimeController.updateMpvAvailableTracks() {
             mpvTrackRefreshInProgress = false
         }
     }
+}
+
+/**
+ * Feed the stream info panel from the mpv engine. Under ExoPlayer these fields are filled
+ * by onTracksChanged/onVideoSizeChanged, which never fire here — so without this the panel
+ * showed nothing for every live IPTV channel (live is always forced onto mpv).
+ *
+ * Each value only ever moves null -> known or known -> known: mpv publishes `video-params`
+ * before the demuxer has parsed the track headers, so a half-populated early snapshot must
+ * not wipe fields a later one already resolved.
+ */
+private fun PlayerRuntimeController.applyMpvVideoSnapshot(snapshot: MpvVideoSnapshot) {
+    snapshot.width?.let { currentVideoWidth = it }
+    snapshot.height?.let { currentVideoHeight = it }
+    snapshot.codec?.let { currentVideoCodec = MpvCodecNames.display(it) }
+    snapshot.frameRate?.let { currentVideoFrameRate = it }
+    snapshot.bitrate?.let { currentVideoBitrate = it }
+    snapshot.audioBitrate?.let { currentAudioBitrate = it }
 }
 
 private fun PlayerRuntimeController.applyMpvTrackSnapshot(snapshot: MpvTrackSnapshot) {
@@ -375,8 +395,11 @@ private fun PlayerRuntimeController.applyMpvTrackSnapshot(snapshot: MpvTrackSnap
 
     val audioTracks = snapshot.audioTracks
         .mapIndexed { index, track ->
+            // Same label the ExoPlayer path produces, so the track menu and the stream info
+            // panel don't disagree about what "eac3" is called.
+            val codec = MpvCodecNames.display(track.codec)
             val codecSuffix = buildList {
-                track.codec?.takeIf { it.isNotBlank() }?.let { add(it) }
+                codec?.let { add(it) }
                 track.channelCount?.takeIf { it > 0 }?.let { add("${it}ch") }
             }.joinToString(" ")
             val displayName = if (codecSuffix.isBlank()) {
@@ -389,8 +412,9 @@ private fun PlayerRuntimeController.applyMpvTrackSnapshot(snapshot: MpvTrackSnap
                 name = displayName,
                 language = track.language,
                 trackId = track.id.toString(),
-                codec = track.codec,
+                codec = codec,
                 channelCount = track.channelCount,
+                sampleRate = track.sampleRate,
                 isSelected = track.isSelected
             )
         }

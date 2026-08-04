@@ -75,6 +75,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     @Volatile private var obsTrackList: MPVNode? = null
     @Volatile private var obsVideoOutParams: MPVNode? = null
     @Volatile private var obsVideoParams: MPVNode? = null
+    // Rolling bitrate estimates. Live MPEG-TS almost never declares a bitrate in the
+    // container, so the demuxer's per-track `demux-bitrate` is usually absent — mpv's
+    // running estimate is the only number the stream info panel can show for live.
+    @Volatile private var obsVideoBitrate: Double? = null
+    @Volatile private var obsAudioBitrate: Double? = null
 
     private fun resetPropertyShadow() {
         obsPaused = true
@@ -88,6 +93,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         obsTrackList = null
         obsVideoOutParams = null
         obsVideoParams = null
+        obsVideoBitrate = null
+        obsAudioBitrate = null
     }
 
     private val propertyShadow = object : MPV.EventObserver {
@@ -106,6 +113,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                 "track-list" -> obsTrackList = null
                 "video-out-params" -> obsVideoOutParams = null
                 "video-params" -> obsVideoParams = null
+                "video-bitrate" -> obsVideoBitrate = null
+                "audio-bitrate" -> obsAudioBitrate = null
             }
         }
 
@@ -123,6 +132,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             when (property) {
                 "time-pos" -> obsTimePosMs = (value * 1000.0).roundToLong().coerceAtLeast(0L)
                 "duration" -> obsDurationMs = (value * 1000.0).roundToLong().coerceAtLeast(0L)
+                "video-bitrate" -> obsVideoBitrate = value.takeIf { it > 0.0 }
+                "audio-bitrate" -> obsAudioBitrate = value.takeIf { it > 0.0 }
             }
         }
 
@@ -586,6 +597,45 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Video facts for the stream info panel. Like [readTrackSnapshot] this reads only the
+     * property shadow — never the mpv core — so it is safe to call from the main thread.
+     *
+     * Resolution comes from `video-params` (what the decoder actually produced) and falls
+     * back to the selected video track's demuxer header. Bitrate prefers mpv's rolling
+     * estimate because live MPEG-TS rarely declares one.
+     *
+     * Total by contract: every field is optional and any node access can throw if mpv
+     * publishes an unexpected shape, so failure degrades to "unknown" rather than
+     * propagating. Unlike [readTrackSnapshot] — whose only caller wraps it — this is read
+     * straight from the UI event that opens the panel, where a throw would take the
+     * player down.
+     */
+    fun readVideoSnapshot(): MpvVideoSnapshot = runCatching {
+        if (!initialized) return@runCatching MpvVideoSnapshot()
+        val videoTrack = obsTrackList?.asArray()?.toList().orEmpty().firstOrNull { node ->
+            node.nodeString("type")?.lowercase() == "video" && node.nodeBoolean("selected") == true
+        }
+        MpvVideoSnapshot(
+            width = obsVideoParams.nodeInt("w") ?: videoTrack.nodeInt("demux-w"),
+            height = obsVideoParams.nodeInt("h") ?: videoTrack.nodeInt("demux-h"),
+            codec = videoTrack.nodeString("codec"),
+            frameRate = videoTrack.nodeDouble("demux-fps")?.toFloat()?.takeIf { it > 0f },
+            // All three are bits per second, same unit as ExoPlayer's Format.bitrate.
+            // Measured first, then the container's average, then the HLS variant's
+            // declared rate (the only one many Xtream live channels expose).
+            bitrate = (
+                obsVideoBitrate
+                    ?: videoTrack.nodeDouble("demux-bitrate")
+                    ?: videoTrack.nodeDouble("hls-bitrate")
+                )?.takeIf { it > 0.0 }?.roundToLong()?.toInt(),
+            audioBitrate = obsAudioBitrate?.takeIf { it > 0.0 }?.roundToLong()?.toInt()
+        )
+    }.getOrElse {
+        Log.w(TAG, "Failed to read mpv video snapshot: ${it.message}")
+        MpvVideoSnapshot()
+    }
+
     fun readTrackSnapshot(): MpvTrackSnapshot {
         if (!initialized) return MpvTrackSnapshot(emptyList(), emptyList())
         // Built from the observed track-list shadow — no synchronous mpv reads. The old
@@ -613,6 +663,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             val channelCount = node.nodeInt("demux-channel-count")
                 ?: node.nodeInt("audio-channels")
                 ?: node.nodeInt("channels")
+            val sampleRate = node.nodeInt("demux-samplerate")
             val forced = (node.nodeBoolean("forced") == true) || listOfNotNull(title, language).any {
                 it.contains("forced", ignoreCase = true)
             }
@@ -631,6 +682,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                         language = language,
                         codec = codec,
                         channelCount = channelCount,
+                        sampleRate = sampleRate,
                         isSelected = selected,
                         isForced = false,
                         isExternal = external
@@ -729,6 +781,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             "track-list" to MPV.mpvFormat.MPV_FORMAT_NODE,
             "video-out-params" to MPV.mpvFormat.MPV_FORMAT_NODE,
             "video-params" to MPV.mpvFormat.MPV_FORMAT_NODE,
+            "video-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
+            "audio-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
         )
         props.forEach { (name, format) -> mpv.observeProperty(name, format) }
     }
@@ -857,7 +911,22 @@ data class MpvTrack(
     val language: String?,
     val codec: String?,
     val channelCount: Int?,
+    val sampleRate: Int? = null,
     val isSelected: Boolean,
     val isForced: Boolean,
     val isExternal: Boolean
+)
+
+/**
+ * What the stream info panel needs about the video being decoded, read off the
+ * observed-property shadow. ExoPlayer hands the same facts over via `Format`; under
+ * libmpv — which every live IPTV stream is forced onto — nothing else reports them.
+ */
+data class MpvVideoSnapshot(
+    val width: Int? = null,
+    val height: Int? = null,
+    val codec: String? = null,
+    val frameRate: Float? = null,
+    val bitrate: Int? = null,
+    val audioBitrate: Int? = null
 )

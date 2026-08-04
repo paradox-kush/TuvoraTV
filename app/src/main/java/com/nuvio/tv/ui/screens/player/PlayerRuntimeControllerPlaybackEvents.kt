@@ -1706,13 +1706,27 @@ internal fun PlayerRuntimeController.buildStreamInfoData(): StreamInfoData {
                 .firstOrNull { it.id == activeVideoFormat?.id || (it.bitrate > 0 && it.bitrate == activeVideoFormat?.bitrate) }
         }
 
-    val videoWidth = matchedFormat?.width?.takeIf { it > 0 } ?: activeVideoFormat?.width?.takeIf { it > 0 } ?: currentVideoWidth
-    val videoHeight = matchedFormat?.height?.takeIf { it > 0 } ?: activeVideoFormat?.height?.takeIf { it > 0 } ?: currentVideoHeight
-    val videoBitrate = activeVideoFormat?.bitrate?.takeIf { it > 0 } ?: currentVideoBitrate
+    // Under mpv there is no ExoPlayer Format to read, so go to the property shadow. Read it
+    // here rather than trusting the cached currentVideo* fields: mpv's bitrate is a rolling
+    // estimate that moves constantly on live, and the track refresh that caches it is
+    // event-driven, not periodic.
+    val mpvVideo = if (isUsingMpvEngine()) mpvView?.readVideoSnapshot() else null
+
+    val videoWidth = matchedFormat?.width?.takeIf { it > 0 }
+        ?: activeVideoFormat?.width?.takeIf { it > 0 }
+        ?: mpvVideo?.width
+        ?: currentVideoWidth
+    val videoHeight = matchedFormat?.height?.takeIf { it > 0 }
+        ?: activeVideoFormat?.height?.takeIf { it > 0 }
+        ?: mpvVideo?.height
+        ?: currentVideoHeight
+    val videoBitrate = activeVideoFormat?.bitrate?.takeIf { it > 0 }
+        ?: mpvVideo?.bitrate
+        ?: currentVideoBitrate
     val videoCodec = activeVideoFormat?.let { format ->
         CustomDefaultTrackNameProvider.formatNameFromMime(format.sampleMimeType)
             ?: CustomDefaultTrackNameProvider.formatNameFromMime(format.codecs)
-    } ?: currentVideoCodec
+    } ?: MpvCodecNames.display(mpvVideo?.codec) ?: currentVideoCodec
 
     return StreamInfoData(
         addonName = currentAddonName,
@@ -1724,7 +1738,11 @@ internal fun PlayerRuntimeController.buildStreamInfoData(): StreamInfoData {
         videoCodec = videoCodec,
         videoWidth = videoWidth,
         videoHeight = videoHeight,
-        videoFrameRate = state.detectedFrameRate.takeIf { it > 0f },
+        // detectedFrameRate is the auto-frame-rate machinery's value and stays 0 when AFR is
+        // off or its probe was skipped; the mpv demuxer's fps then covers live.
+        videoFrameRate = state.detectedFrameRate.takeIf { it > 0f }
+            ?: mpvVideo?.frameRate
+            ?: currentVideoFrameRate,
         videoBitrate = videoBitrate,
         audioCodec = selectedAudio?.codec,
         audioChannels = selectedAudio?.channelCount?.let {

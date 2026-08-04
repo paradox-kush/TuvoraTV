@@ -190,6 +190,11 @@ class PlayerRuntimeController(
     internal var currentVideoWidth: Int? = null
     internal var currentVideoHeight: Int? = null
     internal var currentVideoBitrate: Int? = null
+    // Only the mpv engine fills these two; ExoPlayer reports the same facts through Format.
+    // Frame rate is deliberately kept out of detectedFrameRate — that drives the auto
+    // frame-rate display switch, and a demuxer-reported fps is not a safe input for it.
+    internal var currentVideoFrameRate: Float? = null
+    internal var currentAudioBitrate: Int? = null
     internal var currentStreamUrl: String
     internal var currentStreamResponseHeaders: Map<String, String> = emptyMap()
     internal var currentStreamMimeType: String?

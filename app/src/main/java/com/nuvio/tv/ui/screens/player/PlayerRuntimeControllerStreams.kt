@@ -533,6 +533,8 @@ private fun PlayerRuntimeController.applyStreamMetadata(stream: Stream) {
     currentVideoWidth = null
     currentVideoHeight = null
     currentVideoBitrate = null
+    currentVideoFrameRate = null
+    currentAudioBitrate = null
 
     // Persist binge group per content so subsequent episode plays
     // (from CW, Details, or next-episode) can reuse the same source group.
