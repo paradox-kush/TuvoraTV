@@ -16,8 +16,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.posthog.PostHog
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -59,6 +62,32 @@ class XtreamTmdbResolver @Inject constructor(
     // ~a minute on-device, and users navigate away — cancelling the request must not
     // kill (and backoff-poison) the build
     private val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Serializes catalog builds across every account — see the use site in [ensureIndexed]. */
+    private val buildSlot = Semaphore(1)
+
+    /**
+     * Reports how a catalog index build went, so the memory profile of this path is visible
+     * in analytics instead of only as an unexplained OS kill. `item_count` is the number
+     * that matters: the peak scales with it, and it's the field to look at first when a
+     * device starts getting killed.
+     */
+    private fun reportBuild(kind: MatchKind, itemCount: Int, startedMs: Long, outcome: String, detail: String?) {
+        runCatching {
+            PostHog.capture(
+                event = "iptv_index_build",
+                properties = buildMap {
+                    put("kind", kind.slug)
+                    put("outcome", outcome)
+                    put("item_count", itemCount)
+                    put("duration_ms", System.currentTimeMillis() - startedMs)
+                    put("max_heap_mb", (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt())
+                    put("used_heap_mb", ((Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024 * 1024)).toInt())
+                    detail?.let { put("detail", it.take(300)) }
+                },
+            )
+        }
+    }
 
     /**
      * Fire-and-forget index warm-up (account add, app start, sync-in) so the first
@@ -186,25 +215,39 @@ class XtreamTmdbResolver @Inject constructor(
 
         if (isOwner) {
             buildScope.launch {
+                val startedMs = System.currentTimeMillis()
+                var itemCount = 0
                 try {
-                    val items = when (kind) {
-                        MatchKind.MOVIE -> client.vodMovies(acc).getOrThrow().map {
-                            IndexedItem(it.streamId, it.name, TitleNormalizer.yearOf(it.name), it.tmdb, it.containerExtension, it.poster)
+                    // One catalog build at a time across ALL accounts. Each build peaks at the
+                    // size of one catalog; letting several accounts warm up concurrently stacked
+                    // those peaks in the same heap, which a TV stick's 192 MB ceiling can't take.
+                    buildSlot.withPermit {
+                        val items = when (kind) {
+                            MatchKind.MOVIE -> client.vodIndexItems(acc).getOrThrow()
+                            MatchKind.SERIES -> client.seriesIndexItems(acc).getOrThrow()
                         }
-                        MatchKind.SERIES -> client.series(acc).getOrThrow().map {
-                            IndexedItem(it.seriesId, it.name, it.year ?: TitleNormalizer.yearOf(it.name), it.tmdb, null, it.poster)
+                        itemCount = items.size
+                        // An empty list where we previously indexed content is a panel glitch, not a
+                        // real catalog — fail into the 1h backoff instead of re-fetching every resolve.
+                        check(items.isNotEmpty() || index.builtAt(acc.id, kind) == null) {
+                            "panel returned an empty ${kind.slug} list"
                         }
+                        val stats = index.sync(acc.id, kind, items)
+                        Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
                     }
-                    // An empty list where we previously indexed content is a panel glitch, not a
-                    // real catalog — fail into the 1h backoff instead of re-fetching every resolve.
-                    check(items.isNotEmpty() || index.builtAt(acc.id, kind) == null) {
-                        "panel returned an empty ${kind.slug} list"
-                    }
-                    val stats = index.sync(acc.id, kind, items)
-                    Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
+                    reportBuild(kind, itemCount, startedMs, outcome = "ok", detail = null)
                     buildLock.withLock { lastFailedBuildMs.remove(key) }
+                } catch (oom: OutOfMemoryError) {
+                    // Deliberately not rethrown: the build owns the only large allocations here,
+                    // so releasing them and backing off recovers, where a rethrow would take the
+                    // app down. But it MUST be reported — a swallowed OOM is exactly why this
+                    // showed up in telemetry only as an OS low-memory kill with no stack trace.
+                    Log.e(TAG, "index build ran out of memory for ${acc.name} ${kind.slug} ($itemCount items)", oom)
+                    reportBuild(kind, itemCount, startedMs, outcome = "oom", detail = oom.message)
+                    buildLock.withLock { lastFailedBuildMs[key] = System.currentTimeMillis() }
                 } catch (t: Throwable) {
                     Log.w(TAG, "index build failed for ${acc.name} ${kind.slug}", t)
+                    reportBuild(kind, itemCount, startedMs, outcome = "error", detail = "${t::class.java.simpleName}: ${t.message}")
                     buildLock.withLock { lastFailedBuildMs[key] = System.currentTimeMillis() }
                 } finally {
                     buildLock.withLock {

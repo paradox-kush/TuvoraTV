@@ -1,6 +1,8 @@
 package com.nuvio.tv.core.iptv
 
 import com.nuvio.tv.core.iptv.dns.PlaylistDns
+import com.nuvio.tv.core.iptv.match.IndexedItem
+import com.nuvio.tv.core.iptv.match.XtreamCatalogIndexParser
 import com.nuvio.tv.data.remote.api.XtreamApi
 import com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto
 import com.squareup.moshi.Moshi
@@ -296,6 +298,28 @@ class XtreamClient @Inject constructor(
                 tmdb = dto.tmdb?.takeIf { it > 0 },
                 year = (dto.releaseDate ?: dto.releaseDateAlt)?.trim()?.take(4)?.toIntOrNull()
             )
+        }
+    }
+
+    /**
+     * Catalog reduced to match-index rows, decoded a title at a time.
+     *
+     * [vodMovies]/[series] stay as they are for the browse screens, which need the full model.
+     * The index only needs six fields, and going through the full model cost two extra
+     * whole-catalog copies in heap — including a stream URL built per item that the index
+     * doesn't even store. That peak is what was getting the app lowmemorykilled on TV sticks
+     * right after a playlist was added.
+     */
+    suspend fun vodIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
+        apiFor(acc).getRawCatalog(playerApi(acc, "get_vod_streams")).requireBody().use { body ->
+            XtreamCatalogIndexParser.parseVod(body.source())
+        }
+    }
+
+    /** Series half of [vodIndexItems]. */
+    suspend fun seriesIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
+        apiFor(acc).getRawCatalog(playerApi(acc, "get_series")).requireBody().use { body ->
+            XtreamCatalogIndexParser.parseSeries(body.source())
         }
     }
 
