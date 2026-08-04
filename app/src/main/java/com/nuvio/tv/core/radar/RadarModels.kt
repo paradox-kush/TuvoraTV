@@ -18,6 +18,43 @@ data class RadarCatalog(
     val featured: List<RadarFeaturedEvent> = emptyList(),
 )
 
+/** What the league-discovery mode returns. Same league shape as the catalog, plus a country. */
+@Serializable
+data class RadarLeagueSearchResponse(
+    val leagues: List<RadarLeague> = emptyList(),
+)
+
+/** What `radar-fixtures?catalog=1` returns. [payload] is null before the first publish. */
+@Serializable
+data class RadarCatalogEnvelope(
+    val version: Int = 0,
+    val payload: RadarCatalog? = null,
+    val updatedAt: String? = null,
+)
+
+/** Last good remote catalog, kept so a cold start doesn't wait on the network. */
+@Serializable
+data class RadarCachedCatalog(
+    val version: Int,
+    val catalog: RadarCatalog,
+    val fetchedAtMs: Long,
+)
+
+/**
+ * Whether a catalog is worth adopting over the one already in hand.
+ *
+ * The bundled copy is always a valid fallback, so the bar for replacing it is that the
+ * remote document actually looks like a catalog. Mirrors the gate in
+ * nuvio-backend/tools/radar-catalog/publish_catalog.py — an empty or truncated publish
+ * degrades to the bundled leagues instead of emptying the Sports tab.
+ */
+internal fun RadarCatalog.isUsable(): Boolean =
+    categories.size >= MIN_CATALOG_CATEGORIES &&
+        categories.sumOf { it.leagues.size } >= MIN_CATALOG_LEAGUES
+
+private const val MIN_CATALOG_CATEGORIES = 3
+private const val MIN_CATALOG_LEAGUES = 10
+
 @Serializable
 data class RadarCategory(
     val name: String,
@@ -147,7 +184,32 @@ data class RadarFollow(
     @SerialName("league_id") val leagueId: String,
     val sport: String = "",
     @SerialName("sort_order") val sortOrder: Int = 0,
+    /**
+     * Display + matching metadata, carried ONLY for leagues the user added themselves.
+     *
+     * A catalog league deliberately leaves these null so the catalog stays the single source
+     * of truth — a badge fix or a keyword tweak then reaches everyone without rewriting
+     * anybody's follow rows. A user-added league isn't in the catalog at all, so without
+     * these there'd be nothing to name it, draw it, or match it to a channel with.
+     */
+    val name: String? = null,
+    val badge: String? = null,
+    val banner: String? = null,
+    val keywords: List<String> = emptyList(),
+    val custom: Boolean = false,
 )
+
+/** A user-added follow rendered as a league. Null for catalog follows — look those up instead. */
+fun RadarFollow.asLeague(): RadarLeague? =
+    if (!custom || name.isNullOrBlank()) null
+    else RadarLeague(
+        id = leagueId,
+        name = name,
+        sport = sport.ifBlank { null },
+        badge = badge,
+        banner = banner,
+        keywords = keywords,
+    )
 
 /** Opt-in state values mirror the backend enum-ish text column. */
 object RadarOptIn {

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.radar.RadarChannelMatcher
 import com.nuvio.tv.core.radar.RadarFixture
+import com.nuvio.tv.core.radar.RadarLeague
 import com.nuvio.tv.core.radar.RadarRepository
 import com.nuvio.tv.core.radar.RadarUiState
 import com.nuvio.tv.data.local.XtreamAccountStore
@@ -46,6 +47,38 @@ data class MatchSheetState(
  * lists a blank one and mints a single-use link per play, so probing would consume the link the
  * player is about to use.
  */
+/** Sport -> country -> league browse state for the "add a league" picker. */
+data class LeagueSearchState(
+    val sport: String = "",
+    val country: String = "",
+    val loading: Boolean = false,
+    val results: List<RadarLeague> = emptyList(),
+)
+
+/**
+ * Sports to offer, in TheSportsDB's own spelling — the discovery endpoint filters on these
+ * strings, so they can't be prettified here. Ordered by how many people actually want them.
+ */
+val RADAR_LEAGUE_SPORTS: List<String> = listOf(
+    "Soccer", "Basketball", "American Football", "Baseball", "Ice Hockey",
+    "Cricket", "Rugby", "Motorsport", "Fighting", "Tennis", "Golf",
+    "Cycling", "Australian Football", "Handball", "Volleyball", "Netball",
+    "Darts", "Snooker", "Esports",
+)
+
+/**
+ * Countries worth offering on a remote. Deliberately a short, ordered list rather than every
+ * country TheSportsDB knows — this is browsed with a d-pad, and the long tail is what the
+ * phone's free-text search is for.
+ */
+val RADAR_LEAGUE_COUNTRIES: List<String> = listOf(
+    "England", "Spain", "Italy", "Germany", "France", "Portugal", "Netherlands",
+    "Mexico", "Argentina", "Brazil", "Colombia", "Chile", "United States", "Canada",
+    "Scotland", "Turkey", "Greece", "Belgium", "Denmark", "Sweden", "Norway",
+    "Saudi Arabia", "Egypt", "Morocco", "Japan", "South Korea", "China", "Australia",
+    "India", "Pakistan", "South Africa", "Nigeria",
+)
+
 internal fun radarChannelNeedsHealthProbe(browseStreamUrl: String): Boolean =
     browseStreamUrl.isNotBlank()
 
@@ -53,6 +86,7 @@ internal fun radarChannelNeedsHealthProbe(browseStreamUrl: String): Boolean =
 class SportsHubViewModel @Inject constructor(
     val repository: RadarRepository,
     private val matcher: RadarChannelMatcher,
+    private val catalogClient: com.nuvio.tv.core.radar.RadarCatalogClient,
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
     accountStore: XtreamAccountStore,
 ) : ViewModel() {
@@ -75,6 +109,31 @@ class SportsHubViewModel @Inject constructor(
     }
 
     fun ensureLoaded() = repository.ensureLoaded()
+
+    // --- add a league ---------------------------------------------------------
+    // Leagues we didn't curate. The user adds them to their OWN account, which is why the
+    // published catalog can stay small instead of growing into everyone's Browse list.
+
+    private val _leagueSearch = MutableStateFlow(LeagueSearchState())
+    val leagueSearch: StateFlow<LeagueSearchState> = _leagueSearch.asStateFlow()
+
+    private var searchJob: Job? = null
+
+    fun searchLeaguesIn(sport: String, country: String) {
+        searchJob?.cancel()
+        _leagueSearch.value = LeagueSearchState(sport = sport, country = country, loading = true)
+        searchJob = viewModelScope.launch {
+            val results = catalogClient.searchLeagues(country = country, sport = sport)
+            _leagueSearch.update { it.copy(loading = false, results = results) }
+        }
+    }
+
+    fun clearLeagueSearch() {
+        searchJob?.cancel()
+        _leagueSearch.value = LeagueSearchState()
+    }
+
+    fun toggleFollow(league: RadarLeague) = repository.toggleFollow(league)
 
     fun openMatch(fixture: RadarFixture) {
         matchJob?.cancel()

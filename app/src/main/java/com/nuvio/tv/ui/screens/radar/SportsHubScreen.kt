@@ -76,6 +76,9 @@ fun SportsHubScreen(
     val featured = state.activeFeatured(nowMs)
     val upcoming = state.upcoming(state.followedLeagueIds + featured.map { it.leagueId }, nowMs)
     var browseCategory by remember { mutableStateOf<RadarCategory?>(null) }
+    var pickingSport by remember { mutableStateOf(false) }
+    // Set once a sport is chosen; the country list is the second step.
+    var pickedSport by remember { mutableStateOf<String?>(null) }
     // Discovery drill-in: a league/event page listing everything happening in it.
     var leaguePage by remember { mutableStateOf<RadarLeague?>(null) }
     val firstFocus = remember { FocusRequester() }
@@ -190,6 +193,14 @@ fun SportsHubScreen(
                             onClick = { browseCategory = category },
                         )
                     }
+                    // Anything we didn't curate. Lives at the END of the row so the popular
+                    // leagues stay first — this is the escape hatch, not the main path.
+                    item(key = "__add_league__") {
+                        AddLeagueTile(
+                            customCount = state.customLeagues.size,
+                            onClick = { pickingSport = true },
+                        )
+                    }
                 }
             }
         }
@@ -202,6 +213,98 @@ fun SportsHubScreen(
         if (!initialFocusDone && (featured.isNotEmpty() || state.catalog.categories.isNotEmpty())) {
             initialFocusDone = true
             runCatching { firstFocus.requestFocus() }
+        }
+    }
+
+    // Sport first, then country, then the leagues themselves — a country alone would mix
+    // every sport together, and TheSportsDB filters on both.
+    if (pickingSport) {
+        NuvioDialog(
+            onDismiss = { pickingSport = false },
+            title = "Add a league",
+            subtitle = "Pick a sport — leagues you add here are on your account only",
+        ) {
+            LazyColumn(modifier = Modifier.height(400.dp)) {
+                items(RADAR_LEAGUE_SPORTS, key = { it }) { sport ->
+                    FocusableRow(onClick = {
+                        pickingSport = false
+                        pickedSport = sport
+                    }) {
+                        Text(
+                            sport,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = NuvioTheme.colors.TextPrimary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("›", style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary)
+                    }
+                }
+            }
+        }
+    }
+
+    pickedSport?.let { sport ->
+        NuvioDialog(
+            onDismiss = { pickedSport = null },
+            title = sport,
+            subtitle = "Pick a country",
+        ) {
+            LazyColumn(modifier = Modifier.height(400.dp)) {
+                items(RADAR_LEAGUE_COUNTRIES, key = { it }) { country ->
+                    FocusableRow(onClick = {
+                        pickedSport = null
+                        viewModel.searchLeaguesIn(sport, country)
+                    }) {
+                        Text(
+                            country,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = NuvioTheme.colors.TextPrimary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("›", style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary)
+                    }
+                }
+            }
+        }
+    }
+
+    val search by viewModel.leagueSearch.collectAsStateWithLifecycle()
+    if (search.country.isNotBlank()) {
+        NuvioDialog(
+            onDismiss = { viewModel.clearLeagueSearch() },
+            title = "${search.sport} · ${search.country}",
+            subtitle = if (search.loading) "Finding leagues…" else "Select a league to follow it",
+        ) {
+            LazyColumn(modifier = Modifier.height(400.dp)) {
+                if (!search.loading && search.results.isEmpty()) {
+                    item {
+                        Text(
+                            "No leagues found for ${search.sport} in ${search.country}.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NuvioTheme.colors.TextSecondary,
+                            modifier = Modifier.padding(NuvioTheme.spacing.md),
+                        )
+                    }
+                }
+                items(search.results, key = { it.id }) { league ->
+                    val followed = league.id in state.followedLeagueIds
+                    FocusableRow(onClick = { viewModel.toggleFollow(league) }) {
+                        AsyncImage(model = league.badge, contentDescription = null, modifier = Modifier.size(32.dp))
+                        Spacer(Modifier.width(NuvioTheme.spacing.md))
+                        Text(
+                            league.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = NuvioTheme.colors.TextPrimary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            if (followed) "★ Following" else "+ Follow",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -695,6 +798,52 @@ private fun FeaturedBannerCard(
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
+/**
+ * Entry point for leagues outside the published catalog. Visually a peer of [CategoryTile] so
+ * it reads as "one more category", but it opens the country picker instead of a league list.
+ */
+@Composable
+private fun AddLeagueTile(customCount: Int, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .width(200.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.24f)
+                else NuvioTheme.colors.BackgroundElevated
+            )
+            .border(
+                if (focused) 2.dp else 1.dp,
+                if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
+                RoundedCornerShape(10.dp),
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .padding(NuvioTheme.spacing.md),
+    ) {
+        Text(
+            "+",
+            style = MaterialTheme.typography.headlineSmall,
+            color = NuvioTheme.colors.TextPrimary,
+            modifier = Modifier.size(40.dp),
+        )
+        Spacer(Modifier.height(NuvioTheme.spacing.sm))
+        Text(
+            "Add a league",
+            style = MaterialTheme.typography.titleSmall,
+            color = NuvioTheme.colors.TextPrimary,
+            maxLines = 1,
+        )
+        Text(
+            if (customCount > 0) "$customCount added" else "Not in the list?",
+            style = MaterialTheme.typography.labelMedium,
+            color = NuvioTheme.colors.TextSecondary,
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 private fun CategoryTile(
     category: RadarCategory,

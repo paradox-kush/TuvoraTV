@@ -26,6 +26,7 @@ class RadarStore @Inject constructor(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val stateKey = stringPreferencesKey("radar_state")
     private val fixturesKey = stringPreferencesKey("radar_fixtures")
+    private val catalogKey = stringPreferencesKey("radar_catalog")
 
     private fun store(pid: Int = profileManager.activeProfileId.value) = factory.get(pid, FEATURE)
 
@@ -45,6 +46,16 @@ class RadarStore @Inject constructor(
 
     suspend fun saveFixtures(response: RadarFixturesResponse) {
         store().edit { prefs -> prefs[fixturesKey] = json.encodeToString(response) }
+    }
+
+    /** Last good published catalog. Cache, not user data — a parse failure just means refetch. */
+    suspend fun loadCatalog(): RadarCachedCatalog? =
+        runCatching {
+            store().data.first()[catalogKey]?.let { json.decodeFromString<RadarCachedCatalog>(it) }
+        }.getOrNull()
+
+    suspend fun saveCatalog(cached: RadarCachedCatalog) {
+        store().edit { prefs -> prefs[catalogKey] = json.encodeToString(cached) }
     }
 
     private fun parseState(stored: String?): RadarLocalState {

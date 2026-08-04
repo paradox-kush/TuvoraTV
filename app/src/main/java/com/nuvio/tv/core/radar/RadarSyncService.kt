@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -46,6 +47,12 @@ class RadarSyncService @Inject constructor(
         @SerialName("league_id") val leagueId: String,
         val sport: String = "",
         @SerialName("sort_order") val sortOrder: Int = 0,
+        // Present only for leagues the user added themselves — see RadarFollow.
+        val name: String? = null,
+        val badge: String? = null,
+        val banner: String? = null,
+        val keywords: List<String>? = null,
+        val custom: Boolean = false,
     )
 
     @Serializable
@@ -86,6 +93,15 @@ class RadarSyncService @Inject constructor(
                             put("league_id", follow.leagueId)
                             put("sport", follow.sport)
                             put("sort_order", index)
+                            if (follow.custom) {
+                                put("custom", true)
+                                follow.name?.let { put("name", it) }
+                                follow.badge?.let { put("badge", it) }
+                                follow.banner?.let { put("banner", it) }
+                                if (follow.keywords.isNotEmpty()) {
+                                    put("keywords", buildJsonArray { follow.keywords.forEach { add(it) } })
+                                }
+                            }
                         }
                     }
                 })
@@ -138,7 +154,18 @@ class RadarSyncService @Inject constructor(
             store.saveState(
                 RadarLocalState(
                     follows = followRows.sortedBy { it.sortOrder }
-                        .map { RadarFollow(it.leagueId, it.sport, it.sortOrder) },
+                        .map {
+                            RadarFollow(
+                                leagueId = it.leagueId,
+                                sport = it.sport,
+                                sortOrder = it.sortOrder,
+                                name = it.name,
+                                badge = it.badge,
+                                banner = it.banner,
+                                keywords = it.keywords.orEmpty(),
+                                custom = it.custom,
+                            )
+                        },
                     prefs = prefsRow?.let { RadarPrefs(it.featuredEventId, it.optInState, it.promoDismissed) }
                         ?: store.state.first().prefs,
                 )
