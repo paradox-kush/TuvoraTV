@@ -198,7 +198,14 @@ fun SportsHubScreen(
                     item(key = "__add_league__") {
                         AddLeagueTile(
                             customCount = state.customLeagues.size,
-                            onClick = { pickingSport = true },
+                            onClick = {
+                                // Start clean: leaving the results dialog by any route other
+                                // than its own dismiss used to leave the last search sitting in
+                                // the view model, and it would reappear over the next sport.
+                                viewModel.clearLeagueSearch()
+                                pickedSport = null
+                                pickingSport = true
+                            },
                         )
                     }
                 }
@@ -228,6 +235,7 @@ fun SportsHubScreen(
                 items(RADAR_LEAGUE_SPORTS, key = { it }) { sport ->
                     FocusableRow(onClick = {
                         pickingSport = false
+                        viewModel.clearLeagueSearch()
                         pickedSport = sport
                     }) {
                         Text(
@@ -269,7 +277,7 @@ fun SportsHubScreen(
     }
 
     val search by viewModel.leagueSearch.collectAsStateWithLifecycle()
-    if (search.country.isNotBlank()) {
+    if (search.country.isNotBlank() && search.sport.isNotBlank()) {
         NuvioDialog(
             onDismiss = { viewModel.clearLeagueSearch() },
             title = "${search.sport} · ${search.country}",
