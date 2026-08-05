@@ -1,13 +1,16 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
 import com.nuvio.tv.core.iptv.isM3UFile
+import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.data.local.XtreamLiveStore
@@ -16,15 +19,19 @@ import com.nuvio.tv.domain.model.LibraryEntryInput
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.repository.LibraryRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 
 enum class XtreamSection { LIVE, MOVIES, SERIES }
@@ -55,15 +62,28 @@ data class XtreamHubUiState(
     val categories: List<XtreamCategory> = emptyList(),
     val itemsByCategory: Map<String, List<XtreamHubItem>> = emptyMap(),
     val loading: Boolean = true,
-    val error: String? = null
+    val error: String? = null,
+    // The user's poster-size preference (Layout settings) — the hub's rails derive their card
+    // size from the SAME source as the Modern home rows so the two surfaces always match.
+    val posterCardWidthDp: Int = 126,
+    val posterCardHeightDp: Int = 189,
+    val posterCardCornerRadiusDp: Int = 12,
+    val posterLabelsEnabled: Boolean = true
 ) {
     val selectedAccount: XtreamAccount? get() = accounts.firstOrNull { it.id == selectedAccountId }
 }
 
+/** How many category fetches may be in flight (fetching + parsing) at the same time. */
+private const val MAX_CONCURRENT_CATEGORY_LOADS = 3
+
+/** Past this many claimed fetches, best-effort prefetches are DROPPED rather than queued. */
+private const val MAX_OUTSTANDING_CATEGORY_LOADS = 6
+
 /**
  * Drives the top-level IPTV hub: pick an account (dropdown), pick a section (Live/Movies/Series),
  * browse category rows. Channels play directly; movies/series open the native detail (which the
- * meta + stream short-circuits handle). Per-category lazy loading (catalogs can be 100k+ items).
+ * meta + stream short-circuits handle). Per-category lazy loading (catalogs can be 100k+ items)
+ * with a small bounded lookahead ([prefetchCategory]) so the next rows arrive filled in.
  */
 @HiltViewModel
 class XtreamHubViewModel @Inject constructor(
@@ -72,26 +92,13 @@ class XtreamHubViewModel @Inject constructor(
     private val registry: XtreamItemRegistry,
     private val liveStore: XtreamLiveStore,
     private val libraryRepository: LibraryRepository,
-    private val fileStore: com.nuvio.tv.core.iptv.content.M3UFileStore
+    private val fileStore: com.nuvio.tv.core.iptv.content.M3UFileStore,
+    layoutPreferenceDataStore: LayoutPreferenceDataStore,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamHubUiState())
     val uiState: StateFlow<XtreamHubUiState> = _uiState.asStateFlow()
-
-    /**
-     * Hero banner items for the Movies/Series sections: the first few items of the
-     * first loaded category of the current section. Cheap to derive — reuses the
-     * already-loaded category items rather than fetching anything extra.
-     */
-    val heroItems: StateFlow<List<XtreamHubItem>> = _uiState
-        .map { state ->
-            if (state.section == XtreamSection.LIVE) return@map emptyList()
-            val firstLoaded = state.categories.firstNotNullOfOrNull { cat ->
-                state.itemsByCategory[cat.id]?.takeIf { it.isNotEmpty() }
-            } ?: emptyList()
-            firstLoaded.take(10)
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** Recently-watched channels, newest first — the hub's "Recent Channels" row. */
     val recents: StateFlow<List<XtreamHubItem>> = liveStore.recents
@@ -103,13 +110,49 @@ class XtreamHubViewModel @Inject constructor(
         .map { items -> items.filter { XtreamItemRegistry.isLiveContentId(it.id) }.map { it.id }.toSet() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
-    private val requested = mutableSetOf<String>()   // "accountId|section|categoryId"
+    /**
+     * Categories with a fetch claimed (queued or running), keyed "accountId|section|categoryId" —
+     * the single-flight guard. Released in a `finally`, so a cancelled/failed fetch can be retried
+     * (the old never-released "requested" set stranded a row as empty forever). Only ever touched
+     * from the main dispatcher (composition + viewModelScope), so it needs no lock.
+     */
+    private val inFlightCategories = mutableSetOf<String>()
 
     // In-memory caches so switching sections/accounts and coming back is instant (no spinner, no re-fetch).
     private val categoriesCache = mutableMapOf<String, List<XtreamCategory>>()          // "accountId|section"
     private val itemsCache = mutableMapOf<String, List<XtreamHubItem>>()                // "accountId|section|categoryId"
 
+    // A single category can be tens of MB of JSON on a real panel, so the row lookahead must never
+    // turn into a fan-out: at most MAX_CONCURRENT_CATEGORY_LOADS responses are ever being fetched
+    // and parsed at once, and best-effort prefetches are dropped as soon as
+    // MAX_OUTSTANDING_CATEGORY_LOADS fetches are already claimed (which also makes prefetch back
+    // off by itself while the user flings and the visible rows are hogging the pipe).
+    private val categoryLoadGate = Semaphore(MAX_CONCURRENT_CATEGORY_LOADS)
+
     init {
+        // Track the poster-size preference so the hub's rails resize live with Layout settings,
+        // exactly like the home rows do.
+        viewModelScope.launch {
+            combine(
+                layoutPreferenceDataStore.posterCardWidthDp,
+                layoutPreferenceDataStore.posterCardHeightDp,
+                layoutPreferenceDataStore.posterCardCornerRadiusDp,
+                layoutPreferenceDataStore.posterLabelsEnabled
+            ) { widthDp, heightDp, cornerRadiusDp, labelsEnabled ->
+                CardPrefs(widthDp, heightDp, cornerRadiusDp, labelsEnabled)
+            }
+                .distinctUntilChanged()
+                .collect { prefs ->
+                    _uiState.update {
+                        it.copy(
+                            posterCardWidthDp = prefs.widthDp,
+                            posterCardHeightDp = prefs.heightDp,
+                            posterCardCornerRadiusDp = prefs.cornerRadiusDp,
+                            posterLabelsEnabled = prefs.labelsEnabled
+                        )
+                    }
+                }
+        }
         viewModelScope.launch {
             // Keep observing so playlist edits/enables from Settings refresh a hub VM that
             // stayed on the backstack (a one-shot first() served stale accounts until death).
@@ -151,6 +194,12 @@ class XtreamHubViewModel @Inject constructor(
         return XtreamSection.entries.firstOrNull { acc.typeEnabled(it.typeKey) } ?: current
     }
 
+    /** Retry after a failed category-list load (the ErrorState's Retry button). */
+    fun retry() {
+        _uiState.update { it.copy(error = null) }
+        loadCategories()
+    }
+
     private fun loadCategories() {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
@@ -160,7 +209,7 @@ class XtreamHubViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     categories = emptyList(), itemsByCategory = emptyMap(), loading = false,
-                    error = "Playlist file not on this device — re-import it in Settings → IPTV"
+                    error = context.getString(R.string.iptv_hub_error_file_missing)
                 )
             }
             return
@@ -193,62 +242,100 @@ class XtreamHubViewModel @Inject constructor(
                     val visible = cats.filter { acc.allowsCategory(section.typeKey, it.id) }
                     _uiState.update { it.copy(categories = visible, loading = false) }
                 }
-                .onFailure { e -> _uiState.update { it.copy(loading = false, error = e.message ?: "Failed to load") } }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(loading = false, error = e.message ?: context.getString(R.string.iptv_hub_error_load_failed))
+                    }
+                }
         }
     }
 
+    /** Fetch one category's items — called when its row composes. Never dropped. */
     fun loadCategory(categoryId: String) {
+        requestCategory(categoryId, prefetch = false)
+    }
+
+    /**
+     * Warm a category the user hasn't scrolled to yet, so its row lands with real posters and names
+     * instead of shimmer. Best-effort by design: dropped whenever enough fetches are already
+     * outstanding, so flinging through hundreds of categories can never queue unbounded work.
+     */
+    fun prefetchCategory(categoryId: String) {
+        requestCategory(categoryId, prefetch = true)
+    }
+
+    private fun requestCategory(categoryId: String, prefetch: Boolean) {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
         val key = "${acc.id}|$section|$categoryId"
         // Cache hit: restore items instantly without a network round-trip.
         itemsCache[key]?.let { cached ->
-            requested.add(key)
             if (categoryId !in _uiState.value.itemsByCategory) {
                 _uiState.update { it.copy(itemsByCategory = it.itemsByCategory + (categoryId to cached)) }
             }
             return
         }
-        if (!requested.add(key)) return
+        // Claim the fetch: a visible row always gets one, a prefetch only while the pipe has room.
+        if (key in inFlightCategories) return
+        if (prefetch && inFlightCategories.size >= MAX_OUTSTANDING_CATEGORY_LOADS) return
+        inFlightCategories.add(key)
         viewModelScope.launch {
-            val client = clientFactory.clientFor(acc)
-            val items: List<XtreamHubItem> = when (section) {
-                XtreamSection.LIVE -> client.liveChannels(acc, categoryId).getOrDefault(emptyList()).map { ch ->
-                    val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
-                    registry.register(
-                        XtreamResolvedItem(
-                            id = id, type = ContentType.TV, name = ch.name, poster = ch.logo,
-                            streamUrl = ch.streamUrl, kind = com.nuvio.tv.core.iptv.XtreamKind.LIVE,
-                            accountId = acc.id, streamId = ch.streamId
-                        )
-                    )
-                    XtreamHubItem(id, ch.name, ch.logo, isLive = true, contentId = id, streamUrl = ch.streamUrl)
-                }
-                XtreamSection.MOVIES -> client.vodMovies(acc, categoryId).getOrDefault(emptyList()).map { m ->
-                    val id = XtreamItemRegistry.vodId(acc.id, m.streamId)
-                    registry.register(
-                        XtreamResolvedItem(
-                            id = id, type = ContentType.MOVIE, name = m.name, poster = m.poster,
-                            imdbRating = m.rating?.toFloatOrNull(), streamUrl = m.streamUrl,
-                            accountId = acc.id, streamId = m.streamId
-                        )
-                    )
-                    XtreamHubItem(id, m.name, m.poster, isLive = false, contentId = id, streamUrl = null)
-                }
-                XtreamSection.SERIES -> client.series(acc, categoryId).getOrDefault(emptyList()).map { s ->
-                    val id = XtreamItemRegistry.seriesId(acc.id, s.seriesId)
-                    registry.register(
-                        XtreamResolvedItem(
-                            id = id, type = ContentType.SERIES, name = s.name, poster = s.poster,
-                            description = s.plot, imdbRating = s.rating?.toFloatOrNull(),
-                            streamUrl = "", kind = com.nuvio.tv.core.iptv.XtreamKind.SERIES,
-                            accountId = acc.id, streamId = s.seriesId
-                        )
-                    )
-                    XtreamHubItem(id, s.name, s.poster, isLive = false, contentId = id, streamUrl = null, detailType = "series")
-                }
+            try {
+                categoryLoadGate.withPermit { fetchCategoryItems(acc, section, categoryId, key) }
+            } finally {
+                inFlightCategories.remove(key)
             }
-            itemsCache[key] = items
+        }
+    }
+
+    private suspend fun fetchCategoryItems(
+        acc: XtreamAccount,
+        section: XtreamSection,
+        categoryId: String,
+        key: String
+    ) {
+        val client = clientFactory.clientFor(acc)
+        val items: List<XtreamHubItem> = when (section) {
+            XtreamSection.LIVE -> client.liveChannels(acc, categoryId).getOrDefault(emptyList()).map { ch ->
+                val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
+                registry.register(
+                    XtreamResolvedItem(
+                        id = id, type = ContentType.TV, name = ch.name, poster = ch.logo,
+                        streamUrl = ch.streamUrl, kind = com.nuvio.tv.core.iptv.XtreamKind.LIVE,
+                        accountId = acc.id, streamId = ch.streamId
+                    )
+                )
+                XtreamHubItem(id, ch.name, ch.logo, isLive = true, contentId = id, streamUrl = ch.streamUrl)
+            }
+            XtreamSection.MOVIES -> client.vodMovies(acc, categoryId).getOrDefault(emptyList()).map { m ->
+                val id = XtreamItemRegistry.vodId(acc.id, m.streamId)
+                registry.register(
+                    XtreamResolvedItem(
+                        id = id, type = ContentType.MOVIE, name = m.name, poster = m.poster,
+                        imdbRating = m.rating?.toFloatOrNull(), streamUrl = m.streamUrl,
+                        accountId = acc.id, streamId = m.streamId
+                    )
+                )
+                XtreamHubItem(id, m.name, m.poster, isLive = false, contentId = id, streamUrl = null)
+            }
+            XtreamSection.SERIES -> client.series(acc, categoryId).getOrDefault(emptyList()).map { s ->
+                val id = XtreamItemRegistry.seriesId(acc.id, s.seriesId)
+                registry.register(
+                    XtreamResolvedItem(
+                        id = id, type = ContentType.SERIES, name = s.name, poster = s.poster,
+                        description = s.plot, imdbRating = s.rating?.toFloatOrNull(),
+                        streamUrl = "", kind = com.nuvio.tv.core.iptv.XtreamKind.SERIES,
+                        accountId = acc.id, streamId = s.seriesId
+                    )
+                )
+                XtreamHubItem(id, s.name, s.poster, isLive = false, contentId = id, streamUrl = null, detailType = "series")
+            }
+        }
+        itemsCache[key] = items
+        // Publish only while this account/section is still on screen: a prefetch that lands after
+        // a switch would otherwise inject its items under a category id the new section may reuse.
+        // Nothing is lost — the cache above serves them the moment the user comes back.
+        if (_uiState.value.selectedAccountId == acc.id && _uiState.value.section == section) {
             _uiState.update { it.copy(itemsByCategory = it.itemsByCategory + (categoryId to items)) }
         }
     }
@@ -286,4 +373,12 @@ class XtreamHubViewModel @Inject constructor(
 
     private fun LiveChannelRef.toHubItem(): XtreamHubItem =
         XtreamHubItem(id, name, logo, isLive = true, contentId = id, streamUrl = streamUrl)
+
+    /** Bundle for the single combined layout-preference collector. */
+    private data class CardPrefs(
+        val widthDp: Int,
+        val heightDp: Int,
+        val cornerRadiusDp: Int,
+        val labelsEnabled: Boolean
+    )
 }

@@ -24,6 +24,9 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -43,7 +46,14 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.R
 import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.qr.QrCodeGenerator
+import com.nuvio.tv.ui.screens.addon.QrCodeOverlay
 import com.nuvio.tv.updater.UpdateViewModel
+
+// Permanent Discord invite. On TV this is never opened as a URL - most Android TV devices ship no
+// browser at all, so ACTION_VIEW would throw ActivityNotFoundException. It's rendered as a QR for
+// the viewer's phone instead, the same way the addon and donate flows hand a URL off the telly.
+private const val DISCORD_URL = "https://discord.gg/wFu9T2nS8X"
 
 @Composable
 fun AboutScreen(
@@ -71,6 +81,10 @@ fun AboutSettingsContent(
     initialFocusRequester: FocusRequester? = null
 ) {
     val context = LocalContext.current
+    var showDiscordQr by remember { mutableStateOf(false) }
+    val discordQr = remember { runCatching { QrCodeGenerator.generate(DISCORD_URL, 420) }.getOrNull() }
+
+    BackHandler(enabled = showDiscordQr) { showDiscordQr = false }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -152,6 +166,13 @@ fun AboutSettingsContent(
                 }
 
                 SettingsActionRow(
+                    title = stringResource(R.string.about_discord),
+                    subtitle = stringResource(R.string.about_discord_subtitle),
+                    trailingIcon = Icons.Default.OpenInNew,
+                    onClick = { showDiscordQr = true }
+                )
+
+                SettingsActionRow(
                     title = stringResource(R.string.about_privacy_policy),
                     subtitle = stringResource(R.string.about_privacy_policy_subtitle),
                     trailingIcon = Icons.Default.OpenInNew,
@@ -194,6 +215,14 @@ fun AboutSettingsContent(
                 )
             }
             SettingsVerticalScrollIndicators(state = aboutScrollState)
+            if (showDiscordQr) {
+                QrCodeOverlay(
+                    qrBitmap = discordQr,
+                    serverUrl = DISCORD_URL,
+                    instruction = stringResource(R.string.about_discord_qr_instruction),
+                    onClose = { showDiscordQr = false }
+                )
+            }
             }
         }
     }

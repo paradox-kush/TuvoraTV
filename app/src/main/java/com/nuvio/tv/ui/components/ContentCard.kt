@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -365,6 +367,12 @@ fun ContentCard(
                     )
             ) {
                 val isPlaceholderItem = imageUrl?.startsWith("placeholder://") == true
+                val hasImageUrl = !imageUrl.isNullOrBlank()
+                // Artwork is optional and IPTV panels are full of dead poster links, so the box
+                // must never read as an unlabelled rectangle: the centred name stands in whenever
+                // there is no usable URL *or* the load fails. A successful load is untouched — the
+                // name is only composed once the image reports an error, never while it is loading.
+                var imageFailed by remember(imageUrl) { mutableStateOf(false) }
                 if (isPlaceholderItem) {
                     val effectivePlaceholderShimmerOffsetState =
                         placeholderShimmerOffsetState ?: rememberPlaceholderShimmerOffsetState(
@@ -378,7 +386,7 @@ fun ContentCard(
                                 backgroundColor = NuvioTheme.colors.BackgroundCard
                             )
                     )
-                } else if (!imageUrl.isNullOrBlank()) {
+                } else if (hasImageUrl) {
                     AsyncImage(
                         model = imageModel,
                         contentDescription = item.name,
@@ -386,10 +394,39 @@ fun ContentCard(
                         placeholder = backgroundPainter,
                         error = backgroundPainter,
                         fallback = backgroundPainter,
+                        onLoading = { imageFailed = false },
+                        onSuccess = { imageFailed = false },
+                        onError = { imageFailed = true },
                         contentScale = ContentScale.Crop
                     )
                 } else {
                     MonochromePosterPlaceholder()
+                }
+
+                // Read after the image composes, so an onError write lands as a forward
+                // invalidation. Never over a "placeholder://" item — those must keep shimmering
+                // with no name — and not while the card is expanded, which already labels itself.
+                if (!isPlaceholderItem && !isBackdropExpanded && (!hasImageUrl || imageFailed)) {
+                    // With AMOLED surfaces on, every card token collapses to pure black, so an
+                    // artwork-less card would be an invisible rectangle with the name floating on
+                    // the background. A hairline border keeps it reading as a card on any surface
+                    // setting; cards that do render artwork never take this branch.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .border(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border, cardShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = item.name,
+                            modifier = Modifier.padding(horizontal = NuvioTheme.spacing.md),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = NuvioTheme.extendedColors.textSecondary,
+                            textAlign = TextAlign.Center,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 val shouldPlayTrailerPreview = isBackdropExpanded &&

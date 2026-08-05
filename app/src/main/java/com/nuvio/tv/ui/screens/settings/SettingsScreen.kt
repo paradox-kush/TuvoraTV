@@ -238,8 +238,6 @@ fun SettingsScreen(
     onNavigateToManageProfiles: () -> Unit = {},
     onNavigateToSupportersContributors: () -> Unit = {},
     onNavigateToLicensesAttributions: () -> Unit = {},
-    onNavigateToXtreamVod: (accountId: String) -> Unit = {},
-    onNavigateToXtreamLive: (accountId: String) -> Unit = {},
     onNavigateToIptvPairing: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
     experienceModeViewModel: ExperienceModeSettingsViewModel = hiltViewModel()
@@ -547,8 +545,6 @@ fun SettingsScreen(
                                 onNavigateToAuthQrSignIn = onNavigateToAuthQrSignIn,
                                 onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                                 onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
-                                onNavigateToXtreamVod = onNavigateToXtreamVod,
-                                onNavigateToXtreamLive = onNavigateToXtreamLive,
                                 onNavigateToIptvPairing = onNavigateToIptvPairing
                             )
                         }
@@ -702,8 +698,6 @@ fun SettingsScreen(
                         onNavigateToAuthQrSignIn = onNavigateToAuthQrSignIn,
                         onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                         onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
-                        onNavigateToXtreamVod = onNavigateToXtreamVod,
-                        onNavigateToXtreamLive = onNavigateToXtreamLive,
                         onNavigateToIptvPairing = onNavigateToIptvPairing
                     )
                 }
@@ -734,8 +728,6 @@ private fun SettingsDetailPane(
     onNavigateToAuthQrSignIn: () -> Unit,
     onNavigateToSupportersContributors: () -> Unit,
     onNavigateToLicensesAttributions: () -> Unit,
-    onNavigateToXtreamVod: (accountId: String) -> Unit,
-    onNavigateToXtreamLive: (accountId: String) -> Unit,
     onNavigateToIptvPairing: () -> Unit
 ) {
     when (selectedCategory) {
@@ -820,8 +812,6 @@ private fun SettingsDetailPane(
             mdbListFocusRequester = integrationMdbListFocusRequester,
             animeSkipFocusRequester = integrationAnimeSkipFocusRequester,
             iptvFocusRequester = integrationIptvFocusRequester,
-            onNavigateToXtreamVod = onNavigateToXtreamVod,
-            onNavigateToXtreamLive = onNavigateToXtreamLive,
             onNavigateToIptvPairing = onNavigateToIptvPairing,
             autoFocusEnabled = allowDetailAutofocus
         )
@@ -1009,8 +999,6 @@ private fun IntegrationSettingsContent(
     mdbListFocusRequester: FocusRequester,
     animeSkipFocusRequester: FocusRequester,
     iptvFocusRequester: FocusRequester,
-    onNavigateToXtreamVod: (accountId: String) -> Unit,
-    onNavigateToXtreamLive: (accountId: String) -> Unit,
     onNavigateToIptvPairing: () -> Unit,
     autoFocusEnabled: Boolean
 ) {
@@ -1123,8 +1111,6 @@ private fun IntegrationSettingsContent(
 
         IntegrationSettingsSection.Iptv -> {
             XtreamSettingsContent(
-                onBrowseVod = onNavigateToXtreamVod,
-                onBrowseLive = onNavigateToXtreamLive,
                 onPairFromPhone = onNavigateToIptvPairing,
                 initialFocusRequester = iptvFocusRequester
             )

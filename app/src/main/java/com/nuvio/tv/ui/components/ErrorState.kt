@@ -72,7 +72,9 @@ fun ErrorState(
                 containerColor = NuvioTheme.colors.BackgroundCard,
                 contentColor = NuvioTheme.colors.TextPrimary,
                 focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                focusedContentColor = NuvioTheme.colors.Primary
+                // FocusContent (white), not Primary — Primary is neutral500, a mid grey that on
+                // the amber focus fill reads as a disabled label rather than the focused action.
+                focusedContentColor = NuvioTheme.colors.FocusContent
             ),
             shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
         ) {

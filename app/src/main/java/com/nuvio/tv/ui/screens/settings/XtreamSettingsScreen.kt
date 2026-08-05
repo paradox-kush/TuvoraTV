@@ -81,8 +81,6 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 @Composable
 fun XtreamSettingsContent(
     viewModel: XtreamSettingsViewModel = hiltViewModel(),
-    onBrowseVod: (accountId: String) -> Unit = {},
-    onBrowseLive: (accountId: String) -> Unit = {},
     onPairFromPhone: () -> Unit = {},
     initialFocusRequester: FocusRequester? = null
 ) {
@@ -218,30 +216,6 @@ fun XtreamSettingsContent(
                     onClick = {
                         actionsFor = null
                         editFor = account
-                    }
-                )
-            }
-            // Browse entries respect the content-type toggles — a disabled type is hidden here
-            // too, not just in the hub (this was a bypass around "Hidden").
-            if (!needsReimport && account.typeEnabled(XtreamAccount.TYPE_LIVE)) {
-                SettingsActionRow(
-                    title = "Browse Live TV",
-                    subtitle = null,
-                    onClick = {
-                        val id = account.id
-                        actionsFor = null
-                        onBrowseLive(id)
-                    }
-                )
-            }
-            if (!needsReimport && account.typeEnabled(XtreamAccount.TYPE_MOVIES)) {
-                SettingsActionRow(
-                    title = "Browse Movies (VOD)",
-                    subtitle = null,
-                    onClick = {
-                        val id = account.id
-                        actionsFor = null
-                        onBrowseVod(id)
                     }
                 )
             }

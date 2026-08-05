@@ -342,6 +342,9 @@
     <string name="about_update_banner_subtitle">Show a banner when a new version is available</string>
     <string name="about_check_updates">Check for updates</string>
     <string name="about_check_updates_subtitle">Download latest release</string>
+    <string name="about_discord">Join the Discord</string>
+    <string name="about_discord_subtitle">Setup help, feature ideas and release news</string>
+    <string name="about_discord_qr_instruction">Scan with your phone to join the Tuvora Discord</string>
     <string name="about_privacy_policy">Privacy Policy</string>
     <string name="about_privacy_policy_subtitle">View our privacy policy</string>
     <string name="about_supporters_contributors">Supporters &amp; Contributors</string>
@@ -2984,4 +2987,29 @@
     <string name="debug_backend_switch_confirm_message">Switch to %1$s and sign out? You can sign in again on the selected sync server.</string>
     <string name="debug_backend_switching">Switching…</string>
     <string name="settings_donate_description">Support the development of Tuvora</string>
+
+    <!-- IPTV hub (sidebar destination) -->
+    <string name="iptv_hub_tab_live">Live TV</string>
+    <string name="iptv_hub_account_fallback">Account</string>
+    <string name="iptv_hub_choose_provider">Choose provider</string>
+    <string name="iptv_hub_provider_current">Current</string>
+    <string name="iptv_hub_no_provider_title">No IPTV provider yet</string>
+    <string name="iptv_hub_no_provider_subtitle">Add your Xtream Codes portal or M3U URL to watch Live TV, Movies and Series.</string>
+    <string name="iptv_hub_add_provider">Add IPTV provider</string>
+    <string name="iptv_hub_empty_title">Nothing here</string>
+    <string name="iptv_hub_empty_subtitle">This playlist has no content in this section.</string>
+    <string name="iptv_hub_types_hidden_title">All content types are hidden</string>
+    <string name="iptv_hub_types_hidden_subtitle">Enable them for this playlist in Settings → IPTV → Content &amp; Categories.</string>
+    <string name="iptv_hub_error_file_missing">Playlist file not on this device — re-import it in Settings → IPTV</string>
+    <string name="iptv_hub_error_load_failed">Failed to load</string>
+
+    <!-- IPTV live guide -->
+    <string name="iptv_guide_no_channels">No channels here</string>
+    <string name="iptv_guide_no_information">No information</string>
+    <string name="iptv_guide_min_left">%1$d min left</string>
+    <string name="iptv_guide_next_programme">Next: %1$s · %2$s</string>
+    <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK favorite</string>
+    <string name="iptv_guide_fullscreen_hint">OK play/pause · BACK exit fullscreen</string>
+    <string name="iptv_guide_paused">Paused</string>
+    <string name="iptv_guide_live">Live</string>
 </resources>

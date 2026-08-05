@@ -150,14 +150,6 @@ sealed class Screen(val route: String) {
     data object IptvSettings : Screen("iptv_settings")
     data object IptvPairing : Screen("iptv_pairing")
     data object SportsHub : Screen("sports_hub")
-    data object XtreamVod : Screen("xtream_vod/{accountId}") {
-        fun createRoute(accountId: String): String =
-            "xtream_vod/${URLEncoder.encode(accountId, "UTF-8").replace("+", "%20")}"
-    }
-    data object XtreamLive : Screen("xtream_live/{accountId}") {
-        fun createRoute(accountId: String): String =
-            "xtream_live/${URLEncoder.encode(accountId, "UTF-8").replace("+", "%20")}"
-    }
     data object CatalogOrder : Screen("catalog_order")
     data object Plugins : Screen("plugins")
     data object ExperienceModeSelection : Screen("experience_mode_selection")

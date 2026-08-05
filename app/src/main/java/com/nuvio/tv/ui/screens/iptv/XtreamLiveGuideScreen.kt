@@ -24,6 +24,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -50,18 +54,26 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamProgram
+import com.nuvio.tv.ui.components.EmptyScreenState
+import com.nuvio.tv.ui.components.ErrorState
+import com.nuvio.tv.ui.components.placeholderCardShimmer
+import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
 import android.util.Log
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.AudioAttributes
@@ -251,7 +263,17 @@ fun LiveGuide(
                 true // consume KeyUp of handled keys too, so the locked row never clicks
             }
     ) {
-        Row(Modifier.fillMaxSize()) {
+        // Breathing room: the guide's left edge sits on the same 52dp content gutter the rails
+        // use (none while fullscreen — the video must cover the whole screen).
+        Row(
+            Modifier
+                .fillMaxSize()
+                .then(
+                    if (fullscreen) Modifier
+                    else Modifier.padding(start = GUIDE_START_PADDING, end = NuvioTheme.spacing.xl)
+                ),
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
+        ) {
             // Category column
             LazyColumn(
                 modifier = Modifier.width(CATEGORY_COL_WIDTH).fillMaxHeight().focusRestorer(),
@@ -285,9 +307,16 @@ fun LiveGuide(
                 GuideTimeHeader(windowStartMs = windowStartMs)
 
                 when {
-                    uiState.loadingChannels -> StatusLine("Loading channels…")
-                    uiState.error != null -> StatusLine(uiState.error!!)
-                    uiState.channels.isEmpty() -> StatusLine("No channels here")
+                    uiState.loadingChannels -> GuideChannelListSkeleton()
+                    uiState.error != null -> ErrorState(
+                        message = uiState.error!!,
+                        // Retry = re-run the current category load (same path as re-selecting it).
+                        onRetry = { viewModel.selectCategory(uiState.selectedCategoryId, force = true) }
+                    )
+                    uiState.channels.isEmpty() -> EmptyScreenState(
+                        title = stringResource(R.string.iptv_guide_no_channels),
+                        height = 280.dp
+                    )
                     else -> LazyColumn(
                         modifier = Modifier.fillMaxSize()
                             .focusRequester(channelListFocus)
@@ -300,8 +329,9 @@ fun LiveGuide(
                                 focusRequester = if (index == 0) firstChannelFocus else null,
                                 clampUp = index == 0,
                                 number = index + 1,
-                                // ▶ marks what the preview player is tuned to.
-                                name = (if (isPlaying) "▶ " else "") + ch.name,
+                                name = ch.name,
+                                // A play glyph icon marks what the preview player is tuned to.
+                                isPlaying = isPlaying,
                                 logo = ch.logo,
                                 epg = uiState.epg[ch.streamId],
                                 windowStartMs = windowStartMs,
@@ -333,7 +363,9 @@ fun LiveGuide(
                 if (fullscreen) Modifier.fillMaxSize()
                 else Modifier
                     .align(Alignment.TopStart)
-                    .padding(start = CATEGORY_COL_WIDTH)
+                    // The guide row is inset by the content gutter and the category column gap —
+                    // offset the overlay by the same amounts so it lands exactly on the video slot.
+                    .padding(start = GUIDE_START_PADDING + CATEGORY_COL_WIDTH + NuvioTheme.spacing.md)
                     .height(PREVIEW_PANE_HEIGHT)
                     .aspectRatio(16f / 9f)
                 ).background(Color.Black)
@@ -383,7 +415,7 @@ private fun BoxScope.LiveControlsOverlay(
             AsyncImage(
                 model = channel?.logo,
                 contentDescription = null,
-                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp))
+                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(NuvioTheme.radii.sm))
             )
             Column(Modifier.weight(1f)) {
                 Text(
@@ -403,34 +435,111 @@ private fun BoxScope.LiveControlsOverlay(
                 }
                 epg?.next?.let { next ->
                     Text(
-                        text = "Next: ${timeRange(next)}  ${next.title}",
+                        text = stringResource(R.string.iptv_guide_next_programme, timeRange(next), next.title),
                         style = MaterialTheme.typography.bodySmall,
                         color = NuvioTheme.colors.TextSecondary,
                         maxLines = 1
                     )
                 }
             }
-            Text(
-                text = if (paused) "❙❙ Paused" else "▶ Live",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (paused) Color.White else NuvioTheme.colors.Primary
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
+            ) {
+                val stateColor = if (paused) Color.White else NuvioTheme.colors.Primary
+                Icon(
+                    imageVector = if (paused) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = stateColor,
+                    modifier = Modifier.size(NuvioTheme.spacing.xl)
+                )
+                Text(
+                    text = stringResource(if (paused) R.string.iptv_guide_paused else R.string.iptv_guide_live),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = stateColor
+                )
+            }
         }
         Spacer(Modifier.height(NuvioTheme.spacing.sm))
         Text(
-            text = "OK play/pause · BACK exit fullscreen",
+            text = stringResource(R.string.iptv_guide_fullscreen_hint),
             style = MaterialTheme.typography.bodySmall,
             color = NuvioTheme.colors.TextSecondary
         )
     }
 }
 
+/** Shimmer stand-in for the channel list while a category loads — same row geometry as
+ *  [GuideChannelRow] (label block + timeline cells) so the real rows land without a shift. */
 @Composable
-private fun StatusLine(text: String) {
-    Box(Modifier.fillMaxWidth().padding(NuvioTheme.spacing.xxxl)) {
-        Text(text, style = MaterialTheme.typography.bodyLarge, color = NuvioTheme.colors.TextSecondary)
+private fun GuideChannelListSkeleton() {
+    val shimmerOffsetState = rememberPlaceholderShimmerOffsetState(label = "guideChannelSkeleton")
+    Column(Modifier.fillMaxSize()) {
+        repeat(GUIDE_SKELETON_ROW_COUNT) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(GUIDE_ROW_HEIGHT)
+                    .padding(horizontal = NuvioTheme.spacing.md, vertical = 1.dp)
+                    .padding(horizontal = NuvioTheme.spacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.width(CHANNEL_LABEL_WIDTH).fillMaxHeight(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+                ) {
+                    GuideSkeletonBlock(width = 30.dp, height = 12.dp, shimmerOffsetState = shimmerOffsetState)
+                    GuideSkeletonBlock(
+                        width = 30.dp, height = 30.dp,
+                        cornerRadius = NuvioTheme.radii.xs,
+                        shimmerOffsetState = shimmerOffsetState
+                    )
+                    GuideSkeletonBlock(width = 140.dp, height = 12.dp, shimmerOffsetState = shimmerOffsetState)
+                }
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .padding(start = NuvioTheme.spacing.sm, top = 3.dp, bottom = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    listOf(1f, 1.6f, 1.2f).forEach { cellWeight ->
+                        Box(
+                            modifier = Modifier
+                                .weight(cellWeight)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(NuvioTheme.radii.xs))
+                                .placeholderCardShimmer(
+                                    shimmerOffsetState = shimmerOffsetState,
+                                    backgroundColor = NuvioTheme.colors.BackgroundElevated.copy(alpha = 0.4f)
+                                )
+                        )
+                    }
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun GuideSkeletonBlock(
+    width: Dp,
+    height: Dp,
+    shimmerOffsetState: androidx.compose.runtime.State<Float>,
+    cornerRadius: Dp = NuvioTheme.radii.xxs
+) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .height(height)
+            .clip(RoundedCornerShape(cornerRadius))
+            .placeholderCardShimmer(
+                shimmerOffsetState = shimmerOffsetState,
+                backgroundColor = NuvioTheme.colors.SurfaceVariant
+            )
+    )
 }
 
 @Composable
@@ -451,8 +560,10 @@ private fun GuideCategoryRow(
                 right = rightFocus
                 if (upFocus != null) up = upFocus
             }
-            .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(NuvioTheme.radii.sm))
+            // Focused = solid Primary fill (the app's D-pad vocabulary); the selected-but-unfocused
+            // category keeps the muted elevated fill so the two states never read the same.
             .background(
                 when {
                     focused -> NuvioTheme.colors.Primary
@@ -472,7 +583,11 @@ private fun GuideCategoryRow(
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (focused || selected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
+            color = when {
+                focused -> NuvioTheme.colors.OnPrimary
+                selected -> NuvioTheme.colors.TextPrimary
+                else -> NuvioTheme.colors.TextSecondary
+            }
         )
     }
 }
@@ -482,6 +597,7 @@ private fun GuideCategoryRow(
 private fun GuideChannelRow(
     number: Int,
     name: String,
+    isPlaying: Boolean,
     logo: String?,
     epg: GuideEpg?,
     windowStartMs: Long,
@@ -502,13 +618,14 @@ private fun GuideChannelRow(
             .fillMaxWidth()
             .height(GUIDE_ROW_HEIGHT)
             .padding(horizontal = NuvioTheme.spacing.md, vertical = 1.dp)
-            .clip(RoundedCornerShape(6.dp))
-            // Focus = Primary fill + border (the app's D-pad vocabulary) without hiding the cells.
+            .clip(RoundedCornerShape(NuvioTheme.radii.sm))
+            // Focus = Primary fill + 2dp Primary border (the app's D-pad vocabulary) without
+            // hiding the cells; the currently-tuned channel is marked by the play icon instead.
             .background(if (isFocused) NuvioTheme.colors.Primary.copy(alpha = 0.22f) else Color.Transparent)
             .border(
-                if (isFocused) 2.dp else 0.dp,
+                if (isFocused) NuvioTheme.spacing.xxs else 0.dp,
                 if (isFocused) NuvioTheme.colors.Primary else Color.Transparent,
-                RoundedCornerShape(6.dp)
+                RoundedCornerShape(NuvioTheme.radii.sm)
             )
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .focusProperties {
@@ -527,7 +644,7 @@ private fun GuideChannelRow(
             .padding(horizontal = NuvioTheme.spacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Fixed label block: number | logo | name (+★) — the timeline cells fill the rest.
+        // Fixed label block: number | logo | name (+favorite star) — the timeline cells fill the rest.
         Row(
             modifier = Modifier.width(CHANNEL_LABEL_WIDTH).fillMaxHeight(),
             verticalAlignment = Alignment.CenterVertically,
@@ -543,8 +660,16 @@ private fun GuideChannelRow(
             AsyncImage(
                 model = logo,
                 contentDescription = null,
-                modifier = Modifier.size(30.dp).clip(RoundedCornerShape(4.dp))
+                modifier = Modifier.size(30.dp).clip(RoundedCornerShape(NuvioTheme.radii.xs))
             )
+            if (isPlaying) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = NuvioTheme.colors.Primary,
+                    modifier = Modifier.size(NuvioTheme.spacing.lg)
+                )
+            }
             Text(
                 text = name,
                 style = MaterialTheme.typography.bodySmall,
@@ -554,7 +679,12 @@ private fun GuideChannelRow(
                 modifier = Modifier.weight(1f)
             )
             if (isFavorite) {
-                Text("★", style = MaterialTheme.typography.labelSmall, color = NuvioTheme.colors.Primary)
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    tint = NuvioTheme.colors.Primary,
+                    modifier = Modifier.size(NuvioTheme.spacing.md)
+                )
             }
         }
         ProgrammeCells(
@@ -585,7 +715,7 @@ private fun RowScope.ProgrammeCells(
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         if (visible.isEmpty()) {
-            ProgrammeCell("No information", weightMs = GUIDE_WINDOW_MS, live = false, filler = true)
+            ProgrammeCell(stringResource(R.string.iptv_guide_no_information), weightMs = GUIDE_WINDOW_MS, live = false, filler = true)
             return
         }
         var cursor = windowStartMs
@@ -606,7 +736,7 @@ private fun RowScope.ProgrammeCell(title: String?, weightMs: Long, live: Boolean
         modifier = Modifier
             .weight(weightMs.coerceAtLeast(60_000L).toFloat())
             .fillMaxHeight()
-            .clip(RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(NuvioTheme.radii.xs))
             .background(
                 when {
                     live -> NuvioTheme.colors.Primary.copy(alpha = 0.20f)
@@ -697,7 +827,7 @@ private fun PreviewInfoPane(
                     Modifier
                         .weight(1f)
                         .height(3.dp)
-                        .clip(RoundedCornerShape(2.dp))
+                        .clip(RoundedCornerShape(NuvioTheme.radii.xxs))
                         .background(NuvioTheme.colors.Border)
                 ) {
                     Box(
@@ -710,7 +840,7 @@ private fun PreviewInfoPane(
                 Spacer(Modifier.width(NuvioTheme.spacing.md))
                 val remainingMin = ((now.endMs - nowMs) / 60_000L).coerceAtLeast(0L)
                 Text(
-                    text = "$remainingMin min left",
+                    text = stringResource(R.string.iptv_guide_min_left, remainingMin),
                     style = MaterialTheme.typography.labelMedium,
                     color = NuvioTheme.colors.TextSecondary,
                     maxLines = 1
@@ -729,7 +859,7 @@ private fun PreviewInfoPane(
         } else {
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "No information",
+                text = stringResource(R.string.iptv_guide_no_information),
                 style = MaterialTheme.typography.bodyMedium,
                 color = NuvioTheme.colors.TextSecondary
             )
@@ -737,7 +867,7 @@ private fun PreviewInfoPane(
         Spacer(Modifier.weight(1f))
         epg?.next?.let { next ->
             Text(
-                text = "Next: ${timeRange(next)}  ${next.title}",
+                text = stringResource(R.string.iptv_guide_next_programme, timeRange(next), next.title),
                 style = MaterialTheme.typography.labelMedium,
                 color = NuvioTheme.colors.TextSecondary,
                 maxLines = 1,
@@ -745,7 +875,7 @@ private fun PreviewInfoPane(
             )
         }
         Text(
-            text = "OK preview · OK again fullscreen · hold OK favorite",
+            text = stringResource(R.string.iptv_guide_hint),
             style = MaterialTheme.typography.labelSmall,
             color = NuvioTheme.colors.TextSecondary.copy(alpha = 0.7f),
             maxLines = 1
@@ -765,5 +895,7 @@ private val PREVIEW_PANE_HEIGHT = 180.dp
 private val CATEGORY_COL_WIDTH = 220.dp
 private val CHANNEL_LABEL_WIDTH = 230.dp
 private val GUIDE_ROW_HEIGHT = 44.dp
+private val GUIDE_START_PADDING = 52.dp                   // the app-wide content gutter (Modern rails)
+private const val GUIDE_SKELETON_ROW_COUNT = 10
 private const val GUIDE_WINDOW_MS = 2 * 60 * 60 * 1000L   // 2h visible timeline
 private const val GUIDE_SLOT_MS = 30 * 60 * 1000L         // half-hour header ticks

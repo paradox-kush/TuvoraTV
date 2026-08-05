@@ -44,6 +44,13 @@ class ProfileSyncService @Inject constructor(
     }
 
     suspend fun pushToRemote(): Result<Unit> = withContext(Dispatchers.IO) {
+        // Profile create/update/delete works signed out (ProfileManager has already written the
+        // change locally by the time we get here), so without this the RPC goes out as `anon` and
+        // comes back 42501 on every profile edit. KMP twin: ProfileRepository.pushProfiles().
+        if (!authManager.isAuthenticated) {
+            Log.d(TAG, "pushToRemote: skipped, not signed in")
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         try {
             val profiles = profileManager.profiles.value
 
@@ -110,6 +117,12 @@ class ProfileSyncService @Inject constructor(
     }
 
     suspend fun deleteProfileData(profileId: Int): Result<Unit> = withContext(Dispatchers.IO) {
+        // Same as pushToRemote: deleteProfile() removes the profile locally first, and there is
+        // no remote data to delete for a session-less client.
+        if (!authManager.isAuthenticated) {
+            Log.d(TAG, "deleteProfileData: skipped, not signed in")
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         try {
             val params = buildJsonObject {
                 put("p_profile_id", profileId)

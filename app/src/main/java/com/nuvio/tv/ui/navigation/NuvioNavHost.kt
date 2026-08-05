@@ -1109,12 +1109,6 @@ fun NuvioNavHost(
 
         composable(Screen.IptvSettings.route) {
             com.nuvio.tv.ui.screens.settings.XtreamSettingsContent(
-                onBrowseVod = { accountId ->
-                    navController.navigate(Screen.XtreamVod.createRoute(accountId))
-                },
-                onBrowseLive = { accountId ->
-                    navController.navigate(Screen.XtreamLive.createRoute(accountId))
-                },
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) }
             )
         }
@@ -1133,25 +1127,7 @@ fun NuvioNavHost(
                 onNavigateToLicensesAttributions = {
                     navController.navigate(Screen.LicensesAttributions.route)
                 },
-                onNavigateToXtreamVod = { accountId ->
-                    navController.navigate(Screen.XtreamVod.createRoute(accountId))
-                },
-                onNavigateToXtreamLive = { accountId ->
-                    navController.navigate(Screen.XtreamLive.createRoute(accountId))
-                },
                 onNavigateToIptvPairing = { navController.navigate(Screen.IptvPairing.route) }
-            )
-        }
-
-        composable(
-            route = Screen.XtreamVod.route,
-            arguments = listOf(navArgument("accountId") { type = NavType.StringType })
-        ) {
-            com.nuvio.tv.ui.screens.iptv.XtreamVodScreen(
-                onBackPress = { navController.popBackStack() },
-                onMovieSelected = { contentId ->
-                    navController.navigate(Screen.Detail.createRoute(contentId, "movie"))
-                }
             )
         }
 
@@ -1200,20 +1176,6 @@ fun NuvioNavHost(
                 onOpenDetail = { contentId, type ->
                     navController.navigate(Screen.Detail.createRoute(contentId, type))
                 },
-            )
-        }
-
-        composable(
-            route = Screen.XtreamLive.route,
-            arguments = listOf(navArgument("accountId") { type = NavType.StringType })
-        ) {
-            com.nuvio.tv.ui.screens.iptv.XtreamLiveScreen(
-                onBackPress = { navController.popBackStack() },
-                onChannelSelected = { title, streamUrl ->
-                    navController.navigate(
-                        Screen.Player.createRoute(streamUrl = streamUrl, title = title, contentType = "tv")
-                    )
-                }
             )
         }
 
