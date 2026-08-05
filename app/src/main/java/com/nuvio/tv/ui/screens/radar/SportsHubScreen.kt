@@ -520,6 +520,11 @@ private fun MatchChannelsOverlay(
                 style = MaterialTheme.typography.bodyMedium,
                 color = NuvioTheme.colors.TextSecondary,
             )
+            state.matches.isEmpty() && state.matchingFailed -> Text(
+                "Couldn't load channels from your providers. Please try again.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = NuvioTheme.colors.TextSecondary,
+            )
             state.matches.isEmpty() -> Text(
                 "None of your channels list this match. Matching depends on your playlist's EPG and channel names.",
                 style = MaterialTheme.typography.bodyMedium,

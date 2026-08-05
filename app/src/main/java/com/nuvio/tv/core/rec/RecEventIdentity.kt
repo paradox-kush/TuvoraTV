@@ -63,6 +63,15 @@ class RecEventIdentity @Inject constructor(
         currentSessionId = UUID.randomUUID().toString()
     }
 
+    /** Forget the install token when local account data is wiped. */
+    @Synchronized
+    fun resetLocalState() {
+        preferences.edit().remove(KEY_DEVICE_ID).apply()
+        cachedDeviceId = null
+        currentSessionId = UUID.randomUUID().toString()
+        lastActivityAtMs = 0L
+    }
+
     /**
      * The session this event belongs to. Rolls over after [SESSION_IDLE_RESET_MS] of no logging,
      * which is what "app-foreground session" means in practice on a TV that is never really

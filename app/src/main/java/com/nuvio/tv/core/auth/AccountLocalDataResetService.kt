@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.sync.androidtv.AndroidTvChannelManager
 import com.nuvio.tv.core.profile.ProfileScopedCredentialStore
+import com.nuvio.tv.core.rec.RecEventSettings
 import com.nuvio.tv.data.local.ProfileDataStore
 import com.nuvio.tv.data.local.ProfileDataStoreFactory
 import com.nuvio.tv.data.local.ProfileLockStateDataStore
@@ -23,7 +24,8 @@ class AccountLocalDataResetService @Inject constructor(
     private val profileDataStore: ProfileDataStore,
     private val profileLockStateDataStore: ProfileLockStateDataStore,
     private val credentialStores: Set<@JvmSuppressWildcards ProfileScopedCredentialStore>,
-    private val androidTvChannelManager: AndroidTvChannelManager
+    private val androidTvChannelManager: AndroidTvChannelManager,
+    private val recEventSettings: RecEventSettings,
 ) {
     suspend fun clearAfterSignOut() = withContext(Dispatchers.IO) {
         runCatching { androidTvChannelManager.clearAll() }
@@ -36,6 +38,8 @@ class AccountLocalDataResetService @Inject constructor(
             .onFailure { Log.w(ACCOUNT_RESET_TAG, "Failed to clear profile lock states", it) }
         runCatching { credentialStores.forEach(ProfileScopedCredentialStore::clearAllProfiles) }
             .onFailure { Log.w(ACCOUNT_RESET_TAG, "Failed to clear profile credentials", it) }
+        runCatching { recEventSettings.clearAccountState() }
+            .onFailure { Log.w(ACCOUNT_RESET_TAG, "Failed to clear recommendation event data", it) }
         runCatching { clearAccountFiles() }
             .onFailure { Log.w(ACCOUNT_RESET_TAG, "Failed to clear account files", it) }
     }

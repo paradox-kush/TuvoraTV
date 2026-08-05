@@ -2,12 +2,15 @@
 
 package com.nuvio.tv.ui.screens.account
 
-import com.nuvio.tv.ui.theme.NuvioTheme
-
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +27,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -35,9 +40,10 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
 import com.nuvio.tv.domain.model.AuthState
+import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.theme.NuvioTheme
 
 @Composable
 fun AuthSignInScreen(
@@ -49,6 +55,8 @@ fun AuthSignInScreen(
     val uiState by viewModel.uiState.collectAsState()
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var showSignUpEligibilityConfirmation by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     BackHandler { onBackPress() }
 
@@ -142,7 +150,7 @@ fun AuthSignInScreen(
             }
             Spacer(modifier = Modifier.height(10.dp))
             Button(
-                onClick = { if (canSubmit) viewModel.signUp(email.trim(), password) },
+                onClick = { if (canSubmit) showSignUpEligibilityConfirmation = true },
                 enabled = canSubmit,
                 colors = ButtonDefaults.colors(
                     containerColor = NuvioTheme.colors.BackgroundElevated,
@@ -158,6 +166,46 @@ fun AuthSignInScreen(
                     modifier = Modifier.padding(vertical = NuvioTheme.spacing.xs),
                     fontWeight = FontWeight.Medium
                 )
+            }
+        }
+    }
+
+    if (showSignUpEligibilityConfirmation) {
+        NuvioDialog(
+            onDismiss = { showSignUpEligibilityConfirmation = false },
+            title = stringResource(R.string.auth_signup_eligibility_title),
+            subtitle = stringResource(R.string.auth_signup_eligibility_message),
+            suppressFirstKeyUp = false,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+                Text(
+                    text = stringResource(R.string.auth_signup_view_terms),
+                    modifier = Modifier.clickable {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TUVORA_TERMS_URL)))
+                    },
+                    color = NuvioTheme.colors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Button(onClick = { showSignUpEligibilityConfirmation = false }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                    Button(
+                        onClick = {
+                            if (canCreateAccount(email, password, uiState.isLoading, eligibilityConfirmed = true)) {
+                                showSignUpEligibilityConfirmation = false
+                                viewModel.signUp(email.trim(), password)
+                            }
+                        },
+                        enabled = canCreateAccount(email, password, uiState.isLoading, eligibilityConfirmed = true),
+                    ) {
+                        Text(stringResource(R.string.auth_signup_confirm_create))
+                    }
+                }
             }
         }
     }

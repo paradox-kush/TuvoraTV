@@ -59,7 +59,8 @@ internal object XtreamCatalogIndexParser {
             var name: String? = null
             var tmdb: Int? = null
             var poster: String? = null
-            var releaseDate: String? = null
+            var preferredReleaseDate: String? = null
+            var fallbackReleaseDate: String? = null
             r.beginObject()
             while (r.hasNext()) {
                 when (r.nextName()) {
@@ -67,9 +68,16 @@ internal object XtreamCatalogIndexParser {
                     "name" -> name = r.flexString()
                     "tmdb" -> tmdb = r.flexInt()
                     "cover" -> poster = r.flexString()
-                    // panels send both spellings; releaseDate is the one XUI populates
-                    "releaseDate" -> releaseDate = r.flexString() ?: releaseDate
-                    "release_date" -> releaseDate = releaseDate ?: r.flexString()
+                    // Panels can send both spellings. Always read each value before choosing
+                    // one: putting flexString() on the right of ?: leaves the reader sitting
+                    // on an unconsumed value when releaseDate was already populated.
+                    // XUI's camelCase field wins regardless of the fields' JSON order.
+                    "releaseDate" -> r.flexString().let { value ->
+                        if (value != null) preferredReleaseDate = value
+                    }
+                    "release_date" -> r.flexString().let { value ->
+                        if (value != null) fallbackReleaseDate = value
+                    }
                     else -> r.skipValue()
                 }
             }
@@ -79,7 +87,11 @@ internal object XtreamCatalogIndexParser {
                 IndexedItem(
                     sid = it,
                     name = title,
-                    year = releaseDate?.trim()?.take(4)?.toIntOrNull() ?: TitleNormalizer.yearOf(title),
+                    year = (preferredReleaseDate ?: fallbackReleaseDate)
+                        ?.trim()
+                        ?.take(4)
+                        ?.toIntOrNull()
+                        ?: TitleNormalizer.yearOf(title),
                     tmdb = tmdb?.takeIf { t -> t > 0 },
                     ext = null,
                     poster = poster?.takeIf { p -> p.isNotBlank() },

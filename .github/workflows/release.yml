@@ -9,6 +9,7 @@ name: Release
 #   RELEASE_KEY_ALIAS         key alias
 #   RELEASE_KEY_PASSWORD      key password
 #   SUPABASE_URL / SUPABASE_ANON_KEY   (optional) bake login into the release
+#   POSTHOG_CLI_API_KEY  personal key with Error Tracking write + organization read
 #
 # Play Store upload AAB (playstore flavor) signs with a SEPARATE dedicated key —
 # the GitHub-release key must never change (the in-app updater needs signature
@@ -43,6 +44,10 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      POSTHOG_CLI_HOST: https://us.posthog.com
+      POSTHOG_CLI_PROJECT_ID: '494529'
+      POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +75,11 @@ jobs:
 
       - name: Install SDK packages
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install PostHog symbol uploader
+        run: |
+          test -n "$POSTHOG_CLI_API_KEY" || { echo "POSTHOG_CLI_API_KEY is required" >&2; exit 1; }
+          npm install --global @posthog/cli@0.10.0
 
       - name: Decode signing keystore
         run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "$GITHUB_WORKSPACE/release.jks"

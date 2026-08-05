@@ -12,10 +12,15 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.Executors
 
 /**
  * Sports Centre matches every playlist type, not just Xtream panels: assembly routes through
@@ -24,6 +29,36 @@ import org.junit.Test
  * a fresh link at play time instead of reading the browse row.
  */
 class RadarChannelMatcherSourcesTest {
+
+    @Test
+    fun `catalog loading and scored partials do not run on the caller thread`() = runTest {
+        var catalogThread = ""
+        var partialThread = ""
+        val client = clientWith(channel(1, "Spain Austria Sports", XTREAM_URL))
+        coEvery { client.liveChannels(any(), any()) } coAnswers {
+            catalogThread = Thread.currentThread().name
+            Result.success(listOf(channel(1, "Spain Austria Sports", XTREAM_URL)))
+        }
+        val matcher = matcher(xtreamAccount() to client)
+        val caller = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "sports-ui-test") }
+            .asCoroutineDispatcher()
+        try {
+            val callerThread = withContext(caller) {
+                val name = Thread.currentThread().name
+                matcher.match(FIXTURE, league = null) {
+                    partialThread = Thread.currentThread().name
+                }
+                name
+            }
+
+            assertTrue(catalogThread.isNotBlank())
+            assertTrue(partialThread.isNotBlank())
+            assertNotEquals(callerThread, catalogThread)
+            assertNotEquals(callerThread, partialThread)
+        } finally {
+            caller.close()
+        }
+    }
 
     @Test
     fun `channels from xtream m3u and stalker playlists all match`() = runTest {

@@ -74,6 +74,10 @@ class RecEventLogger @Inject constructor(
     private val supabaseProvider: SyncBackendSupabaseProvider,
     private val profileManager: ProfileManager,
 ) {
+    init {
+        settings.registerQueuePurger(::discardPendingEvents)
+    }
+
     /**
      * Read per event, never cached. On a household TV the profile IS the user as far as training
      * is concerned — blending a child's viewing into a parent's stream is the specific failure
@@ -112,7 +116,10 @@ class RecEventLogger @Inject constructor(
         started = true
         if (BuildConfig.IS_DEBUG_BUILD) Log.d(TAG, "start(): logger running")
         scope.launch {
-            runCatching { restoreQueue() }
+            runCatching {
+                if (settings.isActive(System.currentTimeMillis())) restoreQueue()
+                else discardPendingEvents()
+            }
             while (isActive) {
                 delay(FLUSH_INTERVAL_MS)
                 flush("timer")
@@ -170,6 +177,14 @@ class RecEventLogger @Inject constructor(
         runCatching { scope.launch { flush(reason) } }
     }
 
+    /** Synchronous privacy boundary invoked by the settings opt-out callback. */
+    private fun discardPendingEvents() {
+        synchronized(queueLock) { queue.clear() }
+        retryNotBeforeMs = 0L
+        backoffMs = BACKOFF_START_MS
+        persistQueue(emptyList())
+    }
+
     private suspend fun flush(reason: String) {
         val now = System.currentTimeMillis()
         if (!settings.isActive(now) || now < retryNotBeforeMs) return
@@ -178,11 +193,19 @@ class RecEventLogger @Inject constructor(
             val pending = synchronized(queueLock) { queue.toList() }
             if (pending.isEmpty()) return
             persistQueue(pending)
+            if (!settings.isActive(System.currentTimeMillis())) {
+                discardPendingEvents()
+                return
+            }
 
             // One request per session: the envelope carries a single session_id, and a batch that
             // survived a cold start can straddle two.
             for ((sessionId, records) in pending.groupBy { it.sessionId }) {
                 for (chunk in records.chunked(FLUSH_AT_EVENTS)) {
+                    if (!settings.isActive(System.currentTimeMillis())) {
+                        discardPendingEvents()
+                        return
+                    }
                     val outcome = send(sessionId, chunk.map { it.event })
                     if (outcome == SendOutcome.RETRY) {
                         retryNotBeforeMs = System.currentTimeMillis() + backoffMs

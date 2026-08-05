@@ -631,7 +631,7 @@ private fun AuthTermsAcknowledgement() {
         Text(
             text = stringResource(R.string.auth_qr_terms_link),
             modifier = Modifier.clickable {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://nuvio.tv/terms")))
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TUVORA_TERMS_URL)))
             },
             style = MaterialTheme.typography.bodyMedium.copy(
                 color = AuthTextPrimary,

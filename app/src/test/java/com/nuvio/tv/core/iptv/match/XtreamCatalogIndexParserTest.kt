@@ -90,6 +90,30 @@ class XtreamCatalogIndexParserTest {
     }
 
     @Test
+    fun `series consumes both date spellings and prefers camelCase in either order`() {
+        val items = XtreamCatalogIndexParser.parseSeries(
+            src(
+                """
+                [
+                  {"series_id": 8, "name": "Camel first", "releaseDate": "2019-05-01", "release_date": "2021-02-18"},
+                  {"series_id": 9, "name": "Snake first", "release_date": 2021, "releaseDate": 2019},
+                  {"series_id": 10, "name": "Unsupported preferred scalar", "releaseDate": false, "release_date": 2020},
+                  {"series_id": 11, "name": "Title fallback (2022)", "releaseDate": {"bad": true}, "release_date": null}
+                ]
+                """.trimIndent()
+            )
+        )
+
+        assertEquals(4, items.size)
+        // This ordering previously left release_date's value unconsumed and failed at endObject().
+        assertEquals(2019, items[0].year)
+        assertEquals(2019, items[1].year)
+        // Flexible numeric dates are accepted; unsupported/null values are still consumed.
+        assertEquals(2020, items[2].year)
+        assertEquals(2022, items[3].year)
+    }
+
+    @Test
     fun `empty catalog parses to an empty list`() {
         assertEquals(emptyList<IndexedItem>(), XtreamCatalogIndexParser.parseVod(src("[]")))
     }

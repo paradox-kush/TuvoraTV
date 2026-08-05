@@ -1,11 +1,14 @@
 package com.nuvio.tv.core.iptv.match
 
+import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.isXtream
+import com.nuvio.tv.core.util.DeviceClass
 import com.nuvio.tv.core.tmdb.TmdbTitleBundle
 import com.nuvio.tv.data.local.XtreamAccountStore
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +46,7 @@ data class VerifySignal(val tmdb: Int?, val year: Int?)
  */
 @Singleton
 class XtreamTmdbResolver @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val client: XtreamClient,
     private val index: XtreamMatchIndex,
     private val sync: XtreamMatchSyncService,
@@ -51,6 +55,9 @@ class XtreamTmdbResolver @Inject constructor(
     private val buildLock = Mutex()
     private val inFlightBuilds = mutableMapOf<String, CompletableDeferred<Unit>>()
     private val lastFailedBuildMs = mutableMapOf<String, Long>()
+    private val buildBackoffPrefs by lazy {
+        context.getSharedPreferences(BUILD_BACKOFF_PREFS, Context.MODE_PRIVATE)
+    }
 
     // account ids whose catalog index is currently building — drives the
     // "Preparing catalog…" status on the IPTV settings rows
@@ -96,6 +103,14 @@ class XtreamTmdbResolver @Inject constructor(
      * accounts participate in TMDB matching (M3U/Stalker have no player_api catalog).
      */
     fun warmUp(accounts: List<XtreamAccount>, startDelayMs: Long = 0L) {
+        // Full provider catalogs routinely exceed 175k rows. Even the reduced streaming
+        // parser retains the final index rows until SQLite has reconciled them, which leaves
+        // too little headroom on 2 GB TV sticks for posters, Compose, and the player. Those
+        // devices build on demand instead of doing speculative work after every sync/start.
+        if (DeviceClass.isLowRam(context)) {
+            Log.i(TAG, "skipping speculative catalog warm-up on low-RAM device")
+            return
+        }
         accounts.filter { it.enabled && it.isXtream() }.forEach { acc ->
             buildScope.launch {
                 if (startDelayMs > 0) delay(startDelayMs)
@@ -206,7 +221,7 @@ class XtreamTmdbResolver @Inject constructor(
             inFlightBuilds[key]?.let { return@withLock it to false }
             // backoff applies with OR without an existing index — a dead panel must not
             // trigger a full-catalog download on every resolve attempt
-            if (System.currentTimeMillis() - (lastFailedBuildMs[key] ?: 0) < BUILD_BACKOFF_MS) return
+            if (System.currentTimeMillis() - lastFailedAt(key) < BUILD_BACKOFF_MS) return
             val d = CompletableDeferred<Unit>()
             inFlightBuilds[key] = d
             markIndexingLocked(acc.id, +1)
@@ -236,7 +251,7 @@ class XtreamTmdbResolver @Inject constructor(
                         Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
                     }
                     reportBuild(kind, itemCount, startedMs, outcome = "ok", detail = null)
-                    buildLock.withLock { lastFailedBuildMs.remove(key) }
+                    buildLock.withLock { clearLastFailure(key) }
                 } catch (oom: OutOfMemoryError) {
                     // Deliberately not rethrown: the build owns the only large allocations here,
                     // so releasing them and backing off recovers, where a rethrow would take the
@@ -244,11 +259,11 @@ class XtreamTmdbResolver @Inject constructor(
                     // showed up in telemetry only as an OS low-memory kill with no stack trace.
                     Log.e(TAG, "index build ran out of memory for ${acc.name} ${kind.slug} ($itemCount items)", oom)
                     reportBuild(kind, itemCount, startedMs, outcome = "oom", detail = oom.message)
-                    buildLock.withLock { lastFailedBuildMs[key] = System.currentTimeMillis() }
+                    buildLock.withLock { recordFailure(key) }
                 } catch (t: Throwable) {
                     Log.w(TAG, "index build failed for ${acc.name} ${kind.slug}", t)
                     reportBuild(kind, itemCount, startedMs, outcome = "error", detail = "${t::class.java.simpleName}: ${t.message}")
-                    buildLock.withLock { lastFailedBuildMs[key] = System.currentTimeMillis() }
+                    buildLock.withLock { recordFailure(key) }
                 } finally {
                     buildLock.withLock {
                         inFlightBuilds.remove(key)
@@ -273,12 +288,35 @@ class XtreamTmdbResolver @Inject constructor(
         _indexing.value = indexingCounts.keys.toSet()
     }
 
+    /**
+     * Failed catalog backoff must survive the crash/relaunch loop it is intended to stop.
+     * The old in-memory map reset on every OS kill, so malformed panels immediately started
+     * another multi-minute download after launch and compounded memory/CPU pressure.
+     */
+    private fun lastFailedAt(key: String): Long =
+        lastFailedBuildMs[key] ?: buildBackoffPrefs.getLong(key, 0L).also {
+            if (it > 0L) lastFailedBuildMs[key] = it
+        }
+
+    private fun recordFailure(key: String) {
+        val now = System.currentTimeMillis()
+        lastFailedBuildMs[key] = now
+        // Already on Dispatchers.IO. commit() makes the guard durable before another OS kill.
+        buildBackoffPrefs.edit().putLong(key, now).commit()
+    }
+
+    private fun clearLastFailure(key: String) {
+        lastFailedBuildMs.remove(key)
+        buildBackoffPrefs.edit().remove(key).commit()
+    }
+
     companion object {
         // Passive staleness ceiling (resolve/search/app-start paths). The auto-refresh worker
         // drives the USER-configured cadence (playlist autoRefreshHours, default 24h) with a
         // cheap incremental sync; this TTL is just the fallback when that's off or never ran.
         private const val INDEX_TTL_MS = 72 * 60 * 60 * 1000L
         private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
+        private const val BUILD_BACKOFF_PREFS = "xtream_index_build_backoff"
         private const val STARTUP_WARM_DELAY_MS = 10_000L
         private const val NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000L
         private const val MAX_VERIFY_CALLS = 3

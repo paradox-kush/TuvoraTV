@@ -13,6 +13,7 @@ import com.nuvio.tv.core.iptv.XtreamResolvedItem
 import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.domain.model.ContentType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -21,6 +22,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -98,7 +100,7 @@ class RadarChannelMatcher @Inject constructor(
         league: RadarLeague?,
         stations: List<RadarTvStation> = emptyList(),
         onPartial: (List<ChannelMatch>) -> Unit = {},
-    ): List<ChannelMatch> {
+    ): List<ChannelMatch> = withContext(Dispatchers.Default) {
         val keywords = buildList {
             league?.keywords?.forEach { add(normalize(it)) }
             fixture.league?.let { add(normalize(it)) }
@@ -158,10 +160,10 @@ class RadarChannelMatcher @Inject constructor(
         // its name — no league keyword, no team, no guide entry. A list of those reads as
         // "here's where the match is" and sends someone into a Bulgarian feed for a Mexican
         // fixture. When that's ALL we have, report nothing so the sheet can say so honestly.
-        if (ranked.none { it.score > GENERIC_NAME_SCORE }) return emptyList()
+        if (ranked.none { it.score > GENERIC_NAME_SCORE }) return@withContext emptyList()
         // Generic sports-channel name hits (score <= GENERIC_NAME_SCORE) don't earn slots
         // beyond the classic list length — EPG/listing hits do.
-        return ranked
+        ranked
             .filterIndexed { i, m -> i < NAME_RESULT_CAP || m.score > GENERIC_NAME_SCORE }
             .take(RESULT_CAP)
     }
@@ -421,27 +423,37 @@ class RadarChannelMatcher @Inject constructor(
     private suspend fun assembleCandidates(): List<CandidateChannel> {
         // Every enabled playlist, whatever its source: the factory hands back the Xtream
         // player_api client, the M3U catalog client, or the Stalker portal session as needed.
-        val accounts = accountStore.accounts.first().filter { it.enabled }
-        return accounts.flatMap { account ->
-            val channels = channelCache[account.id] ?: cacheMutex.withLock {
-                channelCache[account.id] ?: clientFactory.clientFor(account).liveChannels(account)
-                    .getOrDefault(emptyList())
-                    // Only cache success — this is an app-lifetime singleton, and caching a
-                    // transient panel failure would leave matching dead until restart.
-                    .also { if (it.isNotEmpty()) channelCache[account.id] = it }
-            }
-            channels.map { ch ->
-                CandidateChannel(
-                    playlistId = account.id,
-                    playlistName = account.name,
-                    contentId = XtreamItemRegistry.liveId(account.id, ch.streamId),
-                    name = ch.name,
-                    logo = ch.logo,
-                    streamId = ch.streamId,
-                    streamUrl = ch.streamUrl,
-                    epgChannelId = ch.epgChannelId,
-                    hasArchive = ch.hasArchive,
-                )
+        val accounts = withContext(Dispatchers.IO) {
+            accountStore.accounts.first().filter { it.enabled }
+        }
+        return buildList {
+            for (account in accounts) {
+                // A panel can return hundreds of thousands of rows. Keep transport and portal
+                // work off the computation pool; conversion below resumes on Default with match().
+                val channels = withContext(Dispatchers.IO) {
+                    channelCache[account.id] ?: cacheMutex.withLock {
+                        channelCache[account.id] ?: clientFactory.clientFor(account).liveChannels(account)
+                            .getOrDefault(emptyList())
+                            // Only cache success — this is an app-lifetime singleton, and caching a
+                            // transient panel failure would leave matching dead until restart.
+                            .also { if (it.isNotEmpty()) channelCache[account.id] = it }
+                    }
+                }
+                for (ch in channels) {
+                    add(
+                        CandidateChannel(
+                            playlistId = account.id,
+                            playlistName = account.name,
+                            contentId = XtreamItemRegistry.liveId(account.id, ch.streamId),
+                            name = ch.name,
+                            logo = ch.logo,
+                            streamId = ch.streamId,
+                            streamUrl = ch.streamUrl,
+                            epgChannelId = ch.epgChannelId,
+                            hasArchive = ch.hasArchive,
+                        )
+                    )
+                }
             }
         }
     }

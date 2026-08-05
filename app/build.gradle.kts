@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.sentry.android.gradle)
+    id("com.posthog.android") version "1.4.0"
 }
 
 import java.io.File

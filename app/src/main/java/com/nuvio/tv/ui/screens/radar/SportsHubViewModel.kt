@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.radar
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.radar.RadarChannelMatcher
@@ -9,7 +10,9 @@ import com.nuvio.tv.core.radar.RadarRepository
 import com.nuvio.tv.core.radar.RadarTeam
 import com.nuvio.tv.core.radar.RadarUiState
 import com.nuvio.tv.data.local.XtreamAccountStore
+import com.posthog.PostHog
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +38,8 @@ data class MatchSheetState(
     /** channel contentId -> (replayContentId, timeshiftUrl, title) for archived channels. */
     val replays: Map<String, Triple<String, String, String>> = emptyMap(),
     val matching: Boolean = true,
+    /** True when matching stopped because a provider or local index failed unexpectedly. */
+    val matchingFailed: Boolean = false,
     val hasPlaylists: Boolean = true,
     /** Channel currently being health-probed before playback (shows "Checking…"). */
     val probingContentId: String? = null,
@@ -126,6 +131,7 @@ class SportsHubViewModel @Inject constructor(
     val sheet: StateFlow<MatchSheetState?> = _sheet.asStateFlow()
 
     private var matchJob: Job? = null
+    @Volatile private var matchGeneration: Long = 0
 
     init {
         // The match sheet reads the mirror; refresh it (12h TTL, no-op when fresh) so the
@@ -208,6 +214,7 @@ class SportsHubViewModel @Inject constructor(
     fun toggleFollow(league: RadarLeague) = repository.toggleFollow(league)
 
     fun openMatch(fixture: RadarFixture) {
+        val generation = ++matchGeneration
         matchJob?.cancel()
         _sheet.value = MatchSheetState(fixture = fixture, hasPlaylists = hasPlaylists.value)
         if (!hasPlaylists.value) {
@@ -215,35 +222,96 @@ class SportsHubViewModel @Inject constructor(
             return
         }
         matchJob = viewModelScope.launch {
-            val league = fixture.leagueId?.let { repository.uiState.value.leagueById(it) }
-            launch {
-                val recordings = runCatching { matcher.findRecordings(fixture) }.getOrDefault(emptyList())
-                _sheet.update { s -> if (s?.fixture === fixture) s.copy(recordings = recordings) else s }
+            runCatching {
+                PostHog.addExceptionStep(
+                    message = "sports_channel_matching_started",
+                    properties = mapOf(
+                        "feature" to "sports_channel_matching",
+                        "source" to "match_sheet",
+                    ),
+                )
             }
-            // Broadcaster listings are one cached edge-fn call; bounded so a slow network
-            // can't hold the whole sheet hostage (matching proceeds without them).
-            val stations = kotlinx.coroutines.withTimeoutOrNull(4_000) {
-                repository.tvStations(fixture.id)
-            } ?: emptyList()
-            val result = matcher.match(fixture, league, stations, onPartial = { partial ->
-                _sheet.update { s -> if (s?.fixture === fixture) s.copy(matches = partial) else s }
-            })
-            val replays = buildMap {
-                result.forEach { m ->
-                    runCatching { matcher.replayFor(m, fixture) }.getOrNull()
-                        ?.let { put(m.channel.contentId, it) }
+            try {
+                val league = fixture.leagueId?.let { repository.uiState.value.leagueById(it) }
+                launch(Dispatchers.IO) {
+                    val recordings = try {
+                        matcher.findRecordings(fixture)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        Log.w(TAG, "Recording lookup failed", error)
+                        emptyList()
+                    }
+                    updateMatchSheet(fixture, generation) { it.copy(recordings = recordings) }
                 }
-            }
-            _sheet.update { s ->
-                if (s?.fixture === fixture) s.copy(matches = result, replays = replays, matching = false) else s
+                // Broadcaster listings are one cached edge-fn call; bounded so a slow network
+                // can't hold the whole sheet hostage (matching proceeds without them).
+                val stations = try {
+                    kotlinx.coroutines.withTimeoutOrNull(4_000) {
+                        repository.tvStations(fixture.id)
+                    } ?: emptyList()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.w(TAG, "Broadcaster lookup failed", error)
+                    emptyList()
+                }
+                val result = matcher.match(fixture, league, stations, onPartial = { partial ->
+                    updateMatchSheet(fixture, generation) { it.copy(matches = partial) }
+                })
+                val replays = buildMap {
+                    result.forEach { match ->
+                        val replay = try {
+                            matcher.replayFor(match, fixture)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            Log.w(TAG, "Replay lookup failed", error)
+                            null
+                        }
+                        replay?.let { put(match.channel.contentId, it) }
+                    }
+                }
+                updateMatchSheet(fixture, generation) {
+                    it.copy(matches = result, replays = replays)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Channel matching failed", error)
+                runCatching {
+                    PostHog.captureException(
+                        throwable = error,
+                        properties = mapOf(
+                            "feature" to "sports_channel_matching",
+                            "source" to "match_sheet",
+                            "phase" to "channel_match",
+                        ),
+                    )
+                }
+                updateMatchSheet(fixture, generation) { it.copy(matchingFailed = true) }
+            } finally {
+                updateMatchSheet(fixture, generation) { it.copy(matching = false) }
             }
         }
     }
 
     fun closeMatch() {
+        ++matchGeneration
         matchJob?.cancel()
         probeJob?.cancel()
         _sheet.value = null
+    }
+
+    /** Ignores late partial/final results from a canceled request, including the same fixture. */
+    private inline fun updateMatchSheet(
+        fixture: RadarFixture,
+        generation: Long,
+        transform: (MatchSheetState) -> MatchSheetState,
+    ) {
+        _sheet.update { state ->
+            if (generation == matchGeneration && state?.fixture === fixture) transform(state) else state
+        }
     }
 
     /**
@@ -315,6 +383,7 @@ class SportsHubViewModel @Inject constructor(
     private var probeJob: Job? = null
 
     private companion object {
+        const val TAG = "SportsHubViewModel"
         const val PROBE_CAP = 6
         const val PROBE_TIMEOUT_MS = 2_500
     }

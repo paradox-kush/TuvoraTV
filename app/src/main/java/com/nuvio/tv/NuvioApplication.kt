@@ -22,6 +22,7 @@ import okio.Path.Companion.toOkioPath
 import com.nuvio.tv.core.analytics.AppExitReporter
 import com.nuvio.tv.core.diagnostics.SentryInitializer
 import com.nuvio.tv.core.iptv.refresh.IptvRefreshScheduler
+import com.nuvio.tv.core.analytics.PostHogPrivacy
 import com.nuvio.tv.core.runtime.PluginRuntimeHooks
 import com.nuvio.tv.core.sync.RealtimeSyncInvalidationService
 import com.nuvio.tv.core.sync.StartupSyncService
@@ -31,6 +32,9 @@ import com.nuvio.tv.data.local.SentrySettingsDataStore
 import com.nuvio.tv.data.simkl.SimklAnimeIdPreferenceHolder
 import com.posthog.android.PostHogAndroid
 import com.posthog.android.PostHogAndroidConfig
+import com.posthog.PostHog
+import com.posthog.PostHogBeforeSend
+import com.posthog.logs.PostHogBeforeSendLog
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -38,9 +42,17 @@ import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 @HiltAndroidApp
 class NuvioApplication : Application(), SingletonImageLoader.Factory, Configuration.Provider {
+
+    private val analyticsConsentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Inject lateinit var startupSyncService: StartupSyncService
     @Inject lateinit var recEventLogger: com.nuvio.tv.core.rec.RecEventLogger
@@ -98,6 +110,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
 
     override fun onCreate() {
         super.onCreate()
+        val crashReportsEnabled = runBlocking(Dispatchers.IO) {
+            sentrySettingsDataStore.isEnabled()
+        }
         PostHogAndroid.setup(
             this,
             PostHogAndroidConfig(
@@ -106,6 +121,30 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             ).apply {
                 // Capture uncaught exceptions as $exception events (where the app breaks).
                 errorTrackingConfig.autoCapture = true
+                // Consent is authoritative. Calling optIn/optOut after setup also overrides any
+                // consent value persisted by an older PostHog SDK run.
+                optOut = !crashReportsEnabled
+                // This consent is for crash diagnostics, not general product analytics.
+                captureApplicationLifecycleEvents = false
+                captureScreenViews = false
+                sendFeatureFlagEvent = false
+                preloadFeatureFlags = false
+                surveys = false
+                // Deep-link autocapture records Intent.data verbatim, including OAuth code/state.
+                captureDeepLinks = false
+                // Explicit privacy defaults: remote config must never activate replay, screenshots,
+                // logcat collection, tracing headers, or the structured-log upload path.
+                sessionReplay = false
+                sessionReplayConfig.screenshot = false
+                sessionReplayConfig.captureLogcat = false
+                tracingHeaders = emptyList()
+                logs.addBeforeSend(PostHogBeforeSendLog { null })
+                addBeforeSend(PostHogBeforeSend { event ->
+                    if (PostHogPrivacy.shouldDropEvent(event.event)) null
+                    else event.copy(
+                        properties = PostHogPrivacy.sanitize(event.properties.orEmpty()).toMutableMap(),
+                    )
+                })
                 // Upload queued events quickly after launch: a crash queued by the previous
                 // run must ship before the user navigates back into whatever crashed
                 // (the default 30s starved uploads during crash-loops).
@@ -114,10 +153,21 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 debug = BuildConfig.DEBUG
             }
         )
+        PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
+        if (crashReportsEnabled) {
+            PostHog.optIn()
+            AppExitReporter.reportPendingExits(this)
+        } else {
+            PostHog.optOut()
+        }
+        analyticsConsentScope.launch {
+            sentrySettingsDataStore.enabled.distinctUntilChanged().collect { enabled ->
+                if (enabled) PostHog.optIn() else PostHog.optOut()
+            }
+        }
         // Upstream's Sentry: inert without a SENTRY_DSN (the fork's crash reporter is PostHog);
         // kept wired so future upstream merges stay clean.
         SentryInitializer.start(this, sentrySettingsDataStore)
-        AppExitReporter.reportPendingExits(this)
         PluginRuntimeHooks.onApplicationCreate(this)
         // Restores anything a previous process left unsent and starts the flush timer. Guarded
         // because nothing about recommendation telemetry may ever prevent the app from starting.

@@ -23,7 +23,7 @@ class SentrySettingsDataStore @Inject constructor(
     private val enabledKey = booleanPreferencesKey("enabled")
 
     val enabled: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[enabledKey] ?: true
+        prefs[enabledKey] ?: false
     }
 
     suspend fun isEnabled(): Boolean {

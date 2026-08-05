@@ -220,6 +220,10 @@ class AuthManager @Inject constructor(
             auth.signUpWith(Email) {
                 this.email = email
                 this.password = password
+                data = buildJsonObject {
+                    put("adult_confirmed", true)
+                    put("terms_version", "2026-08-04")
+                }
             }
             Result.success(Unit)
         } catch (e: Exception) {
