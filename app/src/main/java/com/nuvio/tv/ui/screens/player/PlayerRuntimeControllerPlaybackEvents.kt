@@ -207,11 +207,15 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                                 if (_uiState.value.postPlayDismissedForCurrentEpisode) {
                                     _uiState.update { it.copy(postPlayDismissedForCurrentEpisode = false) }
                                 }
+                                armLiveFreezeReporter()
                             }
                         }
                     if (playerDuration > lastKnownDuration) {
                         lastKnownDuration = playerDuration
                     }
+                    // mpv exposes no buffered-ahead equivalent, so position doubles as both:
+                    // the freeze signal here is the playhead standing still.
+                    sampleLiveFreeze(positionMs = pos, bufferedPositionMs = pos)
                     val displayPosition = pendingPreviewSeekPosition ?: pos
                     updatePlaybackTimeline(
                         currentPosition = displayPosition,
@@ -268,6 +272,10 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     hasRenderedFirstFrame = hasRenderedFirstFrame,
                     rebufferCount = rebufferCount,
                     rebufferTotalMs = rebufferTotalMs
+                )
+                sampleLiveFreeze(
+                    positionMs = pos,
+                    bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
                 )
                 // Update torrent rebuffer progress from ExoPlayer's buffer state
                 if (isTorrentStream && _uiState.value.isBuffering && hasRenderedFirstFrame) {

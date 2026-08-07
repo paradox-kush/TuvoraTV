@@ -1045,7 +1045,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                         updatePlaybackTimeline(duration = playerDuration.coerceAtLeast(0L))
                         // Only mark playbackEnded for real finishes so PlayerScreen does not
                         // dispatch next-episode navigation for short debrid/error placeholders.
+                        // A live channel has no end. ENDED means the upstream closed and Media3
+                        // treated the clean EOF as the content finishing; dispatching that as a
+                        // natural completion would exit the player instead of reconnecting.
                         val naturalEnded = playbackState == Player.STATE_ENDED &&
+                            !isLiveContent() &&
                             shouldTreatAsNaturalPlaybackCompletion(
                                 hasRenderedFirstFrame = hasRenderedFirstFrame,
                                 hasFatalError = !_uiState.value.error.isNullOrBlank(),
@@ -1325,6 +1329,7 @@ internal fun PlayerRuntimeController.initializePlayer(
 
                         if (isFirstFrame) {
                             currentDiagnostics = recordFirstFrameDiagnostics(this@apply, currentDiagnostics, playerSettings)
+                            armLiveFreezeReporter()
                         }
                     }
 

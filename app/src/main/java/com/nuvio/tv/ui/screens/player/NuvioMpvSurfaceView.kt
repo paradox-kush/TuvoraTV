@@ -765,6 +765,14 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         // Bound blocking network reads (ffmpeg rw_timeout): a half-dead live socket
         // otherwise wedges the demuxer — and with it any thread waiting on the core.
         mpv.setOptionString("network-timeout", "15")
+        // ffmpeg's HTTP demuxer does not reconnect on its own: an IPTV panel that closes the
+        // socket mid-stream reads as a clean EOF, and with keep-open=yes the core parks on the
+        // last frame forever. These make it re-open the URL instead, which covers the transient
+        // drops before the app-level reconnect (PlayerRuntimeControllerLiveFreeze) has to.
+        mpv.setOptionString(
+            "stream-lavf-o",
+            "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5",
+        )
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
         mpv.setOptionString("input-default-bindings", "yes")

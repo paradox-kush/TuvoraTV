@@ -292,6 +292,23 @@ class PlayerRuntimeController(
     internal var _loadControl: DefaultLoadControl? = null
     internal var playbackSpeedAwareAudioSink: PlaybackSpeedAwareAudioSink? = null
 
+    /** Reports live channels that freeze with no player error. Silent during healthy playback. */
+    internal val livePlaybackFreezeReporter = com.nuvio.tv.core.analytics.LivePlaybackFreezeReporter()
+
+    /** Reconnect bookkeeping for a frozen live channel; see PlayerRuntimeControllerLiveFreeze. */
+    internal var liveRecoveryAttempts: Int = 0
+    internal var lastLiveRecoveryAtMs: Long = 0L
+    /** True from firing a reconnect until the rebuilt player renders. Suppresses the teardown flush. */
+    @Volatile internal var liveRecoveryInFlight: Boolean = false
+    internal var liveRecoveryGaveUp: Boolean = false
+
+    /** A live channel never legitimately ends or stops advancing, so freezes are only tracked here. */
+    internal fun isLiveContent(): Boolean {
+        if (contentType.equals("live", ignoreCase = true)) return true
+        val id = contentId ?: return false
+        return com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(id)
+    }
+
     internal var progressJob: Job? = null
     internal var vodTelemetryJob: Job? = null
     internal var firstFrameWatchdogJob: Job? = null

@@ -11,6 +11,8 @@ internal fun PlayerRuntimeController.releasePlayer() {
 internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) {
     logScrobbleDiagnostic("release_player", "flushPlaybackState=$flushPlaybackState")
     isReleasingPlayer = true
+    // Before the player is torn down: a freeze still open here is one the viewer had to escape.
+    stopLiveFreezeReporter()
     com.nuvio.tv.core.recommendations.TvRecommendationManager.isPlaybackActive.value = false
     if (flushPlaybackState) {
         stopTorrentStream()
