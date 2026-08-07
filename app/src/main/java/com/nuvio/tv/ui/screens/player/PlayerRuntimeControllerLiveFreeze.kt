@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.player
 import android.util.Log
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
+import com.nuvio.tv.core.analytics.Breadcrumbs
 import com.nuvio.tv.core.analytics.LivePlaybackFreezePolicy
 import com.nuvio.tv.core.analytics.LivePlaybackFreezeReporter
 import com.nuvio.tv.core.analytics.LivePlaybackRecoveryPolicy
@@ -43,6 +44,20 @@ internal fun PlayerRuntimeController.armLiveFreezeReporter() {
     )
     liveRecoveryAttempts = 0
     lastLiveRecoveryAtMs = 0L
+}
+
+/**
+ * Playback breadcrumb for every content kind — [armLiveFreezeReporter] stays live-only. The
+ * persisted side is what lets the next launch's `app_exit` say "died while streaming".
+ */
+internal fun PlayerRuntimeController.recordPlaybackStartBreadcrumb() {
+    Breadcrumbs.playbackStarted(
+        kind = if (isLiveContent()) "live" else "vod",
+        engine = if (isUsingMpvEngine()) "mpv" else "exoplayer",
+        surface = "player",
+        container = LivePlaybackFreezeReporter.streamContainerOf(currentStreamUrl),
+        nowMs = System.currentTimeMillis(),
+    )
 }
 
 /** One sampled tick. No-op unless a live channel is being watched. */

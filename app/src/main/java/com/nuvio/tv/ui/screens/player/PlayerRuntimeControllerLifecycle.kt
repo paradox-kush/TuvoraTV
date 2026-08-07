@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.player
 
 import android.content.Intent
 import android.media.audiofx.AudioEffect
+import com.nuvio.tv.core.analytics.Breadcrumbs
 import kotlinx.coroutines.flow.update
 
 internal fun PlayerRuntimeController.releasePlayer() {
@@ -13,6 +14,7 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
     isReleasingPlayer = true
     // Before the player is torn down: a freeze still open here is one the viewer had to escape.
     stopLiveFreezeReporter()
+    Breadcrumbs.playbackStopped()
     com.nuvio.tv.core.recommendations.TvRecommendationManager.isPlaybackActive.value = false
     if (flushPlaybackState) {
         stopTorrentStream()

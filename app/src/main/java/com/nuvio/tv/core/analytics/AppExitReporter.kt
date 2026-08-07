@@ -72,6 +72,41 @@ object AppExitReporter {
         }
     }
 
+    /**
+     * Persist that playback is running. `app_exit` carries this as `was_playing` plus how long
+     * the stream had been up — the difference between "crashed browsing" and "crashed streaming",
+     * which no same-session event can answer for a next-launch report.
+     */
+    fun recordPlaybackStarted(context: Context, kind: String, engine: String, surface: String) {
+        synchronized(lock) {
+            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
+            if (runStart <= 0L) return
+            val now = System.currentTimeMillis()
+            prefs.edit()
+                .putBoolean(runKey(runStart, "playing"), true)
+                .putString(runKey(runStart, "pb_kind"), safeRouteName(kind))
+                .putString(runKey(runStart, "pb_engine"), safeRouteName(engine))
+                .putString(runKey(runStart, "pb_surface"), safeRouteName(surface))
+                .putLong(runKey(runStart, "pb_at"), now)
+                .putString(runKey(runStart, "action"), "playback")
+                .putLong(runKey(runStart, "context_at"), now)
+                .apply()
+        }
+    }
+
+    fun recordPlaybackStopped(context: Context) {
+        synchronized(lock) {
+            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
+            if (runStart <= 0L) return
+            prefs.edit()
+                .putBoolean(runKey(runStart, "playing"), false)
+                .putLong(runKey(runStart, "context_at"), System.currentTimeMillis())
+                .apply()
+        }
+    }
+
     private fun beginRun(context: Context) {
         synchronized(lock) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -176,6 +211,15 @@ object AppExitReporter {
             put("failed_run_started_at_ms", run.startedAtMs)
             run.lastRoute?.let { put("last_route", it) }
             run.lastAction?.let { put("last_action", it) }
+            put("was_playing", run.wasPlaying)
+            if (run.wasPlaying) {
+                run.playbackKind?.let { put("playback_kind", it) }
+                run.playbackEngine?.let { put("playback_engine", it) }
+                run.playbackSurface?.let { put("playback_surface", it) }
+                run.playbackStartedAtMs?.let {
+                    put("playback_age_ms", (exit.timestamp - it).coerceAtLeast(0L))
+                }
+            }
             run.contextUpdatedAtMs?.let { updatedAt ->
                 put("last_context_age_ms", (exit.timestamp - updatedAt).coerceAtLeast(0L))
             }
@@ -222,6 +266,12 @@ object AppExitReporter {
                     lastAction = prefs.getString(runKey(startedAt, "action"), null),
                     contextUpdatedAtMs = prefs.getLong(runKey(startedAt, "context_at"), 0L)
                         .takeIf { it > 0L },
+                    wasPlaying = prefs.getBoolean(runKey(startedAt, "playing"), false),
+                    playbackKind = prefs.getString(runKey(startedAt, "pb_kind"), null),
+                    playbackEngine = prefs.getString(runKey(startedAt, "pb_engine"), null),
+                    playbackSurface = prefs.getString(runKey(startedAt, "pb_surface"), null),
+                    playbackStartedAtMs = prefs.getLong(runKey(startedAt, "pb_at"), 0L)
+                        .takeIf { it > 0L },
                 )
             }
         }
@@ -229,7 +279,10 @@ object AppExitReporter {
 
     private fun runKey(startedAt: Long, field: String): String = "run.$startedAt.$field"
 
-    private val RUN_FIELDS = listOf("version", "build", "route", "action", "context_at")
+    private val RUN_FIELDS = listOf(
+        "version", "build", "route", "action", "context_at",
+        "playing", "pb_kind", "pb_engine", "pb_surface", "pb_at",
+    )
 }
 
 internal data class AppRunContext(
@@ -239,6 +292,11 @@ internal data class AppRunContext(
     val lastRoute: String?,
     val lastAction: String?,
     val contextUpdatedAtMs: Long?,
+    val wasPlaying: Boolean = false,
+    val playbackKind: String? = null,
+    val playbackEngine: String? = null,
+    val playbackSurface: String? = null,
+    val playbackStartedAtMs: Long? = null,
 )
 
 internal fun findRunContext(exitTimestamp: Long, runs: List<AppRunContext>): AppRunContext? =

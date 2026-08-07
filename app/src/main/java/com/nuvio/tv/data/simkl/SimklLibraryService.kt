@@ -128,8 +128,22 @@ class SimklLibraryService @Inject constructor(
             )
             SimklLibraryMutation.Remove -> mutationService.removeFromList(listOf(reference))
         }
-        check(result.isComplete) {
-            "Simkl could not match ${result.notFoundCount} of ${result.attemptedCount} library items"
+        // A mismatch is data quality, not a programming error — this was a check() whose
+        // uncaught IllegalStateException crash-looped a real TV (MiTV, 1.4.16). Record it,
+        // keep what matched.
+        if (!result.isComplete) {
+            android.util.Log.w(
+                "SimklLibraryService",
+                "Simkl could not match ${result.notFoundCount} of ${result.attemptedCount} library items",
+            )
+            com.posthog.PostHog.capture(
+                "simkl_match_failure",
+                properties = mapOf(
+                    "lane" to "library",
+                    "not_found" to result.notFoundCount,
+                    "attempted" to result.attemptedCount,
+                ),
+            )
         }
     }
 

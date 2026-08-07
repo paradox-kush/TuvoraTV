@@ -276,8 +276,15 @@ object NuvioExoPlayerPerformanceHelper {
             // Onn 4K while a movie played) — the buffer caused the stalls it was
             // meant to prevent. Keep it small where RAM is scarce.
             val lowRam = context != null && com.nuvio.tv.core.util.DeviceClass.isLowRam(context)
+            // Non-lowRam boxes are not all Shields: sticks run a 192m dalvik heap (largeHeap
+            // included) where a flat 100MB byte target — plain byte[] on the Java heap — was
+            // the OOM/LMK driver in field telemetry. Budget a quarter of the real heap,
+            // floored at the lowRam value.
+            val standardBudget = (Runtime.getRuntime().maxMemory() / 4)
+                .coerceIn(40L * 1024 * 1024, 100L * 1024 * 1024)
+                .toInt()
             DefaultLoadControl.Builder()
-                .setTargetBufferBytes(if (lowRam) 40 * 1024 * 1024 else 100 * 1024 * 1024)
+                .setTargetBufferBytes(if (lowRam) 40 * 1024 * 1024 else standardBudget)
                 .setBufferDurationsMs(
                     DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
                     if (lowRam) 45_000 else 70_000,

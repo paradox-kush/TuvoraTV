@@ -207,6 +207,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                                 if (_uiState.value.postPlayDismissedForCurrentEpisode) {
                                     _uiState.update { it.copy(postPlayDismissedForCurrentEpisode = false) }
                                 }
+                                recordPlaybackStartBreadcrumb()
                                 armLiveFreezeReporter()
                             }
                         }

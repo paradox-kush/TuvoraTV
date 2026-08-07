@@ -120,6 +120,7 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import com.nuvio.tv.R
 import com.nuvio.tv.core.analytics.AppExitReporter
+import com.nuvio.tv.core.analytics.Breadcrumbs
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.deeplink.DeepLinkHandler
@@ -649,7 +650,9 @@ class MainActivity : ComponentActivity() {
 
                     LaunchedEffect(actualRoute) {
                         optimisticRoute = null
-                        AppExitReporter.recordRoute(context, actualRoute)
+                        // One breadcrumb path: persists the route for app_exit attribution AND
+                        // emits a real $screen event (autocapture only ever names MainActivity).
+                        actualRoute?.let(Breadcrumbs::screenChanged)
                     }
 
                     // Auto-play next episode for EXTERNAL players: the tracker resolves the

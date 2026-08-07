@@ -81,6 +81,8 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
+import com.nuvio.tv.core.analytics.Breadcrumbs
+import com.nuvio.tv.core.analytics.LivePlaybackFreezeReporter
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -166,7 +168,12 @@ fun LiveGuide(
                 })
             }
     }
-    DisposableEffect(Unit) { onDispose { previewPlayer.release() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            Breadcrumbs.playbackStopped()
+            previewPlayer.release()
+        }
+    }
     BackHandler(enabled = fullscreen) { onFullscreenChange(false) }
 
     // Fullscreen controls overlay: shown on entry and on any key, auto-hides while playing.
@@ -179,6 +186,15 @@ fun LiveGuide(
     // never on focus movement. ExoPlayer calls are main-looper-bound and non-blocking.
     // previewPlayback carries the (DoH-rewritten when the playlist opts in) URL + Host header.
     fun tunePreview(url: String, headers: Map<String, String>) {
+        // Tune intent rather than first frame: the guide's preview player has no snapshot loop,
+        // and for crash attribution "a live preview was up" is the fact that matters.
+        Breadcrumbs.playbackStarted(
+            kind = "live",
+            engine = "exoplayer",
+            surface = "live_guide",
+            container = LivePlaybackFreezeReporter.streamContainerOf(url),
+            nowMs = System.currentTimeMillis(),
+        )
         previewPlayer.setMediaSource(previewSourceFactory.createMediaSource(context, url, headers))
         previewPlayer.prepare()
         previewPlayer.play()

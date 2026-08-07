@@ -113,6 +113,23 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         val crashReportsEnabled = runBlocking(Dispatchers.IO) {
             sentrySettingsDataStore.isEnabled()
         }
+        // Breadcrumbs persist locally so AppExitReporter can attribute a process death on the
+        // NEXT launch; their live-event side goes through PostHog and is consent-gated by the
+        // SDK like every other capture.
+        com.nuvio.tv.core.analytics.Breadcrumbs.crashWriter =
+            object : com.nuvio.tv.core.analytics.Breadcrumbs.CrashWriter {
+                override fun onScreen(name: String) {
+                    AppExitReporter.recordRoute(this@NuvioApplication, name)
+                }
+
+                override fun onPlaybackStarted(kind: String, engine: String, surface: String) {
+                    AppExitReporter.recordPlaybackStarted(this@NuvioApplication, kind, engine, surface)
+                }
+
+                override fun onPlaybackStopped() {
+                    AppExitReporter.recordPlaybackStopped(this@NuvioApplication)
+                }
+            }
         PostHogAndroid.setup(
             this,
             PostHogAndroidConfig(
