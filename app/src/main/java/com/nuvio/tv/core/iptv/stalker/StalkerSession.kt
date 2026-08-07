@@ -108,6 +108,101 @@ class StalkerSession(
     /** Force re-auth on the next call (used when a create_link/browse hits a hard 401/403). */
     fun invalidate() { token = null }
 
+    /**
+     * Authenticated GET that STREAMS the body to [onChunk] instead of materializing it — for the
+     * one Stalker response that can be enormous (bulk `get_epg_info`: 174.5 MB in a real client
+     * trace against our research mock; research/iptv-catalog-loading.md). Same auth + retry
+     * DISCIPLINE as [request] but split across layers: this is ONE attempt (it ensures auth,
+     * sniffs the first bytes for the "Authorization failed." sentinel / empty body, throws
+     * [StalkerAuthException] on either), and the caller owns the single re-auth retry — its
+     * consumer has to reset per attempt anyway (the EPG ingest re-opens its transaction).
+     * Returns true when body bytes arrived. Never re-handshakes on its own.
+     */
+    suspend fun requestStreamOnce(
+        params: Map<String, String>,
+        onChunk: (String) -> Unit,
+    ): Boolean = withContext(Dispatchers.IO) {
+        ensureAuthenticated()
+        val endpointPath = resolvedEndpoint ?: StalkerProtocol.ENDPOINT_CANDIDATES.first()
+        val urlBuilder = ("$baseUrl$endpointPath").toHttpUrlOrNull()
+            ?.newBuilder() ?: error("Invalid Stalker portal URL: $baseUrl")
+        params.forEach { (k, v) -> urlBuilder.addQueryParameter(k, v) }
+        urlBuilder.addQueryParameter("JsHttpRequest", "1-xml")
+        val cookie = buildString {
+            append("mac=").append(StalkerProtocol.encodeMacForCookie(account.macAddress))
+            append("; stb_lang=en; timezone=Europe/London")
+            append("; sn=").append(identity.serialNumber)
+            append("; PHPSESSID=null")
+        }
+        val builder = Request.Builder()
+            .url(urlBuilder.build())
+            .header("User-Agent", USER_AGENT)
+            .header("X-User-Agent", X_USER_AGENT)
+            .header("Referer", referer)
+            .header("Cookie", cookie)
+            .header("Accept", "*/*")
+        token?.takeIf { it.isNotEmpty() }?.let { builder.header("Authorization", "Bearer $it") }
+
+        gate.withPermit {
+            http.newCall(builder.build()).execute().use { resp ->
+                if (resp.code == 401 || resp.code == 403) {
+                    throw StalkerAuthException("Stalker portal answered ${resp.code} for ${account.name}")
+                }
+                if (!resp.isSuccessful) error("Stalker portal answered HTTP ${resp.code}")
+                val source = resp.body?.source() ?: return@use false
+                var sniffing = true
+                val sniff = StringBuilder()
+                var sawBytes = false
+                val buf = ByteArray(STREAM_READ_BYTES)
+                var carry = ByteArray(0)   // incomplete trailing UTF-8 sequence from the last read
+                while (true) {
+                    val n = source.read(buf, carry.size, buf.size - carry.size)
+                    if (n == -1) break
+                    if (n == 0) continue
+                    sawBytes = true
+                    carry.copyInto(buf, 0)
+                    val total = carry.size + n
+                    // Hold back a trailing incomplete multi-byte sequence so a chunk boundary can't
+                    // split a character (which would land replacement chars in programme titles).
+                    var cut = total
+                    var back = 0
+                    while (back < 3 && cut > 0) {
+                        val b = buf[cut - 1].toInt() and 0xFF
+                        if (b < 0x80) break                       // ASCII tail — complete
+                        if (b >= 0xC0) {                          // lead byte: is its sequence complete?
+                            val need = when {
+                                b >= 0xF0 -> 4; b >= 0xE0 -> 3; else -> 2
+                            }
+                            if (total - (cut - 1) < need) cut -= 1 // incomplete — hold it back
+                            break
+                        }
+                        cut -= 1; back += 1                       // continuation byte — keep walking
+                    }
+                    carry = buf.copyOfRange(cut, total)
+                    if (cut == 0) continue
+                    val chunk = String(buf, 0, cut, Charsets.UTF_8)
+                    if (sniffing) {
+                        sniff.append(chunk)
+                        if (sniff.contains(AUTH_FAILED_MARKER, ignoreCase = true)) {
+                            throw StalkerAuthException(
+                                "Stalker portal rejected this device for ${account.name} — check the MAC address (and Serial / Device ID if the portal requires them)"
+                            )
+                        }
+                        if (sniff.length > SNIFF_WINDOW) {
+                            sniffing = false
+                            onChunk(sniff.toString())
+                            sniff.clear()
+                        }
+                    } else {
+                        onChunk(chunk)
+                    }
+                }
+                if (sniffing && sniff.isNotEmpty()) onChunk(sniff.toString())
+                sawBytes
+            }
+        }
+    }
+
     // --- Auth -----------------------------------------------------------------
 
     private suspend fun ensureAuthenticated() {
@@ -264,6 +359,10 @@ class StalkerSession(
          * again and the pair would spin — a self-inflicted request storm, and portals ban for that.
          */
         private const val REAUTH_COOLDOWN_MS = 30_000L
+        /** Bytes buffered at stream start to sniff "Authorization failed." before forwarding. */
+        private const val SNIFF_WINDOW = 512
+        /** Streaming read size — the whole point is that nothing body-sized is ever held. */
+        private const val STREAM_READ_BYTES = 16 * 1024
         // ponytail: fixed ceiling, no adaptive backoff. Raise only with evidence a portal tolerates
         // more; add backoff only if we start seeing 429s at this level.
         // Was 4; lowered after tracing TiviMate 5.3.3 against a controlled portal: the category
