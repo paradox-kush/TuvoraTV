@@ -76,6 +76,9 @@ data class XtreamHubUiState(
 /** How many category fetches may be in flight (fetching + parsing) at the same time. */
 private const val MAX_CONCURRENT_CATEGORY_LOADS = 3
 
+/** How many categories keep their loaded items cached — see itemsCache. */
+private const val MAX_LOADED_CATEGORIES = 40
+
 /** Past this many claimed fetches, best-effort prefetches are DROPPED rather than queued. */
 private const val MAX_OUTSTANDING_CATEGORY_LOADS = 6
 
@@ -120,7 +123,19 @@ class XtreamHubViewModel @Inject constructor(
 
     // In-memory caches so switching sections/accounts and coming back is instant (no spinner, no re-fetch).
     private val categoriesCache = mutableMapOf<String, List<XtreamCategory>>()          // "accountId|section"
-    private val itemsCache = mutableMapOf<String, List<XtreamHubItem>>()                // "accountId|section|categoryId"
+
+    /**
+     * Loaded category items, LRU-bounded. This map used to only grow for the ViewModel's whole
+     * life — every category ever browsed, across sections and accounts, stayed retained (and
+     * every item in it is retained a second time by XtreamItemRegistry). On 2 GB sticks that
+     * unbounded growth is heap the player and Coil don't get. Past the cap the
+     * least-recently-loaded category drops and re-fetches if scrolled back to — a cheap
+     * category call. (research/iptv-catalog-loading.md)
+     */
+    private val itemsCache = object : LinkedHashMap<String, List<XtreamHubItem>>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<XtreamHubItem>>): Boolean =
+            size > MAX_LOADED_CATEGORIES
+    }
 
     // A single category can be tens of MB of JSON on a real panel, so the row lookahead must never
     // turn into a fan-out: at most MAX_CONCURRENT_CATEGORY_LOADS responses are ever being fetched

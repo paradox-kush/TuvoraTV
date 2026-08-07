@@ -323,6 +323,24 @@ class XtreamClient @Inject constructor(
         }
     }
 
+    /**
+     * [vodIndexItems], streamed: rows go to [onItem] as they parse and are then garbage — the
+     * catalog never exists in heap as one list. Returns the delivered count; throws (like the
+     * list variant) on a truncated body, so a partial catalog can't finalize a sync.
+     */
+    suspend fun vodIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        apiFor(acc).getRawCatalog(playerApi(acc, "get_vod_streams")).requireBody().use { body ->
+            XtreamCatalogIndexParser.parseVodInto(body.source(), onItem)
+        }
+    }
+
+    /** Series half of [vodIndexItemsInto]. */
+    suspend fun seriesIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        apiFor(acc).getRawCatalog(playerApi(acc, "get_series")).requireBody().use { body ->
+            XtreamCatalogIndexParser.parseSeriesInto(body.source(), onItem)
+        }
+    }
+
     /** Now + next few programs for a channel (cheap, one call). Full XMLTV grid is the upgrade path. */
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
         val url = playerApi(acc, "get_short_epg").toHttpUrl().newBuilder()

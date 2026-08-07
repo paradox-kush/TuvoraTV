@@ -22,82 +22,99 @@ import okio.BufferedSource
 internal object XtreamCatalogIndexParser {
 
     fun parseVod(source: BufferedSource): List<IndexedItem> =
-        parseArray(source) { r ->
-            var sid: Int? = null
-            var name: String? = null
-            var tmdb: Int? = null
-            var ext: String? = null
-            var poster: String? = null
-            r.beginObject()
-            while (r.hasNext()) {
-                when (r.nextName()) {
-                    "stream_id" -> sid = r.flexInt()
-                    "name" -> name = r.flexString()
-                    "tmdb" -> tmdb = r.flexInt()
-                    "container_extension" -> ext = r.flexString()
-                    "stream_icon" -> poster = r.flexString()
-                    else -> r.skipValue()
-                }
-            }
-            r.endObject()
-            sid?.let {
-                val title = name.orEmpty()
-                IndexedItem(
-                    sid = it,
-                    name = title,
-                    year = TitleNormalizer.yearOf(title),
-                    tmdb = tmdb?.takeIf { t -> t > 0 },
-                    ext = ext?.takeIf { e -> e.isNotBlank() },
-                    poster = poster?.takeIf { p -> p.isNotBlank() },
-                )
-            }
-        }
+        parseArray(source) { readVodItem(it) }
 
     fun parseSeries(source: BufferedSource): List<IndexedItem> =
-        parseArray(source) { r ->
-            var sid: Int? = null
-            var name: String? = null
-            var tmdb: Int? = null
-            var poster: String? = null
-            var preferredReleaseDate: String? = null
-            var fallbackReleaseDate: String? = null
-            r.beginObject()
-            while (r.hasNext()) {
-                when (r.nextName()) {
-                    "series_id" -> sid = r.flexInt()
-                    "name" -> name = r.flexString()
-                    "tmdb" -> tmdb = r.flexInt()
-                    "cover" -> poster = r.flexString()
-                    // Panels can send both spellings. Always read each value before choosing
-                    // one: putting flexString() on the right of ?: leaves the reader sitting
-                    // on an unconsumed value when releaseDate was already populated.
-                    // XUI's camelCase field wins regardless of the fields' JSON order.
-                    "releaseDate" -> r.flexString().let { value ->
-                        if (value != null) preferredReleaseDate = value
-                    }
-                    "release_date" -> r.flexString().let { value ->
-                        if (value != null) fallbackReleaseDate = value
-                    }
-                    else -> r.skipValue()
-                }
-            }
-            r.endObject()
-            sid?.let {
-                val title = name.orEmpty()
-                IndexedItem(
-                    sid = it,
-                    name = title,
-                    year = (preferredReleaseDate ?: fallbackReleaseDate)
-                        ?.trim()
-                        ?.take(4)
-                        ?.toIntOrNull()
-                        ?: TitleNormalizer.yearOf(title),
-                    tmdb = tmdb?.takeIf { t -> t > 0 },
-                    ext = null,
-                    poster = poster?.takeIf { p -> p.isNotBlank() },
-                )
+        parseArray(source) { readSeriesItem(it) }
+
+    private fun readVodItem(r: JsonReader): IndexedItem? {
+        var sid: Int? = null
+        var name: String? = null
+        var tmdb: Int? = null
+        var ext: String? = null
+        var poster: String? = null
+        r.beginObject()
+        while (r.hasNext()) {
+            when (r.nextName()) {
+                "stream_id" -> sid = r.flexInt()
+                "name" -> name = r.flexString()
+                "tmdb" -> tmdb = r.flexInt()
+                "container_extension" -> ext = r.flexString()
+                "stream_icon" -> poster = r.flexString()
+                else -> r.skipValue()
             }
         }
+        r.endObject()
+        return sid?.let {
+            val title = name.orEmpty()
+            IndexedItem(
+                sid = it,
+                name = title,
+                year = TitleNormalizer.yearOf(title),
+                tmdb = tmdb?.takeIf { t -> t > 0 },
+                ext = ext?.takeIf { e -> e.isNotBlank() },
+                poster = poster?.takeIf { p -> p.isNotBlank() },
+            )
+        }
+    }
+
+    private fun readSeriesItem(r: JsonReader): IndexedItem? {
+        var sid: Int? = null
+        var name: String? = null
+        var tmdb: Int? = null
+        var poster: String? = null
+        var preferredReleaseDate: String? = null
+        var fallbackReleaseDate: String? = null
+        r.beginObject()
+        while (r.hasNext()) {
+            when (r.nextName()) {
+                "series_id" -> sid = r.flexInt()
+                "name" -> name = r.flexString()
+                "tmdb" -> tmdb = r.flexInt()
+                "cover" -> poster = r.flexString()
+                // Panels can send both spellings. Always read each value before choosing
+                // one: putting flexString() on the right of ?: leaves the reader sitting
+                // on an unconsumed value when releaseDate was already populated.
+                // XUI's camelCase field wins regardless of the fields' JSON order.
+                "releaseDate" -> r.flexString().let { value ->
+                    if (value != null) preferredReleaseDate = value
+                }
+                "release_date" -> r.flexString().let { value ->
+                    if (value != null) fallbackReleaseDate = value
+                }
+                else -> r.skipValue()
+            }
+        }
+        r.endObject()
+        return sid?.let {
+            val title = name.orEmpty()
+            IndexedItem(
+                sid = it,
+                name = title,
+                year = (preferredReleaseDate ?: fallbackReleaseDate)
+                    ?.trim()
+                    ?.take(4)
+                    ?.toIntOrNull()
+                    ?: TitleNormalizer.yearOf(title),
+                tmdb = tmdb?.takeIf { t -> t > 0 },
+                ext = null,
+                poster = poster?.takeIf { p -> p.isNotBlank() },
+            )
+        }
+    }
+
+    /**
+     * [parseVod]/[parseSeries], streamed: each row goes to [sink] and is then garbage — the
+     * catalog never exists in heap as one list (~40-50 MB of IndexedItem on a 175k panel, on
+     * exactly the devices whose heap can't take it). Returns the delivered count; the same
+     * mid-array/HTTP failure modes throw exactly as in list mode, so a truncated body still
+     * reads as a failed fetch, never as a small catalog.
+     */
+    fun parseVodInto(source: BufferedSource, sink: (IndexedItem) -> Unit): Int =
+        parseArrayInto(source, sink) { readVodItem(it) }
+
+    fun parseSeriesInto(source: BufferedSource, sink: (IndexedItem) -> Unit): Int =
+        parseArrayInto(source, sink) { readSeriesItem(it) }
 
     private inline fun parseArray(
         source: BufferedSource,
@@ -116,6 +133,23 @@ internal object XtreamCatalogIndexParser {
         }
         reader.endArray()
         out
+    }
+
+    private inline fun parseArrayInto(
+        source: BufferedSource,
+        sink: (IndexedItem) -> Unit,
+        readItem: (JsonReader) -> IndexedItem?,
+    ): Int = JsonReader.of(source).use { reader ->
+        if (reader.peek() != JsonReader.Token.BEGIN_ARRAY) {
+            error("expected a catalog array, got ${reader.peek()}")
+        }
+        var n = 0
+        reader.beginArray()
+        while (reader.hasNext()) {
+            readItem(reader)?.let { sink(it); n++ }
+        }
+        reader.endArray()
+        n
     }
 
     private fun JsonReader.flexInt(): Int? = when (peek()) {

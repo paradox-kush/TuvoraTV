@@ -266,7 +266,12 @@ class StalkerSession(
         private const val REAUTH_COOLDOWN_MS = 30_000L
         // ponytail: fixed ceiling, no adaptive backoff. Raise only with evidence a portal tolerates
         // more; add backoff only if we start seeing 429s at this level.
-        private const val MAX_CONCURRENT_REQUESTS = 4
+        // Was 4; lowered after tracing TiviMate 5.3.3 against a controlled portal: the category
+        // leader runs STRICTLY serial against Stalker portals (peak concurrency 1 across its whole
+        // session, even the initial load), and a real portal's Cloudflare has banned this app
+        // before over request volume. 2 keeps browse+EPG overlap without looking like a scraper.
+        // (research/iptv-catalog-loading.md)
+        private const val MAX_CONCURRENT_REQUESTS = 2
         private const val STB_VER =
             "ImageDescription: 0.2.18-r14-pub-250; ImageDate: Wed Aug 29 10:49:52 EEST 2018; PORTAL version: 5.6.1; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x58c"
         private const val USER_AGENT =

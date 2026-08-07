@@ -39,6 +39,9 @@ internal fun itemFp(name: String, year: Int?, tmdb: Int?, ext: String?, poster: 
 
 private fun IndexedItem.fp(): Int = itemFp(name, year, tmdb, ext, poster)
 
+/** Rows per streamed-sync DB flush — matches insertItems' chunk size. */
+private const val FLUSH_CHUNK = 5_000
+
 /**
  * Diffs a fresh catalog fetch against the indexed rows. [existingSids] MUST be ascending
  * (PK read order) and positionally aligned with [existingFps]. Unchanged rows cost one
@@ -227,6 +230,145 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
             removed = diff.goneSids.size,
             total = items.size,
         )
+    }
+
+    /**
+     * Opens a streaming sync: rows are fed one at a time as the response parses
+     * ([SyncSession.accept]) and flushed every [SyncSession.FLUSH_CHUNK], so peak heap is one
+     * chunk (~5k items) instead of the whole catalog. Finalization (vanished-row deletes + the
+     * built_at bump) happens ONLY in [SyncSession.finish]; the parser throws on a truncated body
+     * before the caller gets there, and rows applied before an abort are harmless (idempotent
+     * INSERT OR REPLACE, meta untouched, next sync re-runs).
+     *
+     * Semantics vs [sync]: identical minus the wholesale-reshuffle rebuild shortcut — streaming
+     * can't know the diff size up front, so a renumbered catalog takes the (correct, chunked)
+     * incremental path. On an empty index this IS a streamed rebuild.
+     */
+    suspend fun beginSync(provider: String, kind: MatchKind): SyncSession = withContext(Dispatchers.IO) {
+        var sids = IntArray(4_096)
+        var fps = IntArray(4_096)
+        var count = 0
+        db.rawQuery(
+            "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? ORDER BY sid",
+            arrayOf(provider, kind.slug)
+        ).use { c ->
+            while (c.moveToNext()) {
+                if (count == sids.size) {
+                    sids = sids.copyOf(count * 2); fps = fps.copyOf(count * 2)
+                }
+                sids[count] = c.getLong(0).toInt()
+                fps[count] = itemFp(
+                    name = c.getString(1),
+                    year = if (c.isNull(2)) null else c.getLong(2).toInt(),
+                    tmdb = if (c.isNull(3)) null else c.getLong(3).toInt(),
+                    ext = if (c.isNull(4)) null else c.getString(4),
+                    poster = if (c.isNull(5)) null else c.getString(5),
+                )
+                count++
+            }
+        }
+        if (count == 0) {
+            // First build (or a crashed one): clear leftovers so the stream is a clean rebuild.
+            // idx_meta goes too, so builtAt reads null until finish() writes it (the caller's
+            // "empty list on a first build is OK" check depends on that).
+            db.beginTransaction()
+            try {
+                for (table in listOf("items", "keys", "idx_meta")) {
+                    db.delete(table, "provider = ? AND kind = ?", arrayOf(provider, kind.slug))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        }
+        SyncSession(provider, kind, sids.copyOf(count), fps.copyOf(count))
+    }
+
+    /**
+     * One in-flight streaming sync. Not thread-safe — feed it from the single response-reader
+     * thread (the OkHttp body is already consumed on Dispatchers.IO, so the blocking flushes
+     * land on the right thread by construction).
+     */
+    inner class SyncSession internal constructor(
+        private val provider: String,
+        private val kind: MatchKind,
+        private val existingSids: IntArray,
+        private val existingFps: IntArray,
+    ) {
+        private val seen = BooleanArray(existingSids.size)
+        private val pending = ArrayList<IndexedItem>(FLUSH_CHUNK)
+        private val pendingChanged = ArrayList<Int>()
+        private var fetched = 0
+        private var added = 0
+        private var changed = 0
+
+        /** Accepts one parsed row. Duplicate sids: first occurrence decides, like [diffCatalog]. */
+        fun accept(item: IndexedItem) {
+            fetched++
+            val i = existingSids.ascIndexOf(item.sid)
+            if (i < 0) {
+                pending += item
+                added++
+            } else if (!seen[i]) {
+                seen[i] = true
+                if (existingFps[i] != item.fp()) {
+                    pending += item
+                    pendingChanged += item.sid
+                    changed++
+                }
+            }
+            if (pending.size >= FLUSH_CHUNK) flush()
+        }
+
+        private fun flush() {
+            if (pending.isEmpty()) return
+            // Renamed rows' old name-keys must go before their new keys land (same order sync()
+            // guarantees via its up-front delete).
+            if (pendingChanged.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    for (chunk in pendingChanged.chunked(500)) {
+                        val ph = chunk.joinToString(",") { "?" }
+                        val args = (listOf(provider, kind.slug) + chunk.map { it.toString() }).toTypedArray()
+                        db.delete("keys", "provider = ? AND kind = ? AND sid IN ($ph)", args)
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+            insertItems(provider, kind, pending)
+            pending.clear()
+            pendingChanged.clear()
+        }
+
+        /**
+         * Flushes the tail, deletes rows the fetch no longer contains, and bumps built_at LAST.
+         * An empty fetch against an existing index is a panel glitch — nothing is deleted and
+         * built_at stays stale so the next window retries (mirrors [sync]).
+         */
+        fun finish(): SyncStats {
+            if (fetched == 0 && existingSids.isNotEmpty()) return SyncStats(0, 0, 0, existingSids.size)
+            flush()
+            val gone = ArrayList<Int>()
+            for (i in existingSids.indices) if (!seen[i]) gone += existingSids[i]
+            if (gone.isNotEmpty()) {
+                db.beginTransaction()
+                try {
+                    for (chunk in gone.chunked(500)) {
+                        val ph = chunk.joinToString(",") { "?" }
+                        val args = (listOf(provider, kind.slug) + chunk.map { it.toString() }).toTypedArray()
+                        db.delete("keys", "provider = ? AND kind = ? AND sid IN ($ph)", args)
+                        db.delete("items", "provider = ? AND kind = ? AND sid IN ($ph)", args)
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+            writeMeta(provider, kind, fetched)
+            return SyncStats(added = added, changed = changed, removed = gone.size, total = fetched)
+        }
     }
 
     private fun insertItems(provider: String, kind: MatchKind, items: List<IndexedItem>) {

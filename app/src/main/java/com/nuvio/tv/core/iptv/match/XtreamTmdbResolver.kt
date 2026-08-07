@@ -114,8 +114,12 @@ class XtreamTmdbResolver @Inject constructor(
         accounts.filter { it.enabled && it.isXtream() }.forEach { acc ->
             buildScope.launch {
                 if (startDelayMs > 0) delay(startDelayMs)
-                ensureIndexed(acc, MatchKind.MOVIE)
-                ensureIndexed(acc, MatchKind.SERIES)
+                // Respect the playlist's content types: get_vod_streams is the single largest
+                // fetch the app makes (~15 MB on a 60k panel, whole catalog in one response —
+                // the API has no paging), so a user who turned Movies off was still paying for
+                // it on every add and every 72h refresh.
+                if (acc.typeEnabled(XtreamAccount.TYPE_MOVIES)) ensureIndexed(acc, MatchKind.MOVIE)
+                if (acc.typeEnabled(XtreamAccount.TYPE_SERIES)) ensureIndexed(acc, MatchKind.SERIES)
             }
         }
     }
@@ -237,17 +241,23 @@ class XtreamTmdbResolver @Inject constructor(
                     // size of one catalog; letting several accounts warm up concurrently stacked
                     // those peaks in the same heap, which a TV stick's 192 MB ceiling can't take.
                     buildSlot.withPermit {
-                        val items = when (kind) {
-                            MatchKind.MOVIE -> client.vodIndexItems(acc).getOrThrow()
-                            MatchKind.SERIES -> client.seriesIndexItems(acc).getOrThrow()
+                        // STREAMED: each parsed row goes straight into the SQLite session and is
+                        // then garbage, so a build peaks at one 5k flush-chunk instead of the
+                        // whole catalog (~40-50 MB of IndexedItem on a 175k panel — the
+                        // allocation this resolver's own OOM handler below exists for).
+                        val session = index.beginSync(acc.id, kind)
+                        val fetched = when (kind) {
+                            MatchKind.MOVIE -> client.vodIndexItemsInto(acc, session::accept).getOrThrow()
+                            MatchKind.SERIES -> client.seriesIndexItemsInto(acc, session::accept).getOrThrow()
                         }
-                        itemCount = items.size
+                        itemCount = fetched
                         // An empty list where we previously indexed content is a panel glitch, not a
-                        // real catalog — fail into the 1h backoff instead of re-fetching every resolve.
-                        check(items.isNotEmpty() || index.builtAt(acc.id, kind) == null) {
+                        // real catalog — fail into the 1h backoff instead of re-fetching every
+                        // resolve. Checked BEFORE finish() so built_at stays untouched.
+                        check(fetched > 0 || index.builtAt(acc.id, kind) == null) {
                             "panel returned an empty ${kind.slug} list"
                         }
-                        val stats = index.sync(acc.id, kind, items)
+                        val stats = session.finish()
                         Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
                     }
                     reportBuild(kind, itemCount, startedMs, outcome = "ok", detail = null)
