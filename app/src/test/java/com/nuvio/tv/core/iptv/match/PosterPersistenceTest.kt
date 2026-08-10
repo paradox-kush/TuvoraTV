@@ -3,6 +3,7 @@ package com.nuvio.tv.core.iptv.match
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -121,6 +122,30 @@ class PosterPersistenceTest {
             listOf("Apple", "Mango", "Zebra"),
             index.itemsFor(provider, MatchKind.MOVIE, "7", 0, 10).map { it.name }
         )
+    }
+
+    @Test
+    fun `lastAddedAt bumps only when a sync ADDS items`() = runBlocking {
+        val p = "prov-lastadded"
+        index.rebuild(p, MatchKind.MOVIE, listOf(bare(1), bare(2)))
+        val afterBuild = index.lastAddedAt(p, MatchKind.MOVIE)
+        assertTrue("first build must count as additions", afterBuild > 0)
+
+        // No-op re-sync: negatives recorded after the build stay trusted.
+        Thread.sleep(5)
+        index.sync(p, MatchKind.MOVIE, listOf(bare(1), bare(2)))
+        assertEquals(afterBuild, index.lastAddedAt(p, MatchKind.MOVIE))
+
+        // The panel adds a title -> lastAddedAt moves; every older negative is now suspect.
+        Thread.sleep(5)
+        index.sync(p, MatchKind.MOVIE, listOf(bare(1), bare(2), bare(3)))
+        assertTrue(index.lastAddedAt(p, MatchKind.MOVIE) > afterBuild)
+
+        // Manual re-match reset moves it too (the settings action).
+        val beforeReset = index.lastAddedAt(p, MatchKind.MOVIE)
+        Thread.sleep(5)
+        index.distrustNegativeMappings(p)
+        assertTrue(index.lastAddedAt(p, MatchKind.MOVIE) > beforeReset)
     }
 
     @Test

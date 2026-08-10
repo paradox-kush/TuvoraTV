@@ -69,6 +69,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.theme.NuvioTheme
@@ -237,6 +238,19 @@ fun XtreamSettingsContent(
                     onClick = {
                         actionsFor = null
                         editFor = account
+                    }
+                )
+            }
+            if (account.isXtream()) {
+                // Stale "not on this provider" verdicts hide titles the panel added AFTER the
+                // verdict (they sync across devices and live up to 7 days). Catalog syncs that
+                // ADD items reset them automatically; this is the do-it-now button.
+                SettingsActionRow(
+                    title = "Re-match catalog",
+                    subtitle = "Re-check titles this playlist was thought not to have",
+                    onClick = {
+                        viewModel.rematchCatalog(account.id)
+                        actionsFor = null
                     }
                 )
             }

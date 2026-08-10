@@ -390,6 +390,11 @@ class XtreamSettingsViewModel @Inject constructor(
         )
     }
 
+    /** Distrust every "not on this provider" verdict for this playlist (see XtreamMatchIndex). */
+    fun rematchCatalog(id: String) {
+        viewModelScope.launch { runCatching { matchIndex.distrustNegativeMappings(id) } }
+    }
+
     fun setEnabled(id: String, enabled: Boolean) {
         viewModelScope.launch {
             store.setEnabled(id, enabled)

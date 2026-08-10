@@ -120,19 +120,26 @@ data class UnsyncedMapping(val kind: String, val tmdb: Int, val sid: Int?, val m
 @Singleton
 class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context) {
 
-    private val helper = object : SQLiteOpenHelper(context, "xtream_match.db", null, 4) {
+    private val helper = object : SQLiteOpenHelper(context, "xtream_match.db", null, 5) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, category_id TEXT, epg_id TEXT, tv_archive INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX items_cat ON items(provider, kind, category_id, pos)")
             db.execSQL("CREATE TABLE cats(provider TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, sort INTEGER NOT NULL, PRIMARY KEY(provider, kind, id)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX items_tmdb ON items(provider, kind, tmdb)")
             db.execSQL("CREATE TABLE keys(provider TEXT NOT NULL, kind TEXT NOT NULL, k TEXT NOT NULL, sid INTEGER NOT NULL, PRIMARY KEY(provider, kind, k, sid)) WITHOUT ROWID")
-            db.execSQL("CREATE TABLE idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
+            db.execSQL("CREATE TABLE idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, last_added_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
             db.execSQL("CREATE TABLE tmdb_map(provider TEXT NOT NULL, kind TEXT NOT NULL, tmdb INTEGER NOT NULL, sid INTEGER, matched_name TEXT, updated_at INTEGER NOT NULL, synced INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, tmdb)) WITHOUT ROWID")
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            // index tables are rebuildable caches; mappings re-pull from Supabase
+            if (oldVersion >= 4) {
+                // v5 is additive: idx_meta.last_added_at (negatives are only trusted when they
+                // postdate the catalog's newest addition). Keep the v4 data — a full drop here
+                // would cost every user a re-index for one column.
+                db.execSQL("ALTER TABLE idx_meta ADD COLUMN last_added_at INTEGER NOT NULL DEFAULT 0")
+                return
+            }
+            // pre-v4: index tables are rebuildable caches; mappings re-pull from Supabase
             db.execSQL("DROP TABLE IF EXISTS items"); db.execSQL("DROP TABLE IF EXISTS keys")
             db.execSQL("DROP TABLE IF EXISTS idx_meta"); db.execSQL("DROP TABLE IF EXISTS tmdb_map")
             db.execSQL("DROP TABLE IF EXISTS cats")
@@ -162,6 +169,26 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         db.rawQuery("SELECT built_at FROM idx_meta WHERE provider = ? AND kind = ?", arrayOf(provider, kind.slug)).use { c ->
             if (c.moveToFirst()) c.getLong(0) else null
         }
+    }
+
+    /**
+     * When this provider+kind last GAINED catalog items (0 = never observed). Tier-2 negative
+     * mappings ("not on this provider") are only honored when they postdate this — a panel that
+     * added titles invalidates every older miss, locally AND ones synced from other devices.
+     */
+    suspend fun lastAddedAt(provider: String, kind: MatchKind): Long = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT last_added_at FROM idx_meta WHERE provider = ? AND kind = ?",
+            arrayOf(provider, kind.slug)
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
+    }
+
+    /** Manual re-match reset: distrust every negative verdict recorded before now. */
+    suspend fun distrustNegativeMappings(provider: String) = withContext(Dispatchers.IO) {
+        db.execSQL(
+            "UPDATE idx_meta SET last_added_at = ? WHERE provider = ?",
+            arrayOf<Any?>(System.currentTimeMillis(), provider)
+        )
     }
 
     /**
@@ -249,7 +276,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
             db.endTransaction()
         }
         insertItems(provider, kind, items)
-        writeMeta(provider, kind, items.size)
+        writeMeta(provider, kind, items.size, addedCount = items.size)
     }
 
     /**
@@ -322,7 +349,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
             db.endTransaction()
         }
         insertItems(provider, kind, diff.upserts)
-        writeMeta(provider, kind, items.size)
+        writeMeta(provider, kind, items.size, addedCount = diff.upserts.size - diff.changedSids.size)
         SyncStats(
             added = diff.upserts.size - diff.changedSids.size,
             changed = diff.changedSids.size,
@@ -470,7 +497,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                     db.endTransaction()
                 }
             }
-            writeMeta(provider, kind, fetched)
+            writeMeta(provider, kind, fetched, addedCount = added)
             return SyncStats(added = added, changed = changed, removed = gone.size, total = fetched)
         }
     }
@@ -538,12 +565,18 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         )
     }
 
-    private fun writeMeta(provider: String, kind: MatchKind, itemCount: Int) {
+    private fun writeMeta(provider: String, kind: MatchKind, itemCount: Int, addedCount: Int) {
         db.beginTransaction()
         try {
+            val previousLastAdded = db.rawQuery(
+                "SELECT last_added_at FROM idx_meta WHERE provider = ? AND kind = ?",
+                arrayOf(provider, kind.slug)
+            ).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
+            // Catalog gained titles -> every older negative verdict is suspect (see lastAddedAt).
+            val lastAdded = if (addedCount > 0) System.currentTimeMillis() else previousLastAdded
             db.execSQL(
-                "INSERT OR REPLACE INTO idx_meta(provider, kind, built_at, item_count) VALUES(?,?,?,?)",
-                arrayOf<Any?>(provider, kind.slug, System.currentTimeMillis(), itemCount)
+                "INSERT OR REPLACE INTO idx_meta(provider, kind, built_at, item_count, last_added_at) VALUES(?,?,?,?,?)",
+                arrayOf<Any?>(provider, kind.slug, System.currentTimeMillis(), itemCount, lastAdded)
             )
             db.setTransactionSuccessful()
         } finally {
