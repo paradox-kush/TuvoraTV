@@ -9,10 +9,20 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-enum class MatchKind(val slug: String) { MOVIE("movie"), SERIES("series") }
+enum class MatchKind(val slug: String) { MOVIE("movie"), SERIES("series"), LIVE("live") }
 
-/** One catalog entry as stored in the index. [ext] = container extension (movies only). */
-data class IndexedItem(val sid: Int, val name: String, val year: Int?, val tmdb: Int?, val ext: String?, val poster: String? = null)
+/**
+ * One catalog entry as stored in the index. [ext] = container extension (movies only).
+ * P7 (items 4-5): the index doubles as the Xtream BROWSE catalog — [categoryId] scopes hub rows,
+ * [epgId]/[hasArchive] carry the live-channel fields the guide needs.
+ */
+data class IndexedItem(
+    val sid: Int, val name: String, val year: Int?, val tmdb: Int?, val ext: String?,
+    val poster: String? = null, val categoryId: String? = null, val epgId: String? = null,
+    val hasArchive: Boolean = false,
+    /** Arrival index in the panel's bulk list — categories serve in THE PANEL'S order, never sorted. */
+    val pos: Int = 0,
+)
 
 /** A confirmed (or confirmed-absent when [sid] is null) TMDB->stream mapping. */
 data class CachedMapping(val sid: Int?, val matchedName: String?, val updatedAtMs: Long)
@@ -27,17 +37,29 @@ internal data class CatalogDiff(val upserts: List<IndexedItem>, val changedSids:
  * Row fingerprint for change detection between an indexed row and its fresh fetch.
  * ponytail: a 32-bit hash can collide (~2^-32 per changed row) leaving one stale row;
  * exact field comparison would need all 175k names in heap — accepted ceiling.
+ *
+ * Poster is deliberately NOT part of the fingerprint: lazily enriched artwork (written by
+ * PosterEnricher for panels whose bulk lists ship no icons) must not read as a "change" on
+ * the next sync — the bulk row's empty icon would win and wipe the enrichment. Bulk icon
+ * updates still land: the item write coalesces a non-null incoming poster over the stored one.
  */
-internal fun itemFp(name: String, year: Int?, tmdb: Int?, ext: String?, poster: String?): Int {
+internal fun itemFp(
+    name: String, year: Int?, tmdb: Int?, ext: String?,
+    categoryId: String? = null, epgId: String? = null, hasArchive: Boolean = false,
+    pos: Int = 0,
+): Int {
     var h = name.hashCode()
     h = 31 * h + (year ?: -1)
     h = 31 * h + (tmdb ?: -1)
     h = 31 * h + (ext?.hashCode() ?: 0)
-    h = 31 * h + (poster?.hashCode() ?: 0)
+    h = 31 * h + (categoryId?.hashCode() ?: 0)
+    h = 31 * h + (epgId?.hashCode() ?: 0)
+    h = 31 * h + if (hasArchive) 1 else 0
+    h = 31 * h + pos
     return h
 }
 
-private fun IndexedItem.fp(): Int = itemFp(name, year, tmdb, ext, poster)
+private fun IndexedItem.fp(): Int = itemFp(name, year, tmdb, ext, categoryId, epgId, hasArchive, pos)
 
 /** Rows per streamed-sync DB flush — matches insertItems' chunk size. */
 private const val FLUSH_CHUNK = 5_000
@@ -98,9 +120,11 @@ data class UnsyncedMapping(val kind: String, val tmdb: Int, val sid: Int?, val m
 @Singleton
 class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context) {
 
-    private val helper = object : SQLiteOpenHelper(context, "xtream_match.db", null, 2) {
+    private val helper = object : SQLiteOpenHelper(context, "xtream_match.db", null, 4) {
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
+            db.execSQL("CREATE TABLE items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, category_id TEXT, epg_id TEXT, tv_archive INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
+            db.execSQL("CREATE INDEX items_cat ON items(provider, kind, category_id, pos)")
+            db.execSQL("CREATE TABLE cats(provider TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, sort INTEGER NOT NULL, PRIMARY KEY(provider, kind, id)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX items_tmdb ON items(provider, kind, tmdb)")
             db.execSQL("CREATE TABLE keys(provider TEXT NOT NULL, kind TEXT NOT NULL, k TEXT NOT NULL, sid INTEGER NOT NULL, PRIMARY KEY(provider, kind, k, sid)) WITHOUT ROWID")
             db.execSQL("CREATE TABLE idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
@@ -111,6 +135,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
             // index tables are rebuildable caches; mappings re-pull from Supabase
             db.execSQL("DROP TABLE IF EXISTS items"); db.execSQL("DROP TABLE IF EXISTS keys")
             db.execSQL("DROP TABLE IF EXISTS idx_meta"); db.execSQL("DROP TABLE IF EXISTS tmdb_map")
+            db.execSQL("DROP TABLE IF EXISTS cats")
             onCreate(db)
         }
     }
@@ -124,7 +149,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
     suspend fun purge(provider: String) = withContext(Dispatchers.IO) {
         db.beginTransaction()
         try {
-            for (t in listOf("items", "keys", "idx_meta", "tmdb_map")) {
+            for (t in listOf("items", "keys", "idx_meta", "tmdb_map", "cats")) {
                 db.delete(t, "provider = ?", arrayOf(provider))
             }
             db.setTransactionSuccessful()
@@ -140,10 +165,80 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
     }
 
     /**
+     * Indexed item count for a provider+kind, or null when never built — the playlist settings
+     * row's catalog counts (item 8): the numbers already exist locally, zero API calls.
+     */
+    suspend fun indexedCount(provider: String, kind: MatchKind): Int? = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT item_count FROM idx_meta WHERE provider = ? AND kind = ?", arrayOf(provider, kind.slug)).use { c ->
+            if (c.moveToFirst()) c.getInt(0) else null
+        }
+    }
+
+    // --- browse catalog (P7, items 4-5): the hub reads Xtream sections from here --------------
+
+    /** Replaces one provider+kind's category list (fetched alongside the catalog build). */
+    suspend fun replaceCategories(provider: String, kind: MatchKind, categories: List<Pair<String, String>>) = withContext(Dispatchers.IO) {
+        db.beginTransaction()
+        try {
+            db.delete("cats", "provider = ? AND kind = ?", arrayOf(provider, kind.slug))
+            val st = db.compileStatement("INSERT OR REPLACE INTO cats(provider, kind, id, name, sort) VALUES(?,?,?,?,?)")
+            categories.forEachIndexed { i, (id, name) ->
+                st.clearBindings()
+                st.bindString(1, provider); st.bindString(2, kind.slug)
+                st.bindString(3, id); st.bindString(4, name); st.bindLong(5, i.toLong())
+                st.executeInsert()
+            }
+            st.close()
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** The stored category list in panel order. Empty when the catalog was never built. */
+    suspend fun categoriesFor(provider: String, kind: MatchKind): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT id, name FROM cats WHERE provider = ? AND kind = ? ORDER BY sort", arrayOf(provider, kind.slug)).use { c ->
+            buildList { while (c.moveToNext()) add(c.getString(0) to c.getString(1)) }
+        }
+    }
+
+    /**
+     * One window of a category (or the whole kind when [categoryId] is null), name-ordered.
+     * THE item-5 read: the hub asks for [limit] rows from [offset] instead of materializing a
+     * whole category — the covering items_cat index makes it a range scan.
+     */
+    suspend fun itemsFor(provider: String, kind: MatchKind, categoryId: String?, offset: Int, limit: Int): List<IndexedItem> = withContext(Dispatchers.IO) {
+        val sql = if (categoryId == null)
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? ORDER BY pos LIMIT ? OFFSET ?"
+        else
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND category_id = ? ORDER BY pos LIMIT ? OFFSET ?"
+        val args = if (categoryId == null) arrayOf(provider, kind.slug, limit.toString(), offset.toString())
+        else arrayOf(provider, kind.slug, categoryId, limit.toString(), offset.toString())
+        db.rawQuery(sql, args).use { c ->
+            buildList {
+                while (c.moveToNext()) add(
+                    IndexedItem(
+                        sid = c.getLong(0).toInt(),
+                        name = c.getString(1),
+                        year = if (c.isNull(2)) null else c.getLong(2).toInt(),
+                        tmdb = if (c.isNull(3)) null else c.getLong(3).toInt(),
+                        ext = if (c.isNull(4)) null else c.getString(4),
+                        poster = if (c.isNull(5)) null else c.getString(5),
+                        categoryId = if (c.isNull(6)) null else c.getString(6),
+                        epgId = if (c.isNull(7)) null else c.getString(7),
+                        hasArchive = c.getLong(8) > 0,
+                    )
+                )
+            }
+        }
+    }
+
+    /**
      * Replaces the whole index for one provider+kind. Chunked transactions keep the write
      * lock short; the meta row is written LAST so a crashed rebuild reads as stale.
      */
-    suspend fun rebuild(provider: String, kind: MatchKind, items: List<IndexedItem>) = withContext(Dispatchers.IO) {
+    suspend fun rebuild(provider: String, kind: MatchKind, itemsIn: List<IndexedItem>) = withContext(Dispatchers.IO) {
+        val items = itemsIn.mapIndexed { i, raw -> if (raw.pos == i) raw else raw.copy(pos = i) }
         db.beginTransaction()
         try {
             db.delete("items", "provider = ? AND kind = ?", arrayOf(provider, kind.slug))
@@ -164,14 +259,15 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
      * the catalog reshuffled wholesale. built_at is bumped LAST so a crashed sync reads as
      * stale and re-runs (idempotent).
      */
-    suspend fun sync(provider: String, kind: MatchKind, items: List<IndexedItem>): SyncStats = withContext(Dispatchers.IO) {
+    suspend fun sync(provider: String, kind: MatchKind, itemsIn: List<IndexedItem>): SyncStats = withContext(Dispatchers.IO) {
+        val items = itemsIn.mapIndexed { i, raw -> if (raw.pos == i) raw else raw.copy(pos = i) }
         // One streaming pass over the existing rows -> primitive (sid, fingerprint) arrays,
         // PK-ordered. ~1.4MB for a 175k catalog; never materializes the old names in heap.
         var sids = IntArray(4_096)
         var fps = IntArray(4_096)
         var count = 0
         db.rawQuery(
-            "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? ORDER BY sid",
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive, pos FROM items WHERE provider = ? AND kind = ? ORDER BY sid",
             arrayOf(provider, kind.slug)
         ).use { c ->
             while (c.moveToNext()) {
@@ -184,7 +280,10 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                     year = if (c.isNull(2)) null else c.getLong(2).toInt(),
                     tmdb = if (c.isNull(3)) null else c.getLong(3).toInt(),
                     ext = if (c.isNull(4)) null else c.getString(4),
-                    poster = if (c.isNull(5)) null else c.getString(5),
+                    categoryId = if (c.isNull(6)) null else c.getString(6),
+                    epgId = if (c.isNull(7)) null else c.getString(7),
+                    hasArchive = c.getLong(8) > 0,
+                    pos = c.getLong(9).toInt(),
                 )
                 count++
             }
@@ -249,7 +348,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         var fps = IntArray(4_096)
         var count = 0
         db.rawQuery(
-            "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? ORDER BY sid",
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive, pos FROM items WHERE provider = ? AND kind = ? ORDER BY sid",
             arrayOf(provider, kind.slug)
         ).use { c ->
             while (c.moveToNext()) {
@@ -262,7 +361,10 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                     year = if (c.isNull(2)) null else c.getLong(2).toInt(),
                     tmdb = if (c.isNull(3)) null else c.getLong(3).toInt(),
                     ext = if (c.isNull(4)) null else c.getString(4),
-                    poster = if (c.isNull(5)) null else c.getString(5),
+                    categoryId = if (c.isNull(6)) null else c.getString(6),
+                    epgId = if (c.isNull(7)) null else c.getString(7),
+                    hasArchive = c.getLong(8) > 0,
+                    pos = c.getLong(9).toInt(),
                 )
                 count++
             }
@@ -303,8 +405,10 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         private var changed = 0
 
         /** Accepts one parsed row. Duplicate sids: first occurrence decides, like [diffCatalog]. */
-        fun accept(item: IndexedItem) {
+        fun accept(raw: IndexedItem) {
             fetched++
+            // Stamp arrival order — the panel's list order IS the browse order (never sorted).
+            val item = raw.copy(pos = fetched - 1)
             val i = existingSids.ascIndexOf(item.sid)
             if (i < 0) {
                 pending += item
@@ -375,29 +479,63 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         for (chunk in items.chunked(5_000)) {
             db.beginTransaction()
             try {
-                val itemStmt = db.compileStatement("INSERT OR REPLACE INTO items(provider, kind, sid, name, year, tmdb, ext, poster) VALUES(?,?,?,?,?,?,?,?)")
+                // UPDATE-then-INSERT rather than INSERT OR REPLACE: an existing row's poster must
+                // survive an incoming null (B-style panels ship empty bulk icons; the stored value
+                // may be PosterEnricher's work). COALESCE keeps non-null incoming icons flowing.
+                // Framework SQLite on the oldest supported TVs predates UPSERT, hence two steps.
+                val updStmt = db.compileStatement("UPDATE items SET name=?, year=?, tmdb=?, ext=?, poster=COALESCE(?, poster), category_id=?, epg_id=?, tv_archive=?, pos=? WHERE provider=? AND kind=? AND sid=?")
+                val insStmt = db.compileStatement("INSERT OR REPLACE INTO items(provider, kind, sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive, pos) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
                 val keyStmt = db.compileStatement("INSERT OR REPLACE INTO keys(provider, kind, k, sid) VALUES(?,?,?,?)")
                 for (it in chunk) {
-                    itemStmt.clearBindings()
-                    itemStmt.bindString(1, provider); itemStmt.bindString(2, kind.slug); itemStmt.bindLong(3, it.sid.toLong())
-                    itemStmt.bindString(4, it.name)
-                    if (it.year != null) itemStmt.bindLong(5, it.year.toLong()) else itemStmt.bindNull(5)
-                    if (it.tmdb != null) itemStmt.bindLong(6, it.tmdb.toLong()) else itemStmt.bindNull(6)
-                    if (it.ext != null) itemStmt.bindString(7, it.ext) else itemStmt.bindNull(7)
-                    if (it.poster != null) itemStmt.bindString(8, it.poster) else itemStmt.bindNull(8)
-                    itemStmt.executeInsert()
+                    updStmt.clearBindings()
+                    updStmt.bindString(1, it.name)
+                    if (it.year != null) updStmt.bindLong(2, it.year.toLong()) else updStmt.bindNull(2)
+                    if (it.tmdb != null) updStmt.bindLong(3, it.tmdb.toLong()) else updStmt.bindNull(3)
+                    if (it.ext != null) updStmt.bindString(4, it.ext) else updStmt.bindNull(4)
+                    if (it.poster != null) updStmt.bindString(5, it.poster) else updStmt.bindNull(5)
+                    if (it.categoryId != null) updStmt.bindString(6, it.categoryId) else updStmt.bindNull(6)
+                    if (it.epgId != null) updStmt.bindString(7, it.epgId) else updStmt.bindNull(7)
+                    updStmt.bindLong(8, if (it.hasArchive) 1L else 0L)
+                    updStmt.bindLong(9, it.pos.toLong())
+                    updStmt.bindString(10, provider); updStmt.bindString(11, kind.slug); updStmt.bindLong(12, it.sid.toLong())
+                    if (updStmt.executeUpdateDelete() == 0) {
+                        insStmt.clearBindings()
+                        insStmt.bindString(1, provider); insStmt.bindString(2, kind.slug); insStmt.bindLong(3, it.sid.toLong())
+                        insStmt.bindString(4, it.name)
+                        if (it.year != null) insStmt.bindLong(5, it.year.toLong()) else insStmt.bindNull(5)
+                        if (it.tmdb != null) insStmt.bindLong(6, it.tmdb.toLong()) else insStmt.bindNull(6)
+                        if (it.ext != null) insStmt.bindString(7, it.ext) else insStmt.bindNull(7)
+                        if (it.poster != null) insStmt.bindString(8, it.poster) else insStmt.bindNull(8)
+                        if (it.categoryId != null) insStmt.bindString(9, it.categoryId) else insStmt.bindNull(9)
+                        if (it.epgId != null) insStmt.bindString(10, it.epgId) else insStmt.bindNull(10)
+                        insStmt.bindLong(11, if (it.hasArchive) 1L else 0L)
+                        insStmt.bindLong(12, it.pos.toLong())
+                        insStmt.executeInsert()
+                    }
                     for (key in TitleNormalizer.keysOf(it.name)) {
                         keyStmt.clearBindings()
                         keyStmt.bindString(1, provider); keyStmt.bindString(2, kind.slug); keyStmt.bindString(3, key); keyStmt.bindLong(4, it.sid.toLong())
                         keyStmt.executeInsert()
                     }
                 }
-                itemStmt.close(); keyStmt.close()
+                updStmt.close(); insStmt.close(); keyStmt.close()
                 db.setTransactionSuccessful()
             } finally {
                 db.endTransaction()
             }
         }
+    }
+
+    /**
+     * PosterEnricher's write-back: artwork learned from get_vod_info/get_series_info for a row
+     * whose bulk list carried no icon. Survives syncs because [itemFp] ignores poster and the
+     * sync write coalesces incoming nulls over it.
+     */
+    suspend fun updatePoster(provider: String, kind: MatchKind, sid: Int, poster: String) = withContext(Dispatchers.IO) {
+        db.execSQL(
+            "UPDATE items SET poster = ? WHERE provider = ? AND kind = ? AND sid = ?",
+            arrayOf<Any>(poster, provider, kind.slug, sid.toString())
+        )
     }
 
     private fun writeMeta(provider: String, kind: MatchKind, itemCount: Int) {
@@ -416,7 +554,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
     /** Substring name search over the indexed catalog — backs the IPTV rows in Search. */
     suspend fun searchByName(provider: String, kind: MatchKind, query: String, limit: Int): List<IndexedItem> = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND name LIKE '%' || ? || '%' LIMIT ?",
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND name LIKE '%' || ? || '%' LIMIT ?",
             arrayOf(provider, kind.slug, query, limit.toString())
         ).use { c ->
             buildList {
@@ -429,6 +567,9 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                             tmdb = if (c.isNull(3)) null else c.getLong(3).toInt(),
                             ext = if (c.isNull(4)) null else c.getString(4),
                             poster = if (c.isNull(5)) null else c.getString(5),
+                            categoryId = if (c.isNull(6)) null else c.getString(6),
+                            epgId = if (c.isNull(7)) null else c.getString(7),
+                            hasArchive = c.getLong(8) > 0,
                         )
                     )
                 }
@@ -439,7 +580,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
     /** All items indexed under a normalized key. */
     suspend fun probe(provider: String, kind: MatchKind, key: String): List<IndexedItem> = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT i.sid, i.name, i.year, i.tmdb, i.ext, i.poster FROM keys x JOIN items i ON i.provider = x.provider AND i.kind = x.kind AND i.sid = x.sid WHERE x.provider = ? AND x.kind = ? AND x.k = ?",
+            "SELECT i.sid, i.name, i.year, i.tmdb, i.ext, i.poster, i.category_id, i.epg_id, i.tv_archive FROM keys x JOIN items i ON i.provider = x.provider AND i.kind = x.kind AND i.sid = x.sid WHERE x.provider = ? AND x.kind = ? AND x.k = ?",
             arrayOf(provider, kind.slug, key)
         ).use { c ->
             buildList {
@@ -452,6 +593,9 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                             tmdb = if (c.isNull(3)) null else c.getLong(3).toInt(),
                             ext = if (c.isNull(4)) null else c.getString(4),
                             poster = if (c.isNull(5)) null else c.getString(5),
+                            categoryId = if (c.isNull(6)) null else c.getString(6),
+                            epgId = if (c.isNull(7)) null else c.getString(7),
+                            hasArchive = c.getLong(8) > 0,
                         )
                     )
                 }
@@ -462,7 +606,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
     /** Tier-1: items whose bulk-list tmdb id already matches. */
     suspend fun byTmdb(provider: String, kind: MatchKind, tmdb: Int): List<IndexedItem> = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND tmdb = ?",
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND tmdb = ?",
             arrayOf(provider, kind.slug, tmdb.toString())
         ).use { c ->
             buildList {
@@ -475,6 +619,9 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                             tmdb = if (c.isNull(3)) null else c.getLong(3).toInt(),
                             ext = if (c.isNull(4)) null else c.getString(4),
                             poster = if (c.isNull(5)) null else c.getString(5),
+                            categoryId = if (c.isNull(6)) null else c.getString(6),
+                            epgId = if (c.isNull(7)) null else c.getString(7),
+                            hasArchive = c.getLong(8) > 0,
                         )
                     )
                 }
@@ -484,7 +631,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
 
     suspend fun item(provider: String, kind: MatchKind, sid: Int): IndexedItem? = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND sid = ?",
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND sid = ?",
             arrayOf(provider, kind.slug, sid.toString())
         ).use { c ->
             if (!c.moveToFirst()) null
@@ -495,6 +642,9 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                 tmdb = if (c.isNull(3)) null else c.getLong(3).toInt(),
                 ext = if (c.isNull(4)) null else c.getString(4),
                 poster = if (c.isNull(5)) null else c.getString(5),
+                categoryId = if (c.isNull(6)) null else c.getString(6),
+                epgId = if (c.isNull(7)) null else c.getString(7),
+                hasArchive = c.getLong(8) > 0,
             )
         }
     }

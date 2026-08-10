@@ -115,6 +115,9 @@ data class XtreamVodInfoResponseDto(
 
 data class XtreamVodInfoDto(
     @FlexInt @Json(name = "tmdb_id") val tmdbId: Int?,
+    // artwork for panels whose bulk get_vod_streams ships empty stream_icons (PosterEnricher)
+    @Json(name = "movie_image") val movieImage: String?,
+    @Json(name = "cover_big") val coverBig: String?,
     // verify signal when a panel has no tmdb_id: year check against the TMDB target
     @Json(name = "releasedate") val releaseDate: String?,
     @Json(name = "release_date") val releaseDateAlt: String?

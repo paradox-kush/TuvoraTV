@@ -341,6 +341,13 @@ class XtreamClient @Inject constructor(
         }
     }
 
+    /** Live half of [vodIndexItemsInto] (P7: the index doubles as the browse catalog). */
+    suspend fun liveIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        apiFor(acc).getRawCatalog(playerApi(acc, "get_live_streams")).requireBody().use { body ->
+            XtreamCatalogIndexParser.parseLiveInto(body.source(), onItem)
+        }
+    }
+
     /** Now + next few programs for a channel (cheap, one call). Full XMLTV grid is the upgrade path. */
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
         val url = playerApi(acc, "get_short_epg").toHttpUrl().newBuilder()
@@ -393,6 +400,26 @@ class XtreamClient @Inject constructor(
             .addQueryParameter("vod_id", vodId.toString())
             .build().toString()
         apiFor(acc).getVodInfo(url).requireBody().info?.tmdbId?.takeIf { it > 0 }
+    }
+
+    /**
+     * Artwork for one VOD item from get_vod_info — the lazy fallback for panels whose bulk
+     * list ships empty stream_icons. null = the panel has no art for it either.
+     */
+    suspend fun vodArtwork(acc: XtreamAccount, vodId: Int): Result<String?> = call {
+        val url = playerApi(acc, "get_vod_info").toHttpUrl().newBuilder()
+            .addQueryParameter("vod_id", vodId.toString())
+            .build().toString()
+        val info = apiFor(acc).getVodInfo(url).requireBody().info
+        info?.movieImage?.takeIf { it.isNotBlank() } ?: info?.coverBig?.takeIf { it.isNotBlank() }
+    }
+
+    /** Series half of [vodArtwork] (get_series_info `info.cover`). */
+    suspend fun seriesArtwork(acc: XtreamAccount, seriesId: Int): Result<String?> = call {
+        val url = playerApi(acc, "get_series_info").toHttpUrl().newBuilder()
+            .addQueryParameter("series_id", seriesId.toString())
+            .build().toString()
+        apiFor(acc).getSeriesInfo(url).requireBody().info?.cover?.takeIf { it.isNotBlank() }
     }
 
     /** What get_vod_info can confirm about a candidate during TMDB->stream matching. */

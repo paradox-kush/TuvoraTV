@@ -33,6 +33,7 @@ internal object XtreamCatalogIndexParser {
         var tmdb: Int? = null
         var ext: String? = null
         var poster: String? = null
+        var categoryId: String? = null
         r.beginObject()
         while (r.hasNext()) {
             when (r.nextName()) {
@@ -41,6 +42,7 @@ internal object XtreamCatalogIndexParser {
                 "tmdb" -> tmdb = r.flexInt()
                 "container_extension" -> ext = r.flexString()
                 "stream_icon" -> poster = r.flexString()
+                "category_id" -> categoryId = r.flexString()
                 else -> r.skipValue()
             }
         }
@@ -54,6 +56,7 @@ internal object XtreamCatalogIndexParser {
                 tmdb = tmdb?.takeIf { t -> t > 0 },
                 ext = ext?.takeIf { e -> e.isNotBlank() },
                 poster = poster?.takeIf { p -> p.isNotBlank() },
+                categoryId = categoryId,
             )
         }
     }
@@ -63,6 +66,7 @@ internal object XtreamCatalogIndexParser {
         var name: String? = null
         var tmdb: Int? = null
         var poster: String? = null
+        var categoryId: String? = null
         var preferredReleaseDate: String? = null
         var fallbackReleaseDate: String? = null
         r.beginObject()
@@ -72,6 +76,7 @@ internal object XtreamCatalogIndexParser {
                 "name" -> name = r.flexString()
                 "tmdb" -> tmdb = r.flexInt()
                 "cover" -> poster = r.flexString()
+                "category_id" -> categoryId = r.flexString()
                 // Panels can send both spellings. Always read each value before choosing
                 // one: putting flexString() on the right of ?: leaves the reader sitting
                 // on an unconsumed value when releaseDate was already populated.
@@ -99,9 +104,49 @@ internal object XtreamCatalogIndexParser {
                 tmdb = tmdb?.takeIf { t -> t > 0 },
                 ext = null,
                 poster = poster?.takeIf { p -> p.isNotBlank() },
+                categoryId = categoryId,
             )
         }
     }
+
+    /** One live list entry -> index row (P7: the index doubles as the browse catalog). */
+    private fun readLiveItem(r: JsonReader): IndexedItem? {
+        var sid: Int? = null
+        var name: String? = null
+        var poster: String? = null
+        var categoryId: String? = null
+        var epgId: String? = null
+        var archive = 0
+        r.beginObject()
+        while (r.hasNext()) {
+            when (r.nextName()) {
+                "stream_id" -> sid = r.flexInt()
+                "name" -> name = r.flexString()
+                "stream_icon" -> poster = r.flexString()
+                "category_id" -> categoryId = r.flexString()
+                "epg_channel_id" -> epgId = r.flexString()
+                "tv_archive" -> archive = r.flexInt() ?: 0
+                else -> r.skipValue()
+            }
+        }
+        r.endObject()
+        return sid?.let {
+            IndexedItem(
+                sid = it,
+                name = name.orEmpty(),
+                year = null,
+                tmdb = null,
+                ext = null,
+                poster = poster?.takeIf { p -> p.isNotBlank() },
+                categoryId = categoryId,
+                epgId = epgId?.takeIf { e -> e.isNotBlank() },
+                hasArchive = archive > 0,
+            )
+        }
+    }
+
+    fun parseLiveInto(source: BufferedSource, sink: (IndexedItem) -> Unit): Int =
+        parseArrayInto(source, sink) { readLiveItem(it) }
 
     /**
      * [parseVod]/[parseSeries], streamed: each row goes to [sink] and is then garbage — the

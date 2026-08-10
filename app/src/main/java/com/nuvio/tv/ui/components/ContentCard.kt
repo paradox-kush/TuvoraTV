@@ -369,10 +369,12 @@ fun ContentCard(
                 val isPlaceholderItem = imageUrl?.startsWith("placeholder://") == true
                 val hasImageUrl = !imageUrl.isNullOrBlank()
                 // Artwork is optional and IPTV panels are full of dead poster links, so the box
-                // must never read as an unlabelled rectangle: the centred name stands in whenever
-                // there is no usable URL *or* the load fails. A successful load is untouched — the
-                // name is only composed once the image reports an error, never while it is loading.
+                // must never read as an unlabelled rectangle — or as a black flash: the centred
+                // name stands in from the first frame and stays through loading and failure;
+                // only a successful decode replaces it. (Memory-cache hits report success during
+                // composition, so cached artwork never shows the name at all.)
                 var imageFailed by remember(imageUrl) { mutableStateOf(false) }
+                var imageLoaded by remember(imageUrl) { mutableStateOf(false) }
                 if (isPlaceholderItem) {
                     val effectivePlaceholderShimmerOffsetState =
                         placeholderShimmerOffsetState ?: rememberPlaceholderShimmerOffsetState(
@@ -394,8 +396,8 @@ fun ContentCard(
                         placeholder = backgroundPainter,
                         error = backgroundPainter,
                         fallback = backgroundPainter,
-                        onLoading = { imageFailed = false },
-                        onSuccess = { imageFailed = false },
+                        onLoading = { imageFailed = false; imageLoaded = false },
+                        onSuccess = { imageFailed = false; imageLoaded = true },
                         onError = { imageFailed = true },
                         contentScale = ContentScale.Crop
                     )
@@ -406,7 +408,7 @@ fun ContentCard(
                 // Read after the image composes, so an onError write lands as a forward
                 // invalidation. Never over a "placeholder://" item — those must keep shimmering
                 // with no name — and not while the card is expanded, which already labels itself.
-                if (!isPlaceholderItem && !isBackdropExpanded && (!hasImageUrl || imageFailed)) {
+                if (!isPlaceholderItem && !isBackdropExpanded && (!hasImageUrl || imageFailed || !imageLoaded)) {
                     // With AMOLED surfaces on, every card token collapses to pure black, so an
                     // artwork-less card would be an invisible rectangle with the name floating on
                     // the background. A hairline border keeps it reading as a card on any surface

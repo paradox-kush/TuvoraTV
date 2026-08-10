@@ -186,6 +186,7 @@ fun XtreamHubScreen(
                 onRetry = viewModel::retry,
                 onLoadCategory = viewModel::loadCategory,
                 onPrefetchCategory = viewModel::prefetchCategory,
+                onLoadMoreCategory = viewModel::loadMoreCategory,
                 selectedTabRequester = selectedTabRequester
             )
         }
@@ -216,6 +217,7 @@ private fun HubBrowseContent(
     onRetry: () -> Unit,
     onLoadCategory: (String) -> Unit,
     onPrefetchCategory: (String) -> Unit,
+    onLoadMoreCategory: (String) -> Unit,
     selectedTabRequester: FocusRequester
 ) {
     // The hub's card size derives from the SAME poster-size preference as Modern home, scaled by
@@ -271,6 +273,8 @@ private fun HubBrowseContent(
                             rowKey = "${uiState.section}_${category.id}",
                             items = items,
                             isLoading = !loaded,
+                            hasMore = uiState.hasMoreByCategory[category.id] == true,
+                            onNearEnd = { onLoadMoreCategory(category.id) },
                             portraitStyle = portraitStyle,
                             landscapeStyle = landscapeStyle,
                             showLabels = uiState.posterLabelsEnabled,
@@ -299,6 +303,8 @@ private fun HubPosterRow(
     rowKey: String,
     items: List<XtreamHubItem>,
     isLoading: Boolean,
+    hasMore: Boolean = false,
+    onNearEnd: (() -> Unit)? = null,
     portraitStyle: PosterCardStyle,
     landscapeStyle: PosterCardStyle,
     showLabels: Boolean,
@@ -402,6 +408,11 @@ private fun HubPosterRow(
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
             ) {
                 itemsIndexed(previews, key = { _, preview -> preview.id }) { index, preview ->
+                    // Item-5 window append: composing the LAST loaded tile of a longer category
+                    // pulls the next window in — endless-scroll inside the row.
+                    if (hasMore && onNearEnd != null && index == previews.lastIndex) {
+                        LaunchedEffect(rowKey, previews.size) { onNearEnd() }
+                    }
                     val isPlaceholder = preview.id.startsWith("__placeholder_")
                     // ContentCard sizes LANDSCAPE cards from a fixed constant — hand it a
                     // POSTER-shaped item with landscape dimensions instead so live tiles track the

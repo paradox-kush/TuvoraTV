@@ -103,21 +103,23 @@ class XtreamTmdbResolver @Inject constructor(
      * accounts participate in TMDB matching (M3U/Stalker have no player_api catalog).
      */
     fun warmUp(accounts: List<XtreamAccount>, startDelayMs: Long = 0L) {
-        // Full provider catalogs routinely exceed 175k rows. Even the reduced streaming
-        // parser retains the final index rows until SQLite has reconciled them, which leaves
-        // too little headroom on 2 GB TV sticks for posters, Compose, and the player. Those
-        // devices build on demand instead of doing speculative work after every sync/start.
-        if (DeviceClass.isLowRam(context)) {
-            Log.i(TAG, "skipping speculative catalog warm-up on low-RAM device")
-            return
-        }
+        // Low-RAM devices used to skip this build outright — justified when it buffered the
+        // whole catalog in heap. The build STREAMS now (measured ~54-87 MB total app heap on a
+        // 2 GB device mid-build, its normal operating range), and skipping became actively
+        // harmful: without an index the hub falls back to whole-category in-memory fetches —
+        // the exact allocation pattern low-RAM devices can't afford. They warm up like everyone
+        // else, serialized by buildSlot; only the startup delay is stretched so the home screen
+        // finishes first.
+        val lowRam = DeviceClass.isLowRam(context)
+        val delayMs = if (lowRam) startDelayMs * 2 else startDelayMs
         accounts.filter { it.enabled && it.isXtream() }.forEach { acc ->
             buildScope.launch {
-                if (startDelayMs > 0) delay(startDelayMs)
+                if (delayMs > 0) delay(delayMs)
                 // Respect the playlist's content types: get_vod_streams is the single largest
                 // fetch the app makes (~15 MB on a 60k panel, whole catalog in one response —
                 // the API has no paging), so a user who turned Movies off was still paying for
                 // it on every add and every 72h refresh.
+                if (acc.typeEnabled(XtreamAccount.TYPE_LIVE)) ensureIndexed(acc, MatchKind.LIVE)
                 if (acc.typeEnabled(XtreamAccount.TYPE_MOVIES)) ensureIndexed(acc, MatchKind.MOVIE)
                 if (acc.typeEnabled(XtreamAccount.TYPE_SERIES)) ensureIndexed(acc, MatchKind.SERIES)
             }
@@ -201,6 +203,7 @@ class XtreamTmdbResolver @Inject constructor(
 
     private suspend fun fetchVerifySignal(acc: XtreamAccount, kind: MatchKind, cand: IndexedItem): VerifySignal =
         when (kind) {
+            MatchKind.LIVE -> VerifySignal(null, null)   // live rows are never TMDB-verified
             MatchKind.MOVIE -> client.vodMatchSignal(acc, cand.sid).getOrNull()
                 ?.let { VerifySignal(it.tmdbId, it.year) }
                 ?: VerifySignal(null, null)
@@ -245,10 +248,18 @@ class XtreamTmdbResolver @Inject constructor(
                         // then garbage, so a build peaks at one 5k flush-chunk instead of the
                         // whole catalog (~40-50 MB of IndexedItem on a 175k panel — the
                         // allocation this resolver's own OOM handler below exists for).
+                        // The category list rides along (P7): stored on success so the hub can
+                        // serve section rows without a per-session network fetch.
+                        val cats = when (kind) {
+                            MatchKind.MOVIE -> client.vodCategories(acc)
+                            MatchKind.SERIES -> client.seriesCategories(acc)
+                            MatchKind.LIVE -> client.liveCategories(acc)
+                        }.getOrNull()
                         val session = index.beginSync(acc.id, kind)
                         val fetched = when (kind) {
                             MatchKind.MOVIE -> client.vodIndexItemsInto(acc, session::accept).getOrThrow()
                             MatchKind.SERIES -> client.seriesIndexItemsInto(acc, session::accept).getOrThrow()
+                            MatchKind.LIVE -> client.liveIndexItemsInto(acc, session::accept).getOrThrow()
                         }
                         itemCount = fetched
                         // An empty list where we previously indexed content is a panel glitch, not a
@@ -258,6 +269,7 @@ class XtreamTmdbResolver @Inject constructor(
                             "panel returned an empty ${kind.slug} list"
                         }
                         val stats = session.finish()
+                        cats?.let { index.replaceCategories(acc.id, kind, it.map { c -> c.id to c.name }) }
                         Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
                     }
                     reportBuild(kind, itemCount, startedMs, outcome = "ok", detail = null)

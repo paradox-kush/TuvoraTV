@@ -9,7 +9,9 @@ import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
+import com.nuvio.tv.core.iptv.isM3UBacked
 import com.nuvio.tv.core.iptv.isM3UFile
+import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.data.local.LiveChannelRef
@@ -61,6 +63,8 @@ data class XtreamHubUiState(
     val section: XtreamSection = XtreamSection.MOVIES,
     val categories: List<XtreamCategory> = emptyList(),
     val itemsByCategory: Map<String, List<XtreamHubItem>> = emptyMap(),
+    /** categoryId -> more rows exist past the loaded window (item 5). */
+    val hasMoreByCategory: Map<String, Boolean> = emptyMap(),
     val loading: Boolean = true,
     val error: String? = null,
     // The user's poster-size preference (Layout settings) — the hub's rails derive their card
@@ -72,6 +76,13 @@ data class XtreamHubUiState(
 ) {
     val selectedAccount: XtreamAccount? get() = accounts.firstOrNull { it.id == selectedAccountId }
 }
+
+/**
+ * Rows per category window (item 5). A category is loaded window-by-window — first window on
+ * row-compose, the next appended as focus nears the row's end — instead of materializing a
+ * 10k-item category as one List.
+ */
+private const val PAGE_SIZE = 400
 
 /** How many category fetches may be in flight (fetching + parsing) at the same time. */
 private const val MAX_CONCURRENT_CATEGORY_LOADS = 3
@@ -96,6 +107,9 @@ class XtreamHubViewModel @Inject constructor(
     private val liveStore: XtreamLiveStore,
     private val libraryRepository: LibraryRepository,
     private val fileStore: com.nuvio.tv.core.iptv.content.M3UFileStore,
+    private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
+    private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
+    private val posterEnricher: com.nuvio.tv.core.iptv.match.PosterEnricher,
     layoutPreferenceDataStore: LayoutPreferenceDataStore,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -167,6 +181,11 @@ class XtreamHubViewModel @Inject constructor(
                         )
                     }
                 }
+        }
+        viewModelScope.launch {
+            // Lazily enriched posters (PosterEnricher) patch loaded rows in place — the DB row
+            // is already updated, this just repaints cards that are on screen right now.
+            posterEnricher.updates.collect { u -> applyPosterUpdate(u) }
         }
         viewModelScope.launch {
             // Keep observing so playlist edits/enables from Settings refresh a hub VM that
@@ -245,6 +264,20 @@ class XtreamHubViewModel @Inject constructor(
         }
         _uiState.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
+            // Xtream reads its section rows from the local catalog once it's built (P7, item 4) —
+            // no per-session category fetch. Index absent (first run): fall through to the live
+            // API below (the warm-up is building it for next time).
+            if (acc.isXtream()) {
+                val stored = runCatching {
+                    matchIndex.categoriesFor(acc.id, section.matchKind).map { (id, name) -> XtreamCategory(id, name) }
+                }.getOrDefault(emptyList())
+                if (stored.isNotEmpty()) {
+                    categoriesCache[catKey] = stored
+                    val visible = stored.filter { acc.allowsCategory(section.typeKey, it.id) }
+                    _uiState.update { it.copy(categories = visible, loading = false) }
+                    return@launch
+                }
+            }
             val client = clientFactory.clientFor(acc)
             val result = when (section) {
                 XtreamSection.LIVE -> client.liveCategories(acc)
@@ -296,9 +329,214 @@ class XtreamHubViewModel @Inject constructor(
         inFlightCategories.add(key)
         viewModelScope.launch {
             try {
-                categoryLoadGate.withPermit { fetchCategoryItems(acc, section, categoryId, key) }
+                categoryLoadGate.withPermit { fetchCategoryItems(acc, section, categoryId, key, prefetch) }
             } finally {
                 inFlightCategories.remove(key)
+            }
+        }
+    }
+
+    private val XtreamSection.matchKind: com.nuvio.tv.core.iptv.match.MatchKind
+        get() = when (this) {
+            XtreamSection.LIVE -> com.nuvio.tv.core.iptv.match.MatchKind.LIVE
+            XtreamSection.MOVIES -> com.nuvio.tv.core.iptv.match.MatchKind.MOVIE
+            XtreamSection.SERIES -> com.nuvio.tv.core.iptv.match.MatchKind.SERIES
+        }
+
+    /**
+     * Appends the next window to an already-loaded category (item 5) — called by the row when
+     * focus nears its end. Single-flight per key, best-effort.
+     */
+    fun loadMoreCategory(categoryId: String) {
+        val acc = _uiState.value.selectedAccount ?: return
+        val section = _uiState.value.section
+        if (_uiState.value.hasMoreByCategory[categoryId] != true) return
+        val key = "${acc.id}|$section|$categoryId"
+        if (!inFlightCategories.add(key)) return
+        viewModelScope.launch {
+            try {
+                val offset = itemsCache[key]?.size ?: return@launch
+                val (more, hasMore) = fetchWindow(acc, section, categoryId, offset)
+                val merged = (itemsCache[key].orEmpty()) + more
+                itemsCache[key] = merged
+                if (_uiState.value.selectedAccountId == acc.id && _uiState.value.section == section) {
+                    _uiState.update {
+                        it.copy(
+                            itemsByCategory = it.itemsByCategory + (categoryId to merged),
+                            hasMoreByCategory = it.hasMoreByCategory + (categoryId to hasMore),
+                        )
+                    }
+                }
+            } finally {
+                inFlightCategories.remove(key)
+            }
+        }
+    }
+
+    /**
+     * One window of a category's items, per source (items 4+5):
+     *  - Xtream w/ built catalog: local index window; stream URLs rebuilt from creds.
+     *  - Xtream first-run (no index yet): the old full network fetch, once.
+     *  - M3U + the Stalker live lineup: paged reads over IptvContentDb.
+     *  - Stalker VOD/series: the portal's bounded page (70) — the protocol's own window.
+     */
+    private suspend fun fetchWindow(
+        acc: XtreamAccount,
+        section: XtreamSection,
+        categoryId: String,
+        offset: Int,
+        prefetch: Boolean = false,
+    ): Pair<List<XtreamHubItem>, Boolean> {
+        if (acc.isXtream() && matchIndex.builtAt(acc.id, section.matchKind) != null) {
+            val client = clientFactory.clientFor(acc) as com.nuvio.tv.core.iptv.XtreamClient
+            val rows = matchIndex.itemsFor(acc.id, section.matchKind, categoryId, offset, PAGE_SIZE + 1)
+            val page = rows.take(PAGE_SIZE)
+            // Panels that ship no icons in the bulk list (or rows indexed before artwork was
+            // known) get filled lazily: ask get_vod_info per null row, in list order, while the
+            // user is on this window. Results land in the DB + patch in via posterUpdates.
+            page.filter { it.poster == null }.map { it.sid }
+                .takeIf { it.isNotEmpty() }
+                ?.let { posterEnricher.enqueue(acc, section.matchKind, it, prioritize = !prefetch) }
+            val items = page.map { r ->
+                when (section) {
+                    XtreamSection.LIVE -> {
+                        val id = XtreamItemRegistry.liveId(acc.id, r.sid)
+                        val url = client.buildStreamUrl(acc, "live", r.sid)
+                        registry.register(
+                            XtreamResolvedItem(
+                                id = id, type = ContentType.TV, name = r.name, poster = r.poster,
+                                streamUrl = url, kind = com.nuvio.tv.core.iptv.XtreamKind.LIVE,
+                                accountId = acc.id, streamId = r.sid
+                            )
+                        )
+                        XtreamHubItem(id, r.name, r.poster, isLive = true, contentId = id, streamUrl = url)
+                    }
+                    XtreamSection.MOVIES -> {
+                        val id = XtreamItemRegistry.vodId(acc.id, r.sid)
+                        registry.register(
+                            XtreamResolvedItem(
+                                id = id, type = ContentType.MOVIE, name = r.name, poster = r.poster,
+                                streamUrl = client.buildStreamUrl(acc, "movie", r.sid, r.ext ?: "mp4"),
+                                accountId = acc.id, streamId = r.sid
+                            )
+                        )
+                        XtreamHubItem(id, r.name, r.poster, isLive = false, contentId = id, streamUrl = null)
+                    }
+                    XtreamSection.SERIES -> {
+                        val id = XtreamItemRegistry.seriesId(acc.id, r.sid)
+                        registry.register(
+                            XtreamResolvedItem(
+                                id = id, type = ContentType.SERIES, name = r.name, poster = r.poster,
+                                streamUrl = "", kind = com.nuvio.tv.core.iptv.XtreamKind.SERIES,
+                                accountId = acc.id, streamId = r.sid
+                            )
+                        )
+                        XtreamHubItem(id, r.name, r.poster, isLive = false, contentId = id, streamUrl = null, detailType = "series")
+                    }
+                }
+            }
+            return items to (rows.size > PAGE_SIZE)
+        }
+        if (acc.sourceType == XtreamAccount.SOURCE_STALKER && section == XtreamSection.LIVE) {
+            val rows = clientFactory.stalker().liveChannelsPage(acc, categoryId, offset, PAGE_SIZE + 1)
+            val page = rows.take(PAGE_SIZE)
+            val items = page.map { ch ->
+                val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
+                registry.register(
+                    XtreamResolvedItem(
+                        id = id, type = ContentType.TV, name = ch.name, poster = ch.logo,
+                        streamUrl = ch.streamUrl, kind = com.nuvio.tv.core.iptv.XtreamKind.LIVE,
+                        accountId = acc.id, streamId = ch.streamId
+                    )
+                )
+                XtreamHubItem(id, ch.name, ch.logo, isLive = true, contentId = id, streamUrl = ch.streamUrl)
+            }
+            return items to (rows.size > PAGE_SIZE)
+        }
+        if (acc.isM3UBacked()) {
+            return when (section) {
+                XtreamSection.LIVE -> contentDb.pageChannels(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
+                    val page = rows.take(PAGE_SIZE)
+                    page.map { r ->
+                        val id = XtreamItemRegistry.liveId(acc.id, r.sid)
+                        registry.register(
+                            XtreamResolvedItem(
+                                id = id, type = ContentType.TV, name = r.name, poster = r.logo,
+                                streamUrl = r.url, kind = com.nuvio.tv.core.iptv.XtreamKind.LIVE,
+                                accountId = acc.id, streamId = r.sid
+                            )
+                        )
+                        XtreamHubItem(id, r.name, r.logo, isLive = true, contentId = id, streamUrl = r.url)
+                    } to (rows.size > PAGE_SIZE)
+                }
+                XtreamSection.MOVIES -> contentDb.pageVod(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
+                    val page = rows.take(PAGE_SIZE)
+                    page.map { r ->
+                        val id = XtreamItemRegistry.vodId(acc.id, r.sid)
+                        registry.register(
+                            XtreamResolvedItem(
+                                id = id, type = ContentType.MOVIE, name = r.name, poster = r.logo,
+                                streamUrl = r.url, accountId = acc.id, streamId = r.sid
+                            )
+                        )
+                        XtreamHubItem(id, r.name, r.logo, isLive = false, contentId = id, streamUrl = null)
+                    } to (rows.size > PAGE_SIZE)
+                }
+                XtreamSection.SERIES -> contentDb.pageSeries(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
+                    val page = rows.take(PAGE_SIZE)
+                    page.map { r ->
+                        val id = XtreamItemRegistry.seriesId(acc.id, r.sid)
+                        registry.register(
+                            XtreamResolvedItem(
+                                id = id, type = ContentType.SERIES, name = r.name, poster = r.logo,
+                                streamUrl = "", kind = com.nuvio.tv.core.iptv.XtreamKind.SERIES,
+                                accountId = acc.id, streamId = r.sid
+                            )
+                        )
+                        XtreamHubItem(id, r.name, r.logo, isLive = false, contentId = id, streamUrl = null, detailType = "series")
+                    } to (rows.size > PAGE_SIZE)
+                }
+            }
+        }
+        // Fallbacks (Xtream before its index exists; Stalker VOD/series): the old full fetch, once.
+        if (offset > 0) return emptyList<XtreamHubItem>() to false
+        return fetchCategoryItemsLegacy(acc, section, categoryId) to false
+    }
+
+    /**
+     * Repaints one lazily-enriched poster on every loaded copy of its row. The index row is
+     * already written; this touches the in-memory copies: registry (detail/play path), the
+     * LRU cache (rows on the backstack), and the visible state.
+     */
+    private fun applyPosterUpdate(u: com.nuvio.tv.core.iptv.match.PosterEnricher.PosterUpdate) {
+        val section = when (u.kind) {
+            com.nuvio.tv.core.iptv.match.MatchKind.MOVIE -> XtreamSection.MOVIES
+            com.nuvio.tv.core.iptv.match.MatchKind.SERIES -> XtreamSection.SERIES
+            com.nuvio.tv.core.iptv.match.MatchKind.LIVE -> return
+        }
+        val cardId = when (section) {
+            XtreamSection.MOVIES -> XtreamItemRegistry.vodId(u.accountId, u.sid)
+            else -> XtreamItemRegistry.seriesId(u.accountId, u.sid)
+        }
+        registry.get(cardId)?.let { registry.register(it.copy(poster = u.poster)) }
+        // entry.setValue only — a get() on this access-ordered LRU inside iteration would
+        // structurally reorder it mid-loop.
+        val prefix = "${u.accountId}|$section|"
+        for (entry in itemsCache.entries) {
+            if (!entry.key.startsWith(prefix)) continue
+            val list = entry.value
+            if (list.none { it.cardId == cardId && it.poster == null }) continue
+            entry.setValue(list.map { if (it.cardId == cardId) it.copy(poster = u.poster) else it })
+        }
+        val st = _uiState.value
+        if (st.selectedAccountId == u.accountId && st.section == section &&
+            st.itemsByCategory.values.any { l -> l.any { it.cardId == cardId && it.poster == null } }
+        ) {
+            _uiState.update { s ->
+                s.copy(itemsByCategory = s.itemsByCategory.mapValues { (_, list) ->
+                    if (list.none { it.cardId == cardId }) list
+                    else list.map { if (it.cardId == cardId) it.copy(poster = u.poster) else it }
+                })
             }
         }
     }
@@ -307,8 +545,29 @@ class XtreamHubViewModel @Inject constructor(
         acc: XtreamAccount,
         section: XtreamSection,
         categoryId: String,
-        key: String
+        key: String,
+        prefetch: Boolean = false,
     ) {
+        val (items, hasMore) = fetchWindow(acc, section, categoryId, offset = 0, prefetch = prefetch)
+        itemsCache[key] = items
+        // Publish only while this account/section is still on screen: a prefetch that lands after
+        // a switch would otherwise inject its items under a category id the new section may reuse.
+        // Nothing is lost — the cache above serves them the moment the user comes back.
+        if (_uiState.value.selectedAccountId == acc.id && _uiState.value.section == section) {
+            _uiState.update {
+                it.copy(
+                    itemsByCategory = it.itemsByCategory + (categoryId to items),
+                    hasMoreByCategory = it.hasMoreByCategory + (categoryId to hasMore),
+                )
+            }
+        }
+    }
+
+    private suspend fun fetchCategoryItemsLegacy(
+        acc: XtreamAccount,
+        section: XtreamSection,
+        categoryId: String,
+    ): List<XtreamHubItem> {
         val client = clientFactory.clientFor(acc)
         val items: List<XtreamHubItem> = when (section) {
             XtreamSection.LIVE -> client.liveChannels(acc, categoryId).getOrDefault(emptyList()).map { ch ->
@@ -346,13 +605,7 @@ class XtreamHubViewModel @Inject constructor(
                 XtreamHubItem(id, s.name, s.poster, isLive = false, contentId = id, streamUrl = null, detailType = "series")
             }
         }
-        itemsCache[key] = items
-        // Publish only while this account/section is still on screen: a prefetch that lands after
-        // a switch would otherwise inject its items under a category id the new section may reuse.
-        // Nothing is lost — the cache above serves them the moment the user comes back.
-        if (_uiState.value.selectedAccountId == acc.id && _uiState.value.section == section) {
-            _uiState.update { it.copy(itemsByCategory = it.itemsByCategory + (categoryId to items)) }
-        }
+        return items
     }
 
     /** Mark a channel as just-watched so it shows in Recent Channels and stays replayable. */

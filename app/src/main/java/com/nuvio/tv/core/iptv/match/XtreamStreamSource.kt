@@ -42,6 +42,7 @@ class XtreamStreamSource @Inject constructor(
         val match = resolver.resolve(acc, kind, tmdbId, titles) ?: return emptyList()
 
         return when (kind) {
+            MatchKind.LIVE -> emptyList()   // live never TMDB-resolves; the guide plays directly
             MatchKind.MOVIE -> {
                 // catalogs carry several editions (4K/HD/language) of the same film —
                 // surface them all: by shared tmdb id where the panel provides ids, else
@@ -94,6 +95,7 @@ class XtreamStreamSource @Inject constructor(
         if (wantKeys.isEmpty()) return emptyList()
 
         return when (kind) {
+            MatchKind.LIVE -> emptyList()   // live never TMDB-resolves; the guide plays directly
             MatchKind.MOVIE -> stalkerClient.searchMovies(acc, query)
                 .filter { TitleNormalizer.normKey(it.name) in wantKeys }
                 .filter { yearCompatible(TitleNormalizer.yearOf(it.name), titles.year) }

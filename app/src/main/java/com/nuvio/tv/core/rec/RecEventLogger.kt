@@ -74,9 +74,6 @@ class RecEventLogger @Inject constructor(
     private val supabaseProvider: SyncBackendSupabaseProvider,
     private val profileManager: ProfileManager,
 ) {
-    init {
-        settings.registerQueuePurger(::discardPendingEvents)
-    }
 
     /**
      * Read per event, never cached. On a household TV the profile IS the user as far as training
@@ -97,6 +94,14 @@ class RecEventLogger @Inject constructor(
     private val flushMutex = Mutex()
     private val queueLock = Any()
     private val queue = ArrayDeque<RecEventRecord>()
+
+    init {
+        // MUST come after queueLock/queue are initialized: registerQueuePurger invokes the purger
+        // IMMEDIATELY when logging is already opted out, and discardPendingEvents synchronizes on
+        // queueLock — so registering from an init block placed above these properties crashed at
+        // startup ("Null reference used for synchronization") for every user who had opted out.
+        settings.registerQueuePurger(::discardPendingEvents)
+    }
 
     @Volatile
     private var started = false

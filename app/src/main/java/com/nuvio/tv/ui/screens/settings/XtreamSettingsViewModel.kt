@@ -61,7 +61,9 @@ class XtreamSettingsViewModel @Inject constructor(
     private val refreshStore: com.nuvio.tv.core.iptv.refresh.IptvRefreshStore,
     private val resolver: XtreamTmdbResolver,
     private val purge: com.nuvio.tv.core.iptv.IptvAccountPurge,
-    private val searchIndex: com.nuvio.tv.core.iptv.XtreamSearchIndex
+    private val searchIndex: com.nuvio.tv.core.iptv.XtreamSearchIndex,
+    private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
+    private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
@@ -494,17 +496,40 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /** Lazily fetch the account-status line for a settings row. Non-blocking, cached, silent on failure. */
     fun ensureAccountStatus(account: XtreamAccount) {
-        // M3U playlists have no account endpoint at all — don't burn a doomed request per row.
-        if (account.isM3UBacked()) return
         if (!statusRequests.add(account.id)) return
         viewModelScope.launch {
+            // Catalog counts from LOCAL data only — zero API calls (item 8; how TiviMate shows
+            // "Movies: 60000"). Prepended so even an unreachable panel still shows its sizes.
+            val counts = runCatching { localCatalogCounts(account) }.getOrDefault(emptyList())
+            if (counts.isNotEmpty()) {
+                _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to counts.joinToString(" · "))) }
+            }
+            // M3U playlists have no account endpoint at all — don't burn a doomed request per row.
+            if (account.isM3UBacked()) return@launch
             clientFactory.clientFor(account).accountInfo(account)
                 .onSuccess { info ->
                     info.toStatusLine()?.let { line ->
-                        _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to line)) }
+                        val full = (counts + line).joinToString(" · ")
+                        _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to full)) }
                     }
                 }
-                .onFailure { statusRequests.remove(account.id) }   // silent; retry on a later recomposition
+                .onFailure { if (counts.isEmpty()) statusRequests.remove(account.id) }   // silent; retry later
+        }
+    }
+
+    /** "12,000 channels" / "Movies 60000" style parts, from the local stores only. */
+    private suspend fun localCatalogCounts(account: XtreamAccount): List<String> = when {
+        account.isM3UBacked() -> buildList {
+            val live = contentDb.liveCount(account.id)
+            if (live > 0) add("$live channels")
+        }
+        account.sourceType == XtreamAccount.SOURCE_STALKER -> buildList {
+            val live = contentDb.liveCount(account.id)
+            if (live > 0) add("$live channels")
+        }
+        else -> buildList {
+            matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.MOVIE)?.let { add("$it movies") }
+            matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.SERIES)?.let { add("$it series") }
         }
     }
 

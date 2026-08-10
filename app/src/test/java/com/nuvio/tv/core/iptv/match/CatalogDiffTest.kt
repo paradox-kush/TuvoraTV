@@ -13,7 +13,7 @@ class CatalogDiffTest {
     private fun existing(vararg items: IndexedItem): Pair<IntArray, IntArray> {
         val sorted = items.sortedBy { it.sid }
         return IntArray(sorted.size) { sorted[it].sid } to
-            IntArray(sorted.size) { sorted[it].let { i -> itemFp(i.name, i.year, i.tmdb, i.ext, i.poster) } }
+            IntArray(sorted.size) { sorted[it].let { i -> itemFp(i.name, i.year, i.tmdb, i.ext, i.categoryId, i.epgId, i.hasArchive) } }
     }
 
     @Test
