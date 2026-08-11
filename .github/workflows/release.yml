@@ -34,7 +34,7 @@ on:
       play_track:
         description: 'Google Play track to publish the AAB to'
         required: true
-        default: internal
+        default: alpha
         type: choice
         options: [internal, alpha, beta, production]
 
@@ -167,8 +167,9 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.tuvora.tv
           releaseFiles: app/build/outputs/bundle/playstoreRelease/*.aab
-          # Tag push -> internal (safe); manual run can choose alpha/beta/production.
-          track: ${{ github.event.inputs.play_track || 'internal' }}
+          # Tag push -> alpha, so the closed test the production-access gate measures never
+          # goes stale. Manual run can choose internal/beta/production.
+          track: ${{ github.event.inputs.play_track || 'alpha' }}
           status: completed
 
       # The download links people actually use — tuvora.co/tv, and the aftv.news Downloader code
