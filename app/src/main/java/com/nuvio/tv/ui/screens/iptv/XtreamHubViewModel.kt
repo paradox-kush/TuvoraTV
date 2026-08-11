@@ -385,7 +385,7 @@ class XtreamHubViewModel @Inject constructor(
     /**
      * One window of a category's items, per source (items 4+5):
      *  - Xtream w/ built catalog: local index window; stream URLs rebuilt from creds.
-     *  - Xtream first-run (no index yet): the old full network fetch, once.
+     *  - Xtream first-run (no index yet): the old full network fetch, once, kept to one window.
      *  - M3U + the Stalker live lineup: paged reads over IptvContentDb.
      *  - Stalker VOD/series: the portal's bounded page (70) — the protocol's own window.
      */
@@ -507,7 +507,8 @@ class XtreamHubViewModel @Inject constructor(
                 }
             }
         }
-        // Fallbacks (Xtream before its index exists; Stalker VOD/series): the old full fetch, once.
+        // Fallbacks (Xtream before its index exists; Stalker VOD/series): the old full fetch,
+        // once — bounded to one window for Xtream, see fetchCategoryItemsLegacy.
         if (offset > 0) return emptyList<XtreamHubItem>() to false
         return fetchCategoryItemsLegacy(acc, section, categoryId) to false
     }
@@ -577,9 +578,14 @@ class XtreamHubViewModel @Inject constructor(
         section: XtreamSection,
         categoryId: String,
     ): List<XtreamHubItem> {
+        // Xtream lands here only while its index is still building: keep just the first window —
+        // registering an entire 10k-item category (rows + registry + UI state) was a first-launch
+        // heap spike, and the index takes over with real paging once categories reload. Stalker
+        // VOD/series have no index to heal from, so they stay uncapped.
+        fun <T> List<T>.bounded(): List<T> = if (acc.isXtream()) take(PAGE_SIZE) else this
         val client = clientFactory.clientFor(acc)
         val items: List<XtreamHubItem> = when (section) {
-            XtreamSection.LIVE -> client.liveChannels(acc, categoryId).getOrDefault(emptyList()).map { ch ->
+            XtreamSection.LIVE -> client.liveChannels(acc, categoryId).getOrDefault(emptyList()).bounded().map { ch ->
                 val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
                 registry.register(
                     XtreamResolvedItem(
@@ -590,7 +596,7 @@ class XtreamHubViewModel @Inject constructor(
                 )
                 XtreamHubItem(id, ch.name, ch.logo, isLive = true, contentId = id, streamUrl = ch.streamUrl)
             }
-            XtreamSection.MOVIES -> client.vodMovies(acc, categoryId).getOrDefault(emptyList()).map { m ->
+            XtreamSection.MOVIES -> client.vodMovies(acc, categoryId).getOrDefault(emptyList()).bounded().map { m ->
                 val id = XtreamItemRegistry.vodId(acc.id, m.streamId)
                 registry.register(
                     XtreamResolvedItem(
@@ -601,7 +607,7 @@ class XtreamHubViewModel @Inject constructor(
                 )
                 XtreamHubItem(id, m.name, m.poster, isLive = false, contentId = id, streamUrl = null)
             }
-            XtreamSection.SERIES -> client.series(acc, categoryId).getOrDefault(emptyList()).map { s ->
+            XtreamSection.SERIES -> client.series(acc, categoryId).getOrDefault(emptyList()).bounded().map { s ->
                 val id = XtreamItemRegistry.seriesId(acc.id, s.seriesId)
                 registry.register(
                     XtreamResolvedItem(
