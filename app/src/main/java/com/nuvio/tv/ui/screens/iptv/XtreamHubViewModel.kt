@@ -355,15 +355,24 @@ class XtreamHubViewModel @Inject constructor(
         if (!inFlightCategories.add(key)) return
         viewModelScope.launch {
             try {
-                val offset = itemsCache[key]?.size ?: return@launch
+                val existing = itemsCache[key].orEmpty()
+                val offset = existing.size
                 val (more, hasMore) = fetchWindow(acc, section, categoryId, offset)
-                val merged = (itemsCache[key].orEmpty()) + more
+                // Dedup + no-progress guard. The row triggers loadMore as focus nears its end, so a
+                // window that returns rows ALREADY loaded (a stale index, or a tied ORDER BY
+                // overlapping its pages) would append dupes, grow the row, re-trigger, and spin
+                // forever — the "category rotating on a loop" bug. Only NEW ids extend the row, and
+                // a window that adds nothing new ends paging.
+                val seen = existing.mapTo(HashSet(existing.size)) { it.cardId }
+                val fresh = more.filter { it.cardId !in seen }
+                val merged = existing + fresh
                 itemsCache[key] = merged
+                val stillMore = hasMore && fresh.isNotEmpty()
                 if (_uiState.value.selectedAccountId == acc.id && _uiState.value.section == section) {
                     _uiState.update {
                         it.copy(
                             itemsByCategory = it.itemsByCategory + (categoryId to merged),
-                            hasMoreByCategory = it.hasMoreByCategory + (categoryId to hasMore),
+                            hasMoreByCategory = it.hasMoreByCategory + (categoryId to stillMore),
                         )
                     }
                 }

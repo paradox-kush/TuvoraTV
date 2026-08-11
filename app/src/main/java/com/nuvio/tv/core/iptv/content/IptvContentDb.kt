@@ -314,7 +314,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     suspend fun pageChannels(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<ContentChannel> = withContext(Dispatchers.IO) {
         val (where, args) = catFilter(playlistId, categoryId)
         db.rawQuery(
-            "SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive FROM channels WHERE $where ORDER BY name LIMIT ? OFFSET ?",
+            "SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive FROM channels WHERE $where ORDER BY name, sid LIMIT ? OFFSET ?",
             args + arrayOf(limit.toString(), offset.toString()),
         ).use { c ->
             buildList {
@@ -326,7 +326,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     suspend fun pageVod(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<ContentVod> = withContext(Dispatchers.IO) {
         val (where, args) = catFilter(playlistId, categoryId)
         db.rawQuery(
-            "SELECT sid, name, logo, category_id, url, ext, cmd FROM vod WHERE $where ORDER BY name LIMIT ? OFFSET ?",
+            "SELECT sid, name, logo, category_id, url, ext, cmd FROM vod WHERE $where ORDER BY name, sid LIMIT ? OFFSET ?",
             args + arrayOf(limit.toString(), offset.toString()),
         ).use { c ->
             buildList {
@@ -338,7 +338,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     suspend fun pageSeries(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<ContentSeries> = withContext(Dispatchers.IO) {
         val (where, args) = catFilter(playlistId, categoryId)
         db.rawQuery(
-            "SELECT sid, name, logo, category_id FROM series WHERE $where ORDER BY name LIMIT ? OFFSET ?",
+            "SELECT sid, name, logo, category_id FROM series WHERE $where ORDER BY name, sid LIMIT ? OFFSET ?",
             args + arrayOf(limit.toString(), offset.toString()),
         ).use { c ->
             buildList { while (c.moveToNext()) add(ContentSeries(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3))) }

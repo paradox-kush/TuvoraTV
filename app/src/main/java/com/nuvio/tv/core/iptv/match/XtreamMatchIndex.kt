@@ -236,9 +236,9 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
      */
     suspend fun itemsFor(provider: String, kind: MatchKind, categoryId: String?, offset: Int, limit: Int): List<IndexedItem> = withContext(Dispatchers.IO) {
         val sql = if (categoryId == null)
-            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? ORDER BY pos LIMIT ? OFFSET ?"
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? ORDER BY pos, sid LIMIT ? OFFSET ?"
         else
-            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND category_id = ? ORDER BY pos LIMIT ? OFFSET ?"
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND category_id = ? ORDER BY pos, sid LIMIT ? OFFSET ?"
         val args = if (categoryId == null) arrayOf(provider, kind.slug, limit.toString(), offset.toString())
         else arrayOf(provider, kind.slug, categoryId, limit.toString(), offset.toString())
         db.rawQuery(sql, args).use { c ->
