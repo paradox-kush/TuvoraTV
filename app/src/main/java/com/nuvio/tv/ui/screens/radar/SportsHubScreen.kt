@@ -1,23 +1,31 @@
 package com.nuvio.tv.ui.screens.radar
 
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -27,16 +35,24 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -44,17 +60,25 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.nuvio.tv.core.radar.RadarCategory
 import com.nuvio.tv.core.radar.RadarChannelMatcher
 import com.nuvio.tv.core.radar.RadarFeaturedEvent
 import com.nuvio.tv.core.radar.RadarFixture
 import com.nuvio.tv.core.radar.RadarLeague
+import com.nuvio.tv.core.radar.RadarLiveScore
 import com.nuvio.tv.core.radar.RadarTime
 import com.nuvio.tv.core.radar.radarWhenLabel
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.components.placeholderCardShimmer
+import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
 import com.nuvio.tv.ui.screens.collection.NuvioTextField
+import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 /**
  * Sports Centre hub (drawer destination): featured event banners, live & upcoming fixtures for
@@ -62,7 +86,7 @@ import kotlinx.coroutines.delay
  * channel-matching overlay; OK on a channel plays it fullscreen through the live/mpv route.
  * D-pad only — no long-press idioms.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SportsHubScreen(
     onPlayChannel: (title: String, streamUrl: String, contentId: String) -> Unit,
@@ -135,18 +159,18 @@ fun SportsHubScreen(
             "Sports",
             style = MaterialTheme.typography.headlineSmall,
             color = NuvioTheme.colors.TextPrimary,
-            modifier = Modifier.padding(start = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.md),
+            modifier = Modifier.padding(start = SportsRowStartPadding, bottom = NuvioTheme.spacing.md),
         )
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxxl),
-            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xl),
         ) {
             if (featured.isNotEmpty()) {
                 item(key = "featured") {
                     RowTitle("Featured Events")
                     LazyRow(
-                        contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xxxl),
+                        contentPadding = PaddingValues(horizontal = SportsRowStartPadding),
                         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
                     ) {
                         items(featured, key = { it.id }) { event ->
@@ -164,7 +188,20 @@ fun SportsHubScreen(
             if (upcoming.isNotEmpty()) {
                 item(key = "upcoming") {
                     RowTitle("Live & Upcoming")
-                    MatchRow(upcoming, state.isLiveCheck(nowMs), onMatch = { viewModel.openMatch(it) })
+                    MatchRow(
+                        upcoming,
+                        state.isLiveCheck(nowMs),
+                        liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
+                        onMatch = { viewModel.openMatch(it) },
+                        // The featured rail owns first focus when it exists; otherwise the
+                        // top match card does — a follows-only profile used to land nowhere.
+                        firstItemFocusRequester = if (featured.isEmpty()) firstFocus else null,
+                    )
+                }
+            } else if (state.loadingFixtures && (state.follows.isNotEmpty() || featured.isNotEmpty())) {
+                item(key = "loading") {
+                    RowTitle("Live & Upcoming")
+                    MatchRowSkeleton()
                 }
             }
             state.followedTeams.forEach { team ->
@@ -172,7 +209,12 @@ fun SportsHubScreen(
                 if (fixtures.isNotEmpty()) {
                     item(key = "team-${team.id}") {
                         RowTitle(team.name)
-                        MatchRow(fixtures, state.isLiveCheck(nowMs), onMatch = { viewModel.openMatch(it) })
+                        MatchRow(
+                            fixtures,
+                            state.isLiveCheck(nowMs),
+                            liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
+                            onMatch = { viewModel.openMatch(it) },
+                        )
                     }
                 }
             }
@@ -181,8 +223,13 @@ fun SportsHubScreen(
                 val fixtures = state.upcoming(listOf(league.id), nowMs, cap = 12)
                 if (fixtures.isNotEmpty()) {
                     item(key = "league-${league.id}") {
-                        RowTitle(league.name)
-                        MatchRow(fixtures, state.isLiveCheck(nowMs), onMatch = { viewModel.openMatch(it) })
+                        RowTitle(league.name, badge = league.badge)
+                        MatchRow(
+                            fixtures,
+                            state.isLiveCheck(nowMs),
+                            liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
+                            onMatch = { viewModel.openMatch(it) },
+                        )
                     }
                 }
             }
@@ -194,14 +241,14 @@ fun SportsHubScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = NuvioTheme.colors.TextSecondary,
                         modifier = Modifier.padding(
-                            start = NuvioTheme.spacing.xxxl,
-                            end = NuvioTheme.spacing.xxxl,
+                            start = SportsRowStartPadding,
+                            end = SportsRowStartPadding,
                             bottom = NuvioTheme.spacing.sm,
                         ),
                     )
                 }
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xxxl),
+                    contentPadding = PaddingValues(horizontal = SportsRowStartPadding),
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
                 ) {
                     items(state.catalog.categories, key = { it.name }) { category ->
@@ -251,7 +298,7 @@ fun SportsHubScreen(
     // away from wherever the user has navigated to.
     var initialFocusDone by remember { mutableStateOf(false) }
     LaunchedEffect(featured.size, upcoming.size) {
-        if (!initialFocusDone && (featured.isNotEmpty() || state.catalog.categories.isNotEmpty())) {
+        if (!initialFocusDone && (featured.isNotEmpty() || upcoming.isNotEmpty() || state.catalog.categories.isNotEmpty())) {
             initialFocusDone = true
             runCatching { firstFocus.requestFocus() }
         }
@@ -662,51 +709,131 @@ private fun MatchChannelsOverlay(
 
 // --- rows & cards ---------------------------------------------------------------
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun MatchRow(
     fixtures: List<RadarFixture>,
     isLive: (RadarFixture) -> Boolean,
+    liveScoreFor: (RadarFixture) -> RadarLiveScore?,
     onMatch: (RadarFixture) -> Unit,
+    firstItemFocusRequester: FocusRequester? = null,
 ) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xxxl),
-        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
-    ) {
-        items(fixtures, key = { it.id ?: it.hashCode().toString() }) { fx ->
-            MatchCard(fx, live = isLive(fx), onClick = { onMatch(fx) })
+    // Left-align the focused card to the 52dp gutter while scrolling, like the Modern rows.
+    val density = LocalDensity.current
+    val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val horizontalBringIntoViewSpec = remember(density, defaultBringIntoViewSpec, isRtl) {
+        val startPx = with(density) { SportsRowStartPadding.roundToPx() }
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+        object : BringIntoViewSpec {
+            override val scrollAnimationSpec: AnimationSpec<Float> =
+                defaultBringIntoViewSpec.scrollAnimationSpec
+
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+                val childSize = abs(size)
+                val childSmallerThanParent = childSize <= containerSize
+                if (isRtl) {
+                    val initialTarget = containerSize - startPx.toFloat()
+                    val targetForTrailingEdge =
+                        if (childSmallerThanParent && initialTarget < childSize) childSize else initialTarget
+                    return (offset + size) - targetForTrailingEdge
+                }
+                val target = startPx.toFloat()
+                val space = containerSize - target
+                val leading = if (childSmallerThanParent && space < childSize) containerSize - childSize else target
+                return offset - leading
+            }
+        }
+    }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalBringIntoViewSpec) {
+        LazyRow(
+            modifier = Modifier
+                .focusRestorer { firstItemFocusRequester ?: FocusRequester.Default }
+                .focusGroup(),
+            contentPadding = PaddingValues(horizontal = SportsRowStartPadding),
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+        ) {
+            itemsIndexed(
+                fixtures,
+                key = { _, fx -> fx.id ?: "${fx.leagueId}/${fx.event}/${fx.ts}" },
+            ) { index, fx ->
+                MatchCard(
+                    fx,
+                    live = isLive(fx),
+                    onClick = { onMatch(fx) },
+                    modifier = Modifier
+                        .width(MatchCardWidth)
+                        .then(
+                            if (index == 0 && firstItemFocusRequester != null) {
+                                Modifier.focusRequester(firstItemFocusRequester)
+                            } else Modifier
+                        ),
+                    liveScore = liveScoreFor(fx),
+                )
+            }
         }
     }
 }
 
+/** Shimmer stand-in for a match row while the first fixtures load. */
+@Composable
+private fun MatchRowSkeleton() {
+    val shimmer = rememberPlaceholderShimmerOffsetState("sportsSkeleton")
+    Row(
+        modifier = Modifier.padding(horizontal = SportsRowStartPadding),
+        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+    ) {
+        repeat(4) {
+            Box(
+                Modifier
+                    .width(MatchCardWidth)
+                    .height(140.dp)
+                    .clip(RoundedCornerShape(NuvioTheme.radii.md))
+                    .placeholderCardShimmer(shimmer, NuvioTheme.colors.BackgroundCard),
+            )
+        }
+    }
+}
+
+/**
+ * A fixture card in the Modern-home vocabulary: league line + status pill on top, one row
+ * per team with its crest and (live/final) score, kickoff + venue below. Works both as a
+ * fixed-width rail tile and stretched fillMaxWidth in the league page list.
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun MatchCard(
     fixture: RadarFixture,
     live: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier.width(280.dp),
+    modifier: Modifier = Modifier.width(MatchCardWidth),
+    liveScore: RadarLiveScore? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
-    // Focus = unmistakable Primary treatment (HubChip's vocabulary): the D-pad cursor must
-    // always be visible. onFocusChanged BEFORE clickable, per the guide-row gotcha.
+    val cardShape = RoundedCornerShape(NuvioTheme.radii.md)
+    // Focus = FocusBackground fill + 2dp FocusRing border — unmistakable, and never the
+    // grey `Primary`. onFocusChanged BEFORE clickable, per the guide-row gotcha.
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(cardShape)
             .background(
-                if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.24f)
+                if (focused) NuvioTheme.colors.FocusBackground
                 else NuvioTheme.colors.BackgroundElevated
             )
             .border(
                 if (focused) 2.dp else 1.dp,
-                if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
-                RoundedCornerShape(10.dp),
+                if (focused) NuvioTheme.colors.FocusRing else NuvioTheme.colors.Border,
+                cardShape,
             )
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(NuvioTheme.spacing.md),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            fixture.leagueBadge?.takeIf { it.isNotBlank() }?.let { badge ->
+                BadgeImage(url = badge, size = 16.dp)
+                Spacer(Modifier.width(6.dp))
+            }
             Text(
                 fixture.roundLabel ?: fixture.league ?: "",
                 style = MaterialTheme.typography.labelSmall,
@@ -715,47 +842,229 @@ private fun MatchCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (live) {
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFFD32F2F))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                ) {
-                    Text("LIVE", style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
+            Spacer(Modifier.width(NuvioTheme.spacing.sm))
+            MatchStatusPill(fixture, live, liveScore)
         }
         Spacer(Modifier.height(NuvioTheme.spacing.sm))
-        Text(
-            fixture.displayTitle,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = NuvioTheme.colors.TextPrimary,
-            // minLines keeps every card the same height — short titles were
-            // producing visibly smaller boxes next to two-line ones.
-            minLines = 2,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(NuvioTheme.spacing.sm))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                fixture.startEpochMs?.let { radarWhenLabel(it) } ?: "Time TBC",
-                style = MaterialTheme.typography.labelMedium,
-                color = NuvioTheme.colors.TextSecondary,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            fixture.scoreLabel?.let { score ->
-                Spacer(Modifier.width(NuvioTheme.spacing.sm))
+        val home = fixture.home?.takeIf { it.isNotBlank() }
+        val away = fixture.away?.takeIf { it.isNotBlank() }
+        Column(Modifier.heightIn(min = MatchCardTeamsMinHeight)) {
+            if (home != null && away != null) {
+                val homeScore = (liveScore?.homeScore ?: fixture.homeScore)?.takeIf { it.isNotBlank() }
+                val awayScore = (liveScore?.awayScore ?: fixture.awayScore)?.takeIf { it.isNotBlank() }
+                TeamRow(home, fixture.homeBadge, homeScore, dimScore = scoreTrails(homeScore, awayScore))
+                TeamRow(away, fixture.awayBadge, awayScore, dimScore = scoreTrails(awayScore, homeScore))
+            } else {
+                // Motorsport/golf-style events have no team pair — the event name carries the card.
                 Text(
-                    score,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
+                    fixture.displayTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
                     color = NuvioTheme.colors.TextPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
+        Spacer(Modifier.height(NuvioTheme.spacing.sm))
+        val startMs = fixture.startEpochMs
+        val whenLabel = when {
+            live -> null
+            startMs != null -> radarWhenLabel(startMs)
+            else -> "Time TBC"
+        }
+        val hot = !live && startMs != null &&
+            RadarTime.dayLabel(startMs).let { it == "Today" || it == "Tomorrow" }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.heightIn(min = 18.dp),
+        ) {
+            if (whenLabel != null) {
+                Text(
+                    whenLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (hot) NuvioTheme.colors.Secondary else NuvioTheme.colors.TextSecondary,
+                    maxLines = 1,
+                )
+            }
+            fixture.venue?.takeIf { it.isNotBlank() }?.let { venue ->
+                if (whenLabel != null) {
+                    Text(
+                        " · ",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = NuvioTheme.colors.TextTertiary,
+                    )
+                }
+                Text(
+                    venue,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = NuvioTheme.colors.TextTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TeamRow(name: String, badge: String?, score: String?, dimScore: Boolean) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xxs),
+    ) {
+        TeamBadge(name = name, badge = badge)
+        Spacer(Modifier.width(NuvioTheme.spacing.sm + NuvioTheme.spacing.xxs))
+        Text(
+            name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = NuvioTheme.colors.TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (!score.isNullOrBlank()) {
+            Spacer(Modifier.width(NuvioTheme.spacing.sm))
+            Text(
+                score,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = if (dimScore) NuvioTheme.colors.TextTertiary else NuvioTheme.colors.TextPrimary,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Team crest with a monogram-circle fallback so badge-less teams never leave a hole. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TeamBadge(name: String, badge: String?) {
+    val failed = remember(badge) { mutableStateOf(false) }
+    Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+        if (!badge.isNullOrBlank() && !failed.value) {
+            BadgeImage(
+                url = badge,
+                size = 28.dp,
+                onError = { failed.value = true },
+            )
+        } else {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(NuvioTheme.colors.BackgroundCard)
+                    .border(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    teamMonogram(name),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NuvioTheme.colors.TextSecondary,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * TheSportsDB badges are ~500px PNGs; decode them at display size with the ContentCard
+ * memory-cache-key convention instead of at full source resolution.
+ */
+@Composable
+private fun BadgeImage(url: String, size: Dp, onError: (() -> Unit)? = null) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val px = remember(size, density) { with(density) { size.roundToPx() }.coerceAtLeast(1) }
+    val request = remember(url, px) {
+        ImageRequest.Builder(context)
+            .data(url)
+            .crossfade(true)
+            .memoryCacheKey("${url}_${px}x${px}")
+            .size(px, px)
+            .build()
+    }
+    AsyncImage(
+        model = request,
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.size(size),
+        onState = { state ->
+            if (state is AsyncImagePainter.State.Error) onError?.invoke()
+        },
+    )
+}
+
+private fun teamMonogram(name: String): String {
+    val words = name.split(' ', '-').filter { it.firstOrNull()?.isLetter() == true }
+    return when {
+        words.size >= 2 -> "${words[0].first()}${words[1].first()}".uppercase()
+        words.isNotEmpty() -> words[0].take(2).uppercase()
+        else -> "?"
+    }
+}
+
+/** True when both scores parse as numbers and this side is behind — the trailing score dims. */
+private fun scoreTrails(own: String?, other: String?): Boolean {
+    val a = own?.trim()?.toIntOrNull() ?: return false
+    val b = other?.trim()?.toIntOrNull() ?: return false
+    return a < b
+}
+
+@Composable
+private fun MatchStatusPill(fixture: RadarFixture, live: Boolean, liveScore: RadarLiveScore?) {
+    when {
+        live -> LiveBadge(progress = liveScore?.progress)
+        fixture.postponed == "yes" -> StatusPill("POSTPONED", NuvioTheme.colors.TextTertiary)
+        fixture.scoreLabel != null -> StatusPill("FT", NuvioTheme.colors.TextTertiary)
+        else -> {
+            val day = fixture.startEpochMs?.let { RadarTime.dayLabel(it) }
+            if (day == "Today" || day == "Tomorrow") StatusPill(day.uppercase(), NuvioTheme.colors.Secondary)
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun StatusPill(text: String, color: Color) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = color,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(MatchPillShape)
+            .background(color.copy(alpha = 0.12f))
+            .border(NuvioTheme.spacing.hairline, color.copy(alpha = 0.35f), MatchPillShape)
+            .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp),
+    )
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun LiveBadge(progress: String? = null) {
+    val live = NuvioPrimitives.marigoldLive
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(MatchPillShape)
+            .background(live.copy(alpha = 0.16f))
+            .border(NuvioTheme.spacing.hairline, live.copy(alpha = 0.5f), MatchPillShape)
+            .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp),
+    ) {
+        Box(Modifier.size(6.dp).clip(CircleShape).background(live))
+        Spacer(Modifier.width(4.dp))
+        Text(
+            if (progress.isNullOrBlank()) "LIVE" else "LIVE $progress",
+            style = MaterialTheme.typography.labelSmall,
+            color = live,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -785,10 +1094,10 @@ private fun LeagueFixturesPage(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = NuvioTheme.spacing.xl, start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl),
+            .padding(top = NuvioTheme.spacing.xl, start = SportsRowStartPadding, end = SportsRowStartPadding),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(model = league.badge, contentDescription = null, modifier = Modifier.size(56.dp))
+            league.badge?.takeIf { it.isNotBlank() }?.let { BadgeImage(url = it, size = 56.dp) }
             Spacer(Modifier.width(NuvioTheme.spacing.md))
             Column(Modifier.weight(1f)) {
                 Text(league.name, style = MaterialTheme.typography.headlineSmall, color = NuvioTheme.colors.TextPrimary)
@@ -798,7 +1107,9 @@ private fun LeagueFixturesPage(
                     color = NuvioTheme.colors.TextSecondary,
                 )
             }
-            Box(modifier = Modifier.focusRequester(headerFocus)) {
+            // IntrinsicSize.Max: FocusableRow is fillMaxWidth, and an unweighted Row child
+            // measures before the weighted name column — unbounded it swallows the header.
+            Box(modifier = Modifier.width(IntrinsicSize.Max).focusRequester(headerFocus)) {
                 FocusableRow(onClick = onToggleFollow) {
                     Text(
                         if (followed) "★ Following" else "Follow",
@@ -824,6 +1135,7 @@ private fun LeagueFixturesPage(
                     MatchCard(
                         fx, live = isLive(fx), onClick = { onMatch(fx) },
                         modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs),
+                        liveScore = fx.id?.let { state.liveScores[it] },
                     )
                 }
             }
@@ -841,6 +1153,7 @@ private fun LeagueFixturesPage(
                     MatchCard(
                         fx, live = false, onClick = { onMatch(fx) },
                         modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs),
+                        liveScore = fx.id?.let { state.liveScores[it] },
                     )
                 }
             }
@@ -877,7 +1190,7 @@ private fun FeaturedBannerCard(
             .clip(RoundedCornerShape(12.dp))
             .border(
                 if (focused) 3.dp else 0.dp,
-                if (focused) NuvioTheme.colors.Primary else Color.Transparent,
+                if (focused) NuvioTheme.colors.FocusRing else Color.Transparent,
                 RoundedCornerShape(12.dp),
             )
             .onFocusChanged { focused = it.isFocused }
@@ -932,12 +1245,12 @@ private fun AddFollowTile(title: String, subtitle: String, onClick: () -> Unit) 
             .width(200.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(
-                if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.24f)
+                if (focused) NuvioTheme.colors.FocusBackground
                 else NuvioTheme.colors.BackgroundElevated
             )
             .border(
                 if (focused) 2.dp else 1.dp,
-                if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
+                if (focused) NuvioTheme.colors.FocusRing else NuvioTheme.colors.Border,
                 RoundedCornerShape(10.dp),
             )
             .onFocusChanged { focused = it.isFocused }
@@ -980,12 +1293,12 @@ private fun CategoryTile(
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .clip(RoundedCornerShape(10.dp))
             .background(
-                if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.24f)
+                if (focused) NuvioTheme.colors.FocusBackground
                 else NuvioTheme.colors.BackgroundElevated
             )
             .border(
                 if (focused) 2.dp else 1.dp,
-                if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
+                if (focused) NuvioTheme.colors.FocusRing else NuvioTheme.colors.Border,
                 RoundedCornerShape(10.dp),
             )
             .onFocusChanged { focused = it.isFocused }
@@ -993,11 +1306,11 @@ private fun CategoryTile(
             .padding(NuvioTheme.spacing.md),
     ) {
         // Artwork-first like the rest of the app: the category's flagship league badge.
-        AsyncImage(
-            model = category.leagues.firstOrNull()?.badge,
-            contentDescription = null,
-            modifier = Modifier.size(40.dp),
-        )
+        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+            category.leagues.firstOrNull()?.badge?.takeIf { it.isNotBlank() }?.let {
+                BadgeImage(url = it, size = 40.dp)
+            }
+        }
         Spacer(Modifier.height(NuvioTheme.spacing.sm))
         Text(
             category.name,
@@ -1034,18 +1347,33 @@ private fun FocusableRow(onClick: () -> Unit, content: @Composable androidx.comp
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun RowTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.SemiBold,
-        color = NuvioTheme.colors.TextPrimary,
+private fun RowTitle(text: String, badge: String? = null) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(
-            start = NuvioTheme.spacing.xxxl,
-            bottom = NuvioTheme.spacing.sm,
+            start = SportsRowStartPadding,
+            bottom = SportsRowTitleBottom,
         ),
-    )
+    ) {
+        badge?.takeIf { it.isNotBlank() }?.let {
+            BadgeImage(url = it, size = 22.dp)
+            Spacer(Modifier.width(NuvioTheme.spacing.sm))
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = NuvioTheme.colors.TextPrimary,
+        )
+    }
 }
+
+// Modern-home rail metrics (XtreamHubScreen's HubRowStartPadding/HubRowTitleBottom).
+private val SportsRowStartPadding = 52.dp
+private val SportsRowTitleBottom = 14.dp
+private val MatchCardWidth = 300.dp
+private val MatchCardTeamsMinHeight = 64.dp
+private val MatchPillShape = RoundedCornerShape(percent = 50)
 
 
 private const val SEARCH_DEBOUNCE_MS = 350L

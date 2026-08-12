@@ -26,6 +26,8 @@ data class RadarUiState(
     val prefs: RadarPrefs = RadarPrefs(),
     val fixturesByLeague: Map<String, List<RadarFixture>> = emptyMap(),
     val liveEventIds: Set<String> = emptySet(),
+    /** eventId -> latest livescore row (in-progress score + minute) for covered sports. */
+    val liveScores: Map<String, RadarLiveScore> = emptyMap(),
     /** Sports the last FRESH fetch returned livescore data for — the feed is authoritative
      *  for these (empty after a cold-start disk load: stale feed data must not suppress
      *  the time-window inference). */
@@ -150,6 +152,7 @@ class RadarRepository @Inject constructor(
                             fixturesByLeague = cached.fixtures,
                             fixturesByTeam = cached.teamFixtures,
                             liveEventIds = liveIds(cached),
+                            liveScores = scoresById(cached),
                         )
                     }
                 }
@@ -221,6 +224,7 @@ class RadarRepository @Inject constructor(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
                     fixturesByTeam = it.fixturesByTeam + response.teamFixtures,
                     liveEventIds = liveIds(response),
+                    liveScores = scoresById(response),
                     livescoreSports = response.livescore.keys.map { s -> s.lowercase() }.toSet(),
                     loadingFixtures = false,
                 )
@@ -313,6 +317,7 @@ class RadarRepository @Inject constructor(
                 it.copy(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
                     liveEventIds = it.liveEventIds + liveIds(response),
+                    liveScores = it.liveScores + scoresById(response),
                 )
             }
         }
@@ -320,6 +325,11 @@ class RadarRepository @Inject constructor(
 
     private fun liveIds(response: RadarFixturesResponse): Set<String> =
         response.livescore.values.asSequence().flatten().mapNotNull { it.eventId }.toSet()
+
+    private fun scoresById(response: RadarFixturesResponse): Map<String, RadarLiveScore> =
+        response.livescore.values.asSequence().flatten()
+            .mapNotNull { score -> score.eventId?.let { it to score } }
+            .toMap()
 
     // Broadcaster listings barely change and the edge function caches them 12h — one
     // fetch per event per app session is plenty.
