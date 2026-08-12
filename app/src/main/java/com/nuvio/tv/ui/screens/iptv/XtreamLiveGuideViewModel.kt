@@ -17,6 +17,7 @@ import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.model.LibraryEntryInput
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.repository.LibraryRepository
+import com.nuvio.tv.ui.screens.player.PlayerMediaSourceFactory
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,6 +69,9 @@ data class LiveGuideUiState(
      *  opts into a non-system resolver, else the channel's URL with no extra headers. Recomputed per
      *  channel; null until computed (the screen waits for it before loading). */
     val previewPlayback: PreparedLiveStream? = null,
+    /** Container to force for [previewPlayback], set only by the container-mismatch retry (see
+     *  [XtreamLiveGuideViewModel.onPreviewContainerMismatch]). Null = infer from the URL. */
+    val previewMimeOverride: String? = null,
     val loadingChannels: Boolean = false,
     val error: String? = null
 ) {
@@ -285,6 +289,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     fun playPreview(channel: GuideChannel) {
         // A user-initiated tune resolves fresh below, so it always deserves a new recovery shot.
         previewLinkRefreshBurntForChannelId = null
+        previewContainerRetryBurntForChannelId = null
         viewModelScope.launch {
             // Stalker needs a fresh create_link; Xtream/M3U reuse the browse-time URL. Then tunePreview
             // applies the playlist's DNS (resolve → rewrite) before handing the URL to the player.
@@ -336,13 +341,62 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
     }
 
+    // One container retry per tuned channel: if HLS doesn't play either then the container isn't
+    // what's wrong, and re-tuning on every error would just spin.
+    private var previewContainerRetryBurntForChannelId: String? = null
+
+    /**
+     * The preview failed because the bytes aren't the container the URL promised: we asked the panel
+     * for `.ts` and it answered with something that isn't MPEG-TS — in practice a 302 to an HLS
+     * playlist, which several panels do for every live channel. Re-tune the same channel forcing
+     * HLS.
+     *
+     * Stalker's `create_link` tokens are single-use and the failed attempt already spent this one,
+     * so that source needs a freshly minted link (no re-handshake — the portal session is reused).
+     * Xtream/M3U URLs are stable and get retried as they are, which keeps the retry free of any
+     * extra provider request — the connection budget on a `max_connections=1` line can't spare one.
+     */
+    fun onPreviewContainerMismatch() {
+        val channel = _uiState.value.previewChannel ?: return
+        if (previewContainerRetryBurntForChannelId == channel.contentId) return
+        previewContainerRetryBurntForChannelId = channel.contentId
+        viewModelScope.launch {
+            val acc = account ?: return@launch
+            val url = if (acc.sourceType == XtreamAccount.SOURCE_STALKER) {
+                clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId)
+                    ?.takeIf { it.isNotBlank() } ?: return@launch
+            } else {
+                channel.streamUrl
+            }
+            tunePreview(
+                channel.copy(streamUrl = url),
+                mimeOverride = PlayerMediaSourceFactory.CONTAINER_MISMATCH_RETRY_MIME_TYPE
+            )
+        }
+    }
+
+    /**
+     * The forced-container retry reached a frame, so the guess was right. Remember it against this
+     * host so every later zap on the provider builds the right source first time — the failed
+     * attempt is paid once per provider, not once per channel. Deliberately recorded on success
+     * only: a guess that never played must not poison the rest of the session.
+     */
+    fun onPreviewContainerRetryPlayed() {
+        val state = _uiState.value
+        val mime = state.previewMimeOverride ?: return
+        val url = state.previewPlayback?.url ?: return
+        PlayerMediaSourceFactory.rememberContainerMimeType(url, mime)
+    }
+
     /**
      * Points the preview at [channel]: sets it synchronously (clearing any stale prepared playback so
      * the screen never loads the previous channel's DoH-rewritten URL) and computes the DoH-prepared
      * URL + headers off-main. The prepare is defensive — any failure yields the plain URL.
      */
-    private fun tunePreview(channel: GuideChannel) {
-        _uiState.update { it.copy(previewChannel = channel, previewPlayback = null) }
+    private fun tunePreview(channel: GuideChannel, mimeOverride: String? = null) {
+        _uiState.update {
+            it.copy(previewChannel = channel, previewPlayback = null, previewMimeOverride = mimeOverride)
+        }
         val provider = account?.dnsProvider
         viewModelScope.launch {
             val prepared = withContext(Dispatchers.IO) { livePlayback.prepare(provider, channel.streamUrl) }

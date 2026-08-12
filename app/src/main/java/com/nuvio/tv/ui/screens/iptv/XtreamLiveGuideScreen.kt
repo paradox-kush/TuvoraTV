@@ -161,9 +161,22 @@ fun LiveGuide(
                         Log.w("LiveGuide", "preview playback error: ${error.errorCodeName}")
                         // Token-shaped HTTP failures (Stalker create_link TTL, session rotated by
                         // another device) get one fresh link + in-place re-tune from the VM.
-                        error.findInvalidResponseCodeException()?.responseCode?.let { code ->
-                            viewModel.onPreviewAuthError(code)
+                        val authStatus = error.findInvalidResponseCodeException()?.responseCode
+                        if (authStatus != null) {
+                            viewModel.onPreviewAuthError(authStatus)
+                            return
                         }
+                        // The panel answered our `.ts` request with a container that isn't TS
+                        // (typically a 302 to an HLS playlist). One re-tune forcing HLS.
+                        if (PlayerMediaSourceFactory.isContainerMismatch(error)) {
+                            viewModel.onPreviewContainerMismatch()
+                        }
+                    }
+
+                    override fun onRenderedFirstFrame() {
+                        // Only does anything after a container retry — that is when the guess the
+                        // retry made becomes a fact worth remembering for the rest of the session.
+                        viewModel.onPreviewContainerRetryPlayed()
                     }
                 })
             }
@@ -185,7 +198,7 @@ fun LiveGuide(
     // The player tunes ONLY when the preview channel changes (OK press / last-played restore) —
     // never on focus movement. ExoPlayer calls are main-looper-bound and non-blocking.
     // previewPlayback carries the (DoH-rewritten when the playlist opts in) URL + Host header.
-    fun tunePreview(url: String, headers: Map<String, String>) {
+    fun tunePreview(url: String, headers: Map<String, String>, mimeOverride: String? = null) {
         // Tune intent rather than first frame: the guide's preview player has no snapshot loop,
         // and for crash attribution "a live preview was up" is the fact that matters.
         Breadcrumbs.playbackStarted(
@@ -195,16 +208,19 @@ fun LiveGuide(
             container = LivePlaybackFreezeReporter.streamContainerOf(url),
             nowMs = System.currentTimeMillis(),
         )
-        previewPlayer.setMediaSource(previewSourceFactory.createMediaSource(context, url, headers))
+        previewPlayer.setMediaSource(
+            previewSourceFactory.createMediaSource(context, url, headers, mimeTypeOverride = mimeOverride)
+        )
         previewPlayer.prepare()
         previewPlayer.play()
     }
 
     val previewPlayback = uiState.previewPlayback
-    LaunchedEffect(previewPlayback) {
+    val previewMimeOverride = uiState.previewMimeOverride
+    LaunchedEffect(previewPlayback, previewMimeOverride) {
         val prepared = previewPlayback ?: return@LaunchedEffect
         paused = false
-        tunePreview(prepared.url, prepared.headers)
+        tunePreview(prepared.url, prepared.headers, previewMimeOverride)
     }
 
     // Pause holds the frame; resume reloads instead of unpausing (a paused live buffer goes
@@ -213,7 +229,7 @@ fun LiveGuide(
         val prepared = uiState.previewPlayback ?: return
         val target = !paused
         paused = target
-        if (target) previewPlayer.pause() else tunePreview(prepared.url, prepared.headers)
+        if (target) previewPlayer.pause() else tunePreview(prepared.url, prepared.headers, previewMimeOverride)
         showControls()
     }
 
@@ -243,7 +259,7 @@ fun LiveGuide(
                 Lifecycle.Event.ON_START -> {
                     val prepared = uiState.previewPlayback ?: return@LifecycleEventObserver
                     paused = false
-                    tunePreview(prepared.url, prepared.headers)
+                    tunePreview(prepared.url, prepared.headers, uiState.previewMimeOverride)
                 }
                 else -> Unit
             }
