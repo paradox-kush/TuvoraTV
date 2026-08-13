@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
+import com.nuvio.tv.core.analytics.resolveDiagnosticsEnabled
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -23,7 +24,7 @@ class SentrySettingsDataStore @Inject constructor(
     private val enabledKey = booleanPreferencesKey("enabled")
 
     val enabled: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[enabledKey] ?: false
+        resolveDiagnosticsEnabled(prefs[enabledKey])
     }
 
     suspend fun isEnabled(): Boolean {
