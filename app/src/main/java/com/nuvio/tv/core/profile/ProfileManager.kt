@@ -104,6 +104,62 @@ class ProfileManager @Inject constructor(
         return true
     }
 
+    /**
+     * Swap [id] with the primary profile so it becomes profile 1.
+     *
+     * Profile 1 is the anchor: it can't be deleted and other profiles inherit its addons/plugins,
+     * so "primary" is a position, not a flag. Promoting therefore means exchanging everything the
+     * two profiles own — the synced rows (caller's job, via ProfileSyncService.swapProfileData),
+     * the on-disk DataStore files, the plugin code directories, and the credential stores.
+     *
+     * IMPORTANT: the caller must restart the UI afterwards. Evicting the DataStore cache frees the
+     * files for renaming, but every already-injected DataStore reference in the graph still points
+     * at the old instance. FolderDetailScreen-style hot reuse would read stale data until the
+     * process is rebuilt. ProfileSettingsViewModel recreates the activity for this reason.
+     */
+    suspend fun swapProfileIndexes(id: Int): Boolean {
+        if (id == 1) return false
+        val current = profiles.value
+        if (current.none { it.id == id }) return false
+        if (current.none { it.id == 1 }) return false
+
+        swapProfileLocalData(1, id)
+
+        val swapped = current.map { profile ->
+            when (profile.id) {
+                1 -> profile.copy(id = id)
+                id -> profile.copy(id = 1)
+                else -> profile
+            }
+        }.sortedBy { it.id }
+        profileDataStore.replaceAllProfiles(swapped)
+
+        // Follow the profile the user is on, not the index — the index now means someone else.
+        when (activeProfileId.value) {
+            1 -> profileDataStore.setActiveProfile(id)
+            id -> profileDataStore.setActiveProfile(1)
+        }
+        return true
+    }
+
+    private suspend fun swapProfileLocalData(a: Int, b: Int) = withContext(Dispatchers.IO) {
+        factory.swapProfileFiles(a, b)
+        credentialStores.forEach { store -> store.swapProfiles(a, b) }
+
+        // Plugin code follows the same "unsuffixed means profile 1" convention as the DataStores
+        // (PluginDataStore: `if (pid == 1) "plugin_code" else "plugin_code_p$pid"`).
+        fun pluginDir(id: Int) = File(context.filesDir, if (id == 1) "plugin_code" else "plugin_code_p$id")
+        val dirA = pluginDir(a)
+        val dirB = pluginDir(b)
+        val tmp = File(context.filesDir, "plugin_code_swap_tmp")
+        if (tmp.exists()) tmp.deleteRecursively()
+        val hadA = dirA.exists()
+        val hadB = dirB.exists()
+        if (hadA) dirA.renameTo(tmp)
+        if (hadB) dirB.renameTo(dirA)
+        if (hadA) tmp.renameTo(dirB)
+    }
+
     suspend fun updateProfile(profile: UserProfile): Boolean {
         if (profiles.value.none { it.id == profile.id }) return false
         profileDataStore.upsertProfile(profile)

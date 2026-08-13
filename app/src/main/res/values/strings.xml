@@ -1972,6 +1972,13 @@
     <string name="profile_delete_confirm_title">Delete Profile?</string>
     <string name="profile_delete_confirm_subtitle">This will permanently delete this profile and all its data including library, watch history, and addon settings. This cannot be undone.</string>
     <string name="profile_delete_btn">Delete Profile</string>
+    <string name="profile_make_primary">Make Main Profile</string>
+    <string name="profile_make_primary_confirm_title">Make this the main profile?</string>
+    <string name="profile_make_primary_confirm_subtitle">\"%1$s\" will swap places with your current main profile. Both profiles keep all of their own data — only which one is the main profile changes. Tuvora will restart.</string>
+    <string name="profile_make_primary_btn">Make Main Profile</string>
+    <string name="profile_make_primary_failed_title">Couldn\'t change the main profile</string>
+    <string name="profile_make_primary_failed_subtitle">Nothing was changed. Check your connection and try again.</string>
+    <string name="profile_make_primary_ok">OK</string>
     <string name="profile_saving">Saving\u2026</string>
 
     <string name="cast_detail_error">Something went wrong</string>

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.sync.ProfileSyncService
 import com.nuvio.tv.core.sync.SetProfilePinResult
+import com.nuvio.tv.core.sync.SyncNotAuthenticatedException
 import com.nuvio.tv.data.local.ProfileLockStateDataStore
 import com.nuvio.tv.data.remote.supabase.SupabaseProfilePinVerifyResult
 import com.nuvio.tv.data.remote.supabase.AvatarCatalogItem
@@ -13,9 +14,12 @@ import com.nuvio.tv.data.remote.supabase.AvatarRepository
 import com.nuvio.tv.domain.model.UserProfile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -44,6 +48,13 @@ class ProfileSelectionViewModel @Inject constructor(
 
     private val _isSaving = MutableStateFlow(false)
     val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
+
+    private val _isPromoting = MutableStateFlow(false)
+    val isPromoting: StateFlow<Boolean> = _isPromoting.asStateFlow()
+
+    /** true = promoted, restart the UI; false = it failed and nothing changed. */
+    private val _promoteResult = MutableSharedFlow<Boolean>()
+    val promoteResult: SharedFlow<Boolean> = _promoteResult.asSharedFlow()
 
     val profilePinEnabled: StateFlow<Map<Int, Boolean>> = profileLockStateDataStore.pinEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
@@ -120,6 +131,37 @@ class ProfileSelectionViewModel @Inject constructor(
             profileSyncService.deleteProfileData(id)
             profileSyncService.pushToRemote()
             refreshProfilePinStates()
+        }
+    }
+
+    /**
+     * Promote [id] to profile 1 by swapping the two profiles wholesale.
+     *
+     * Emits into [promoteResult] rather than finishing silently: on success the screen must restart
+     * the activity. The swap renames per-profile DataStore files, and references handed out before
+     * the rename are still live all over the graph — they have to be rebuilt before anything reads
+     * through them again.
+     */
+    fun promoteToPrimary(id: Int) {
+        if (_isPromoting.value) return
+        viewModelScope.launch {
+            _isPromoting.value = true
+            // Remote first: if the server refuses, the device stays consistent with the account.
+            val remote = profileSyncService.swapProfileData(1, id)
+            val remoteBlocked = remote.isFailure &&
+                remote.exceptionOrNull() !is SyncNotAuthenticatedException
+            if (remoteBlocked) {
+                _isPromoting.value = false
+                _promoteResult.emit(false)
+                return@launch
+            }
+            val swapped = profileManager.swapProfileIndexes(id)
+            if (swapped) {
+                profileSyncService.pushToRemote()
+                refreshProfilePinStates()
+            }
+            _isPromoting.value = false
+            _promoteResult.emit(swapped)
         }
     }
 

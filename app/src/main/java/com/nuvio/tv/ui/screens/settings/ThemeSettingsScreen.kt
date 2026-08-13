@@ -4,9 +4,7 @@ package com.nuvio.tv.ui.screens.settings
 
 import com.nuvio.tv.ui.theme.NuvioTheme
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
+import com.nuvio.tv.ui.util.findActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -294,11 +292,6 @@ fun ThemeSettingsContent(
     }
 }
 
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
-}
 
 @Composable
 private fun ThemeSwatchChip(

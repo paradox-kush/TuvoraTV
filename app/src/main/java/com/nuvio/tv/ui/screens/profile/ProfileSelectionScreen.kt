@@ -101,6 +101,7 @@ import com.nuvio.tv.domain.model.UserProfile
 import com.nuvio.tv.ui.components.AvatarPickerGrid
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.components.ProfileAvatarCircle
+import com.nuvio.tv.ui.util.findActivity
 import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import kotlinx.coroutines.delay
 
@@ -194,6 +195,17 @@ fun ProfileSelectionScreen(
     var longPressedProfile by remember { mutableStateOf<UserProfile?>(null) }
     var suppressOptionsDialogFirstKeyUp by remember { mutableStateOf(true) }
     var profileToDelete by remember { mutableStateOf<UserProfile?>(null) }
+    var profileToPromote by remember { mutableStateOf<UserProfile?>(null) }
+    var promoteFailed by remember { mutableStateOf(false) }
+
+    // A promotion renames the per-profile DataStore files. Evicting the factory cache frees them
+    // for the rename, but every DataStore reference already injected across the graph still points
+    // at the old instance, so the Activity has to be rebuilt before anything reads through them.
+    LaunchedEffect(viewModel) {
+        viewModel.promoteResult.collect { promoted ->
+            if (promoted) context.findActivity()?.recreate() else promoteFailed = true
+        }
+    }
     var profileToEdit by remember { mutableStateOf<UserProfile?>(null) }
     var pinOverlayState by remember { mutableStateOf<ProfilePinOverlayState?>(null) }
     var pinOverlayError by remember { mutableStateOf<String?>(null) }
@@ -555,6 +567,24 @@ fun ProfileSelectionScreen(
                     }
                 }
 
+                // "Primary" is profile 1's position, not a flag, so promoting means swapping the
+                // two profiles. Both keep their own data.
+                if (!profile.isPrimary) {
+                    Button(
+                        onClick = {
+                            longPressedProfile = null
+                            profileToPromote = profile
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.colors(
+                            containerColor = NuvioTheme.colors.BackgroundCard,
+                            contentColor = NuvioTheme.colors.TextPrimary
+                        )
+                    ) {
+                        Text(stringResource(R.string.profile_make_primary))
+                    }
+                }
+
                 if (!profile.isPrimary) {
                     Button(
                         onClick = {
@@ -574,6 +604,53 @@ fun ProfileSelectionScreen(
                     ) {
                         Text(stringResource(R.string.profile_delete))
                     }
+                }
+            }
+        }
+
+        // Promote confirmation. On success the activity is recreated (see the LaunchedEffect that
+        // collects promoteResult) because the swap renames DataStore files out from under the
+        // references the graph is already holding.
+        profileToPromote?.let { profile ->
+            val promoteDialogFocusRequester = remember(profile.id) { FocusRequester() }
+            LaunchedEffect(profile.id) {
+                repeat(2) { withFrameNanos { } }
+                runCatching { promoteDialogFocusRequester.requestFocus() }
+            }
+            NuvioDialog(
+                onDismiss = { profileToPromote = null },
+                title = stringResource(R.string.profile_make_primary_confirm_title),
+                subtitle = stringResource(R.string.profile_make_primary_confirm_subtitle, profile.name),
+                width = 460.dp,
+                suppressFirstKeyUp = false
+            ) {
+                Button(
+                    onClick = {
+                        viewModel.promoteToPrimary(profile.id)
+                        profileToPromote = null
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(promoteDialogFocusRequester)
+                ) {
+                    Text(stringResource(R.string.profile_make_primary_btn))
+                }
+            }
+        }
+
+        if (promoteFailed) {
+            NuvioDialog(
+                onDismiss = { promoteFailed = false },
+                title = stringResource(R.string.profile_make_primary_failed_title),
+                subtitle = stringResource(R.string.profile_make_primary_failed_subtitle),
+                width = 460.dp,
+                suppressFirstKeyUp = false
+            ) {
+                Button(
+                    onClick = { promoteFailed = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.profile_make_primary_ok))
                 }
             }
         }

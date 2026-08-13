@@ -140,6 +140,34 @@ class ProfileSyncService @Inject constructor(
         }
     }
 
+    /**
+     * Exchange every per-profile row between two profiles, for "make this my main profile".
+     *
+     * Runs BEFORE the local swap: if the server rejects it, the device is still consistent with
+     * the account. A session-less client has no remote rows, so the local swap alone is correct.
+     */
+    suspend fun swapProfileData(a: Int, b: Int): Result<Unit> = withContext(Dispatchers.IO) {
+        if (!authManager.isAuthenticated) {
+            Log.d(TAG, "swapProfileData: skipped, not signed in")
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
+        try {
+            val params = buildJsonObject {
+                put("p_a", a)
+                put("p_b", b)
+                putSyncOriginClientId(syncClientIdentity)
+            }
+            withJwtRefreshRetry {
+                postgrest.rpc("sync_swap_profile_index", params)
+            }
+            Log.d(TAG, "Swapped remote data for profiles $a and $b")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to swap remote profile data for $a and $b", e)
+            Result.failure(e)
+        }
+    }
+
     suspend fun pullProfileLockStates(): Result<Map<Int, Boolean>> = withContext(Dispatchers.IO) {
         try {
             val response = withJwtRefreshRetry {

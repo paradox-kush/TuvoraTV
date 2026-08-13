@@ -102,6 +102,86 @@ class ProfileDataStoreFactory @Inject constructor(
         }
     }
 
+    /**
+     * Exchange the on-disk DataStore files of two profiles, for "make this my main profile".
+     *
+     * Profile 1's files are unsuffixed and everyone else's carry `_p<id>`, so a promotion is a
+     * physical rename in both directions, via a temp name because the two sets collide.
+     *
+     * Every affected DataStore is torn down first: DataStore keeps a process-wide registry of
+     * active files and a single-writer lock per path, so renaming underneath a live instance
+     * corrupts it. Tearing down is necessary but NOT sufficient — anything already holding a
+     * DataStore reference keeps the stale object. The caller must restart the UI afterwards
+     * (ProfileManager.promoteToPrimary documents this contract).
+     */
+    suspend fun swapProfileFiles(a: Int, b: Int) = withContext(Dispatchers.IO) {
+        if (a == b) return@withContext
+        val suffixA = if (a == 1) "" else "_p$a"
+        val suffixB = if (b == 1) "" else "_p$b"
+
+        // Tear down every cached store belonging to either profile before touching the filesystem.
+        val keysToEvict = synchronized(lock) {
+            cache.keys.filter { key ->
+                val owner = profileIdForDataStoreName(key)
+                owner == a || owner == b
+            }
+        }
+        for (key in keysToEvict) {
+            val scoped = synchronized(lock) { cache.remove(key) } ?: continue
+            scoped.job.cancel()
+            scoped.job.join()
+        }
+
+        val dataStoreDir = File(context.filesDir, "datastore")
+        if (!dataStoreDir.exists()) return@withContext
+        val files = dataStoreDir.listFiles().orEmpty()
+
+        fun featureNameOf(fileName: String, suffix: String): String? {
+            if (!fileName.endsWith(".preferences_pb")) return null
+            val name = fileName.removeSuffix(".preferences_pb")
+            if (!isProfileScopedDataStoreFile(fileName)) return null
+            if (profileIdForDataStoreName(name) == null) return null
+            return if (suffix.isEmpty()) name.takeIf { profileIdForDataStoreName(it) == 1 }
+            else name.removeSuffix(suffix).takeIf { it != name }
+        }
+
+        val featuresA = files.mapNotNull { featureNameOf(it.name, suffixA) }.toSet()
+        val featuresB = files.mapNotNull { featureNameOf(it.name, suffixB) }.toSet()
+
+        fun fileFor(feature: String, suffix: String) =
+            File(dataStoreDir, "$feature$suffix.preferences_pb")
+
+        // A -> temp, B -> A, temp -> B. Same shuffle the SQL swap uses, same reason.
+        for (feature in featuresA) {
+            val src = fileFor(feature, suffixA)
+            if (src.exists()) src.renameTo(File(dataStoreDir, "$feature$suffixA.swap_tmp"))
+        }
+        for (feature in featuresB) {
+            val src = fileFor(feature, suffixB)
+            if (src.exists()) src.renameTo(fileFor(feature, suffixA))
+        }
+        for (feature in featuresA) {
+            val tmp = File(dataStoreDir, "$feature$suffixA.swap_tmp")
+            if (tmp.exists()) tmp.renameTo(fileFor(feature, suffixB))
+        }
+
+        // Promoting a profile un-deletes both indexes as far as this factory is concerned.
+        deletedProfileIds.remove(a)
+        deletedProfileIds.remove(b)
+    }
+
+    /**
+     * Which profile a DataStore file belongs to, or null when it is one of the standalone stores
+     * that is deliberately not profile-scoped. An unsuffixed profile-scoped name belongs to 1.
+     */
+    private fun profileIdForDataStoreName(dataStoreName: String): Int? {
+        if (dataStoreName in retainedStandaloneDataStoreNames) return null
+        val suffixIndex = dataStoreName.lastIndexOf("_p")
+        if (suffixIndex < 0) return 1
+        val parsed = dataStoreName.substring(suffixIndex + 2).toIntOrNull() ?: return 1
+        return parsed
+    }
+
     suspend fun clearProfileScopedData() = withContext(Dispatchers.IO) {
         val cachedStores = synchronized(lock) { cache.toMap() }
         cachedStores.values.forEach { scoped ->

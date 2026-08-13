@@ -145,6 +145,23 @@ class AndroidSimklAuthStorage @Inject constructor(
         }
     }
 
+    override fun swapProfiles(a: Int, b: Int) {
+        if (a == b) return
+        // Move the stored strings verbatim. The token is encrypted, but encrypt()/decrypt() are not
+        // keyed by profile id, so relocating the ciphertext is safe and avoids a decrypt round-trip.
+        val editor = preferences.edit()
+        for (key in listOf(METADATA_KEY, TOKEN_KEY)) {
+            val valueA = preferences.getString(profileKey(key, a), null)
+            val valueB = preferences.getString(profileKey(key, b), null)
+            if (valueB != null) editor.putString(profileKey(key, a), valueB) else editor.remove(profileKey(key, a))
+            if (valueA != null) editor.putString(profileKey(key, b), valueA) else editor.remove(profileKey(key, b))
+        }
+        editor.apply()
+        // Re-read whichever profile is live so the in-memory copy isn't the pre-swap one.
+        val activeProfileId = synchronized(stateLock) { activeCredentials.profileId }
+        if (activeProfileId == a || activeProfileId == b) load(activeProfileId)
+    }
+
     override fun clearAllProfiles() {
         preferences.edit().clear().apply()
         synchronized(stateLock) {
