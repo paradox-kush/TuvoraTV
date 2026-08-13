@@ -23,8 +23,10 @@ import com.nuvio.tv.data.repository.TraktAuthService
 import com.nuvio.tv.domain.model.TmdbCollectionMediaType
 import com.nuvio.tv.domain.model.TraktCollectionSource
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.spyk
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -292,7 +294,27 @@ class TraktPublicListSourceResolverTest {
         assertEquals(0, result.data.items.size)
     }
 
-    private fun resolver(api: TraktApi, authenticated: Boolean): TraktPublicListSourceResolver {
+    @Test
+    fun `resolve reports missing credentials instead of a misleading not-found`() = runTest {
+        // No client id: Trakt answers 403, which the code maps to "list not found or not public".
+        // The list is fine — the build has no Trakt key. Say that instead.
+        every { context.getString(R.string.trakt_error_missing_credentials) } returns "Missing TRAKT credentials"
+        val api = mockk<TraktApi>()
+        val resolver = resolver(api, authenticated = false, hasCredentials = false)
+
+        val result = resolver.resolve(
+            TraktCollectionSource(title = "Public", traktListId = 1L)
+        ).first { it is NetworkResult.Error } as NetworkResult.Error
+
+        assertEquals("Missing TRAKT credentials", result.message)
+        coVerify(exactly = 0) { api.getPublicListItems(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    private fun resolver(
+        api: TraktApi,
+        authenticated: Boolean,
+        hasCredentials: Boolean = true
+    ): TraktPublicListSourceResolver {
         val authStore = mockk<TraktAuthDataStore> {
             every { isAuthenticated } returns flowOf(authenticated)
             every { state } returns flowOf(
@@ -304,13 +326,21 @@ class TraktPublicListSourceResolverTest {
                 )
             )
         }
-        val authService = TraktAuthService(
-            context = context,
-            traktApi = api,
-            traktAuthDataStore = authStore,
-            authSessionNoticeDataStore = mockk<AuthSessionNoticeDataStore>(relaxed = true),
-            traktCredentialCleanupService = mockk<TraktCredentialCleanupService>(relaxed = true)
-        )
+        // hasRequiredCredentials() reads BuildConfig.TRAKT_CLIENT_ID, which is blank in unit builds
+        // (the key only ever comes from local.properties). Spy it to true so these tests exercise
+        // the request/mapping path rather than the missing-credentials short-circuit — that
+        // short-circuit has its own test below.
+        val authService = spyk(
+            TraktAuthService(
+                context = context,
+                traktApi = api,
+                traktAuthDataStore = authStore,
+                authSessionNoticeDataStore = mockk<AuthSessionNoticeDataStore>(relaxed = true),
+                traktCredentialCleanupService = mockk<TraktCredentialCleanupService>(relaxed = true)
+            )
+        ) {
+            every { hasRequiredCredentials() } returns hasCredentials
+        }
         return TraktPublicListSourceResolver(
             appContext = context,
             traktApi = api,

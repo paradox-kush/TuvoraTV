@@ -54,6 +54,13 @@ class TraktPublicListSourceResolver @Inject constructor(
     private fun string(resId: Int): String = appContext.getString(resId)
     private fun string(resId: Int, vararg args: Any): String = appContext.getString(resId, *args)
 
+    /**
+     * False when the build carries no Trakt client id/secret. Every Trakt call fails in that case,
+     * so surfaces that let people *create* Trakt sources should hide rather than offer a dead end.
+     */
+    val isConfigured: Boolean
+        get() = traktAuthService.hasRequiredCredentials()
+
     fun resolve(source: TraktCollectionSource, page: Int = 1): Flow<NetworkResult<CatalogRow>> = flow {
         emit(NetworkResult.Loading)
         val result = runCatching {
@@ -145,6 +152,12 @@ class TraktPublicListSourceResolver @Inject constructor(
     }
 
     private suspend fun <T> publicRequest(call: suspend () -> Response<T>): Response<T> {
+        // Without a client id Trakt answers 403, which errorMessageFor() reports as "list not found
+        // or not public" — a lie that sends people hunting for a broken list. Say what is actually
+        // wrong. (Mobile/desktop already guard this in TraktPublicListSourceResolver.requestRaw.)
+        if (!traktAuthService.hasRequiredCredentials()) {
+            error(string(R.string.trakt_error_missing_credentials))
+        }
         return traktAuthService.executePublicRequest(call) ?: error(string(R.string.trakt_error_public_request_failed))
     }
 
