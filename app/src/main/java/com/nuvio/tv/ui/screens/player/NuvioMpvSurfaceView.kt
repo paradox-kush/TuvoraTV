@@ -11,6 +11,7 @@ import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
 import java.util.Locale
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import kotlin.math.pow
@@ -735,12 +736,24 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         // thread: mpv_terminate_destroy joins the demuxer, which can hang on a dead
         // network read — that hang used to land on the main thread (BACK during a stall).
         initialized = false
-        pendingDestroy = runCatching {
-            mpvCtl.submit {
-                runCatching { destroy() }
-                    .onFailure { Log.w(TAG, "Failed to destroy libmpv view cleanly: ${it.message}") }
+        // Abort a wedged demuxer before destroy reaches the serialized control queue. Otherwise
+        // an earlier blocked command can retain the native core and all of its buffers after the
+        // UI releases this player.
+        val destroyCompletion = CompletableFuture<Unit>()
+        pendingDestroy = destroyCompletion
+        Thread({
+            runCatching { mpv.command("stop") }
+            val destroyJob = runCatching {
+                mpvCtl.submit {
+                    runCatching { destroy() }
+                        .onFailure { Log.w(TAG, "Failed to destroy libmpv view cleanly: ${it.message}") }
+                }
+            }.getOrNull()
+            if (destroyJob != null) {
+                runCatching { destroyJob.get() }
             }
-        }.getOrNull()
+            destroyCompletion.complete(Unit)
+        }, "mpv-stop-release").start()
         hasQueuedInitialMedia = false
         lastMediaRequestKey = null
         pendingInitialMediaUrl = null
@@ -776,6 +789,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
         mpv.setOptionString("input-default-bindings", "yes")
+        // Tuvora supplies its own controls; do not load mpv's built-in Lua console.
+        mpv.setOptionString("load-console", "no")
         mpv.setOptionString("demuxer-max-bytes", "${64 * 1024 * 1024}")
         mpv.setOptionString("demuxer-max-back-bytes", "${64 * 1024 * 1024}")
         mpv.setOptionString("keep-open", "yes")

@@ -205,6 +205,11 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         LocaleCache.localeTag = tag ?: ""
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        AppExitReporter.recordMemorySnapshot(this, "trim_memory", level)
+    }
+
     override fun newImageLoader(context: android.content.Context): ImageLoader {
         return ImageLoader.Builder(this)
             .components {

@@ -4,11 +4,12 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
+import android.os.Debug
 import com.nuvio.tv.BuildConfig
 import com.posthog.PostHog
 import java.io.InputStream
-import java.io.InputStreamReader
 import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * Reports OS process-exit records as PostHog `app_exit` events on the next launch.
@@ -31,6 +32,9 @@ object AppExitReporter {
     private const val MAX_DESCRIPTION_CHARS = 512
     private const val MAX_TRACE_CHARS = 6_000
     private val lock = Any()
+    private val memorySampler = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "AppMemorySampler").apply { isDaemon = true }
+    }
 
     /** Abnormal exit reasons worth reporting; everything else is normal lifecycle noise. */
     private val REPORTED_REASONS = mapOf(
@@ -51,6 +55,7 @@ object AppExitReporter {
         // Snapshot the new run immediately, before it can fail. The binder query and trace reads
         // remain off the main thread and can never delay startup.
         runCatching { beginRun(appContext) }
+        recordMemorySnapshot(appContext, "startup")
         Thread({ runCatching { doReport(appContext) } }, "AppExitReporter").start()
     }
 
@@ -70,6 +75,7 @@ object AppExitReporter {
                 .putLong(runKey(runStart, "context_at"), System.currentTimeMillis())
                 .apply()
         }
+        recordMemorySnapshot(context, "route_$safeRoute")
     }
 
     /**
@@ -93,6 +99,7 @@ object AppExitReporter {
                 .putLong(runKey(runStart, "context_at"), now)
                 .apply()
         }
+        recordMemorySnapshot(context, "playback_started")
     }
 
     fun recordPlaybackStopped(context: Context) {
@@ -105,6 +112,7 @@ object AppExitReporter {
                 .putLong(runKey(runStart, "context_at"), System.currentTimeMillis())
                 .apply()
         }
+        recordMemorySnapshot(context, "playback_stopped")
     }
 
     private fun beginRun(context: Context) {
@@ -159,7 +167,9 @@ object AppExitReporter {
                 val failedRun = findRunContext(exit.timestamp, runContexts)
                 val properties = buildProperties(context, exit, reason, failedRun)
                 PostHog.capture("app_exit", properties = properties)
-                captureExitIssue(reason, properties)
+                if (shouldPromoteProcessExitToIssue(reason, exit.importance)) {
+                    captureExitIssue(reason, properties)
+                }
 
                 // Persist after each capture rather than once at the end, so another crash during
                 // a crash-loop does not replay every earlier event on the next launch.
@@ -223,12 +233,21 @@ object AppExitReporter {
             run.contextUpdatedAtMs?.let { updatedAt ->
                 put("last_context_age_ms", (exit.timestamp - updatedAt).coerceAtLeast(0L))
             }
+            run.memorySampledAtMs?.let { put("memory_sampled_at_ms", it) }
+            run.memoryTrigger?.let { put("memory_sample_trigger", it) }
+            run.memoryTrimLevel?.let { put("memory_trim_level", it) }
+            run.lastPssKb?.let { put("last_sampled_pss_kb", it) }
+            run.maxPssKb?.let { put("max_sampled_pss_kb", it) }
+            run.lastJavaHeapKb?.let { put("last_java_heap_kb", it) }
+            run.maxJavaHeapKb?.let { put("max_java_heap_kb", it) }
+            run.lastNativeHeapKb?.let { put("last_native_heap_kb", it) }
+            run.maxNativeHeapKb?.let { put("max_native_heap_kb", it) }
         }
     }
 
     private fun readTraceExcerpt(exit: ApplicationExitInfo): String? = runCatching {
         exit.traceInputStream?.use { input ->
-            sanitizeDiagnosticText(readBoundedText(input, MAX_TRACE_CHARS), MAX_TRACE_CHARS)
+            sanitizeDiagnosticText(readDiagnosticExcerpt(input, MAX_TRACE_CHARS), MAX_TRACE_CHARS)
         }
     }.getOrNull()
 
@@ -272,7 +291,62 @@ object AppExitReporter {
                     playbackSurface = prefs.getString(runKey(startedAt, "pb_surface"), null),
                     playbackStartedAtMs = prefs.getLong(runKey(startedAt, "pb_at"), 0L)
                         .takeIf { it > 0L },
+                    memorySampledAtMs = prefs.getLong(runKey(startedAt, "mem_at"), 0L)
+                        .takeIf { it > 0L },
+                    memoryTrigger = prefs.getString(runKey(startedAt, "mem_trigger"), null),
+                    memoryTrimLevel = prefs.getInt(runKey(startedAt, "mem_trim"), -1)
+                        .takeIf { it >= 0 },
+                    lastPssKb = prefs.getLong(runKey(startedAt, "mem_pss"), 0L)
+                        .takeIf { it > 0L },
+                    maxPssKb = prefs.getLong(runKey(startedAt, "mem_pss_max"), 0L)
+                        .takeIf { it > 0L },
+                    lastJavaHeapKb = prefs.getLong(runKey(startedAt, "mem_java"), 0L)
+                        .takeIf { it > 0L },
+                    maxJavaHeapKb = prefs.getLong(runKey(startedAt, "mem_java_max"), 0L)
+                        .takeIf { it > 0L },
+                    lastNativeHeapKb = prefs.getLong(runKey(startedAt, "mem_native"), 0L)
+                        .takeIf { it > 0L },
+                    maxNativeHeapKb = prefs.getLong(runKey(startedAt, "mem_native_max"), 0L)
+                        .takeIf { it > 0L },
                 )
+            }
+        }
+    }
+
+    /** Samples off the main thread and keeps only the latest and peak values for this run. */
+    fun recordMemorySnapshot(context: Context, trigger: String, trimLevel: Int? = null) {
+        val appContext = context.applicationContext
+        memorySampler.execute {
+            runCatching {
+                val runtime = Runtime.getRuntime()
+                val javaHeapKb = (runtime.totalMemory() - runtime.freeMemory()) / 1_024L
+                val nativeHeapKb = Debug.getNativeHeapAllocatedSize() / 1_024L
+                val pssKb = Debug.getPss()
+                synchronized(lock) {
+                    val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
+                    if (runStart <= 0L) return@runCatching
+                    prefs.edit()
+                        .putLong(runKey(runStart, "mem_at"), System.currentTimeMillis())
+                        .putString(runKey(runStart, "mem_trigger"), safeRouteName(trigger))
+                        .putInt(runKey(runStart, "mem_trim"), trimLevel ?: -1)
+                        .putLong(runKey(runStart, "mem_pss"), pssKb)
+                        .putLong(
+                            runKey(runStart, "mem_pss_max"),
+                            maxOf(pssKb, prefs.getLong(runKey(runStart, "mem_pss_max"), 0L)),
+                        )
+                        .putLong(runKey(runStart, "mem_java"), javaHeapKb)
+                        .putLong(
+                            runKey(runStart, "mem_java_max"),
+                            maxOf(javaHeapKb, prefs.getLong(runKey(runStart, "mem_java_max"), 0L)),
+                        )
+                        .putLong(runKey(runStart, "mem_native"), nativeHeapKb)
+                        .putLong(
+                            runKey(runStart, "mem_native_max"),
+                            maxOf(nativeHeapKb, prefs.getLong(runKey(runStart, "mem_native_max"), 0L)),
+                        )
+                        .apply()
+                }
             }
         }
     }
@@ -282,6 +356,8 @@ object AppExitReporter {
     private val RUN_FIELDS = listOf(
         "version", "build", "route", "action", "context_at",
         "playing", "pb_kind", "pb_engine", "pb_surface", "pb_at",
+        "mem_at", "mem_trigger", "mem_trim", "mem_pss", "mem_pss_max",
+        "mem_java", "mem_java_max", "mem_native", "mem_native_max",
     )
 }
 
@@ -297,6 +373,15 @@ internal data class AppRunContext(
     val playbackEngine: String? = null,
     val playbackSurface: String? = null,
     val playbackStartedAtMs: Long? = null,
+    val memorySampledAtMs: Long? = null,
+    val memoryTrigger: String? = null,
+    val memoryTrimLevel: Int? = null,
+    val lastPssKb: Long? = null,
+    val maxPssKb: Long? = null,
+    val lastJavaHeapKb: Long? = null,
+    val maxJavaHeapKb: Long? = null,
+    val lastNativeHeapKb: Long? = null,
+    val maxNativeHeapKb: Long? = null,
 )
 
 internal fun findRunContext(exitTimestamp: Long, runs: List<AppRunContext>): AppRunContext? =
@@ -331,15 +416,29 @@ private fun fingerprintTimestamp(value: String): Long = value.substringBefore('|
 
 internal fun readBoundedText(input: InputStream, maxChars: Int): String {
     if (maxChars <= 0) return ""
-    val reader = InputStreamReader(input, Charsets.UTF_8)
-    val result = StringBuilder(minOf(maxChars, 1_024))
-    val buffer = CharArray(minOf(1_024, maxChars))
-    while (result.length < maxChars) {
-        val count = reader.read(buffer, 0, minOf(buffer.size, maxChars - result.length))
+    return readBoundedBytes(input, maxChars).toString(Charsets.UTF_8).take(maxChars)
+}
+
+private fun readBoundedBytes(input: InputStream, maxBytes: Int): ByteArray {
+    if (maxBytes <= 0) return ByteArray(0)
+    val result = java.io.ByteArrayOutputStream(minOf(maxBytes, 1_024))
+    val buffer = ByteArray(minOf(1_024, maxBytes))
+    while (result.size() < maxBytes) {
+        val count = input.read(buffer, 0, minOf(buffer.size, maxBytes - result.size()))
         if (count < 0) break
-        result.append(buffer, 0, count)
+        result.write(buffer, 0, count)
     }
-    return result.toString()
+    return result.toByteArray()
+}
+
+/** Native tombstones are protobuf on newer Android versions; retain their printable strings. */
+internal fun readDiagnosticExcerpt(input: InputStream, maxChars: Int): String {
+    val bytes = readBoundedBytes(input, maxChars * 4)
+    if (bytes.none { it == 0.toByte() }) return bytes.toString(Charsets.UTF_8).take(maxChars)
+    return Regex("[\\x20-\\x7E]{4,}")
+        .findAll(bytes.toString(Charsets.ISO_8859_1))
+        .joinToString("\n") { it.value }
+        .take(maxChars)
 }
 
 private val URL_PATTERN = Regex("(?i)\\b(?:https?|rtsp|rtmp|udp|file)://[^\\s\\\"'<>]+")
@@ -381,6 +480,10 @@ private fun importanceName(importance: Int): String = when (importance) {
 }
 
 internal fun processExitIssueFingerprint(reason: String): String = "android_process_exit:$reason"
+
+internal fun shouldPromoteProcessExitToIssue(reason: String, importance: Int): Boolean =
+    !(reason == "low_memory_kill" &&
+        importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED)
 
 internal fun processExitIssueLevel(reason: String): String = when (reason) {
     "low_memory_kill", "excessive_resource_usage" -> "warning"

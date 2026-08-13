@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.analytics
 
+import android.app.ActivityManager
 import java.io.ByteArrayInputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -77,6 +78,39 @@ class AppExitReporterTest {
         assertEquals("fatal", processExitIssueLevel("native_crash"))
         assertEquals("warning", processExitIssueLevel("low_memory_kill"))
         assertEquals("warning", processExitIssueLevel("excessive_resource_usage"))
+    }
+
+    @Test
+    fun `cached low memory exits remain analytics but do not become issues`() {
+        assertFalse(
+            shouldPromoteProcessExitToIssue(
+                "low_memory_kill",
+                ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED,
+            ),
+        )
+        assertTrue(
+            shouldPromoteProcessExitToIssue(
+                "low_memory_kill",
+                ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND,
+            ),
+        )
+        assertTrue(
+            shouldPromoteProcessExitToIssue(
+                "native_crash",
+                ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED,
+            ),
+        )
+    }
+
+    @Test
+    fun `binary tombstones retain printable native diagnostics`() {
+        val tombstone = byteArrayOf(0, 1) + "SIGSEGV".toByteArray() +
+            byteArrayOf(0) + "libmpv.so".toByteArray()
+
+        val excerpt = readDiagnosticExcerpt(ByteArrayInputStream(tombstone), maxChars = 1_000)
+
+        assertTrue(excerpt.contains("SIGSEGV"))
+        assertTrue(excerpt.contains("libmpv.so"))
     }
 
     private fun run(startedAt: Long, version: String) = AppRunContext(
