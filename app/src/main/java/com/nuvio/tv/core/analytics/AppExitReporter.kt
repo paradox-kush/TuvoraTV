@@ -10,6 +10,8 @@ import com.posthog.PostHog
 import java.io.InputStream
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Reports OS process-exit records as PostHog `app_exit` events on the next launch.
@@ -31,10 +33,13 @@ object AppExitReporter {
     private const val MAX_RUN_CONTEXTS = 32
     private const val MAX_DESCRIPTION_CHARS = 512
     private const val MAX_TRACE_CHARS = 6_000
+    private const val PROCESS_SAMPLE_INTERVAL_SECONDS = 30L
     private val lock = Any()
-    private val memorySampler = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "AppMemorySampler").apply { isDaemon = true }
+    private val diagnosticsSampler = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "AppDiagnosticsSampler").apply { isDaemon = true }
     }
+    private val processSamplerStarted = AtomicBoolean(false)
+    private var previousProcessSample: ProcessInventorySample? = null
 
     /** Abnormal exit reasons worth reporting; everything else is normal lifecycle noise. */
     private val REPORTED_REASONS = mapOf(
@@ -56,6 +61,7 @@ object AppExitReporter {
         // remain off the main thread and can never delay startup.
         runCatching { beginRun(appContext) }
         recordMemorySnapshot(appContext, "startup")
+        startProcessSampling(appContext)
         Thread({ runCatching { doReport(appContext) } }, "AppExitReporter").start()
     }
 
@@ -242,6 +248,16 @@ object AppExitReporter {
             run.maxJavaHeapKb?.let { put("max_java_heap_kb", it) }
             run.lastNativeHeapKb?.let { put("last_native_heap_kb", it) }
             run.maxNativeHeapKb?.let { put("max_native_heap_kb", it) }
+            run.processSampledAtMs?.let { put("process_sampled_at_ms", it) }
+            run.processSampleTrigger?.let { put("process_sample_trigger", it) }
+            run.processImportance?.let { put("sampled_app_importance", it) }
+            run.processInventory?.let { put("uid_process_inventory", it) }
+            run.processCount?.let { put("uid_process_count", it) }
+            run.topCpuProcess?.let { put("top_cpu_process", it) }
+            run.topCpuTicksDelta?.let { put("top_cpu_ticks_delta", it) }
+            run.processSampleIntervalMs?.let { put("process_sample_interval_ms", it) }
+            run.selfCpuTimeMs?.let { put("self_cpu_time_ms", it) }
+            run.selfCpuDeltaMs?.let { put("self_cpu_delta_ms", it) }
         }
     }
 
@@ -308,6 +324,22 @@ object AppExitReporter {
                         .takeIf { it > 0L },
                     maxNativeHeapKb = prefs.getLong(runKey(startedAt, "mem_native_max"), 0L)
                         .takeIf { it > 0L },
+                    processSampledAtMs = prefs.getLong(runKey(startedAt, "proc_at"), 0L)
+                        .takeIf { it > 0L },
+                    processSampleTrigger = prefs.getString(runKey(startedAt, "proc_trigger"), null),
+                    processImportance = prefs.getString(runKey(startedAt, "proc_importance"), null),
+                    processInventory = prefs.getString(runKey(startedAt, "proc_inventory"), null),
+                    processCount = prefs.getInt(runKey(startedAt, "proc_count"), -1)
+                        .takeIf { it >= 0 },
+                    topCpuProcess = prefs.getString(runKey(startedAt, "proc_top"), null),
+                    topCpuTicksDelta = prefs.getLong(runKey(startedAt, "proc_top_delta"), -1L)
+                        .takeIf { it >= 0L },
+                    processSampleIntervalMs = prefs.getLong(runKey(startedAt, "proc_interval"), 0L)
+                        .takeIf { it > 0L },
+                    selfCpuTimeMs = prefs.getLong(runKey(startedAt, "self_cpu"), 0L)
+                        .takeIf { it > 0L },
+                    selfCpuDeltaMs = prefs.getLong(runKey(startedAt, "self_cpu_delta"), -1L)
+                        .takeIf { it >= 0L },
                 )
             }
         }
@@ -316,7 +348,7 @@ object AppExitReporter {
     /** Samples off the main thread and keeps only the latest and peak values for this run. */
     fun recordMemorySnapshot(context: Context, trigger: String, trimLevel: Int? = null) {
         val appContext = context.applicationContext
-        memorySampler.execute {
+        diagnosticsSampler.execute {
             runCatching {
                 val runtime = Runtime.getRuntime()
                 val javaHeapKb = (runtime.totalMemory() - runtime.freeMemory()) / 1_024L
@@ -351,6 +383,66 @@ object AppExitReporter {
         }
     }
 
+    /**
+     * Keeps a tiny rolling inventory of this app UID's processes. Android's excessive-CPU exit
+     * description says only "child process"; this breadcrumb identifies which named process was
+     * alive and accumulating the most CPU immediately before the OS killed the app.
+     */
+    private fun startProcessSampling(context: Context) {
+        if (!processSamplerStarted.compareAndSet(false, true)) return
+        diagnosticsSampler.scheduleAtFixedRate(
+            { runCatching { recordProcessSnapshot(context, "periodic") } },
+            0L,
+            PROCESS_SAMPLE_INTERVAL_SECONDS,
+            TimeUnit.SECONDS,
+        )
+    }
+
+    private fun recordProcessSnapshot(context: Context, trigger: String) {
+        val now = System.currentTimeMillis()
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val processes = activityManager.runningAppProcesses.orEmpty()
+            .asSequence()
+            .filter { it.uid == android.os.Process.myUid() }
+            .map { process ->
+                ProcessCpuSample(
+                    pid = process.pid,
+                    name = safeProcessName(context.packageName, process.processName),
+                    importance = process.importance,
+                    cpuTicks = readProcessCpuTicks(process.pid),
+                )
+            }
+            .sortedBy { it.name }
+            .toList()
+        val selfCpuMs = android.os.Process.getElapsedCpuTime()
+        val current = ProcessInventorySample(now, selfCpuMs, processes)
+        val previous = previousProcessSample
+        previousProcessSample = current
+        val deltas = processCpuDeltas(previous, current)
+        val top = deltas.maxByOrNull { it.second }
+        val selfDelta = previous?.let { (selfCpuMs - it.selfCpuTimeMs).coerceAtLeast(0L) }
+        val interval = previous?.let { (now - it.sampledAtMs).coerceAtLeast(0L) }
+        val ownImportance = processes.firstOrNull { it.pid == android.os.Process.myPid() }?.importance
+
+        synchronized(lock) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
+            if (runStart <= 0L) return
+            prefs.edit()
+                .putLong(runKey(runStart, "proc_at"), now)
+                .putString(runKey(runStart, "proc_trigger"), safeRouteName(trigger))
+                .putString(runKey(runStart, "proc_importance"), ownImportance?.let(::importanceName))
+                .putString(runKey(runStart, "proc_inventory"), formatProcessInventory(processes))
+                .putInt(runKey(runStart, "proc_count"), processes.size)
+                .putString(runKey(runStart, "proc_top"), top?.first)
+                .putLong(runKey(runStart, "proc_top_delta"), top?.second ?: -1L)
+                .putLong(runKey(runStart, "proc_interval"), interval ?: 0L)
+                .putLong(runKey(runStart, "self_cpu"), selfCpuMs)
+                .putLong(runKey(runStart, "self_cpu_delta"), selfDelta ?: -1L)
+                .apply()
+        }
+    }
+
     private fun runKey(startedAt: Long, field: String): String = "run.$startedAt.$field"
 
     private val RUN_FIELDS = listOf(
@@ -358,6 +450,8 @@ object AppExitReporter {
         "playing", "pb_kind", "pb_engine", "pb_surface", "pb_at",
         "mem_at", "mem_trigger", "mem_trim", "mem_pss", "mem_pss_max",
         "mem_java", "mem_java_max", "mem_native", "mem_native_max",
+        "proc_at", "proc_trigger", "proc_importance", "proc_inventory", "proc_count",
+        "proc_top", "proc_top_delta", "proc_interval", "self_cpu", "self_cpu_delta",
     )
 }
 
@@ -382,7 +476,61 @@ internal data class AppRunContext(
     val maxJavaHeapKb: Long? = null,
     val lastNativeHeapKb: Long? = null,
     val maxNativeHeapKb: Long? = null,
+    val processSampledAtMs: Long? = null,
+    val processSampleTrigger: String? = null,
+    val processImportance: String? = null,
+    val processInventory: String? = null,
+    val processCount: Int? = null,
+    val topCpuProcess: String? = null,
+    val topCpuTicksDelta: Long? = null,
+    val processSampleIntervalMs: Long? = null,
+    val selfCpuTimeMs: Long? = null,
+    val selfCpuDeltaMs: Long? = null,
 )
+
+internal data class ProcessCpuSample(
+    val pid: Int,
+    val name: String,
+    val importance: Int,
+    val cpuTicks: Long?,
+)
+
+private data class ProcessInventorySample(
+    val sampledAtMs: Long,
+    val selfCpuTimeMs: Long,
+    val processes: List<ProcessCpuSample>,
+)
+
+internal fun safeProcessName(packageName: String, processName: String): String =
+    processName.removePrefix(packageName).ifBlank { "main" }.take(64)
+
+internal fun formatProcessInventory(processes: List<ProcessCpuSample>): String = processes
+    .joinToString(",") { "${it.name}:${importanceName(it.importance)}:${it.pid}" }
+    .take(512)
+
+private fun processCpuDeltas(
+    previous: ProcessInventorySample?,
+    current: ProcessInventorySample,
+): List<Pair<String, Long>> {
+    if (previous == null) return emptyList()
+    val oldTicks = previous.processes.associate { it.pid to it.cpuTicks }
+    return current.processes.mapNotNull { process ->
+        val before = oldTicks[process.pid] ?: return@mapNotNull null
+        val after = process.cpuTicks ?: return@mapNotNull null
+        process.name to (after - before).coerceAtLeast(0L)
+    }
+}
+
+/** Reads Linux /proc stat fields 14+15 (user and kernel CPU ticks) for an app-owned process. */
+internal fun parseProcessCpuTicks(stat: String): Long? {
+    val fields = stat.substringAfterLast(')', missingDelimiterValue = "").trim().split(Regex("\\s+"))
+    if (fields.size <= 12) return null
+    return fields[11].toLongOrNull()?.plus(fields[12].toLongOrNull() ?: return null)
+}
+
+private fun readProcessCpuTicks(pid: Int): Long? = runCatching {
+    java.io.File("/proc/$pid/stat").bufferedReader().use { parseProcessCpuTicks(it.readLine()) }
+}.getOrNull()
 
 internal fun findRunContext(exitTimestamp: Long, runs: List<AppRunContext>): AppRunContext? =
     runs.asSequence()

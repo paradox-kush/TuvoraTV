@@ -113,6 +113,34 @@ class AppExitReporterTest {
         assertTrue(excerpt.contains("libmpv.so"))
     }
 
+    @Test
+    fun `process stat parser handles names containing spaces and parentheses`() {
+        val stat = "123 (Tuvora worker (1)) S 1 2 3 4 5 6 7 8 9 10 120 30 0 0"
+
+        assertEquals(150L, parseProcessCpuTicks(stat))
+        assertNull(parseProcessCpuTicks("malformed"))
+    }
+
+    @Test
+    fun `process inventory is privacy safe and records importance`() {
+        val processes = listOf(
+            ProcessCpuSample(
+                pid = 12,
+                name = safeProcessName("com.tuvora.mobile", "com.tuvora.mobile"),
+                importance = ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED,
+                cpuTicks = 100,
+            ),
+            ProcessCpuSample(
+                pid = 13,
+                name = safeProcessName("com.tuvora.mobile", "com.tuvora.mobile:player"),
+                importance = ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE,
+                cpuTicks = 200,
+            ),
+        )
+
+        assertEquals("main:cached:12,:player:service:13", formatProcessInventory(processes))
+    }
+
     private fun run(startedAt: Long, version: String) = AppRunContext(
         startedAtMs = startedAt,
         versionName = version,
