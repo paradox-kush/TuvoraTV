@@ -1,14 +1,16 @@
 name: Build APK
 
-# Builds the Android TV debug APK on every push. The job FAILS if the build fails,
-# and the APK is uploaded as a downloadable artifact ("nuviotv-full-debug").
+# Builds the Android TV debug APK on pushes to main and on pull requests. The job FAILS if the
+# build fails, and the APK is uploaded as a downloadable artifact ("nuviotv-full-debug").
+# Naming branches (rather than '**') also keeps this off tag pushes, which release.yml owns.
 # The debug build signs with the release config; CI generates a throwaway keystore
 # using the passwords already defaulted in app/build.gradle.kts.
 # Optional: set repo secrets SUPABASE_URL / SUPABASE_ANON_KEY to bake login into the CI APK.
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
