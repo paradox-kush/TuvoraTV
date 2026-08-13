@@ -30,6 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import com.nuvio.tv.R
 import com.nuvio.tv.core.tracking.TrackingProviderId
+import com.nuvio.tv.core.tracking.visibleTrackingProviders
 import com.nuvio.tv.data.local.MoreLikeThisSourcePreference
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressSource
@@ -410,6 +411,14 @@ internal fun TrackingSettingsOverview(
     val traktPresentation = traktConnectionPresentation(traktState)
     val simklPresentation = simklConnectionPresentation(simklState)
     val traktConnected = traktState.mode == TraktConnectionMode.CONNECTED
+    // A provider whose client credentials are missing from this build can never connect, so it is
+    // hidden rather than offered as a row that always fails. See visibleTrackingProviders.
+    val visibleProviders = visibleTrackingProviders { id ->
+        when (id) {
+            TrackingProviderId.TRAKT -> traktState.credentialsConfigured
+            TrackingProviderId.SIMKL -> simklState.credentialsConfigured
+        }
+    }
     val traktProgressActive = trackingState.watchProgressSource == WatchProgressSource.TRAKT
 
     SettingsStandaloneScaffold(
@@ -434,35 +443,41 @@ internal fun TrackingSettingsOverview(
                     contentPadding = PaddingValues(bottom = NuvioTheme.spacing.md),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    item(key = "tracking_accounts") {
-                        SettingsGroupCard(
-                            title = stringResource(R.string.tracking_accounts_title),
-                            subtitle = stringResource(R.string.tracking_accounts_subtitle)
-                        ) {
-                            SettingsActionRow(
-                                title = stringResource(R.string.trakt_name),
-                                subtitle = traktPresentation.subtitle,
-                                value = traktPresentation.value,
-                                valueColor = traktPresentation.color,
-                                leadingRawIconRes = R.raw.trakt_tv_favicon,
-                                leadingArtworkSize = 40.dp,
-                                onClick = onTraktClick,
-                                modifier = Modifier
-                                    .focusRequester(traktFocusRequester)
-                                    .testTag(TrackingSettingsTestTags.TRAKT_PROVIDER)
-                            )
-                            SettingsActionRow(
-                                title = stringResource(R.string.simkl_name),
-                                subtitle = simklPresentation.subtitle,
-                                value = simklPresentation.value,
-                                valueColor = simklPresentation.color,
-                                leadingRawIconRes = R.raw.simkl_tv_glyph,
-                                leadingArtworkSize = 40.dp,
-                                onClick = onSimklClick,
-                                modifier = Modifier
-                                    .focusRequester(simklFocusRequester)
-                                    .testTag(TrackingSettingsTestTags.SIMKL_PROVIDER)
-                            )
+                    if (visibleProviders.isNotEmpty()) {
+                        item(key = "tracking_accounts") {
+                            SettingsGroupCard(
+                                title = stringResource(R.string.tracking_accounts_title),
+                                subtitle = stringResource(R.string.tracking_accounts_subtitle)
+                            ) {
+                                if (TrackingProviderId.TRAKT in visibleProviders) {
+                                    SettingsActionRow(
+                                        title = stringResource(R.string.trakt_name),
+                                        subtitle = traktPresentation.subtitle,
+                                        value = traktPresentation.value,
+                                        valueColor = traktPresentation.color,
+                                        leadingRawIconRes = R.raw.trakt_tv_favicon,
+                                        leadingArtworkSize = 40.dp,
+                                        onClick = onTraktClick,
+                                        modifier = Modifier
+                                            .focusRequester(traktFocusRequester)
+                                            .testTag(TrackingSettingsTestTags.TRAKT_PROVIDER)
+                                    )
+                                }
+                                if (TrackingProviderId.SIMKL in visibleProviders) {
+                                    SettingsActionRow(
+                                        title = stringResource(R.string.simkl_name),
+                                        subtitle = simklPresentation.subtitle,
+                                        value = simklPresentation.value,
+                                        valueColor = simklPresentation.color,
+                                        leadingRawIconRes = R.raw.simkl_tv_glyph,
+                                        leadingArtworkSize = 40.dp,
+                                        onClick = onSimklClick,
+                                        modifier = Modifier
+                                            .focusRequester(simklFocusRequester)
+                                            .testTag(TrackingSettingsTestTags.SIMKL_PROVIDER)
+                                    )
+                                }
+                            }
                         }
                     }
                     item(key = "tracking_sources") {

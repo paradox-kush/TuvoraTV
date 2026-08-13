@@ -17,6 +17,21 @@ val LibrarySourceMode.providerId: TrackingProviderId?
         LibrarySourceMode.SIMKL -> TrackingProviderId.SIMKL
     }
 
+/**
+ * Which tracking providers Settings should offer at all.
+ *
+ * A build without a provider's client credentials cannot reach it: connecting fails on the first
+ * call, every catalog backed by it comes back empty, and the error the API returns for an
+ * unauthenticated client rarely says so. Showing the row anyway is a dead end that reads as a
+ * broken feature rather than an absent one — which is exactly how users read it.
+ *
+ * This is about what the BUILD can do, not what the user has connected; [availableWatchProgressSources]
+ * and friends handle the latter.
+ */
+fun visibleTrackingProviders(
+    isProviderConfigured: (TrackingProviderId) -> Boolean
+): List<TrackingProviderId> = TrackingProviderId.entries.filter(isProviderConfigured)
+
 fun effectiveWatchProgressSource(
     requestedSource: WatchProgressSource,
     isProviderAuthenticated: (TrackingProviderId) -> Boolean
