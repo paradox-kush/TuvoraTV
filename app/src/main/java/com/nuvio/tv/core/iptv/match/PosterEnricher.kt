@@ -90,14 +90,17 @@ class PosterEnricher @Inject constructor(
     private suspend fun drain() {
         while (true) {
             val req = synchronized(lock) {
-                val entry = queue.entries.firstOrNull()
-                if (entry == null) {
+                val iterator = queue.entries.iterator()
+                if (!iterator.hasNext()) {
                     workers--
                     return
                 }
-                queue.remove(entry.key)
-                attempted.add(entry.key)
-                entry.value
+                // Keep this twin safe for Kotlin/Native ports: a HashMap.Entry is invalid as
+                // soon as its backing entry is removed. Copy first, then remove via the iterator.
+                val request = iterator.next().value
+                iterator.remove()
+                attempted.add(request.key)
+                request
             }
             val client = clientFactory.clientFor(req.acc) as? XtreamClient ?: continue
             val result = when (req.kind) {
