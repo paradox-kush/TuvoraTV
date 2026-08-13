@@ -199,7 +199,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (category.special == null || category.special == GuideSpecial.ALL) {
             channelsCache["${acc.id}|${categoryId}"]?.let { cached ->
                 _uiState.update { it.copy(selectedCategoryId = categoryId, channels = cached, loadingChannels = false, error = null, focusedChannelId = cached.firstOrNull()?.contentId) }
-                cached.firstOrNull()?.let { ensureEpg(it.streamId) }
+                primeEpgFor(cached)
                 return
             }
         }
@@ -231,7 +231,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 channelsCache["${acc.id}|${category.id}"] = channels
             }
             _uiState.update { it.copy(channels = channels, loadingChannels = false, focusedChannelId = channels.firstOrNull()?.contentId) }
-            channels.firstOrNull()?.let { ensureEpg(it.streamId) }
+            primeEpgFor(channels)
+        }
+    }
+
+    /**
+     * Prime now/next for a category that has just been shown. The first channel is marked focused
+     * as the list lands, so [onChannelFocused] treats the UI's own focus event for it as a no-op
+     * and its window never runs — without this the whole group reads "No information" until the
+     * viewer moves off row one.
+     */
+    private fun primeEpgFor(channels: List<GuideChannel>) {
+        GuideEpgPrefetchPolicy.onChannelsLoaded(channels.size).forEach { index ->
+            channels.getOrNull(index)?.let { ensureEpg(it.streamId) }
         }
     }
 
@@ -241,8 +253,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     /**
      * Channel got D-pad focus: drive the preview + fetch its now/next EPG. Debounced ~250ms and
-     * prefetches the focused channel plus its ±3 neighbours so now/next is present when focus settles
-     * (instead of one get_short_epg per composed row, which made fast scrolling feel laggy).
+     * prefetches a window around the focused channel (see [GuideEpgPrefetchPolicy]) so now/next is
+     * present when focus settles, instead of one get_short_epg per composed row, which made fast
+     * scrolling feel laggy.
      */
     fun onChannelFocused(channel: GuideChannel, index: Int = -1) {
         if (channel.contentId == _uiState.value.focusedChannelId) return
@@ -254,10 +267,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
             val center = if (index in channels.indices) index else channels.indexOfFirst { it.contentId == channel.contentId }
             if (center < 0) { ensureEpg(channel.streamId); return@launch }
             // Focused first, then neighbours by proximity, so the visible row resolves soonest.
-            ensureEpg(channels[center].streamId)
-            for (d in 1..EPG_PREFETCH_RADIUS) {
-                channels.getOrNull(center - d)?.let { ensureEpg(it.streamId) }
-                channels.getOrNull(center + d)?.let { ensureEpg(it.streamId) }
+            GuideEpgPrefetchPolicy.onFocusChanged(center, channels.size).forEach { index ->
+                channels.getOrNull(index)?.let { ensureEpg(it.streamId) }
             }
         }
     }
@@ -471,7 +482,6 @@ class XtreamLiveGuideViewModel @Inject constructor(
         private const val ALL_ID = "__all"
         private const val ALL_CAP = 600   // ponytail: don't render 26k rows; categories are the real browse path
         private const val EPG_FOCUS_DEBOUNCE_MS = 250L   // wait for focus to settle before fetching EPG
-        private const val EPG_PREFETCH_RADIUS = 8        // prefetch ±8 neighbours: timeline rows show cells, so cover a screenful
         private const val GUIDE_EPG_WINDOW_MS = 3 * 60 * 60 * 1000L  // mirror-fallback fetch span for the timeline
         private const val RETRY_DELAY_MS = 1000L         // pause before the single panel-flake retry
     }
