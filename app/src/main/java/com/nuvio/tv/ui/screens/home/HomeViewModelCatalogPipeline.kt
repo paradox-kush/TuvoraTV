@@ -799,9 +799,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                 when (homeRow) {
                     is HomeRow.Catalog -> {
                         val row = homeRow.row
-                        val isPlaceholderRow = row.isLoading &&
-                            row.items.firstOrNull()?.id?.startsWith("__placeholder_") == true
-                        if (row.items.isNotEmpty() && !isPlaceholderRow) {
+                        if (row.items.isNotEmpty() && !row.isPlaceholderRow) {
                             add(GridItem.SectionDivider(
                                 catalogName = row.catalogName,
                                 catalogId = row.catalogId,

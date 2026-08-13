@@ -194,3 +194,19 @@ sealed class HomeEvent {
 fun homeItemStatusKey(itemId: String, itemType: String): String {
     return "${itemType.lowercase()}|$itemId"
 }
+
+/**
+ * Id prefix for the shimmer stand-ins that rows carry while a catalog is in flight. They are not
+ * content: they must never be focused for hero enrichment, opened, or counted as loaded items.
+ */
+const val PLACEHOLDER_ITEM_ID_PREFIX = "__placeholder_"
+
+fun isPlaceholderItemId(itemId: String): Boolean = itemId.startsWith(PLACEHOLDER_ITEM_ID_PREFIX)
+
+/**
+ * True when the row is holding shimmer stand-ins rather than real items. Deliberately does NOT look
+ * at [CatalogRow.isLoading]: a source that fails clears its loading flag while the stand-ins are
+ * still in place, and keying off the flag is what let those fakes render as content.
+ */
+val CatalogRow.isPlaceholderRow: Boolean
+    get() = items.firstOrNull()?.id?.let(::isPlaceholderItemId) == true

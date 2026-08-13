@@ -428,6 +428,9 @@ internal fun HomeViewModel.requestTrailerPreviewPipeline(
 }
 
 internal fun HomeViewModel.onItemFocusPipeline(item: MetaPreview) {
+    // Shimmer stand-ins carry a synthetic id. Enriching one resolves nothing and leaves the raw
+    // "__placeholder_…" id sitting in the hero.
+    if (isPlaceholderItemId(item.id)) return
     if (startupGracePeriodActive) {
         deferredEnrichItem = item
         return
