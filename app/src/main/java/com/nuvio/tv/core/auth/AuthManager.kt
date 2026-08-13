@@ -130,22 +130,17 @@ class AuthManager @Inject constructor(
                         is SessionStatus.NotAuthenticated -> {
                             val session = auth.currentSessionOrNull()
                             val refreshToken = session?.refreshToken?.takeIf { it.isNotBlank() }
-                            if (refreshToken != null) {
-                                scope.launch {
-                                    when (refreshCurrentSessionSerialized(
-                                            observedRefreshToken = refreshToken,
-                                            reason = "Session became unauthenticated"
-                                        )
-                                    ) {
-                                        SessionRefreshResult.REFRESHED -> Unit
-                                        SessionRefreshResult.INVALID_SESSION -> handleUnexpectedSignedOut()
-                                        SessionRefreshResult.TRANSIENT_FAILURE -> {
-                                            Log.w(TAG, "Session refresh failed transiently; keeping current auth state")
-                                        }
+                            scope.launch {
+                                when (refreshCurrentSessionSerialized(
+                                    observedRefreshToken = refreshToken,
+                                    reason = "Session became unauthenticated"
+                                )) {
+                                    SessionRefreshResult.REFRESHED -> Unit
+                                    SessionRefreshResult.INVALID_SESSION -> handleUnexpectedSignedOut()
+                                    SessionRefreshResult.TRANSIENT_FAILURE -> {
+                                        Log.w(TAG, "Session refresh failed transiently; keeping current auth state")
                                     }
                                 }
-                            } else {
-                                handleUnexpectedSignedOut()
                             }
                         }
                         is SessionStatus.Initializing -> {
@@ -330,11 +325,37 @@ class AuthManager @Inject constructor(
         observedRefreshToken: String?,
         reason: String
     ): SessionRefreshResult = refreshMutex.withLock {
-        val currentRefreshToken = auth.currentSessionOrNull()?.refreshToken?.takeIf { it.isNotBlank() }
-        if (currentRefreshToken == null) {
-            Log.w(TAG, "$reason but no refresh token available; cannot refresh session")
-            return@withLock SessionRefreshResult.INVALID_SESSION
+        val currentSession = auth.currentSessionOrNull()
+        if (currentSession?.refreshToken.isNullOrBlank()) {
+            // NotAuthenticated may only mean the SDK lost its in-memory copy during process
+            // recreation or a transient refresh. Restore the disk session before deciding the
+            // user really signed out. Updates preserve this app storage when package/signing stay
+            // the same, and importSession restarts rotating-token auto refresh.
+            val persistedSession = runCatching { auth.sessionManager.loadSession() }
+                .onFailure { error -> Log.w(TAG, "$reason; failed to read persisted session", error) }
+                .getOrNull()
+            if (persistedSession?.refreshToken.isNullOrBlank()) {
+                Log.w(TAG, "$reason and no persisted refresh token is available")
+                return@withLock SessionRefreshResult.INVALID_SESSION
+            }
+            val restoreResult = try {
+                auth.importSession(persistedSession, autoRefresh = true)
+                SessionRefreshResult.REFRESHED
+            } catch (restoreError: Exception) {
+                restoreError.toSessionRefreshResult().also { result ->
+                    if (result == SessionRefreshResult.INVALID_SESSION) {
+                        Log.e(TAG, "Persisted Supabase session was rejected", restoreError)
+                    } else {
+                        Log.w(TAG, "Persisted Supabase session could not refresh yet", restoreError)
+                    }
+                }
+            }
+            // importSession owns any immediately-needed refresh and starts the SDK's refresh job.
+            return@withLock restoreResult
         }
+
+        val activeSession = currentSession
+        val currentRefreshToken = activeSession.refreshToken
         if (observedRefreshToken != null && currentRefreshToken != observedRefreshToken) {
             Log.d(TAG, "$reason; session was already refreshed by another request")
             return@withLock SessionRefreshResult.REFRESHED
@@ -343,8 +364,8 @@ class AuthManager @Inject constructor(
         // Two POSTs presenting the same refresh token can trip GoTrue reuse detection
         // (refresh_token_not_found -> the library clears the session -> spurious "signed out" +
         // playback teardown). If the library already keeps the access token valid, we're done.
-        val expiresAt = auth.currentSessionOrNull()?.expiresAt
-        if (expiresAt != null && expiresAt > Clock.System.now() + REFRESH_SKEW) {
+        val expiresAt = activeSession.expiresAt
+        if (expiresAt > Clock.System.now() + REFRESH_SKEW) {
             Log.d(TAG, "$reason; access token still valid, deferring to auto-refresh")
             return@withLock SessionRefreshResult.REFRESHED
         }

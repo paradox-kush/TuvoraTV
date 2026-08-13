@@ -57,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
@@ -117,7 +119,37 @@ fun SportsHubScreen(
     var pickedSport by remember { mutableStateOf<String?>(null) }
     // Discovery drill-in: a league/event page listing everything happening in it.
     var leaguePage by remember { mutableStateOf<RadarLeague?>(null) }
+    var fixturesPage by remember { mutableStateOf<SportsFixturesCollection?>(null) }
     val firstFocus = remember { FocusRequester() }
+
+    fixturesPage?.let { page ->
+        SportsFixturesPage(
+            state = state,
+            page = page,
+            isLive = state.isLiveCheck(nowMs),
+            onMatch = { viewModel.openMatch(it) },
+            onBack = { fixturesPage = null },
+        )
+        sheet?.let { s ->
+            val hasPlaylistsNow by viewModel.hasPlaylists.collectAsStateWithLifecycle()
+            MatchChannelsOverlay(
+                state = s.copy(hasPlaylists = hasPlaylistsNow),
+                isLive = viewModel.uiState.value.isLive(s.fixture, RadarTime.nowMs()),
+                onPlay = { match -> viewModel.playMatch(match, onPlayChannel) },
+                onPlayReplay = { replay ->
+                    viewModel.closeMatch()
+                    onPlayChannel(replay.third, replay.second, replay.first)
+                },
+                onOpenRecording = { id ->
+                    viewModel.closeMatch()
+                    onOpenDetail(id, "movie")
+                },
+                onAddProvider = { viewModel.closeMatch(); onAddProvider() },
+                onDismiss = { viewModel.closeMatch() },
+            )
+        }
+        return
+    }
 
     leaguePage?.let { league ->
         LeagueFixturesPage(
@@ -168,7 +200,18 @@ fun SportsHubScreen(
         ) {
             if (featured.isNotEmpty()) {
                 item(key = "featured") {
-                    RowTitle("Featured Events")
+                    RowTitle(
+                        text = "Featured Events",
+                        onSeeAll = {
+                            fixturesPage = SportsFixturesCollection(
+                                title = "Featured Events",
+                                fixtures = featured.flatMap { event ->
+                                    state.upcoming(listOf(event.leagueId), nowMs, cap = 40)
+                                }.distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
+                                    .sortedBy { it.startEpochMs },
+                            )
+                        },
+                    )
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = SportsRowStartPadding),
                         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
@@ -187,7 +230,12 @@ fun SportsHubScreen(
             }
             if (upcoming.isNotEmpty()) {
                 item(key = "upcoming") {
-                    RowTitle("Live & Upcoming")
+                    RowTitle(
+                        text = "Live & Upcoming",
+                        onSeeAll = {
+                            fixturesPage = SportsFixturesCollection("Live & Upcoming", upcoming)
+                        },
+                    )
                     MatchRow(
                         upcoming,
                         state.isLiveCheck(nowMs),
@@ -208,7 +256,15 @@ fun SportsHubScreen(
                 val fixtures = state.upcomingForTeams(listOf(team.id), nowMs, cap = 12)
                 if (fixtures.isNotEmpty()) {
                     item(key = "team-${team.id}") {
-                        RowTitle(team.name)
+                        RowTitle(
+                            text = team.name,
+                            onSeeAll = {
+                                fixturesPage = SportsFixturesCollection(
+                                    team.name,
+                                    state.upcomingForTeams(listOf(team.id), nowMs, cap = 40),
+                                )
+                            },
+                        )
                         MatchRow(
                             fixtures,
                             state.isLiveCheck(nowMs),
@@ -223,7 +279,11 @@ fun SportsHubScreen(
                 val fixtures = state.upcoming(listOf(league.id), nowMs, cap = 12)
                 if (fixtures.isNotEmpty()) {
                     item(key = "league-${league.id}") {
-                        RowTitle(league.name, badge = league.badge)
+                        RowTitle(
+                            text = league.name,
+                            badge = league.badge,
+                            onSeeAll = { leaguePage = league },
+                        )
                         MatchRow(
                             fixtures,
                             state.isLiveCheck(nowMs),
@@ -1068,6 +1128,55 @@ private fun LiveBadge(progress: String? = null) {
     }
 }
 
+private data class SportsFixturesCollection(
+    val title: String,
+    val fixtures: List<RadarFixture>,
+)
+
+@Composable
+private fun SportsFixturesPage(
+    state: com.nuvio.tv.core.radar.RadarUiState,
+    page: SportsFixturesCollection,
+    isLive: (RadarFixture) -> Boolean,
+    onMatch: (RadarFixture) -> Unit,
+    onBack: () -> Unit,
+) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(page.fixtures.isNotEmpty()) {
+        if (page.fixtures.isNotEmpty()) runCatching { firstFocus.requestFocus() }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = NuvioTheme.spacing.xl, start = SportsRowStartPadding, end = SportsRowStartPadding),
+    ) {
+        Text(
+            text = page.title,
+            style = MaterialTheme.typography.headlineSmall,
+            color = NuvioTheme.colors.TextPrimary,
+            modifier = Modifier.padding(bottom = NuvioTheme.spacing.md),
+        )
+        LazyColumn(contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxxl)) {
+            itemsIndexed(
+                items = page.fixtures,
+                key = { _, fixture -> fixture.id ?: "${fixture.leagueId}/${fixture.event}/${fixture.ts}" },
+            ) { index, fixture ->
+                MatchCard(
+                    fixture = fixture,
+                    live = isLive(fixture),
+                    onClick = { onMatch(fixture) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = NuvioTheme.spacing.xs)
+                        .then(if (index == 0) Modifier.focusRequester(firstFocus) else Modifier),
+                    liveScore = fixture.id?.let { state.liveScores[it] },
+                )
+            }
+        }
+    }
+}
+
 /** League/event page: EVERYTHING happening in it — live, upcoming, recent results. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -1347,13 +1456,20 @@ private fun FocusableRow(onClick: () -> Unit, content: @Composable androidx.comp
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun RowTitle(text: String, badge: String? = null) {
+private fun RowTitle(
+    text: String,
+    badge: String? = null,
+    onSeeAll: (() -> Unit)? = null,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(
-            start = SportsRowStartPadding,
-            bottom = SportsRowTitleBottom,
-        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = SportsRowStartPadding,
+                end = SportsRowStartPadding,
+                bottom = SportsRowTitleBottom,
+            ),
     ) {
         badge?.takeIf { it.isNotBlank() }?.let {
             BadgeImage(url = it, size = 22.dp)
@@ -1365,6 +1481,25 @@ private fun RowTitle(text: String, badge: String? = null) {
             fontWeight = FontWeight.SemiBold,
             color = NuvioTheme.colors.TextPrimary,
         )
+        onSeeAll?.let { openAll ->
+            Spacer(Modifier.width(NuvioTheme.spacing.md))
+            Button(
+                onClick = openAll,
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioTheme.colors.BackgroundCard,
+                    contentColor = NuvioTheme.colors.TextSecondary,
+                    focusedContainerColor = NuvioTheme.colors.FocusBackground,
+                    focusedContentColor = NuvioTheme.colors.Primary,
+                ),
+                shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.sm)),
+                contentPadding = PaddingValues(
+                    horizontal = NuvioTheme.spacing.md,
+                    vertical = NuvioTheme.spacing.xs,
+                ),
+            ) {
+                Text("See all", style = MaterialTheme.typography.labelLarge)
+            }
+        }
     }
 }
 

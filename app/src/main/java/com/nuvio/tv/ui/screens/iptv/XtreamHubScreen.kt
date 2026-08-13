@@ -21,7 +21,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.LiveTv
@@ -100,6 +104,7 @@ fun XtreamHubScreen(
     // B10: the Live guide's preview player expanded to fullscreen — hide the header row so the
     // video really covers the whole screen. Focus is locked inside the guide while true.
     var liveFullscreen by remember { mutableStateOf(false) }
+    var openCategoryId by remember(uiState.selectedAccountId, uiState.section) { mutableStateOf<String?>(null) }
     val firstFocus = remember { FocusRequester() }
 
     // Per-tab focus targets so D-pad UP from the first content row lands back on the
@@ -132,6 +137,36 @@ fun XtreamHubScreen(
             firstFocus = firstFocus,
             onAddProvider = onAddProvider,
             onPairFromPhone = onPairFromPhone
+        )
+        return
+    }
+
+    val openCategory = openCategoryId?.let { id -> uiState.categories.firstOrNull { it.id == id } }
+    if (openCategory != null) {
+        HubCategoryPage(
+            title = openCategory.name,
+            rowKey = "${uiState.section}_${openCategory.id}",
+            items = uiState.itemsByCategory[openCategory.id].orEmpty(),
+            hasMore = uiState.hasMoreByCategory[openCategory.id] == true,
+            portraitStyle = remember(uiState.posterCardWidthDp, uiState.posterCardHeightDp, uiState.posterCardCornerRadiusDp) {
+                PosterCardDefaults.Style.copy(
+                    width = uiState.posterCardWidthDp.dp * HUB_PORTRAIT_CARD_SCALE,
+                    height = uiState.posterCardHeightDp.dp * HUB_PORTRAIT_CARD_SCALE,
+                    cornerRadius = uiState.posterCardCornerRadiusDp.dp,
+                )
+            },
+            landscapeStyle = remember(uiState.posterCardWidthDp, uiState.posterCardCornerRadiusDp) {
+                val width = uiState.posterCardWidthDp.dp * HUB_LANDSCAPE_CARD_SCALE
+                PosterCardDefaults.Style.copy(
+                    width = width,
+                    height = width / HUB_LANDSCAPE_CARD_ASPECT,
+                    cornerRadius = uiState.posterCardCornerRadiusDp.dp,
+                )
+            },
+            showLabels = uiState.posterLabelsEnabled,
+            onNearEnd = { viewModel.loadMoreCategory(openCategory.id) },
+            onActivate = onActivate,
+            onBack = { openCategoryId = null },
         )
         return
     }
@@ -187,6 +222,7 @@ fun XtreamHubScreen(
                 onLoadCategory = viewModel::loadCategory,
                 onPrefetchCategory = viewModel::prefetchCategory,
                 onLoadMoreCategory = viewModel::loadMoreCategory,
+                onOpenCategory = { openCategoryId = it },
                 selectedTabRequester = selectedTabRequester
             )
         }
@@ -218,6 +254,7 @@ private fun HubBrowseContent(
     onLoadCategory: (String) -> Unit,
     onPrefetchCategory: (String) -> Unit,
     onLoadMoreCategory: (String) -> Unit,
+    onOpenCategory: (String) -> Unit,
     selectedTabRequester: FocusRequester
 ) {
     // The hub's card size derives from the SAME poster-size preference as Modern home, scaled by
@@ -280,6 +317,7 @@ private fun HubBrowseContent(
                             showLabels = uiState.posterLabelsEnabled,
                             placeholderShimmerOffsetState = sharedShimmerOffsetState,
                             onActivate = onActivate,
+                            onViewAll = { onOpenCategory(category.id) },
                             // First row routes UP to the active tab.
                             upFocusRequester = if (index == 0) selectedTabRequester else null
                         )
@@ -310,6 +348,7 @@ private fun HubPosterRow(
     showLabels: Boolean,
     placeholderShimmerOffsetState: State<Float>,
     onActivate: (XtreamHubItem) -> Unit,
+    onViewAll: () -> Unit,
     upFocusRequester: FocusRequester? = null,
 ) {
     // Loading rows render shimmer placeholders through the same "placeholder://empty" contract
@@ -335,14 +374,29 @@ private fun HubPosterRow(
     Column {
         val titleMediumStyle = MaterialTheme.typography.titleMedium
         val rowTitleStyle = remember(titleMediumStyle) { titleMediumStyle.copy(fontWeight = FontWeight.SemiBold) }
-        Text(
-            text = title,
-            style = rowTitleStyle,
-            color = NuvioTheme.colors.TextPrimary,
-            modifier = Modifier.padding(start = HubRowStartPadding, bottom = HubRowTitleBottom)
-        )
-
+        val hasViewAll = !isLoading && previews.isNotEmpty()
+        val viewAllFocusRequester = remember { FocusRequester() }
         val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+        val firstItemFocusRequester = itemFocusRequesters.getOrPut(0) { FocusRequester() }
+        Row(
+            modifier = Modifier.padding(start = HubRowStartPadding, bottom = HubRowTitleBottom),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+        ) {
+            Text(
+                text = title,
+                style = rowTitleStyle,
+                color = NuvioTheme.colors.TextPrimary,
+            )
+            if (hasViewAll) {
+                HubHeaderSeeAllButton(
+                    onClick = onViewAll,
+                    focusRequester = viewAllFocusRequester,
+                    upFocusRequester = upFocusRequester,
+                    downFocusRequester = firstItemFocusRequester,
+                )
+            }
+        }
 
         // Placeholder -> data swap replaces the LazyRow keys; if focus was sitting on a
         // placeholder it would be dropped mid-swap. Same rescue trick as CatalogRowSection:
@@ -431,8 +485,10 @@ private fun HubPosterRow(
                         },
                         modifier = Modifier
                             .then(
-                                if (upFocusRequester != null) {
-                                    Modifier.focusProperties { up = upFocusRequester }
+                                if (hasViewAll || upFocusRequester != null) {
+                                    Modifier.focusProperties {
+                                        up = if (hasViewAll) viewAllFocusRequester else upFocusRequester!!
+                                    }
                                 } else Modifier
                             )
                             .then(
@@ -442,6 +498,101 @@ private fun HubPosterRow(
                             )
                     )
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun HubHeaderSeeAllButton(
+    onClick: () -> Unit,
+    focusRequester: FocusRequester,
+    upFocusRequester: FocusRequester?,
+    downFocusRequester: FocusRequester,
+) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier
+            .focusRequester(focusRequester)
+            .focusProperties { down = downFocusRequester }
+            .then(
+                upFocusRequester?.let { requester ->
+                    Modifier.focusProperties { up = requester }
+                } ?: Modifier,
+            ),
+        colors = ButtonDefaults.colors(
+            containerColor = NuvioTheme.colors.BackgroundCard,
+            contentColor = NuvioTheme.colors.TextSecondary,
+            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+            focusedContentColor = NuvioTheme.colors.Primary,
+        ),
+        shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.sm)),
+        contentPadding = PaddingValues(
+            horizontal = NuvioTheme.spacing.md,
+            vertical = NuvioTheme.spacing.xs,
+        ),
+    ) {
+        Text(
+            text = stringResource(R.string.action_see_all),
+            style = MaterialTheme.typography.labelLarge,
+        )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun HubCategoryPage(
+    title: String,
+    rowKey: String,
+    items: List<XtreamHubItem>,
+    hasMore: Boolean,
+    portraitStyle: PosterCardStyle,
+    landscapeStyle: PosterCardStyle,
+    showLabels: Boolean,
+    onNearEnd: () -> Unit,
+    onActivate: (XtreamHubItem) -> Unit,
+    onBack: () -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(items.isNotEmpty()) {
+        if (items.isNotEmpty()) runCatching { firstFocus.requestFocus() }
+    }
+    Column(Modifier.fillMaxSize().padding(top = NuvioTheme.spacing.xl)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineSmall,
+            color = NuvioTheme.colors.TextPrimary,
+            modifier = Modifier.padding(start = HubRowStartPadding, bottom = NuvioTheme.spacing.lg),
+        )
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = portraitStyle.width + NuvioTheme.spacing.md),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = HubRowStartPadding,
+                end = HubRowStartPadding,
+                bottom = NuvioTheme.spacing.xxxl,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xl),
+        ) {
+            gridItemsIndexed(
+                items = items,
+                key = { _, item -> item.cardId },
+            ) { index, item ->
+                if (hasMore && index == items.lastIndex) {
+                    LaunchedEffect(rowKey, items.size) { onNearEnd() }
+                }
+                val preview = item.toMetaPreview()
+                val landscape = preview.posterShape == PosterShape.LANDSCAPE
+                ContentCard(
+                    item = if (landscape) preview.copy(posterShape = PosterShape.POSTER) else preview,
+                    posterCardStyle = if (landscape) landscapeStyle else portraitStyle,
+                    showLabels = showLabels,
+                    focusRequester = if (index == 0) firstFocus else null,
+                    onClick = { onActivate(item) },
+                )
             }
         }
     }
