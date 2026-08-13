@@ -38,6 +38,8 @@ import com.nuvio.tv.ui.screens.home.ModernCarouselRowBuildCache
 import com.nuvio.tv.ui.screens.home.ModernHomePresentationInput
 import com.nuvio.tv.ui.screens.home.buildModernHomePresentation
 import com.nuvio.tv.ui.screens.home.homeItemStatusKey
+import com.nuvio.tv.ui.screens.home.isPlaceholderItemId
+import com.nuvio.tv.ui.screens.home.isPlaceholderRow
 import com.nuvio.tv.domain.repository.CatalogRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -367,7 +369,7 @@ class FolderDetailViewModel @Inject constructor(
         }
         // Only include real loaded rows (exclude placeholder shimmer rows)
         val loadedRows = sourceTabs.mapNotNull { tab ->
-            tab.catalogRow?.takeIf { !it.isLoading }
+            tab.catalogRow?.takeIf { !it.isLoading && !it.isPlaceholderRow }
         }
 
         if (loadedRows.isEmpty()) return
@@ -474,7 +476,7 @@ class FolderDetailViewModel @Inject constructor(
 
         val homeRows = allRows.map { HomeRow.Catalog(it) }
         // Only include real (non-placeholder) rows in grid items
-        val realRows = allRows.filter { !it.isLoading }
+        val realRows = allRows.filter { !it.isLoading && !it.isPlaceholderRow }
         val gridItems = buildList<GridItem> {
             realRows.forEach { row ->
                 add(GridItem.SectionDivider(
@@ -688,7 +690,13 @@ class FolderDetailViewModel @Inject constructor(
                         _uiState.update { state ->
                             val tabs = state.tabs.toMutableList()
                             if (tabIndex < tabs.size) {
-                                tabs[tabIndex] = tabs[tabIndex].copy(isLoading = false, error = result.message)
+                                tabs[tabIndex] = tabs[tabIndex].copy(
+                                    isLoading = false,
+                                    error = result.message,
+                                    catalogRow = tabs[tabIndex].catalogRow
+                                        ?.takeUnless { it.isPlaceholderRow }
+                                        ?.copy(isLoading = false)
+                                )
                             }
                             state.copy(tabs = tabs)
                         }
@@ -937,7 +945,12 @@ class FolderDetailViewModel @Inject constructor(
                                 tabs[tabIndex] = current.copy(
                                     isLoading = false,
                                     error = result.message,
-                                    catalogRow = current.catalogRow?.copy(isLoading = false)
+                                    // Drop the shimmer stand-ins. Keeping them (with isLoading
+                                    // cleared) is what made a failed source render as blank cards
+                                    // and put "__placeholder_…" in the hero title.
+                                    catalogRow = current.catalogRow
+                                        ?.takeUnless { it.isPlaceholderRow }
+                                        ?.copy(isLoading = false)
                                 )
                             }
                             s.copy(tabs = tabs)
@@ -998,7 +1011,12 @@ class FolderDetailViewModel @Inject constructor(
                                 tabs[tabIndex] = current.copy(
                                     isLoading = false,
                                     error = result.message,
-                                    catalogRow = current.catalogRow?.copy(isLoading = false)
+                                    // Drop the shimmer stand-ins. Keeping them (with isLoading
+                                    // cleared) is what made a failed source render as blank cards
+                                    // and put "__placeholder_…" in the hero title.
+                                    catalogRow = current.catalogRow
+                                        ?.takeUnless { it.isPlaceholderRow }
+                                        ?.copy(isLoading = false)
                                 )
                             }
                             s.copy(tabs = tabs)
@@ -1087,6 +1105,9 @@ class FolderDetailViewModel @Inject constructor(
     }
 
     fun onItemFocused(item: MetaPreview) {
+        // Shimmer stand-ins carry a synthetic id. Enriching one resolves nothing and leaves the raw
+        // "__placeholder_…" id sitting in the hero.
+        if (isPlaceholderItemId(item.id)) return
         // Clear enriching for previous item immediately.
         if (_enrichingItemId.value != null && _enrichingItemId.value != item.id) {
             _enrichingItemId.value = null

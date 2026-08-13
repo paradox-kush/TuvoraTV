@@ -57,6 +57,8 @@ data class CollectionEditorUiState(
     val showCatalogPicker: Boolean = false,
     val showTmdbSourcePicker: Boolean = false,
     val showTraktSourcePicker: Boolean = false,
+    /** False when the build has no Trakt client id — Trakt sources can never load, so don't offer them. */
+    val traktAvailable: Boolean = false,
     val editingTmdbSourceIndex: Int? = null,
     val editingTraktSourceIndex: Int? = null,
     val tmdbBuilderMode: TmdbBuilderMode = TmdbBuilderMode.PRESETS,
@@ -127,7 +129,9 @@ class CollectionEditorViewModel @Inject constructor(
 
     private val collectionIdArg: String = savedStateHandle["collectionId"] ?: ""
 
-    private val _uiState = MutableStateFlow(CollectionEditorUiState())
+    private val _uiState = MutableStateFlow(
+        CollectionEditorUiState(traktAvailable = traktPublicListSourceResolver.isConfigured)
+    )
     val uiState: StateFlow<CollectionEditorUiState> = _uiState.asStateFlow()
 
     init {
@@ -472,6 +476,7 @@ class CollectionEditorViewModel @Inject constructor(
     }
 
     fun showTraktSourcePicker() {
+        if (!traktPublicListSourceResolver.isConfigured) return
         _uiState.update {
             it.copy(
                 showTraktSourcePicker = true,
@@ -495,6 +500,7 @@ class CollectionEditorViewModel @Inject constructor(
     }
 
     fun editTraktSource(index: Int) {
+        if (!traktPublicListSourceResolver.isConfigured) return
         _uiState.update { state ->
             val folder = state.editingFolder ?: return@update state
             val source = folder.sources.getOrNull(index) as? TraktCollectionSource ?: return@update state

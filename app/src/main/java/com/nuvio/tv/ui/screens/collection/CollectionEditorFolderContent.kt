@@ -746,7 +746,10 @@ fun FolderEditorContent(
                                     Icon(Icons.Default.Edit, stringResource(R.string.cd_edit))
                                 }
                             }
-                            if (traktSource != null) {
+                            // Without credentials the Trakt picker can't search or validate, so an
+                            // Edit button here would be a focusable that does nothing. Remove and
+                            // reorder stay available so the dead source can still be cleaned up.
+                            if (traktSource != null && uiState.traktAvailable) {
                                 Button(
                                     onClick = { viewModel.editTraktSource(index) },
                                     colors = ButtonDefaults.colors(
@@ -841,10 +844,13 @@ fun FolderEditorContent(
                         Spacer(modifier = Modifier.width(NuvioTheme.spacing.sm))
                         Text(stringResource(R.string.collections_editor_add_tmdb_source))
                     }
-                    NuvioButton(onClick = { viewModel.showTraktSourcePicker() }) {
-                        Icon(Icons.Default.Add, stringResource(R.string.cd_add))
-                        Spacer(modifier = Modifier.width(NuvioTheme.spacing.sm))
-                        Text(stringResource(R.string.collections_editor_add_trakt_source))
+                    // No Trakt client id in the build means every Trakt source is a dead row.
+                    if (uiState.traktAvailable) {
+                        NuvioButton(onClick = { viewModel.showTraktSourcePicker() }) {
+                            Icon(Icons.Default.Add, stringResource(R.string.cd_add))
+                            Spacer(modifier = Modifier.width(NuvioTheme.spacing.sm))
+                            Text(stringResource(R.string.collections_editor_add_trakt_source))
+                        }
                     }
                 }
             }
