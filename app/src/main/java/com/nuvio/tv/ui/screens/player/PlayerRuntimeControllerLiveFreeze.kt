@@ -65,6 +65,10 @@ internal fun PlayerRuntimeController.sampleLiveFreeze(positionMs: Long, buffered
     if (!isLiveContent()) return
     val state: LivePlaybackFreezePolicy.PlaybackState
     val wantsToPlay: Boolean
+    // The one signal audio cannot keep alive: a frozen picture with playing audio leaves every
+    // other field here looking healthy, including the playhead.
+    val videoProgressTicks: Long
+    val hasVideoTrack: Boolean
     if (isUsingMpvEngine()) {
         val view = mpvView ?: return
         // mpv has no ENDED state to read: keep-open=yes parks the core at EOF holding the last
@@ -76,6 +80,8 @@ internal fun PlayerRuntimeController.sampleLiveFreeze(positionMs: Long, buffered
             else -> LivePlaybackFreezePolicy.PlaybackState.READY
         }
         wantsToPlay = !userPausedManually
+        videoProgressTicks = view.videoFrameTicksNow()
+        hasVideoTrack = view.hasVideoTrackNow()
     } else {
         val player = _exoPlayer ?: return
         state = when (player.playbackState) {
@@ -85,6 +91,9 @@ internal fun PlayerRuntimeController.sampleLiveFreeze(positionMs: Long, buffered
             else -> LivePlaybackFreezePolicy.PlaybackState.IDLE
         }
         wantsToPlay = player.playWhenReady && !userPausedManually
+        // The renderer's own count of frames it put on screen.
+        videoProgressTicks = player.videoDecoderCounters?.renderedOutputBufferCount?.toLong() ?: 0L
+        hasVideoTrack = player.videoFormat != null
     }
 
     val decision = livePlaybackFreezeReporter.onSample(
@@ -95,6 +104,8 @@ internal fun PlayerRuntimeController.sampleLiveFreeze(positionMs: Long, buffered
         wantsToPlay = wantsToPlay,
         rebufferCount = rebufferCount,
         rebufferTotalMs = rebufferTotalMs,
+        videoProgressTicks = videoProgressTicks,
+        hasVideoTrack = hasVideoTrack,
     )
 
     when (decision) {

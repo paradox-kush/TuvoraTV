@@ -96,6 +96,16 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     // container, so the demuxer's per-track `demux-bitrate` is usually absent — mpv's
     // running estimate is the only number the stream info panel can show for live.
     @Volatile private var obsVideoBitrate: Double? = null
+
+    /**
+     * Counts samples where mpv reported the video output running. Written on the mpv event
+     * thread only — never read back through mpv from Main (see the ANR rules in this file).
+     *
+     * CAVEAT: `estimated-vf-fps` measures the *filter chain* output, so it proves frames are
+     * still being produced rather than presented. It catches the reported "picture frozen, audio
+     * playing" wedge; verify against a genuinely frozen channel before trusting it alone.
+     */
+    @Volatile private var obsVideoFrameTicks = 0L
     @Volatile private var obsAudioBitrate: Double? = null
 
     private fun resetPropertyShadow() {
@@ -150,6 +160,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                 "time-pos" -> obsTimePosMs = (value * 1000.0).roundToLong().coerceAtLeast(0L)
                 "duration" -> obsDurationMs = (value * 1000.0).roundToLong().coerceAtLeast(0L)
                 "video-bitrate" -> obsVideoBitrate = value.takeIf { it > 0.0 }
+                "estimated-vf-fps" -> if (value > 0.0) obsVideoFrameTicks++
                 "audio-bitrate" -> obsAudioBitrate = value.takeIf { it > 0.0 }
             }
         }
@@ -399,6 +410,16 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         if (!initialized) return false
         return obsCoreIdle
     }
+
+    /**
+     * Evidence the picture is alive, for live-freeze detection. Only ever increments, so any
+     * change since the previous sample means a frame was produced. Audio cannot move it, which
+     * is exactly why the playhead is not enough.
+     */
+    fun videoFrameTicksNow(): Long = obsVideoFrameTicks
+
+    /** Whether a picture is expected at all — IPTV radio stations legitimately render none. */
+    fun hasVideoTrackNow(): Boolean = initialized && obsVideoParams != null
 
     fun seekToMs(positionMs: Long) {
         if (!initialized) return
@@ -926,6 +947,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             "video-params" to MPV.mpvFormat.MPV_FORMAT_NODE,
             "video-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
             "audio-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
+            // Fires roughly per frame, like time-pos above; the handler is a volatile increment.
+            "estimated-vf-fps" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
         )
         props.forEach { (name, format) -> mpv.observeProperty(name, format) }
     }

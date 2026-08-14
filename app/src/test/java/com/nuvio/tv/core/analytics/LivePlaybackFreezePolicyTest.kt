@@ -22,6 +22,13 @@ class LivePlaybackFreezePolicyTest {
         lastAdvancedBufferedPositionMs: Long = 69_000L,
         sinceBufferedAdvanceMs: Long = 0L,
         freezeActive: Boolean = false,
+        activeKind: Kind? = null,
+        // Defaults describe a healthy picture too: the frame counter moving, well past startup.
+        hasVideoTrack: Boolean = true,
+        videoProgressTicks: Long = 1_000L,
+        lastAdvancedVideoTicks: Long = 999L,
+        sinceVideoAdvanceMs: Long = 0L,
+        sincePlaybackStartMs: Long = 60_000L,
     ) = Input(
         state = state,
         wantsToPlay = wantsToPlay,
@@ -32,6 +39,33 @@ class LivePlaybackFreezePolicyTest {
         lastAdvancedBufferedPositionMs = lastAdvancedBufferedPositionMs,
         sinceBufferedAdvanceMs = sinceBufferedAdvanceMs,
         freezeActive = freezeActive,
+        activeKind = activeKind,
+        hasVideoTrack = hasVideoTrack,
+        videoProgressTicks = videoProgressTicks,
+        lastAdvancedVideoTicks = lastAdvancedVideoTicks,
+        sinceVideoAdvanceMs = sinceVideoAdvanceMs,
+        sincePlaybackStartMs = sincePlaybackStartMs,
+    )
+
+    /**
+     * The reported symptom: audio playing (so the playhead advances normally) while the video
+     * output has produced nothing for [frozenForMs].
+     */
+    private fun videoFrozen(
+        frozenForMs: Long,
+        hasVideoTrack: Boolean = true,
+        sincePlaybackStartMs: Long = 60_000L,
+        freezeActive: Boolean = false,
+        activeKind: Kind? = null,
+    ) = input(
+        state = PlaybackState.READY,
+        hasVideoTrack = hasVideoTrack,
+        videoProgressTicks = 4_200L,
+        lastAdvancedVideoTicks = 4_200L,
+        sinceVideoAdvanceMs = frozenForMs,
+        sincePlaybackStartMs = sincePlaybackStartMs,
+        freezeActive = freezeActive,
+        activeKind = activeKind,
     )
 
     /** Both the playhead and the buffered edge pinned in place, for `stalledFor` ms. */
@@ -140,5 +174,84 @@ class LivePlaybackFreezePolicyTest {
             input(state = PlaybackState.ENDED, positionMs = 65_000L, lastAdvancedPositionMs = 60_000L, freezeActive = true)
         )
         assertEquals(Decision.Continue(Kind.ENDED), decision)
+    }
+
+    // --- video-only freezes: picture dead, audio alive -------------------------------------
+
+    @Test
+    fun `video output stopping while audio plays on is a freeze`() {
+        // The exact user report, and the case this policy was blind to until 2026-08-14: audio
+        // keeps the playhead advancing, so every pre-existing check reads this as healthy.
+        assertEquals(
+            Decision.Start(Kind.VIDEO_STALLED),
+            LivePlaybackFreezePolicy.evaluate(videoFrozen(threshold)),
+        )
+    }
+
+    @Test
+    fun `a video stall below the threshold is not yet a freeze`() {
+        assertEquals(Decision.Idle, LivePlaybackFreezePolicy.evaluate(videoFrozen(threshold - 1)))
+    }
+
+    @Test
+    fun `a channel with no picture never reports a video freeze`() {
+        // IPTV radio stations render no frames by design and would otherwise freeze permanently.
+        assertEquals(
+            Decision.Idle,
+            LivePlaybackFreezePolicy.evaluate(videoFrozen(threshold * 10, hasVideoTrack = false)),
+        )
+    }
+
+    @Test
+    fun `a video stall during startup is not a freeze`() {
+        // Decoders render nothing while warming up, and mpv's FPS estimate needs frames first.
+        assertEquals(
+            Decision.Idle,
+            LivePlaybackFreezePolicy.evaluate(
+                videoFrozen(threshold, sincePlaybackStartMs = LivePlaybackFreezePolicy.VIDEO_STARTUP_GRACE_MS - 1)
+            ),
+        )
+    }
+
+    @Test
+    fun `an open video freeze stays open while the playhead keeps moving`() {
+        // The regression that matters most: resolving on playhead movement would clear this
+        // freeze on the very next sample, because audio never stopped.
+        assertEquals(
+            Decision.Continue(Kind.VIDEO_STALLED),
+            LivePlaybackFreezePolicy.evaluate(
+                videoFrozen(threshold * 3, freezeActive = true, activeKind = Kind.VIDEO_STALLED)
+            ),
+        )
+    }
+
+    @Test
+    fun `an open video freeze clears when frames return`() {
+        val decision = LivePlaybackFreezePolicy.evaluate(
+            input(
+                freezeActive = true,
+                activeKind = Kind.VIDEO_STALLED,
+                videoProgressTicks = 4_260L,
+                lastAdvancedVideoTicks = 4_200L,
+                sinceVideoAdvanceMs = 0L,
+            )
+        )
+        assertEquals(Decision.Recover, decision)
+    }
+
+    @Test
+    fun `everything stopping is still a plain stall, not a video stall`() {
+        // A dead pipe already had a kind; a stopped picture only reclassifies it when the
+        // playhead is genuinely still moving.
+        val decision = LivePlaybackFreezePolicy.evaluate(
+            stalled(threshold).copy(
+                hasVideoTrack = true,
+                videoProgressTicks = 4_200L,
+                lastAdvancedVideoTicks = 4_200L,
+                sinceVideoAdvanceMs = threshold,
+                sincePlaybackStartMs = 60_000L,
+            )
+        )
+        assertEquals(Decision.Start(Kind.STALLED), decision)
     }
 }

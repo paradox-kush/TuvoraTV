@@ -33,6 +33,12 @@ object AppExitReporter {
     private const val MAX_RUN_CONTEXTS = 32
     private const val MAX_DESCRIPTION_CHARS = 512
     private const val MAX_TRACE_CHARS = 6_000
+
+    /** Header slice kept ahead of the thread stack: build fingerprint, `Heap:`, loaded libraries. */
+    private const val TRACE_HEAD_CHARS = 1_500
+
+    /** How far into a trace to look for the main thread before giving up and keeping the head. */
+    private const val TRACE_SCAN_CHARS = 120_000
     private const val PROCESS_SAMPLE_INTERVAL_SECONDS = 30L
     private val lock = Any()
     private val diagnosticsSampler = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -278,7 +284,12 @@ object AppExitReporter {
 
     private fun readTraceExcerpt(exit: ApplicationExitInfo): String? = runCatching {
         exit.traceInputStream?.use { input ->
-            sanitizeDiagnosticText(readDiagnosticExcerpt(input, MAX_TRACE_CHARS), MAX_TRACE_CHARS)
+            val focused = focusTraceOnMainThread(
+                text = readDiagnosticExcerpt(input, TRACE_SCAN_CHARS),
+                headChars = TRACE_HEAD_CHARS,
+                mainChars = MAX_TRACE_CHARS,
+            )
+            sanitizeDiagnosticText(focused, TRACE_HEAD_CHARS + MAX_TRACE_CHARS + ELISION.length)
         }
     }.getOrNull()
 
@@ -774,6 +785,37 @@ private fun readBoundedBytes(input: InputStream, maxBytes: Int): ByteArray {
         result.write(buffer, 0, count)
     }
     return result.toByteArray()
+}
+
+internal const val ELISION = "\n[...]\n"
+
+private val MAIN_THREAD_MARKER = Regex("^\"main\" ", RegexOption.MULTILINE)
+
+/**
+ * Keeps the part of an ANR trace that says why the app hung.
+ *
+ * An ANR trace opens with the process header and then dumps cumulative GC timings — routinely
+ * tens of thousands of characters before the first thread stack. Taking the head therefore
+ * captured everything about the process except the one thing an ANR is about: what the main
+ * thread was blocked in. Field evidence: every ANR excerpt collected up to 2026-08-14 stopped
+ * inside the GC histograms, so a 10s main-thread wedge on player exit could only be inferred
+ * from RSS numbers.
+ *
+ * The head still carries real signal (build fingerprint, `Heap:` usage, loaded libraries — how we
+ * established that a 484 MB ANR was native, not Java heap), so keep a slice of it and then jump to
+ * the `"main"` thread block.
+ *
+ * Native tombstones have no thread-name markers and fall back to the head, which is exactly where
+ * a tombstone's signal and backtrace already live.
+ */
+internal fun focusTraceOnMainThread(text: String, headChars: Int, mainChars: Int): String {
+    val mainIndex = MAIN_THREAD_MARKER.find(text)?.range?.first
+        ?: return text.take(headChars + mainChars)
+    // Already within the head slice: one contiguous excerpt beats stitching in an elision marker.
+    if (mainIndex <= headChars) return text.take(headChars + mainChars)
+    val head = text.take(headChars).trimEnd()
+    val main = text.substring(mainIndex).take(mainChars)
+    return head + ELISION + main
 }
 
 /** Native tombstones are protobuf on newer Android versions; retain their printable strings. */

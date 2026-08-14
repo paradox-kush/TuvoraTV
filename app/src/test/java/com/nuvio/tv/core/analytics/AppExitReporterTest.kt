@@ -114,6 +114,53 @@ class AppExitReporterTest {
     }
 
     @Test
+    fun `anr excerpt keeps the main thread stack behind a long GC preamble`() {
+        val trace = buildString {
+            appendLine("----- pid 493 at 2026-08-08 16:22:54 -----")
+            appendLine("Cmd line: com.tuvora.tv")
+            appendLine("Heap: 19% free, 33MB/41MB; 757361 objects")
+            appendLine("Libraries: libmpv.so libplayer.so")
+            appendLine("Dumping cumulative Gc timings")
+            repeat(400) { appendLine("ProcessMarkStack:\tSum: 868.280ms Avg: 96.475ms") }
+            appendLine("\"main\" prio=5 tid=1 Native")
+            appendLine("  #00 pc 000000000009d1f4  libmpv.so (mpv_terminate_destroy)")
+            appendLine("  at com.nuvio.tv.MainActivity.onStop(MainActivity.kt:42)")
+        }
+
+        val excerpt = focusTraceOnMainThread(trace, headChars = 1_500, mainChars = 6_000)
+
+        // The header still carries the evidence that separates a native from a Java-heap death.
+        assertTrue(excerpt.contains("Heap: 19% free, 33MB/41MB"))
+        assertTrue(excerpt.contains("libmpv.so libplayer.so"))
+        // ...and the blocked frame is no longer cut off by the GC histograms.
+        assertTrue(excerpt.contains("\"main\" prio=5"))
+        assertTrue(excerpt.contains("mpv_terminate_destroy"))
+        assertTrue(excerpt.contains(ELISION))
+    }
+
+    @Test
+    fun `traces without a main thread marker keep the head`() {
+        val tombstone = "SIGSEGV\nbacktrace:\n  #00 libGLES_mali.so\n" + "x".repeat(20_000)
+
+        val excerpt = focusTraceOnMainThread(tombstone, headChars = 1_500, mainChars = 6_000)
+
+        assertTrue(excerpt.startsWith("SIGSEGV"))
+        assertTrue(excerpt.contains("libGLES_mali.so"))
+        assertFalse(excerpt.contains(ELISION))
+        assertEquals(7_500, excerpt.length)
+    }
+
+    @Test
+    fun `a main thread already inside the head slice is not stitched`() {
+        val trace = "----- pid 1 -----\n\"main\" prio=5 tid=1 Blocked\n  at Foo.bar(Foo.kt:1)\n"
+
+        val excerpt = focusTraceOnMainThread(trace, headChars = 1_500, mainChars = 6_000)
+
+        assertEquals(trace, excerpt)
+        assertFalse(excerpt.contains(ELISION))
+    }
+
+    @Test
     fun `process stat parser handles names containing spaces and parentheses`() {
         val stat = "123 (Tuvora worker (1)) S 1 2 3 4 5 6 7 8 9 10 120 30 0 0"
 
