@@ -121,7 +121,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
     private fun triggerRemoteSync(profileId: Int = profileManager.activeProfileId.value) {
         if (isSyncingFromRemote) return
         if (!hasCompletedInitialPull) return
-        if (!authManager.isAuthenticated) return
+        if (!authManager.canSync) return
         syncJob?.cancel()
         syncJob = syncScope.launch {
             delay(2000)
@@ -138,7 +138,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         if (items.isEmpty()) return
         if (isSyncingFromRemote) return
         if (!hasCompletedInitialWatchedItemsPull) return
-        if (!authManager.isAuthenticated) return
+        if (!authManager.canSync) return
         synchronized(pendingWatchedItemsLock) {
             items.forEach { item ->
                 pendingWatchedItems[item.syncKey()] = item
@@ -637,7 +637,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         activeProgressProvider()?.applyOptimisticProgress(progress, quiet = !syncRemote)
         watchProgressPreferences.saveProgress(progress, profileId = profileId)
 
-        if (syncRemote && authManager.isAuthenticated) {
+        if (syncRemote && authManager.canSync) {
             syncScope.launch(NonCancellable) {
                 watchProgressSyncService.pushSingleToRemote(progressKey(progress), progress, profileId)
                     .onFailure { error ->
@@ -649,7 +649,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         if (progress.isCompleted()) {
             val watchedItem = progress.toWatchedItem()
             watchedItemsPreferences.markAsWatched(watchedItem, profileId = profileId)
-            if (syncRemote && authManager.isAuthenticated) {
+            if (syncRemote && authManager.canSync) {
                 triggerWatchedItemsSync(listOf(watchedItem), profileId = profileId)
             }
             // Emit optimistic continue-watching update so the next episode
@@ -668,7 +668,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         }
         watchProgressPreferences.saveProgressBatch(progressList, profileId = profileId)
 
-        if (syncRemote && authManager.isAuthenticated) {
+        if (syncRemote && authManager.canSync) {
             triggerRemoteSync(profileId = profileId)
         }
 
@@ -677,7 +677,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             .map { progress -> progress.toWatchedItem() }
         if (completedWatchedItems.isNotEmpty()) {
             watchedItemsPreferences.markAsWatchedBatch(completedWatchedItems, profileId = profileId)
-            if (syncRemote && authManager.isAuthenticated) {
+            if (syncRemote && authManager.canSync) {
                 triggerWatchedItemsSync(completedWatchedItems, profileId = profileId)
             }
         }
@@ -698,7 +698,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             }.forEach { operation -> operation.await() }
         }
         watchProgressPreferences.removeProgress(contentId, season, episode)
-        if (authManager.isAuthenticated && remoteDeleteKeys.isNotEmpty()) {
+        if (authManager.canSync && remoteDeleteKeys.isNotEmpty()) {
             watchProgressSyncService.deleteFromRemote(remoteDeleteKeys)
                 .onFailure { error ->
                     Log.w(TAG, "removeProgress remote delete failed; relying on push sync", error)
@@ -723,13 +723,13 @@ class WatchProgressRepositoryImpl @Inject constructor(
         broadcastHistoryRemoval(profileId, listOf(media))
         watchProgressPreferences.removeProgress(contentId, season, episode)
         watchedItemsPreferences.unmarkAsWatched(contentId, season, episode, profileId = profileId)
-        if (authManager.isAuthenticated && remoteDeleteKeys.isNotEmpty()) {
+        if (authManager.canSync && remoteDeleteKeys.isNotEmpty()) {
             watchProgressSyncService.deleteFromRemote(remoteDeleteKeys)
                 .onFailure { error ->
                     Log.w(TAG, "removeFromHistory remote delete failed; relying on push sync", error)
                 }
         }
-        if (authManager.isAuthenticated) {
+        if (authManager.canSync) {
             watchedItemsSyncService.deleteFromRemote(contentId, season, episode, profileId = profileId)
                 .onFailure { error ->
                     Log.w(TAG, "removeFromHistory watched item remote delete failed", error)
@@ -766,7 +766,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         val remoteDeleteKeys = episodes.map { (season, episode, _) ->
             "${contentId}_s${season}e${episode}"
         } + contentId
-        if (authManager.isAuthenticated) {
+        if (authManager.canSync) {
             watchProgressSyncService.deleteFromRemote(remoteDeleteKeys.distinct())
                 .onFailure { error -> Log.w(TAG, "removeFromHistoryBatch remote delete failed", error) }
             watchedItemsSyncService.deleteFromRemoteBatch(contentId, episodePairs, profileId = profileId)

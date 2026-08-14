@@ -228,7 +228,7 @@ class AccountViewModel @Inject constructor(
     fun generateSyncCode(pin: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
-            if (!authManager.isAuthenticated) {
+            if (!authManager.canSync) {
                 _uiState.update { it.copy(isLoading = false, error = context.getString(R.string.account_error_signin_required)) }
                 return@launch
             }
@@ -261,7 +261,7 @@ class AccountViewModel @Inject constructor(
     fun claimSyncCode(code: String, pin: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
-            if (!authManager.isAuthenticated) {
+            if (!authManager.canSync) {
                 _uiState.update { it.copy(isLoading = false, error = context.getString(R.string.account_error_signin_required)) }
                 return@launch
             }

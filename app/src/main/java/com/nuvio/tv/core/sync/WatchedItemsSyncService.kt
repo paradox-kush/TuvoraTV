@@ -135,7 +135,7 @@ class WatchedItemsSyncService @Inject constructor(
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             if (items.isEmpty()) return@withContext Result.success(Unit)
-            if (!authManager.isAuthenticated) {
+            if (!authManager.canSync) {
                 // Signed out: the RPC would go out as `anon` and come back 42501. Leave the write
                 // queued locally — do NOT markPushSucceeded, or the next pull deletes it.
                 Log.d(TAG, "Deferred watched-items push - not signed in")

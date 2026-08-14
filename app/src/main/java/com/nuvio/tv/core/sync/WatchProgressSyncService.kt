@@ -166,7 +166,7 @@ class WatchProgressSyncService @Inject constructor(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (!authManager.isAuthenticated) {
+            if (!authManager.canSync) {
                 // Signed out: the RPC would go out as `anon` and come back 42501. Leave the write
                 // queued locally — do NOT markPushSucceeded, or the next pull deletes it.
                 Log.d(TAG, "Deferred watch progress push - not signed in")
@@ -220,7 +220,7 @@ class WatchProgressSyncService @Inject constructor(
             if (isLiveProgress(progress)) {
                 return@withContext Result.success(Unit)
             }
-            if (!authManager.isAuthenticated) {
+            if (!authManager.canSync) {
                 // Signed out: the RPC would go out as `anon` and come back 42501. Leave the write
                 // queued locally — do NOT markPushSucceeded, or the next pull deletes it.
                 Log.d(TAG, "Deferred watch progress scrobble - not signed in")

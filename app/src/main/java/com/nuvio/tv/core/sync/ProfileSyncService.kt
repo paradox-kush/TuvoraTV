@@ -47,7 +47,7 @@ class ProfileSyncService @Inject constructor(
         // Profile create/update/delete works signed out (ProfileManager has already written the
         // change locally by the time we get here), so without this the RPC goes out as `anon` and
         // comes back 42501 on every profile edit. KMP twin: ProfileRepository.pushProfiles().
-        if (!authManager.isAuthenticated) {
+        if (!authManager.canSync) {
             Log.d(TAG, "pushToRemote: skipped, not signed in")
             return@withContext Result.failure(SyncNotAuthenticatedException())
         }
@@ -119,7 +119,7 @@ class ProfileSyncService @Inject constructor(
     suspend fun deleteProfileData(profileId: Int): Result<Unit> = withContext(Dispatchers.IO) {
         // Same as pushToRemote: deleteProfile() removes the profile locally first, and there is
         // no remote data to delete for a session-less client.
-        if (!authManager.isAuthenticated) {
+        if (!authManager.canSync) {
             Log.d(TAG, "deleteProfileData: skipped, not signed in")
             return@withContext Result.failure(SyncNotAuthenticatedException())
         }
@@ -147,7 +147,7 @@ class ProfileSyncService @Inject constructor(
      * the account. A session-less client has no remote rows, so the local swap alone is correct.
      */
     suspend fun swapProfileData(a: Int, b: Int): Result<Unit> = withContext(Dispatchers.IO) {
-        if (!authManager.isAuthenticated) {
+        if (!authManager.canSync) {
             Log.d(TAG, "swapProfileData: skipped, not signed in")
             return@withContext Result.failure(SyncNotAuthenticatedException())
         }

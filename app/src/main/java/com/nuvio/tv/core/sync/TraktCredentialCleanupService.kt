@@ -37,7 +37,7 @@ class TraktCredentialCleanupService @Inject constructor(
     suspend fun deleteRemote(): Result<Unit> = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {
-                if (!authManager.isAuthenticated) {
+                if (!authManager.canSync) {
                     return@withLock Result.success(Unit)
                 }
 

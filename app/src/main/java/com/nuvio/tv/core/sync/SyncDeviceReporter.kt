@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import com.nuvio.tv.core.auth.AuthManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.rpc
@@ -26,11 +27,17 @@ class SyncDeviceReporter @Inject constructor(
     @ApplicationContext private val context: Context,
     private val postgrest: Postgrest,
     private val syncClientIdentity: SyncClientIdentity,
+    private val authManager: AuthManager,
 ) {
     @Volatile
     private var reportedForClientId: String? = null
 
     suspend fun reportOnce() {
+        // report_device is `revoke all … from public, anon`, so without a live session this is not
+        // a no-op that fails quietly — it is a 42501 on every launch. Callers react to
+        // AuthState.FullAccount, which outlives the session across a refresh failure.
+        if (!authManager.canSync) return
+
         val clientId = syncClientIdentity.currentClientId()
         if (reportedForClientId == clientId) return
         reportedForClientId = clientId

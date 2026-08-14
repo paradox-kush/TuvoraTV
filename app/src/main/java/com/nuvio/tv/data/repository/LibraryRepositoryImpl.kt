@@ -75,7 +75,7 @@ class LibraryRepositoryImpl @Inject constructor(
 
     private fun triggerRemoteSync(profileId: Int) {
         if (!hasCompletedInitialPull) return
-        if (!authManager.isAuthenticated) return
+        if (!authManager.canSync) return
         syncJob?.cancel()
         syncJob = syncScope.launch {
             delay(500)

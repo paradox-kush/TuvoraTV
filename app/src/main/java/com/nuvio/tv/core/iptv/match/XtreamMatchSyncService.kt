@@ -49,7 +49,7 @@ class XtreamMatchSyncService @Inject constructor(
 
     /** Merge this provider's remote mappings into the local mirror. No-op after the first call per session/user. */
     suspend fun pullOnce(provider: String) {
-        if (!authManager.isAuthenticated) return
+        if (!authManager.canSync) return
         val userId = runCatching { authManager.getEffectiveUserId(fallbackToOwnIdOnFailure = true) }.getOrNull() ?: return
         pullMutex.withLock {
             if (pulledForUser != userId) { pulledProviders.clear(); pulledForUser = userId }
@@ -85,7 +85,7 @@ class XtreamMatchSyncService @Inject constructor(
 
     /** Debounced push of not-yet-synced local mappings for this provider. */
     fun triggerPush(provider: String) {
-        if (!authManager.isAuthenticated) return
+        if (!authManager.canSync) return
         pushJob?.cancel()
         pushJob = scope.launch {
             delay(2_000)

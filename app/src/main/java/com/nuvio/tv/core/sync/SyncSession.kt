@@ -24,3 +24,35 @@ package com.nuvio.tv.core.sync
  */
 class SyncNotAuthenticatedException :
     IllegalStateException("Not signed in — sync push skipped and left queued")
+
+/**
+ * True when this failure means "the server will refuse every retry too".
+ *
+ * The startup pull retries a failed cycle three times, which is right for a timeout or a 5xx and
+ * pointless for a lapsed session: asking again cannot mint a token, so all three attempts spend
+ * their RPCs to collect the same 42501.
+ *
+ * Deliberately narrow — only the two shapes certain to repeat qualify:
+ *
+ *  * [SyncNotAuthenticatedException] — this client refused the call before sending it.
+ *  * `42501 / permission denied for function …` — PostgREST ran the call as `anon`.
+ *
+ * A 401 is NOT on the list: supabase-kt refreshes an expired access token underneath us (that is
+ * exactly what `withJwtRefreshRetry` exists for), so a lone 401 can genuinely resolve on retry.
+ *
+ * KMP twin: Throwable.isSyncAuthRefusal() in the mobile/desktop codebase.
+ */
+fun Throwable.isSyncAuthRefusal(): Boolean {
+    var current: Throwable? = this
+    while (current != null) {
+        if (current is SyncNotAuthenticatedException) return true
+        val message = current.message?.lowercase()
+        if (message != null &&
+            ("42501" in message || "permission denied for function" in message)
+        ) {
+            return true
+        }
+        current = current.cause
+    }
+    return false
+}

@@ -86,7 +86,7 @@ class RadarSyncService @Inject constructor(
 
     /** Debounced push after a local change (called from RadarRepository). */
     fun triggerRemoteSync() {
-        if (isSyncingFromRemote || !authManager.isAuthenticated) return
+        if (isSyncingFromRemote || !authManager.canSync) return
         pushJob?.cancel()
         pushJob = scope.launch {
             delay(600)

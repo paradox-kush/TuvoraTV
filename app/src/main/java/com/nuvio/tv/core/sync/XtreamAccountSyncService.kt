@@ -70,7 +70,7 @@ class XtreamAccountSyncService @Inject constructor(
 
     /** Debounced push after a local account change (called from XtreamSettingsViewModel). */
     fun triggerRemoteSync() {
-        if (isSyncingFromRemote || !authManager.isAuthenticated) return
+        if (isSyncingFromRemote || !authManager.canSync) return
         pushJob?.cancel()
         pushJob = scope.launch {
             delay(600)

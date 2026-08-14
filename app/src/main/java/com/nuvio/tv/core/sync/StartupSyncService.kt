@@ -27,6 +27,7 @@ import javax.inject.Singleton
 
 private const val TAG = "StartupSyncService"
 private const val FORCE_RESYNC_MIN_INTERVAL_MS = 30_000L
+private const val RETRY_DELAY_MS = 3_000L
 private const val FULL_STARTUP_PULL_TTL_MS = 6 * 60 * 60 * 1000L
 private const val PERIODIC_WATCH_STATE_PULL_INTERVAL_MS = 120_000L
 private const val PERIODIC_LIBRARY_PULL_INTERVAL_MS = 240_000L
@@ -198,7 +199,7 @@ class StartupSyncService @Inject constructor(
     }
 
     fun requestRealtimeSurfacePull(profileId: Int, surface: String) {
-        if (!authManager.isAuthenticated) return
+        if (!authManager.canSync) return
         if (surface != "profiles" && profileManager.activeProfileId.value != profileId) {
             Log.d(TAG, "Ignoring realtime surface=$surface for inactive profile $profileId")
             return
@@ -356,9 +357,17 @@ class StartupSyncService @Inject constructor(
                     break
                 }
 
-                Log.w(TAG, "Startup sync attempt $attempt failed for key=$key", result.exceptionOrNull())
+                val error = result.exceptionOrNull()
+                Log.w(TAG, "Startup sync attempt $attempt failed for key=$key", error)
+                if (error?.isSyncAuthRefusal() == true) {
+                    // Retrying cannot mint a token; the remaining attempts would only re-collect
+                    // the same 42501. The pull resumes from the auth-state collector above once a
+                    // session is back.
+                    Log.w(TAG, "Startup sync abandoned for key=$key - session refused")
+                    break
+                }
                 if (attempt < maxAttempts) {
-                    delay(3000)
+                    delay(RETRY_DELAY_MS shl (attempt - 1))
                 }
             }
             

@@ -138,7 +138,7 @@ class CollectionSyncService @Inject constructor(
      */
     fun triggerPush() {
         if (isSyncingFromRemote) return
-        if (!authManager.isAuthenticated) return
+        if (!authManager.canSync) return
         pushJob?.cancel()
         pushJob = scope.launch {
             delay(500)

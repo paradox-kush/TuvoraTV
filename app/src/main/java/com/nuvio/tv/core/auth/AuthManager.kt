@@ -156,6 +156,27 @@ class AuthManager @Inject constructor(
     val isAuthenticated: Boolean
         get() = _authState.value is AuthState.FullAccount
 
+    /**
+     * True when an RPC issued right now will carry a real user's JWT.
+     *
+     * [isAuthenticated] alone is not enough to decide that. It reports what the app believes about
+     * the account, and that belief deliberately survives a lapsed session: `RefreshFailure` lands in
+     * the `else` branch of [observeSessionStatus] ("keep current state") and a transient refresh
+     * failure under `NotAuthenticated` keeps [AuthState.FullAccount] too, so a flaky network doesn't
+     * look like a sign-out. Right for the UI, wrong for sync — supabase-kt holds no session in that
+     * window, postgrest falls back to the publishable key as bearer, and every `sync_*` RPC runs as
+     * `anon` and comes back
+     *
+     *     permission denied for function sync_pull_watched_items   (SQLSTATE 42501)
+     *
+     * so the whole pull+push cycle burns retries against a server that can never say yes. Gate calls
+     * on this; gate lifecycle (whether a sync loop should exist) on [isAuthenticated].
+     *
+     * KMP twin: SyncSession.canSync() in the mobile/desktop codebase.
+     */
+    val canSync: Boolean
+        get() = isAuthenticated && auth.currentAccessTokenOrNull() != null
+
     val currentUserId: String?
         get() = when (val state = _authState.value) {
             is AuthState.FullAccount -> state.userId

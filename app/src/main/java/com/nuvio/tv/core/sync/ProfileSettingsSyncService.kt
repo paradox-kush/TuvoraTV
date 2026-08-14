@@ -266,7 +266,7 @@ class ProfileSettingsSyncService @Inject constructor(
     }
 
     fun requestForegroundPull(force: Boolean = false) {
-        if (!authManager.isAuthenticated) return
+        if (!authManager.canSync) return
 
         val now = SystemClock.elapsedRealtime()
         if (!force && foregroundPullJob?.isActive == true) return
@@ -276,7 +276,7 @@ class ProfileSettingsSyncService @Inject constructor(
             if (!force) {
                 delay(FOREGROUND_PULL_DELAY_MS)
             }
-            if (!authManager.isAuthenticated) return@launch
+            if (!authManager.canSync) return@launch
 
             lastForegroundPullAtMs = SystemClock.elapsedRealtime()
             pullCurrentProfileFromRemote()
@@ -394,7 +394,7 @@ class ProfileSettingsSyncService @Inject constructor(
                 .distinctUntilChanged()
                 .debounce(SETTINGS_PUSH_DEBOUNCE_MS)
                 .collect { signature ->
-                    if (!authManager.isAuthenticated) return@collect
+                    if (!authManager.canSync) return@collect
                     if (applyingRemoteBlob) return@collect
                     if (profileDataStoreFactory.corruptedFileNames.isNotEmpty()) {
                         Log.w(TAG, "DataStore corruption detected (${profileDataStoreFactory.corruptedFileNames}) — pulling from remote instead of pushing")
