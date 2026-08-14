@@ -42,4 +42,21 @@ class MpvSurfaceThreadingTest {
             declaringClass,
         )
     }
+
+    @Test
+    fun `surface attach and detach are overridden so lifecycle calls never run on main`() {
+        listOf("surfaceCreated", "surfaceDestroyed").forEach { methodName ->
+            val declaringClass = NuvioMpvSurfaceView::class.java.getDeclaredMethod(
+                methodName,
+                SurfaceHolder::class.java,
+            ).declaringClass
+
+            assertEquals(
+                "$methodName must stay overridden: BaseMPVView performs synchronous native " +
+                    "surface lifecycle calls on Main instead of the serialized mpv queue.",
+                NuvioMpvSurfaceView::class.java,
+                declaringClass,
+            )
+        }
+    }
 }

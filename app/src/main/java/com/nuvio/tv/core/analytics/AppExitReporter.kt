@@ -258,6 +258,21 @@ object AppExitReporter {
             run.processSampleIntervalMs?.let { put("process_sample_interval_ms", it) }
             run.selfCpuTimeMs?.let { put("self_cpu_time_ms", it) }
             run.selfCpuDeltaMs?.let { put("self_cpu_delta_ms", it) }
+            run.fdSampledAtMs?.let { put("fd_sampled_at_ms", it) }
+            run.fdSampleTrigger?.let { put("fd_sample_trigger", it) }
+            run.lastFdCount?.let { put("last_fd_count", it) }
+            run.maxFdCount?.let { put("max_fd_count", it) }
+            run.fdSoftLimit?.let { put("fd_soft_limit", it) }
+            run.fdUtilizationPercent?.let { put("fd_utilization_percent", it) }
+            run.fdInventory?.let { put("fd_inventory", it) }
+            run.mpvInstanceId?.let { put("mpv_instance_id", it) }
+            run.mpvLifecycleStage?.let { put("mpv_lifecycle_stage", it) }
+            run.mpvLifecycleStageAtMs?.let { put("mpv_lifecycle_stage_at_ms", it) }
+            run.mpvActiveInstances?.let { put("mpv_active_instances", it) }
+            run.mpvWaitingInstances?.let { put("mpv_waiting_instances", it) }
+            run.maxMpvActiveInstances?.let { put("max_mpv_active_instances", it) }
+            run.mpvDestroyWaitMs?.let { put("mpv_destroy_wait_ms", it) }
+            run.mpvLifecycleHistory?.let { put("mpv_lifecycle_history", it) }
         }
     }
 
@@ -340,6 +355,33 @@ object AppExitReporter {
                         .takeIf { it > 0L },
                     selfCpuDeltaMs = prefs.getLong(runKey(startedAt, "self_cpu_delta"), -1L)
                         .takeIf { it >= 0L },
+                    fdSampledAtMs = prefs.getLong(runKey(startedAt, "fd_at"), 0L)
+                        .takeIf { it > 0L },
+                    fdSampleTrigger = prefs.getString(runKey(startedAt, "fd_trigger"), null),
+                    lastFdCount = prefs.getInt(runKey(startedAt, "fd_total"), -1)
+                        .takeIf { it >= 0 },
+                    maxFdCount = prefs.getInt(runKey(startedAt, "fd_max"), -1)
+                        .takeIf { it >= 0 },
+                    fdSoftLimit = prefs.getLong(runKey(startedAt, "fd_limit"), 0L)
+                        .takeIf { it > 0L },
+                    fdUtilizationPercent = prefs.getFloat(runKey(startedAt, "fd_pct"), -1f)
+                        .takeIf { it >= 0f }
+                        ?.toDouble(),
+                    fdInventory = prefs.getString(runKey(startedAt, "fd_inventory"), null),
+                    mpvInstanceId = prefs.getLong(runKey(startedAt, "mpv_id"), 0L)
+                        .takeIf { it > 0L },
+                    mpvLifecycleStage = prefs.getString(runKey(startedAt, "mpv_stage"), null),
+                    mpvLifecycleStageAtMs = prefs.getLong(runKey(startedAt, "mpv_stage_at"), 0L)
+                        .takeIf { it > 0L },
+                    mpvActiveInstances = prefs.getInt(runKey(startedAt, "mpv_active"), -1)
+                        .takeIf { it >= 0 },
+                    mpvWaitingInstances = prefs.getInt(runKey(startedAt, "mpv_waiting"), -1)
+                        .takeIf { it >= 0 },
+                    maxMpvActiveInstances = prefs.getInt(runKey(startedAt, "mpv_active_max"), -1)
+                        .takeIf { it >= 0 },
+                    mpvDestroyWaitMs = prefs.getLong(runKey(startedAt, "mpv_destroy_wait"), -1L)
+                        .takeIf { it >= 0L },
+                    mpvLifecycleHistory = prefs.getString(runKey(startedAt, "mpv_history"), null),
                 )
             }
         }
@@ -384,6 +426,94 @@ object AppExitReporter {
     }
 
     /**
+     * Persists a lifecycle breadcrumb together with a privacy-safe descriptor inventory. Normal
+     * stages stay local and are attached to a later `app_exit`; teardown failures are also emitted
+     * immediately because they prove a native core may still own resources after its view is gone.
+     */
+    fun recordMpvLifecycle(
+        context: Context,
+        instanceId: Long,
+        stage: String,
+        activeInstances: Int,
+        waitingInstances: Int,
+        peakActiveInstances: Int,
+        destroyWaitMs: Long? = null,
+    ) {
+        val appContext = context.applicationContext
+        val safeStage = safeRouteName(stage) ?: "unknown"
+        diagnosticsSampler.execute {
+            runCatching {
+                val now = System.currentTimeMillis()
+                val fdSnapshot = readFileDescriptorSnapshot()
+                synchronized(lock) {
+                    val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
+                    if (runStart <= 0L) return@runCatching
+                    val edit = prefs.edit()
+                        .putLong(runKey(runStart, "mpv_id"), instanceId)
+                        .putString(runKey(runStart, "mpv_stage"), safeStage)
+                        .putLong(runKey(runStart, "mpv_stage_at"), now)
+                        .putInt(runKey(runStart, "mpv_active"), activeInstances)
+                        .putInt(runKey(runStart, "mpv_waiting"), waitingInstances)
+                        .putInt(
+                            runKey(runStart, "mpv_active_max"),
+                            maxOf(
+                                peakActiveInstances,
+                                prefs.getInt(runKey(runStart, "mpv_active_max"), 0),
+                            ),
+                        )
+                        .putLong(runKey(runStart, "mpv_destroy_wait"), destroyWaitMs ?: -1L)
+                        .putString(
+                            runKey(runStart, "mpv_history"),
+                            appendMpvLifecycleHistory(
+                                existing = prefs.getString(runKey(runStart, "mpv_history"), null),
+                                timestampMs = now,
+                                instanceId = instanceId,
+                                stage = safeStage,
+                                activeInstances = activeInstances,
+                            ),
+                        )
+                    fdSnapshot?.let { snapshot ->
+                        edit.putFileDescriptorSnapshot(
+                            runStart = runStart,
+                            trigger = "mpv_$safeStage",
+                            snapshot = snapshot,
+                            previousMax = prefs.getInt(runKey(runStart, "fd_max"), 0),
+                            sampledAtMs = now,
+                        )
+                    }
+                    edit.apply()
+                }
+                LogMpvLifecycle.write(
+                    instanceId = instanceId,
+                    stage = safeStage,
+                    activeInstances = activeInstances,
+                    waitingInstances = waitingInstances,
+                    fdSnapshot = fdSnapshot,
+                    destroyWaitMs = destroyWaitMs,
+                )
+                if (safeStage in MPV_WARNING_STAGES) {
+                    PostHog.capture(
+                        "mpv_lifecycle_warning",
+                        properties = buildMap {
+                            put("mpv_instance_id", instanceId)
+                            put("mpv_lifecycle_stage", safeStage)
+                            put("mpv_active_instances", activeInstances)
+                            put("mpv_waiting_instances", waitingInstances)
+                            destroyWaitMs?.let { put("mpv_destroy_wait_ms", it) }
+                            fdSnapshot?.let { snapshot ->
+                                put("fd_count", snapshot.total)
+                                put("fd_inventory", snapshot.inventory())
+                                snapshot.softLimit?.let { put("fd_soft_limit", it) }
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    /**
      * Keeps a tiny rolling inventory of this app UID's processes. Android's excessive-CPU exit
      * description says only "child process"; this breadcrumb identifies which named process was
      * alive and accumulating the most CPU immediately before the OS killed the app.
@@ -400,6 +530,7 @@ object AppExitReporter {
 
     private fun recordProcessSnapshot(context: Context, trigger: String) {
         val now = System.currentTimeMillis()
+        val fdSnapshot = readFileDescriptorSnapshot()
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val processes = activityManager.runningAppProcesses.orEmpty()
             .asSequence()
@@ -428,7 +559,7 @@ object AppExitReporter {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
             if (runStart <= 0L) return
-            prefs.edit()
+            val edit = prefs.edit()
                 .putLong(runKey(runStart, "proc_at"), now)
                 .putString(runKey(runStart, "proc_trigger"), safeRouteName(trigger))
                 .putString(runKey(runStart, "proc_importance"), ownImportance?.let(::importanceName))
@@ -439,9 +570,33 @@ object AppExitReporter {
                 .putLong(runKey(runStart, "proc_interval"), interval ?: 0L)
                 .putLong(runKey(runStart, "self_cpu"), selfCpuMs)
                 .putLong(runKey(runStart, "self_cpu_delta"), selfDelta ?: -1L)
-                .apply()
+            fdSnapshot?.let { snapshot ->
+                edit.putFileDescriptorSnapshot(
+                    runStart = runStart,
+                    trigger = trigger,
+                    snapshot = snapshot,
+                    previousMax = prefs.getInt(runKey(runStart, "fd_max"), 0),
+                    sampledAtMs = now,
+                )
+            }
+            edit.apply()
         }
     }
+
+    private fun android.content.SharedPreferences.Editor.putFileDescriptorSnapshot(
+        runStart: Long,
+        trigger: String,
+        snapshot: FileDescriptorSnapshot,
+        previousMax: Int,
+        sampledAtMs: Long,
+    ): android.content.SharedPreferences.Editor = this
+        .putLong(runKey(runStart, "fd_at"), sampledAtMs)
+        .putString(runKey(runStart, "fd_trigger"), safeRouteName(trigger))
+        .putInt(runKey(runStart, "fd_total"), snapshot.total)
+        .putInt(runKey(runStart, "fd_max"), maxOf(snapshot.total, previousMax))
+        .putLong(runKey(runStart, "fd_limit"), snapshot.softLimit ?: 0L)
+        .putFloat(runKey(runStart, "fd_pct"), snapshot.utilizationPercent?.toFloat() ?: -1f)
+        .putString(runKey(runStart, "fd_inventory"), snapshot.inventory())
 
     private fun runKey(startedAt: Long, field: String): String = "run.$startedAt.$field"
 
@@ -452,6 +607,15 @@ object AppExitReporter {
         "mem_java", "mem_java_max", "mem_native", "mem_native_max",
         "proc_at", "proc_trigger", "proc_importance", "proc_inventory", "proc_count",
         "proc_top", "proc_top_delta", "proc_interval", "self_cpu", "self_cpu_delta",
+        "fd_at", "fd_trigger", "fd_total", "fd_max", "fd_limit", "fd_pct", "fd_inventory",
+        "mpv_id", "mpv_stage", "mpv_stage_at", "mpv_active", "mpv_waiting",
+        "mpv_active_max", "mpv_destroy_wait", "mpv_history",
+    )
+
+    private val MPV_WARNING_STAGES = setOf(
+        "destroy_timeout",
+        "destroy_failed",
+        "destroy_queue_failed",
     )
 }
 
@@ -486,7 +650,40 @@ internal data class AppRunContext(
     val processSampleIntervalMs: Long? = null,
     val selfCpuTimeMs: Long? = null,
     val selfCpuDeltaMs: Long? = null,
+    val fdSampledAtMs: Long? = null,
+    val fdSampleTrigger: String? = null,
+    val lastFdCount: Int? = null,
+    val maxFdCount: Int? = null,
+    val fdSoftLimit: Long? = null,
+    val fdUtilizationPercent: Double? = null,
+    val fdInventory: String? = null,
+    val mpvInstanceId: Long? = null,
+    val mpvLifecycleStage: String? = null,
+    val mpvLifecycleStageAtMs: Long? = null,
+    val mpvActiveInstances: Int? = null,
+    val mpvWaitingInstances: Int? = null,
+    val maxMpvActiveInstances: Int? = null,
+    val mpvDestroyWaitMs: Long? = null,
+    val mpvLifecycleHistory: String? = null,
 )
+
+private object LogMpvLifecycle {
+    fun write(
+        instanceId: Long,
+        stage: String,
+        activeInstances: Int,
+        waitingInstances: Int,
+        fdSnapshot: FileDescriptorSnapshot?,
+        destroyWaitMs: Long?,
+    ) {
+        android.util.Log.i(
+            "MpvLifecycle",
+            "id=$instanceId stage=$stage active=$activeInstances waiting=$waitingInstances " +
+                "fds=${fdSnapshot?.total ?: -1}/${fdSnapshot?.softLimit ?: -1} " +
+                "inventory=${fdSnapshot?.inventory().orEmpty()} waitMs=${destroyWaitMs ?: -1}",
+        )
+    }
+}
 
 internal data class ProcessCpuSample(
     val pid: Int,

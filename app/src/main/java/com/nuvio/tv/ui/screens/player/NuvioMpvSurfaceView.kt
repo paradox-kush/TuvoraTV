@@ -1,9 +1,12 @@
 package com.nuvio.tv.ui.screens.player
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.util.Log
+import android.view.Surface
 import android.view.SurfaceHolder
+import com.nuvio.tv.core.analytics.AppExitReporter
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
 import `is`.xyz.mpv.BaseMPVView
@@ -14,6 +17,8 @@ import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.pow
 import kotlin.math.roundToLong
 
@@ -30,6 +35,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     private var lastMediaRequestKey: String? = null
     private var pendingInitialMediaUrl: String? = null
     private var pendingInitialStartOption: String? = null
+    @Volatile private var nativeCoreAlive = false
+    private var lifecycleInstanceId = 0L
+    // Read and written only by mpv-ctl.
+    private var attachedSurface: Surface? = null
 
     /**
      * Invoked (on mpv's event thread — hop before touching UI/player state) when a file unloads
@@ -50,7 +59,14 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     @Volatile private var pendingDestroy: Future<*>? = null
 
     private fun ctl(block: () -> Unit) {
-        runCatching { mpvCtl.execute { runCatching(block) } }
+        val instanceId = lifecycleInstanceId
+        if (!initialized || !nativeCoreAlive || instanceId <= 0L) return
+        runCatching {
+            mpvCtl.execute {
+                if (!nativeCoreAlive || lifecycleInstanceId != instanceId) return@execute
+                runCatching(block)
+            }
+        }
     }
     private var hardwareDecodeMode: MpvHardwareDecodeMode = MpvHardwareDecodeMode.AUTO_SAFE
     private var currentAspectMode: AspectMode = AspectMode.ORIGINAL
@@ -171,9 +187,13 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         // re-creating the core on the same MPV instance. Only blocks when re-init races
         // an in-flight destroy — the old code blocked main on every destroy instead.
         pendingDestroy?.let { destroyJob ->
+            if (!destroyJob.isDone) {
+                recordMpvStage("waiting_for_destroy", waitingInstances = 1)
+            }
             runCatching { destroyJob.get() }
             pendingDestroy = null
         }
+        check(!nativeCoreAlive) { "Previous native MPV core did not finish destruction" }
         // copyAssets re-writes fonts + cacert from assets and is slow on first run; skip it
         // once the marker file exists so repeat inits (e.g. the Live TV preview) don't block.
         if (!java.io.File(context.filesDir, "cacert.pem").exists()) {
@@ -184,6 +204,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             cacheDir = context.cacheDir.path
         )
         initialized = true
+        nativeCoreAlive = true
+        lifecycleInstanceId = NEXT_MPV_INSTANCE_ID.getAndIncrement()
+        val active = ACTIVE_MPV_INSTANCES.incrementAndGet()
+        updatePeakActiveInstances(active)
+        recordMpvStage("initialized")
     }
 
     fun setMedia(url: String, headers: Map<String, String>, startPositionMs: Long = 0L) {
@@ -214,13 +239,17 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                 ensureSurfaceAttachedIfAlreadyAvailable()
                 ctl { mpv.command("loadfile", url, "replace") }
             } else {
-                playFile(url)
+                pendingInitialMediaUrl = url
             }
         } else {
             pendingInitialMediaUrl = null
             pendingInitialStartOption = null
-            playFile(url)
-            ensureSurfaceAttachedIfAlreadyAvailable()
+            if (holder.surface?.isValid == true) {
+                ensureSurfaceAttachedIfAlreadyAvailable()
+                ctl { mpv.command("loadfile", url, "replace") }
+            } else {
+                pendingInitialMediaUrl = url
+            }
             hasQueuedInitialMedia = true
         }
         lastMediaRequestKey = requestKey
@@ -246,16 +275,49 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        super.surfaceCreated(holder)
-        val url = pendingInitialMediaUrl ?: return
+        val surface = holder.surface ?: return
+        val url = pendingInitialMediaUrl
         val startOption = pendingInitialStartOption
-        pendingInitialMediaUrl = null
-        pendingInitialStartOption = null
-        if (startOption != null) {
-            ctl { loadFileWithOptions(url, startOption) }
-        } else {
-            ctl { mpv.command("loadfile", url, "replace") }
+        if (url != null) {
+            pendingInitialMediaUrl = null
+            pendingInitialStartOption = null
         }
+        // Do not call BaseMPVView: it attaches the Surface with blocking native calls on Main.
+        ctl {
+            attachSurfaceInternal(surface)
+            if (url != null && startOption != null) {
+                loadFileWithOptions(url, startOption)
+            } else if (url != null) {
+                mpv.command("loadfile", url, "replace")
+            }
+        }
+    }
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // Keep detach ordered with every load, seek, stop, and destroy operation.
+        ctl {
+            detachSurfaceInternal()
+            recordMpvStage("surface_detached")
+        }
+    }
+
+    private fun attachSurfaceInternal(surface: Surface) {
+        if (!surface.isValid) return
+        if (attachedSurface === surface) return
+        detachSurfaceInternal()
+        mpv.attachSurface(surface)
+        attachedSurface = surface
+        mpv.setOptionString("force-window", "yes")
+        mpv.setPropertyString("vo", "gpu")
+        recordMpvStage("surface_attached")
+    }
+
+    private fun detachSurfaceInternal() {
+        if (attachedSurface == null) return
+        runCatching { mpv.setPropertyString("vo", "null") }
+        runCatching { mpv.setPropertyString("force-window", "no") }
+        runCatching { mpv.detachSurface() }
+        attachedSurface = null
     }
 
     /**
@@ -277,7 +339,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             ensureSurfaceAttachedIfAlreadyAvailable()
             ctl { mpv.command("loadfile", url, "replace") }
         } else {
-            playFile(url)
+            pendingInitialMediaUrl = url
         }
         hasQueuedInitialMedia = true
         lastMediaRequestKey = requestKey
@@ -320,12 +382,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     fun stopPlayback() {
         if (!initialized) return
-        // "stop" sets mpv's abort token at enqueue, interrupting a demuxer wedged in a
-        // dead-socket read — the state that blocks the main thread inside BaseMPVView's
-        // synchronous vo teardown when the window goes away. A raw thread, not the ctl
-        // queue: the queue itself can be wedged inside a blocked command, and the whole
-        // point is to abort that.
-        Thread({ runCatching { mpv.command("stop") } }, "mpv-stop").start()
+        ctl { mpv.command("stop") }
     }
 
     fun isPlayingNow(): Boolean {
@@ -732,32 +789,78 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     fun releasePlayer() {
         if (!initialized) return
         removeCallbacks(aspectReapplyRunnable)
+        runCatching { holder.removeCallback(this) }
         // Flip the guard first so readers/writers no-op, then tear down on the control
         // thread: mpv_terminate_destroy joins the demuxer, which can hang on a dead
         // network read — that hang used to land on the main thread (BACK during a stall).
         initialized = false
-        // Abort a wedged demuxer before destroy reaches the serialized control queue. Otherwise
-        // an earlier blocked command can retain the native core and all of its buffers after the
-        // UI releases this player.
+        val releaseStartedAtMs = SystemClock.elapsedRealtime()
+        val instanceId = lifecycleInstanceId
+        recordMpvStage("release_started", instanceId = instanceId)
         val destroyCompletion = CompletableFuture<Unit>()
         pendingDestroy = destroyCompletion
-        Thread({
-            runCatching { mpv.command("stop") }
-            val destroyJob = runCatching {
-                mpvCtl.submit {
-                    runCatching { destroy() }
+        runCatching {
+            mpvCtl.submit {
+                var destroyed = false
+                try {
+                    // A single ordered teardown prevents stop/surface detach/destroy from racing
+                    // each other while the native core is releasing descriptors and buffers.
+                    runCatching { mpv.command("stop") }
+                    detachSurfaceInternal()
+                    runCatching { mpv.removeObserver(propertyShadow) }
+                    runCatching { mpv.destroy() }
+                        .onSuccess { destroyed = true }
                         .onFailure { Log.w(TAG, "Failed to destroy libmpv view cleanly: ${it.message}") }
+                } finally {
+                    val waitMs = SystemClock.elapsedRealtime() - releaseStartedAtMs
+                    if (destroyed) {
+                        nativeCoreAlive = false
+                        ACTIVE_MPV_INSTANCES.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+                        recordMpvStage("destroyed", waitMs, instanceId)
+                        destroyCompletion.complete(Unit)
+                    } else {
+                        // Do not unblock reinitialization if the previous native core may still
+                        // own descriptors or Surface buffers.
+                        recordMpvStage("destroy_failed", waitMs, instanceId)
+                    }
                 }
-            }.getOrNull()
-            if (destroyJob != null) {
-                runCatching { destroyJob.get() }
             }
+        }.onFailure { error ->
+            Log.w(TAG, "Failed to queue libmpv destruction: ${error.message}")
+            recordMpvStage("destroy_queue_failed", instanceId = instanceId)
             destroyCompletion.complete(Unit)
-        }, "mpv-stop-release").start()
+        }
+        postDelayed({
+            if (!destroyCompletion.isDone) {
+                recordMpvStage(
+                    stage = "destroy_timeout",
+                    destroyWaitMs = SystemClock.elapsedRealtime() - releaseStartedAtMs,
+                    instanceId = instanceId,
+                )
+            }
+        }, MPV_DESTROY_WATCHDOG_MS)
         hasQueuedInitialMedia = false
         lastMediaRequestKey = null
         pendingInitialMediaUrl = null
         pendingInitialStartOption = null
+    }
+
+    private fun recordMpvStage(
+        stage: String,
+        destroyWaitMs: Long? = null,
+        instanceId: Long = lifecycleInstanceId,
+        waitingInstances: Int = 0,
+    ) {
+        if (instanceId <= 0L) return
+        AppExitReporter.recordMpvLifecycle(
+            context = context,
+            instanceId = instanceId,
+            stage = stage,
+            activeInstances = ACTIVE_MPV_INSTANCES.get(),
+            waitingInstances = waitingInstances,
+            peakActiveInstances = PEAK_ACTIVE_MPV_INSTANCES.get(),
+            destroyWaitMs = destroyWaitMs,
+        )
     }
 
     override fun initOptions() {
@@ -912,6 +1015,18 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "NuvioMpvSurfaceView"
+        private const val MPV_DESTROY_WATCHDOG_MS = 20_000L
+        private val NEXT_MPV_INSTANCE_ID = AtomicLong(1L)
+        private val ACTIVE_MPV_INSTANCES = AtomicInteger(0)
+        private val PEAK_ACTIVE_MPV_INSTANCES = AtomicInteger(0)
+
+        private fun updatePeakActiveInstances(activeInstances: Int) {
+            while (true) {
+                val currentPeak = PEAK_ACTIVE_MPV_INSTANCES.get()
+                if (activeInstances <= currentPeak) return
+                if (PEAK_ACTIVE_MPV_INSTANCES.compareAndSet(currentPeak, activeInstances)) return
+            }
+        }
         /** `loadfile` insertion index; only meaningful for insert-at flags, -1 is mpv's default. */
         private const val LOADFILE_DEFAULT_INDEX = "-1"
         private const val MPV_COVER_FALLBACK_SCALE = 1.15f
