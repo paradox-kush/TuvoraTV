@@ -1,12 +1,44 @@
 {
   "name": "strict_mag_identity",
-  "supported": false,
-  "gap": "Portals that reject the hardcoded MAG250 identity (image_version 218 / hw 1.7-BD-00) and only accept a MAG254/Ministra profile answer 'Authorization failed.' as plain text. TWO gaps: (1) we send ONE identity with no preset ladder, so there is no recovery; (2) the rejection is NOT detected during authentication -- get_profile's rejection is ignored and we carry on to the content call, only surfacing the error there. A preset ladder would need to notice it at get_profile to know to retry with another identity.",
-  "endpoints": ["/portal.php", "/stalker_portal/server/load.php", "/server/load.php", "/c/portal.php", "/stb/server/load.php"],
-  "responses": [
-    { "action": "handshake", "body": "{\"js\":{\"token\":\"token-strict\"}}" },
-    { "action": "get_profile", "body": "Authorization failed." },
-    { "action": "get_genres", "body": "Authorization failed." }
+  "supported": true,
+  "gap": null,
+  "endpoints": [
+    "/portal.php",
+    "/stalker_portal/server/load.php",
+    "/server/load.php",
+    "/c/portal.php",
+    "/stb/server/load.php"
   ],
-  "expect": { "requestOrder": ["handshake", "get_profile", "get_genres"] }
+  "responses": [
+    {
+      "action": "handshake",
+      "body": "{\"js\":{\"token\":\"token-strict\"}}"
+    },
+    {
+      "action": "get_profile",
+      "match": {
+        "stb_type": "MAG250"
+      },
+      "body": "Authorization failed."
+    },
+    {
+      "action": "get_profile",
+      "match": {
+        "stb_type": "MAG254"
+      },
+      "body": "{\"js\":{\"id\":\"5\",\"name\":\"Strict\",\"status\":0}}"
+    },
+    {
+      "action": "get_genres",
+      "body": "{\"js\":[{\"id\":\"7\",\"title\":\"Docs\"}]}"
+    }
+  ],
+  "expect": {
+    "requestOrder": [
+      "handshake",
+      "get_profile",
+      "get_genres"
+    ]
+  },
+  "contentRequiresProfile": true
 }

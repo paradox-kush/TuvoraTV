@@ -48,6 +48,9 @@ object Breadcrumbs {
      * one deliberate exception; see its call site.
      */
     fun playbackStarted(kind: String, engine: String, surface: String, container: String, nowMs: Long) {
+        // Every playback surface already routes through here, so this is the one place a Stalker
+        // portal can learn a stream is up without threading an account through the player.
+        com.nuvio.tv.core.iptv.stalker.StalkerPlaybackTraffic.onPlaybackStarted()
         // The persisted note always updates: it must reflect reality at the moment of death
         // even when the analytics event below is deduped or rate-capped.
         crashWriter?.onPlaybackStarted(kind, engine, surface)
@@ -71,6 +74,7 @@ object Breadcrumbs {
     }
 
     fun playbackStopped() {
+        com.nuvio.tv.core.iptv.stalker.StalkerPlaybackTraffic.onPlaybackStopped()
         crashWriter?.onPlaybackStopped()
     }
 

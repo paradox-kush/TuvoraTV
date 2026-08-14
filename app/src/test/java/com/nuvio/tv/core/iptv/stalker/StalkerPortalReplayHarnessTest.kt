@@ -89,6 +89,7 @@ class StalkerPortalReplayHarnessTest {
     private fun runFixture(name: String) = runBlocking {
         val fixture = loadFixture(name)
         val requested = Collections.synchronizedList(mutableListOf<String>())
+        val profileAccepted = java.util.concurrent.atomic.AtomicBoolean(false)
 
         val bodies = fixture.responses
         server = MockWebServer()
@@ -100,9 +101,27 @@ class StalkerPortalReplayHarnessTest {
                 }
                 val action = request.url.queryParameter("action").orEmpty()
                 requested.add(action)
-                val body = bodies[action]
-                    ?: return MockResponse.Builder().code(200).body("""{"js":false}""").build()
-                return MockResponse.Builder().code(200).body(body).build()
+                // First scripted response whose `match` params all agree with the request wins, so a
+                // fixture can model a portal that accepts one STB identity and rejects another.
+                val scripted = bodies.firstOrNull { candidate ->
+                    candidate.action == action && candidate.match.all { (k, v) ->
+                        request.url.queryParameter(k) == v
+                    }
+                } ?: return MockResponse.Builder().code(200).body("""{"js":false}""").build()
+
+                // A real portal activates the session on a successful get_profile and serves nothing
+                // until then, so identity rejection has to bite on the CONTENT call too — otherwise
+                // a client that ignores the rejection looks like it works.
+                if (action == "get_profile" && !scripted.body.contains(AUTH_FAILED)) {
+                    profileAccepted.set(true)
+                }
+                if (fixture.contentRequiresProfile &&
+                    action !in BOOTSTRAP_ACTIONS &&
+                    !profileAccepted.get()
+                ) {
+                    return MockResponse.Builder().code(200).body(AUTH_FAILED).build()
+                }
+                return MockResponse.Builder().code(200).body(scripted.body).build()
             }
         }
         server.start()
@@ -140,22 +159,42 @@ class StalkerPortalReplayHarnessTest {
         }
     }
 
+    private companion object {
+        const val AUTH_FAILED = "Authorization failed."
+        val BOOTSTRAP_ACTIONS = setOf("handshake", "get_profile", "get_modules", "do_auth", "get_main_info")
+    }
+
+    private data class ScriptedResponse(
+        val action: String,
+        val body: String,
+        /** Query params that must match for this response to apply. Empty = matches any. */
+        val match: Map<String, String>,
+    )
+
     private data class Fixture(
         val name: String,
         val gap: String?,
         val supported: Boolean,
         val endpoints: List<String>,
-        val responses: Map<String, String>,
+        val responses: List<ScriptedResponse>,
         val expectRequestOrder: List<String>,
+        /** Model a portal that serves content only after a successful get_profile. */
+        val contentRequiresProfile: Boolean,
     )
 
     private fun loadFixture(name: String): Fixture {
         val stream = javaClass.classLoader?.getResourceAsStream("stalker/fixtures/$name.json")
             ?: error("missing fixture stalker/fixtures/$name.json")
         val root = JsonParser.parseReader(stream.reader()).asJsonObject
-        val responses = root.getAsJsonArray("responses").associate { element ->
+        val responses = root.getAsJsonArray("responses").map { element ->
             val obj = element.asJsonObject
-            obj.get("action").asString to obj.get("body").asString
+            ScriptedResponse(
+                action = obj.get("action").asString,
+                body = obj.get("body").asString,
+                match = obj.getAsJsonObject("match")?.entrySet()
+                    ?.associate { (k, v) -> k to v.asString }
+                    .orEmpty(),
+            )
         }
         val expect = root.getAsJsonObject("expect")
         return Fixture(
@@ -165,6 +204,7 @@ class StalkerPortalReplayHarnessTest {
             endpoints = root.getAsJsonArray("endpoints").map { it.asString },
             responses = responses,
             expectRequestOrder = expect.getAsJsonArray("requestOrder").map { it.asString },
+            contentRequiresProfile = root.get("contentRequiresProfile")?.takeIf { !it.isJsonNull }?.asBoolean ?: false,
         )
     }
 }

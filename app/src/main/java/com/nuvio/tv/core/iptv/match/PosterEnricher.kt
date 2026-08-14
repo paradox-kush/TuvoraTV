@@ -135,7 +135,9 @@ class PosterEnricher @Inject constructor(
         }
     }
 
-    private companion object {
+    // internal, not private: the priority test gates on CONCURRENCY to know when every worker is
+    // busy. Hardcoding a 2 there would keep compiling but stop testing anything if this changed.
+    internal companion object {
         const val CONCURRENCY = 2
         /** ~5 windows of pending backlog; beyond this the oldest abandoned rows age out. */
         const val QUEUE_CAP = 2_000

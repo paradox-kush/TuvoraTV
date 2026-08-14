@@ -23,6 +23,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.ConscryptMode
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
 
 /** PosterEnricher's politeness contract: once per item ever, newest window wins, live excluded. */
 @RunWith(RobolectricTestRunner::class)
@@ -39,14 +40,32 @@ class PosterEnricherTest {
 
     private val fetched = Collections.synchronizedList(mutableListOf<Int>())
 
+    /**
+     * Ask order, recorded as each request leaves the queue.
+     *
+     * [fetched] records *completion*, which says nothing about priority: CONCURRENCY workers run
+     * fetches in parallel, so two items pulled in the same round finish in whichever order the
+     * scheduler picks. Queue-jumping is a statement about what gets taken off the queue next, so
+     * that is what the priority test asserts on.
+     */
+    private val started = Collections.synchronizedList(mutableListOf<Int>())
+
     @After
     fun tearDown() {
         collectScope.cancel()
     }
 
-    private fun answerArtwork(url: (Int) -> String?, delayMs: Long = 0) {
+    /**
+     * [gate], when given, holds every worker inside the fetch until the test opens it — which is how
+     * the priority test pins down exactly how much of the first window is already in flight before
+     * the second window is enqueued. Without it that depends on wall-clock timing and the test is
+     * only asserting how fast the machine is.
+     */
+    private fun answerArtwork(url: (Int) -> String?, delayMs: Long = 0, gate: CountDownLatch? = null) {
         coEvery { client.vodArtwork(any(), any()) } coAnswers {
             val sid = secondArg<Int>()
+            started.add(sid)
+            gate?.await()
             if (delayMs > 0) delay(delayMs)
             fetched.add(sid)
             Result.success(url(sid))
@@ -94,15 +113,23 @@ class PosterEnricherTest {
 
     @Test
     fun `the newest window drains ahead of older pending rows`() = runBlocking {
-        answerArtwork({ "https://img/$it.jpg" }, delayMs = 200)
+        // Hold the first window's workers mid-fetch, so the second enqueue lands with a known
+        // amount in flight: CONCURRENCY items taken, the rest still queued behind them.
+        val gate = CountDownLatch(1)
+        answerArtwork({ "https://img/$it.jpg" }, gate = gate)
         enricher.enqueue(acc, MatchKind.MOVIE, listOf(1, 2, 3, 4, 5, 6))
+        await("both workers busy") { started.size == PosterEnricher.CONCURRENCY }
+
         enricher.enqueue(acc, MatchKind.MOVIE, listOf(9))
+        gate.countDown()
         await("everything drains") { fetched.containsAll(listOf(1, 2, 3, 4, 5, 6, 9)) }
+
         // The just-served window jumps the queue (visible cards fill first); the older window's
-        // tail still completes behind it instead of being clobbered by prefetch enqueues.
+        // tail still completes behind it instead of being clobbered by prefetch enqueues. Items
+        // already in flight cannot be reordered, so the guarantee is against the pending tail.
         assertTrue(
-            "9 should drain before the old tail: $fetched",
-            fetched.indexOf(9) < fetched.indexOf(3)
+            "9 should be asked before the old tail: $started",
+            started.indexOf(9) < started.indexOf(4)
         )
     }
 
