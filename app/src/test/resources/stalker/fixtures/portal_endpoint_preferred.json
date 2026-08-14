@@ -1,0 +1,11 @@
+{
+  "name": "portal_endpoint_preferred",
+  "supported": true,
+  "endpoints": ["/c/portal.php"],
+  "responses": [
+    { "action": "handshake", "body": "{\"js\":{\"token\":\"token-xyz\"}}" },
+    { "action": "get_profile", "body": "{\"js\":{\"id\":\"2\",\"name\":\"OnlyC\",\"status\":0}}" },
+    { "action": "get_genres", "body": "{\"js\":[{\"id\":\"9\",\"title\":\"News\"}]}" }
+  ],
+  "expect": { "requestOrder": ["handshake", "get_profile", "get_genres"] }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "auth_required",
+  "supported": false,
+  "gap": "Portals that require an explicit do_auth with the account's username/password before content. Tuvora stores stalkerUsername/stalkerPassword but never issues a do_auth action, so these portals answer content calls with js:false forever.",
+  "endpoints": ["/portal.php", "/stalker_portal/server/load.php", "/server/load.php", "/c/portal.php", "/stb/server/load.php"],
+  "responses": [
+    { "action": "handshake", "body": "{\"js\":{\"token\":\"token-auth\"}}" },
+    { "action": "get_profile", "body": "{\"js\":{\"id\":\"3\",\"name\":\"NeedsAuth\",\"status\":2,\"auth_access\":true}}" },
+    { "action": "do_auth", "body": "{\"js\":true}" },
+    { "action": "get_genres", "body": "{\"js\":[{\"id\":\"4\",\"title\":\"Movies\"}]}" }
+  ],
+  "expect": { "requestOrder": ["handshake", "get_profile", "get_genres"] }
+}
