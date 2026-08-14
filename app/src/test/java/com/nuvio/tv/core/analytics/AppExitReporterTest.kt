@@ -161,6 +161,20 @@ class AppExitReporterTest {
     }
 
     @Test
+    fun `memory stat parser survives whatever a vendor ROM returns`() {
+        // Java heap plus native heap accounted for barely half of PSS at death, so the graphics
+        // bucket is the one that matters — but it must never take the sampler down with it.
+        assertEquals(184_320L, parseMemoryStatKb("184320"))
+        assertEquals(0L, parseMemoryStatKb("0"))
+        assertEquals(184_320L, parseMemoryStatKb("  184320 "))
+        assertNull(parseMemoryStatKb(null))
+        assertNull(parseMemoryStatKb(""))
+        assertNull(parseMemoryStatKb("n/a"))
+        assertNull(parseMemoryStatKb("12.5"))
+        assertNull(parseMemoryStatKb("-1"))
+    }
+
+    @Test
     fun `process stat parser handles names containing spaces and parentheses`() {
         val stat = "123 (Tuvora worker (1)) S 1 2 3 4 5 6 7 8 9 10 120 30 0 0"
 

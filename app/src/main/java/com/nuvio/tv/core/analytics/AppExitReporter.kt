@@ -254,6 +254,12 @@ object AppExitReporter {
             run.maxJavaHeapKb?.let { put("max_java_heap_kb", it) }
             run.lastNativeHeapKb?.let { put("last_native_heap_kb", it) }
             run.maxNativeHeapKb?.let { put("max_native_heap_kb", it) }
+            run.lastGraphicsKb?.let { put("last_graphics_kb", it) }
+            run.maxGraphicsKb?.let { put("max_graphics_kb", it) }
+            run.lastCodeKb?.let { put("last_code_kb", it) }
+            run.lastPrivateOtherKb?.let { put("last_private_other_kb", it) }
+            run.lastTotalPssKb?.let { put("last_total_pss_kb", it) }
+            run.maxTotalPssKb?.let { put("max_total_pss_kb", it) }
             run.processSampledAtMs?.let { put("process_sampled_at_ms", it) }
             run.processSampleTrigger?.let { put("process_sample_trigger", it) }
             run.processImportance?.let { put("sampled_app_importance", it) }
@@ -350,6 +356,18 @@ object AppExitReporter {
                         .takeIf { it > 0L },
                     maxNativeHeapKb = prefs.getLong(runKey(startedAt, "mem_native_max"), 0L)
                         .takeIf { it > 0L },
+                    lastGraphicsKb = prefs.getLong(runKey(startedAt, "mem_gfx"), 0L)
+                        .takeIf { it > 0L },
+                    maxGraphicsKb = prefs.getLong(runKey(startedAt, "mem_gfx_max"), 0L)
+                        .takeIf { it > 0L },
+                    lastCodeKb = prefs.getLong(runKey(startedAt, "mem_code"), 0L)
+                        .takeIf { it > 0L },
+                    lastPrivateOtherKb = prefs.getLong(runKey(startedAt, "mem_other"), 0L)
+                        .takeIf { it > 0L },
+                    lastTotalPssKb = prefs.getLong(runKey(startedAt, "mem_total_pss"), 0L)
+                        .takeIf { it > 0L },
+                    maxTotalPssKb = prefs.getLong(runKey(startedAt, "mem_total_pss_max"), 0L)
+                        .takeIf { it > 0L },
                     processSampledAtMs = prefs.getLong(runKey(startedAt, "proc_at"), 0L)
                         .takeIf { it > 0L },
                     processSampleTrigger = prefs.getString(runKey(startedAt, "proc_trigger"), null),
@@ -407,6 +425,16 @@ object AppExitReporter {
                 val javaHeapKb = (runtime.totalMemory() - runtime.freeMemory()) / 1_024L
                 val nativeHeapKb = Debug.getNativeHeapAllocatedSize() / 1_024L
                 val pssKb = Debug.getPss()
+                // Java heap + native heap accounted for barely half of PSS at death (measured
+                // 2026-08-14: 76 of 136 MB on low-memory kills, 118 of 272 on native crashes).
+                // getNativeHeapAllocatedSize only counts malloc'd bytes, so it misses exactly
+                // where a video player's memory lives — gralloc/GPU buffers and codec mmaps.
+                // summary.graphics is the missing pool; the rest close the accounting.
+                val memoryInfo = Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }
+                val graphicsKb = memoryInfo.memoryStatKb("summary.graphics")
+                val codeKb = memoryInfo.memoryStatKb("summary.code")
+                val privateOtherKb = memoryInfo.memoryStatKb("summary.private-other")
+                val totalPssKb = memoryInfo.memoryStatKb("summary.total-pss")
                 synchronized(lock) {
                     val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
@@ -429,6 +457,18 @@ object AppExitReporter {
                         .putLong(
                             runKey(runStart, "mem_native_max"),
                             maxOf(nativeHeapKb, prefs.getLong(runKey(runStart, "mem_native_max"), 0L)),
+                        )
+                        .putLong(runKey(runStart, "mem_gfx"), graphicsKb ?: 0L)
+                        .putLong(
+                            runKey(runStart, "mem_gfx_max"),
+                            maxOf(graphicsKb ?: 0L, prefs.getLong(runKey(runStart, "mem_gfx_max"), 0L)),
+                        )
+                        .putLong(runKey(runStart, "mem_code"), codeKb ?: 0L)
+                        .putLong(runKey(runStart, "mem_other"), privateOtherKb ?: 0L)
+                        .putLong(runKey(runStart, "mem_total_pss"), totalPssKb ?: 0L)
+                        .putLong(
+                            runKey(runStart, "mem_total_pss_max"),
+                            maxOf(totalPssKb ?: 0L, prefs.getLong(runKey(runStart, "mem_total_pss_max"), 0L)),
                         )
                         .apply()
                 }
@@ -616,6 +656,7 @@ object AppExitReporter {
         "playing", "pb_kind", "pb_engine", "pb_surface", "pb_at",
         "mem_at", "mem_trigger", "mem_trim", "mem_pss", "mem_pss_max",
         "mem_java", "mem_java_max", "mem_native", "mem_native_max",
+        "mem_gfx", "mem_gfx_max", "mem_code", "mem_other", "mem_total_pss", "mem_total_pss_max",
         "proc_at", "proc_trigger", "proc_importance", "proc_inventory", "proc_count",
         "proc_top", "proc_top_delta", "proc_interval", "self_cpu", "self_cpu_delta",
         "fd_at", "fd_trigger", "fd_total", "fd_max", "fd_limit", "fd_pct", "fd_inventory",
@@ -651,6 +692,12 @@ internal data class AppRunContext(
     val maxJavaHeapKb: Long? = null,
     val lastNativeHeapKb: Long? = null,
     val maxNativeHeapKb: Long? = null,
+    val lastGraphicsKb: Long? = null,
+    val maxGraphicsKb: Long? = null,
+    val lastCodeKb: Long? = null,
+    val lastPrivateOtherKb: Long? = null,
+    val lastTotalPssKb: Long? = null,
+    val maxTotalPssKb: Long? = null,
     val processSampledAtMs: Long? = null,
     val processSampleTrigger: String? = null,
     val processImportance: String? = null,
@@ -788,6 +835,17 @@ private fun readBoundedBytes(input: InputStream, maxBytes: Int): ByteArray {
 }
 
 internal const val ELISION = "\n[...]\n"
+
+/**
+ * Debug.MemoryInfo.getMemoryStat returns a decimal KB string, or null on a device that does not
+ * publish that bucket. Parsed defensively: this is diagnostics, and a vendor ROM returning
+ * something unexpected must not take the sampler down.
+ */
+internal fun parseMemoryStatKb(value: String?): Long? =
+    value?.trim()?.toLongOrNull()?.takeIf { it >= 0L }
+
+private fun Debug.MemoryInfo.memoryStatKb(name: String): Long? =
+    runCatching { parseMemoryStatKb(getMemoryStat(name)) }.getOrNull()
 
 private val MAIN_THREAD_MARKER = Regex("^\"main\" ", RegexOption.MULTILINE)
 
