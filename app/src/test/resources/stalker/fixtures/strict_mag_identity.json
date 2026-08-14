@@ -40,5 +40,7 @@
       "get_genres"
     ]
   },
-  "contentRequiresProfile": true
+  "contentRequiresActions": [
+    "get_profile"
+  ]
 }

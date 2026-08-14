@@ -89,7 +89,7 @@ class StalkerPortalReplayHarnessTest {
     private fun runFixture(name: String) = runBlocking {
         val fixture = loadFixture(name)
         val requested = Collections.synchronizedList(mutableListOf<String>())
-        val profileAccepted = java.util.concurrent.atomic.AtomicBoolean(false)
+        val satisfied = Collections.synchronizedSet(mutableSetOf<String>())
 
         val bodies = fixture.responses
         server = MockWebServer()
@@ -109,16 +109,13 @@ class StalkerPortalReplayHarnessTest {
                     }
                 } ?: return MockResponse.Builder().code(200).body("""{"js":false}""").build()
 
-                // A real portal activates the session on a successful get_profile and serves nothing
-                // until then, so identity rejection has to bite on the CONTENT call too — otherwise
-                // a client that ignores the rejection looks like it works.
-                if (action == "get_profile" && !scripted.body.contains(AUTH_FAILED)) {
-                    profileAccepted.set(true)
-                }
-                if (fixture.contentRequiresProfile &&
-                    action !in BOOTSTRAP_ACTIONS &&
-                    !profileAccepted.get()
-                ) {
+                // A real portal serves nothing until its bootstrap is satisfied — the profile
+                // activated, the modules fetched, the explicit auth done. Modelling that is what
+                // makes these fixtures discriminate: a client that skips a required step has to be
+                // seen failing on the CONTENT call, not quietly appearing to work.
+                if (!scripted.body.contains(AUTH_FAILED)) satisfied.add(action)
+                val unmet = fixture.contentRequiresActions.filterNot { it in satisfied }
+                if (unmet.isNotEmpty() && action !in BOOTSTRAP_ACTIONS) {
                     return MockResponse.Builder().code(200).body(AUTH_FAILED).build()
                 }
                 return MockResponse.Builder().code(200).body(scripted.body).build()
@@ -131,6 +128,8 @@ class StalkerPortalReplayHarnessTest {
             sourceType = "stalker",
             portalUrl = server.url("/").toString().trimEnd('/'),
             macAddress = "00:1A:79:DE:AD:BE",
+            stalkerUsername = fixture.stalkerUsername,
+            stalkerPassword = fixture.stalkerPassword,
         )
         val session = StalkerSession(account, OkHttpClient())
 
@@ -178,8 +177,10 @@ class StalkerPortalReplayHarnessTest {
         val endpoints: List<String>,
         val responses: List<ScriptedResponse>,
         val expectRequestOrder: List<String>,
-        /** Model a portal that serves content only after a successful get_profile. */
-        val contentRequiresProfile: Boolean,
+        /** Actions that must have succeeded before this portal serves any content. */
+        val contentRequiresActions: List<String>,
+        val stalkerUsername: String,
+        val stalkerPassword: String,
     )
 
     private fun loadFixture(name: String): Fixture {
@@ -197,6 +198,7 @@ class StalkerPortalReplayHarnessTest {
             )
         }
         val expect = root.getAsJsonObject("expect")
+        val device = root.getAsJsonObject("device")
         return Fixture(
             name = root.get("name").asString,
             gap = root.get("gap")?.takeIf { !it.isJsonNull }?.asString,
@@ -204,7 +206,10 @@ class StalkerPortalReplayHarnessTest {
             endpoints = root.getAsJsonArray("endpoints").map { it.asString },
             responses = responses,
             expectRequestOrder = expect.getAsJsonArray("requestOrder").map { it.asString },
-            contentRequiresProfile = root.get("contentRequiresProfile")?.takeIf { !it.isJsonNull }?.asBoolean ?: false,
+            contentRequiresActions = root.getAsJsonArray("contentRequiresActions")
+                ?.map { it.asString }.orEmpty(),
+            stalkerUsername = device?.get("stalkerUsername")?.asString.orEmpty(),
+            stalkerPassword = device?.get("stalkerPassword")?.asString.orEmpty(),
         )
     }
 }

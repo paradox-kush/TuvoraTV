@@ -272,7 +272,11 @@ class StalkerSession(
             rawRequestAt(endpoint, profileParams)
         }.onFailure { Log.d(TAG, "get_profile non-fatal failure for ${account.name}", it) }
 
-        val rejection = profileOutcome.exceptionOrNull() as? StalkerAuthException ?: return
+        val rejection = profileOutcome.exceptionOrNull() as? StalkerAuthException
+        if (rejection == null) {
+            runFollowUpBootstrap(endpoint, profileOutcome.getOrNull())
+            return
+        }
         val nextPreset = StalkerMagPresets.next(magPreset)
         if (nextPreset == null) {
             // Every identity we know was refused. The MAC/serial genuinely is not provisioned here,
@@ -287,6 +291,36 @@ class StalkerSession(
         magPreset = nextPreset
         token = null
         doHandshakeAndProfile()
+    }
+
+    /**
+     * The extra calls some portals require before they will serve anything — see
+     * [StalkerBootstrapPolicy]. Best-effort: a portal that did not want these answers them with
+     * junk, and failing the whole session over an optional step would be worse than not asking.
+     */
+    private suspend fun runFollowUpBootstrap(endpoint: String, profile: JsonElement?) {
+        val js = profile?.jsOrNull() as? JsonObject ?: return
+        val steps = StalkerBootstrapPolicy.stepsAfterProfile(
+            authAccess = js.get("auth_access")?.asBooleanOrNull(),
+            status = js.get("status")?.asIntOrNull(),
+            hasCredentials = account.stalkerUsername.isNotBlank() && account.stalkerPassword.isNotBlank(),
+        )
+        for (step in steps) {
+            val params = when (step) {
+                StalkerBootstrapPolicy.Step.DO_AUTH -> mapOf(
+                    "type" to "stb",
+                    "action" to "do_auth",
+                    "login" to account.stalkerUsername,
+                    "password" to account.stalkerPassword,
+                )
+                StalkerBootstrapPolicy.Step.GET_MODULES -> mapOf(
+                    "type" to "stb",
+                    "action" to "get_modules",
+                )
+            }
+            runCatching { rawRequestAt(endpoint, params) }
+                .onFailure { Log.d(TAG, "Stalker $step failed for ${account.name}", it) }
+        }
     }
 
     /** Try each candidate endpoint until one handshakes with a token. Throws if none do. */
@@ -398,6 +432,28 @@ class StalkerSession(
 
     private fun JsonElement.asStringOrNull(): String? =
         runCatching { if (isJsonNull) null else asString }.getOrNull()
+
+    /**
+     * Portals are loose about types — `auth_access` and `status` arrive as booleans, numbers or
+     * quoted strings depending on the panel. Null means the field was absent or unreadable, which
+     * [StalkerBootstrapPolicy] treats as "nothing further needed" rather than guessing.
+     */
+    private fun JsonElement.asBooleanOrNull(): Boolean? = runCatching {
+        when {
+            isJsonNull -> null
+            asJsonPrimitive.isBoolean -> asBoolean
+            asJsonPrimitive.isNumber -> asInt != 0
+            else -> when (asString.trim().lowercase()) {
+                "1", "true" -> true
+                "0", "false" -> false
+                else -> null
+            }
+        }
+    }.getOrNull()
+
+    private fun JsonElement.asIntOrNull(): Int? = runCatching {
+        if (isJsonNull) null else asString.trim().toIntOrNull()
+    }.getOrNull()
 
     companion object {
         private const val TAG = "StalkerSession"
