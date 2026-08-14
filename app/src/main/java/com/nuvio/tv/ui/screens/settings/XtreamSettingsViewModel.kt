@@ -340,7 +340,10 @@ class XtreamSettingsViewModel @Inject constructor(
         )
         viewModelScope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
-            val result = client.verify(account)
+            // Options-only edit (name/EPG/DNS/refresh) — nothing about how we reach the provider
+            // changed, so don't make an unreachable provider block the save. See sameConnectionAs.
+            val result =
+                if (account.sameConnectionAs(old)) Result.success(Unit) else client.verify(account)
             _uiState.update { it.copy(isValidating = false) }
             result.onSuccess {
                 store.replace(old.id, account)

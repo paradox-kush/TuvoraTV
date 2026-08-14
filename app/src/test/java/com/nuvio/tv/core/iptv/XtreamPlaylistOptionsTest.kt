@@ -1,7 +1,9 @@
 package com.nuvio.tv.core.iptv
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -28,6 +30,49 @@ class XtreamPlaylistOptionsTest {
         assertEquals("http://host:8080", account.baseUrl)
         assertEquals("u1", account.username)
         assertEquals(XtreamAccount.SOURCE_XTREAM, account.sourceType)
+    }
+
+    /**
+     * The edit path skips its live verify when the connection is unchanged. This pins what
+     * "unchanged" means: shared options may move freely, anything that decides WHERE we connect
+     * or WHO we connect as does not. Without this, a playlist whose provider is unreachable can
+     * never be edited — including to switch its DNS resolver, which is what fixes some of those
+     * unreachable providers in the first place.
+     */
+    @Test
+    fun `same connection ignores shared options but not identity`() {
+        val stalker = XtreamAccount(
+            id = "stalker|http://portal:80|00:1A:79:32:31:37",
+            name = "Portal",
+            baseUrl = "http://portal:80",
+            username = "",
+            password = "",
+            sourceType = XtreamAccount.SOURCE_STALKER,
+            portalUrl = "http://portal:80",
+            macAddress = "00:1A:79:32:31:37"
+        )
+
+        // Options-only edits: same connection, so the save must not need a reachable portal.
+        assertTrue(stalker.copy(dnsProvider = XtreamAccount.DNS_CLOUDFLARE).sameConnectionAs(stalker))
+        assertTrue(stalker.copy(epgUrl = "http://epg/x.xml").sameConnectionAs(stalker))
+        assertTrue(stalker.copy(autoRefreshHours = 0).sameConnectionAs(stalker))
+        assertTrue(stalker.copy(name = "Renamed").sameConnectionAs(stalker))
+        assertTrue(stalker.copy(enabled = false).sameConnectionAs(stalker))
+
+        // Anything that changes where/who we connect as: verify still runs.
+        assertFalse(stalker.copy(portalUrl = "http://other:80").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(macAddress = "00:1A:79:00:00:01").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(serialNumber = "SN1").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(deviceId = "DEV1").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(sendDeviceId = false).sameConnectionAs(stalker))
+        assertFalse(stalker.copy(stalkerUsername = "u").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(sourceType = XtreamAccount.SOURCE_URL).sameConnectionAs(stalker))
+
+        val xtream = xtreamAccountFromFields("host:8080", "u1", "p1")!!
+        assertTrue(xtream.copy(dnsProvider = XtreamAccount.DNS_CLOUDFLARE).sameConnectionAs(xtream))
+        assertFalse(xtream.copy(username = "u2").sameConnectionAs(xtream))
+        assertFalse(xtream.copy(password = "p2").sameConnectionAs(xtream))
+        assertFalse(xtream.copy(baseUrl = "http://other:8080").sameConnectionAs(xtream))
     }
 
     @Test
