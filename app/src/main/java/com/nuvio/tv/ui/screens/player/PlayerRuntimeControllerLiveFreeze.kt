@@ -134,10 +134,33 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
             LivePlaybackRecoveryPolicy.Input(
                 attempts = liveRecoveryAttempts,
                 sinceLastAttemptMs = sinceLastAttemptMs,
+                kind = kind,
+                // Only mpv can reinitialise its video track without a new connection; the
+                // ExoPlayer path escalates straight to a re-prepare rather than spending
+                // attempts on a primitive it does not have.
+                videoResetAttempts = if (isUsingMpvEngine()) {
+                    LivePlaybackRecoveryPolicy.VIDEO_RESET_ATTEMPTS
+                } else {
+                    0
+                },
             )
         )
     ) {
         LivePlaybackRecoveryPolicy.Decision.Wait -> Unit
+
+        // Audio is still arriving, so the link works and the fault is downstream of it.
+        // `video-reload` reinitialises the video track off the demuxer that is already
+        // connected — no new create_link, nothing spent against the provider's connection cap.
+        LivePlaybackRecoveryPolicy.Decision.ResetVideo -> {
+            liveRecoveryAttempts += 1
+            lastLiveRecoveryAtMs = nowMs
+            livePlaybackFreezeReporter.onRecoveryAttempt(nowMs)
+            Log.w(
+                PlayerRuntimeController.TAG,
+                "LIVE_RECONNECT: reloading video track (kind=$kind attempt=$liveRecoveryAttempts)",
+            )
+            mpvView?.reloadVideoTrack()
+        }
 
         LivePlaybackRecoveryPolicy.Decision.GiveUp -> {
             // Out of attempts. Let the freeze stand so the normal error path can surface it

@@ -421,6 +421,16 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     /** Whether a picture is expected at all — IPTV radio stations legitimately render none. */
     fun hasVideoTrackNow(): Boolean = initialized && obsVideoParams != null
 
+    /**
+     * Reinitialises the video track off the demuxer that is already connected, for a channel
+     * whose picture died while its audio kept playing. Costs the provider nothing — no new
+     * create_link, nothing spent against its connection cap — unlike a full re-prepare.
+     */
+    fun reloadVideoTrack() {
+        if (!initialized) return
+        ctl { mpv.command("video-reload") }
+    }
+
     fun seekToMs(positionMs: Long) {
         if (!initialized) return
         val seconds = (positionMs.coerceAtLeast(0L) / 1000.0)
