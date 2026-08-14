@@ -82,6 +82,8 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
+private const val SPORTS_LIVE_REFRESH_INTERVAL_MS = 2 * 60 * 1000L
+
 /**
  * Sports Centre hub (drawer destination): featured event banners, live & upcoming fixtures for
  * followed leagues, and browse-by-sport with OK-toggle follows. OK on a match opens the
@@ -98,7 +100,15 @@ fun SportsHubScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val sheet by viewModel.sheet.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { viewModel.ensureLoaded() }
+    LaunchedEffect(Unit) {
+        viewModel.ensureLoaded()
+        // The Sports destination can remain alive across kick-off. Refresh while it is visible so
+        // a pre-game card gains its live score without requiring a route change or app restart.
+        while (true) {
+            delay(SPORTS_LIVE_REFRESH_INTERVAL_MS)
+            viewModel.repository.refreshFixtures(force = true)
+        }
+    }
 
     val nowMs = RadarTime.nowMs()
     val featured = state.activeFeatured(nowMs)

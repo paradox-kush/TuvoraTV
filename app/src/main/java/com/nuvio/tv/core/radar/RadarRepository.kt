@@ -225,7 +225,10 @@ class RadarRepository @Inject constructor(
                     fixturesByTeam = it.fixturesByTeam + response.teamFixtures,
                     liveEventIds = liveIds(response),
                     liveScores = scoresById(response),
-                    livescoreSports = response.livescore.keys.map { s -> s.lowercase() }.toSet(),
+                    // An empty upstream lane is not authoritative coverage. Treating it as such
+                    // suppresses kickoff-time inference (notably for NFL games where the live feed
+                    // can be empty while the fixture endpoint already reports Q1 and a score).
+                    livescoreSports = coveredLivescoreSports(response),
                     loadingFixtures = false,
                 )
             }
@@ -318,6 +321,7 @@ class RadarRepository @Inject constructor(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
                     liveEventIds = it.liveEventIds + liveIds(response),
                     liveScores = it.liveScores + scoresById(response),
+                    livescoreSports = it.livescoreSports + coveredLivescoreSports(response),
                 )
             }
         }
@@ -330,6 +334,12 @@ class RadarRepository @Inject constructor(
         response.livescore.values.asSequence().flatten()
             .mapNotNull { score -> score.eventId?.let { it to score } }
             .toMap()
+
+    private fun coveredLivescoreSports(response: RadarFixturesResponse): Set<String> =
+        response.livescore.asSequence()
+            .filter { (_, scores) -> scores.isNotEmpty() }
+            .map { (sport, _) -> sport.lowercase() }
+            .toSet()
 
     // Broadcaster listings barely change and the edge function caches them 12h — one
     // fetch per event per app session is plenty.
