@@ -108,5 +108,40 @@ class XtreamCatchUpTest {
         assertTrue("password must be encoded: $first", first.contains("p%2Fs"))
     }
 
+    /**
+     * Panels interpret `start` in THEIR timezone, not ours, so a panel in New York replaying a
+     * programme we describe in UTC lands hours off. When the panel tells us its timezone
+     * (server_info.timezone) we have to speak it.
+     */
+    @Test
+    fun `start is formatted in the panel's timezone when it tells us one`() {
+        // 2024-03-09 16:00 UTC is 11:00 in New York (EST, UTC-5).
+        assertEquals("2024-03-09:11-00", XtreamCatchUp.formatStart(start, "America/New_York"))
+        // ...and 17:00 in Berlin (CET, UTC+1).
+        assertEquals("2024-03-09:17-00", XtreamCatchUp.formatStart(start, "Europe/Berlin"))
+    }
+
+    /**
+     * UTC stays the fallback, NOT the device's local time. Most panels never report a timezone, and
+     * UTC is what Tuvora has always sent — switching the default would silently shift replay for
+     * every provider that works today.
+     */
+    @Test
+    fun `an unknown or unusable timezone falls back to UTC`() {
+        assertEquals("2024-03-09:16-00", XtreamCatchUp.formatStart(start, null))
+        assertEquals("2024-03-09:16-00", XtreamCatchUp.formatStart(start, ""))
+        assertEquals("2024-03-09:16-00", XtreamCatchUp.formatStart(start, "Not/AZone"))
+    }
+
+    @Test
+    fun `the timezone reaches the built urls`() {
+        val url = XtreamCatchUp.candidateUrls(
+            baseUrl = "https://example.com", username = "u", password = "p",
+            streamId = 1, startMs = start, endMs = end, containerExtension = "ts",
+            serverTimeZone = "America/New_York",
+        ).first()
+        assertTrue("expected New York time in $url", url.contains("2024-03-09:11-00"))
+    }
+
     private companion object { const val DAY = 24L * 60 * 60 * 1000 }
 }

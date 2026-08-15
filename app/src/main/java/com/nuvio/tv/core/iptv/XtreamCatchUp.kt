@@ -19,14 +19,27 @@ object XtreamCatchUp {
     private const val START_PATTERN = "yyyy-MM-dd:HH-mm"
 
     /**
-     * Panels interpret [startMs] in the SERVER's timezone while we send UTC, so a mis-set panel
-     * replays offset. Reading `server_info.timezone` and shifting is the upgrade path; the
-     * reference implementations we compared against have the same limitation.
+     * Panels interpret `start` in THEIR OWN timezone, so a panel in New York replaying a programme
+     * we describe in UTC lands hours off. [serverTimeZone] is the panel's `server_info.timezone`
+     * when we know it.
+     *
+     * The fallback is UTC rather than the device's local time. Most panels never report a zone, and
+     * UTC is what Tuvora has always sent — moving the default would silently shift replay for every
+     * provider that works today, which is a worse trade than leaving the unknown case as it is.
+     * An unusable zone string falls back the same way rather than throwing.
      */
-    fun formatStart(startMs: Long): String =
-        SimpleDateFormat(START_PATTERN, Locale.US)
-            .apply { timeZone = TimeZone.getTimeZone("UTC") }
+    fun formatStart(startMs: Long, serverTimeZone: String? = null): String {
+        val zone = serverTimeZone?.takeIf { it.isNotBlank() }
+            ?.let { id ->
+                // getTimeZone() answers GMT for anything it does not recognise, which would look
+                // like a deliberate UTC choice instead of a bad id.
+                TimeZone.getTimeZone(id).takeIf { it.id == id || TimeZone.getAvailableIDs().contains(id) }
+            }
+            ?: TimeZone.getTimeZone("UTC")
+        return SimpleDateFormat(START_PATTERN, Locale.US)
+            .apply { timeZone = zone }
             .format(Date(startMs))
+    }
 
     /** Whole minutes, floored, never below one — a zero-length request plays nothing. */
     fun durationMinutes(startMs: Long, endMs: Long): Int =
@@ -62,10 +75,11 @@ object XtreamCatchUp {
         startMs: Long,
         endMs: Long,
         containerExtension: String?,
+        serverTimeZone: String? = null,
     ): List<String> {
         val root = baseUrl.trimEnd('/')
         val ext = containerExtension?.takeIf { it.isNotBlank() } ?: "ts"
-        val start = formatStart(startMs)
+        val start = formatStart(startMs, serverTimeZone)
         val minutes = durationMinutes(startMs, endMs)
         val u = encode(username)
         val p = encode(password)
