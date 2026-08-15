@@ -21,9 +21,11 @@ class XtreamCatchUpPrefsSyncTest {
         id: String,
         preferM3u8: Boolean = false,
         correction: Int = 0,
+        guideOffset: Int = 0,
     ) = XtreamAccount(
         id = id, name = "Panel", baseUrl = "http://host:8080", username = "u", password = "p",
         preferM3u8CatchUp = preferM3u8, catchUpCorrectionMinutes = correction,
+        guideEpgCorrectionMinutes = guideOffset,
     )
 
     @Test
@@ -35,6 +37,21 @@ class XtreamCatchUpPrefsSyncTest {
         val merged = preserveDeviceLocalPrefs(pulled, local).single()
         assertTrue("container preference kept", merged.preferM3u8CatchUp)
         assertEquals("time correction kept", -120, merged.catchUpCorrectionMinutes)
+    }
+
+    /** The guide EPG offset is the same kind of device-local panel tuning as the other two. */
+    @Test
+    fun `a pull keeps this device's guide epg offset`() {
+        val local = listOf(account("http://host:8080|u", guideOffset = -120))
+        val pulled = listOf(account("http://host:8080|u"))
+
+        val merged = preserveDeviceLocalPrefs(pulled, local).single()
+        assertEquals("guide offset kept", -120, merged.guideEpgCorrectionMinutes)
+        assertEquals(
+            "an unseen account takes the auto default",
+            0,
+            preserveDeviceLocalPrefs(listOf(account("http://other|u")), local).single().guideEpgCorrectionMinutes,
+        )
     }
 
     /** The rest of the pulled account still wins — this preserves two fields, not the whole object. */

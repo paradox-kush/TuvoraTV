@@ -25,27 +25,35 @@ internal object XtreamSimpleDataTable {
      * A body that is not a listings payload (a panel erroring mid-session answers with
      * `{"user_info":…}`) yields zero rather than throwing: the caller's fetch gate has already been
      * stamped, and a thrown parse would look like a crash rather than an empty guide.
+     *
+     * Epoch-skew correction ([XtreamEpochSkew]) happens HERE, before the keep-window: [manualOffsetMs]
+     * (the per-playlist setting) wins outright; otherwise the response votes the liar equality and a
+     * proven liar's epochs get [clockPairOffsetMs] subtracted. While the vote is open, rows wait in a
+     * small bounded buffer — the window has to judge CORRECTED epochs, or a shifted panel's forward
+     * edge would be refused at parse.
      */
     fun parseInto(
         source: BufferedSource,
         channelId: String,
         nowMs: Long,
         catchUpDays: Int,
+        manualOffsetMs: Long? = null,
+        clockPairOffsetMs: Long? = null,
         sink: (EpgProgramme) -> Unit,
     ): Int = runCatching {
         JsonReader.of(source).use { reader ->
             if (reader.peek() != JsonReader.Token.BEGIN_OBJECT) return@use 0
-            var kept = 0
+            val emitter = SkewCorrectingEmitter(channelId, nowMs, catchUpDays, manualOffsetMs, clockPairOffsetMs, sink)
             reader.beginObject()
             while (reader.hasNext()) {
                 if (reader.nextName() != "epg_listings") {
                     reader.skipValue()
                     continue
                 }
-                kept += readListings(reader, channelId, nowMs, catchUpDays, sink)
+                readListings(reader, emitter)
             }
             reader.endObject()
-            kept
+            emitter.finish()
         }
     }.getOrDefault(0)
 
@@ -53,16 +61,9 @@ internal object XtreamSimpleDataTable {
      * The listings themselves. Normally an array; a handful of panels key them by index instead,
      * which is one character of difference between a full guide and an empty one.
      */
-    private fun readListings(
-        reader: JsonReader,
-        channelId: String,
-        nowMs: Long,
-        catchUpDays: Int,
-        sink: (EpgProgramme) -> Unit,
-    ): Int {
-        var kept = 0
+    private fun readListings(reader: JsonReader, emitter: SkewCorrectingEmitter) {
         fun row() {
-            readRow(reader, channelId, nowMs, catchUpDays)?.let { sink(it); kept++ }
+            readRow(reader)?.let(emitter::offer)
         }
         when (reader.peek()) {
             JsonReader.Token.BEGIN_ARRAY -> {
@@ -77,22 +78,17 @@ internal object XtreamSimpleDataTable {
             }
             else -> reader.skipValue()
         }
-        return kept
     }
 
-    /** One listing. Null = malformed or outside the window; either way the body keeps going. */
-    private fun readRow(
-        reader: JsonReader,
-        channelId: String,
-        nowMs: Long,
-        catchUpDays: Int,
-    ): EpgProgramme? {
+    /** One listing's raw fields. Null only for a non-object element; junk fields ride through. */
+    private fun readRow(reader: JsonReader): RawRow? {
         if (reader.peek() != JsonReader.Token.BEGIN_OBJECT) {
             reader.skipValue()
             return null
         }
         var title: String? = null
         var desc: String? = null
+        var startText: String? = null
         var start = 0L
         var stop = 0L
         var archive = 0
@@ -101,6 +97,8 @@ internal object XtreamSimpleDataTable {
             when (reader.nextName()) {
                 "title" -> title = reader.flexString()
                 "description", "descr" -> desc = reader.flexString()
+                // The wall-clock start STRING beside the epoch — never stored, it only votes.
+                "start" -> startText = reader.flexString()
                 "start_timestamp" -> start = reader.flexLong() ?: 0L
                 "stop_timestamp", "end_timestamp" -> stop = reader.flexLong() ?: 0L
                 "has_archive" -> archive = reader.flexLong()?.toInt() ?: 0
@@ -108,21 +106,97 @@ internal object XtreamSimpleDataTable {
             }
         }
         reader.endObject()
+        return RawRow(title, desc, startText, start, stop, archive)
+    }
 
-        val startMs = toMillis(start)
-        val endMs = toMillis(stop)
-        if (!CatchUpEpgWindow.keeps(startMs, endMs, nowMs, catchUpDays)) return null
-        // Decoded ONCE here: the guide reads these rows back from SQLite, so a second decode per
-        // repaint would be paid on every scroll.
-        val decodedDesc = decodeText(desc).takeIf { it.isNotBlank() }
-        return EpgProgramme(
-            channelId = channelId,
-            startMs = startMs,
-            endMs = endMs,
-            title = decodeText(title),
-            desc = decodedDesc,
-            hasArchive = archive > 0,
-        )
+    /** One row as the panel sent it, before correction/window/decoding. */
+    private class RawRow(
+        val title: String?,
+        val desc: String?,
+        val startText: String?,
+        val startRaw: Long,
+        val stopRaw: Long,
+        val archive: Int,
+    )
+
+    /**
+     * Applies [XtreamEpochSkew] per response, streaming. With a manual offset the vote never opens
+     * and nothing is buffered. Otherwise rows wait (bounded by [XtreamEpochSkew.PENDING_ROW_CAP],
+     * resolved early at [XtreamEpochSkew.SAMPLE_VOTE_CAP] votes) until the verdict fixes the
+     * offset, then flush in arrival order; later rows stream straight through. The buffer holds at
+     * most a few hundred small objects — the response body itself still never lands in the heap.
+     */
+    private class SkewCorrectingEmitter(
+        private val channelId: String,
+        private val nowMs: Long,
+        private val catchUpDays: Int,
+        manualOffsetMs: Long?,
+        private val clockPairOffsetMs: Long?,
+        private val sink: (EpgProgramme) -> Unit,
+    ) {
+        private var resolvedOffsetMs: Long? = manualOffsetMs
+        private val pending = ArrayList<RawRow>()
+        private var liarVotes = 0
+        private var honestVotes = 0
+        private var kept = 0
+
+        fun offer(row: RawRow) {
+            val resolved = resolvedOffsetMs
+            if (resolved != null) {
+                emit(row, resolved)
+                return
+            }
+            when (XtreamEpochSkew.vote(row.startText, row.startRaw)) {
+                true -> liarVotes++
+                false -> honestVotes++
+                null -> Unit
+            }
+            pending.add(row)
+            if (liarVotes + honestVotes >= XtreamEpochSkew.SAMPLE_VOTE_CAP ||
+                pending.size >= XtreamEpochSkew.PENDING_ROW_CAP
+            ) {
+                resolveAndFlush()
+            }
+        }
+
+        fun finish(): Int {
+            if (resolvedOffsetMs == null) resolveAndFlush()
+            return kept
+        }
+
+        private fun resolveAndFlush() {
+            val offset = XtreamEpochSkew.effectiveOffsetMs(
+                null,
+                XtreamEpochSkew.verdict(liarVotes, honestVotes),
+                clockPairOffsetMs,
+            )
+            resolvedOffsetMs = offset
+            pending.forEach { emit(it, offset) }
+            pending.clear()
+        }
+
+        /** The pre-correction tail of the old readRow: window on corrected epochs, decode once, sink. */
+        private fun emit(row: RawRow, offsetMs: Long) {
+            // Only REAL epochs are shifted: an absent timestamp parses to 0 and a "corrected" 0
+            // would be negative garbage nothing downstream could recognise as absent.
+            val startMs = toMillis(row.startRaw).let { if (row.startRaw > 0) it + offsetMs else it }
+            val endMs = toMillis(row.stopRaw).let { if (row.stopRaw > 0) it + offsetMs else it }
+            if (!CatchUpEpgWindow.keeps(startMs, endMs, nowMs, catchUpDays)) return
+            // Decoded ONCE here: the guide reads these rows back from SQLite, so a second decode per
+            // repaint would be paid on every scroll.
+            val decodedDesc = decodeText(row.desc).takeIf { it.isNotBlank() }
+            sink(
+                EpgProgramme(
+                    channelId = channelId,
+                    startMs = startMs,
+                    endMs = endMs,
+                    title = decodeText(row.title),
+                    desc = decodedDesc,
+                    hasArchive = row.archive > 0,
+                )
+            )
+            kept++
+        }
     }
 
     /**

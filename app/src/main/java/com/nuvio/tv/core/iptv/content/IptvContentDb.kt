@@ -760,6 +760,19 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         inTx { db.delete("epg_programmes", "playlist_id = ? AND end_ms < ?", arrayOf(playlistId, cutoffMs.toString())) }
     }
 
+    /**
+     * Forgets when this playlist's channels were last refilled, WITHOUT touching their rows.
+     *
+     * The guide-offset setting (fix 2) needs this: stored programmes were corrected under the OLD
+     * offset, and the six-hour fetch gate would otherwise keep showing them long after the user
+     * changed the setting to fix exactly what they are looking at. Open stamps make the next focus
+     * refetch-and-replace per channel; the stale rows stay readable until then — the same
+     * no-gap trade [clear] makes for the catalog.
+     */
+    suspend fun resetEpgFetchStamps(playlistId: String) = withContext(Dispatchers.IO) {
+        inTx { db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId)) }
+    }
+
     companion object {
         const val TYPE_LIVE = "live"
         const val TYPE_VOD = "vod"

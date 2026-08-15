@@ -6,6 +6,8 @@ import com.nuvio.tv.core.iptv.match.XtreamCatalogIndexParser
 import com.nuvio.tv.data.remote.api.XtreamApi
 import com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto
 import com.squareup.moshi.Moshi
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -101,10 +103,22 @@ data class XtreamAccount(
      * TiviMate's per-playlist EPG offset, XUI's server-side `epg_shift`). 0 = send UTC, which is
      * what Tuvora has always sent, so the default path is byte-identical to today.
      */
-    val catchUpCorrectionMinutes: Int = 0
+    val catchUpCorrectionMinutes: Int = 0,
+    /**
+     * Manual GUIDE EPG offset in minutes, −720..+840, added to every EPG epoch at the parse
+     * boundary. 0 = auto: [XtreamEpochSkew] detects wall-clock-epoch liar panels per response and
+     * subtracts the measured clock-pair offset; a non-zero value overrides that vote entirely.
+     * Deliberately separate from [catchUpCorrectionMinutes] — that one shifts the `start` STRING
+     * sent to the panel for a replay (a different lie with a different fix); this one shifts what
+     * the guide believes about when programmes air.
+     */
+    val guideEpgCorrectionMinutes: Int = 0
 ) {
     /** The correction as the panel-offset [XtreamCatchUp.candidateUrls] takes; null = unset (UTC). */
     val catchUpOffsetMs: Long? get() = catchUpCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }
+
+    /** The manual guide offset in milliseconds; null = auto-detect (the default). */
+    val guideEpgOffsetMs: Long? get() = guideEpgCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }
 
     fun typeEnabled(type: String): Boolean = type in contentTypes
 
@@ -289,7 +303,9 @@ class XtreamClient @Inject constructor(
     }
     /** Verifies credentials. Success only when the panel reports auth=1 and an active status. */
     suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
-        val info = apiFor(acc).getAccount(playerApi(acc)).requireBody().userInfo
+        val body = apiFor(acc).getAccount(playerApi(acc)).requireBody()
+        rememberClockPair(acc.id, body.serverInfo)
+        val info = body.userInfo
         check(info?.auth == 1) { "Authentication failed" }
         val status = info.status?.lowercase().orEmpty()
         check(status.isEmpty() || status == "active") { "Account status: ${info.status}" }
@@ -297,13 +313,53 @@ class XtreamClient @Inject constructor(
 
     /** Account status (expiry/connections) for the settings row. Same endpoint as [verify]. */
     override suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = call {
-        val info = apiFor(acc).getAccount(playerApi(acc)).requireBody().userInfo
+        val body = apiFor(acc).getAccount(playerApi(acc)).requireBody()
+        rememberClockPair(acc.id, body.serverInfo)
+        val info = body.userInfo
         XtreamAccountInfo(
             status = info?.status?.takeIf { it.isNotBlank() },
             expiresAtEpochSec = info?.expDate?.trim()?.toLongOrNull(),
             activeConnections = info?.activeConnections?.trim()?.toIntOrNull(),
             maxConnections = info?.maxConnections?.trim()?.toIntOrNull()
         )
+    }
+
+    // --- the panel's measured clock offset (session-scoped) ------------------------------------
+
+    /**
+     * Per-account clock-pair offset for this SESSION, keyed by account id. An immutable snapshot
+     * swapped whole (the [CatchUpEpgRepository]-style looseness mobile already ships): readers
+     * never lock, and the guide's parallel short-EPG calls at most duplicate one tiny fetch.
+     * Attempted-but-junk is remembered as null so a panel with no usable pair is asked once, not
+     * once per channel.
+     */
+    @Volatile
+    private var measuredClockOffsets: Map<String, Long?> = emptyMap()
+    private val clockFetchGate = Mutex()
+
+    /** Folds one `server_info` sighting into the session memo — verify/accountInfo ride free. */
+    private fun rememberClockPair(accountId: String, serverInfo: com.nuvio.tv.data.remote.dto.XtreamServerInfoDto?) {
+        val offset = ServerClockOffset.offsetMs(serverInfo?.timeNow, serverInfo?.timestampNow ?: 0L)
+        measuredClockOffsets = measuredClockOffsets + (accountId to offset)
+    }
+
+    /**
+     * The panel's measured clock-pair offset ([ServerClockOffset]), fetched AT MOST once per
+     * account per session and usually never: the add/edit verify and the settings account row both
+     * seed the memo from responses they already make, and the guide only asks at all once a
+     * response has voted LIAR. Null = the panel's own clocks are junk (nothing to subtract).
+     */
+    suspend fun measuredClockOffsetMs(acc: XtreamAccount): Long? {
+        measuredClockOffsets[acc.id]?.let { return it }
+        if (acc.id in measuredClockOffsets) return null   // attempted, junk
+        clockFetchGate.withLock {
+            if (acc.id in measuredClockOffsets) return measuredClockOffsets[acc.id]
+            val serverInfo = runCatching {
+                apiFor(acc).getAccount(playerApi(acc)).requireBody().serverInfo
+            }.getOrNull()
+            rememberClockPair(acc.id, serverInfo)
+            return measuredClockOffsets[acc.id]
+        }
     }
 
     override suspend fun liveCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
@@ -411,7 +467,10 @@ class XtreamClient @Inject constructor(
             .addQueryParameter("stream_id", streamId.toString())
             .addQueryParameter("limit", limit.toString())
             .build().toString()
-        apiFor(acc).getShortEpg(url).requireBody().listings.orEmpty().map { it.toProgram() }
+        correctShortEpgListings(
+            apiFor(acc).getShortEpg(url).requireBody().listings.orEmpty(),
+            manualOffsetMs = acc.guideEpgOffsetMs,
+        ) { measuredClockOffsetMs(acc) }
     }
 
     /**
@@ -433,8 +492,15 @@ class XtreamClient @Inject constructor(
         val url = playerApi(acc, "get_simple_data_table").toHttpUrl().newBuilder()
             .addQueryParameter("stream_id", streamId.toString())
             .build().toString()
+        // The stream parse can't suspend mid-body, so the clock pair is resolved up front when
+        // auto-detection could need it (manual unset). Session-memoized — usually already seeded
+        // by verify/accountInfo or a liar short-EPG response, so this is normally free.
+        val manualOffsetMs = acc.guideEpgOffsetMs
+        val clockPairOffsetMs = if (manualOffsetMs == null) measuredClockOffsetMs(acc) else null
         apiFor(acc).getRawEpgTable(url).requireBody().use { body ->
-            XtreamSimpleDataTable.parseInto(body.source(), channelId, nowMs, catchUpDays, sink)
+            XtreamSimpleDataTable.parseInto(
+                body.source(), channelId, nowMs, catchUpDays, manualOffsetMs, clockPairOffsetMs, sink,
+            )
         }
     }
 
@@ -600,16 +666,40 @@ class XtreamClient @Inject constructor(
     }
 }
 
-internal fun XtreamEpgEntryDto.toProgram(): XtreamProgram = XtreamProgram(
+internal fun XtreamEpgEntryDto.toProgram(offsetMs: Long = 0L): XtreamProgram = XtreamProgram(
     title = decodeXtreamBase64(title),
     description = decodeXtreamBase64(description),
-    startMs = (startTimestamp?.toLongOrNull() ?: 0L) * 1000,
-    endMs = (stopTimestamp?.toLongOrNull() ?: 0L) * 1000,
+    // The epoch-skew correction shifts only REAL epochs: an absent timestamp parses to 0, and a
+    // "corrected" 0 would be negative garbage that actionFor could no longer recognise as absent.
+    startMs = (startTimestamp?.toLongOrNull() ?: 0L).let { if (it > 0) it * 1000 + offsetMs else it * 1000 },
+    endMs = (stopTimestamp?.toLongOrNull() ?: 0L).let { if (it > 0) it * 1000 + offsetMs else it * 1000 },
     nowPlaying = nowPlaying == 1,
     // FlexInt already coerced "1"/true; any positive count is a mark, junk decoded to null stays
     // null — silence, not "no".
     hasArchive = hasArchive?.let { it > 0 }
 )
+
+/**
+ * One short-EPG response through the epoch-skew gate ([XtreamEpochSkew]): vote the liar equality
+ * across the rows, resolve the offset, map. The clock pair is fetched ONLY when a response has
+ * actually voted LIAR and no manual offset preempts it — honest panels (the population) never pay
+ * a request or a changed byte for the lie, which is what the onnipsite probe demands.
+ */
+internal suspend fun correctShortEpgListings(
+    listings: List<XtreamEpgEntryDto>,
+    manualOffsetMs: Long?,
+    measuredClockOffsetMs: suspend () -> Long?,
+): List<XtreamProgram> {
+    val offsetMs = when {
+        manualOffsetMs != null -> manualOffsetMs
+        XtreamEpochSkew.verdictOf(
+            listings.map { it.start to it.startTimestamp?.trim()?.toLongOrNull() }
+        ) == XtreamEpochSkew.Verdict.LIAR ->
+            XtreamEpochSkew.effectiveOffsetMs(null, XtreamEpochSkew.Verdict.LIAR, measuredClockOffsetMs())
+        else -> 0L
+    }
+    return listings.map { it.toProgram(offsetMs) }
+}
 
 /** Xtream base64-encodes EPG title/description. Returns "" on null/garbage rather than throwing. */
 internal fun decodeXtreamBase64(s: String?): String {
