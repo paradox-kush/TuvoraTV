@@ -9,16 +9,20 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** One live/vod row as stored/queried. sid is the synthetic per-playlist stream id. */
-data class ContentChannel(val sid: Int, val name: String, val logo: String?, val tvgId: String?, val categoryId: String?, val url: String, val cmd: String? = null, val hasArchive: Boolean = false)
+/** One live/vod row as stored/queried. sid is the synthetic per-playlist stream id.
+ *  [useHttpTmpLink]/[useLoadBalancing] mirror the Xtream panel's per-channel flags (stream
+ *  resolution consumes them — this store only persists and returns them). */
+data class ContentChannel(val sid: Int, val name: String, val logo: String?, val tvgId: String?, val categoryId: String?, val url: String, val cmd: String? = null, val hasArchive: Boolean = false, val useHttpTmpLink: Boolean = false, val useLoadBalancing: Boolean = false)
 data class ContentVod(val sid: Int, val name: String, val logo: String?, val categoryId: String?, val url: String, val ext: String?, val cmd: String? = null)
 /** A series HEADER (grouped M3U episodes). [sid] is a synthetic id derived from the series name. */
 data class ContentSeries(val sid: Int, val name: String, val logo: String?, val categoryId: String?)
 /** One episode under a series header, with its direct stream URL. */
 data class ContentEpisode(val seriesSid: Int, val episodeSid: String, val season: Int, val episodeNum: Int, val title: String, val logo: String?, val url: String, val ext: String?, val cmd: String? = null)
 data class ContentCategory(val id: String, val name: String)
-/** One XMLTV programme spanning [startMs, endMs), keyed to a channel by its (normalized) EPG id. */
-data class EpgProgramme(val channelId: String, val startMs: Long, val endMs: Long, val title: String, val desc: String?)
+/** One XMLTV programme spanning [startMs, endMs), keyed to a channel by its (normalized) EPG id.
+ *  [hasArchive] = the programme is inside the provider's replay window (catch-up). Windowed
+ *  reads truncate [desc] to 600 chars — [IptvContentDb.epgFullDesc] fetches the whole text. */
+data class EpgProgramme(val channelId: String, val startMs: Long, val endMs: Long, val title: String, val desc: String?, val hasArchive: Boolean = false)
 
 /**
  * Disk-backed catalog for M3U/URL playlists. Unlike Xtream (which has a live API per browse),
@@ -33,9 +37,13 @@ data class EpgProgramme(val channelId: String, val startMs: Long, val endMs: Lon
 @Singleton
 class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
-    private val helper = object : SQLiteOpenHelper(context, "iptv_content.db", null, 3) {
+    // v4 (memory/catch-up pre-work, one migration): epg_programmes.has_archive, the
+    // per-(playlist, channel) fetch-stamp table, and the Xtream channel flags. This helper
+    // rebuilds on upgrade (everything here is a re-ingestable cache), so the bump IS the
+    // migration and onCreate always carries the current schema.
+    private val helper = object : SQLiteOpenHelper(context, "iptv_content.db", null, 4) {
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, cmd TEXT, tv_archive INTEGER, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
+            db.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, cmd TEXT, tv_archive INTEGER, use_http_tmp_link INTEGER, use_load_balancing INTEGER, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX channels_cat ON channels(playlist_id, category_id)")
             db.execSQL("CREATE TABLE vod(playlist_id TEXT NOT NULL, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, cmd TEXT, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX vod_cat ON vod(playlist_id, category_id)")
@@ -52,7 +60,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             // Everything here is a rebuildable cache of the parsed playlist — drop + re-ingest.
-            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes")) {
+            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_channel_fetch")) {
                 db.execSQL("DROP TABLE IF EXISTS $t")
             }
             onCreate(db)
@@ -60,8 +68,10 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
         /** XMLTV now/next store: one row per programme, looked up by (playlist, channel, time). */
         private fun createEpgTable(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT)")
+            db.execSQL("CREATE TABLE epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, has_archive INTEGER NOT NULL DEFAULT 0)")
             db.execSQL("CREATE INDEX epg_lookup ON epg_programmes(playlist_id, channel_id, start_ms)")
+            // Per-(playlist, channel) EPG fetch stamp — the guide's lazy-fetch gate.
+            db.execSQL("CREATE TABLE epg_channel_fetch(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY(playlist_id, channel_id)) WITHOUT ROWID")
         }
     }
 
@@ -169,12 +179,13 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         // --- batched writers (each its own transaction) ---
         private fun flushChannels() {
             inTx {
-                val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive) VALUES(?,?,?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 for (r in channelBatch) {
                     s.clearBindings()
                     s.bindString(1, playlistId); bindNullable(s, 2, r.categoryId); s.bindLong(3, r.sid.toLong())
                     s.bindString(4, r.name); bindNullable(s, 5, r.logo); bindNullable(s, 6, r.tvgId); s.bindString(7, r.url)
                     bindNullable(s, 8, r.cmd); s.bindLong(9, if (r.hasArchive) 1L else 0L)
+                    s.bindLong(10, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(11, if (r.useLoadBalancing) 1L else 0L)
                     s.executeInsert()
                 }
                 s.close()
@@ -294,7 +305,10 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     suspend fun purge(playlistId: String) {
         clear(playlistId)
         withContext(Dispatchers.IO) {
-            inTx { db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId)) }
+            inTx {
+                db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
+                db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
+            }
         }
     }
 
@@ -314,11 +328,11 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     suspend fun pageChannels(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<ContentChannel> = withContext(Dispatchers.IO) {
         val (where, args) = catFilter(playlistId, categoryId)
         db.rawQuery(
-            "SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive FROM channels WHERE $where ORDER BY name, sid LIMIT ? OFFSET ?",
+            "SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE $where ORDER BY name, sid LIMIT ? OFFSET ?",
             args + arrayOf(limit.toString(), offset.toString()),
         ).use { c ->
             buildList {
-                while (c.moveToNext()) add(ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0))
+                while (c.moveToNext()) add(ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0))
             }
         }
     }
@@ -348,9 +362,9 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     /** [categoryId] null = every channel in the playlist. */
     suspend fun channelsFor(playlistId: String, categoryId: String?): List<ContentChannel> = withContext(Dispatchers.IO) {
         val (where, args) = catFilter(playlistId, categoryId)
-        db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive FROM channels WHERE $where", args).use { c ->
+        db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE $where", args).use { c ->
             buildList {
-                while (c.moveToNext()) add(ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0))
+                while (c.moveToNext()) add(ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0))
             }
         }
     }
@@ -396,8 +410,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     }
 
     suspend fun channelRow(playlistId: String, sid: Int): ContentChannel? = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive FROM channels WHERE playlist_id = ? AND sid = ?", arrayOf(playlistId, sid.toString())).use { c ->
-            if (c.moveToFirst()) ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0) else null
+        db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE playlist_id = ? AND sid = ?", arrayOf(playlistId, sid.toString())).use { c ->
+            if (c.moveToFirst()) ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0) else null
         }
     }
 
@@ -424,12 +438,13 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         inTx {
             db.delete("channels", "playlist_id = ?", arrayOf(playlistId))
             db.delete("categories", "playlist_id = ? AND type = ?", arrayOf(playlistId, TYPE_LIVE))
-            val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive) VALUES(?,?,?,?,?,?,?,?,?)")
+            val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
             for (r in channels) {
                 s.clearBindings()
                 s.bindString(1, playlistId); bindNullable(s, 2, r.categoryId); s.bindLong(3, r.sid.toLong())
                 s.bindString(4, r.name); bindNullable(s, 5, r.logo); bindNullable(s, 6, r.tvgId); s.bindString(7, r.url)
                 bindNullable(s, 8, r.cmd); s.bindLong(9, if (r.hasArchive) 1L else 0L)
+                s.bindLong(10, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(11, if (r.useLoadBalancing) 1L else 0L)
                 s.executeInsert()
             }
             s.close()
@@ -559,7 +574,11 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
      * already-normalized by the caller so lookups are a plain equality match.
      */
     suspend fun replaceEpg(playlistId: String, builtAtMs: Long, fill: suspend (EpgWriter) -> Unit) = withContext(Dispatchers.IO) {
-        inTx { db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId)) }
+        // A wholesale refresh supersedes the per-channel fetch stamps too.
+        inTx {
+            db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
+            db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
+        }
         val writer = EpgWriter(playlistId)
         fill(writer)
         writer.flush()
@@ -580,12 +599,13 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         internal fun flush() {
             if (batch.isEmpty()) return
             inTx {
-                val s = db.compileStatement("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc) VALUES(?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES(?,?,?,?,?,?,?)")
                 for (p in batch) {
                     s.clearBindings()
                     s.bindString(1, playlistId); s.bindString(2, p.channelId)
                     s.bindLong(3, p.startMs); s.bindLong(4, p.endMs); s.bindString(5, p.title)
                     bindNullable(s, 6, p.desc)
+                    s.bindLong(7, if (p.hasArchive) 1L else 0L)
                     s.executeInsert()
                 }
                 s.close()
@@ -629,14 +649,14 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             add(limit.toString())
         }.toTypedArray()
         db.rawQuery(
-            "SELECT channel_id, start_ms, end_ms, title, desc FROM epg_programmes " +
+            "SELECT channel_id, start_ms, end_ms, title, desc, has_archive FROM epg_programmes " +
                 "WHERE playlist_id = ? AND start_ms < ? AND end_ms > ? AND ($where) " +
                 "ORDER BY start_ms LIMIT ?",
             args,
         ).use { c ->
             buildList {
                 while (c.moveToNext()) {
-                    add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4)))
+                    add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0))
                 }
             }
         }
@@ -647,13 +667,97 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         // A single query: everything ending after now, ordered by start, take 2. The first is "now"
         // if it already started, else the schedule has a gap and it's the upcoming programme.
         db.rawQuery(
-            "SELECT channel_id, start_ms, end_ms, title, desc FROM epg_programmes WHERE playlist_id = ? AND channel_id = ? AND end_ms > ? ORDER BY start_ms LIMIT 2",
+            "SELECT channel_id, start_ms, end_ms, title, desc, has_archive FROM epg_programmes WHERE playlist_id = ? AND channel_id = ? AND end_ms > ? ORDER BY start_ms LIMIT 2",
             arrayOf(playlistId, channelId, nowMs.toString())
         ).use { c ->
             buildList {
-                while (c.moveToNext()) add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4)))
+                while (c.moveToNext()) add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0))
             }
         }
+    }
+
+    /**
+     * Windowed guide read: programmes overlapping [fromMs, toMs) for one channel, ordered by
+     * start, desc truncated to its first 600 chars (SUBSTR runs in SQLite, so a feed's 4KB
+     * synopsis never lands in the heap — [epgFullDesc] fetches the whole text on demand).
+     * [limit] keeps a corrupt feed from materializing thousands of rows.
+     */
+    suspend fun epgWindow(
+        playlistId: String,
+        channelId: String,
+        fromMs: Long,
+        toMs: Long,
+        limit: Int = 200,
+    ): List<EpgProgramme> = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT channel_id, start_ms, end_ms, title, SUBSTR(desc, 1, 600), has_archive FROM epg_programmes " +
+                "WHERE playlist_id = ? AND channel_id = ? AND start_ms < ? AND end_ms > ? ORDER BY start_ms LIMIT ?",
+            arrayOf(playlistId, channelId, toMs.toString(), fromMs.toString(), limit.toString())
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0))
+            }
+        }
+    }
+
+    /** The FULL description of one programme (keyed by its start) — the details sheet's lazy read. */
+    suspend fun epgFullDesc(playlistId: String, channelId: String, startMs: Long): String? = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT desc FROM epg_programmes WHERE playlist_id = ? AND channel_id = ? AND start_ms = ? LIMIT 1",
+            arrayOf(playlistId, channelId, startMs.toString())
+        ).use { c ->
+            if (c.moveToFirst()) c.getStringOrNull(0) else null
+        }
+    }
+
+    /**
+     * Atomic per-channel EPG refill: the channel's old rows are DELETEd in the SAME transaction
+     * as the new batch's insert, and the (playlist, channel) fetch stamp is written with them —
+     * a reader never sees an empty channel mid-refill and a crash leaves the old rows intact.
+     * Rows are stored under [channelId] regardless of what their own field says: the refill is
+     * per-channel by contract. An empty [programmes] still stamps [fetchedAtMs] so the guide's
+     * lazy-fetch gate stops re-asking a channel the provider has no guide for.
+     */
+    suspend fun refillChannelEpg(
+        playlistId: String,
+        channelId: String,
+        programmes: List<EpgProgramme>,
+        fetchedAtMs: Long,
+    ) = withContext(Dispatchers.IO) {
+        inTx {
+            db.delete("epg_programmes", "playlist_id = ? AND channel_id = ?", arrayOf(playlistId, channelId))
+            if (programmes.isNotEmpty()) {
+                val s = db.compileStatement("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES(?,?,?,?,?,?,?)")
+                for (p in programmes) {
+                    s.clearBindings()
+                    s.bindString(1, playlistId); s.bindString(2, channelId)
+                    s.bindLong(3, p.startMs); s.bindLong(4, p.endMs); s.bindString(5, p.title)
+                    bindNullable(s, 6, p.desc)
+                    s.bindLong(7, if (p.hasArchive) 1L else 0L)
+                    s.executeInsert()
+                }
+                s.close()
+            }
+            db.execSQL(
+                "INSERT OR REPLACE INTO epg_channel_fetch(playlist_id, channel_id, fetched_at) VALUES(?,?,?)",
+                arrayOf<Any?>(playlistId, channelId, fetchedAtMs)
+            )
+        }
+    }
+
+    /** When this channel's EPG was last refilled (null = never — the lazy-fetch gate opens). */
+    suspend fun epgChannelFetchedAt(playlistId: String, channelId: String): Long? = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT fetched_at FROM epg_channel_fetch WHERE playlist_id = ? AND channel_id = ?",
+            arrayOf(playlistId, channelId)
+        ).use { c ->
+            if (c.moveToFirst()) c.getLong(0) else null
+        }
+    }
+
+    /** Drops programmes that ended before [cutoffMs] — the guide never reads that far back. */
+    suspend fun pruneEpg(playlistId: String, cutoffMs: Long) = withContext(Dispatchers.IO) {
+        inTx { db.delete("epg_programmes", "playlist_id = ? AND end_ms < ?", arrayOf(playlistId, cutoffMs.toString())) }
     }
 
     companion object {
