@@ -155,4 +155,148 @@ class XtreamClientTest {
         assertEquals("", decodeXtreamBase64(null))
         assertEquals("", decodeXtreamBase64("   "))
     }
+
+    // --- the short-EPG lane's epoch-skew correction (the wa12 lie) ----------------------------
+
+    /** 2026-08-15 00:00:00 UTC; the guide's "now" is 21:40 UTC that evening. */
+    private val probeDay = 1_786_752_000L
+    private val wa12Now = (probeDay + 21 * 3600 + 40 * 60) * 1000L
+
+    /** A wa12-shaped listing: the epoch equals its own start string read as UTC (+2h wall clock). */
+    private fun liarEntry(h: Int, m: Int): com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto {
+        val startSec = probeDay + h * 3600L + m * 60L
+        return com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto(
+            id = "1",
+            title = null,
+            description = null,
+            startTimestamp = startSec.toString(),
+            stopTimestamp = (startSec + 3600).toString(),
+            nowPlaying = 0,
+            start = "2026-08-15 %02d:%02d:00".format(h, m),
+        )
+    }
+
+    /** An onnipsite-shaped listing: local string (+1h), true-UTC epoch. */
+    private fun honestEntry(utcH: Int, utcM: Int): com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto {
+        val startSec = probeDay + utcH * 3600L + utcM * 60L
+        return com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto(
+            id = "1",
+            title = null,
+            description = null,
+            startTimestamp = startSec.toString(),
+            stopTimestamp = (startSec + 3600).toString(),
+            nowPlaying = 0,
+            start = "2026-08-15 %02d:%02d:00".format(utcH + 1, utcM),
+        )
+    }
+
+    @Test
+    fun `wa12-shaped listings are corrected so one brackets now`() = runTest {
+        var asked = 0
+        val programs = correctShortEpgListings(
+            listOf(liarEntry(22, 20), liarEntry(23, 20)),
+            manualOffsetMs = null,
+            measuredClockOffsetMs = { asked++; 7_200_000L },
+        )
+        assertEquals("clock pair fetched exactly once", 1, asked)
+        assertEquals("corrected to 20:20 UTC", (probeDay + 20 * 3600 + 20 * 60) * 1000L, programs.first().startMs)
+        assertTrue("a corrected row brackets now", programs.any { wa12Now in it.startMs until it.endMs })
+    }
+
+    /**
+     * The onnipsite proof: honest panels never pay for the lie — not with a shifted guide and not
+     * with a panel round trip. The clock pair is only fetched once a response has voted LIAR.
+     */
+    @Test
+    fun `honest listings are byte-identical and never fetch the clock pair`() = runTest {
+        var asked = 0
+        val listings = listOf(honestEntry(20, 40), honestEntry(21, 40))
+        val programs = correctShortEpgListings(listings, null) { asked++; 3_600_000L }
+        assertEquals("no server_info request for an honest panel", 0, asked)
+        assertEquals("identical to the uncorrected mapping", listings.map { it.toProgram() }, programs)
+    }
+
+    @Test
+    fun `a manual offset overrides auto and skips the clock fetch`() = runTest {
+        var asked = 0
+        val programs = correctShortEpgListings(
+            listOf(liarEntry(22, 20), liarEntry(23, 20)),
+            manualOffsetMs = 1_800_000L,
+            measuredClockOffsetMs = { asked++; 7_200_000L },
+        )
+        assertEquals("manual never measures", 0, asked)
+        assertEquals(
+            "shifted by the manual +30m, not the auto -2h",
+            (probeDay + 22 * 3600 + 20 * 60) * 1000L + 1_800_000L,
+            programs.first().startMs,
+        )
+    }
+
+    /** A liar whose server_info is junk has nothing to subtract — leave the rows alone. */
+    @Test
+    fun `a liar with no measurable clock pair is untouched`() = runTest {
+        val listings = listOf(liarEntry(22, 20), liarEntry(23, 20))
+        val programs = correctShortEpgListings(listings, null) { null }
+        assertEquals(listings.map { it.toProgram() }, programs)
+    }
+
+    /** One parseable pair proves nothing (short EPG often answers 4 rows; junk eats some). */
+    @Test
+    fun `insufficient votes leave the response untouched`() = runTest {
+        var asked = 0
+        val listings = listOf(liarEntry(22, 20))
+        val programs = correctShortEpgListings(listings, null) { asked++; 7_200_000L }
+        assertEquals("unknown never measures", 0, asked)
+        assertEquals(listings.map { it.toProgram() }, programs)
+    }
+
+    /**
+     * `server_info` was dropped from this DTO once because panels send `port` as a bare int and
+     * the strict String decode threw — losing the whole body. The re-added clock pair must
+     * survive that exact payload, and the pair itself arrives bare OR quoted across panels.
+     */
+    @Test
+    fun `server_info clock pair decodes despite the bare-int port that broke the old dto`() {
+        val moshi = Moshi.Builder()
+            .add(FlexIntAdapter)
+            .add(com.nuvio.tv.data.remote.dto.FlexLongAdapter)
+            .add(KotlinJsonAdapterFactory())
+            .build()
+        val adapter = moshi.adapter(com.nuvio.tv.data.remote.dto.XtreamAccountDto::class.java)
+
+        val bare = adapter.fromJson(
+            """{"user_info":{"auth":1},"server_info":{"url":"host","port":8080,""" +
+                """"timestamp_now":1786830000,"time_now":"2026-08-15 23:40:00"}}"""
+        )!!
+        assertEquals(1786830000L, bare.serverInfo?.timestampNow)
+        assertEquals(
+            "the wa12 pair measures +2h",
+            7_200_000L,
+            ServerClockOffset.offsetMs(bare.serverInfo?.timeNow, bare.serverInfo?.timestampNow ?: 0L),
+        )
+
+        val quoted = adapter.fromJson(
+            """{"server_info":{"timestamp_now":"1786830000","time_now":"2026-08-15 23:40:00"}}"""
+        )!!
+        assertEquals(1786830000L, quoted.serverInfo?.timestampNow)
+
+        val absent = adapter.fromJson("""{"user_info":{"auth":1}}""")!!
+        assertEquals(null, absent.serverInfo)
+    }
+
+    /** Absent timestamps parse to 0; a "corrected" 0 would be negative garbage downstream. */
+    @Test
+    fun `rows without epochs are never shifted`() = runTest {
+        val empty = com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto(
+            id = "1", title = null, description = null,
+            startTimestamp = null, stopTimestamp = null, nowPlaying = 0,
+        )
+        val programs = correctShortEpgListings(
+            listOf(liarEntry(22, 20), liarEntry(23, 20), empty),
+            manualOffsetMs = null,
+            measuredClockOffsetMs = { 7_200_000L },
+        )
+        assertEquals("the empty row keeps its zero start", 0L, programs.last().startMs)
+        assertEquals("and its zero end", 0L, programs.last().endMs)
+    }
 }

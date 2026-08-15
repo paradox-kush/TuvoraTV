@@ -90,6 +90,7 @@ fun XtreamSettingsContent(
     var showAddDialog by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
     var correctionFor by remember { mutableStateOf<String?>(null) }
+    var guideOffsetFor by remember { mutableStateOf<String?>(null) }
     var editFor by remember { mutableStateOf<XtreamAccount?>(null) }
     // Content & Categories: track ids (not snapshots) so the dialogs always render the
     // freshest account from the store after each toggle.
@@ -219,6 +220,28 @@ fun XtreamSettingsContent(
         }
     }
 
+    // Manual guide EPG offset: same -12h..+14h half-hour range; 0 = auto-detect lying panels.
+    guideOffsetFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) {
+            guideOffsetFor = null
+        } else {
+            SettingsSingleChoiceDialog(
+                title = "Guide EPG offset",
+                subtitle = "Auto detects most wrong-clock panels; set this only if guide times are still shifted",
+                options = CATCHUP_CORRECTION_OPTIONS.map {
+                    SettingsPickerOption(value = it, title = guideEpgOffsetLabel(it))
+                },
+                selectedValue = account.guideEpgCorrectionMinutes,
+                onOptionSelected = {
+                    viewModel.setGuideEpgCorrectionMinutes(id, it)
+                    guideOffsetFor = null
+                },
+                onDismiss = { guideOffsetFor = null }
+            )
+        }
+    }
+
     actionsFor?.let { account ->
         val needsReimport = viewModel.needsReimport(account)
         NuvioDialog(
@@ -281,6 +304,15 @@ fun XtreamSettingsContent(
                     value = catchUpCorrectionLabel(account.catchUpCorrectionMinutes),
                     onClick = {
                         correctionFor = account.id
+                        actionsFor = null
+                    }
+                )
+                SettingsActionRow(
+                    title = "Guide EPG offset",
+                    subtitle = "Shift guide times when programmes show at the wrong hour",
+                    value = guideEpgOffsetLabel(account.guideEpgCorrectionMinutes),
+                    onClick = {
+                        guideOffsetFor = account.id
                         actionsFor = null
                     }
                 )
@@ -1198,3 +1230,7 @@ private fun catchUpCorrectionLabel(minutes: Int): String {
     val abs = kotlin.math.abs(minutes)
     return if (abs % 60 == 0) "$sign${abs / 60}h" else "$sign${abs / 60}h ${abs % 60}m"
 }
+
+/** Same scale as [catchUpCorrectionLabel] but 0 reads "Auto": unset means detect, not "+0". */
+private fun guideEpgOffsetLabel(minutes: Int): String =
+    if (minutes == 0) "Auto" else catchUpCorrectionLabel(minutes)

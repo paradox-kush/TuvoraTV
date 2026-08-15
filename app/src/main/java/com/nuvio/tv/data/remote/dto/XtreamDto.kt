@@ -43,11 +43,45 @@ object FlexIntAdapter {
     }
 }
 
+/** [FlexInt] for values that outgrow Int — unix timestamps arrive bare or quoted. */
+@Retention(AnnotationRetention.RUNTIME)
+@JsonQualifier
+annotation class FlexLong
+
+/** Coerces number | "string" | true/false | null -> Long?. Registered on the app Moshi. */
+object FlexLongAdapter {
+    @FromJson
+    @FlexLong
+    fun fromJson(reader: JsonReader): Long? = when (reader.peek()) {
+        JsonReader.Token.NUMBER -> reader.nextLong()
+        JsonReader.Token.STRING -> reader.nextString().trim().toLongOrNull()
+        JsonReader.Token.BOOLEAN -> if (reader.nextBoolean()) 1L else 0L
+        JsonReader.Token.NULL -> reader.nextNull()
+        else -> { reader.skipValue(); null }
+    }
+
+    @ToJson
+    fun toJson(writer: JsonWriter, @FlexLong value: Long?) {
+        writer.value(value)
+    }
+}
+
 // player_api.php?username=U&password=P  (no action)
 data class XtreamAccountDto(
-    @Json(name = "user_info") val userInfo: XtreamUserInfoDto?
-    // ponytail: server_info dropped — fields were never read and panels send `port` as a
-    // bare int, which broke Moshi's String decode. Moshi ignores the unknown key.
+    @Json(name = "user_info") val userInfo: XtreamUserInfoDto?,
+    /**
+     * Only the clock pair is modelled. `server_info` was dropped wholesale once because panels
+     * send `port` as a bare int, which broke Moshi's String decode — so only fields with a reader
+     * come back, each typed to survive every shape panels send (Moshi skips the unknown rest).
+     * The pair feeds [com.nuvio.tv.core.iptv.ServerClockOffset] for the guide's epoch-skew
+     * correction.
+     */
+    @Json(name = "server_info") val serverInfo: XtreamServerInfoDto? = null
+)
+
+data class XtreamServerInfoDto(
+    @Json(name = "time_now") val timeNow: String?,          // "YYYY-MM-DD HH:MM:SS", panel-local
+    @FlexLong @Json(name = "timestamp_now") val timestampNow: Long?   // unix seconds, bare or quoted
 )
 
 data class XtreamUserInfoDto(
@@ -172,5 +206,11 @@ data class XtreamEpgEntryDto(
     // Per-programme archive flag (get_simple_data_table rows; get_short_epg omits it): the panel
     // saying, recording by recording, what it actually kept — the strongest catch-up signal
     // there is. Panels send int or "1"; absent -> null = the panel said nothing.
-    @FlexInt @Json(name = "has_archive") val hasArchive: Int? = null
+    @FlexInt @Json(name = "has_archive") val hasArchive: Int? = null,
+    /**
+     * The wall-clock start STRING beside the epoch. Never shown — it exists so
+     * [com.nuvio.tv.core.iptv.XtreamEpochSkew] can test the liar equality
+     * (`epoch == parse(start AS UTC)`) against fields already in the response.
+     */
+    @Json(name = "start") val start: String? = null
 )

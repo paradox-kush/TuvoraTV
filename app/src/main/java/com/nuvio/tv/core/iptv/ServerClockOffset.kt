@@ -28,8 +28,13 @@ object ServerClockOffset {
         return (diffSeconds + 30).floorDiv(60) * 60_000L
     }
 
-    /** "YYYY-MM-DD HH:MM[:SS]" read as a UTC instant. Anything else is null, never a throw. */
-    private fun parseAsUtcSeconds(value: String): Long? {
+    /**
+     * "YYYY-MM-DD HH:MM[:SS]" read as a UTC instant. Anything else is null, never a throw.
+     * Internal because [XtreamEpochSkew]'s liar equality must read EPG `start` strings with
+     * EXACTLY the parser the clock pair uses — two parsers would disagree on exactly the junk
+     * inputs this exists to survive.
+     */
+    internal fun parseAsUtcSeconds(value: String): Long? {
         val match = TIME_NOW.matchEntire(value) ?: return null
         val (y, mo, d, h, mi) = match.destructured
         val year = y.toIntOrNull() ?: return null

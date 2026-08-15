@@ -429,6 +429,28 @@ class XtreamSettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Manual guide EPG offset (0 = auto-detect the wall-clock-epoch lie per response).
+     *
+     * Opening the fetch stamps is the load-bearing half, same shape as [setPreferM3u8CatchUp]
+     * clearing the winner store: stored guide rows were corrected under the OLD offset and the
+     * six-hour gate would keep showing them — the setting would look dead on exactly the guide the
+     * user is staring at. Stale rows stay readable until each channel's next focus refetches.
+     */
+    fun setGuideEpgCorrectionMinutes(id: String, minutes: Int) {
+        viewModelScope.launch {
+            store.update(id) {
+                it.copy(
+                    guideEpgCorrectionMinutes = minutes.coerceIn(
+                        XtreamAccount.CATCHUP_CORRECTION_MIN_MINUTES,
+                        XtreamAccount.CATCHUP_CORRECTION_MAX_MINUTES,
+                    )
+                )
+            }
+            runCatching { contentDb.resetEpgFetchStamps(id) }
+        }
+    }
+
     fun setEnabled(id: String, enabled: Boolean) {
         viewModelScope.launch {
             store.setEnabled(id, enabled)

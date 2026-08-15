@@ -67,4 +67,31 @@ class XtreamAccountCatchUpDecodeTest {
         assertFalse("kept false", acc.preferM3u8CatchUp)
         assertEquals("kept 0", 0, acc.catchUpCorrectionMinutes)
     }
+
+    /**
+     * The guide EPG offset (fix 2) rides the same primitive-decode trap: every stored playlist
+     * predates it, and 0 must read as "auto-detect" — the guide's default path — not as a stored
+     * choice that suppresses it.
+     */
+    @Test
+    fun `json written before the guide offset shipped decodes to auto`() {
+        val acc = decodeXtreamAccountsJson(gson, legacy).single()
+        assertEquals("auto by default", 0, acc.guideEpgCorrectionMinutes)
+        assertNull("0 means auto, not a +0 override", acc.guideEpgOffsetMs)
+    }
+
+    @Test
+    fun `a stored guide offset survives the round trip as milliseconds`() {
+        val json = gson.toJson(
+            listOf(
+                XtreamAccount(
+                    id = "a", name = "n", baseUrl = "http://h", username = "u", password = "p",
+                    guideEpgCorrectionMinutes = -120,
+                )
+            )
+        )
+        val acc = decodeXtreamAccountsJson(gson, json).single()
+        assertEquals("minutes kept", -120, acc.guideEpgCorrectionMinutes)
+        assertEquals("as milliseconds", -120 * 60_000L, acc.guideEpgOffsetMs)
+    }
 }

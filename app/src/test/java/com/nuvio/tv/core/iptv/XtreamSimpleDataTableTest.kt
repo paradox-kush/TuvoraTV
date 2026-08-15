@@ -189,4 +189,152 @@ class XtreamSimpleDataTableTest {
         ) { }
         assertEquals("kept rows only", 1, n)
     }
+
+    // --- epoch-skew correction at the parse boundary (the wa12 lie) ---------------------------
+    //
+    // wa12 (measured live): the panel builds its epochs from its own wall clock, so every epoch
+    // equals its own start STRING read as UTC and is shifted by the panel's zone (+2h). This lane
+    // must repair those rows the same way the short-EPG lane does, or the guide's timeline and the
+    // replay strip would disagree about when the same programme aired.
+
+    /** 2026-08-15 00:00:00 UTC, the probe day; wa12Now = 21:40 UTC that evening. */
+    private val probeDay = 1_786_752_000L
+    private val wa12Now = (probeDay + 21 * 3600 + 40 * 60) * 1000L
+    private val panelOffsetMs = 7_200_000L   // the measured clock pair: +2h
+
+    /** A wa12-shaped row: the start string and the epoch describe the SAME wall-clock digits. */
+    private fun liarRow(day: Int, h: Int, m: Int, durMin: Int = 60): String {
+        val startSec = probeDay + (day - 15) * 86_400L + h * 3600L + m * 60L
+        val stopSec = startSec + durMin * 60L
+        val startText = "2026-08-%02d %02d:%02d:00".format(day, h, m)
+        return """{"title":"${b64("Programme")}","start":"$startText",""" +
+            """"start_timestamp":"$startSec","stop_timestamp":"$stopSec","has_archive":1}"""
+    }
+
+    /** An onnipsite-shaped row: string is panel-local (+1h) but the epoch is true UTC. */
+    private fun honestRow(startSec: Long, durMin: Int = 60): String {
+        val localSec = startSec + 3600L
+        val h = (localSec % 86_400L) / 3600L
+        val m = (localSec % 3600L) / 60L
+        val startText = "2026-08-15 %02d:%02d:00".format(h, m)
+        return """{"title":"${b64("Programme")}","start":"$startText",""" +
+            """"start_timestamp":"$startSec","stop_timestamp":"${startSec + durMin * 60L}"}"""
+    }
+
+    @Test
+    fun `wa12-shaped rows are auto-corrected so one brackets now`() {
+        val out = ArrayList<EpgProgramme>()
+        XtreamSimpleDataTable.parseInto(
+            body(liarRow(15, 22, 20), liarRow(15, 23, 20), liarRow(16, 0, 20)),
+            "chan-1",
+            wa12Now,
+            7,
+            manualOffsetMs = null,
+            clockPairOffsetMs = panelOffsetMs,
+        ) { out.add(it) }
+
+        assertEquals("all rows kept", 3, out.size)
+        // Each epoch comes back minus the panel's offset — the true UTC airing time.
+        assertEquals(
+            "first row corrected to 20:20 UTC",
+            (probeDay + 20 * 3600 + 20 * 60) * 1000L,
+            out.first().startMs,
+        )
+        assertTrue(
+            "a corrected row brackets now (uncorrected, none did — the field symptom)",
+            out.any { wa12Now in it.startMs until it.endMs },
+        )
+    }
+
+    /** The onnipsite proof: the same clock pair must NOT be subtracted from an honest panel. */
+    @Test
+    fun `honest rows pass through byte-identical even with a measured clock pair`() {
+        val startSec = probeDay + 20 * 3600 + 40 * 60   // true 20:40 UTC
+        val out = ArrayList<EpgProgramme>()
+        XtreamSimpleDataTable.parseInto(
+            body(honestRow(startSec), honestRow(startSec + 3600)),
+            "chan-1",
+            wa12Now,
+            7,
+            manualOffsetMs = null,
+            clockPairOffsetMs = 3_600_000L,
+        ) { out.add(it) }
+        assertEquals("both kept", 2, out.size)
+        assertEquals("epochs untouched", startSec * 1000L, out.first().startMs)
+    }
+
+    /** The manual per-playlist offset wins over the vote — it exists for the residue auto misses. */
+    @Test
+    fun `a manual offset overrides the auto correction`() {
+        val out = ArrayList<EpgProgramme>()
+        XtreamSimpleDataTable.parseInto(
+            body(liarRow(15, 22, 20), liarRow(15, 23, 20)),
+            "chan-1",
+            wa12Now,
+            7,
+            manualOffsetMs = 1_800_000L,
+            clockPairOffsetMs = panelOffsetMs,
+        ) { out.add(it) }
+        assertEquals(
+            "shifted by the manual +30m, not the auto -2h",
+            (probeDay + 22 * 3600 + 20 * 60) * 1000L + 1_800_000L,
+            out.first().startMs,
+        )
+    }
+
+    /** Junk rows can't vote, but the parseable majority still repairs the response. */
+    @Test
+    fun `junk rows do not break the vote in this lane`() {
+        val out = ArrayList<EpgProgramme>()
+        XtreamSimpleDataTable.parseInto(
+            body(
+                """{"title":"x","start_timestamp":"notanumber","stop_timestamp":"alsonot"}""",
+                liarRow(15, 22, 20),
+                """{"title":"x","start":"garbage","start_timestamp":"0","stop_timestamp":"0"}""",
+                liarRow(15, 23, 20),
+            ),
+            "chan-1",
+            wa12Now,
+            7,
+            manualOffsetMs = null,
+            clockPairOffsetMs = panelOffsetMs,
+        ) { out.add(it) }
+        assertEquals("the two real rows survive, corrected", 2, out.size)
+        assertEquals((probeDay + 20 * 3600 + 20 * 60) * 1000L, out.first().startMs)
+    }
+
+    /**
+     * The keep-window must judge the CORRECTED epochs: a liar's raw epoch can sit past the forward
+     * window while the real airing is inside it. Uncorrected, this row would be refused at parse
+     * and the guide's forward edge would go blank.
+     */
+    @Test
+    fun `the parse window is applied to corrected epochs`() {
+        // Raw epoch at now+37h (outside the 36h forward window); corrected -2h = +35h, inside.
+        val out = ArrayList<EpgProgramme>()
+        XtreamSimpleDataTable.parseInto(
+            body(liarRow(15, 22, 20), liarRow(15, 23, 20), liarRow(17, 10, 40)),
+            "chan-1",
+            wa12Now,
+            7,
+            manualOffsetMs = null,
+            clockPairOffsetMs = panelOffsetMs,
+        ) { out.add(it) }
+        assertEquals("the far row is kept because its corrected start is inside", 3, out.size)
+    }
+
+    /** A row whose timestamps are absent parses to 0 — garbage must not be "corrected" into more garbage. */
+    @Test
+    fun `absent timestamps are never shifted`() {
+        val out = ArrayList<EpgProgramme>()
+        val n = XtreamSimpleDataTable.parseInto(
+            body(liarRow(15, 22, 20), liarRow(15, 23, 20), """{"title":"x"}"""),
+            "chan-1",
+            wa12Now,
+            7,
+            manualOffsetMs = null,
+            clockPairOffsetMs = panelOffsetMs,
+        ) { out.add(it) }
+        assertEquals("the empty row is refused as ever", 2, n)
+    }
 }

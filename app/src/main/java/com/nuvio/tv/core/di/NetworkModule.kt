@@ -106,6 +106,7 @@ object NetworkModule {
     @Singleton
     fun provideMoshi(): Moshi = Moshi.Builder()
         .add(com.nuvio.tv.data.remote.dto.FlexIntAdapter)
+        .add(com.nuvio.tv.data.remote.dto.FlexLongAdapter)
         .add(KotlinJsonAdapterFactory())
         .build()
 

@@ -112,7 +112,8 @@ internal fun decodeXtreamAccountsJson(gson: Gson, json: String?): List<XtreamAcc
                 hadAutoRefresh = obj.has("autoRefreshHours"),
                 hadSendDeviceId = obj.has("sendDeviceId"),
                 hadPreferM3u8CatchUp = obj.has("preferM3u8CatchUp"),
-                hadCatchUpCorrection = obj.has("catchUpCorrectionMinutes")
+                hadCatchUpCorrection = obj.has("catchUpCorrectionMinutes"),
+                hadGuideEpgCorrection = obj.has("guideEpgCorrectionMinutes")
             )
         }
     } catch (e: Exception) {
@@ -132,7 +133,8 @@ private fun XtreamAccount.withDecodeDefaults(
     hadAutoRefresh: Boolean,
     hadSendDeviceId: Boolean,
     hadPreferM3u8CatchUp: Boolean,
-    hadCatchUpCorrection: Boolean
+    hadCatchUpCorrection: Boolean,
+    hadGuideEpgCorrection: Boolean
 ): XtreamAccount = XtreamAccount(
     id = id,
     name = name ?: "",
@@ -164,5 +166,7 @@ private fun XtreamAccount.withDecodeDefaults(
     // (any JSON written before catch-up shipped) must read as the default, not as false/0, and an
     // explicitly stored false/0 must survive.
     preferM3u8CatchUp = if (hadPreferM3u8CatchUp) preferM3u8CatchUp else false,
-    catchUpCorrectionMinutes = if (hadCatchUpCorrection) catchUpCorrectionMinutes else 0
+    catchUpCorrectionMinutes = if (hadCatchUpCorrection) catchUpCorrectionMinutes else 0,
+    // Guide EPG offset (fix 2): missing = 0 = auto-detect, the default every stored playlist gets.
+    guideEpgCorrectionMinutes = if (hadGuideEpgCorrection) guideEpgCorrectionMinutes else 0
 )
