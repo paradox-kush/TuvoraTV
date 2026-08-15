@@ -16,6 +16,7 @@ import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.data.local.LiveChannelRef
+import com.nuvio.tv.data.local.XtreamHubSelectionStore
 import com.nuvio.tv.data.local.XtreamLiveStore
 import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.model.LibraryEntryInput
@@ -106,6 +107,7 @@ class XtreamHubViewModel @Inject constructor(
     private val clientFactory: IptvClientFactory,
     private val registry: XtreamItemRegistry,
     private val liveStore: XtreamLiveStore,
+    private val selectionStore: XtreamHubSelectionStore,
     private val libraryRepository: LibraryRepository,
     private val fileStore: com.nuvio.tv.core.iptv.content.M3UFileStore,
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
@@ -189,17 +191,26 @@ class XtreamHubViewModel @Inject constructor(
             posterEnricher.updates.collect { u -> applyPosterUpdate(u) }
         }
         viewModelScope.launch {
+            // Fix 1 (sticky provider): what the last visit left on screen, read BEFORE the first
+            // accounts emission so a fresh entry restores it instead of resetting to the first
+            // account. The section seeds once; after that the in-memory state is the truth.
+            val remembered = selectionStore.read()
+            var restoreSection = true
             // Keep observing so playlist edits/enables from Settings refresh a hub VM that
             // stayed on the backstack (a one-shot first() served stale accounts until death).
             store.accounts
                 .map { list -> list.filter { it.enabled } }
                 .distinctUntilChanged()
                 .collect { accounts ->
-                    val selected = _uiState.value.selectedAccountId
-                        ?.takeIf { id -> accounts.any { it.id == id } }
-                        ?: accounts.firstOrNull()?.id
+                    val selected = resolveStickyAccount(_uiState.value.selectedAccountId, remembered.accountId, accounts)
+                    val wanted = if (restoreSection) {
+                        restoreSection = false
+                        resolveStickySection(remembered.section, _uiState.value.section)
+                    } else {
+                        _uiState.value.section
+                    }
                     // A disabled content type hides its tab — never leave the section on one.
-                    val section = coerceSection(_uiState.value.section, accounts.firstOrNull { it.id == selected })
+                    val section = coerceSection(wanted, accounts.firstOrNull { it.id == selected })
                     _uiState.update { it.copy(accounts = accounts, selectedAccountId = selected, section = section) }
                     if (accounts.isEmpty()) {
                         _uiState.update { it.copy(loading = false) }
@@ -214,13 +225,21 @@ class XtreamHubViewModel @Inject constructor(
         if (accountId == _uiState.value.selectedAccountId) return
         val section = coerceSection(_uiState.value.section, _uiState.value.accounts.firstOrNull { it.id == accountId })
         _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap()) }
+        rememberSelection()
         loadCategories()
     }
 
     fun selectSection(section: XtreamSection) {
         if (section == _uiState.value.section) return
         _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap()) }
+        rememberSelection()
         loadCategories()
+    }
+
+    /** Fix 1: persist the on-screen provider + tab (per profile) so the next entry restores them. */
+    private fun rememberSelection() {
+        val st = _uiState.value
+        viewModelScope.launch { selectionStore.save(st.selectedAccountId, st.section.name) }
     }
 
     /** Keeps the section on a content type the account has enabled (first enabled one otherwise). */
