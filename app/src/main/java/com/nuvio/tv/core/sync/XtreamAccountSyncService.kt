@@ -121,7 +121,8 @@ class XtreamAccountSyncService @Inject constructor(
             // empty remote — applying an empty list would wipe local state.
             val remoteAccounts = rows.sortedBy { it.sortOrder }.mapNotNull { it.toXtreamAccountOrNull() }
             if (remoteAccounts.isNotEmpty()) {
-                applyRemote(reconcileLocalIds(remoteAccounts, accountStore.accounts.first()))
+                val local = accountStore.accounts.first()
+                applyRemote(preserveDeviceLocalPrefs(reconcileLocalIds(remoteAccounts, local), local))
                 Log.d(TAG, "Pulled ${remoteAccounts.size} iptv playlists for profile $profileId")
                 return@withContext Result.success(Unit)
             }
@@ -284,6 +285,29 @@ internal fun SupabaseIptvPlaylist.toXtreamAccountOrNull(): XtreamAccount? {
         autoRefreshHours = autoRefreshHours,
         contentTypes = contentTypes.toSet(),
         categorySelections = decodeCategorySelections(categorySelections)
+    )
+}
+
+/**
+ * Carries this device's catch-up preferences across a pull.
+ *
+ * A pull REPLACES the account list with objects rebuilt from the wire, so any field the payload does
+ * not carry comes back as its constructor default. The catch-up container preference and the manual
+ * time correction are deliberately not on the wire — they tune ONE panel's URL dialect as reached
+ * from THIS device (the same reasoning that keeps the proven-dialect memory in device-local
+ * SharedPreferences), and a shared column would need a backend migration to hold them.
+ *
+ * Without this, every sync would silently reset both, which is exactly the kind of "my setting keeps
+ * un-setting itself" bug that is impossible to report and miserable to find.
+ */
+internal fun preserveDeviceLocalPrefs(
+    pulled: List<XtreamAccount>,
+    local: List<XtreamAccount>
+): List<XtreamAccount> = pulled.map { acc ->
+    val match = local.firstOrNull { it.id == acc.id } ?: return@map acc
+    acc.copy(
+        preferM3u8CatchUp = match.preferM3u8CatchUp,
+        catchUpCorrectionMinutes = match.catchUpCorrectionMinutes
     )
 }
 
