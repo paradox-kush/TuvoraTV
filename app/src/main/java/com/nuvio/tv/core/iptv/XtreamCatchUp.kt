@@ -20,15 +20,26 @@ object XtreamCatchUp {
 
     /**
      * Panels interpret `start` in THEIR OWN timezone, so a panel in New York replaying a programme
-     * we describe in UTC lands hours off. [serverTimeZone] is the panel's `server_info.timezone`
-     * when we know it.
+     * we describe in UTC lands hours off.
+     *
+     * [serverOffsetMs] is the measured clock-pair offset ([ServerClockOffset]) and wins when known:
+     * it is derived from the panel's own clocks, needs no timezone database, and stays right when
+     * the panel's `timezone` field lies. [serverTimeZone] is the panel's self-reported
+     * `server_info.timezone`, used only when no offset was measured.
      *
      * The fallback is UTC rather than the device's local time. Most panels never report a zone, and
      * UTC is what Tuvora has always sent — moving the default would silently shift replay for every
      * provider that works today, which is a worse trade than leaving the unknown case as it is.
      * An unusable zone string falls back the same way rather than throwing.
      */
-    fun formatStart(startMs: Long, serverTimeZone: String? = null): String {
+    fun formatStart(startMs: Long, serverTimeZone: String? = null, serverOffsetMs: Long? = null): String {
+        if (serverOffsetMs != null) {
+            // Panel-local wall time is the UTC instant plus the panel's offset; formatting the
+            // shifted instant as UTC prints exactly that wall time.
+            return SimpleDateFormat(START_PATTERN, Locale.US)
+                .apply { timeZone = TimeZone.getTimeZone("UTC") }
+                .format(Date(startMs + serverOffsetMs))
+        }
         val zone = serverTimeZone?.takeIf { it.isNotBlank() }
             ?.let { id ->
                 // getTimeZone() answers GMT for anything it does not recognise, which would look
@@ -63,6 +74,12 @@ object XtreamCatchUp {
      * can restart what is on right now, which is the catch-up affordance most viewers actually
      * reach for, and a channel WITHOUT an archive must still be watchable live rather than
      * offering nothing at all.
+     *
+     * [programmeHasArchive] is the per-programme `has_archive` flag from get_simple_data_table —
+     * the panel saying, recording by recording, what it actually kept, which is the strongest
+     * signal there is. POSITIVE override only: true makes the programme replayable past every
+     * channel-level rule (the start must still have passed); false and null leave the channel
+     * rules untouched, because many panels serve catch-up while never marking a single row.
      */
     fun actionFor(
         programmeStartMs: Long,
@@ -70,9 +87,15 @@ object XtreamCatchUp {
         nowMs: Long,
         hasArchive: Boolean,
         catchUpDays: Int,
+        programmeHasArchive: Boolean? = null,
     ): ProgrammeAction {
+        // Degenerate EPG rows: a zero/negative-length programme, or a zero/epoch start (an absent
+        // timestamp parses to 0). No real broadcast looks like this, and a replay URL built from
+        // it is guaranteed dead — refuse before any other rule can offer one.
+        if (programmeEndMs <= programmeStartMs || programmeStartMs <= 0) return ProgrammeAction.NONE
         if (programmeStartMs > nowMs) return ProgrammeAction.NONE
-        val replayable = hasArchive && isWithinWindow(programmeStartMs, nowMs, catchUpDays)
+        val replayable = programmeHasArchive == true ||
+            (hasArchive && isWithinWindow(programmeStartMs, nowMs, catchUpDays))
         val finished = programmeEndMs <= nowMs
         return when {
             finished && replayable -> ProgrammeAction.REPLAY
@@ -117,10 +140,14 @@ object XtreamCatchUp {
         endMs: Long,
         containerExtension: String?,
         serverTimeZone: String? = null,
+        serverOffsetMs: Long? = null,
     ): List<String> {
+        // Blank credentials cannot form a playable URL — built anyway they become
+        // `.../timeshift///60/...`, a failure that looks like a provider fault.
+        if (username.isBlank() || password.isBlank()) return emptyList()
         val root = baseUrl.trimEnd('/')
         val ext = containerExtension?.takeIf { it.isNotBlank() } ?: "ts"
-        val start = formatStart(startMs, serverTimeZone)
+        val start = formatStart(startMs, serverTimeZone, serverOffsetMs)
         val minutes = durationMinutes(startMs, endMs)
         val u = encode(username)
         val p = encode(password)

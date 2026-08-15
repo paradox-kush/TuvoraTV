@@ -118,6 +118,36 @@ class XtreamClientTest {
         assertEquals(null, xtreamAccountFromFields("", "u", "p", null))
     }
 
+    /**
+     * Per-programme has_archive (get_simple_data_table rows) — the panel marking, recording by
+     * recording, what it kept. FlexInt already coerces the shapes; pinned anyway because a wrong
+     * decode here silently turns "the panel spoke" into "the panel was silent".
+     */
+    @Test
+    fun `per-programme has_archive parses from int, string and absent`() {
+        val moshi = Moshi.Builder().add(FlexIntAdapter).add(KotlinJsonAdapterFactory()).build()
+        val adapter = moshi.adapter(com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto::class.java)
+
+        val marked = adapter.fromJson("""{"id":"1","has_archive":1}""")!!
+        val markedString = adapter.fromJson("""{"id":"1","has_archive":"1"}""")!!
+        val unmarked = adapter.fromJson("""{"id":"1","has_archive":0}""")!!
+        val absent = adapter.fromJson("""{"id":"1"}""")!!
+        val junk = adapter.fromJson("""{"id":"1","has_archive":"soon"}""")!!
+
+        assertEquals(1, marked.hasArchive)
+        assertEquals(1, markedString.hasArchive)
+        assertEquals(0, unmarked.hasArchive)
+        assertEquals(null, absent.hasArchive)
+        assertEquals(null, junk.hasArchive)
+
+        // ...and threads into the domain model as spoke-true / spoke-false / silent.
+        assertEquals(true, marked.toProgram().hasArchive)
+        assertEquals(true, markedString.toProgram().hasArchive)
+        assertEquals(false, unmarked.toProgram().hasArchive)
+        assertEquals(null, absent.toProgram().hasArchive)
+        assertEquals(null, junk.toProgram().hasArchive)
+    }
+
     @Test
     fun `decodeXtreamBase64 decodes, passes through garbage, empties null`() {
         val enc = Base64.getEncoder().encodeToString("News at Ten".toByteArray())
