@@ -1137,7 +1137,9 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         is PlayerEvent.OnSeekBy -> {
             pendingPreviewSeekPosition = null
             val current = currentPlaybackPositionMs() ?: 0L
-            val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
+            val maxDuration = catchUpSeekCeilingMs()
+                ?: currentPlaybackDurationMs().takeIf { it >= 0 }
+                ?: Long.MAX_VALUE
             val target = (current + event.deltaMs)
                 .coerceAtLeast(0L)
                 .coerceAtMost(maxDuration)
@@ -1156,7 +1158,9 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             }
         }
         is PlayerEvent.OnPreviewSeekBy -> {
-            val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
+            val maxDuration = catchUpSeekCeilingMs()
+                ?: currentPlaybackDurationMs().takeIf { it >= 0 }
+                ?: Long.MAX_VALUE
             val basePosition = pendingPreviewSeekPosition ?: currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L
             val target = (basePosition + event.deltaMs)
                 .coerceAtLeast(0L)
@@ -1170,7 +1174,9 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             }
         }
         PlayerEvent.OnCommitPreviewSeek -> {
-            val target = pendingPreviewSeekPosition
+            // Clamped again on commit: the pending position can have been set before the guard
+            // moved (the live edge advances while the viewer holds the button down).
+            val target = pendingPreviewSeekPosition?.let { clampCatchUpSeekMs(it) }
             if (target != null) {
                 seekPlaybackTo(target, SeekParameters.CLOSEST_SYNC)
                 updatePlaybackTimeline(currentPosition = target)
@@ -1185,8 +1191,9 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         }
         is PlayerEvent.OnSeekTo -> {
             pendingPreviewSeekPosition = null
-            seekPlaybackTo(event.position, SeekParameters.CLOSEST_SYNC)
-            updatePlaybackTimeline(currentPosition = event.position)
+            val position = clampCatchUpSeekMs(event.position)
+            seekPlaybackTo(position, SeekParameters.CLOSEST_SYNC)
+            updatePlaybackTimeline(currentPosition = position)
             scheduleProgressSyncAfterSeek()
             if (_uiState.value.showControls) {
                 showControlsTemporarily()

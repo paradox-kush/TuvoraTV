@@ -97,6 +97,9 @@ fun XtreamHubScreen(
     onOpenDetail: (contentId: String, type: String) -> Unit,
     onAddProvider: () -> Unit,
     onPairFromPhone: () -> Unit = {},
+    /** Opens a catch-up replay in the full player — see LiveGuide's parameter of the same name. */
+    onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit =
+        { _, _, _, _, _ -> },
     viewModel: XtreamHubViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -212,7 +215,8 @@ fun XtreamHubScreen(
                 account = liveAccount,
                 fullscreen = liveFullscreen,
                 onFullscreenChange = { liveFullscreen = it },
-                selectedTabRequester = selectedTabRequester
+                selectedTabRequester = selectedTabRequester,
+                onPlayCatchUp = onPlayCatchUp
             )
         } else {
             HubBrowseContent(

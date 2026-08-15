@@ -732,6 +732,22 @@ fun NuvioNavHost(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                // Catch-up replay: a recording wearing a live channel's id (see Screen.Player).
+                navArgument("isCatchUp") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("catchUpStartMs") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("catchUpEndMs") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
@@ -1137,7 +1153,23 @@ fun NuvioNavHost(
                     navController.navigate(Screen.Detail.createRoute(contentId, type))
                 },
                 onAddProvider = { navController.navigate(Screen.IptvSettings.route) },
-                onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) }
+                onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
+                // Catch-up takes the same proven live route (contentType="live" keeps the live DoH
+                // and engine handling, and routes BACK to this hub), plus the isCatchUp flag that
+                // turns off the three behaviours a recording must not have.
+                onPlayCatchUp = { url, title, contentId, startMs, endMs ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = url,
+                            title = title,
+                            contentType = "live",
+                            contentId = contentId,
+                            isCatchUp = true,
+                            catchUpStartMs = startMs,
+                            catchUpEndMs = endMs,
+                        )
+                    )
+                }
             )
         }
 

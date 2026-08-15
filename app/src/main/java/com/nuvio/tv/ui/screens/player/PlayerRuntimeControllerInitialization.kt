@@ -1331,6 +1331,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                             currentDiagnostics = recordFirstFrameDiagnostics(this@apply, currentDiagnostics, playerSettings)
                             recordPlaybackStartBreadcrumb()
                             armLiveFreezeReporter()
+                            // The catch-up URL shape that actually played is the only proof worth
+                            // keeping — a guess that never rendered must not be pinned.
+                            reportCatchUpPlayed()
                         }
                     }
 
@@ -1355,6 +1358,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                             }
                             return
                         }
+
+                        // Catch-up: a panel that does not speak this timeshift URL shape answers
+                        // 404/timeout, which every ladder below would read as a broken stream.
+                        // Walk to the next shape first; it only advances on transport-shaped
+                        // failures, so a genuinely broken recording still falls through to them.
+                        if (advanceCatchUpDialect(error.errorCode)) return
 
                         // Error handlers: DV codec failures, audio decoder issues, codec state errors.
                         if (error.isDolbyVisionDecoderFailure() && !isMapDv7ToHevcActiveForCurrentPlayback) {

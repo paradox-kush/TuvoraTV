@@ -639,7 +639,12 @@ fun PlayerScreen(
                             }
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
-                                val isLive = uiState.contentType.equals("live", ignoreCase = true)
+                                // Catch-up excluded: up/down must not change channel in the
+                                // middle of a recording (CatchUpPlaybackPolicy.allowsChannelZap).
+                                val isLive = CatchUpPlaybackPolicy.allowsChannelZap(
+                                    isLive = uiState.contentType.equals("live", ignoreCase = true),
+                                    isCatchUpPlayback = uiState.isCatchUpPlayback,
+                                )
                                 if (!uiState.showControls && isLive) {
                                     // TiViMate-style zap: up = previous channel (in place, same surface).
                                     viewModel.zapLive(-1)
@@ -668,7 +673,10 @@ fun PlayerScreen(
                                 true
                             }
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            val isLive = uiState.contentType.equals("live", ignoreCase = true)
+                            val isLive = CatchUpPlaybackPolicy.allowsChannelZap(
+                                isLive = uiState.contentType.equals("live", ignoreCase = true),
+                                isCatchUpPlayback = uiState.isCatchUpPlayback,
+                            )
                             if (!uiState.showControls && isLive) {
                                 // TiViMate-style zap: down = next channel (in place, same surface).
                                 viewModel.zapLive(1)

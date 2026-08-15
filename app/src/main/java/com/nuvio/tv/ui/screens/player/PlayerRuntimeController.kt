@@ -89,6 +89,8 @@ class PlayerRuntimeController(
     internal val streamBadgePresentation: com.nuvio.tv.core.streams.StreamBadgePresentation,
     internal val playbackIssueReportRepository: PlaybackIssueReportRepository,
     internal val playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver,
+    /** Holds the catch-up dialect walk across the guide -> player boundary; see its docs. */
+    internal val catchUpCoordinator: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
     savedStateHandle: SavedStateHandle,
     internal val scope: CoroutineScope
 ) {
@@ -164,6 +166,14 @@ class PlayerRuntimeController(
     internal val headersJson: String? = navigationArgs.headersJson
     internal val contentId: String? = navigationArgs.contentId
     internal val contentType: String? = navigationArgs.contentType
+    /**
+     * Catch-up replay. The replay id keeps the channel's `:live:` segment, so [isLiveContent] still
+     * answers true and every live path keeps working; this turns off only what a recording must not
+     * do. See [com.nuvio.tv.ui.screens.player.CatchUpPlaybackPolicy].
+     */
+    internal val isCatchUpPlayback: Boolean = navigationArgs.isCatchUp
+    internal val catchUpProgrammeStartMs: Long? = navigationArgs.catchUpStartMs
+    internal val catchUpProgrammeEndMs: Long? = navigationArgs.catchUpEndMs
     internal val contentName: String? = navigationArgs.contentName
     internal val poster: String? = navigationArgs.poster
     internal val backdrop: String? = navigationArgs.backdrop
@@ -237,6 +247,9 @@ class PlayerRuntimeController(
             currentStreamAddonName = navigationArgs.addonName,
             releaseYear = year,
             contentType = contentType,
+            isCatchUpPlayback = isCatchUpPlayback,
+            catchUpProgrammeStartMs = catchUpProgrammeStartMs,
+            catchUpProgrammeEndMs = catchUpProgrammeEndMs,
             backdrop = backdrop,
             logo = logo,
             showLoadingOverlay = true,
@@ -308,6 +321,16 @@ class PlayerRuntimeController(
         val id = contentId ?: return false
         return com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(id)
     }
+
+    /**
+     * Live in the sense that the LIVE-ONLY behaviours apply: a live feed that is not a recording.
+     *
+     * A catch-up replay is live by [isLiveContent] — its id contains `:live:` and it is launched
+     * with contentType "live" — and that is correct, because it IS an IPTV channel's stream and
+     * wants the live DoH/engine handling. What it is not is a feed with a moving edge, so the three
+     * behaviours that assume one are gated on this instead.
+     */
+    internal fun isLiveFeed(): Boolean = isLiveContent() && !isCatchUpPlayback
 
     internal var progressJob: Job? = null
     internal var vodTelemetryJob: Job? = null

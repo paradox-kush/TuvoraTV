@@ -68,6 +68,7 @@ class PlayerViewModel @Inject constructor(
     private val subtitleFileCache: com.nuvio.tv.core.player.SubtitleFileCache,
     private val livePlaylist: com.nuvio.tv.core.iptv.XtreamLivePlaylist,
     private val playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver,
+    private val catchUpCoordinator: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
     private val playbackActivityTracker: com.nuvio.tv.core.player.PlaybackActivityTracker,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -114,6 +115,7 @@ class PlayerViewModel @Inject constructor(
         streamBadgePresentation = streamBadgePresentation,
         playbackIssueReportRepository = playbackIssueReportRepository,
         playlistDnsResolver = playlistDnsResolver,
+        catchUpCoordinator = catchUpCoordinator,
         savedStateHandle = savedStateHandle,
         scope = viewModelScope
     )

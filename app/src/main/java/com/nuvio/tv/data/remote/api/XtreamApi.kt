@@ -49,6 +49,16 @@ interface XtreamApi {
     @GET
     suspend fun getShortEpg(@Url url: String): Response<XtreamShortEpgResponseDto>
 
+    /**
+     * Undecoded body for `get_simple_data_table` — a channel's FULL guide, past included, which is
+     * what makes catch-up's "days back" real. Streamed for the same reason as [getRawCatalog]: a
+     * busy channel's week is a large payload and the XMLTV out-of-memory crash was caused by
+     * holding a guide response in the heap. Callers MUST close the body.
+     */
+    @Streaming
+    @GET
+    suspend fun getRawEpgTable(@Url url: String): Response<ResponseBody>
+
     @GET
     suspend fun getVodInfo(@Url url: String): Response<XtreamVodInfoResponseDto>
 
