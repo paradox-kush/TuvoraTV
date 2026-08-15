@@ -1,7 +1,8 @@
 package com.nuvio.tv.core.radar
 
+import com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator
+import com.nuvio.tv.core.iptv.CatchUpWinnerStore
 import com.nuvio.tv.core.iptv.XtreamAccount
-import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.data.local.XtreamAccountStore
 import io.mockk.every
@@ -14,10 +15,10 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * Replay is a timeshift URL built off the Xtream `player_api` scheme — Stalker and M3U sources
- * have no equivalent, so offering it for them fabricates a URL that can never play. Guarding it
- * inside [RadarChannelMatcher.replayFor] also hides the affordance: the sheet only draws a Replay
- * button for contentIds present in the replays map.
+ * Replay is a catch-up walk over the Xtream `player_api` timeshift dialects — Stalker and M3U
+ * sources have no equivalent, so offering it for them fabricates a URL that can never play.
+ * Guarding it inside [RadarChannelMatcher.replayFor] also hides the affordance: the sheet only
+ * draws a Replay button for contentIds present in the replays map.
  */
 class RadarChannelMatcherReplayTest {
 
@@ -40,9 +41,19 @@ class RadarChannelMatcherReplayTest {
         val replay = matcher.replayFor(match(hasArchive = true), STARTED_FIXTURE)
 
         assertNotNull(replay)
-        assertEquals(expectedReplayId(), replay!!.first)
-        assertEquals(TIMESHIFT_URL, replay.second)
-        assertEquals(TIMESHIFT_URL, registry.get(expectedReplayId())?.streamUrl)
+        // Nothing is registered (and no walk begins) until the replay is actually played.
+        assertNull(registry.get(expectedReplayId()))
+
+        val session = matcher.beginReplay(replay!!)
+        assertNotNull(session)
+        assertEquals(
+            "the session keeps the sports replay id shape",
+            expectedReplayId(), session!!.contentId,
+        )
+        assertEquals(
+            "the registered item carries the walk's first URL",
+            session.url, registry.get(expectedReplayId())?.streamUrl,
+        )
     }
 
     @Test
@@ -57,10 +68,8 @@ class RadarChannelMatcherReplayTest {
     private fun matcher(account: XtreamAccount, registry: XtreamItemRegistry): RadarChannelMatcher {
         val store = mockk<XtreamAccountStore>()
         every { store.accounts } returns flowOf(listOf(account))
-        val client = mockk<XtreamClient>()
-        every { client.liveTimeshiftUrl(any(), any(), any(), any()) } returns TIMESHIFT_URL
         return RadarChannelMatcher(
-            xtreamClient = client,
+            xtreamClient = mockk(relaxed = true),
             accountStore = store,
             registry = registry,
             matchIndex = mockk(relaxed = true),
@@ -71,6 +80,13 @@ class RadarChannelMatcherReplayTest {
             // tiers underneath it.
             contentDb = mockk(relaxed = true),
             clientFactory = mockk(relaxed = true),
+            catchUp = CatchUpPlaybackCoordinator(
+                CatchUpWinnerStore(object : CatchUpWinnerStore.Persistence {
+                    private var stored: Map<String, String> = emptyMap()
+                    override fun load(): Map<String, String> = stored
+                    override fun save(entries: Map<String, String>) { stored = entries.toMap() }
+                })
+            ),
         )
     }
 
@@ -108,7 +124,7 @@ class RadarChannelMatcherReplayTest {
         score = 50,
     )
 
-    /** Mirrors replayFor's id: no programme, so the window opens 15 minutes before kickoff. */
+    /** Mirrors replayFor's window: no programme, so it opens 15 minutes before kickoff. */
     private fun expectedReplayId(): String {
         val replayStart = STARTED_FIXTURE.startEpochMs!! - 15 * 60 * 1000L
         return "${CONTENT_ID}r${replayStart / 60_000L}"
@@ -118,7 +134,6 @@ class RadarChannelMatcherReplayTest {
         const val ACCOUNT_ID = "http://panel.example:8080|user"
         const val STREAM_ID = 4242
         val CONTENT_ID = XtreamItemRegistry.liveId(ACCOUNT_ID, STREAM_ID)
-        const val TIMESHIFT_URL = "http://panel.example:8080/timeshift/user/pass/165/2020-05-01:11-45/4242.ts"
 
         /** Kickoff safely in the past, so only the source type decides the outcome. */
         val STARTED_FIXTURE = RadarFixture(

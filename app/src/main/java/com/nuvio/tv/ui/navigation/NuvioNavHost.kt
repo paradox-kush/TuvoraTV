@@ -1208,6 +1208,22 @@ fun NuvioNavHost(
                 onOpenDetail = { contentId, type ->
                     navController.navigate(Screen.Detail.createRoute(contentId, type))
                 },
+                // Sports replays take the SAME catch-up route the guide's replays take: the
+                // isCatchUp flag + programme bounds turn off the three live-only behaviours a
+                // recording must not have and give the player its clamped seek ceiling.
+                onPlayCatchUp = { url, title, contentId, startMs, endMs ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = url,
+                            title = title,
+                            contentType = "live",
+                            contentId = contentId,
+                            isCatchUp = true,
+                            catchUpStartMs = startMs,
+                            catchUpEndMs = endMs,
+                        )
+                    )
+                },
             )
         }
 
