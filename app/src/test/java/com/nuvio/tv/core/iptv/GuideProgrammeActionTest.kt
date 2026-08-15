@@ -14,12 +14,14 @@ class GuideProgrammeActionTest {
         endMs: Long,
         hasArchive: Boolean = true,
         catchUpDays: Int = 7,
+        programmeHasArchive: Boolean? = null,
     ) = XtreamCatchUp.actionFor(
         programmeStartMs = startMs,
         programmeEndMs = endMs,
         nowMs = now,
         hasArchive = hasArchive,
         catchUpDays = catchUpDays,
+        programmeHasArchive = programmeHasArchive,
     )
 
     /** Nothing to offer for something that has not been broadcast yet. */
@@ -90,5 +92,106 @@ class GuideProgrammeActionTest {
     @Test
     fun `a programme starting exactly now is airing`() {
         assertEquals(ProgrammeAction.START_OVER, actionFor(now, now + hour))
+    }
+
+    /**
+     * Panels ship degenerate EPG rows — end at or before start, or a zero/epoch start (an absent
+     * timestamp parses to 0). Offering REPLAY of a zero-length programme at epoch is a
+     * guaranteed-dead URL, so a row that cannot describe a real broadcast offers nothing.
+     * StreamVault refuses these outright (start > 0, end > start); so do we.
+     */
+    @Test
+    fun `a degenerate programme offers nothing`() {
+        // Zero length: end == start.
+        assertEquals(ProgrammeAction.NONE, actionFor(now - hour, now - hour))
+        // Negative length: end before start.
+        assertEquals(ProgrammeAction.NONE, actionFor(now - hour, now - 2 * hour))
+        // Epoch start — the shape a missing start_timestamp produces.
+        assertEquals(ProgrammeAction.NONE, actionFor(0L, hour, catchUpDays = 0))
+        // Negative start is no better.
+        assertEquals(ProgrammeAction.NONE, actionFor(-hour, hour, catchUpDays = 0))
+    }
+
+    // --- Per-programme has_archive: the panel speaking recording by recording. ------------------
+    // POSITIVE override only (the locked policy): true = the panel says THIS programme is kept,
+    // which beats every channel-level rule; false and null leave the existing rules untouched,
+    // because many panels serve catch-up while never marking anything.
+
+    /** The spec-named baseline: a marked programme on an unknown-window channel replays. */
+    @Test
+    fun `a marked programme replays on an unknown-window channel`() {
+        val longAgo = now - 30L * 24 * hour
+        assertEquals(
+            ProgrammeAction.REPLAY,
+            actionFor(longAgo, longAgo + hour, catchUpDays = 0, programmeHasArchive = true)
+        )
+    }
+
+    /** The override's real teeth: the panel keeping a programme beats a stated window. */
+    @Test
+    fun `a marked programme replays outside the stated window`() {
+        val tenDaysAgo = now - 10L * 24 * hour
+        assertEquals(
+            ProgrammeAction.REPLAY,
+            actionFor(tenDaysAgo, tenDaysAgo + hour, catchUpDays = 7, programmeHasArchive = true)
+        )
+    }
+
+    /** ...and beats a channel the panel forgot to flag tv_archive on. */
+    @Test
+    fun `a marked programme replays on a channel with no archive flag`() {
+        assertEquals(
+            ProgrammeAction.REPLAY,
+            actionFor(now - 3 * hour, now - 2 * hour, hasArchive = false, programmeHasArchive = true)
+        )
+    }
+
+    @Test
+    fun `a marked airing programme can start over on an unflagged channel`() {
+        assertEquals(
+            ProgrammeAction.START_OVER,
+            actionFor(now - hour, now + hour, hasArchive = false, programmeHasArchive = true)
+        )
+    }
+
+    /** A mark is not a time machine: the start must still have passed. */
+    @Test
+    fun `a marked future programme still offers nothing`() {
+        assertEquals(
+            ProgrammeAction.NONE,
+            actionFor(now + hour, now + 2 * hour, programmeHasArchive = true)
+        )
+    }
+
+    /** Nor does a mark rescue a degenerate row — the URL would still be dead. */
+    @Test
+    fun `a marked degenerate programme still offers nothing`() {
+        assertEquals(
+            ProgrammeAction.NONE,
+            actionFor(now - hour, now - hour, programmeHasArchive = true)
+        )
+    }
+
+    /** The spec-named permissive pin: silence (null) must not become restrictive. */
+    @Test
+    fun `an unmarked programme still replays when the panel never marks anything`() {
+        val longAgo = now - 30L * 24 * hour
+        assertEquals(
+            ProgrammeAction.REPLAY,
+            actionFor(longAgo, longAgo + hour, catchUpDays = 0, programmeHasArchive = null)
+        )
+    }
+
+    /** false is NOT a veto — the override is positive-only, so channel rules decide as before. */
+    @Test
+    fun `an explicitly unmarked programme follows the channel rules`() {
+        assertEquals(
+            ProgrammeAction.REPLAY,
+            actionFor(now - 3 * hour, now - 2 * hour, programmeHasArchive = false)
+        )
+        assertEquals(
+            ProgrammeAction.NONE,
+            actionFor(now - 3 * hour, now - 2 * hour, hasArchive = false, programmeHasArchive = false)
+        )
     }
 }
