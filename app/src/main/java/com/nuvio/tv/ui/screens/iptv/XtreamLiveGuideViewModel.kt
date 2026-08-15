@@ -497,16 +497,28 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (streamId <= 0 || !epgRequested.add(streamId)) return
         viewModelScope.launch {
             val nowMs = System.currentTimeMillis()
-            // Panel EPG first; when the panel has nothing (the common case on real panels —
-            // Starshare fills 6%), fall back to the mirrored canonical EPG via the mapping.
-            // Panel short EPG first; else the mirror's programme window (the timeline needs more
-            // than now/next, and the windowed query is a superset of nowNext anyway).
-            val programs = clientFactory.clientFor(acc).shortEpg(acc, streamId).getOrDefault(emptyList())
-                .ifEmpty {
+            // Per-channel source ladder (replacing the old provider-first `.ifEmpty { mirror }`):
+            // (future) manual mapping → the playlist's own short EPG if its rows pass the sanity
+            // gate → the mirror's programme window (the timeline needs more than now/next, and the
+            // windowed query is a superset of nowNext anyway) → nothing. Present-but-garbage panel
+            // rows (the wa12 shape — Starshare fills 6%, and what IS filled can be skew the epoch
+            // detector could not prove) no longer suppress the mirror. The answering rung is
+            // remembered per (account, channel) for the session, so a mirror-fed channel doesn't
+            // re-ask the panel on every guide re-entry.
+            val resolution = com.nuvio.tv.core.iptv.EpgSourceLadder.resolveAndRemember(
+                memory = com.nuvio.tv.core.iptv.EpgSourceLadder.sessionMemory,
+                accountId = acc.id,
+                streamId = streamId,
+                nowMs = nowMs,
+                manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+                provider = { clientFactory.clientFor(acc).shortEpg(acc, streamId).getOrDefault(emptyList()) },
+                mirror = {
                     runCatching { epgMirror.programmesWindow(acc.id, streamId, nowMs, nowMs + GUIDE_EPG_WINDOW_MS) }
                         .getOrDefault(emptyList())
                         .map { XtreamProgram(it.title, it.desc.orEmpty(), it.startMs, it.endMs, nowPlaying = nowMs in it.startMs until it.endMs) }
-                }
+                },
+            )
+            val programs = resolution.programmes
             val nowIdx = programs.indexOfFirst { it.nowPlaying || (nowMs in it.startMs until it.endMs) }
                 .takeIf { it >= 0 } ?: 0
             val now = programs.getOrNull(nowIdx)
