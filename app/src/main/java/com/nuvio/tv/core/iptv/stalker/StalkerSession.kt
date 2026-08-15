@@ -5,8 +5,14 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.nuvio.tv.core.iptv.XtreamAccount
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -18,6 +24,19 @@ import okhttp3.Request
 
 /** The portal rejected our identity/token — the ONLY failure that may trigger a re-handshake. */
 class StalkerAuthException(message: String) : IllegalStateException(message)
+
+/**
+ * get_profile answered `status: 1`: the portal understood our identity and REFUSED the account
+ * (disabled line, unknown MAC, …). Never retried — re-handshaking cannot fix a refusal, and a
+ * status refusal must never be mistaken for an empty portal.
+ */
+open class StalkerPortalRefusedException(message: String) : IllegalStateException(message)
+
+/**
+ * The `status: 1` refusal names the DEVICE BINDING: the portal has a different device identity
+ * pinned to this MAC. The one refusal with a user remedy, so it gets its own type and message.
+ */
+class StalkerDeviceConflictException(message: String) : StalkerPortalRefusedException(message)
 
 /**
  * A stateful Stalker-portal (MAG/Ministra) session for ONE playlist. Owns:
@@ -56,6 +75,12 @@ class StalkerSession(
     // connections; magplex (the reference client) caps this at 3 explicitly "to prevent rate
     // limiting". Ours is per-session so a busy UI can't fan out into a ban.
     private val gate = Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    // The get_events keep-alive (see [StalkerWatchdogPolicy]). Session-owned so its lifetime IS
+    // the session's: (re)started on every successful activation, gone on [shutdown] (the manager
+    // shuts a session down when it evicts/replaces it).
+    private val watchdogScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var watchdogJob: Job? = null
 
     private val baseUrl: String = StalkerProtocol.normalizePortalBase(account.portalUrl)
     private val identity: StalkerProtocol.DeviceIdentity =
@@ -114,6 +139,11 @@ class StalkerSession(
 
     /** Force re-auth on the next call (used when a create_link/browse hits a hard 401/403). */
     fun invalidate() { token = null }
+
+    /** Tear the session down (evicted/replaced): stops the watchdog. Do not use it afterwards. */
+    fun shutdown() {
+        watchdogScope.cancel()
+    }
 
     /**
      * Authenticated GET that STREAMS the body to [onChunk] instead of materializing it — for the
@@ -256,25 +286,16 @@ class StalkerSession(
         // the next rung of the identity ladder and re-handshake — the token is bound to the identity
         // that requested it, so the whole bootstrap has to be redone, not just the profile call.
         val profileOutcome = runCatching {
-            val profileParams = buildMap {
-                put("type", "stb"); put("action", "get_profile"); put("hd", "1")
-                put("ver", magPreset.stbVer)
-                put("num_banks", "2"); put("stb_type", magPreset.stbType); put("client_type", "STB")
-                put("image_version", magPreset.imageVersion); put("video_out", "hdmi")
-                put("hw_version", magPreset.hwVersion); put("not_valid_token", "0")
-                put("device_id", identity.deviceId); put("device_id2", identity.deviceId2)
-                if (account.sendDeviceId) put("signature", identity.signature)
-                put("sn", identity.serialNumber)
-                put("auth_second_step", "0"); put("prehash", "0")
-                account.stalkerUsername.takeIf { it.isNotBlank() }?.let { put("login", it) }
-                account.stalkerPassword.takeIf { it.isNotBlank() }?.let { put("password", it) }
-            }
-            rawRequestAt(endpoint, profileParams)
+            rawRequestAt(endpoint, profileParams(authSecondStep = false))
         }.onFailure { Log.d(TAG, "get_profile non-fatal failure for ${account.name}", it) }
 
         val rejection = profileOutcome.exceptionOrNull() as? StalkerAuthException
         if (rejection == null) {
-            runFollowUpBootstrap(endpoint, profileOutcome.getOrNull())
+            val profileJs = profileOutcome.getOrNull()?.jsOrNull() as? JsonObject
+            // status=1 is a REFUSAL (the portal understood us and said no) — never "empty portal".
+            throwIfRefused(profileJs)
+            val activatedJs = runFollowUpBootstrap(endpoint, profileJs)
+            startWatchdog(activatedJs ?: profileJs)
             return
         }
         val nextPreset = StalkerMagPresets.next(magPreset)
@@ -293,33 +314,118 @@ class StalkerSession(
         doHandshakeAndProfile()
     }
 
+    /** The full MAG profile params. [authSecondStep] is set ONLY by the post-do_auth retry —
+     *  the portal's own client sends get_user_profile(false) at boot and (true) after do_auth. */
+    private fun profileParams(authSecondStep: Boolean): Map<String, String> = buildMap {
+        put("type", "stb"); put("action", "get_profile"); put("hd", "1")
+        put("ver", magPreset.stbVer)
+        put("num_banks", "2"); put("stb_type", magPreset.stbType); put("client_type", "STB")
+        put("image_version", magPreset.imageVersion); put("video_out", "hdmi")
+        put("hw_version", magPreset.hwVersion); put("not_valid_token", "0")
+        put("device_id", identity.deviceId); put("device_id2", identity.deviceId2)
+        if (account.sendDeviceId) put("signature", identity.signature)
+        put("sn", identity.serialNumber)
+        put("auth_second_step", if (authSecondStep) "1" else "0"); put("prehash", "0")
+        account.stalkerUsername.takeIf { it.isNotBlank() }?.let { put("login", it) }
+        account.stalkerPassword.takeIf { it.isNotBlank() }?.let { put("password", it) }
+    }
+
+    /** Throws the typed refusal for a `status: 1` profile — see [StalkerBootstrapPolicy.refusalAfterProfile]. */
+    private fun throwIfRefused(profileJs: JsonObject?) {
+        val refusal = StalkerBootstrapPolicy.refusalAfterProfile(
+            status = profileJs?.get("status")?.asIntOrNull(),
+            msg = profileJs?.get("msg")?.asStringOrNull(),
+            blockMsg = profileJs?.get("block_msg")?.asStringOrNull(),
+        ) ?: return
+        val portalSaid = refusal.portalText?.let { " Portal says: $it" }.orEmpty()
+        if (refusal.deviceConflict) {
+            throw StalkerDeviceConflictException(
+                "Another device is using this MAC on ${account.name} — the portal has a different " +
+                    "Device ID pinned to it. Stop the other device or ask the provider to reset the MAC.$portalSaid"
+            )
+        }
+        throw StalkerPortalRefusedException(
+            "Stalker portal refused ${account.name}." +
+                portalSaid.ifEmpty { " The account may be disabled or the MAC not provisioned." }
+        )
+    }
+
     /**
      * The extra calls some portals require before they will serve anything — see
      * [StalkerBootstrapPolicy]. Best-effort: a portal that did not want these answers them with
      * junk, and failing the whole session over an optional step would be worse than not asking.
+     *
+     * Returns the auth_second_step profile's js when that retry ran (its fields are the freshest —
+     * the watchdog cadence should come from it), else null.
      */
-    private suspend fun runFollowUpBootstrap(endpoint: String, profile: JsonElement?) {
-        val js = profile?.jsOrNull() as? JsonObject ?: return
+    private suspend fun runFollowUpBootstrap(endpoint: String, js: JsonObject?): JsonObject? {
+        if (js == null) return null
         val steps = StalkerBootstrapPolicy.stepsAfterProfile(
             authAccess = js.get("auth_access")?.asBooleanOrNull(),
             status = js.get("status")?.asIntOrNull(),
             hasCredentials = account.stalkerUsername.isNotBlank() && account.stalkerPassword.isNotBlank(),
         )
+        var secondStepJs: JsonObject? = null
         for (step in steps) {
-            val params = when (step) {
-                StalkerBootstrapPolicy.Step.DO_AUTH -> mapOf(
-                    "type" to "stb",
-                    "action" to "do_auth",
-                    "login" to account.stalkerUsername,
-                    "password" to account.stalkerPassword,
-                )
-                StalkerBootstrapPolicy.Step.GET_MODULES -> mapOf(
-                    "type" to "stb",
-                    "action" to "get_modules",
-                )
+            when (step) {
+                StalkerBootstrapPolicy.Step.DO_AUTH -> {
+                    val authed = runCatching {
+                        rawRequestAt(
+                            endpoint,
+                            mapOf(
+                                "type" to "stb",
+                                "action" to "do_auth",
+                                "login" to account.stalkerUsername,
+                                "password" to account.stalkerPassword,
+                            )
+                        ).jsOrNull()
+                    }.onFailure { Log.d(TAG, "Stalker do_auth failed for ${account.name}", it) }
+                        .getOrNull() != null
+                    // The portal's own client re-fetches the profile with auth_second_step=1 after
+                    // a successful do_auth (c/xpcom.common.js) — ONLY that retry sets the flag.
+                    if (authed) {
+                        secondStepJs = runCatching {
+                            rawRequestAt(endpoint, profileParams(authSecondStep = true))
+                        }.onFailure { Log.d(TAG, "second-step get_profile failed for ${account.name}", it) }
+                            .getOrNull()?.jsOrNull() as? JsonObject
+                        // A refusal on the retry is as final as one on the first profile.
+                        throwIfRefused(secondStepJs)
+                    }
+                }
+                StalkerBootstrapPolicy.Step.GET_MODULES -> {
+                    runCatching { rawRequestAt(endpoint, mapOf("type" to "stb", "action" to "get_modules")) }
+                        .onFailure { Log.d(TAG, "Stalker get_modules failed for ${account.name}", it) }
+                }
             }
-            runCatching { rawRequestAt(endpoint, params) }
-                .onFailure { Log.d(TAG, "Stalker $step failed for ${account.name}", it) }
+        }
+        return secondStepJs
+    }
+
+    /**
+     * (Re)start the get_events keep-alive with the cadence [profileJs] advertises. The init ping
+     * rides activation INLINE (a real box pings before it browses; strict portals read it as part
+     * of the bootstrap) — but its failure never fails auth, and the periodic loop pings only while
+     * a token exists: the keep-alive must NEVER re-handshake on its own, because a handshake
+     * evicts the other device on a shared MAC. Ping failures are log-only by contract — a missed
+     * ping only affects the portal's "online" reporting.
+     */
+    private suspend fun startWatchdog(profileJs: JsonObject?) {
+        val timing = StalkerWatchdogPolicy.timingFrom(
+            watchdogTimeoutSeconds = profileJs?.get("watchdog_timeout")?.asStringOrNull()?.trim()?.toDoubleOrNull()?.toLong(),
+            timeslotSeconds = profileJs?.get("timeslot")?.asStringOrNull()?.trim()?.toDoubleOrNull(),
+        )
+        runCatching { rawRequest(StalkerWatchdogPolicy.pingParams(init = true)) }
+            .onFailure { Log.d(TAG, "watchdog init ping failed for ${account.name}", it) }
+        watchdogJob?.cancel()
+        watchdogJob = watchdogScope.launch {
+            delay(StalkerWatchdogPolicy.initialPeriodicDelayMs(timing))
+            while (isActive) {
+                if (token != null) {
+                    runCatching { rawRequest(StalkerWatchdogPolicy.pingParams(init = false)) }
+                        .onFailure { Log.d(TAG, "watchdog ping failed for ${account.name}: ${it.message}") }
+                }
+                delay(StalkerWatchdogPolicy.periodMs(timing))
+            }
         }
     }
 
@@ -478,9 +584,12 @@ class StalkerSession(
         // (research/iptv-catalog-loading.md)
         private const val MAX_CONCURRENT_REQUESTS = 2
 
-        /** Never held back by [StalkerPlaybackTraffic] — playback itself depends on these. */
+        /** Never held back by [StalkerPlaybackTraffic] — playback itself depends on these.
+         *  get_events is here because the init ping rides the auth path (deferring it would add
+         *  its wait to every mid-playback zap) and the keep-alive is a few bytes every ~120s. */
         private val PLAYBACK_CRITICAL_ACTIONS = setOf(
-            "handshake", "get_profile", "create_link", "do_auth", "get_modules", "get_main_info"
+            "handshake", "get_profile", "create_link", "do_auth", "get_modules", "get_main_info",
+            "get_events"
         )
     }
 }

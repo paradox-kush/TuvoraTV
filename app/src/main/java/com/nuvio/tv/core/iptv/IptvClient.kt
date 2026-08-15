@@ -37,6 +37,11 @@ interface IptvClient {
      * formula; M3U looks it up in the ingested catalog (URLs aren't formula-derivable there).
      * Returns null when the id isn't in this source (M3U miss) — the caller treats that as
      * "no longer available".
+     *
+     * [forceFresh] rides the one-shot 401/403/410 refresh ladder: produce the freshest possible
+     * URL, bypassing any static/derived shortcut. Stalker mints a new create_link even when the
+     * static-cmd policy would rule it unnecessary (the static URL just DIED — rebuilding it would
+     * replay the failure); Xtream/M3U URLs are stable formulas, so they ignore it.
      */
-    suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int): String?
+    suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean = false): String?
 }

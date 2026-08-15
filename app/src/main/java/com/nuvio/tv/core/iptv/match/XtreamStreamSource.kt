@@ -142,8 +142,10 @@ class XtreamStreamSource @Inject constructor(
     private fun deferredEpisode(acc: XtreamAccount, seriesId: Int, season: Int, episode: Int): String =
         "$DEFERRED_PREFIX${acc.id}|episode|$seriesId|$season|$episode"
 
-    /** Mints the real play link for a [isDeferred] URL, or null when it can't be issued. */
-    suspend fun resolveDeferredUrl(url: String, accounts: List<XtreamAccount>): String? {
+    /** Mints the real play link for a [isDeferred] URL, or null when it can't be issued.
+     *  [forceFresh] — the 401-refresh path only: bypass a static-cmd verdict (the static URL just
+     *  died); the normal pick-time resolve keeps the policy's static shortcut. */
+    suspend fun resolveDeferredUrl(url: String, accounts: List<XtreamAccount>, forceFresh: Boolean = false): String? {
         if (!isDeferred(url)) return url
         val parts = url.removePrefix(DEFERRED_PREFIX).split("|")
         // accountId itself contains '|' ("stalker|http://host|MAC"), so anchor on the kind marker.
@@ -153,7 +155,7 @@ class XtreamStreamSource @Inject constructor(
         val acc = accounts.firstOrNull { it.id == accountId } ?: return null
         return when (parts[kindIdx]) {
             "movie" -> parts.getOrNull(kindIdx + 1)?.toIntOrNull()
-                ?.let { stalkerClient.resolveStreamUrl(acc, "movie", it) }
+                ?.let { stalkerClient.resolveStreamUrl(acc, "movie", it, forceFresh) }
             "episode" -> {
                 val seriesId = parts.getOrNull(kindIdx + 1)?.toIntOrNull() ?: return null
                 val season = parts.getOrNull(kindIdx + 2)?.toIntOrNull() ?: return null

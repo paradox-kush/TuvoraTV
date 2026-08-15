@@ -343,7 +343,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
         previewLinkRefreshBurntForChannelId = channel.contentId
         viewModelScope.launch {
             val acc = account ?: return@launch
-            val fresh = clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId)
+            // forceFresh: a static-cmd verdict would rebuild the very URL that just answered
+            // 401/403/410 — this recovery exists to mint a genuinely new link.
+            val fresh = clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId, forceFresh = true)
             if (fresh.isNullOrBlank()) {
                 _uiState.update { it.copy(error = "Couldn't open \"${channel.name}\"") }
                 return@launch

@@ -81,18 +81,19 @@ class StreamRepositoryImpl @Inject constructor(
     }
 
     /**
-     * Always resolves FRESH — for Stalker this mints a new single-use create_link token, which is
-     * also the mid-playback recovery for an expired/rotated one (the player calls this on stream
-     * 401/403 before giving up). Xtream/M3U return their stable URL, so a "refresh" is a no-op
-     * round-trip at worst.
+     * Always resolves FRESH — for Stalker this mints a new single-use create_link token (or, for
+     * an unflagged row, returns its static cmd), which is also the mid-playback recovery for an
+     * expired/rotated one (the player calls this with [forceFresh] on stream 401/403 before
+     * giving up — forcing the mint past a static verdict, because the static URL just died).
+     * Xtream/M3U return their stable URL, so a "refresh" is a no-op round-trip at worst.
      */
-    override suspend fun refreshIptvStreamUrl(videoId: String): String? {
+    override suspend fun refreshIptvStreamUrl(videoId: String, forceFresh: Boolean): String? {
         val parsed = com.nuvio.tv.core.iptv.XtreamItemRegistry.parseId(videoId) ?: return null
         val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == parsed.accountId } ?: return null
         val client = iptvClientFactory.clientFor(account)
         return when (parsed.kind) {
-            "live" -> client.resolveStreamUrl(account, "live", parsed.streamId.toIntOrNull() ?: return null)
-            "vod" -> client.resolveStreamUrl(account, "movie", parsed.streamId.toIntOrNull() ?: return null)
+            "live" -> client.resolveStreamUrl(account, "live", parsed.streamId.toIntOrNull() ?: return null, forceFresh)
+            "vod" -> client.resolveStreamUrl(account, "movie", parsed.streamId.toIntOrNull() ?: return null, forceFresh)
             "episode" -> {
                 // Stalker episode ids encode "seriesId:season:episodeNum" as the streamId segment.
                 // A legacy 2-part id ("seriesId:episodeNum") predates seasons -> season null.
@@ -139,7 +140,18 @@ class StreamRepositoryImpl @Inject constructor(
                 .getOrDefault(emptyList())
             val fresh = streams.firstOrNull { it.name == streamName && !it.url.isNullOrBlank() && it.url != failedUrl }
                 ?: streams.firstOrNull { !it.url.isNullOrBlank() && it.url != failedUrl }
-            if (fresh?.url != null) return fresh.url
+            val freshUrl = fresh?.url
+            if (freshUrl != null) {
+                // A matched Stalker candidate is DEFERRED ("stalker-deferred:…") — the listing
+                // never mints. The recovery swaps this URL straight into the engine, so the real
+                // link must be minted HERE, and minted fresh: a static-cmd verdict would rebuild
+                // the very URL that just died. Xtream URLs pass through unchanged.
+                val playable = runCatching {
+                    xtreamStreamSource.resolveDeferredUrl(freshUrl, candidates, forceFresh = true)
+                }.onFailure { Log.w(TAG, "matched-iptv refresh: deferred mint failed: ${it.message}") }
+                    .getOrNull()
+                if (!playable.isNullOrBlank() && playable != failedUrl) return playable
+            }
         }
         return null
     }

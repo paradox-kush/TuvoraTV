@@ -257,8 +257,9 @@ class M3UClient @Inject constructor(
         }
     }
 
-    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int): String? {
+    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String? {
         // URLs aren't formula-derivable for M3U (they're arbitrary provider URLs) — look them up.
+        // ([forceFresh] is meaningless here: the stored line IS the freshest URL there is.)
         // ensureIngested so a fresh cold-start deep link can still resolve.
         ensureIngested(acc)
         return when (kind) {

@@ -127,12 +127,41 @@ class StreamRepositoryRefreshIptvTest {
             matchedStream("Movie 4K", "http://fresh/4k.ts"),
             matchedStream("Movie HD", "http://fresh/hd.ts"),
         )
+        // Production routes every candidate through the deferred-mint step; a non-deferred URL
+        // passes through unchanged (the real resolveDeferredUrl's contract).
+        coEvery { source.resolveDeferredUrl(any(), any(), any()) } answers { firstArg() }
         val repo = repositoryWith(source)
         val url = repo.refreshMatchedIptvStreamUrl(
             type = "movie", videoId = "tmdb:603", season = null, episode = null,
             addonName = account.name, streamName = "Movie HD", failedUrl = "http://dead/old.ts"
         )
         assertEquals("http://fresh/hd.ts", url)
+    }
+
+    /**
+     * Matched Stalker candidates are DEFERRED ("stalker-deferred:…") — the listing never mints,
+     * and the recovery swaps its result straight into the engine. The refresh must therefore
+     * mint the REAL link itself, and mint it FRESH (forceFresh=true): with static-cmd playback a
+     * plain resolve could rebuild the very URL that just died. Regression for the recovery
+     * handing the player an unplayable deferred URL.
+     */
+    @Test
+    fun `matched refresh mints a deferred stalker candidate before returning it`() = runTest {
+        val source = mockk<com.nuvio.tv.core.iptv.match.XtreamStreamSource>()
+        val deferred = "stalker-deferred:${account.id}|movie|42|Movie HD"
+        coEvery { source.streamsFor(account, "movie", "tmdb:603", null, null) } returns listOf(
+            matchedStream("Movie HD", deferred),
+        )
+        coEvery {
+            source.resolveDeferredUrl(deferred, listOf(account), forceFresh = true)
+        } returns "http://fresh/minted.ts?play_token=x"
+        val repo = repositoryWith(source)
+        val url = repo.refreshMatchedIptvStreamUrl(
+            type = "movie", videoId = "tmdb:603", season = null, episode = null,
+            addonName = account.name, streamName = "Movie HD", failedUrl = "http://dead/old.ts"
+        )
+        assertEquals("http://fresh/minted.ts?play_token=x", url)
+        coVerify(exactly = 1) { source.resolveDeferredUrl(deferred, listOf(account), forceFresh = true) }
     }
 
     @Test

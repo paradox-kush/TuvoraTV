@@ -481,8 +481,9 @@ class XtreamClient @Inject constructor(
     fun buildStreamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String = "mp4"): String =
         streamUrl(acc, kind, id, if (kind == "live") "ts" else ext)
 
-    /** [IptvClient] stream-URL resolution — Xtream derives it by formula (always succeeds). */
-    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int): String =
+    /** [IptvClient] stream-URL resolution — Xtream derives it by formula (always succeeds;
+     *  [forceFresh] is meaningless for a stable formula URL). */
+    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String =
         buildStreamUrl(acc, kind, streamId)
 
     /**
