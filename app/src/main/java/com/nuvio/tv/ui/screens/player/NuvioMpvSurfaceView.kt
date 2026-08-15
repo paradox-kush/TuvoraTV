@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.SystemClock
 import android.util.AttributeSet
@@ -108,6 +109,13 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     @Volatile private var obsVideoFrameTicks = 0L
     @Volatile private var obsAudioBitrate: Double? = null
 
+    // VO-level counters, straight from mpv. `estimated-vf-fps` above proves decoding, not
+    // presentation; these are the closest signals mpv has to "the picture reached the screen"
+    // (no true presented-frames property exists). Diagnostics for the live-freeze work only —
+    // not a detection input yet.
+    @Volatile private var obsVoDroppedFrames = 0L
+    @Volatile private var obsVoDelayedFrames = 0L
+
     private fun resetPropertyShadow() {
         obsPaused = true
         obsPausedForCache = false
@@ -122,6 +130,9 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         obsVideoParams = null
         obsVideoBitrate = null
         obsAudioBitrate = null
+        // Per-core counters: a fresh core reports 0, so re-init starts them there too.
+        obsVoDroppedFrames = 0L
+        obsVoDelayedFrames = 0L
     }
 
     private val propertyShadow = object : MPV.EventObserver {
@@ -142,10 +153,18 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                 "video-params" -> obsVideoParams = null
                 "video-bitrate" -> obsVideoBitrate = null
                 "audio-bitrate" -> obsAudioBitrate = null
+                // Unavailable means no active VO — the same 0 a fresh core reports.
+                "frame-drop-count" -> obsVoDroppedFrames = 0L
+                "vo-delayed-frame-count" -> obsVoDelayedFrames = 0L
             }
         }
 
-        override fun eventProperty(property: String, value: Long) = Unit
+        override fun eventProperty(property: String, value: Long) {
+            when (property) {
+                "frame-drop-count" -> obsVoDroppedFrames = value
+                "vo-delayed-frame-count" -> obsVoDelayedFrames = value
+            }
+        }
 
         override fun eventProperty(property: String, value: Boolean) {
             when (property) {
@@ -420,6 +439,20 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     /** Whether a picture is expected at all — IPTV radio stations legitimately render none. */
     fun hasVideoTrackNow(): Boolean = initialized && obsVideoParams != null
+
+    /**
+     * mpv `frame-drop-count`, read off the shadow: frames the VO dropped, including frames it
+     * could not display on time. [videoFrameTicksNow] is fed by `estimated-vf-fps`, which
+     * measures the filter chain — decoding — rather than presentation; mpv has no true
+     * presented-frames property, so this and [voDelayedFrameCountNow] are the closest VO-level
+     * signals to "the picture reached the screen". The TV twin of mobile's
+     * `PlayerPlaybackSnapshot.voDroppedFrameCount`; recorded for the live-freeze work, not a
+     * detection input yet. Resets with the core, so consumers must diff defensively.
+     */
+    fun voDroppedFrameCountNow(): Long = obsVoDroppedFrames
+
+    /** mpv `vo-delayed-frame-count`: delayed-vsync estimate. See [voDroppedFrameCountNow]. */
+    fun voDelayedFrameCountNow(): Long = obsVoDelayedFrames
 
     /**
      * Reinitialises the video track off the demuxer that is already connected, for a channel
@@ -894,6 +927,20 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         )
     }
 
+    // TODO(WP1): replace with shared MemoryTierPolicy — this deliberately stays a private
+    // probe so two lanes don't both invent the shared one. Thresholds match the locked
+    // decision (isLowRamDevice or a ≤192MB dalvik heap class = LOW; budget boxes that
+    // declare nothing land on memoryClass, which is why it is the floor here).
+    private fun localMemoryTier(): MpvMemoryTier {
+        val activityManager =
+            context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                ?: return MpvMemoryTier.MID
+        val lowRam = runCatching {
+            activityManager.isLowRamDevice || activityManager.memoryClass <= 192
+        }.getOrDefault(false)
+        return if (lowRam) MpvMemoryTier.LOW else MpvMemoryTier.MID
+    }
+
     override fun initOptions() {
         mpv.setOptionString("profile", "fast")
         setVo("gpu")
@@ -925,8 +972,13 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         mpv.setOptionString("input-default-bindings", "yes")
         // Tuvora supplies its own controls; do not load mpv's built-in Lua console.
         mpv.setOptionString("load-console", "no")
-        mpv.setOptionString("demuxer-max-bytes", "${64 * 1024 * 1024}")
-        mpv.setOptionString("demuxer-max-back-bytes", "${64 * 1024 * 1024}")
+        // Demuxer cache tiered by device memory. The flat 64+64MiB this replaces was the
+        // largest native cache in the fleet, granted on the smallest devices; LOW now gets
+        // 48+16MiB and everything else 64+32MiB — mobile's proven forward:back ratio, which
+        // spends the budget on the forward window that actually absorbs network jitter.
+        val demuxerBytes = demuxerBytesFor(localMemoryTier())
+        mpv.setOptionString("demuxer-max-bytes", "${demuxerBytes.maxBytes}")
+        mpv.setOptionString("demuxer-max-back-bytes", "${demuxerBytes.maxBackBytes}")
         mpv.setOptionString("keep-open", "yes")
         mpv.setOptionString("softvol", "yes")
         mpv.setOptionString("volume-max", MPV_MAX_VOLUME_PERCENT.toInt().toString())
@@ -959,6 +1011,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             "audio-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
             // Fires roughly per frame, like time-pos above; the handler is a volatile increment.
             "estimated-vf-fps" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
+            // VO-level counters: change only when a frame is dropped or a vsync runs long, so
+            // they are near-silent during healthy playback.
+            "frame-drop-count" to MPV.mpvFormat.MPV_FORMAT_INT64,
+            "vo-delayed-frame-count" to MPV.mpvFormat.MPV_FORMAT_INT64,
         )
         props.forEach { (name, format) -> mpv.observeProperty(name, format) }
     }
@@ -1118,3 +1174,27 @@ data class MpvVideoSnapshot(
     val bitrate: Int? = null,
     val audioBitrate: Int? = null
 )
+
+/** Device memory tier for the demuxer budget. MID and HIGH share one budget today. */
+internal enum class MpvMemoryTier { LOW, MID, HIGH }
+
+/** Demuxer cache budget: the forward window plus the seek-back window, in bytes. */
+internal data class MpvDemuxerBytes(val maxBytes: Long, val maxBackBytes: Long)
+
+/**
+ * mpv demuxer cache per memory tier. Pure so the numbers are testable.
+ *
+ * LOW keeps the forward:back ratio but at a smaller absolute size; MID/HIGH use mobile's
+ * proven 64+32MiB split. The back buffer is the first thing cut because it only serves
+ * seek-back, which live TV — the dominant mpv workload here — never uses.
+ */
+internal fun demuxerBytesFor(tier: MpvMemoryTier): MpvDemuxerBytes = when (tier) {
+    MpvMemoryTier.LOW -> MpvDemuxerBytes(
+        maxBytes = 48L * 1024L * 1024L,
+        maxBackBytes = 16L * 1024L * 1024L,
+    )
+    MpvMemoryTier.MID, MpvMemoryTier.HIGH -> MpvDemuxerBytes(
+        maxBytes = 64L * 1024L * 1024L,
+        maxBackBytes = 32L * 1024L * 1024L,
+    )
+}
