@@ -16,6 +16,16 @@
     },
     {
       "action": "get_profile",
+      "match": {
+        "auth_second_step": "1"
+      },
+      "body": "{\"js\":{\"id\":\"3\",\"name\":\"NeedsAuth\",\"status\":0,\"auth_access\":true,\"watchdog_timeout\":120}}"
+    },
+    {
+      "action": "get_profile",
+      "match": {
+        "auth_second_step": "0"
+      },
       "body": "{\"js\":{\"id\":\"3\",\"name\":\"NeedsAuth\",\"status\":2,\"auth_access\":true}}"
     },
     {
@@ -32,8 +42,17 @@
       "handshake",
       "get_profile",
       "do_auth",
+      "get_events",
       "get_genres"
-    ]
+    ],
+    "paramSequence": {
+      "action": "get_profile",
+      "param": "auth_second_step",
+      "values": [
+        "0",
+        "1"
+      ]
+    }
   },
   "contentRequiresActions": [
     "do_auth"

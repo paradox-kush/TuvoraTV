@@ -40,12 +40,25 @@ import java.util.Collections
  *   "gap": "...",               // optional: what we don't support, when supported=false
  *   "supported": true,          // whether Tuvora handles this family
  *   "endpoints": ["/portal.php"],        // paths that answer at all; others 404
- *   "responses": [ { "action": "handshake", "body": "..." } ],
- *   "expect": { "requestOrder": ["handshake", "get_profile"], "authSucceeds": true }
+ *   "responses": [ { "action": "handshake", "body": "...", "match": {"param": "value"} } ],
+ *   "expect": {
+ *     "requestOrder": ["handshake", "get_profile"],
+ *     "authSucceeds": true,                       // default true; false = the bootstrap must throw
+ *     "errorType": "StalkerDeviceConflictException",  // exact exception simple name when it throws
+ *     "errorContains": "nother device",           // substring the surfaced message must carry
+ *     "paramSequence": {                          // one param's values across a repeated action,
+ *       "action": "get_profile",                  // in request order (pins auth_second_step: the
+ *       "param": "auth_second_step",              // retry after do_auth is the ONLY one sending 1)
+ *       "values": ["0", "1"]
+ *     }
+ *   }
  * }
  * ```
  * `expect.requestOrder` is the DISTINCT action sequence, first occurrence order — endpoint probing
  * and retries repeat actions, and the point is which calls are made, not how many.
+ *
+ * When `get_events` appears in the expected order, the harness also pins the watchdog wire shape
+ * (the portal's own c/watchdog.js: type=watchdog, cur_play_type, event_active_id, init=1 first).
  */
 class StalkerPortalReplayHarnessTest {
 
@@ -84,11 +97,20 @@ class StalkerPortalReplayHarnessTest {
     @Test
     fun `portal rejecting the MAG250 identity we hardcode`() = runFixture("strict_mag_identity")
 
+    /** status=1 + a device-binding phrase → the actionable device-conflict error, not "empty portal". */
+    @Test
+    fun `portal refusing with a device conflict message`() = runFixture("device_conflict")
+
+    /** A bare {"status":1} with no message is a refusal, never a success. */
+    @Test
+    fun `portal refusing with a bare status one`() = runFixture("status1_bare")
+
     // ---------------------------------------------------------------------------------------
 
     private fun runFixture(name: String) = runBlocking {
         val fixture = loadFixture(name)
         val requested = Collections.synchronizedList(mutableListOf<String>())
+        val requestedUrls = Collections.synchronizedList(mutableListOf<okhttp3.HttpUrl>())
         val satisfied = Collections.synchronizedSet(mutableSetOf<String>())
 
         val bodies = fixture.responses
@@ -101,6 +123,7 @@ class StalkerPortalReplayHarnessTest {
                 }
                 val action = request.url.queryParameter("action").orEmpty()
                 requested.add(action)
+                requestedUrls.add(request.url)
                 // First scripted response whose `match` params all agree with the request wins, so a
                 // fixture can model a portal that accepts one STB identity and rejects another.
                 val scripted = bodies.firstOrNull { candidate ->
@@ -134,17 +157,34 @@ class StalkerPortalReplayHarnessTest {
         val session = StalkerSession(account, OkHttpClient())
 
         // itv/get_genres is the cheapest real content call; it forces a full auth first.
-        val outcome = runCatching {
-            session.request(mapOf("type" to "itv", "action" to "get_genres"))
+        val outcome = try {
+            runCatching { session.request(mapOf("type" to "itv", "action" to "get_genres")) }
+        } finally {
+            session.shutdown()   // stop the watchdog loop so tests never leak a ticking coroutine
         }
 
         val order = requested.distinct().filter { it.isNotEmpty() }
 
-        if (fixture.supported) {
+        if (fixture.supported && fixture.expectAuthSucceeds) {
             assertTrue(
                 "${fixture.name}: expected auth+content to succeed, failed with ${outcome.exceptionOrNull()}",
                 outcome.isSuccess
             )
+            assertEquals("${fixture.name}: request order", fixture.expectRequestOrder, order)
+        } else if (fixture.supported) {
+            // A REFUSAL family: the bootstrap must throw the exact typed error, with the
+            // actionable wording — a refusal surfacing as "empty portal" is the old bug.
+            val error = outcome.exceptionOrNull()
+            assertTrue("${fixture.name}: expected the bootstrap to throw, got success", error != null)
+            fixture.expectErrorType?.let {
+                assertEquals("${fixture.name}: error type", it, error!!.javaClass.simpleName)
+            }
+            fixture.expectErrorContains?.let {
+                assertTrue(
+                    "${fixture.name}: error message must contain \"$it\", was: ${error!!.message}",
+                    error.message.orEmpty().contains(it)
+                )
+            }
             assertEquals("${fixture.name}: request order", fixture.expectRequestOrder, order)
         } else {
             // Documents the gap rather than pretending it passes. If this starts failing, the
@@ -155,6 +195,31 @@ class StalkerPortalReplayHarnessTest {
                 fixture.expectRequestOrder,
                 order
             )
+        }
+
+        // One param's value sequence across a repeated action — pins auth_second_step: the initial
+        // profile sends 0 and ONLY the post-do_auth retry sends 1.
+        fixture.expectParamSequence?.let { pin ->
+            val values = requestedUrls.filter { it.queryParameter("action") == pin.action }
+                .map { it.queryParameter(pin.param).orEmpty() }
+            assertEquals("${fixture.name}: ${pin.action}.${pin.param} sequence", pin.values, values)
+        }
+
+        // Watchdog wire shape whenever the family expects the keep-alive: the portal's own
+        // c/watchdog.js sends type=watchdog with cur_play_type/event_active_id, init=1 first.
+        if ("get_events" in fixture.expectRequestOrder) {
+            val pings = requestedUrls.filter { it.queryParameter("action") == "get_events" }
+            assertTrue("${fixture.name}: expected at least one get_events ping", pings.isNotEmpty())
+            pings.forEachIndexed { i, url ->
+                assertEquals("${fixture.name}: ping type", "watchdog", url.queryParameter("type"))
+                assertEquals("${fixture.name}: ping cur_play_type", "0", url.queryParameter("cur_play_type"))
+                assertEquals("${fixture.name}: ping event_active_id", "0", url.queryParameter("event_active_id"))
+                assertEquals(
+                    "${fixture.name}: init flag (1 only on the activation ping)",
+                    if (i == 0) "1" else "0",
+                    url.queryParameter("init")
+                )
+            }
         }
     }
 
@@ -170,6 +235,12 @@ class StalkerPortalReplayHarnessTest {
         val match: Map<String, String>,
     )
 
+    private data class ParamSequence(
+        val action: String,
+        val param: String,
+        val values: List<String>,
+    )
+
     private data class Fixture(
         val name: String,
         val gap: String?,
@@ -177,6 +248,12 @@ class StalkerPortalReplayHarnessTest {
         val endpoints: List<String>,
         val responses: List<ScriptedResponse>,
         val expectRequestOrder: List<String>,
+        val expectAuthSucceeds: Boolean,
+        /** Exact exception simple name when authSucceeds=false (null = any throw). */
+        val expectErrorType: String?,
+        /** Substring the surfaced error message must carry (actionable wording pin). */
+        val expectErrorContains: String?,
+        val expectParamSequence: ParamSequence?,
         /** Actions that must have succeeded before this portal serves any content. */
         val contentRequiresActions: List<String>,
         val stalkerUsername: String,
@@ -206,6 +283,16 @@ class StalkerPortalReplayHarnessTest {
             endpoints = root.getAsJsonArray("endpoints").map { it.asString },
             responses = responses,
             expectRequestOrder = expect.getAsJsonArray("requestOrder").map { it.asString },
+            expectAuthSucceeds = expect.get("authSucceeds")?.takeIf { !it.isJsonNull }?.asBoolean ?: true,
+            expectErrorType = expect.get("errorType")?.takeIf { !it.isJsonNull }?.asString,
+            expectErrorContains = expect.get("errorContains")?.takeIf { !it.isJsonNull }?.asString,
+            expectParamSequence = expect.getAsJsonObject("paramSequence")?.let { pin ->
+                ParamSequence(
+                    action = pin.get("action").asString,
+                    param = pin.get("param").asString,
+                    values = pin.getAsJsonArray("values").map { it.asString },
+                )
+            },
             contentRequiresActions = root.getAsJsonArray("contentRequiresActions")
                 ?.map { it.asString }.orEmpty(),
             stalkerUsername = device?.get("stalkerUsername")?.asString.orEmpty(),

@@ -41,6 +41,13 @@ class StalkerClient @Inject constructor(
     // re-paging the whole catalog (the request storm that got a live portal to block us).
     private val rowCache = ConcurrentHashMap<String, JsonObject>()
 
+    /** A row's use_http_tmp_link/use_load_balancing verdicts (null = key absent on the row). */
+    private data class LinkFlags(val useHttpTmpLink: Boolean?, val useLoadBalancing: Boolean?)
+
+    // Static-vs-mint evidence per row, keyed like [rowCache] — small enough to keep for the whole
+    // lineup (the raw 13MB rows are NOT retained; get_all_channels items never enter rowCache).
+    private val linkFlags = ConcurrentHashMap<String, LinkFlags>()
+
     // The live lineup per account (one get_all_channels request, filtered client-side) + each
     // channel's create_link `cmd`. Mapped to the domain model so the raw 13MB JSON isn't retained.
     // The live lineup lives in IptvContentDb (P6): one get_all_channels per LINEUP_TTL_MS,
@@ -64,6 +71,7 @@ class StalkerClient @Inject constructor(
         epgUnsupported.remove(accountId)
         seasonCache.keys.removeAll { it.startsWith("$accountId:") }
         rowCache.keys.removeAll { it.startsWith("$accountId:") }
+        linkFlags.keys.removeAll { it.startsWith("$accountId:") }
     }
 
     /** Verify = handshake succeeds (session authenticates) + account_info is reachable. */
@@ -169,6 +177,9 @@ class StalkerClient @Inject constructor(
             if (items.isEmpty()) items = orderedList(acc, "itv", null)
             val rows = items.mapNotNull { item ->
                 val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
+                // The raw 13MB rows are dropped after this mapping, so the static-vs-mint flags
+                // must be picked off here or the whole lineup would lose its evidence.
+                rememberLinkFlags(acc.id, "itv", item, id)
                 com.nuvio.tv.core.iptv.content.ContentChannel(
                     sid = id,
                     name = item.str("name").orEmpty(),
@@ -178,6 +189,10 @@ class StalkerClient @Inject constructor(
                     url = "",
                     cmd = item.str("cmd"),
                     hasArchive = (item.int("tv_archive") ?: 0) > 0,
+                    // Stored as plain booleans (false = flag absent OR panel said false — the
+                    // column cannot tell them apart), so reads treat only TRUE as evidence.
+                    useHttpTmpLink = item.flag("use_http_tmp_link") ?: false,
+                    useLoadBalancing = item.flag("use_load_balancing") ?: false,
                 )
             }
             // Nothing usable fetched: keep whatever lineup is stored (stale beats empty), and do
@@ -445,20 +460,25 @@ class StalkerClient @Inject constructor(
     }
 
     /**
-     * Resolve a playable URL by running create_link FRESH (single-use play_token). [kind] is
-     * "movie" / "live" / "episode:{seriesId}:{n}" (episodes reuse the series cmd with series={n}).
-     * Because we don't retain the browse-time cmd, we re-fetch the item's cmd here, then create_link.
+     * Resolve a playable URL: the row's STATIC cmd when [StalkerPlaybackLinkPolicy] rules
+     * create_link unnecessary, else a FRESH create_link (single-use play_token). [kind] is
+     * "movie" / "live" (episodes reuse the series cmd with series={n} via [resolveEpisodeUrl]).
      * Returns null if the item is no longer in the portal.
+     *
+     * [forceFresh] is the one-shot 401/403/410 refresh ladder's entry: it bypasses the static
+     * verdict so a static play that died still gets exactly one fresh create_link.
      */
-    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int): String? {
+    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String? {
         val session = sessions.sessionFor(acc)
         return when {
             kind == "live" -> {
                 val cmd = liveCmd(acc, streamId) ?: return null
+                staticUrlOrNull(acc, "itv", streamId, cmd, forceFresh)?.let { return it }
                 createLink(session, "itv", cmd)
             }
             kind == "movie" -> {
                 val cmd = vodCmd(acc, streamId) ?: return null
+                staticUrlOrNull(acc, "vod", streamId, cmd, forceFresh)?.let { return it }
                 createLink(session, "vod", cmd)
             }
             else -> null
@@ -466,10 +486,42 @@ class StalkerClient @Inject constructor(
     }
 
     /**
+     * The static play URL when [StalkerPlaybackLinkPolicy] rules create_link unnecessary for this
+     * row, else null (mint as always).
+     *
+     * Evidence arrives two ways: live rows via [rememberLinkFlags] (can prove true OR false),
+     * and stored lineup rows via [noteStoredFlags] (true only — see its note on why the boolean
+     * columns cannot prove false). A row with no evidence mints; cold-start static playback for
+     * known-false rows waits on a tri-state column.
+     */
+    private fun staticUrlOrNull(acc: XtreamAccount, type: String, id: Int, cmd: String, forceMint: Boolean): String? {
+        if (forceMint) return null
+        val flags = linkFlags[rowKey(acc.id, type, id)]
+        val decision = StalkerPlaybackLinkPolicy.decide(
+            useHttpTmpLink = flags?.useHttpTmpLink,
+            useLoadBalancing = flags?.useLoadBalancing,
+            cmd = cmd,
+        )
+        return (decision as? StalkerPlaybackLinkPolicy.Decision.Static)?.url
+    }
+
+    /** Keep a row's flag evidence — only when the row actually carries a flag key. */
+    private fun rememberLinkFlags(accId: String, type: String, item: JsonObject, id: Int) {
+        val tmp = item.flag("use_http_tmp_link")
+        val lb = item.flag("use_load_balancing")
+        if (tmp == null && lb == null) return
+        if (linkFlags.size > MAX_CACHED_ROWS) linkFlags.clear()   // same crude cap as rowCache
+        linkFlags[rowKey(accId, type, id)] = LinkFlags(tmp, lb)
+    }
+
+    /**
      * Episode play. The create_link cmd belongs to the SEASON row (it decodes to
      * `{"type":"series","series_id":536,"season_num":2}`), and the episode rides as `series={n}` — NOT
      * the top-level series row, whose cmd is empty. [season] null = a legacy 2-part episode id from
      * before seasons were modelled; fall back to the first season we find.
+     *
+     * Episodes ALWAYS mint: the `series={n}` parameter is create_link's argument — the season cmd
+     * is a container reference, not a playable address, so the static-cmd policy never applies.
      */
     suspend fun resolveEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
         // Season cmd resolution, cheapest first: this session's cache -> the write-through rows
@@ -586,7 +638,24 @@ class StalkerClient @Inject constructor(
         // The mirrored lineup carries every channel's cmd — playing a channel costs nothing but
         // the create_link itself, even on a cold start with the portal briefly unreachable.
         ensureLineup(acc)
-        return contentDb.channelRow(acc.id, streamId)?.cmd ?: row(acc, "itv", streamId)?.str("cmd")
+        val stored = contentDb.channelRow(acc.id, streamId)
+        if (stored != null) noteStoredFlags(acc.id, "itv", streamId, stored.useHttpTmpLink, stored.useLoadBalancing)
+        return stored?.cmd ?: row(acc, "itv", streamId)?.str("cmd")
+    }
+
+    /**
+     * Cold-start evidence off a stored lineup row. The columns are plain booleans, so only TRUE
+     * is evidence ("this panel flagged the row" — mint, protecting masked rows before any live
+     * catalog fetch); false/false stays "no evidence" and mints anyway, because the store cannot
+     * distinguish a panel that said false from a row written before the flags existed. Live
+     * in-session evidence (rememberLinkFlags) is never overwritten — it can also prove false.
+     */
+    private fun noteStoredFlags(accId: String, type: String, id: Int, tmpLink: Boolean, loadBalancing: Boolean) {
+        if (!tmpLink && !loadBalancing) return
+        val key = rowKey(accId, type, id)
+        if (linkFlags.containsKey(key)) return
+        if (linkFlags.size > MAX_CACHED_ROWS) linkFlags.clear()
+        linkFlags[key] = LinkFlags(tmpLink, loadBalancing)
     }
 
     private suspend fun vodCmd(acc: XtreamAccount, streamId: Int): String? =
@@ -619,7 +688,12 @@ class StalkerClient @Inject constructor(
     private fun cacheRows(accId: String, type: String, rows: List<JsonObject>) {
         // ponytail: crude cap, not an LRU — swap one in only if this shows up in a memory profile.
         if (rowCache.size > MAX_CACHED_ROWS) rowCache.clear()
-        rows.forEach { r -> r.int("id")?.let { rowCache[rowKey(accId, type, it)] = r } }
+        rows.forEach { r ->
+            r.int("id")?.let {
+                rowCache[rowKey(accId, type, it)] = r
+                rememberLinkFlags(accId, type, r, it)
+            }
+        }
     }
 
     // --- request helpers ------------------------------------------------------
@@ -699,6 +773,19 @@ class StalkerClient @Inject constructor(
         get(key)?.takeIf { !it.isJsonNull }?.let { el ->
             runCatching { el.asLong }.getOrNull() ?: runCatching { el.asString.trim().toLong() }.getOrNull()
         }
+
+    /** Portal flags arrive as booleans, numbers or quoted strings — like the tv_archive parse.
+     *  Null = the key is absent (or unreadable), which callers treat as "no evidence". */
+    private fun JsonObject.flag(key: String): Boolean? {
+        val el = get(key)?.takeIf { !it.isJsonNull } ?: return null
+        val s = runCatching { el.asString }.getOrNull()?.trim()?.lowercase() ?: return null
+        return when {
+            s.isEmpty() -> null
+            s == "true" -> true
+            s == "false" -> false
+            else -> s.toIntOrNull()?.let { it != 0 }
+        }
+    }
 
     companion object {
         private const val TAG = "StalkerClient"

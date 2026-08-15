@@ -106,6 +106,20 @@ object StalkerProtocol {
         return trimmed.split(WHITESPACE).lastOrNull { isHttpUrl(it) }
     }
 
+    /**
+     * Strip a leading launcher token off a cmd, keeping the target REGARDLESS of scheme — the
+     * scheme-agnostic sibling of [extractStreamUrl] (which surfaces http(s) only by taking the
+     * last URL-shaped token). Both live here so launcher knowledge has exactly one home.
+     *
+     * Kodi pvr.stalker documents the cmd format as `(?:ffrt\d*\s|)(.*)` (ChannelManager, citing
+     * the portal's own /c/player.js); the portals this client has met also emit `ffmpeg ` and
+     * `auto ` (see [extractStreamUrl]'s examples), so the token class is (ffmpeg|auto|ffrt\d*).
+     * Unknown leading tokens are LEFT IN PLACE — callers' guards then fail toward create_link,
+     * never toward playing junk.
+     */
+    fun stripLauncherPrefix(cmd: String): String =
+        cmd.trim().replaceFirst(LAUNCHER_PREFIX, "").trim()
+
     private fun isHttpUrl(s: String): Boolean =
         s.startsWith("http://", ignoreCase = true) || s.startsWith("https://", ignoreCase = true)
 
@@ -125,5 +139,6 @@ object StalkerProtocol {
     }
 
     private val WHITESPACE = Regex("\\s+")
+    private val LAUNCHER_PREFIX = Regex("""^(?:ffmpeg|auto|ffrt\d*)\s+""", RegexOption.IGNORE_CASE)
     private const val HEX_CHARS = "0123456789abcdef"
 }

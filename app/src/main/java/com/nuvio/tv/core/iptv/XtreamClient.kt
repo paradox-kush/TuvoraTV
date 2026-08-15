@@ -213,7 +213,12 @@ data class XtreamProgram(
     val description: String,
     val startMs: Long,
     val endMs: Long,
-    val nowPlaying: Boolean
+    val nowPlaying: Boolean,
+    /**
+     * Per-programme `has_archive`: true/false = the panel spoke, null = it said nothing (every
+     * get_short_epg row). Feeds [XtreamCatchUp.actionFor]'s positive override.
+     */
+    val hasArchive: Boolean? = null
 )
 
 /** Verify signals from get_vod_info during TMDB->stream matching. */
@@ -481,8 +486,9 @@ class XtreamClient @Inject constructor(
     fun buildStreamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String = "mp4"): String =
         streamUrl(acc, kind, id, if (kind == "live") "ts" else ext)
 
-    /** [IptvClient] stream-URL resolution — Xtream derives it by formula (always succeeds). */
-    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int): String =
+    /** [IptvClient] stream-URL resolution — Xtream derives it by formula (always succeeds;
+     *  [forceFresh] is meaningless for a stable formula URL). */
+    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String =
         buildStreamUrl(acc, kind, streamId)
 
     /**
@@ -492,7 +498,9 @@ class XtreamClient @Inject constructor(
      * shifting is the upgrade path if providers surface that in practice.
      */
     fun liveTimeshiftUrl(acc: XtreamAccount, streamId: Int, startEpochMs: Long, durationMinutes: Int): String =
-        liveTimeshiftUrls(acc, streamId, startEpochMs, durationMinutes).first()
+        // Empty only for blank credentials, which candidateUrls refuses to build garbage for —
+        // callers are Xtream-gated so it doesn't happen, but a crash would be the worst answer.
+        liveTimeshiftUrls(acc, streamId, startEpochMs, durationMinutes).firstOrNull().orEmpty()
 
     /**
      * Every catch-up URL worth trying for this channel, best-known first — panels disagree about
@@ -547,7 +555,10 @@ internal fun XtreamEpgEntryDto.toProgram(): XtreamProgram = XtreamProgram(
     description = decodeXtreamBase64(description),
     startMs = (startTimestamp?.toLongOrNull() ?: 0L) * 1000,
     endMs = (stopTimestamp?.toLongOrNull() ?: 0L) * 1000,
-    nowPlaying = nowPlaying == 1
+    nowPlaying = nowPlaying == 1,
+    // FlexInt already coerced "1"/true; any positive count is a mark, junk decoded to null stays
+    // null — silence, not "no".
+    hasArchive = hasArchive?.let { it > 0 }
 )
 
 /** Xtream base64-encodes EPG title/description. Returns "" on null/garbage rather than throwing. */

@@ -400,7 +400,9 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
         showRecoveryOverlay()
         val freshUrl = runCatching {
             if (refreshId != null) {
-                streamRepository.refreshIptvStreamUrl(refreshId)
+                // forceFresh: with static-cmd playback the plain resolve would rebuild the very
+                // URL that just 401'd — the one-shot recovery must mint a genuinely new link.
+                streamRepository.refreshIptvStreamUrl(refreshId, forceFresh = true)
             } else {
                 streamRepository.refreshMatchedIptvStreamUrl(
                     type = matchedType,

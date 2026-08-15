@@ -12,9 +12,11 @@ import javax.inject.Singleton
  * Owns one [StalkerSession] per Stalker playlist, keyed by account id + a config fingerprint so an
  * edited portal/MAC gets a fresh session.
  *
- * No keep-alive/watchdog: a portal expires an idle session after `watchdog_timeout` (~100–120s), but
- * the session re-handshakes on demand (single-flight — see [StalkerSession.reauthenticate]) the next
- * time it's used, which is exactly how a real STB behaves after it sleeps.
+ * Each session runs its own `get_events` keep-alive once authenticated (see
+ * [StalkerWatchdogPolicy]) — the ping is log-only and never re-handshakes on its own, so on-demand
+ * single-flight re-auth (see [StalkerSession.reauthenticate]) is still what recovers a stale
+ * token, exactly like a real STB after it sleeps. Replacing or evicting a session shuts its
+ * watchdog down.
  */
 @Singleton
 class StalkerSessionManager @Inject constructor(
@@ -30,6 +32,8 @@ class StalkerSessionManager @Inject constructor(
         val fp = fingerprint(account)
         val existing = sessions[account.id]
         if (existing != null && existing.fingerprint == fp) return existing.session
+        // Config changed: the replaced session's watchdog must not keep pinging the old identity.
+        existing?.session?.shutdown()
         // Portal calls ride the playlist's own resolver, exactly like the Xtream/M3U/XMLTV clients.
         // Without this the one setting that can route around a broken/filtered system resolver had
         // no effect on the handshake — the very request that fails when a DNS block is the problem.
@@ -39,9 +43,12 @@ class StalkerSessionManager @Inject constructor(
     }
 
     /** Drop a session (playlist removed/edited) so the next access re-handshakes. */
-    fun evict(accountId: String) { sessions.remove(accountId) }
+    fun evict(accountId: String) { sessions.remove(accountId)?.session?.shutdown() }
 
-    fun clear() { sessions.clear() }
+    fun clear() {
+        sessions.values.forEach { it.session.shutdown() }
+        sessions.clear()
+    }
 
     /** Any change to these invalidates the session (new handshake/device identity needed).
      *  dnsProvider is in here because the session holds a resolver-bound client: without it an

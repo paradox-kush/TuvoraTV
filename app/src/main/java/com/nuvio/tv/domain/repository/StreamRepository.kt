@@ -41,9 +41,13 @@ interface StreamRepository {
      * of surfacing the fatal error screen.
      *
      * @param videoId an [com.nuvio.tv.core.iptv.XtreamItemRegistry] id ("xtream:acc:kind:streamId")
+     * @param forceFresh true on the 401/403/410 recovery path: bypass Stalker's static-cmd
+     *   verdict and mint a genuinely new create_link — a static URL that just died would
+     *   otherwise be rebuilt byte-identical and replay the failure. Initial plays/zaps leave it
+     *   false so unflagged rows keep their zero-request static playback.
      * @return a fresh URL, or null when the id isn't an xtream id / account is gone / resolve failed
      */
-    suspend fun refreshIptvStreamUrl(videoId: String): String?
+    suspend fun refreshIptvStreamUrl(videoId: String, forceFresh: Boolean = false): String?
 
     /**
      * Same recovery for a TMDB-MATCHED iptv stream — [videoId] is a tmdb/imdb id here, so

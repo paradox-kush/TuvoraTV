@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.iptv
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.IptvPanelGuard
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamKind
@@ -193,6 +194,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val acc = account ?: return
         val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
         if (!force && categoryId == _uiState.value.selectedCategoryId && _uiState.value.channels.isNotEmpty()) return
+        // force=true is only ever user-driven (the error row's Retry, a category-selection edit):
+        // clear the panel breaker FIRST (WP6) so the refresh is never met with a fast-fail. The
+        // automatic single retryOnce below deliberately does NOT reset.
+        if (force) IptvPanelGuard.resetForAccount(acc)
         channelsJob?.cancel()
         // Cache hit for a network-backed category: swap channels in directly, skipping the empty-list
         // + loadingChannels spinner flash on revisit. (FAVORITES/RECENT stay dynamic — not cached here.)
@@ -343,7 +348,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
         previewLinkRefreshBurntForChannelId = channel.contentId
         viewModelScope.launch {
             val acc = account ?: return@launch
-            val fresh = clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId)
+            // forceFresh: a static-cmd verdict would rebuild the very URL that just answered
+            // 401/403/410 — this recovery exists to mint a genuinely new link.
+            val fresh = clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId, forceFresh = true)
             if (fresh.isNullOrBlank()) {
                 _uiState.update { it.copy(error = "Couldn't open \"${channel.name}\"") }
                 return@launch

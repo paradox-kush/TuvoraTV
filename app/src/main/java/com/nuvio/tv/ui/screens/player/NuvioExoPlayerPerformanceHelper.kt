@@ -262,6 +262,12 @@ object NuvioExoPlayerPerformanceHelper {
             DefaultLoadControl.Builder()
                 .setAllocator(DefaultAllocator(true, DEFAULT_NUVIO_ALLOCATOR_SEGMENT_SIZE, 64, enabled))
                 .setTargetBufferBytes(targetBufferBytes)
+                // Pinned to media3 1.8.0's default: the byte target above only bounds memory
+                // while this stays false — shouldContinueLoading keeps loading below
+                // minBufferMs whenever `prioritizeTimeOverSizeThresholds ||
+                // !targetBufferSizeReached`. (BitrateAwareLoadControl deliberately sets true;
+                // it pairs the flag with a much larger budget for high-bitrate VOD.)
+                .setPrioritizeTimeOverSizeThresholds(false)
                 .setBufferDurationsMs(
                     minBufferMs,
                     maxBufferMs,
@@ -285,6 +291,9 @@ object NuvioExoPlayerPerformanceHelper {
                 .toInt()
             DefaultLoadControl.Builder()
                 .setTargetBufferBytes(if (lowRam) 40 * 1024 * 1024 else standardBudget)
+                // Pinned to media3 1.8.0's default; see the enabled branch above — the heap/4
+                // budget is only a real ceiling while this stays false.
+                .setPrioritizeTimeOverSizeThresholds(false)
                 .setBufferDurationsMs(
                     DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
                     if (lowRam) 45_000 else 70_000,

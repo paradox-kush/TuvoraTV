@@ -3,6 +3,12 @@ package com.nuvio.tv.core.di
 import android.content.Context
 import android.util.Log
 import com.nuvio.tv.BuildConfig
+import com.nuvio.tv.core.iptv.IptvPanelGuard
+import com.nuvio.tv.core.iptv.PanelAdmission
+import com.nuvio.tv.core.iptv.PanelHostFastFailIOException
+import com.nuvio.tv.core.iptv.PanelHostGuard
+import com.nuvio.tv.core.iptv.PanelRequestOutcome
+import com.nuvio.tv.core.iptv.classifyPanelThrowable
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.data.remote.api.AniSkipApi
 import com.nuvio.tv.data.remote.api.AnimeSkipApi
@@ -160,6 +166,11 @@ object NetworkModule {
             // Panel flake fallback: on network failure or 4xx/5xx for a catalog request,
             // serve the last cached copy (up to 7 days stale) instead of failing the screen.
             .addInterceptor(XtreamCatalogFallbackInterceptor())
+            // Per-origin breaker for panel API requests (WP6). Deliberately BELOW the fallback:
+            // it observes the true transport outcome (a stale-cache save must not read as "the
+            // host answered"), and its fast-fail is an IOException the fallback catches — so an
+            // open breaker serves the stale catalog copy instantly instead of after a timeout.
+            .addInterceptor(PanelHostGuardInterceptor())
             .addInterceptor(HttpLoggingInterceptor().apply {
                 level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC
                         else HttpLoggingInterceptor.Level.NONE
@@ -698,6 +709,51 @@ object NetworkModule {
  * returned an error). So the error body is buffered and closed before the
  * cache lookup, and re-attached if the cache misses.
  */
+/**
+ * WP6 — admits every Xtream panel API request through the per-origin [PanelHostGuard] breaker and
+ * reports its true transport outcome. This is the ONE choke point for the whole Xtream lane: every
+ * XtreamClient call (Retrofit or streamed raw catalog) is a `player_api.php` request through the
+ * shared OkHttp client, and nothing else on that client touches a panel.
+ *
+ * Scope is exactly the panel API layer: the path filter keeps addon/TMDB/other traffic on this
+ * shared client out, and stream playback / M3U / XMLTV never ride this client at all.
+ *
+ * Placement contract (see the install site): BELOW [XtreamCatalogFallbackInterceptor], so
+ *  - the guard sees the network's own outcome, not the fallback's stale-cache save;
+ *  - a fast-fail ([PanelHostFastFailIOException] — an IOException on purpose, interceptors may
+ *    throw nothing else) is caught by the fallback and answered from the stale cache instantly;
+ *  - the fallback's `onlyIfCached` stale lookup passes through unguarded — it can never touch the
+ *    host, so there is nothing to admit and nothing to learn;
+ *  - a response OkHttp served purely from its fresh cache (no network) reports as inconclusive
+ *    ([PanelRequestOutcome.CONNECTION_RESET]): the disk answered, which proves nothing about the
+ *    host and must neither clear nor count.
+ */
+internal class PanelHostGuardInterceptor(
+    private val guard: PanelHostGuard = IptvPanelGuard.guard,
+) : okhttp3.Interceptor {
+    override fun intercept(chain: okhttp3.Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!request.url.encodedPath.endsWith("/player_api.php")) return chain.proceed(request)
+        if (request.cacheControl.onlyIfCached) return chain.proceed(request)
+        val admission = when (val decision = guard.admit(request.url.toString())) {
+            is PanelAdmission.FastFail -> throw PanelHostFastFailIOException(decision.toException())
+            is PanelAdmission.Allowed -> decision
+        }
+        val response = try {
+            chain.proceed(request)
+        } catch (t: Throwable) {
+            guard.report(admission, classifyPanelThrowable(t))
+            throw t
+        }
+        guard.report(
+            admission,
+            if (response.networkResponse != null) PanelRequestOutcome.HTTP_RESPONSE
+            else PanelRequestOutcome.CONNECTION_RESET,
+        )
+        return response
+    }
+}
+
 internal class XtreamCatalogFallbackInterceptor : okhttp3.Interceptor {
     override fun intercept(chain: okhttp3.Interceptor.Chain): Response {
         val request = chain.request()

@@ -32,6 +32,7 @@
       "handshake",
       "get_profile",
       "get_modules",
+      "get_events",
       "get_genres"
     ]
   },

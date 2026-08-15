@@ -186,4 +186,116 @@ class IptvContentDbTest {
         assertNull(db.epgBuiltAt(pid))
         assertEquals(listOf("P"), db.epgNowNext(pid, "bbc.uk", nowMs = 1L).map { it.title })
     }
+
+    // --- WP1: windowed reads, per-channel refill, prune, has_archive, channel flags ---
+
+    @Test
+    fun `epg window truncates descriptions and the full-desc getter returns the whole text`() = runTest {
+        val longDesc = "x".repeat(2_000)
+        db.refillChannelEpg(pid, "bbc.uk", listOf(EpgProgramme("bbc.uk", 1_000L, 2_000L, "Show", longDesc)), fetchedAtMs = 50L)
+
+        val window = db.epgWindow(pid, "bbc.uk", fromMs = 0L, toMs = 10_000L)
+        assertEquals(1, window.size)
+        // The projection truncates in SQLite — the heap never sees more than 600 chars.
+        assertEquals(600, window[0].desc?.length)
+        // The single-programme getter still has the whole text.
+        assertEquals(2_000, db.epgFullDesc(pid, "bbc.uk", 1_000L)?.length)
+    }
+
+    @Test
+    fun `epg window returns only programmes overlapping the range in start order`() = runTest {
+        db.refillChannelEpg(
+            pid, "cnn.us",
+            listOf(
+                EpgProgramme("cnn.us", 1_000L, 2_000L, "Before", null),
+                EpgProgramme("cnn.us", 2_000L, 3_000L, "SpansFrom", null),
+                EpgProgramme("cnn.us", 3_000L, 4_000L, "Inside", null),
+                EpgProgramme("cnn.us", 4_000L, 5_000L, "SpansTo", null),
+                EpgProgramme("cnn.us", 5_000L, 6_000L, "After", null),
+            ),
+            fetchedAtMs = 50L,
+        )
+        val titles = db.epgWindow(pid, "cnn.us", fromMs = 2_500L, toMs = 4_500L).map { it.title }
+        assertEquals(listOf("SpansFrom", "Inside", "SpansTo"), titles)
+    }
+
+    @Test
+    fun `channel refill replaces only that channel and stamps its fetch time`() = runTest {
+        db.replaceEpg(pid, builtAtMs = 0L) { w ->
+            w.add(EpgProgramme("bbc.uk", 1_000L, 2_000L, "Old A", null))
+            w.add(EpgProgramme("cnn.us", 1_000L, 2_000L, "Other channel", null))
+        }
+
+        db.refillChannelEpg(pid, "bbc.uk", listOf(EpgProgramme("bbc.uk", 2_000L, 3_000L, "New A", null)), fetchedAtMs = 777L)
+
+        // The refilled channel shows ONLY the new batch; the sibling is untouched.
+        assertEquals(listOf("New A"), db.epgWindow(pid, "bbc.uk", 0L, 10_000L).map { it.title })
+        assertEquals(listOf("Other channel"), db.epgWindow(pid, "cnn.us", 0L, 10_000L).map { it.title })
+        // The lazy-fetch gate: stamped for the refilled channel, absent for the other.
+        assertEquals(777L, db.epgChannelFetchedAt(pid, "bbc.uk"))
+        assertNull(db.epgChannelFetchedAt(pid, "cnn.us"))
+    }
+
+    @Test
+    fun `an empty refill clears the channel and still stamps the gate`() = runTest {
+        db.refillChannelEpg(pid, "bbc.uk", listOf(EpgProgramme("bbc.uk", 1_000L, 2_000L, "Stale", null)), fetchedAtMs = 1L)
+        db.refillChannelEpg(pid, "bbc.uk", emptyList(), fetchedAtMs = 900L)
+        assertTrue(db.epgWindow(pid, "bbc.uk", 0L, 10_000L).isEmpty())
+        // A provider with no guide for the channel is remembered — the gate stops re-asking.
+        assertEquals(900L, db.epgChannelFetchedAt(pid, "bbc.uk"))
+    }
+
+    @Test
+    fun `a wholesale epg replace supersedes the per-channel fetch stamps`() = runTest {
+        db.refillChannelEpg(pid, "bbc.uk", emptyList(), fetchedAtMs = 5L)
+        assertEquals(5L, db.epgChannelFetchedAt(pid, "bbc.uk"))
+        db.replaceEpg(pid, builtAtMs = 10L) { w -> w.add(EpgProgramme("bbc.uk", 1L, 2L, "P", null)) }
+        assertNull(db.epgChannelFetchedAt(pid, "bbc.uk"))
+    }
+
+    @Test
+    fun `prune drops programmes that ended before the cutoff`() = runTest {
+        db.refillChannelEpg(
+            pid, "bbc.uk",
+            listOf(
+                EpgProgramme("bbc.uk", 0L, 1_000L, "Long gone", null),
+                EpgProgramme("bbc.uk", 1_000L, 2_000L, "Just ended", null),
+                EpgProgramme("bbc.uk", 2_000L, 3_000L, "Still relevant", null),
+            ),
+            fetchedAtMs = 1L,
+        )
+        db.pruneEpg(pid, cutoffMs = 2_500L)
+        assertEquals(listOf("Still relevant"), db.epgWindow(pid, "bbc.uk", 0L, 10_000L).map { it.title })
+    }
+
+    @Test
+    fun `has archive round-trips through the writer and every epg read`() = runTest {
+        db.replaceEpg(pid, builtAtMs = 0L) { w ->
+            w.add(EpgProgramme("bbc.uk", 1_000L, 2_000L, "Replayable", null, hasArchive = true))
+            w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Live only", null))
+        }
+        assertEquals(listOf(true, false), db.epgWindow(pid, "bbc.uk", 0L, 10_000L).map { it.hasArchive })
+        assertEquals(listOf(true, false), db.epgNowNext(pid, "bbc.uk", nowMs = 1_500L).map { it.hasArchive })
+    }
+
+    @Test
+    fun `xtream channel flags round-trip through ingest and lineup paths`() = runTest {
+        db.ingest(pid) { w ->
+            w.addChannel(ContentChannel(1, "Flagged", null, null, "g", "http://h/1.ts", useHttpTmpLink = true, useLoadBalancing = true))
+            w.addChannel(ContentChannel(2, "Plain", null, null, "g", "http://h/2.ts"))
+        }
+        val bySid = db.channelRow(pid, 1)
+        assertEquals(true, bySid?.useHttpTmpLink)
+        assertEquals(true, bySid?.useLoadBalancing)
+        assertEquals(false, db.channelRow(pid, 2)?.useHttpTmpLink)
+
+        val paged = db.pageChannels(pid, categoryId = null, offset = 0, limit = 10).associateBy { it.sid }
+        assertEquals(true, paged[1]?.useHttpTmpLink)
+        assertEquals(false, paged[2]?.useLoadBalancing)
+
+        // The Stalker lineup path persists them too.
+        val other = "m3u:http://flags/lineup"
+        db.replaceLiveLineup(other, listOf(ContentChannel(9, "LB", null, null, "g", "http://h/9.ts", useLoadBalancing = true)), categories = listOf("g" to "Group"))
+        assertEquals(true, db.channelsFor(other, null).single().useLoadBalancing)
+    }
 }
