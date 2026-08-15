@@ -34,7 +34,19 @@ internal data class PlayerNavigationArgs(
     val contentLanguage: String?,
     val rememberedAudioLanguage: String?,
     val rememberedAudioName: String?,
-    val launchStartedAtMs: Long?
+    val launchStartedAtMs: Long?,
+    /**
+     * This playback is a catch-up recording, not a live feed.
+     *
+     * Carried BESIDE [contentType] rather than as a new type: the replay id keeps the channel's
+     * `:live:` segment, so `isLiveContentId()` still answers true and every live code path keeps
+     * working — this flag turns off only the three behaviours a recording must not have (channel
+     * zapping, live-edge resume after backgrounding, and the freeze watchdog).
+     */
+    val isCatchUp: Boolean,
+    /** The replayed programme's bounds, for the seek ceiling. Null unless [isCatchUp]. */
+    val catchUpStartMs: Long?,
+    val catchUpEndMs: Long?
 ) {
     val torrentTrackers: List<String>
         get() {
@@ -92,7 +104,10 @@ internal data class PlayerNavigationArgs(
                 contentLanguage = decodedOrNull("contentLanguage"),
                 rememberedAudioLanguage = decodedOrNull("rememberedAudioLanguage"),
                 rememberedAudioName = decodedOrNull("rememberedAudioName"),
-                launchStartedAtMs = savedStateHandle.get<String>("launchStartedAtMs")?.toLongOrNull()
+                launchStartedAtMs = savedStateHandle.get<String>("launchStartedAtMs")?.toLongOrNull(),
+                isCatchUp = savedStateHandle.get<String>("isCatchUp")?.toBooleanStrictOrNull() == true,
+                catchUpStartMs = savedStateHandle.get<String>("catchUpStartMs")?.toLongOrNull(),
+                catchUpEndMs = savedStateHandle.get<String>("catchUpEndMs")?.toLongOrNull()
             )
         }
     }

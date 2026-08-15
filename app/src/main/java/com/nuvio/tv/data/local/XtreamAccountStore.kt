@@ -110,7 +110,9 @@ internal fun decodeXtreamAccountsJson(gson: Gson, json: String?): List<XtreamAcc
             val obj = raw[i].asJsonObject
             acc.withDecodeDefaults(
                 hadAutoRefresh = obj.has("autoRefreshHours"),
-                hadSendDeviceId = obj.has("sendDeviceId")
+                hadSendDeviceId = obj.has("sendDeviceId"),
+                hadPreferM3u8CatchUp = obj.has("preferM3u8CatchUp"),
+                hadCatchUpCorrection = obj.has("catchUpCorrectionMinutes")
             )
         }
     } catch (e: Exception) {
@@ -126,7 +128,12 @@ internal fun decodeXtreamAccountsJson(gson: Gson, json: String?): List<XtreamAcc
  * field values and would throw.)
  */
 @Suppress("USELESS_ELVIS")
-private fun XtreamAccount.withDecodeDefaults(hadAutoRefresh: Boolean, hadSendDeviceId: Boolean): XtreamAccount = XtreamAccount(
+private fun XtreamAccount.withDecodeDefaults(
+    hadAutoRefresh: Boolean,
+    hadSendDeviceId: Boolean,
+    hadPreferM3u8CatchUp: Boolean,
+    hadCatchUpCorrection: Boolean
+): XtreamAccount = XtreamAccount(
     id = id,
     name = name ?: "",
     baseUrl = baseUrl,
@@ -152,5 +159,10 @@ private fun XtreamAccount.withDecodeDefaults(hadAutoRefresh: Boolean, hadSendDev
     deviceId = deviceId ?: "",
     // sendDeviceId is a primitive boolean: Gson can't tell missing from an explicit false. Present ->
     // keep the stored value (incl. a deliberate false); missing (pre-P4 JSON) -> the `true` default.
-    sendDeviceId = if (hadSendDeviceId) sendDeviceId else true
+    sendDeviceId = if (hadSendDeviceId) sendDeviceId else true,
+    // Catch-up preferences: same primitive problem as sendDeviceId/autoRefreshHours — missing
+    // (any JSON written before catch-up shipped) must read as the default, not as false/0, and an
+    // explicitly stored false/0 must survive.
+    preferM3u8CatchUp = if (hadPreferM3u8CatchUp) preferM3u8CatchUp else false,
+    catchUpCorrectionMinutes = if (hadCatchUpCorrection) catchUpCorrectionMinutes else 0
 )

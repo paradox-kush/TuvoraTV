@@ -67,6 +67,16 @@ data class PlayerUiState(
     val contentName: String? = null, // Series/show name (for series content)
     val releaseYear: String? = null, // Release year for movies
     val contentType: String? = null,
+    /**
+     * This playback is a catch-up recording rather than a live feed. Mirrored out of
+     * [com.nuvio.tv.ui.screens.player.PlayerRuntimeController] because PlayerScreen's key handling
+     * reads uiState, not the controller — see [CatchUpPlaybackPolicy] for what it gates and why it
+     * is a flag beside the content type instead of a content type of its own.
+     */
+    val isCatchUpPlayback: Boolean = false,
+    /** The replayed programme's bounds, for the clamped seek ceiling. Null unless catch-up. */
+    val catchUpProgrammeStartMs: Long? = null,
+    val catchUpProgrammeEndMs: Long? = null,
     val currentStreamName: String? = null, // Name of the current stream source
     val currentStreamUrl: String? = null,
     val currentStreamInfoHash: String? = null, // InfoHash of the currently playing stream (for debrid matching)

@@ -363,7 +363,12 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
     if (hasAttemptedIptvLinkRefresh) return false
     hasAttemptedIptvLinkRefresh = true
 
-    val isLive = refreshId != null && com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(refreshId)
+    // A catch-up replay is deliberately NOT "live" here: its id contains `:live:`, but restarting
+    // a recording from zero after a token refresh throws the viewer back to the top of a programme
+    // they were half way through.
+    val isLive = refreshId != null &&
+        com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(refreshId) &&
+        !isCatchUpPlayback
     val paused = userPausedManually
     // Engine-aware: mpv VOD keeps its position too, live always rejoins the live edge.
     val savedPosition = if (isLive) 0L else (currentPlaybackPositionMs()?.takeIf { it > 0L } ?: 0L)

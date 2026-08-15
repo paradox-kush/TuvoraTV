@@ -89,6 +89,7 @@ fun XtreamSettingsContent(
     val indexingAccounts by viewModel.indexingAccounts.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
+    var correctionFor by remember { mutableStateOf<String?>(null) }
     var editFor by remember { mutableStateOf<XtreamAccount?>(null) }
     // Content & Categories: track ids (not snapshots) so the dialogs always render the
     // freshest account from the store after each toggle.
@@ -196,6 +197,28 @@ fun XtreamSettingsContent(
         )
     }
 
+    // Manual catch-up time correction: iptvsimple's -12h..+14h range, in half hours.
+    correctionFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) {
+            correctionFor = null
+        } else {
+            SettingsSingleChoiceDialog(
+                title = "Catch-up time correction",
+                subtitle = "Only needed when replays start at the wrong point",
+                options = CATCHUP_CORRECTION_OPTIONS.map {
+                    SettingsPickerOption(value = it, title = catchUpCorrectionLabel(it))
+                },
+                selectedValue = account.catchUpCorrectionMinutes,
+                onOptionSelected = {
+                    viewModel.setCatchUpCorrectionMinutes(id, it)
+                    correctionFor = null
+                },
+                onDismiss = { correctionFor = null }
+            )
+        }
+    }
+
     actionsFor?.let { account ->
         val needsReimport = viewModel.needsReimport(account)
         NuvioDialog(
@@ -242,6 +265,25 @@ fun XtreamSettingsContent(
                 )
             }
             if (account.isXtream()) {
+                // Catch-up is Xtream-only: a Stalker portal builds its archive URLs server-side and
+                // an M3U playlist has no panel to ask, so neither has a container to choose.
+                SettingsActionRow(
+                    title = "Catch-up container",
+                    subtitle = "m3u8 enables the scrub bar; TS is more widely served",
+                    value = if (account.preferM3u8CatchUp) "Prefer m3u8" else "Prefer TS",
+                    onClick = {
+                        viewModel.setPreferM3u8CatchUp(account.id, !account.preferM3u8CatchUp)
+                    }
+                )
+                SettingsActionRow(
+                    title = "Catch-up time correction",
+                    subtitle = "Shift replay start times when the provider's clock is off",
+                    value = catchUpCorrectionLabel(account.catchUpCorrectionMinutes),
+                    onClick = {
+                        correctionFor = account.id
+                        actionsFor = null
+                    }
+                )
                 // Stale "not on this provider" verdicts hide titles the panel added AFTER the
                 // verdict (they sync across devices and live up to 7 days). Catalog syncs that
                 // ADD items reset them automatically; this is the do-it-now button.
@@ -1139,4 +1181,20 @@ private fun XtreamAddButton(
             color = NuvioTheme.colors.TextPrimary.copy(alpha = contentAlpha)
         )
     }
+}
+
+/**
+ * Catch-up time-correction choices: iptvsimple's -12h..+14h range in half hours, which is what
+ * every real-world provider offset needs (whole and half-hour zones both exist).
+ */
+private val CATCHUP_CORRECTION_OPTIONS: List<Int> =
+    generateSequence(XtreamAccount.CATCHUP_CORRECTION_MIN_MINUTES) { it + 30 }
+        .takeWhile { it <= XtreamAccount.CATCHUP_CORRECTION_MAX_MINUTES }
+        .toList()
+
+private fun catchUpCorrectionLabel(minutes: Int): String {
+    if (minutes == 0) return "None (UTC)"
+    val sign = if (minutes < 0) "-" else "+"
+    val abs = kotlin.math.abs(minutes)
+    return if (abs % 60 == 0) "$sign${abs / 60}h" else "$sign${abs / 60}h ${abs % 60}m"
 }

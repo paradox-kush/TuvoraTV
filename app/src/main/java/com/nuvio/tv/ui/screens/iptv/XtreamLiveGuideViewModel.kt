@@ -47,7 +47,11 @@ data class GuideChannel(
     val logo: String?,
     val streamUrl: String,
     val streamId: Int,
-    val categoryId: String? = null
+    val categoryId: String? = null,
+    /** The panel's channel-level `tv_archive` flag — the ⟲ beside the channel name. */
+    val hasArchive: Boolean = false,
+    /** `tv_archive_duration` in days; 0 = the panel did not say (see XtreamCatchUp.isWithinWindow). */
+    val catchUpDays: Int = 0
 )
 
 /** Programs for a channel: now/next plus the raw list feeding the guide's timeline cells. */
@@ -55,6 +59,15 @@ data class GuideEpg(
     val now: XtreamProgram?,
     val next: XtreamProgram?,
     val programmes: List<XtreamProgram> = emptyList()
+)
+
+/** Everything the player needs for one replay — see CatchUpPlaybackCoordinator. */
+data class ReplayLaunch(
+    val url: String,
+    val contentId: String,
+    val title: String,
+    val programmeStartMs: Long,
+    val programmeEndMs: Long
 )
 
 data class LiveGuideUiState(
@@ -74,7 +87,21 @@ data class LiveGuideUiState(
      *  [XtreamLiveGuideViewModel.onPreviewContainerMismatch]). Null = infer from the URL. */
     val previewMimeOverride: String? = null,
     val loadingChannels: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    /**
+     * Start of the visible two hours. Travels backward with LEFT past the window's edge; the minute
+     * tick only rolls it forward while it is still anchored at live, so a viewer reading yesterday
+     * is never yanked back to now.
+     */
+    val windowStartMs: Long = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis()),
+    /**
+     * Whether this playlist can build catch-up URLs at all (Xtream with credentials). False turns
+     * every cell action back into plain live, so a Stalker or M3U playlist never shows a replay
+     * badge it could not honour.
+     */
+    val catchUpSupported: Boolean = false,
+    /** Set when a replay is ready to launch; the screen consumes it and navigates. */
+    val replayLaunch: ReplayLaunch? = null
 ) {
     val focusedChannel: GuideChannel? get() = channels.firstOrNull { it.contentId == focusedChannelId }
 }
@@ -96,7 +123,23 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val libraryRepository: LibraryRepository,
     private val livePlayback: PlaylistLivePlayback,
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
+    private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
+    private val catchUp: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
 ) : ViewModel() {
+
+    /**
+     * Historical guide for the FOCUSED channel only — `get_simple_data_table`, which is the one
+     * endpoint that returns past programmes and therefore the one that makes "days back" real.
+     * Deliberately not prefetched across channels (a full week per channel is how 2 MB becomes
+     * 40 MB on a 192 MB heap), gated on the stored copy's age, and single-flighted so the focus
+     * debounce, the timeline opening and a re-focus cannot become three requests.
+     */
+    private val historyFetcher = com.nuvio.tv.core.iptv.CatchUpEpgFetcher(
+        fetchedAt = { playlistId, channelId -> contentDb.epgChannelFetchedAt(playlistId, channelId) },
+        refill = { playlistId, channelId, catchUpDays, nowMs ->
+            refillHistory(playlistId, channelId, catchUpDays, nowMs)
+        },
+    )
 
     private val _uiState = MutableStateFlow(LiveGuideUiState())
     val uiState: StateFlow<LiveGuideUiState> = _uiState.asStateFlow()
@@ -146,6 +189,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
             return
         }
         epgRequested.clear()
+        _uiState.update {
+            it.copy(
+                catchUpSupported = catchUp.supports(acc),
+                windowStartMs = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis()),
+            )
+        }
         // Tune the preview to the LAST OPENED channel of this account (TiViMate-style resume).
         // Stalker's stored URL is a dead single-use create_link — skip the auto-resume for it
         // (OK on a row resolves a fresh URL); Xtream/M3U resume with their stable stored URL.
@@ -275,6 +324,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
             GuideEpgPrefetchPolicy.onFocusChanged(center, channels.size).forEach { index ->
                 channels.getOrNull(index)?.let { ensureEpg(it.streamId) }
             }
+            // History for the FOCUSED channel alone. GuideEpgPrefetchPolicy prefetches now/next
+            // around it because that is one cheap call each; a week of programmes per channel is
+            // not, so this one deliberately does not follow the window.
+            ensureHistory(channel)
         }
     }
 
@@ -311,7 +364,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // applies the playlist's DNS (resolve → rewrite) before handing the URL to the player.
             val playable = resolvedStreamUrl(channel)
             if (playable == null) {
-                _uiState.update { it.copy(error = "Couldn't open \"${channel.name}\"") }
+                // The source sometimes knows exactly what went wrong (a Stalker session cap is
+                // fixed by closing the other device, not by retrying) — say that instead.
+                val specific = account?.let { clientFactory.clientFor(it).lastResolveError }
+                _uiState.update { it.copy(error = specific ?: "Couldn't open \"${channel.name}\"") }
                 return@launch
             }
             val tuned = channel.copy(streamUrl = playable)
@@ -469,7 +525,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     streamUrl = ch.streamUrl, kind = XtreamKind.LIVE, accountId = acc.id, streamId = ch.streamId
                 )
             )
-            GuideChannel(id, ch.name, ch.logo, ch.streamUrl, ch.streamId, ch.categoryId)
+            GuideChannel(
+                contentId = id, name = ch.name, logo = ch.logo, streamUrl = ch.streamUrl,
+                streamId = ch.streamId, categoryId = ch.categoryId,
+                hasArchive = ch.hasArchive, catchUpDays = ch.catchUpDays
+            )
         }
     }
 
@@ -485,11 +545,189 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** Best-effort streamId from a live content id ("xtream:acc:live:<streamId>"). */
     private fun streamIdOf(contentId: String): Int = contentId.substringAfterLast(":live:").toIntOrNull() ?: 0
 
+
+    // --- Catch-up: history, time travel, and launching a replay -------------------------------
+
+    /**
+     * Makes sure the focused channel's stored guide covers the catch-up window, then republishes
+     * its cells from the database.
+     *
+     * Everything about this call is bounded on purpose: one channel, gated on the stored copy's
+     * age, single-flighted, parsed straight from the socket into SQLite, and read back one visible
+     * window at a time. The XMLTV out-of-memory crash is what all of that is avoiding.
+     */
+    private fun ensureHistory(channel: GuideChannel) {
+        val acc = account ?: return
+        if (!_uiState.value.catchUpSupported || channel.streamId <= 0) return
+        viewModelScope.launch {
+            runCatching {
+                historyFetcher.ensure(
+                    playlistId = acc.id,
+                    channelId = epgChannelKey(channel.streamId),
+                    catchUpDays = channel.catchUpDays,
+                    nowMs = System.currentTimeMillis(),
+                )
+            }
+            publishWindow(channel)
+        }
+    }
+
+    /** Streams get_simple_data_table into the EPG table, atomically per channel, pruning as it goes. */
+    private suspend fun refillHistory(playlistId: String, channelId: String, catchUpDays: Int, nowMs: Long) {
+        val acc = account ?: return
+        val streamId = channelId.removePrefix(EPG_CHANNEL_PREFIX).toIntOrNull() ?: return
+        val client = clientFactory.clientFor(acc)
+        if (client !is com.nuvio.tv.core.iptv.XtreamClient) return
+        val rows = ArrayList<com.nuvio.tv.core.iptv.content.EpgProgramme>(PROGRAMME_CAP)
+        val parsed = client.historicalEpgInto(acc, streamId, channelId, nowMs, catchUpDays) { row ->
+            // A corrupt feed must not be able to materialize thousands of rows on a TV stick.
+            if (rows.size < PROGRAMME_CAP) rows.add(row)
+        }
+        // A failed fetch stamps nothing, so the next open tries again rather than reading as
+        // "this channel has no history" for the life of the install.
+        if (parsed.isFailure) return
+        contentDb.refillChannelEpg(playlistId, channelId, rows, nowMs)
+        contentDb.pruneEpg(playlistId, com.nuvio.tv.core.iptv.CatchUpEpgWindow.pruneCutoffMs(nowMs, catchUpDays))
+    }
+
+    /**
+     * Republishes one channel's cells for the CURRENT visible window from the database — a windowed
+     * read with the description truncated in SQL, so a travelling guide costs one screenful of rows
+     * rather than the whole archive. Keeps the panel's now/next when there is no stored history.
+     */
+    private suspend fun publishWindow(channel: GuideChannel) {
+        val acc = account ?: return
+        val windowStart = _uiState.value.windowStartMs
+        val rows = runCatching {
+            contentDb.epgWindow(
+                playlistId = acc.id,
+                channelId = epgChannelKey(channel.streamId),
+                fromMs = windowStart - GuideTimeTravel.WINDOW_MS,
+                toMs = windowStart + 2 * GuideTimeTravel.WINDOW_MS,
+            )
+        }.getOrDefault(emptyList())
+        if (rows.isEmpty()) return
+        val nowMs = System.currentTimeMillis()
+        val programmes = rows.map {
+            XtreamProgram(
+                title = it.title,
+                description = it.desc.orEmpty(),
+                startMs = it.startMs,
+                endMs = it.endMs,
+                nowPlaying = nowMs in it.startMs until it.endMs,
+                hasArchive = it.hasArchive.takeIf { marked -> marked },
+            )
+        }
+        _uiState.update { state ->
+            val existing = state.epg[channel.streamId]
+            state.copy(
+                epg = state.epg + (channel.streamId to GuideEpg(
+                    now = existing?.now ?: programmes.firstOrNull { it.nowPlaying },
+                    next = existing?.next,
+                    programmes = programmes,
+                ))
+            )
+        }
+    }
+
+    /**
+     * Moves the visible window [slots] half-hours (negative = back into the archive), clamped to the
+     * provider's window, and reloads the focused channel's cells for where it landed.
+     */
+    fun travelWindow(slots: Int) {
+        val channel = _uiState.value.focusedChannel
+        val next = GuideTimeTravel.shift(
+            currentStartMs = _uiState.value.windowStartMs,
+            slots = slots,
+            nowMs = System.currentTimeMillis(),
+            catchUpDays = channel?.catchUpDays ?: 0,
+        )
+        if (next == _uiState.value.windowStartMs) return
+        _uiState.update { it.copy(windowStartMs = next) }
+        channel?.let { viewModelScope.launch { publishWindow(it) } }
+    }
+
+    /** BACK out of the timeline, or a channel change: return the guide to now. */
+    fun resetWindowToLive() {
+        val live = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis())
+        if (live == _uiState.value.windowStartMs) return
+        _uiState.update { it.copy(windowStartMs = live) }
+        _uiState.value.focusedChannel?.let { viewModelScope.launch { publishWindow(it) } }
+    }
+
+    /**
+     * The minute tick. Only rolls the window forward while it is still anchored at live — a viewer
+     * reading yesterday's schedule must not have it pulled back to now under them.
+     */
+    fun onMinuteTick(nowMs: Long) {
+        val current = _uiState.value.windowStartMs
+        val live = GuideTimeTravel.liveWindowStartMs(nowMs)
+        if (current != live && !GuideTimeTravel.isAtLiveEdge(current, nowMs - 60_000L)) return
+        if (current == live) return
+        _uiState.update { it.copy(windowStartMs = live) }
+    }
+
+    /**
+     * Builds the replay for one programme and hands it to the screen to launch. Start-over and a
+     * finished replay take the same path — the difference is only whether the programme's end is
+     * still in the future, which the player uses for its clamped seek ceiling.
+     */
+    fun startReplay(channel: GuideChannel, programme: XtreamProgram) {
+        val acc = account ?: return
+        val nowMs = System.currentTimeMillis()
+        val session = catchUp.begin(
+            account = acc,
+            channelContentId = channel.contentId,
+            channelName = channel.name,
+            streamId = channel.streamId,
+            programme = com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.Programme(
+                title = programme.title,
+                startMs = programme.startMs,
+                endMs = programme.endMs,
+            ),
+            nowMs = nowMs,
+        )
+        if (session == null) {
+            _uiState.update { it.copy(error = "This provider has no recording of \"${programme.title}\"") }
+            return
+        }
+        // Publish the channel list first so BACK from the player returns to a populated guide.
+        recordPlayed(channel)
+        _uiState.update {
+            it.copy(
+                replayLaunch = ReplayLaunch(
+                    url = session.url,
+                    contentId = session.contentId,
+                    title = "${channel.name} · ${programme.title}",
+                    programmeStartMs = programme.startMs,
+                    programmeEndMs = programme.endMs,
+                )
+            )
+        }
+    }
+
+    /** The screen navigated; drop the one-shot so a recomposition cannot launch it twice. */
+    fun consumeReplayLaunch() {
+        if (_uiState.value.replayLaunch != null) _uiState.update { it.copy(replayLaunch = null) }
+    }
+
+    fun dismissError() {
+        if (_uiState.value.error != null) _uiState.update { it.copy(error = null) }
+    }
+
+    /**
+     * What one channel's programmes are stored under. Prefixed so the stream-id namespace can never
+     * collide with the tvg-ids the XMLTV ingest writes into the same table.
+     */
+    private fun epgChannelKey(streamId: Int): String = "$EPG_CHANNEL_PREFIX$streamId"
+
     companion object {
         private const val ALL_ID = "__all"
         private const val ALL_CAP = 600   // ponytail: don't render 26k rows; categories are the real browse path
         private const val EPG_FOCUS_DEBOUNCE_MS = 250L   // wait for focus to settle before fetching EPG
         private const val GUIDE_EPG_WINDOW_MS = 3 * 60 * 60 * 1000L  // mirror-fallback fetch span for the timeline
         private const val RETRY_DELAY_MS = 1000L         // pause before the single panel-flake retry
+        private const val EPG_CHANNEL_PREFIX = "sid:"    // keeps stream ids out of the tvg-id namespace
+        private const val PROGRAMME_CAP = 2_000          // a corrupt feed must not materialize a catalog
     }
 }

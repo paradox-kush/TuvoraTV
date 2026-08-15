@@ -256,7 +256,7 @@ internal fun PlayerRuntimeController.pauseForLifecycle() {
     logScrobbleDiagnostic("lifecycle_pause", "userPaused=$userPausedManually")
 
     if (isUsingMpvEngine()) {
-        if (_uiState.value.contentType.equals("live", ignoreCase = true)) {
+        if (isLiveFeed()) {
             // Live: kill the demux now instead of pausing — a paused live socket goes
             // stale and wedges the core, which then blocks the main thread inside the
             // upcoming synchronous surface teardown. resumeForLifecycle reloads the
@@ -303,8 +303,10 @@ internal fun PlayerRuntimeController.resumeForLifecycle() {
     // Live channels: the paused mpv buffer is stale and the upstream socket is likely dead —
     // unpausing would play the leftover buffer then stall at the old position. Rejoin the
     // live edge instead and resume (same pattern as XtreamLiveGuideScreen's ON_START).
+    // A catch-up replay is excluded: it has no live edge to rejoin, and reloading it would
+    // restart the recording from the top instead of resuming where the viewer left off.
     if (isUsingMpvEngine() &&
-        _uiState.value.contentType.equals("live", ignoreCase = true) &&
+        isLiveFeed() &&
         currentStreamUrl.isNotBlank()
     ) {
         val view = mpvView ?: return

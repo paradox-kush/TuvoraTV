@@ -82,8 +82,30 @@ data class XtreamAccount(
     val serialNumber: String = "",
     val deviceId: String = "",
     /** Send the derived (or overridden) device signature on get_profile. Default on. */
-    val sendDeviceId: Boolean = true
+    val sendDeviceId: Boolean = true,
+    // --- Catch-up (tv_archive replay) preferences, per playlist. -------------------------------
+    /**
+     * Ask the panel for `.m3u8` catch-up first instead of `.ts`.
+     *
+     * TS is the default because it is the more dependable answer in the field (iptvnator's order,
+     * arrived at the hard way), but only m3u8 carries per-segment durations, so only m3u8 scrubs.
+     * The preference is the escape hatch rather than a guess: flipping it reorders the dialect
+     * ladder and a failing m3u8 still walks back to TS.
+     */
+    val preferM3u8CatchUp: Boolean = false,
+    /**
+     * Manual catch-up time correction in minutes, −720..+840 (−12 h..+14 h).
+     *
+     * Panels interpret a replay's `start` in THEIR OWN timezone and some of them lie about which
+     * that is; every mature player ships this escape hatch (iptvsimple's `catchup-correction`,
+     * TiviMate's per-playlist EPG offset, XUI's server-side `epg_shift`). 0 = send UTC, which is
+     * what Tuvora has always sent, so the default path is byte-identical to today.
+     */
+    val catchUpCorrectionMinutes: Int = 0
 ) {
+    /** The correction as the panel-offset [XtreamCatchUp.candidateUrls] takes; null = unset (UTC). */
+    val catchUpOffsetMs: Long? get() = catchUpCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }
+
     fun typeEnabled(type: String): Boolean = type in contentTypes
 
     /**
@@ -133,6 +155,10 @@ data class XtreamAccount(
         // Auto-refresh options (hours). 0 = off; 24 = product default.
         const val DEFAULT_AUTO_REFRESH_HOURS = 24
         val AUTO_REFRESH_OPTIONS = listOf(0, 6, 12, 24, 48, 72)
+
+        // Catch-up time correction: iptvsimple's range, and the one every mature player ships.
+        const val CATCHUP_CORRECTION_MIN_MINUTES = -12 * 60
+        const val CATCHUP_CORRECTION_MAX_MINUTES = 14 * 60
 
         const val TYPE_LIVE = "live"
         const val TYPE_MOVIES = "movies"
@@ -386,6 +412,30 @@ class XtreamClient @Inject constructor(
             .addQueryParameter("limit", limit.toString())
             .build().toString()
         apiFor(acc).getShortEpg(url).requireBody().listings.orEmpty().map { it.toProgram() }
+    }
+
+    /**
+     * A channel's FULL guide — past programmes included, each with the panel's own `has_archive`
+     * mark. `get_short_epg` answers now+next and cannot power a replay strip, so this is the call
+     * that makes catch-up's "days back" real.
+     *
+     * Streamed into [sink] a row at a time and filtered to the parse window as it goes, so a panel
+     * that keeps a month costs the heap a week and no more. Returns how many rows were kept.
+     */
+    suspend fun historicalEpgInto(
+        acc: XtreamAccount,
+        streamId: Int,
+        channelId: String,
+        nowMs: Long,
+        catchUpDays: Int,
+        sink: (com.nuvio.tv.core.iptv.content.EpgProgramme) -> Unit,
+    ): Result<Int> = call {
+        val url = playerApi(acc, "get_simple_data_table").toHttpUrl().newBuilder()
+            .addQueryParameter("stream_id", streamId.toString())
+            .build().toString()
+        apiFor(acc).getRawEpgTable(url).requireBody().use { body ->
+            XtreamSimpleDataTable.parseInto(body.source(), channelId, nowMs, catchUpDays, sink)
+        }
     }
 
     /** Full episode list (across seasons) for a series, each with its built stream URL. */

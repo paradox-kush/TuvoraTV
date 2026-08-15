@@ -49,6 +49,7 @@ data class XtreamSettingsUiState(
 @HiltViewModel
 class XtreamSettingsViewModel @Inject constructor(
     private val store: XtreamAccountStore,
+    private val catchUpWinners: com.nuvio.tv.core.iptv.CatchUpWinnerStore,
     private val client: XtreamClient,
     private val clientFactory: IptvClientFactory,
     private val syncService: XtreamAccountSyncService,
@@ -396,6 +397,36 @@ class XtreamSettingsViewModel @Inject constructor(
     /** Distrust every "not on this provider" verdict for this playlist (see XtreamMatchIndex). */
     fun rematchCatalog(id: String) {
         viewModelScope.launch { runCatching { matchIndex.distrustNegativeMappings(id) } }
+    }
+
+    /**
+     * Flips the per-playlist catch-up container preference.
+     *
+     * Clearing the remembered dialect is the load-bearing half. The walk puts a proven winner at the
+     * head of the ladder, so on an account that already learned a TS dialect the flipped preference
+     * would never get a turn and the toggle would silently do nothing — on exactly the accounts the
+     * viewer has used the most. ([CatchUpWinnerStore] also voids it by stamp, which covers a
+     * preference that arrives from another device; this is the same fix from the settings end.)
+     */
+    fun setPreferM3u8CatchUp(id: String, prefer: Boolean) {
+        viewModelScope.launch {
+            store.update(id) { it.copy(preferM3u8CatchUp = prefer) }
+            catchUpWinners.forget(id)
+        }
+    }
+
+    /** Manual catch-up time correction, for panels that lie about their own clock. */
+    fun setCatchUpCorrectionMinutes(id: String, minutes: Int) {
+        viewModelScope.launch {
+            store.update(id) {
+                it.copy(
+                    catchUpCorrectionMinutes = minutes.coerceIn(
+                        XtreamAccount.CATCHUP_CORRECTION_MIN_MINUTES,
+                        XtreamAccount.CATCHUP_CORRECTION_MAX_MINUTES,
+                    )
+                )
+            }
+        }
     }
 
     fun setEnabled(id: String, enabled: Boolean) {

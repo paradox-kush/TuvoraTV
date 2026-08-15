@@ -41,6 +41,11 @@ class StalkerClient @Inject constructor(
     // re-paging the whole catalog (the request storm that got a live portal to block us).
     private val rowCache = ConcurrentHashMap<String, JsonObject>()
 
+    @Volatile private var lastResolveErrorInternal: String? = null
+
+    /** Why the last create_link refused, when the portal said something specific. */
+    override val lastResolveError: String? get() = lastResolveErrorInternal
+
     /** A row's use_http_tmp_link/use_load_balancing verdicts (null = key absent on the row). */
     private data class LinkFlags(val useHttpTmpLink: Boolean?, val useLoadBalancing: Boolean?)
 
@@ -628,6 +633,20 @@ class StalkerClient @Inject constructor(
         }.filterKeys { it != "JsHttpRequest" }   // let the session own JsHttpRequest
         val js = runCatching { session.request(params) }.getOrNull() ?: return null
         val obj = js as? JsonObject ?: return null
+        // The portal's two documented refusals. `{error:'limit'}` is the account's session cap —
+        // surfaced as its own message because "couldn't open this channel" sends the viewer to
+        // Discord blaming the app when the fix is to close the other device.
+        when (com.nuvio.tv.core.iptv.CatchUpFailure.stalkerLinkErrorOf(obj.toString())) {
+            com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.SESSION_LIMIT -> {
+                lastResolveErrorInternal = SESSION_LIMIT_MESSAGE
+                return null
+            }
+            com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.LINK_FAULT -> {
+                lastResolveErrorInternal = LINK_FAULT_MESSAGE
+                return null
+            }
+            com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NONE -> lastResolveErrorInternal = null
+        }
         val rawCmd = obj.str("cmd") ?: return null
         return StalkerProtocol.extractStreamUrl(rawCmd)
     }
@@ -789,6 +808,12 @@ class StalkerClient @Inject constructor(
 
     companion object {
         private const val TAG = "StalkerClient"
+
+        /** The portal's session cap — a different problem from a dead channel, so it says so. */
+        internal const val SESSION_LIMIT_MESSAGE =
+            "This portal is already streaming on another device — close it and try again"
+        internal const val LINK_FAULT_MESSAGE =
+            "The portal couldn't build a playback link for this channel"
         private const val MAX_ITEMS = 8000    // ponytail: categories are the browse path; don't slurp 26k
         private const val MAX_PAGES = 200
         private const val MAX_CACHED_ROWS = 10_000

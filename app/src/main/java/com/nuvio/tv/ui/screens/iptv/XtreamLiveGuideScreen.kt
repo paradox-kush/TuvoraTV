@@ -91,8 +91,6 @@ import com.nuvio.tv.ui.screens.player.enableComposeSurfaceSyncWorkaroundIfAvaila
 import com.nuvio.tv.ui.screens.player.findInvalidResponseCodeException
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
-import java.util.Calendar
-import java.util.Locale
 
 /**
  * TiViMate-style Live TV guide (B10): category column -> channel list with now/next EPG, and a
@@ -113,6 +111,13 @@ fun LiveGuide(
     fullscreen: Boolean,
     onFullscreenChange: (Boolean) -> Unit,
     selectedTabRequester: FocusRequester? = null,
+    /**
+     * Launches a catch-up replay in the full player. Catch-up does NOT play in the guide's preview
+     * surface: the three behaviours a recording must not have (channel zapping, live-edge resume,
+     * the freeze watchdog) and the scrub bar all live in PlayerScreen, so the flag that turns them
+     * off has to be carried there.
+     */
+    onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit = { _, _, _, _, _ -> },
     viewModel: XtreamLiveGuideViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -127,13 +132,66 @@ fun LiveGuide(
             value = System.currentTimeMillis()
         }
     }
-    val windowStartMs = (nowMs / GUIDE_SLOT_MS) * GUIDE_SLOT_MS
+    LaunchedEffect(nowMs) { viewModel.onMinuteTick(nowMs) }
+    val windowStartMs = uiState.windowStartMs
 
     // RIGHT from a category must land on the channel list — without this, focus search looks
     // rightward at the (non-focusable) preview pane and jumps up to the tabs instead.
     val channelListFocus = remember { FocusRequester() }
     // focusRestorer with no saved child fails the enter and focus wanders — fall back to row 1.
     val firstChannelFocus = remember { FocusRequester() }
+
+    // Focus inside the timeline: which channel's cells the cursor is in, and which edge to restore
+    // to after the window scrolls (the cell that was focused no longer exists once it rebuilds).
+    var timelineChannelId by remember { mutableStateOf<String?>(null) }
+    var pendingEdgeFocus by remember { mutableStateOf(0) }
+    val leadingCellFocus = remember { FocusRequester() }
+    val trailingCellFocus = remember { FocusRequester() }
+    val channelRowFocus = remember { FocusRequester() }
+    // Shown only for the airing programme on an archive channel — the one state with two
+    // reasonable destinations (see GuideCellIntent).
+    var sheetProgramme by remember { mutableStateOf<XtreamProgram?>(null) }
+
+    // Launch a replay in the full player, once.
+    val replayLaunch = uiState.replayLaunch
+    LaunchedEffect(replayLaunch) {
+        val launch = replayLaunch ?: return@LaunchedEffect
+        viewModel.consumeReplayLaunch()
+        onPlayCatchUp(launch.url, launch.title, launch.contentId, launch.programmeStartMs, launch.programmeEndMs)
+    }
+
+    // Restore the cursor to the window's new edge after travelling, so holding LEFT keeps going.
+    LaunchedEffect(windowStartMs, pendingEdgeFocus) {
+        if (pendingEdgeFocus == 0) return@LaunchedEffect
+        val target = if (pendingEdgeFocus < 0) leadingCellFocus else trailingCellFocus
+        // The new window can be empty of actionable cells (an archive that ends here); dropping
+        // back to the channel row is the honest answer rather than trapping the cursor.
+        if (runCatching { target.requestFocus() }.isFailure) {
+            runCatching { channelRowFocus.requestFocus() }
+            timelineChannelId = null
+        }
+        pendingEdgeFocus = 0
+    }
+
+    // BACK leaves the timeline (and returns the guide to now) before it collapses fullscreen or
+    // exits the guide — LEFT/RIGHT are spent on travelling, so BACK is the way out.
+    BackHandler(enabled = !fullscreen && timelineChannelId != null) {
+        timelineChannelId = null
+        sheetProgramme = null
+        viewModel.resetWindowToLive()
+        if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
+            runCatching { firstChannelFocus.requestFocus() }
+        }
+    }
+
+    // Moving off the row (DOWN out of the timeline lands on the next channel) leaves the old row's
+    // cells focusable behind the cursor — clear the timeline when the focused channel changes.
+    LaunchedEffect(uiState.focusedChannelId) {
+        if (timelineChannelId != null && timelineChannelId != uiState.focusedChannelId) {
+            timelineChannelId = null
+            sheetProgramme = null
+        }
+    }
 
     val context = LocalContext.current
     val previewSourceFactory = remember(context) { PlayerMediaSourceFactory(context) }
@@ -336,7 +394,11 @@ fun LiveGuide(
                     )
                 }
 
-                GuideTimeHeader(windowStartMs = windowStartMs)
+                GuideTimeHeaderWithDay(
+                    windowStartMs = windowStartMs,
+                    nowMs = nowMs,
+                    labelWidth = CHANNEL_LABEL_WIDTH,
+                )
 
                 when {
                     uiState.loadingChannels -> GuideChannelListSkeleton()
@@ -357,8 +419,15 @@ fun LiveGuide(
                     ) {
                         itemsIndexed(uiState.channels, key = { _, it -> it.contentId }) { index, ch ->
                             val isPlaying = ch.contentId == uiState.previewChannel?.contentId
+                            val isTimelineRow = timelineChannelId == ch.contentId
                             GuideChannelRow(
-                                focusRequester = if (index == 0) firstChannelFocus else null,
+                                focusRequester = when {
+                                    // Row 0 keeps the restorer's fallback requester; any OTHER
+                                    // focused row carries the one BACK-out-of-the-timeline uses.
+                                    index == 0 -> firstChannelFocus
+                                    ch.contentId == uiState.focusedChannelId -> channelRowFocus
+                                    else -> null
+                                },
                                 clampUp = index == 0,
                                 number = index + 1,
                                 name = ch.name,
@@ -379,7 +448,38 @@ fun LiveGuide(
                                     if (isPlaying) onFullscreenChange(true)
                                     else viewModel.playPreview(ch)
                                 },
-                                onLongClick = { viewModel.toggleFavorite(ch) }
+                                onLongClick = { viewModel.toggleFavorite(ch) },
+                                channel = ch,
+                                catchUpSupported = uiState.catchUpSupported,
+                                timelineActive = isTimelineRow,
+                                // RIGHT steps off the channel into its timeline (the artifact's
+                                // model); only the focused row's cells are focusable, so the tree
+                                // never carries thousands of targets.
+                                onEnterTimeline = { timelineChannelId = ch.contentId },
+                                onLeaveTimeline = {
+                                    timelineChannelId = null
+                                    viewModel.resetWindowToLive()
+                                },
+                                onTravel = { slots ->
+                                    pendingEdgeFocus = slots
+                                    viewModel.travelWindow(slots)
+                                },
+                                onProgrammeClick = { programme ->
+                                    when (GuideCellIntent.forAction(
+                                        guideActionFor(programme, ch, nowMs, uiState.catchUpSupported)
+                                    )) {
+                                        GuideCellIntent.Intent.REPLAY -> viewModel.startReplay(ch, programme)
+                                        GuideCellIntent.Intent.OPEN_SHEET -> sheetProgramme = programme
+                                        GuideCellIntent.Intent.PLAY_LIVE ->
+                                            if (isPlaying) onFullscreenChange(true) else viewModel.playPreview(ch)
+                                        GuideCellIntent.Intent.NONE -> Unit
+                                    }
+                                },
+                                leadingEdgeFocus = leadingCellFocus,
+                                trailingEdgeFocus = trailingCellFocus,
+                                nowFraction = if (GuideTimeTravel.containsNow(windowStartMs, nowMs)) {
+                                    GuideTimeTravel.nowFraction(windowStartMs, nowMs)
+                                } else null,
                             )
                         }
                     }
@@ -422,6 +522,24 @@ fun LiveGuide(
                     paused = paused
                 )
             }
+        }
+
+        // START_OVER is the only state with two destinations, so it is the only one that asks.
+        val sheet = sheetProgramme
+        val sheetChannel = uiState.focusedChannel
+        if (sheet != null && sheetChannel != null && !fullscreen) {
+            GuideStartOverSheet(
+                channelName = sheetChannel.name,
+                programme = sheet,
+                onStartOver = {
+                    sheetProgramme = null
+                    viewModel.startReplay(sheetChannel, sheet)
+                },
+                onWatchLive = {
+                    sheetProgramme = null
+                    viewModel.playPreview(sheetChannel)
+                },
+            )
         }
     }
 }
@@ -641,10 +759,29 @@ private fun GuideChannelRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    channel: GuideChannel,
+    catchUpSupported: Boolean,
+    timelineActive: Boolean,
+    onEnterTimeline: () -> Unit,
+    onLeaveTimeline: () -> Unit,
+    onTravel: (Int) -> Unit,
+    onProgrammeClick: (XtreamProgram) -> Unit,
+    leadingEdgeFocus: FocusRequester? = null,
+    trailingEdgeFocus: FocusRequester? = null,
+    nowFraction: Float? = null,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val latestOnFocused by rememberUpdatedState(onFocused)
     LaunchedEffect(isFocused) { if (isFocused) latestOnFocused() }
+    // The cells only become focus targets once the viewer steps into the timeline, so the request
+    // has to wait for that recomposition.
+    LaunchedEffect(timelineActive) {
+        if (timelineActive) {
+            leadingEdgeFocus?.let { requester ->
+                if (runCatching { requester.requestFocus() }.isFailure) onLeaveTimeline()
+            }
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -672,6 +809,17 @@ private fun GuideChannelRow(
                 }
             }
             .onFocusChanged { isFocused = it.isFocused }
+            // RIGHT steps off the channel and into its timeline — the artifact's TV model. The
+            // channel row itself keeps its own OK semantics untouched (preview, then fullscreen,
+            // hold to favourite); the catch-up OK rule belongs to the CELLS, one level in.
+            .onPreviewKeyEvent { event ->
+                if (lockFocus || timelineActive || !isFocused) return@onPreviewKeyEvent false
+                if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionRight) {
+                    return@onPreviewKeyEvent false
+                }
+                onEnterTimeline()
+                true
+            }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = NuvioTheme.spacing.sm),
         verticalAlignment = Alignment.CenterVertically
@@ -719,97 +867,19 @@ private fun GuideChannelRow(
                 )
             }
         }
-        ProgrammeCells(
+        GuideProgrammeCells(
             programmes = epg?.programmes ?: emptyList(),
+            channel = channel,
             windowStartMs = windowStartMs,
-            nowMs = nowMs
+            nowMs = nowMs,
+            catchUpSupported = catchUpSupported,
+            interactive = timelineActive,
+            onProgrammeClick = onProgrammeClick,
+            onTravel = onTravel,
+            leadingEdgeFocus = leadingEdgeFocus,
+            trailingEdgeFocus = trailingEdgeFocus,
+            nowFraction = nowFraction,
         )
-    }
-}
-
-/**
- * Duration-proportional programme cells for one channel over the guide window. Display-only —
- * the row is the focusable unit. (ponytail: no horizontal cell browsing yet; add per-cell focus
- * if users ask for it.)
- */
-@Composable
-private fun RowScope.ProgrammeCells(
-    programmes: List<XtreamProgram>,
-    windowStartMs: Long,
-    nowMs: Long,
-) {
-    val windowEndMs = windowStartMs + GUIDE_WINDOW_MS
-    val visible = programmes
-        .filter { it.endMs > windowStartMs && it.startMs < windowEndMs && it.endMs > it.startMs }
-        .sortedBy { it.startMs }
-    Row(
-        modifier = Modifier.weight(1f).fillMaxHeight().padding(start = NuvioTheme.spacing.sm, top = 3.dp, bottom = 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-        if (visible.isEmpty()) {
-            ProgrammeCell(stringResource(R.string.iptv_guide_no_information), weightMs = GUIDE_WINDOW_MS, live = false, filler = true)
-            return
-        }
-        var cursor = windowStartMs
-        for (p in visible) {
-            val start = maxOf(p.startMs, windowStartMs)
-            val end = minOf(p.endMs, windowEndMs)
-            if (start > cursor) ProgrammeCell(null, weightMs = start - cursor, live = false, filler = true)
-            ProgrammeCell(p.title, weightMs = end - start, live = nowMs in p.startMs until p.endMs, filler = false)
-            cursor = end
-        }
-        if (cursor < windowEndMs) ProgrammeCell(null, weightMs = windowEndMs - cursor, live = false, filler = true)
-    }
-}
-
-@Composable
-private fun RowScope.ProgrammeCell(title: String?, weightMs: Long, live: Boolean, filler: Boolean) {
-    Box(
-        modifier = Modifier
-            .weight(weightMs.coerceAtLeast(60_000L).toFloat())
-            .fillMaxHeight()
-            .clip(RoundedCornerShape(NuvioTheme.radii.xs))
-            .background(
-                when {
-                    live -> NuvioTheme.colors.Primary.copy(alpha = 0.20f)
-                    filler -> NuvioTheme.colors.BackgroundElevated.copy(alpha = 0.4f)
-                    else -> NuvioTheme.colors.BackgroundElevated
-                }
-            )
-            .padding(horizontal = 6.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        if (title != null) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (live) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-/** Half-hour tick labels over the timeline area, aligned with the rows' cell region. */
-@Composable
-private fun GuideTimeHeader(windowStartMs: Long) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = NuvioTheme.spacing.md + NuvioTheme.spacing.sm, vertical = 2.dp)
-    ) {
-        Spacer(Modifier.width(CHANNEL_LABEL_WIDTH + NuvioTheme.spacing.sm))
-        val slots = (GUIDE_WINDOW_MS / GUIDE_SLOT_MS).toInt()
-        repeat(slots) { i ->
-            Text(
-                text = hhmm(windowStartMs + i * GUIDE_SLOT_MS),
-                style = MaterialTheme.typography.labelSmall,
-                color = NuvioTheme.colors.TextSecondary,
-                modifier = Modifier.weight(1f),
-                maxLines = 1
-            )
-        }
     }
 }
 
@@ -915,13 +985,7 @@ private fun PreviewInfoPane(
     }
 }
 
-private fun timeRange(p: XtreamProgram): String = "${hhmm(p.startMs)}–${hhmm(p.endMs)}"
-
-private fun hhmm(ms: Long): String {
-    if (ms <= 0L) return ""
-    val c = Calendar.getInstance().apply { timeInMillis = ms }
-    return String.format(Locale.US, "%02d:%02d", c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE))
-}
+private fun timeRange(p: XtreamProgram): String = "${guideHhMm(p.startMs)}–${guideHhMm(p.endMs)}"
 
 private val PREVIEW_PANE_HEIGHT = 180.dp
 private val CATEGORY_COL_WIDTH = 220.dp
@@ -929,5 +993,3 @@ private val CHANNEL_LABEL_WIDTH = 230.dp
 private val GUIDE_ROW_HEIGHT = 44.dp
 private val GUIDE_START_PADDING = 52.dp                   // the app-wide content gutter (Modern rails)
 private const val GUIDE_SKELETON_ROW_COUNT = 10
-private const val GUIDE_WINDOW_MS = 2 * 60 * 60 * 1000L   // 2h visible timeline
-private const val GUIDE_SLOT_MS = 30 * 60 * 1000L         // half-hour header ticks

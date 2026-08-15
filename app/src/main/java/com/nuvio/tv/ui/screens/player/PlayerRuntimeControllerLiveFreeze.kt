@@ -19,7 +19,10 @@ import com.nuvio.tv.data.local.PlayerSettings
  */
 
 internal fun PlayerRuntimeController.armLiveFreezeReporter() {
-    if (!isLiveContent()) return
+    // isLiveFeed, not isLiveContent: a catch-up recording that reaches its end has not frozen, and
+    // this reporter's recovery ladder ends by reloading the stream from the LIVE EDGE — which
+    // would throw the viewer out of the programme they were replaying.
+    if (!isLiveFeed()) return
     // The rebuilt player has rendered, so the reconnect is done; whether it actually fixed
     // anything is decided by the next few samples, not by getting this far.
     liveRecoveryInFlight = false
@@ -62,7 +65,7 @@ internal fun PlayerRuntimeController.recordPlaybackStartBreadcrumb() {
 
 /** One sampled tick. No-op unless a live channel is being watched. */
 internal fun PlayerRuntimeController.sampleLiveFreeze(positionMs: Long, bufferedPositionMs: Long) {
-    if (!isLiveContent()) return
+    if (!isLiveFeed()) return
     val state: LivePlaybackFreezePolicy.PlaybackState
     val wantsToPlay: Boolean
     // The one signal audio cannot keep alive: a frozen picture with playing audio leaves every

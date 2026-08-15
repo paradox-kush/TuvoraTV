@@ -44,4 +44,12 @@ interface IptvClient {
      * replay the failure); Xtream/M3U URLs are stable formulas, so they ignore it.
      */
     suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean = false): String?
+
+    /**
+     * Why the LAST [resolveStreamUrl] answered null, when the source can say something better than
+     * "it did not work" — currently only Stalker's session cap, which is a completely different
+     * problem from a dead channel and is fixed by closing the other device, not by retrying.
+     * Null = nothing more specific to say.
+     */
+    val lastResolveError: String? get() = null
 }
