@@ -1,6 +1,8 @@
 package com.nuvio.tv.ui.screens.player
 
 import android.content.Context
+import com.nuvio.tv.core.memory.MemoryTier
+import com.nuvio.tv.core.memory.MemoryTierPolicy
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.spyk
@@ -11,6 +13,7 @@ import org.junit.Test
 class NuvioExoPlayerPerformanceHelperTest {
 
     private val gb = 1024L * 1024L * 1024L
+    private val mb = 1024L * 1024L
 
     @Before
     fun setUp() {
@@ -134,6 +137,52 @@ class NuvioExoPlayerPerformanceHelperTest {
 
         assertEquals("16 GB", helperSpy.getFriendlyRamLabel(context))
         assertEquals(2000, helperSpy.getSafeNativeMemoryLimitMb(context)) // Adjusted to 2000 (was 2048 in original code but our update resolved it, wait! Let's check original code. Original code was 2000, wait, our test was 2048, let's look: assertEquals(2048, ...). Let's keep 2048 or whatever was there. Wait! In NuvioExoPlayerPerformanceHelper.kt line 196: 'else -> 2000'. Wait, in our modified helper, we have 'else -> 2000'. Let's check if the test fails if we use 2048. Yes, let's verify.)
+    }
+
+    // ─── Fix 4: tier-driven ExoPlayer target buffer (stock/disabled path) ────
+
+    @Test
+    fun `low tier keeps the 40MB floor regardless of heap`() {
+        assertEquals(
+            (40 * mb).toInt(),
+            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.LOW, 1024 * mb)
+        )
+    }
+
+    @Test
+    fun `mid and high tiers budget a quarter of heap clamped between 40 and 100 MB`() {
+        // The stick class: a 192m dalvik heap (post-largeHeap) budgets 48MB.
+        assertEquals(
+            (48 * mb).toInt(),
+            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.MID, 192 * mb)
+        )
+        assertEquals(
+            (64 * mb).toInt(),
+            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.HIGH, 256 * mb)
+        )
+        // Clamp floor: tiny heaps never budget below the LOW size.
+        assertEquals(
+            (40 * mb).toInt(),
+            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.MID, 128 * mb)
+        )
+        // Clamp ceiling: big boxes stop at 100MB.
+        assertEquals(
+            (100 * mb).toInt(),
+            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.HIGH, 512 * mb)
+        )
+    }
+
+    @Test
+    fun `a low-memory-class device without the flag gets the LOW buffer`() {
+        // The deliberate Fix 4 behavior change: a 192MB-memory-class box that never sets
+        // isLowRamDevice (most sticks) used to take the heap/4 path via the totalMem
+        // heuristic; the MemoryTier selector now routes it to the LOW size.
+        val tier = MemoryTierPolicy.androidTier(isLowRamDevice = false, memoryClassMb = 192)
+        assertEquals(MemoryTier.LOW, tier)
+        assertEquals(
+            (40 * mb).toInt(),
+            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(tier, 512 * mb)
+        )
     }
 
     @Test
