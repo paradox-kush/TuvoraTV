@@ -168,5 +168,9 @@ data class XtreamEpgEntryDto(
     val description: String?,      // base64
     @Json(name = "start_timestamp") val startTimestamp: String?,  // unix seconds (string)
     @Json(name = "stop_timestamp") val stopTimestamp: String?,
-    @FlexInt @Json(name = "now_playing") val nowPlaying: Int?
+    @FlexInt @Json(name = "now_playing") val nowPlaying: Int?,
+    // Per-programme archive flag (get_simple_data_table rows; get_short_epg omits it): the panel
+    // saying, recording by recording, what it actually kept — the strongest catch-up signal
+    // there is. Panels send int or "1"; absent -> null = the panel said nothing.
+    @FlexInt @Json(name = "has_archive") val hasArchive: Int? = null
 )
