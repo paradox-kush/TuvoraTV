@@ -203,6 +203,7 @@ class RadarChannelMatcherSourcesTest {
             // the name/keyword tiers underneath the guide.
             contentDb = contentDb,
             clientFactory = factory,
+            catchUp = mockk(relaxed = true),
         )
     }
 

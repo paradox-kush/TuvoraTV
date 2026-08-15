@@ -56,6 +56,7 @@ class RadarChannelMatcher @Inject constructor(
     private val epgMirror: EpgMirrorRepository,
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
     private val clientFactory: IptvClientFactory,
+    private val catchUp: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
 ) {
     data class CandidateChannel(
         val playlistId: String,
@@ -303,33 +304,85 @@ class RadarChannelMatcher @Inject constructor(
     }
 
     /**
-     * Catch-up Replay for a started/finished fixture on an archived channel: registers a
-     * synthetic live item carrying the timeshift URL and returns (contentId, url, title) —
-     * plays through the same live route as everything else. Null when no archive/not started.
+     * A replayable programme on a matched channel — everything the play step needs to start the
+     * catch-up walk. Built at sheet time; the walk itself begins only in [beginReplay], because
+     * [CatchUpPlaybackCoordinator][com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator] single-flights
+     * one walk per account, and a sheet full of archived channels beginning eagerly would each
+     * supersede the last.
      */
-    suspend fun replayFor(match: ChannelMatch, fixture: RadarFixture): Triple<String, String, String>? {
+    data class SportsReplay(
+        val playlistId: String,
+        val channelContentId: String,
+        val channelName: String,
+        val logo: String?,
+        val streamId: Int,
+        /** The player-facing title ("ESPN · Replay"). */
+        val title: String,
+        val programmeTitle: String,
+        val programmeStartMs: Long,
+        val programmeEndMs: Long,
+    )
+
+    /**
+     * Catch-up Replay for a started/finished fixture on an archived channel: the programme bounds
+     * the walk will replay, from the matched EPG programme when there is one, else a default
+     * window opening 15 minutes before kickoff. Null when no archive/not started/not replayable.
+     */
+    suspend fun replayFor(match: ChannelMatch, fixture: RadarFixture): SportsReplay? {
         val start = fixture.startEpochMs ?: return null
         if (!match.channel.hasArchive || start > RadarTime.nowMs()) return null
         val account = accountStore.accounts.first().firstOrNull { it.id == match.channel.playlistId }
             ?: return null
-        // Timeshift/catch-up is an Xtream-only feature — there's no interface method for Stalker/M3U.
-        // Offering Replay for those would register a bogus fabricated URL, so skip it. (Assembly is
-        // Xtream-only today, so this is the guard that keeps Replay honest once it isn't.)
-        if (!account.isXtream()) return null
+        // Xtream-with-credentials only, the same rule the guide's replays play by: a Stalker
+        // portal builds archive links server-side (none of the dialects apply) and an M3U playlist
+        // has no panel to ask — the coordinator is the one place that knows.
+        if (!catchUp.supports(account)) return null
         val programme = match.programme
         val replayStart = programme?.startMs?.takeIf { it > 0 } ?: (start - 15 * 60 * 1000L)
         val durationMin = (((programme?.endMs ?: 0L) - (programme?.startMs ?: 0L)) / 60_000L)
             .toInt().takeIf { it in 30..360 } ?: 165
-        val url = xtreamClient.liveTimeshiftUrl(account, match.channel.streamId, replayStart, durationMin)
-        val title = "${match.channel.name} · Replay"
-        val contentId = "${match.channel.contentId}r${replayStart / 60_000L}"
+        return SportsReplay(
+            playlistId = account.id,
+            channelContentId = match.channel.contentId,
+            channelName = match.channel.name,
+            logo = match.channel.logo,
+            streamId = match.channel.streamId,
+            title = "${match.channel.name} · Replay",
+            programmeTitle = programme?.title ?: "Replay",
+            programmeStartMs = replayStart,
+            programmeEndMs = replayStart + durationMin * 60_000L,
+        )
+    }
+
+    /**
+     * Starts the replay's catch-up session — the same coordinator the guide's replays go through
+     * (WP5), so the player inherits the flag, the gates and the dialect walk with the account's
+     * container preference and winner memory. The session id is registered like every other Sports
+     * play so the live route resolves it; the URL it carries is the walk's FIRST attempt, and the
+     * player advances the walk in place on transport failure.
+     */
+    suspend fun beginReplay(replay: SportsReplay): com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.Session? {
+        val account = accountStore.accounts.first().firstOrNull { it.id == replay.playlistId }
+            ?: return null
+        val session = catchUp.begin(
+            account = account,
+            channelContentId = replay.channelContentId,
+            channelName = replay.channelName,
+            streamId = replay.streamId,
+            programme = com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.Programme(
+                title = replay.programmeTitle,
+                startMs = replay.programmeStartMs,
+                endMs = replay.programmeEndMs,
+            ),
+            nowMs = RadarTime.nowMs(),
+        ) ?: return null
         registry.register(
             XtreamResolvedItem(
-                id = contentId, type = ContentType.TV, name = title, poster = match.channel.logo,
-                streamUrl = url, kind = XtreamKind.LIVE, accountId = account.id, streamId = match.channel.streamId,
+                id = session.contentId, type = ContentType.TV, name = replay.title, poster = replay.logo,
+                streamUrl = session.url, kind = XtreamKind.LIVE, accountId = account.id, streamId = replay.streamId,
             )
         )
-        return Triple(contentId, url, title)
+        return session
     }
 
     /**

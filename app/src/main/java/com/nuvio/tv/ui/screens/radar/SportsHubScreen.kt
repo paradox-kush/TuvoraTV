@@ -96,6 +96,9 @@ fun SportsHubScreen(
     onPlayChannel: (title: String, streamUrl: String, contentId: String) -> Unit,
     onAddProvider: () -> Unit,
     onOpenDetail: (contentId: String, type: String) -> Unit = { _, _ -> },
+    /** A catch-up replay launch — the guide's route shape, so the player gets the flag + bounds. */
+    onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit =
+        { _, _, _, _, _ -> },
     viewModel: SportsHubViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -146,10 +149,7 @@ fun SportsHubScreen(
                 state = s.copy(hasPlaylists = hasPlaylistsNow),
                 isLive = viewModel.uiState.value.isLive(s.fixture, RadarTime.nowMs()),
                 onPlay = { match -> viewModel.playMatch(match, onPlayChannel) },
-                onPlayReplay = { replay ->
-                    viewModel.closeMatch()
-                    onPlayChannel(replay.third, replay.second, replay.first)
-                },
+                onPlayReplay = { replay -> viewModel.playReplay(replay, onPlayCatchUp) },
                 onOpenRecording = { id ->
                     viewModel.closeMatch()
                     onOpenDetail(id, "movie")
@@ -177,10 +177,7 @@ fun SportsHubScreen(
                 state = s.copy(hasPlaylists = hasPlaylistsNow),
                 isLive = viewModel.uiState.value.isLive(s.fixture, RadarTime.nowMs()),
                 onPlay = { match -> viewModel.playMatch(match, onPlayChannel) },
-                onPlayReplay = { replay ->
-                    viewModel.closeMatch()
-                    onPlayChannel(replay.third, replay.second, replay.first)
-                },
+                onPlayReplay = { replay -> viewModel.playReplay(replay, onPlayCatchUp) },
                 onOpenRecording = { id ->
                     viewModel.closeMatch()
                     onOpenDetail(id, "movie")
@@ -580,10 +577,7 @@ fun SportsHubScreen(
             state = s.copy(hasPlaylists = hasPlaylistsNow),
             isLive = viewModel.uiState.value.isLive(s.fixture, RadarTime.nowMs()),
             onPlay = { match -> viewModel.playMatch(match, onPlayChannel) },
-            onPlayReplay = { replay ->
-                viewModel.closeMatch()
-                onPlayChannel(replay.third, replay.second, replay.first)
-            },
+            onPlayReplay = { replay -> viewModel.playReplay(replay, onPlayCatchUp) },
             onOpenRecording = { id ->
                 viewModel.closeMatch()
                 onOpenDetail(id, "movie")
@@ -604,7 +598,7 @@ private fun MatchChannelsOverlay(
     state: MatchSheetState,
     isLive: Boolean,
     onPlay: (RadarChannelMatcher.ChannelMatch) -> Unit,
-    onPlayReplay: (Triple<String, String, String>) -> Unit = {},
+    onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
     onOpenRecording: (String) -> Unit = {},
     onAddProvider: () -> Unit,
     onDismiss: () -> Unit,

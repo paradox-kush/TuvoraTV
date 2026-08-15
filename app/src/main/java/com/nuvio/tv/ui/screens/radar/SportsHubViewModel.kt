@@ -35,8 +35,9 @@ data class MatchSheetState(
     val matches: List<RadarChannelMatcher.ChannelMatch> = emptyList(),
     /** Provider VOD recordings of this fixture (started/finished matches). */
     val recordings: List<RadarChannelMatcher.RecordingHit> = emptyList(),
-    /** channel contentId -> (replayContentId, timeshiftUrl, title) for archived channels. */
-    val replays: Map<String, Triple<String, String, String>> = emptyMap(),
+    /** channel contentId -> the replayable programme, for archived channels. The catch-up walk
+     *  begins only when one is actually played — see [SportsHubViewModel.playReplay]. */
+    val replays: Map<String, RadarChannelMatcher.SportsReplay> = emptyMap(),
     val matching: Boolean = true,
     /** True when matching stopped because a provider or local index failed unexpectedly. */
     val matchingFailed: Boolean = false,
@@ -311,6 +312,29 @@ class SportsHubViewModel @Inject constructor(
     ) {
         _sheet.update { state ->
             if (generation == matchGeneration && state?.fixture === fixture) transform(state) else state
+        }
+    }
+
+    /**
+     * Starts a replay's catch-up session and hands the launch to the screen. The session begins
+     * HERE, not at sheet-open time, because the walk single-flights per account: a sheet building
+     * ten channels' sessions eagerly would leave only the last one alive. Mirrors the live guide's
+     * startReplay — same coordinator, same flag, same gates, same dialect walk.
+     */
+    fun playReplay(
+        replay: RadarChannelMatcher.SportsReplay,
+        onPlay: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val session = runCatching { matcher.beginReplay(replay) }.getOrNull()
+            if (session == null) {
+                // The account vanished or lost its credentials between sheet and press — the same
+                // shape the guide surfaces for an unbuildable replay.
+                Log.w(TAG, "Replay session could not be started for ${replay.channelName}")
+                return@launch
+            }
+            closeMatch()
+            onPlay(session.url, replay.title, session.contentId, replay.programmeStartMs, replay.programmeEndMs)
         }
     }
 
