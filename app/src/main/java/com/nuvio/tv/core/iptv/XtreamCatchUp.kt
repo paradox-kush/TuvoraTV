@@ -41,6 +41,47 @@ object XtreamCatchUp {
             .format(Date(startMs))
     }
 
+    /** What the guide can offer for one programme. */
+    enum class ProgrammeAction {
+        /** Nothing playable: not broadcast yet, or gone from the panel. */
+        NONE,
+
+        /** Airing now on a channel with no archive — ordinary live playback. */
+        PLAY_LIVE,
+
+        /** Airing now, and the panel kept the beginning: restart from the top. */
+        START_OVER,
+
+        /** Finished, and still inside the panel's window. */
+        REPLAY,
+    }
+
+    /**
+     * Which action a guide cell should offer.
+     *
+     * Deliberately covers the airing programme as well as finished ones: a channel with an archive
+     * can restart what is on right now, which is the catch-up affordance most viewers actually
+     * reach for, and a channel WITHOUT an archive must still be watchable live rather than
+     * offering nothing at all.
+     */
+    fun actionFor(
+        programmeStartMs: Long,
+        programmeEndMs: Long,
+        nowMs: Long,
+        hasArchive: Boolean,
+        catchUpDays: Int,
+    ): ProgrammeAction {
+        if (programmeStartMs > nowMs) return ProgrammeAction.NONE
+        val replayable = hasArchive && isWithinWindow(programmeStartMs, nowMs, catchUpDays)
+        val finished = programmeEndMs <= nowMs
+        return when {
+            finished && replayable -> ProgrammeAction.REPLAY
+            finished -> ProgrammeAction.NONE
+            replayable -> ProgrammeAction.START_OVER
+            else -> ProgrammeAction.PLAY_LIVE
+        }
+    }
+
     /** Whole minutes, floored, never below one — a zero-length request plays nothing. */
     fun durationMinutes(startMs: Long, endMs: Long): Int =
         (((endMs - startMs) / 60_000L).toInt()).coerceAtLeast(1)
