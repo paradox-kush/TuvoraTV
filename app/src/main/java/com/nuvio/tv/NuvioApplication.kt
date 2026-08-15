@@ -110,6 +110,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
 
     override fun onCreate() {
         super.onCreate()
+        // Resolve the memory tier once, before anything sizes a cache from it.
+        com.nuvio.tv.core.memory.AndroidMemoryTierProbe.tier(this)
         val crashReportsEnabled = runBlocking(Dispatchers.IO) {
             sentrySettingsDataStore.isEnabled()
         }
@@ -207,6 +209,14 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        // Since Android 14 only these two constants fire (the rest died in 14, formally
+        // deprecated in 15) — both mean the UI left the screen: drop every registered
+        // cache. Truth is on disk; the windows repopulate on return.
+        if (level == android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN ||
+            level == android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        ) {
+            com.nuvio.tv.core.memory.AppMemory.trimCaches()
+        }
         AppExitReporter.recordMemorySnapshot(this, "trim_memory", level)
     }
 
@@ -235,12 +245,16 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             }
             .memoryCache {
                 // 0.33 of the largeHeap memory class allowed a ~127MB bitmap cache,
-                // which helped push 2GB boxes into swap-thrash. Hard-cap it; posters
-                // are RGB565+inexact so 64MB still fits several screens' worth.
-                val lowRam = com.nuvio.tv.core.util.DeviceClass.isLowRam(this)
-                MemoryCache.Builder()
-                    .maxSizeBytes(if (lowRam) 32L * 1024 * 1024 else 64L * 1024 * 1024)
-                    .build()
+                // which helped push 2GB boxes into swap-thrash. Cap it from the memory
+                // tier (LOW 32 / MID 64 / HIGH 96 MiB) and register it in the budget
+                // registry so the trim hooks can drop it; posters are RGB565+inexact
+                // so even the LOW cap fits several screens' worth.
+                val tier = com.nuvio.tv.core.memory.AndroidMemoryTierProbe.tier(this)
+                val cap = com.nuvio.tv.core.memory.MemoryTierPolicy.imageMemoryCacheBytes(tier)
+                val cache = MemoryCache.Builder().maxSizeBytes(cap).build()
+                com.nuvio.tv.core.memory.AppMemory.registry
+                    .register("image_memory_cache", cap, priority = 0) { cache.clear() }
+                cache
             }
             .diskCache {
                 DiskCache.Builder()
