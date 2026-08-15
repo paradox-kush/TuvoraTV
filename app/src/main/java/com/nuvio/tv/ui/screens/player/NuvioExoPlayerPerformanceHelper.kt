@@ -10,6 +10,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.ScrubbingModeParameters
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
+import com.nuvio.tv.core.memory.AndroidMemoryTierProbe
+import com.nuvio.tv.core.memory.MemoryTier
 import com.nuvio.tv.data.local.PlayerSettings
 
 /**
@@ -280,28 +282,47 @@ object NuvioExoPlayerPerformanceHelper {
             // On ≤2GB boxes the old 100MB/70s buffer pushed the whole device into
             // swap-thrash (kernel direct reclaim + LMK kills observed on a 2GB
             // Onn 4K while a movie played) — the buffer caused the stalls it was
-            // meant to prevent. Keep it small where RAM is scarce.
-            val lowRam = context != null && com.nuvio.tv.core.util.DeviceClass.isLowRam(context)
-            // Non-lowRam boxes are not all Shields: sticks run a 192m dalvik heap (largeHeap
-            // included) where a flat 100MB byte target — plain byte[] on the Java heap — was
-            // the OOM/LMK driver in field telemetry. Budget a quarter of the real heap,
-            // floored at the lowRam value.
-            val standardBudget = (Runtime.getRuntime().maxMemory() / 4)
-                .coerceIn(40L * 1024 * 1024, 100L * 1024 * 1024)
-                .toInt()
+            // meant to prevent. Keep it small where RAM is scarce. The selector is the
+            // shared MemoryTier (isLowRamDevice OR memoryClass ≤ 192 → LOW) — the same
+            // probe that already sizes the mpv demuxer and image caches — replacing the
+            // old DeviceClass totalMem heuristic that used to pick the branch here.
+            val tier = if (context != null) {
+                AndroidMemoryTierProbe.tier(context)
+            } else {
+                // No context, no probe; not-low is the existing default for unknown
+                // (the old heuristic also fell to the bigger budget without a context).
+                MemoryTier.HIGH
+            }
+            val low = tier == MemoryTier.LOW
             DefaultLoadControl.Builder()
-                .setTargetBufferBytes(if (lowRam) 40 * 1024 * 1024 else standardBudget)
+                .setTargetBufferBytes(playerTargetBufferBytes(tier, Runtime.getRuntime().maxMemory()))
                 // Pinned to media3 1.8.0's default; see the enabled branch above — the heap/4
                 // budget is only a real ceiling while this stays false.
                 .setPrioritizeTimeOverSizeThresholds(false)
                 .setBufferDurationsMs(
                     DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-                    if (lowRam) 45_000 else 70_000,
+                    if (low) 45_000 else 70_000,
                     DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
                     5_000
                 )
                 .build()
         }
+    }
+
+    /**
+     * ExoPlayer's media buffer target for the stock (non-performance-mode) path — plain
+     * byte[] on the Java heap, so it must fit the real dalvik budget. LOW-tier boxes
+     * (declared low-RAM or a ≤192MB memory class — most sticks, now that largeHeap is
+     * gone from the manifest) keep the flat 40MB that stopped the 2GB-box swap-thrash;
+     * everything else budgets a quarter of the real heap, clamped so no box ever sizes
+     * below the LOW value or above the old 100MB flat target that field telemetry
+     * showed driving OOM/LMK kills.
+     */
+    internal fun playerTargetBufferBytes(tier: MemoryTier, maxHeapBytes: Long): Int {
+        if (tier == MemoryTier.LOW) return 40 * 1024 * 1024
+        return (maxHeapBytes / 4)
+            .coerceIn(40L * 1024 * 1024, 100L * 1024 * 1024)
+            .toInt()
     }
 
     // ─── BandwidthMeter ───────────────────────────────────────────────────────
