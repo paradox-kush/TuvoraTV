@@ -189,6 +189,10 @@ class StalkerClient @Inject constructor(
                     url = "",
                     cmd = item.str("cmd"),
                     hasArchive = (item.int("tv_archive") ?: 0) > 0,
+                    // Stored as plain booleans (false = flag absent OR panel said false — the
+                    // column cannot tell them apart), so reads treat only TRUE as evidence.
+                    useHttpTmpLink = item.flag("use_http_tmp_link") ?: false,
+                    useLoadBalancing = item.flag("use_load_balancing") ?: false,
                 )
             }
             // Nothing usable fetched: keep whatever lineup is stored (stale beats empty), and do
@@ -485,12 +489,10 @@ class StalkerClient @Inject constructor(
      * The static play URL when [StalkerPlaybackLinkPolicy] rules create_link unnecessary for this
      * row, else null (mint as always).
      *
-     * INTEGRATION(WP1): flag evidence lives only in this session's in-memory caches — the
-     * DB-cached rows (IptvContentDb ContentChannel/ContentVod) do not carry use_http_tmp_link /
-     * use_load_balancing yet; WP1 owns those columns. A cold-start play served purely from the
-     * store therefore has no evidence here and MINTS (the safe rule: absence of evidence keeps
-     * minting). When WP1's fields land, read them off the stored row in THIS function and cold
-     * starts inherit static playback too.
+     * Evidence arrives two ways: live rows via [rememberLinkFlags] (can prove true OR false),
+     * and stored lineup rows via [noteStoredFlags] (true only — see its note on why the boolean
+     * columns cannot prove false). A row with no evidence mints; cold-start static playback for
+     * known-false rows waits on a tri-state column.
      */
     private fun staticUrlOrNull(acc: XtreamAccount, type: String, id: Int, cmd: String, forceMint: Boolean): String? {
         if (forceMint) return null
@@ -636,7 +638,24 @@ class StalkerClient @Inject constructor(
         // The mirrored lineup carries every channel's cmd — playing a channel costs nothing but
         // the create_link itself, even on a cold start with the portal briefly unreachable.
         ensureLineup(acc)
-        return contentDb.channelRow(acc.id, streamId)?.cmd ?: row(acc, "itv", streamId)?.str("cmd")
+        val stored = contentDb.channelRow(acc.id, streamId)
+        if (stored != null) noteStoredFlags(acc.id, "itv", streamId, stored.useHttpTmpLink, stored.useLoadBalancing)
+        return stored?.cmd ?: row(acc, "itv", streamId)?.str("cmd")
+    }
+
+    /**
+     * Cold-start evidence off a stored lineup row. The columns are plain booleans, so only TRUE
+     * is evidence ("this panel flagged the row" — mint, protecting masked rows before any live
+     * catalog fetch); false/false stays "no evidence" and mints anyway, because the store cannot
+     * distinguish a panel that said false from a row written before the flags existed. Live
+     * in-session evidence (rememberLinkFlags) is never overwritten — it can also prove false.
+     */
+    private fun noteStoredFlags(accId: String, type: String, id: Int, tmpLink: Boolean, loadBalancing: Boolean) {
+        if (!tmpLink && !loadBalancing) return
+        val key = rowKey(accId, type, id)
+        if (linkFlags.containsKey(key)) return
+        if (linkFlags.size > MAX_CACHED_ROWS) linkFlags.clear()
+        linkFlags[key] = LinkFlags(tmpLink, loadBalancing)
     }
 
     private suspend fun vodCmd(acc: XtreamAccount, streamId: Int): String? =
