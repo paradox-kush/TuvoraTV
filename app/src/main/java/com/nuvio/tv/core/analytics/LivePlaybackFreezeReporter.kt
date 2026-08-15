@@ -168,7 +168,18 @@ internal class LivePlaybackFreezeReporter(
             is LivePlaybackFreezePolicy.Decision.Start -> {
                 freezeActive = true
                 freezeKind = decision.kind
-                freezeStartedAtMs = nowMs
+                // The viewer's clock on a video-only freeze started when the last frame
+                // rendered, not when the detection threshold fired ~6s later. Basing it at
+                // detection shipped fleet frozen_ms values below the threshold itself —
+                // impossible by construction. `lastVideoAdvanceAtMs` still holds the true
+                // stall start here: the ticks did not move this sample, so the mark above
+                // did not touch it. The playhead kinds keep the detection basis the fleet
+                // has been read with since the detector shipped.
+                freezeStartedAtMs = if (decision.kind == LivePlaybackFreezePolicy.Kind.VIDEO_STALLED) {
+                    lastVideoAdvanceAtMs
+                } else {
+                    nowMs
+                }
                 freezeStartPositionMs = positionMs
                 freezeStartBufferedAheadMs = bufferedAheadMs
                 freezeMaxBufferedAheadMs = bufferedAheadMs
