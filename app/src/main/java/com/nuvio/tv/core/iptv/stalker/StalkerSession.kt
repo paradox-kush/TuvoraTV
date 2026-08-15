@@ -4,7 +4,10 @@ import android.util.Log
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.nuvio.tv.core.iptv.IptvPanelGuard
+import com.nuvio.tv.core.iptv.PanelHostGuard
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.guardedPanelRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,7 +59,10 @@ class StalkerDeviceConflictException(message: String) : StalkerPortalRefusedExce
  */
 class StalkerSession(
     private val account: XtreamAccount,
-    private val http: OkHttpClient
+    private val http: OkHttpClient,
+    // The per-origin circuit breaker every portal request is admitted through (WP6). Injectable so
+    // tests drive it with their own clock; production shares the process-wide instance.
+    private val panelGuard: PanelHostGuard = IptvPanelGuard.guard
 ) {
     @Volatile private var token: String? = null
     /** When a re-auth ran and the retry STILL came back empty (another device holds the MAC). */
@@ -180,6 +186,10 @@ class StalkerSession(
             .header("Accept", "*/*")
         token?.takeIf { it.isNotEmpty() }?.let { builder.header("Authorization", "Bearer $it") }
 
+        // Guarded like rawRequestAt (WP6): the bulk-EPG stream is a panel request too. A sniffed
+        // rejection sentinel throws from inside the block, which classifies as HTTP_RESPONSE —
+        // body bytes arrived, so the host is alive and the record clears.
+        panelGuard.guardedPanelRequest(urlBuilder.build().toString()) {
         gate.withPermit {
             http.newCall(builder.build()).execute().use { resp ->
                 if (resp.code == 401 || resp.code == 403) {
@@ -237,6 +247,7 @@ class StalkerSession(
                 if (sniffing && sniff.isNotEmpty()) onChunk(sniff.toString())
                 sawBytes
             }
+        }
         }
     }
 
@@ -429,7 +440,9 @@ class StalkerSession(
         }
     }
 
-    /** Try each candidate endpoint until one handshakes with a token. Throws if none do. */
+    /** Try each candidate endpoint until one handshakes with a token. Throws if none do.
+     *  The probes carry the guard's discovery flag (WP6): they run even while the breaker is open
+     *  and their failures are never counted — but a probe that reaches the host clears its record. */
     private suspend fun probeEndpoint(): String {
         var lastError: Throwable? = null
         for (candidate in StalkerProtocol.ENDPOINT_CANDIDATES) {
@@ -437,7 +450,8 @@ class StalkerSession(
                 rawRequestAt(
                     candidate,
                     mapOf("type" to "stb", "action" to "handshake", "token" to "", "prehash" to "0"),
-                    tokenOverride = ""
+                    tokenOverride = "",
+                    discovery = true
                 ).jsOrNull()?.asJsonObject?.get("token")?.asStringOrNull()?.isNotBlank() == true
             }.onFailure { lastError = it }.getOrDefault(false)
             if (ok) {
@@ -478,7 +492,10 @@ class StalkerSession(
     private suspend fun rawRequestAt(
         endpointPath: String,
         params: Map<String, String>,
-        tokenOverride: String? = null
+        tokenOverride: String? = null,
+        // Endpoint-discovery probe (WP6): admitted even while the breaker is open, its failures
+        // never counted — discovery expects most candidates to fail. Successes still clear.
+        discovery: Boolean = false
     ): JsonElement {
         awaitPlaybackTraffic(params["action"].orEmpty())
         val urlBuilder = ("$baseUrl$endpointPath").toHttpUrlOrNull()
@@ -504,21 +521,28 @@ class StalkerSession(
 
         // The gate is the backstop against UI fan-out (the hub fires one get_short_epg per channel
         // tile as it composes). Nothing reaches the portal outside it.
-        return gate.withPermit { http.newCall(builder.build()).execute().use { resp ->
-            val bodyStr = resp.body?.string().orEmpty()
-            if (resp.code == 401 || resp.code == 403) {
-                // Signal a stale token to the retry path by returning an empty envelope.
-                return@use JsonObject()
-            }
-            if (!resp.isSuccessful) error("HTTP ${resp.code}")
-            // A portal that rejects the STB identity replies HTTP 200 with the plain text
-            // "Authorization failed." (not JSON). A stale token recovers via re-auth; a persistent
-            // rejection would otherwise surface as a vague "no data". Throw an actionable error — it
-            // only becomes terminal when re-auth can't fix it (MAC/Serial/Device ID genuinely wrong).
-            if (bodyStr.contains(AUTH_FAILED_MARKER, ignoreCase = true))
-                throw StalkerAuthException("Stalker portal rejected this device for ${account.name} — check the MAC address (and Serial / Device ID if the portal requires them)")
-            runCatching { JsonParser.parseString(bodyStr) }.getOrDefault(JsonObject())
-        } }
+        // The panel guard sits OUTSIDE the gate (WP6): a fast-fail must not queue behind requests
+        // that are busy timing out, and its refusal (PanelHostFastFailException — never an auth
+        // type, and worded to read as a connection-level failure) propagates without re-auth.
+        // A body-read failure after the status line classifies as a reset (inconclusive); the
+        // rejection sentinel / HTTP-status throws classify as HTTP_RESPONSE — the host answered.
+        return panelGuard.guardedPanelRequest(urlBuilder.build().toString(), discovery) {
+            gate.withPermit { http.newCall(builder.build()).execute().use { resp ->
+                val bodyStr = resp.body?.string().orEmpty()
+                if (resp.code == 401 || resp.code == 403) {
+                    // Signal a stale token to the retry path by returning an empty envelope.
+                    return@use JsonObject()
+                }
+                if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                // A portal that rejects the STB identity replies HTTP 200 with the plain text
+                // "Authorization failed." (not JSON). A stale token recovers via re-auth; a persistent
+                // rejection would otherwise surface as a vague "no data". Throw an actionable error — it
+                // only becomes terminal when re-auth can't fix it (MAC/Serial/Device ID genuinely wrong).
+                if (bodyStr.contains(AUTH_FAILED_MARKER, ignoreCase = true))
+                    throw StalkerAuthException("Stalker portal rejected this device for ${account.name} — check the MAC address (and Serial / Device ID if the portal requires them)")
+                runCatching { JsonParser.parseString(bodyStr) }.getOrDefault(JsonObject())
+            } }
+        }
     }
 
     // --- JSON helpers ---------------------------------------------------------

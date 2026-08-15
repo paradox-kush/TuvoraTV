@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.IptvPanelGuard
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
@@ -230,6 +231,9 @@ class XtreamHubViewModel @Inject constructor(
 
     /** Retry after a failed category-list load (the ErrorState's Retry button). */
     fun retry() {
+        // User-driven retry: clear the panel breaker FIRST (WP6) so it can never fast-fail the
+        // very attempt the user just asked for.
+        _uiState.value.selectedAccount?.let { IptvPanelGuard.resetForAccount(it) }
         _uiState.update { it.copy(error = null) }
         loadCategories()
     }
