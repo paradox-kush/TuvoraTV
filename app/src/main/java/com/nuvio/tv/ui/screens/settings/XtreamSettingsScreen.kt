@@ -133,14 +133,19 @@ fun XtreamSettingsContent(
         )
 
         uiState.accounts.forEach { account ->
-            // Lazily fetch "Active · 0/1 connections · Expires …" for the row (silent on failure).
-            LaunchedEffect(account.id) { viewModel.ensureAccountStatus(account) }
+            // Lazily fetch "Active · 0/1 connections · Expires …" for the row (silent on failure),
+            // and the read-only guide EPG coverage line (mirror mapping + session source tally).
+            LaunchedEffect(account.id) {
+                viewModel.ensureAccountStatus(account)
+                viewModel.ensureGuideEpgCoverage(account)
+            }
             SettingsActionRow(
                 title = account.name,
                 subtitle = listOfNotNull(
                     account.baseUrl,
                     "Preparing catalog for search & playback…".takeIf { account.id in indexingAccounts },
-                    uiState.accountStatus[account.id]
+                    uiState.accountStatus[account.id],
+                    uiState.guideEpgCoverage[account.id]
                 ).joinToString("\n"),
                 value = if (account.enabled) "On" else "Off",
                 onClick = { actionsFor = account }

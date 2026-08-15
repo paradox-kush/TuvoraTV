@@ -43,7 +43,9 @@ data class XtreamSettingsUiState(
     /** "accountId|type" -> that type's category list (for the Content & Categories checklist). */
     val categoryLists: Map<String, List<XtreamCategory>> = emptyMap(),
     /** accountId -> "Active · 0/1 connections · Expires 2027-01-11" (lazily fetched, silent on failure). */
-    val accountStatus: Map<String, String> = emptyMap()
+    val accountStatus: Map<String, String> = emptyMap(),
+    /** accountId -> the guide's EPG-source coverage line (mirror mapping + session tally; read-only). */
+    val guideEpgCoverage: Map<String, String> = emptyMap()
 )
 
 @HiltViewModel
@@ -65,6 +67,7 @@ class XtreamSettingsViewModel @Inject constructor(
     private val searchIndex: com.nuvio.tv.core.iptv.XtreamSearchIndex,
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
+    private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
@@ -448,6 +451,9 @@ class XtreamSettingsViewModel @Inject constructor(
                 )
             }
             runCatching { contentDb.resetEpgFetchStamps(id) }
+            // Sources measured under the old offset are stale too: a channel that fell to the
+            // mirror because its rows looked skewed deserves a fresh panel ask under the new one.
+            com.nuvio.tv.core.iptv.EpgSourceLadder.sessionMemory.forgetAccount(id)
         }
     }
 
@@ -491,10 +497,17 @@ class XtreamSettingsViewModel @Inject constructor(
         }.toSet()
         statusRequests.removeAll(ids)
         categoryRequests.removeAll(typeKeys)
+        coverageRequests.removeAll(ids)
         // A creds edit keeps the same id when only the password changed — the search
         // cache's stream URLs embed the OLD password, so drop it alongside the VM caches.
         ids.forEach { searchIndex.evict(it) }
-        _uiState.update { it.copy(accountStatus = it.accountStatus - ids, categoryLists = it.categoryLists - typeKeys) }
+        _uiState.update {
+            it.copy(
+                accountStatus = it.accountStatus - ids,
+                categoryLists = it.categoryLists - typeKeys,
+                guideEpgCoverage = it.guideEpgCoverage - ids,
+            )
+        }
     }
 
     /** Fetch the three category lists for the Content & Categories dialog (cached, silent on failure). */
@@ -552,6 +565,40 @@ class XtreamSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             store.update(accountId, transform)
             syncService.triggerRemoteSync()
+        }
+    }
+
+    private val coverageRequests = mutableSetOf<String>()   // accountId in flight or done
+
+    /**
+     * Lazily compute the guide's EPG-source coverage line for a settings row (read-only, cached
+     * per VM). Cheap by construction: one mirror mapping read (the streamId→epgId table for this
+     * playlist) + the stored ingest count where one exists (M3U/Stalker — Xtream lineups aren't
+     * ingested, so their line shows the mapped figure alone rather than paying a panel call to
+     * count) + the in-memory session tally of which ladder rung fed each browsed channel. Never
+     * a lineup scan — coverage must not cost what it reports on.
+     */
+    fun ensureGuideEpgCoverage(account: XtreamAccount) {
+        if (!coverageRequests.add(account.id)) return
+        viewModelScope.launch {
+            val mapped = runCatching { epgMirror.mappingFor(account.id).size }.getOrDefault(0)
+            val total = runCatching { contentDb.liveCount(account.id) }.getOrDefault(0).takeIf { it > 0 }
+            val coverage = when {
+                mapped <= 0 -> "Backup guide (EPG mirror): no channels matched yet"
+                total != null -> "Backup guide (EPG mirror): $mapped of $total channels matched"
+                else -> "Backup guide (EPG mirror): $mapped channels matched"
+            }
+            val tally = com.nuvio.tv.core.iptv.EpgSourceLadder.sessionMemory.tally(account.id)
+            val line = if (tally.total == 0) coverage else {
+                val parts = buildList {
+                    if (tally.manual > 0) add("manual ${tally.manual}")
+                    if (tally.provider > 0) add("provider ${tally.provider}")
+                    if (tally.mirror > 0) add("backup ${tally.mirror}")
+                    if (tally.none > 0) add("none ${tally.none}")
+                }
+                coverage + " · guide sources this session: " + parts.joinToString(" · ")
+            }
+            _uiState.update { it.copy(guideEpgCoverage = it.guideEpgCoverage + (account.id to line)) }
         }
     }
 
