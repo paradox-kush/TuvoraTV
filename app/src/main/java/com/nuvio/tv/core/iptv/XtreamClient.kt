@@ -160,6 +160,8 @@ data class XtreamChannel(
     val epgChannelId: String?,
     val categoryId: String?,
     val hasArchive: Boolean,
+    /** Days of catch-up available; 0 = the panel did not say (see [XtreamCatchUp.isWithinWindow]). */
+    val catchUpDays: Int = 0,
     val streamUrl: String
 )
 
@@ -292,6 +294,7 @@ class XtreamClient @Inject constructor(
                 epgChannelId = dto.epgChannelId?.takeIf { it.isNotBlank() },
                 categoryId = dto.categoryId,
                 hasArchive = (dto.tvArchive ?: 0) > 0,
+                catchUpDays = (dto.tvArchiveDuration ?: 0).coerceAtLeast(0),
                 streamUrl = streamUrl(acc, "live", id, "ts")
             )
         }
@@ -488,20 +491,29 @@ class XtreamClient @Inject constructor(
      * timezone, so a mis-set panel replays offset — reading server_info.timezone and
      * shifting is the upgrade path if providers surface that in practice.
      */
-    fun liveTimeshiftUrl(acc: XtreamAccount, streamId: Int, startEpochMs: Long, durationMinutes: Int): String {
-        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd:HH-mm", java.util.Locale.US)
-            .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-        val start = fmt.format(java.util.Date(startEpochMs))
-        return (acc.baseUrl.toHttpUrlOrNull() ?: error("Invalid server URL"))
-            .newBuilder()
-            .addPathSegment("timeshift")
-            .addPathSegment(acc.username)
-            .addPathSegment(acc.password)
-            .addPathSegment(durationMinutes.toString())
-            .addPathSegment(start)
-            .addPathSegment("$streamId.ts")
-            .build().toString()
-    }
+    fun liveTimeshiftUrl(acc: XtreamAccount, streamId: Int, startEpochMs: Long, durationMinutes: Int): String =
+        liveTimeshiftUrls(acc, streamId, startEpochMs, durationMinutes).first()
+
+    /**
+     * Every catch-up URL worth trying for this channel, best-known first — panels disagree about
+     * the shape and none advertise which they speak, so the caller walks the list until one plays.
+     * The first entry is the form Tuvora has always sent.
+     */
+    fun liveTimeshiftUrls(
+        acc: XtreamAccount,
+        streamId: Int,
+        startEpochMs: Long,
+        durationMinutes: Int,
+        containerExtension: String? = null,
+    ): List<String> = XtreamCatchUp.candidateUrls(
+        baseUrl = acc.baseUrl,
+        username = acc.username,
+        password = acc.password,
+        streamId = streamId,
+        startMs = startEpochMs,
+        endMs = startEpochMs + durationMinutes * 60_000L,
+        containerExtension = containerExtension,
+    )
 
     private fun streamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String): String =
         (acc.baseUrl.toHttpUrlOrNull() ?: error("Invalid server URL"))

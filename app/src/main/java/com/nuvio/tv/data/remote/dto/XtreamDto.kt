@@ -74,7 +74,9 @@ data class XtreamLiveStreamDto(
     @Json(name = "stream_icon") val streamIcon: String?,
     @Json(name = "epg_channel_id") val epgChannelId: String?,
     @Json(name = "category_id") val categoryId: String?,
-    @FlexInt @Json(name = "tv_archive") val tvArchive: Int?
+    @FlexInt @Json(name = "tv_archive") val tvArchive: Int?,
+    /** Days of catch-up the panel keeps. Frequently absent or 0 even when tv_archive is set. */
+    @FlexInt @Json(name = "tv_archive_duration") val tvArchiveDuration: Int? = null
 )
 
 // action=get_vod_streams
