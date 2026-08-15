@@ -37,6 +37,7 @@
     "requestOrder": [
       "handshake",
       "get_profile",
+      "get_events",
       "get_genres"
     ]
   },

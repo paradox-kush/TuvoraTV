@@ -27,6 +27,48 @@ internal object StalkerBootstrapPolicy {
     }
 
     /**
+     * A `status: 1` profile refusal. [deviceConflict] = the portal's own message names the DEVICE
+     * BINDING (another device's identity is pinned to this MAC) — the one refusal with a user
+     * remedy. [portalText] is the markup-stripped `msg`/`block_msg` for error surfaces.
+     */
+    data class Refusal(val deviceConflict: Boolean, val portalText: String?)
+
+    /**
+     * `get_profile` status decode: 0/absent = OK, 2 = wants `do_auth` (see [stepsAfterProfile]),
+     * 1 = REFUSED — the line is disabled, the MAC unknown, or another device owns the binding.
+     * A bare `{status: 1}` with no message is still a refusal, never a success.
+     *
+     * The device-conflict split matches a NARROW phrase set against the portal's own STRUCTURED
+     * `msg`/`block_msg` (never a raw HTML body). Kept to the binding itself: "device" alone
+     * appears in unrelated refusals ("device limit reached", "no device selected"), and
+     * mislabelling one of those would hand the user a remedy that cannot work.
+     */
+    fun refusalAfterProfile(status: Int?, msg: String?, blockMsg: String?): Refusal? {
+        if (status != 1) return null
+        val text = listOfNotNull(msg, blockMsg)
+            .map { stripMarkup(it) }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .joinToString(" — ")
+            .ifEmpty { null }
+        val conflict = text != null && DEVICE_CONFLICT_PATTERNS.any { it.containsMatchIn(text) }
+        return Refusal(deviceConflict = conflict, portalText = text)
+    }
+
+    /** `block_msg` routinely carries markup ("Your STB is damaged.<br/>Call the provider."). */
+    private fun stripMarkup(text: String): String =
+        text.replace(MARKUP, " ").replace(SPACES, " ").trim()
+
+    private val MARKUP = Regex("<[^>]*>")
+    private val SPACES = Regex("\\s+")
+
+    /** Device-conflict phrasings seen in the wild (iptvnator ships the same set). */
+    private val DEVICE_CONFLICT_PATTERNS = listOf(
+        Regex("""device\s*conflict""", RegexOption.IGNORE_CASE),
+        Regex("""device[\s_-]?id[^.!?]{0,40}?(mismatch|conflict|does\s*not\s*match|not\s*match)""", RegexOption.IGNORE_CASE),
+    )
+
+    /**
      * Steps to run, in order, after a successful `get_profile`.
      *
      * [authAccess] and [status] are null when the portal omits them, which most do — absence means

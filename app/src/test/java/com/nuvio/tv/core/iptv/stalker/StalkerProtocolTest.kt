@@ -46,6 +46,28 @@ class StalkerProtocolTest {
     }
 
     @Test
+    fun `stripLauncherPrefix removes known launcher tokens regardless of scheme`() {
+        // Kodi pvr.stalker documents the cmd format as `(?:ffrt\d*\s|)(.*)`; real portals also emit
+        // "ffmpeg " and "auto " (see extractStreamUrl). The strip must keep NON-http targets intact —
+        // that is the whole reason it exists next to extractStreamUrl, which only surfaces http(s).
+        assertEquals("http://a/x", StalkerProtocol.stripLauncherPrefix("ffmpeg http://a/x"))
+        assertEquals("http://a/x", StalkerProtocol.stripLauncherPrefix("auto http://a/x"))
+        assertEquals("udp://239.0.0.1:1234", StalkerProtocol.stripLauncherPrefix("ffrt udp://239.0.0.1:1234"))
+        assertEquals("rtp://239.0.0.1:5000", StalkerProtocol.stripLauncherPrefix("ffrt2 rtp://239.0.0.1:5000"))
+        assertEquals("http://a/x", StalkerProtocol.stripLauncherPrefix("ffrt10 http://a/x"))
+    }
+
+    @Test
+    fun `stripLauncherPrefix leaves unknown tokens and bare targets alone`() {
+        // An unrecognized token is NOT a launcher we know — leave the cmd whole; the policy then
+        // fails safe (mint). Bare URLs and portal-relative shapes pass through untouched.
+        assertEquals("ffzz rtp://x", StalkerProtocol.stripLauncherPrefix("ffzz rtp://x"))
+        assertEquals("http://a/x", StalkerProtocol.stripLauncherPrefix("http://a/x"))
+        assertEquals("/media/file_12.mpg", StalkerProtocol.stripLauncherPrefix("/media/file_12.mpg"))
+        assertEquals("?token=abc", StalkerProtocol.stripLauncherPrefix(" ?token=abc "))
+    }
+
+    @Test
     fun `mac cookie encoding replaces colons`() {
         assertEquals("00%3A1A%3A79%3A58%3AB3%3AA6", StalkerProtocol.encodeMacForCookie(mac))
     }
