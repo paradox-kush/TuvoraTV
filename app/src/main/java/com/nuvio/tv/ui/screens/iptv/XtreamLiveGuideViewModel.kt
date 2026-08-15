@@ -262,10 +262,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // null = the panel request FAILED (these panels throw transient 403/500s and
             // rate-limit bursts) — retry once, then surface an error instead of faking "empty".
             val channels: List<GuideChannel>? = when (category.special) {
-                GuideSpecial.FAVORITES -> favoriteChannels()
-                GuideSpecial.RECENT -> liveStore.recents.first().map {
-                    GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id))
-                }
+                GuideSpecial.FAVORITES -> favoriteChannels(acc)
+                // Scoped to THIS account: the store keeps one flat profile-wide list (favorites
+                // and recents across every playlist), and these rails live inside a provider's
+                // guide — the auto-resume above already filters the same way.
+                GuideSpecial.RECENT -> liveStore.recents.first()
+                    .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
+                    .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) }
                 // "All channels" honors the category selections too (filter BEFORE the cap so
                 // a selection at the catalog's tail isn't cut off). Favorites/Recent stay unfiltered.
                 GuideSpecial.ALL -> retryOnce { fetchChannels(acc, null) }
@@ -545,9 +548,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
     }
 
-    private suspend fun favoriteChannels(): List<GuideChannel> {
+    /** Live favorites belonging to [acc] — see the RECENT rail for why this is account-scoped. */
+    private suspend fun favoriteChannels(acc: XtreamAccount): List<GuideChannel> {
+        val prefix = XtreamItemRegistry.accountPrefix(acc.id)
         val favIds = libraryRepository.libraryItems.first()
-            .filter { XtreamItemRegistry.isLiveContentId(it.id) }
+            .filter { XtreamItemRegistry.isLiveContentId(it.id) && it.id.startsWith(prefix) }
             .map { it.id }
         return favIds.mapNotNull { id ->
             liveStore.refFor(id)?.let { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) }
