@@ -613,6 +613,8 @@ internal fun XtreamEpgEntryDto.toProgram(): XtreamProgram = XtreamProgram(
 
 /** Xtream base64-encodes EPG title/description. Returns "" on null/garbage rather than throwing. */
 internal fun decodeXtreamBase64(s: String?): String {
+    // Delegates to the hardened decoder: a short plain title ("News") is valid base64 by accident
+    // and a blind decode ships mojibake — accepted only when base64-shaped AND readable came out.
     if (s.isNullOrBlank()) return ""
-    return runCatching { String(Base64.getDecoder().decode(s.trim()), Charsets.UTF_8) }.getOrDefault(s)
+    return XtreamSimpleDataTable.decodeText(s)
 }

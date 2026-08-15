@@ -19,10 +19,16 @@ class GuideTimeTravelTest {
     private val now = 1_710_000_000_000L + 7 * 60_000L + 13_000L
 
     @Test
-    fun `the live window starts on the containing half hour`() {
+    fun `the live window shows one slot of past by default`() {
         val start = GuideTimeTravel.liveWindowStartMs(now)
         assertEquals("lands on a slot", 0L, start % GuideTimeTravel.SLOT_MS)
-        assertTrue("contains now", start <= now && now < start + GuideTimeTravel.SLOT_MS)
+        // The resting guide draws recent history (the approved mockups): the window opens one
+        // lookback behind now, so a just-finished programme is visible without travelling.
+        assertTrue("exposes the lookback", start <= now - GuideTimeTravel.LIVE_LOOKBACK_MS)
+        assertTrue(
+            "nearest boundary below the lookback point",
+            now - GuideTimeTravel.LIVE_LOOKBACK_MS - start < GuideTimeTravel.SLOT_MS,
+        )
     }
 
     @Test

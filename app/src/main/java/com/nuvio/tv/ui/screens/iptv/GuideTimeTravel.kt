@@ -20,8 +20,11 @@ internal object GuideTimeTravel {
 
     private const val DAY_MS = 24 * 60 * 60 * 1000L
 
-    /** The half hour containing [nowMs] — where the guide sits until the viewer travels. */
-    fun liveWindowStartMs(nowMs: Long): Long = slotFloor(nowMs)
+    /** How much past the LIVE view shows by default — one slot, so recent history is visible
+     *  and replay is discoverable without travelling (the approved mockups draw past cells). */
+    const val LIVE_LOOKBACK_MS = SLOT_MS
+
+    fun liveWindowStartMs(nowMs: Long): Long = slotFloor(nowMs - LIVE_LOOKBACK_MS)
 
     /**
      * The furthest back the viewer may travel: the provider's own window when it states one, else
