@@ -35,6 +35,26 @@ class MemoryTierPolicyTest {
         assertEquals(96L * 1024 * 1024, MemoryTierPolicy.imageMemoryCacheBytes(MemoryTier.HIGH))
     }
 
+    /**
+     * How many catalog rows one index transaction may hold.
+     *
+     * Measured on the user's 2 GB Onn 4K box (2026-08-16, v1.4.30): the catalog index build held a
+     * worker at 97% CPU for minutes and the hub's own reads — which come from the SAME index DB —
+     * queued behind its write transaction, so movies "didn't load" and rows never filled. The batch
+     * was 5,000 rows, each costing an UPDATE-or-INSERT plus one INSERT per normalized key: roughly
+     * 25,000 statements under the writer lock before it was released.
+     *
+     * The numbers are StreamVault's (CatalogSyncRuntimeProfile: LOW 100 / MID 300 / HIGH 500),
+     * whose tier cuts we already share. Smaller batches lower BOTH the lock hold and the heap peak
+     * — the old 5,000 was chosen against "the whole catalog at once", never against 500.
+     */
+    @Test
+    fun `index batch size follows the tier`() {
+        assertEquals("a 1GB box must not hold 5k rows of writes", 100, MemoryTierPolicy.indexBatchSize(MemoryTier.LOW))
+        assertEquals(300, MemoryTierPolicy.indexBatchSize(MemoryTier.MID))
+        assertEquals(500, MemoryTierPolicy.indexBatchSize(MemoryTier.HIGH))
+    }
+
     @Test
     fun `pressure escalates one tier transiently and relaxes back`() {
         val hold = MemoryPressureGovernor.DEFAULT_HOLD_MS

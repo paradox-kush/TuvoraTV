@@ -4,6 +4,8 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.nuvio.tv.core.memory.AppMemory
+import com.nuvio.tv.core.memory.MemoryTierPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -61,7 +63,14 @@ internal fun itemFp(
 
 private fun IndexedItem.fp(): Int = itemFp(name, year, tmdb, ext, categoryId, epgId, hasArchive, pos)
 
-/** Rows per streamed-sync DB flush — matches insertItems' chunk size. */
+/**
+ * Rows the streamed sync buffers in heap before handing them to the DB.
+ *
+ * This is the HEAP knob (how many IndexedItem live at once); the writer-lock knob is
+ * [MemoryTierPolicy.indexBatchSize], which splits each flush into tier-sized transactions. The two
+ * were the same number until the Onn 4K field report — a 5,000-row transaction blocked the hub's
+ * reads for seconds at a time — so they are deliberately independent now.
+ */
 private const val FLUSH_CHUNK = 5_000
 
 /**
@@ -502,8 +511,29 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         }
     }
 
+    /**
+     * Writes the index in tier-sized transactions, YIELDING between them.
+     *
+     * The hub reads its rows from this same database, so every statement here is time the UI
+     * cannot read. Measured on a 2 GB Onn 4K box (v1.4.30): at 5,000 rows a batch — an
+     * UPDATE-or-INSERT plus one INSERT per normalized key, so ~25,000 statements — the build held
+     * a worker at 97% CPU for minutes and the hub's category reads queued behind the writer lock.
+     * Movies read as "not loading" and rows never filled; it recovered only when the build ended.
+     *
+     * The batch is now [MemoryTierPolicy.indexBatchSize] — 300 on that box instead of 5,000, so the
+     * writer lock is handed back ~16x more often and the hub's reads get in between batches. This
+     * does not make indexing faster; it makes it interruptible, which is what "the app feels
+     * broken" actually was.
+     *
+     * NOT done here, deliberately: suspending between batches (StreamVault's `yield()`), which
+     * would also stop one worker being monopolized at 100% CPU. [SyncSession.add] is driven from a
+     * non-suspend streaming-parser callback, so making this chain suspend means changing that
+     * callback's signature — a bigger change than a field fix should carry. The CPU/GC half of the
+     * problem is `TitleNormalizer.keysOf`'s allocation rate and belongs with that work.
+     */
     private fun insertItems(provider: String, kind: MatchKind, items: List<IndexedItem>) {
-        for (chunk in items.chunked(5_000)) {
+        val batch = MemoryTierPolicy.indexBatchSize(AppMemory.effectiveTier())
+        for (chunk in items.chunked(batch)) {
             db.beginTransaction()
             try {
                 // UPDATE-then-INSERT rather than INSERT OR REPLACE: an existing row's poster must

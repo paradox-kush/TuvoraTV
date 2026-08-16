@@ -18,6 +18,25 @@ internal object MemoryTierPolicy {
         else -> MemoryTier.HIGH
     }
 
+    /**
+     * How many catalog rows one index-write transaction may hold — LOW 100 / MID 300 / HIGH 500.
+     *
+     * The hub reads its movie/series rows from the SAME index database the build writes, so the
+     * batch size is really "how long the UI can be blocked". Measured on a 2 GB Onn 4K box: at
+     * 5,000 rows (~25,000 statements per transaction, one INSERT per normalized key on top of each
+     * row) the reads queued behind the writer long enough that categories looked empty and the
+     * whole app felt broken until the build finished.
+     *
+     * Smaller batches cut the lock hold AND the heap peak: the old 5,000 was picked against
+     * "materialize the whole catalog", never against a few hundred. Numbers are StreamVault's
+     * (CatalogSyncRuntimeProfile), whose tier cuts [androidTier] already matches.
+     */
+    fun indexBatchSize(tier: MemoryTier): Int = when (tier) {
+        MemoryTier.LOW -> 100
+        MemoryTier.MID -> 300
+        MemoryTier.HIGH -> 500
+    }
+
     /** Image memory cache budget per tier (Coil): LOW 32 / MID 64 / HIGH 96 MiB. */
     fun imageMemoryCacheBytes(tier: MemoryTier): Long = when (tier) {
         MemoryTier.LOW -> 32L * MIB
