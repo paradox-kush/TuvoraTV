@@ -126,8 +126,10 @@ internal fun RowScope.GuideProgrammeCells(
                 if (!interactive || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 val here = focusedStart ?: return@onPreviewKeyEvent false
                 when (event.key) {
-                    Key.DirectionLeft -> if (here == firstActionableStart) { onTravel(-1); true } else false
-                    Key.DirectionRight -> if (here == lastActionableStart) { onTravel(1); true } else false
+                    // Edge presses PAGE (a full window), they do not step a slot — see
+                    // GuideTimeTravel.EDGE_TRAVEL_SLOTS for the field report behind this.
+                    Key.DirectionLeft -> if (here == firstActionableStart) { onTravel(-GuideTimeTravel.EDGE_TRAVEL_SLOTS); true } else false
+                    Key.DirectionRight -> if (here == lastActionableStart) { onTravel(GuideTimeTravel.EDGE_TRAVEL_SLOTS); true } else false
                     else -> false
                 }
             }

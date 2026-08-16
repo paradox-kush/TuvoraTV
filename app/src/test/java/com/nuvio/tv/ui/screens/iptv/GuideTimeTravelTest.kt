@@ -126,6 +126,35 @@ class GuideTimeTravelTest {
         )
     }
 
+    /**
+     * One press of LEFT at the window's edge must PAGE, not step.
+     *
+     * Field report from the Onn 4K (2026-08-16): "click back on the EPG — it only shows today, the
+     * date does not change." The edge press was wired to a single 30-minute slot, so from an
+     * evening anchor, yesterday sat ~40 presses away: the day label was CORRECT every press a
+     * human would actually make, and the feature read as broken. Mobile already pages two hours
+     * per press; a page here is one full window, which is the same two hours.
+     */
+    @Test
+    fun `an edge press pages a full window, so yesterday is reachable`() {
+        assertEquals(
+            "one edge press = one full window",
+            GuideTimeTravel.WINDOW_MS,
+            GuideTimeTravel.EDGE_TRAVEL_SLOTS * GuideTimeTravel.SLOT_MS,
+        )
+        // From a 21:30-ish evening anchor, a dozen presses must cross midnight.
+        var anchor = GuideTimeTravel.liveWindowStartMs(now)
+        repeat(12) {
+            anchor = GuideTimeTravel.shift(
+                anchor, slots = -GuideTimeTravel.EDGE_TRAVEL_SLOTS, nowMs = now, catchUpDays = 7,
+            )
+        }
+        assertTrue(
+            "12 presses reach back a full day",
+            GuideTimeTravel.liveWindowStartMs(now) - anchor >= day,
+        )
+    }
+
     /** A window that has travelled back must not be quietly snapped forward by the minute tick. */
     @Test
     fun `a travelled window survives a shift of zero`() {

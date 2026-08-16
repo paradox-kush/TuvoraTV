@@ -12,11 +12,22 @@ import com.nuvio.tv.core.iptv.CatchUpEpgWindow
  */
 internal object GuideTimeTravel {
 
-    /** The header's tick, and one press of LEFT/RIGHT at the window's edge. */
+    /** The header's tick, and the grid's cell granularity. */
     const val SLOT_MS = 30 * 60 * 1000L
 
     /** How much of the timeline is on screen. */
     const val WINDOW_MS = 2 * 60 * 60 * 1000L
+
+    /**
+     * How far one press of LEFT/RIGHT at the window's edge travels: one FULL window, not one slot.
+     *
+     * Field-reported on the Onn 4K: wired to a single slot, an evening viewer was ~40 presses from
+     * yesterday — the day label never left "Today" for any number of presses a person would
+     * actually make, and time travel read as broken. A page is two hours (the whole window), the
+     * same distance mobile's Earlier/Later buttons move, so a day is a dozen presses (or a held
+     * key) instead of forty. Fine positioning inside the window is the D-pad's normal cell walk.
+     */
+    const val EDGE_TRAVEL_SLOTS = (WINDOW_MS / SLOT_MS).toInt()
 
     private const val DAY_MS = 24 * 60 * 60 * 1000L
 
