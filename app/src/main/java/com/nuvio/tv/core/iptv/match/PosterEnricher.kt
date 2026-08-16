@@ -52,6 +52,38 @@ class PosterEnricher @Inject constructor(
     private var transportFailures = 0
 
     /**
+     * Removes every queued entry that does NOT belong to [keepAccountId]; returns how many went.
+     *
+     * Pure and generic so the rule is testable without a portal: [accountOf] maps a queue value to
+     * its account id. See [onProviderSwitched] for why this exists.
+     */
+    internal fun <V> dropQueuedFor(
+        queue: MutableMap<String, V>,
+        keepAccountId: String,
+        accountOf: (V) -> String,
+    ): Int {
+        val doomed = queue.entries.filter { accountOf(it.value) != keepAccountId }.map { it.key }
+        doomed.forEach { queue.remove(it) }
+        return doomed.size
+    }
+
+    /**
+     * The hub switched to [accountId]: abandon every queued poster fetch for other providers.
+     *
+     * Measured on a phone (2026-08-16): 30s after switching away from a Stalker portal the
+     * enricher was still issuing 87 requests to it with 202 queued at ~700ms each — about two
+     * minutes of work for a screen nobody was on, competing with the NEW playlist for the same
+     * rate-limited host. The Stalker switch-abandon could not catch these: the enricher mints each
+     * request fresh AFTER the switch, so every one looks current. The queue itself is scoped here.
+     *
+     * Deliberately NOT clearing [attempted]: a dropped item was never asked, and its key is only
+     * added when a worker actually picks it up — so a return visit re-queues it normally.
+     */
+    fun onProviderSwitched(accountId: String) {
+        synchronized(lock) { dropQueuedFor(queue, accountId) { it.acc.id } }
+    }
+
+    /**
      * Queues the null-poster sids of a just-served window. A window the user can SEE
      * ([prioritize]=true: row compose, loadMore) goes AHEAD of everything pending; a
      * prefetch window appends behind — during a section load half a dozen off-screen

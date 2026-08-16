@@ -228,6 +228,7 @@ class XtreamHubViewModel @Inject constructor(
         // same throttled host; measured on a phone: Xtream posters waiting minutes behind an
         // abandoned Stalker scroll backlog).
         com.nuvio.tv.core.iptv.stalker.StalkerPlaybackTraffic.onProviderSwitched()
+        posterEnricher.onProviderSwitched(accountId)
         val section = coerceSection(_uiState.value.section, _uiState.value.accounts.firstOrNull { it.id == accountId })
         _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap()) }
         rememberSelection()
