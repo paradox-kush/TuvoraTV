@@ -17,6 +17,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  * This only ever DELAYS browse work, and only by [DEFER_SLICE_MS] at a time up to [MAX_DEFER_MS];
  * it must never fail a request, because a stuck counter would otherwise brick browsing.
  */
+
+/**
+ * A queued browse call was dropped because the user switched providers while it waited for a gate
+ * permit. NOT a network failure (the wire was never touched) and NOT an auth failure (no re-auth
+ * must fire); the panel guard classifies it as neutral. Callers treat it like any failed page —
+ * the screen it belonged to is gone, so nobody renders the gap.
+ */
+internal class StalkerBrowseAbandonedException :
+    IllegalStateException("Stalker browse call abandoned after a provider switch")
+
 internal object StalkerPlaybackTraffic {
 
     /** How long a browse call waits before re-checking whether playback is still up. */
@@ -54,4 +64,37 @@ internal object StalkerPlaybackTraffic {
      */
     fun shouldDefer(playbackActive: Boolean, waitedMs: Long, isBootstrap: Boolean): Boolean =
         !isBootstrap && playbackActive && waitedMs < MAX_DEFER_MS
+
+    /**
+     * The current browse generation. A queued browse call captures this at ENQUEUE; when its gate
+     * permit finally arrives it compares against the current value, and a mismatch means the user
+     * has switched providers since — the answer nobody is waiting for must not be fetched.
+     *
+     * Field report (S24 mobile, 2026-08-16, same code shape here): scrolling a Stalker portal
+     * queues dozens of sequential 14-row pages behind the 2-permit gate; switching to an Xtream
+     * account on the SAME Cloudflare-throttled host then crawled until that abandoned backlog
+     * drained. Same discipline as the deferral above, but as a DROP, not a delay: the work is not
+     * merely early, it is unwanted.
+     *
+     * A plain Long for the same reason `playing` is a plain Boolean: the only race is a call
+     * reading a value that flipped microseconds ago, and its worst outcome is one already-queued
+     * request going out (exactly today's behaviour for every request).
+     */
+    var browseEpoch: Long = 0L
+        private set
+
+    /** The hub switched providers: everything browse-shaped still queued belongs to the old one. */
+    fun onProviderSwitched() {
+        browseEpoch++
+    }
+
+    /**
+     * Whether a queued call should be dropped now that its turn has come.
+     *
+     * Playback-critical actions (handshake / create_link — [isCritical], the session's existing
+     * PLAYBACK_CRITICAL_ACTIONS classification) always run: a replay resolving mid-switch must not
+     * lose its single-use create_link to a browse policy.
+     */
+    fun isAbandoned(requestEpoch: Long, currentEpoch: Long, isCritical: Boolean): Boolean =
+        !isCritical && requestEpoch != currentEpoch
 }

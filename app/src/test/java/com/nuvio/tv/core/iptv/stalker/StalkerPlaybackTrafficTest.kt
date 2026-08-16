@@ -86,4 +86,28 @@ class StalkerPlaybackTrafficTest {
             )
         )
     }
+
+    /**
+     * Switching providers must abandon the OTHER provider's queued browse work.
+     *
+     * Field report (S24 mobile, 2026-08-16; same code shape here): scrolling a Stalker portal
+     * queues dozens of 14-row get_ordered_list calls behind the 2-permit gate; switching to an
+     * Xtream provider on the SAME host then hangs — the abandoned backlog keeps draining at the
+     * throttled host's pace, ahead of everything the user is now looking at. A queued browse call
+     * from before the switch must be dropped when its turn finally comes; playback-critical calls
+     * are never dropped (a replay resolving mid-switch must not lose its create_link).
+     */
+    @Test
+    fun `a provider switch abandons queued browse calls but never critical ones`() {
+        val before = StalkerPlaybackTraffic.browseEpoch
+        StalkerPlaybackTraffic.onProviderSwitched()
+        val after = StalkerPlaybackTraffic.browseEpoch
+
+        // A browse call enqueued before the switch is stale when its permit arrives.
+        assertTrue(StalkerPlaybackTraffic.isAbandoned(requestEpoch = before, currentEpoch = after, isCritical = false))
+        // One enqueued after the switch runs normally.
+        assertFalse(StalkerPlaybackTraffic.isAbandoned(requestEpoch = after, currentEpoch = after, isCritical = false))
+        // Playback-critical work survives any number of switches.
+        assertFalse(StalkerPlaybackTraffic.isAbandoned(requestEpoch = before, currentEpoch = after, isCritical = true))
+    }
 }

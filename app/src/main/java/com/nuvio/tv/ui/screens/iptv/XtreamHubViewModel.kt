@@ -223,6 +223,11 @@ class XtreamHubViewModel @Inject constructor(
 
     fun selectAccount(accountId: String) {
         if (accountId == _uiState.value.selectedAccountId) return
+        // Whatever browse work the OLD provider still has queued belongs to a screen the user just
+        // left — drop it rather than let it drain ahead of the new provider (which may share the
+        // same throttled host; measured on a phone: Xtream posters waiting minutes behind an
+        // abandoned Stalker scroll backlog).
+        com.nuvio.tv.core.iptv.stalker.StalkerPlaybackTraffic.onProviderSwitched()
         val section = coerceSection(_uiState.value.section, _uiState.value.accounts.firstOrNull { it.id == accountId })
         _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap()) }
         rememberSelection()

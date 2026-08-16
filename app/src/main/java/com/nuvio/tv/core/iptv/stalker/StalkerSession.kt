@@ -497,7 +497,12 @@ class StalkerSession(
         // never counted — discovery expects most candidates to fail. Successes still clear.
         discovery: Boolean = false
     ): JsonElement {
-        awaitPlaybackTraffic(params["action"].orEmpty())
+        val action = params["action"].orEmpty()
+        // Captured at ENQUEUE: if the user switches providers while this call waits for a gate
+        // permit, it is answering a screen nobody is on — drop it instead of spending the
+        // throttled host's budget on it (see StalkerPlaybackTraffic.browseEpoch).
+        val enqueueEpoch = StalkerPlaybackTraffic.browseEpoch
+        awaitPlaybackTraffic(action)
         val urlBuilder = ("$baseUrl$endpointPath").toHttpUrlOrNull()
             ?.newBuilder() ?: error("Invalid Stalker portal URL: $baseUrl")
         params.forEach { (k, v) -> urlBuilder.addQueryParameter(k, v) }
@@ -527,7 +532,19 @@ class StalkerSession(
         // A body-read failure after the status line classifies as a reset (inconclusive); the
         // rejection sentinel / HTTP-status throws classify as HTTP_RESPONSE — the host answered.
         return panelGuard.guardedPanelRequest(urlBuilder.build().toString(), discovery) {
-            gate.withPermit { http.newCall(builder.build()).execute().use { resp ->
+            gate.withPermit {
+                // Checked with the permit in hand — the whole wait is the window a switch can
+                // land in. Thrown INSIDE the guard, which classifies it as neutral (an abandoned
+                // call is not a panel failure); callers treat it like any transport failure.
+                if (StalkerPlaybackTraffic.isAbandoned(
+                        requestEpoch = enqueueEpoch,
+                        currentEpoch = StalkerPlaybackTraffic.browseEpoch,
+                        isCritical = action in PLAYBACK_CRITICAL_ACTIONS,
+                    )
+                ) {
+                    throw StalkerBrowseAbandonedException()
+                }
+                http.newCall(builder.build()).execute().use { resp ->
                 val bodyStr = resp.body?.string().orEmpty()
                 if (resp.code == 401 || resp.code == 403) {
                     // Signal a stale token to the retry path by returning an empty envelope.

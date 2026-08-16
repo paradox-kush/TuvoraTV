@@ -68,6 +68,9 @@ internal fun classifyPanelThrowable(t: Throwable): PanelRequestOutcome = when (t
     // Our own refusal is never evidence about the wire (defensive: cannot happen with one wrap).
     is PanelHostFastFailException -> PanelRequestOutcome.CONNECTION_RESET
     is PanelHostFastFailIOException -> PanelRequestOutcome.CONNECTION_RESET
+    // A browse call dropped after a provider switch never touched the wire either — dozens of
+    // these in one switch must not open the breaker for a perfectly healthy portal.
+    is com.nuvio.tv.core.iptv.stalker.StalkerBrowseAbandonedException -> PanelRequestOutcome.CONNECTION_RESET
 
     is UnknownHostException,
     is ConnectException,
