@@ -84,6 +84,14 @@ class ProfileSyncService @Inject constructor(
     }
 
     suspend fun pullFromRemote(): Result<List<UserProfile>> = withContext(Dispatchers.IO) {
+        // Without a live session this RPC goes out as `anon` and comes back
+        // `42501 permission denied for function sync_pull_profiles` — one of the launch-trio
+        // errors measured on the backend (report_device / get_sync_owner / sync_pull_profiles).
+        // AuthState.FullAccount deliberately survives a lapsed session, so callers reaching here
+        // is normal; the failed Result keeps every caller on its existing "pull failed" path.
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         try {
             val response = withJwtRefreshRetry {
                 postgrest.rpc("sync_pull_profiles")

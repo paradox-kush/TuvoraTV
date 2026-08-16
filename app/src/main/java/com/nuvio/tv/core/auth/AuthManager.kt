@@ -190,6 +190,11 @@ class AuthManager @Inject constructor(
      */
     suspend fun getEffectiveUserId(fallbackToOwnIdOnFailure: Boolean = true): String? {
         val userId = currentUserId ?: return null
+        // A lapsed session would send get_sync_owner as `anon` (42501) and then land in the
+        // failure fallback anyway — skip straight to that outcome without the doomed RPC.
+        // currentUserId alone can't decide this: FullAccount survives a refresh failure (see
+        // canSync's doc), so this branch is reachable in normal operation.
+        if (!canSync) return if (fallbackToOwnIdOnFailure) userId else null
         if (cachedEffectiveUserSourceUserId != userId) {
             cachedEffectiveUserId = null
             cachedEffectiveUserSourceUserId = null
