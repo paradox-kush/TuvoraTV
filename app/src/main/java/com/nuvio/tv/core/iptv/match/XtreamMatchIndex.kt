@@ -7,6 +7,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import com.nuvio.tv.core.memory.AppMemory
 import com.nuvio.tv.core.memory.MemoryTierPolicy
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -156,7 +160,41 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         }
     }
 
-    private val db: SQLiteDatabase by lazy { helper.writableDatabase }
+    private val _buildProgress = MutableStateFlow<Map<String, IndexBuildProgress>>(emptyMap())
+
+    /**
+     * Live per-provider index-build progress, for the "Preparing catalog…" status.
+     *
+     * A running COUNT, not a percentage: an account's build spans movies, series and live, and the
+     * streaming sync learns its row count only as the response parses — so any total would either
+     * be invented or would visibly reset three times. Matters most on this platform, where the
+     * build is slowest (measured on a 2 GB Onn 4K box).
+     */
+    val buildProgress: StateFlow<Map<String, IndexBuildProgress>> = _buildProgress.asStateFlow()
+
+    private fun advanceBuildProgress(provider: String, delta: Int) {
+        _buildProgress.update { current ->
+            val next = IndexBuildProgress((current[provider]?.itemsWritten ?: 0) + delta)
+            current + (provider to (current[provider]?.mergeWith(next) ?: next))
+        }
+    }
+
+    /** Called when an account's build finishes (or fails) so the status clears. */
+    fun clearBuildProgress(provider: String) {
+        _buildProgress.update { it - provider }
+    }
+
+    private val db: SQLiteDatabase by lazy {
+        helper.writableDatabase.also {
+            // Stated, not inherited. `synchronous` defaults to FULL, so every COMMIT fsyncs — and
+            // the tier-sized batches that made indexing interruptible also multiplied the number of
+            // COMMITs by 10-50x. NORMAL is safe here by design rather than by gamble: every table
+            // in this file is a rebuildable cache (onUpgrade drops and recreates them; mappings
+            // re-pull from Supabase), so a torn write costs the rebuild that is already the
+            // recovery path. StreamVault sets its journal mode explicitly for the same reason.
+            runCatching { it.execSQL("PRAGMA synchronous = NORMAL") }
+        }
+    }
 
     /**
      * Drops EVERYTHING stored for one provider (index + local mapping mirror) — account
@@ -534,6 +572,12 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
     private fun insertItems(provider: String, kind: MatchKind, items: List<IndexedItem>) {
         val batch = MemoryTierPolicy.indexBatchSize(AppMemory.effectiveTier())
         for (chunk in items.chunked(batch)) {
+            // Normalised BEFORE the transaction opens. TitleNormalizer.keysOf is the CPU-heavy half
+            // of indexing, and running it inside the transaction meant the hub's category reads sat
+            // behind the writer lock for the whole normalisation — the measured Onn 4K symptom this
+            // method's doc describes. Sorted by (k, sid) because `keys` is WITHOUT ROWID, so its
+            // primary key IS the storage B-tree and catalog-order inserts land at random leaves.
+            val keyRows = sortedKeyRows(chunk)
             db.beginTransaction()
             try {
                 // UPDATE-then-INSERT rather than INSERT OR REPLACE: an existing row's poster must
@@ -569,17 +613,20 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                         insStmt.bindLong(12, it.pos.toLong())
                         insStmt.executeInsert()
                     }
-                    for (key in TitleNormalizer.keysOf(it.name)) {
-                        keyStmt.clearBindings()
-                        keyStmt.bindString(1, provider); keyStmt.bindString(2, kind.slug); keyStmt.bindString(3, key); keyStmt.bindLong(4, it.sid.toLong())
-                        keyStmt.executeInsert()
-                    }
+                }
+                for (row in keyRows) {
+                    keyStmt.clearBindings()
+                    keyStmt.bindString(1, provider); keyStmt.bindString(2, kind.slug); keyStmt.bindString(3, row.key); keyStmt.bindLong(4, row.sid.toLong())
+                    keyStmt.executeInsert()
                 }
                 updStmt.close(); insStmt.close(); keyStmt.close()
                 db.setTransactionSuccessful()
             } finally {
                 db.endTransaction()
             }
+            // After the batch is durable, so the number on screen never runs ahead of what
+            // survives a kill mid-build.
+            advanceBuildProgress(provider, chunk.size)
         }
     }
 
