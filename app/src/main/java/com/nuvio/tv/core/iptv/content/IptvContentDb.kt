@@ -42,6 +42,15 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     // rebuilds on upgrade (everything here is a re-ingestable cache), so the bump IS the
     // migration and onCreate always carries the current schema.
     private val helper = object : SQLiteOpenHelper(context, "iptv_content.db", null, 4) {
+        override fun onConfigure(db: SQLiteDatabase) {
+            // WAL: browse/guide reads keep serving while a background ingest writes — the
+            // default journal mode blocks every reader for the duration of each write
+            // transaction, which on a budget box turns a catalog/EPG ingest into visible
+            // UI stalls. NORMAL sync is safe: this whole DB is a re-ingestable cache.
+            db.enableWriteAheadLogging()
+            db.execSQL("PRAGMA synchronous=NORMAL")
+        }
+
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, cmd TEXT, tv_archive INTEGER, use_http_tmp_link INTEGER, use_load_balancing INTEGER, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX channels_cat ON channels(playlist_id, category_id)")

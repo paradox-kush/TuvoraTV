@@ -75,9 +75,60 @@ object EpgNorm {
     fun coreNorm(s: String): String {
         val stripped = stripPrefix(baseNorm(s))
         val toks = stripped.split(" ").filter { it.isNotEmpty() && it !in QUALITY }
-            .map { WORD_DIGITS[it] ?: it }
+            // A LEADING word-digit is part of the brand, not a channel number: "One Sports",
+            // "One TV". Folding it made those collide with "Sport 1" / "TV One" through the
+            // order-insensitive token tiers — two real false positives on the user's panel.
+            // Elsewhere the word IS the number ("BBC One" -> "bbc 1"), which is the whole point
+            // of the table, so only position 0 is exempt.
+            .mapIndexed { index, token -> if (index == 0) token else WORD_DIGITS[token] ?: token }
         val out = toks.joinToString(" ")
         return out.ifEmpty { stripped }
+    }
+
+    // --- provider-name noise (panel side only) ---------------------------------
+
+    /** `(Local)`, `(ALLENTE)`, `(C)` … — packager/operator tags an EPG feed never carries. */
+    private val PACKAGER_PARENS = Regex(
+        "\\((local|c|hd|sd|fhd|uhd|backup|alt|allente|magenta|magneta|canal\\+?|sky|virgin|vip)\\)",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Trailing codec advertising: `''hevc h.265''`, `H.264`. */
+    private val CODEC_TAG = Regex("['\"]*\\b(hevc|h\\.?26[45]|av1|mpeg2?)\\b['\"]*", RegexOption.IGNORE_CASE)
+
+    /** Operator words that appear loose (outside parens): "-HD (Local) Magneta". */
+    private val OPERATOR_WORDS = setOf("local", "magneta", "magenta", "allente")
+
+    /** A genre/category the panel prefixes onto the real name: "Music: Trace Muzika". */
+    private val CATEGORY_PREFIX = Regex(
+        "^\\s*(music|cinema|movies?|sport|sports|kids|news|docu\\w*|entertainment)\\s*[:,|-]\\s*",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * Strips IPTV-panel packaging from a provider channel name, leaving the channel itself.
+     *
+     * Panel names carry things no EPG feed ever does — the reseller's bouquet, the operator, the
+     * codec: `PL | Canal+ | Discovery Life FHD`, `FRA | Trace Urban HD (Local)`,
+     * `|NO| CNBC (ALLENTE)`, `TOGGO plus -HD (Local) Magneta`. Measured on the user's real
+     * 11,283-channel panel these five shapes were worth **+759 matches** (2,765 -> 3,524), 93% of
+     * them landing on the high-confidence exact tier.
+     *
+     * Applied ONLY to provider names ([EpgChannelIndex.match]), never when indexing EPG feeds.
+     */
+    fun stripPanelNoise(raw: String): String {
+        // "PL | Canal+ | Discovery Life FHD" -> the LAST pipe segment is the channel; two
+        // segments is the common "country | name" shape, which stripPrefix already handles.
+        val segments = raw.split('|').map { it.trim() }.filter { it.isNotEmpty() }
+        var out = if (segments.size >= 3) segments.last() else raw
+        out = PACKAGER_PARENS.replace(out, " ")
+        out = CODEC_TAG.replace(out, " ")
+        // Never drop the FIRST word: a channel legitimately called "Local News" or "Magenta
+        // Sport" would otherwise lose its identity.
+        out = out.split(" ").filter { it.isNotEmpty() }
+            .filterIndexed { index, token -> index == 0 || token.trim('(', ')', '-').lowercase() !in OPERATOR_WORDS }
+            .joinToString(" ")
+        return CATEGORY_PREFIX.replace(out, "")
     }
 
     /** 'BBC.One.HD.uk' -> 'bbc 1 hd' — an XMLTV id read as a name. */
@@ -93,6 +144,11 @@ object EpgNorm {
     }
 
     fun squash(core: String): String = core.replace(" ", "")
+
+    private val PLUS_ONE_MARKER = Regex("(\\+\\s*1\\b|\\bplus 1\\b)")
+
+    /** Whether a normalized name is a "+1" timeshift channel. */
+    fun isTimeshift(core: String): Boolean = PLUS_ONE_MARKER.containsMatchIn(core)
 
     private fun depl(tok: String): String =
         if (tok.length > 3 && tok.endsWith("s")) tok.dropLast(1) else tok
@@ -151,31 +207,56 @@ class EpgChannelIndex private constructor(
      * only trusted when the EPG channel's name is loosely compatible with [name]).
      */
     fun match(name: String, tvgId: String?): Hit? {
-        val core = EpgNorm.coreNorm(name)
+        val core = EpgNorm.coreNorm(EpgNorm.stripPanelNoise(name))
         val tvg = tvgId?.trim()?.lowercase().orEmpty()
         if (tvg.isNotEmpty()) {
             val cid = byTvg[tvg]
-            if (cid != null && tvgPlausible(core, cid)) return Hit(cid, TIER_TVG)
+            if (cid != null && tvgPlausible(core, cid)) accept(core, cid, TIER_TVG)?.let { return it }
         }
         if (core.isEmpty()) return null
+        // Every tier below funnels through `accept`, which drops a timeshift-vs-base mismatch
+        // no matter which tier produced it.
         for (v in EpgNorm.variants(core)) {
-            byCore[v]?.let { return Hit(it, TIER_EXACT) }
+            byCore[v]?.let { cid -> accept(core, cid, TIER_EXACT)?.let { return it } }
         }
-        byTokens[EpgNorm.tokenKey(core)]?.let { return Hit(it, TIER_TOKENS) }
-        bySquash[EpgNorm.squash(core)]?.let { return Hit(it, TIER_SQUASH) }
-        byDepl[EpgNorm.deplKey(core)]?.let { return Hit(it, TIER_PLURAL) }
+        byTokens[EpgNorm.tokenKey(core)]?.let { cid -> accept(core, cid, TIER_TOKENS)?.let { return it } }
+        bySquash[EpgNorm.squash(core)]?.let { cid -> accept(core, cid, TIER_SQUASH)?.let { return it } }
+        byDepl[EpgNorm.deplKey(core)]?.let { cid -> accept(core, cid, TIER_PLURAL)?.let { return it } }
 
         val first = core.substringBefore(' ')
         var best: String? = null
         var bestScore = 0.0
         for (cand in fuzzyBucket[first].orEmpty()) {
+            // Levenshtein distance is at least the length difference, so similarity tops out
+            // at 1 - |Δlen|/maxLen: when that bound is already under the gate, the DP cannot
+            // change the answer. One integer compare replaces an O(n·m) table for most of the
+            // bucket — misses pay this walk for EVERY unmatched channel, and misses dominate
+            // real panels (88% on the measured account; research/tv-epg-mirror-spin.md).
+            val maxLen = maxOf(core.length, cand.length)
+            val lenDelta = kotlin.math.abs(core.length - cand.length)
+            if (lenDelta.toDouble() / maxLen > 1.0 - FUZZY_GATE) continue
             val r = EpgNorm.similarity(core, cand)
             if (r > bestScore) { best = cand; bestScore = r }
         }
         if (best != null && bestScore >= FUZZY_GATE) {
-            byCore[best]?.let { return Hit(it, TIER_FUZZY) }
+            byCore[best]?.let { cid -> accept(core, cid, TIER_FUZZY)?.let { return it } }
         }
         return null
+    }
+
+    /** A hit, unless it is a timeshift-vs-base mismatch (see [timeshiftMismatch]). */
+    private fun accept(core: String, cid: String, tier: String): Hit? =
+        if (timeshiftMismatch(core, cid)) null else Hit(cid, tier)
+
+    /**
+     * Rejects a "+1" timeshift channel matched onto a feed with no timeshift marker at all.
+     * A timeshift channel carries the SAME programmes an hour later, so this is the worst kind
+     * of wrong match: every title looks plausible and every time is an hour off. Deliberately
+     * one-directional — a plain channel is NOT blocked because the EPG id carries a +1 alias.
+     */
+    private fun timeshiftMismatch(core: String, cid: String): Boolean {
+        if (!EpgNorm.isTimeshift(core)) return false
+        return coresById[cid].orEmpty().none { EpgNorm.isTimeshift(it) }
     }
 
     /** Accept a tvg-id hit only when the names share a token or a 4-char squash prefix. */

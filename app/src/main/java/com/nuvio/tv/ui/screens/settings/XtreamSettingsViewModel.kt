@@ -76,12 +76,43 @@ class XtreamSettingsViewModel @Inject constructor(
     /** Account ids whose catalog index is building — shown as "Preparing catalog…" on the rows. */
     val indexingAccounts: StateFlow<Set<String>> = resolver.indexing
 
+    /** Live per-account row counts for the same status line — a build runs for minutes here. */
+    val indexProgress: StateFlow<Map<String, com.nuvio.tv.core.iptv.match.IndexBuildProgress>> =
+        matchIndex.buildProgress
+
+    /**
+     * The guide-region picker's state. The mirror indexes every region it carries, but a
+     * household uses a fraction (2,035 of 15,397 channels on a measured panel), and unselected
+     * regions are never stored — so this trims the on-device index, not just the display.
+     */
+    private val _epgRegions = MutableStateFlow<List<com.nuvio.tv.core.epg.EpgRegion>>(emptyList())
+    val epgRegions: StateFlow<List<com.nuvio.tv.core.epg.EpgRegion>> = _epgRegions.asStateFlow()
+
+    private val _selectedEpgRegions = MutableStateFlow<Set<String>>(emptySet())
+    val selectedEpgRegions: StateFlow<Set<String>> = _selectedEpgRegions.asStateFlow()
+
+    fun refreshEpgRegions() {
+        viewModelScope.launch {
+            _epgRegions.value = runCatching { epgMirror.availableRegions() }.getOrDefault(emptyList())
+            _selectedEpgRegions.value = runCatching { epgMirror.selectedRegions() }.getOrDefault(emptySet())
+        }
+    }
+
+    /** Applies a selection; the repository rebuilds the index on its own scope. */
+    fun setEpgRegions(regions: Set<String>) {
+        viewModelScope.launch {
+            runCatching { epgMirror.setSelectedRegions(regions) }
+            _selectedEpgRegions.value = regions
+        }
+    }
+
     init {
         viewModelScope.launch {
             store.accounts.collectLatest { accounts ->
                 _uiState.update { it.copy(accounts = accounts) }
             }
         }
+        refreshEpgRegions()
     }
 
     /** The shared "Add Playlist" options collected by the form (EPG override, DNS, auto-refresh). */

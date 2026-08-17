@@ -313,7 +313,14 @@ class XtreamTmdbResolver @Inject constructor(
     /** Callers hold [buildLock]. Tracks per-account in-flight build counts for [indexing]. */
     private fun markIndexingLocked(accountId: String, delta: Int) {
         val n = (indexingCounts[accountId] ?: 0) + delta
-        if (n <= 0) indexingCounts.remove(accountId) else indexingCounts[accountId] = n
+        if (n <= 0) {
+            indexingCounts.remove(accountId)
+            // Last in-flight build for the account ended (or failed) — drop the running count so
+            // the next build starts from zero instead of continuing yesterday's total.
+            index.clearBuildProgress(accountId)
+        } else {
+            indexingCounts[accountId] = n
+        }
         _indexing.value = indexingCounts.keys.toSet()
     }
 

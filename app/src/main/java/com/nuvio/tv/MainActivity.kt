@@ -3,6 +3,7 @@ package com.nuvio.tv
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
@@ -301,6 +302,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // Opt the whole window out of autofill — twin of the mobile fix.
+        //
+        // Mobile hit an unhandled `TransactionTooLargeException` (765KB parcel) on 1.4.35 when a
+        // recomposition reached Compose's AndroidAutofillManager, which marshals the autofill view
+        // structure across Binder. TV runs the same Compose autofill machinery and is therefore
+        // exposed to the same trap; no TV crash has been observed, so this is prevention, not a
+        // reported fix. Costs nothing here: this app never integrated autofill (no autofillHints /
+        // contentType anywhere), and a TV has no password-manager ecosystem to lose.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            window.decorView.importantForAutofill =
+                android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        }
         isFirstResumeAfterCreate = true
         window?.setBackgroundDrawable(null)
 
