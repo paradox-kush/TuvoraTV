@@ -106,4 +106,81 @@ class EpgChannelMapperTest {
     fun `word digits fold`() {
         assertEquals("bbc.one.hd.uk", index.match("BBC ONE", null)?.epgId)
     }
+
+    // --- fuzzy-tier length prefilter (the 49k-channel episode fix) ---
+
+    @Test
+    fun `length prefilter only skips pairs the gate would reject anyway`() {
+        // Levenshtein distance >= |Δlen|, so similarity <= 1 - Δlen/maxLen. Any pair the
+        // prefilter drops must therefore score under the 0.87 gate — verify the bound holds
+        // across a spread of shapes so the skip can never change a match result.
+        val pairs = listOf(
+            "sky sports main event" to "sky s",
+            "sky sports main event" to "sky sports main event extra long name",
+            "fox" to "fox sports racing",
+            "bbc 1" to "bbc 1 scotland hd extra",
+        )
+        for ((a, b) in pairs) {
+            val maxLen = maxOf(a.length, b.length)
+            val bound = 1.0 - kotlin.math.abs(a.length - b.length).toDouble() / maxLen
+            if (bound < 0.87) {
+                val actual = EpgNorm.similarity(a, b)
+                assertEquals(
+                    "similarity($a, $b) must sit under its length bound",
+                    true,
+                    actual <= bound + 1e-9,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `fuzzy tier still matches after the prefilter`() {
+        // Same near-spelling case as above — the prefilter must not eat true fuzzy hits.
+        assertEquals(EpgChannelIndex.TIER_FUZZY, index.match("SKY SPORTS MAIN EVENTT HD", null)?.tier)
+        // And a short garbage prefix that shares the first token stays unmatched.
+        assertNull(index.match("SKY S", null))
+    }
+
+    // --- panel-noise stripping + false-positive guards (JUnit order: message FIRST) ---
+
+    @Test
+    fun `a packager segment between pipes is dropped`() {
+        assertEquals("golf channel", EpgNorm.coreNorm(EpgNorm.stripPanelNoise("PL | Canal+ | Golf Channel FHD")))
+    }
+
+    @Test
+    fun `a two segment name keeps its country prefix handling`() {
+        assertEquals("bbc 1", EpgNorm.coreNorm(EpgNorm.stripPanelNoise("UK | BBC One")))
+    }
+
+    @Test
+    fun `operator and codec tags are stripped`() {
+        assertEquals("trace urban", EpgNorm.coreNorm(EpgNorm.stripPanelNoise("FRA | Trace Urban HD (Local)")))
+        assertEquals("cnbc", EpgNorm.coreNorm(EpgNorm.stripPanelNoise("|NO| CNBC (ALLENTE)")))
+    }
+
+    @Test
+    fun `an operator word is kept when it is the channel name`() {
+        assertEquals("local news", EpgNorm.coreNorm(EpgNorm.stripPanelNoise("Local News")))
+        assertEquals("magenta sport", EpgNorm.coreNorm(EpgNorm.stripPanelNoise("Magenta Sport")))
+    }
+
+    @Test
+    fun `a leading word digit is brand not channel number`() {
+        assertEquals("one sports", EpgNorm.coreNorm("ONE SPORTS"))
+        assertEquals("bbc 1", EpgNorm.coreNorm("BBC One"))
+    }
+
+    @Test
+    fun `a timeshift channel never matches its base channel`() {
+        val idx = EpgChannelIndex.build(listOf("ITV1.uk" to listOf("ITV1")))
+        assertNull("ITV +1 is not ITV1 - same titles, an hour off", idx.match("UK: ITV +1", null))
+    }
+
+    @Test
+    fun `a base channel is not blocked by a timeshift alias`() {
+        val idx = EpgChannelIndex.build(listOf("tennis.us" to listOf("Tennis Channel", "Tennis Channel +1")))
+        assertEquals("tennis.us", idx.match("USA: Tennis Channel", null)?.epgId)
+    }
 }
