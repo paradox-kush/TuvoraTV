@@ -167,9 +167,18 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.tuvora.tv
           releaseFiles: app/build/outputs/bundle/playstoreRelease/*.aab
-          # Tag push -> alpha, so the closed test the production-access gate measures never
-          # goes stale. Manual run can choose internal/beta/production.
-          track: ${{ github.event.inputs.play_track || 'alpha' }}
+          # Tag push -> internal AND alpha, in one edit.
+          #
+          # alpha is what the production-access gate measures (12 testers, 14 continuous days),
+          # so it must never go stale. But alpha needs Google review, which means a release can
+          # sit for hours before any tester sees it — internal testing publishes with no review
+          # at all, so the team gets the build in minutes. Publishing to internal used to be
+          # skipped entirely and it drifted a week behind (1.4.23 while alpha was on 1.4.32).
+          #
+          # `tracks` (plural) assigns the SAME uploaded bundle to both tracks inside one edit.
+          # Do NOT do this as two invocations of the action: the second upload re-sends the same
+          # version code and Play rejects it outright.
+          tracks: ${{ github.event.inputs.play_track || 'internal,alpha' }}
           status: completed
 
       # The download links people actually use — tuvora.co/tv, and the aftv.news Downloader code
