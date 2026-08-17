@@ -1245,8 +1245,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 }
                             }
                             // Marks watched + auto-play next only for real episode finishes;
-                            // short debrid/error placeholders are ignored (see #2819).
-                            handleNaturalPlaybackEnded()
+                            // short debrid/error placeholders are ignored (see #2819), and a
+                            // live feed reaching ENDED is a dropped stream, never a completion —
+                            // the freeze sampler (still running now) owns that case instead.
+                            if (PlayerLiveSamplingPolicy.isNaturalCompletionCandidate(isLiveFeed())) {
+                                handleNaturalPlaybackEnded()
+                            }
                         }
 
                         refreshStableProgressResetGate()
@@ -1269,7 +1273,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                             emitScrobbleStart()
                         } else {
                             if (userPausedManually) schedulePauseOverlay() else cancelPauseOverlay()
-                            if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                            if (!PlayerLiveSamplingPolicy.shouldKeepSamplingWhileNotPlaying(
+                                    isLiveFeed = isLiveFeed(),
+                                    isEndedOrIdle = playbackState == Player.STATE_ENDED ||
+                                        playbackState == Player.STATE_IDLE,
+                                )
+                            ) {
                                 stopProgressUpdates()
                             }
                             stopWatchProgressSaving()
