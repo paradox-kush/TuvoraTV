@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -87,6 +89,10 @@ fun XtreamSettingsContent(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val indexingAccounts by viewModel.indexingAccounts.collectAsStateWithLifecycle()
+    val indexProgress by viewModel.indexProgress.collectAsStateWithLifecycle()
+    val epgRegions by viewModel.epgRegions.collectAsStateWithLifecycle()
+    val selectedEpgRegions by viewModel.selectedEpgRegions.collectAsStateWithLifecycle()
+    var showRegionPicker by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
     var correctionFor by remember { mutableStateOf<String?>(null) }
@@ -132,6 +138,14 @@ fun XtreamSettingsContent(
             leadingIcon = Icons.Default.PhoneAndroid
         )
 
+        SettingsActionRow(
+            title = "Guide regions",
+            subtitle = "Choose which countries' EPG this device keeps",
+            value = epgRegionSummaryValue(selectedEpgRegions, epgRegions),
+            onClick = { showRegionPicker = true },
+            leadingIcon = Icons.Default.Public
+        )
+
         uiState.accounts.forEach { account ->
             // Lazily fetch "Active · 0/1 connections · Expires …" for the row (silent on failure),
             // and the read-only guide EPG coverage line (mirror mapping + session source tally).
@@ -143,7 +157,10 @@ fun XtreamSettingsContent(
                 title = account.name,
                 subtitle = listOfNotNull(
                     account.baseUrl,
-                    "Preparing catalog for search & playback…".takeIf { account.id in indexingAccounts },
+                    com.nuvio.tv.core.iptv.match.indexingStatusLine(
+                        isIndexing = account.id in indexingAccounts,
+                        progress = indexProgress[account.id],
+                    ),
                     uiState.accountStatus[account.id],
                     uiState.guideEpgCoverage[account.id]
                 ).joinToString("\n"),
@@ -151,6 +168,18 @@ fun XtreamSettingsContent(
                 onClick = { actionsFor = account }
             )
         }
+    }
+
+    if (showRegionPicker) {
+        EpgRegionPickerDialog(
+            regions = epgRegions,
+            initiallySelected = selectedEpgRegions,
+            onApply = {
+                viewModel.setEpgRegions(it)
+                showRegionPicker = false
+            },
+            onDismiss = { showRegionPicker = false },
+        )
     }
 
     if (showAddDialog) {
@@ -430,6 +459,136 @@ private fun XtreamContentTypesDialog(
             style = MaterialTheme.typography.bodySmall,
             color = NuvioTheme.colors.TextTertiary
         )
+    }
+}
+
+/** Compact value for the settings row: flags when we have them, otherwise counts. */
+private fun epgRegionSummaryValue(
+    selected: Set<String>,
+    available: List<com.nuvio.tv.core.epg.EpgRegion>,
+): String = when {
+    available.isEmpty() -> "—"
+    selected.isEmpty() -> "All (${available.size})"
+    else -> {
+        val flags = available.filter { it.name in selected }.mapNotNull { it.flag.ifEmpty { null } }
+        if (flags.isNotEmpty()) flags.take(4).joinToString(" ") + if (selected.size > 4) " +${selected.size - 4}" else ""
+        else "${selected.size} selected"
+    }
+}
+
+/**
+ * Guide-region picker. Toggling commits immediately to local dialog state; Done applies the
+ * whole selection at once, because each apply invalidates the stored index and kicks off a
+ * rebuild — doing that per keypress would restart the sync on every D-pad press.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun EpgRegionPickerDialog(
+    regions: List<com.nuvio.tv.core.epg.EpgRegion>,
+    initiallySelected: Set<String>,
+    onApply: (Set<String>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selected by remember(initiallySelected) { mutableStateOf(initiallySelected) }
+    val firstRowFocus = remember { FocusRequester() }
+    LaunchedEffect(regions.isNotEmpty()) { firstRowFocus.requestFocusAfterFrames() }
+
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = "Guide regions",
+        subtitle = if (selected.isEmpty()) {
+            "Using every region — pick the ones you watch to store less guide data on this device"
+        } else {
+            "${selected.size} of ${regions.size} selected"
+        },
+    ) {
+        if (regions.isEmpty()) {
+            Text(
+                text = "Available after the first guide sync.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = NuvioTheme.colors.TextSecondary,
+            )
+            return@NuvioDialog
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+            SettingsDialogActionRow(horizontalAlignment = Alignment.Start) {
+                SettingsDialogActionButton("Done", onClick = { onApply(selected) }, primary = true)
+                SettingsDialogActionButton("Use all", onClick = { selected = emptySet() })
+            }
+            LazyColumn(
+                modifier = Modifier.heightIn(max = SettingsDialogListMaxHeight),
+                verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+                contentPadding = PaddingValues(vertical = NuvioTheme.spacing.xs)
+            ) {
+                itemsIndexed(regions, key = { _, r -> r.name }) { index, region ->
+                    val checked = region.name in selected
+                    EpgRegionCheckRow(
+                        region = region,
+                        checked = checked,
+                        focusRequester = if (index == 0) firstRowFocus else null,
+                        onToggle = {
+                            selected = if (checked) selected - region.name else selected + region.name
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Region row: same Card+Check idiom as [CategoryCheckRow], with the flag and channel count. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun EpgRegionCheckRow(
+    region: com.nuvio.tv.core.epg.EpgRegion,
+    checked: Boolean,
+    focusRequester: FocusRequester?,
+    onToggle: () -> Unit,
+) {
+    Card(
+        onClick = onToggle,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier),
+        colors = CardDefaults.colors(
+            containerColor = if (checked) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundCard,
+            focusedContainerColor = NuvioTheme.colors.FocusBackground
+        ),
+        shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
+        scale = CardDefaults.scale(focusedScale = 1f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(NuvioTheme.spacing.lg),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (region.flag.isNotEmpty()) {
+                Text(text = region.flag, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.width(NuvioTheme.spacing.md))
+            }
+            Text(
+                text = region.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (checked) NuvioTheme.colors.Primary else NuvioTheme.colors.TextPrimary,
+                maxLines = 1,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = "${region.channelCount}",
+                style = MaterialTheme.typography.labelLarge,
+                color = NuvioTheme.colors.TextSecondary
+            )
+            if (checked) {
+                Spacer(Modifier.width(NuvioTheme.spacing.md))
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = NuvioTheme.colors.Primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
     }
 }
 
