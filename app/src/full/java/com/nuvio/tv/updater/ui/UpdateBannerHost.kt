@@ -24,6 +24,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.collectAsState
+import com.nuvio.tv.updater.ImmersivePlaybackGate
+import com.nuvio.tv.updater.UpdateBannerVisibilityPolicy
 import com.nuvio.tv.updater.UpdateUiState
 
 @Composable
@@ -62,7 +65,14 @@ fun UpdateBannerHost(
     }
 
     val update = state.update
-    val showBanner = state.showBanner && update != null
+    // The banner is a Column sibling of the whole app (below), so it SHRINKS the content rather
+    // than floating over it — over the player that letterboxes the picture. Ask the policy.
+    val playerOnScreen by ImmersivePlaybackGate.isActive.collectAsState()
+    val showBanner = UpdateBannerVisibilityPolicy.mayOccupyLayout(
+        hasUpdate = update != null,
+        bannerRequested = state.showBanner,
+        playerOnScreen = playerOnScreen
+    )
 
     Column(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(

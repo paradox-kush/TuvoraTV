@@ -357,6 +357,13 @@ fun PlayerScreen(
     // The Linux scheduler favors the thread under CPU pressure (background addon prefetch,
     // Trakt sync, image decode), reducing dropped frames at scene cuts and during decoder
     // spin-up. Restored on dispose so non-player screens stay at default priority.
+    // Tell app-level chrome (the update banner) to stand down while the player owns the screen:
+    // the banner is a layout sibling of the whole app, so leaving it up shrinks the video.
+    DisposableEffect(Unit) {
+        com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(true)
+        onDispose { com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(false) }
+    }
+
     DisposableEffect(Unit) {
         val tid = android.os.Process.myTid()
         val previousPriority = runCatching { android.os.Process.getThreadPriority(tid) }.getOrDefault(0)
