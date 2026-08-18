@@ -1071,7 +1071,14 @@ private fun LegacySidebarScaffold(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val drawerItemFocusRequesters = rememberDrawerItemFocusRequesters(drawerItems)
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    val showSidebar = currentRoute in rootRoutes
+    // Route says "this screen has a sidebar"; the immersive gate says "a player owns the screen
+    // right now". Both must agree, or a fullscreen live channel on the IPTV/Sports hub keeps the
+    // nav rail painted over the video (those routes are rootRoutes so LEFT-to-open works there).
+    val immersivePlayback by com.nuvio.tv.updater.ImmersivePlaybackGate.isActive.collectAsState()
+    val showSidebar = com.nuvio.tv.ui.navigation.SidebarVisibilityPolicy.showSidebar(
+        routeHasSidebar = currentRoute in rootRoutes,
+        immersivePlayback = immersivePlayback,
+    )
 
     LaunchedEffect(currentRoute) {
         drawerState.setValue(DrawerValue.Closed)
@@ -1426,7 +1433,14 @@ private fun ModernSidebarScaffold(
     onNavigate: (String) -> Unit,
     onExitApp: () -> Unit
 ) {
-    val showSidebar = currentRoute in rootRoutes
+    // Route says "this screen has a sidebar"; the immersive gate says "a player owns the screen
+    // right now". Both must agree, or a fullscreen live channel on the IPTV/Sports hub keeps the
+    // nav rail painted over the video (those routes are rootRoutes so LEFT-to-open works there).
+    val immersivePlayback by com.nuvio.tv.updater.ImmersivePlaybackGate.isActive.collectAsState()
+    val showSidebar = com.nuvio.tv.ui.navigation.SidebarVisibilityPolicy.showSidebar(
+        routeHasSidebar = currentRoute in rootRoutes,
+        immersivePlayback = immersivePlayback,
+    )
     val sidebarTokens = NuvioComponents.tokens.sidebar
     val collapsedSidebarWidth = if (sidebarCollapsed) NuvioTheme.spacing.none else sidebarTokens.collapsedWidth
     val openSidebarWidth = sidebarTokens.expandedWidth
