@@ -311,6 +311,41 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
      * Replaces the whole index for one provider+kind. Chunked transactions keep the write
      * lock short; the meta row is written LAST so a crashed rebuild reads as stale.
      */
+    /**
+     * Every distinct `epg_channel_id` this provider's LIVE lineup carries — the allow-set for a
+     * whole-guide XMLTV ingest, so a guide covering thousands of channels only stores rows for ours.
+     *
+     * The Xtream counterpart of [IptvContentDb.channelTvgIds]: M3U and Stalker lineups live in
+     * IptvContentDb, Xtream's lives here, and the ingest needs whichever one owns the account.
+     * Panels fill this field very unevenly, so an empty result is a normal answer meaning "this
+     * panel cannot be matched by id" — not an error.
+     */
+    suspend fun liveEpgIds(provider: String): Set<String> = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT DISTINCT epg_id FROM items WHERE provider = ? AND kind = ? AND epg_id IS NOT NULL",
+            arrayOf(provider, MatchKind.LIVE.slug),
+        ).use { c ->
+            buildSet {
+                while (c.moveToNext()) {
+                    if (!c.isNull(0)) c.getString(0).trim().lowercase().takeIf { it.isNotEmpty() }?.let { add(it) }
+                }
+            }
+        }
+    }
+
+    /**
+     * One live channel's `epg_channel_id`, or null when the panel left it blank. The guide resolves
+     * by stream id but the stored guide is keyed by channel id, so this is the join between them.
+     */
+    suspend fun liveEpgIdFor(provider: String, sid: Int): String? = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT epg_id FROM items WHERE provider = ? AND kind = ? AND sid = ?",
+            arrayOf(provider, MatchKind.LIVE.slug, sid.toString()),
+        ).use { c ->
+            if (c.moveToNext() && !c.isNull(0)) c.getString(0).trim().lowercase().takeIf { it.isNotEmpty() } else null
+        }
+    }
+
     suspend fun rebuild(provider: String, kind: MatchKind, itemsIn: List<IndexedItem>) = withContext(Dispatchers.IO) {
         val items = itemsIn.mapIndexed { i, raw -> if (raw.pos == i) raw else raw.copy(pos = i) }
         db.beginTransaction()

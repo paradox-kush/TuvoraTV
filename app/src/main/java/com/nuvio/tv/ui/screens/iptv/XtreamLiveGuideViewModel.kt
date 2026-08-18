@@ -126,6 +126,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
     private val catchUp: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
+    private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
+    private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
 ) : ViewModel() {
 
     /**
@@ -191,6 +193,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (acc == account) return
         val sameAccount = acc.id == account?.id
         account = acc
+        // Warm this account's OWN whole guide (xmltv.php), so the store rung has something to serve
+        // and the per-channel asks stop. On the ingest's own scope — never this ViewModel's, which
+        // is the mistake that cost the mirror 76 seconds of work per visit.
+        xmltv.warm(acc)
         if (sameAccount) {
             // Option-only change: re-filter the cached category column, keep everything else.
             categoriesCache[acc.id]?.let { full ->
@@ -549,6 +555,24 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 streamId = streamId,
                 nowMs = nowMs,
                 manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+                // The account's own guide, ingested once into SQLite. Zero network per channel —
+                // this is the rung that makes a guide fling cost nothing. An account with no stored
+                // guide answers empty and the ladder falls through exactly as before.
+                store = {
+                    runCatching {
+                        val epgId = matchIndex.liveEpgIdFor(acc.id, streamId)
+                        if (epgId.isNullOrBlank()) emptyList()
+                        else contentDb.epgNowNext(acc.id, epgId, nowMs).map {
+                            XtreamProgram(
+                                title = it.title,
+                                description = it.desc.orEmpty(),
+                                startMs = it.startMs,
+                                endMs = it.endMs,
+                                nowPlaying = nowMs in it.startMs until it.endMs,
+                            )
+                        }
+                    }.getOrDefault(emptyList())
+                },
                 // null = the ask FAILED. Collapsing that into emptyList() told the ladder "this
                 // panel has no EPG for this channel", which is a coverage claim a timeout cannot
                 // support — see EpgSourceLadder.Source.UNAVAILABLE.

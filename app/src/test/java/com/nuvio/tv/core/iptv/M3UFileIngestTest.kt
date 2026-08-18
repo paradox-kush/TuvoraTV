@@ -35,7 +35,10 @@ class M3UFileIngestTest {
     // XmltvClient is exercised only for its (no-op here) EPG refresh; a bare OkHttp is never called
     // because these file playlists have no epgUrl / url-tvg header.
     private val dns = com.nuvio.tv.core.iptv.dns.PlaylistDns()
-    private val xmltv = XmltvClient(db, OkHttpClient(), dns)
+    // The Xtream match index is only consulted for Xtream playlists; these are m3u_file, so it is
+    // constructed but never queried.
+    private val matchIndex = com.nuvio.tv.core.iptv.match.XtreamMatchIndex(app)
+    private val xmltv = XmltvClient(db, OkHttpClient(), dns, matchIndex)
     private val client = M3UClient(db, OkHttpClient(), fileStore, xmltv, dns)
 
     private val SAMPLE = """

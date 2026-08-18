@@ -104,14 +104,18 @@ object EpgTelemetry {
      * panel ask failed with no mirror to fall back on. Reading them as one number is what made the
      * first field sample unreadable, so they are reported apart.
      */
-    fun resolveTallied(manual: Int, provider: Int, mirror: Int, none: Int, unavailable: Int = 0) {
-        val total = manual + provider + mirror + none + unavailable
+    fun resolveTallied(manual: Int, provider: Int, mirror: Int, none: Int, unavailable: Int = 0, store: Int = 0) {
+        val total = manual + store + provider + mirror + none + unavailable
         if (total <= 0) return
         runCatching {
             PostHog.capture(
                 event = "epg_resolve",
                 properties = mapOf(
                     "manual" to manual,
+                    // Served from the account's own stored guide: zero network for this channel.
+                    "store" to store,
+                // Served from the account's own stored guide: zero network for this channel.
+                "store" to store,
                     "provider" to provider,
                     "mirror" to mirror,
                     "none" to none,

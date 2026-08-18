@@ -23,7 +23,18 @@ object EpgSourceLadder {
 
     /** Which rung answered for a channel. */
     enum class Source {
-        MANUAL, PROVIDER, MIRROR,
+        MANUAL,
+
+        /**
+         * The account's own whole-guide XMLTV, ingested once into SQLite and read back from there.
+         *
+         * Above [PROVIDER] because it is the same data by a cheaper route: one download per refresh
+         * instead of one request per channel per browse. A channel served from the store costs zero
+         * network, which is the entire point of the lane.
+         */
+        STORE,
+
+        PROVIDER, MIRROR,
 
         /** Every rung answered and none had a programme: this channel genuinely has no guide. */
         NONE,
@@ -92,12 +103,17 @@ object EpgSourceLadder {
         nowMs: Long,
         remembered: Source? = null,
         manual: (suspend () -> List<XtreamProgram>?)? = null,
+        store: (suspend () -> List<XtreamProgram>)? = null,
         provider: suspend () -> List<XtreamProgram>?,
         mirror: suspend () -> List<XtreamProgram>,
     ): Resolution {
         // Rung 1 — manual mapping. An explicit user assignment outranks everything, including
         // the memory: the user may map a channel precisely because the remembered source is bad.
         manual?.invoke()?.takeIf { it.isNotEmpty() }?.let { return Resolution(Source.MANUAL, it) }
+
+        // Rung 2 — the account's own stored guide. Gated like the provider's rows, because it is
+        // the same panel's data and can carry the same zone skew.
+        store?.invoke()?.takeIf { providerPassesGate(it, nowMs) }?.let { return Resolution(Source.STORE, it) }
 
         // A channel that already fell to the mirror goes straight back to it — the whole point
         // of the memory is that garbage panels are not re-asked on every focus.
@@ -136,6 +152,7 @@ object EpgSourceLadder {
         streamId: Int,
         nowMs: Long,
         manual: ManualResolver? = null,
+        store: (suspend () -> List<XtreamProgram>)? = null,
         provider: suspend () -> List<XtreamProgram>?,
         mirror: suspend () -> List<XtreamProgram>,
     ): Resolution {
@@ -143,6 +160,7 @@ object EpgSourceLadder {
             nowMs = nowMs,
             remembered = memory.rememberedFor(accountId, streamId),
             manual = manual?.let { { it.programmesFor(accountId, streamId, nowMs) } },
+            store = store,
             provider = provider,
             mirror = mirror,
         )
@@ -156,6 +174,7 @@ object EpgSourceLadder {
             memory.markReported(accountId, tally.total)
             com.nuvio.tv.core.epg.EpgTelemetry.resolveTallied(
                 manual = tally.manual,
+                store = tally.store,
                 provider = tally.provider,
                 mirror = tally.mirror,
                 none = tally.none,
@@ -205,8 +224,10 @@ object EpgSourceLadder {
         val mirror: Int,
         val none: Int,
         val unavailable: Int = 0,
+        /** Defaulted and last so every existing construction keeps compiling unchanged. */
+        val store: Int = 0,
     ) {
-        val total: Int get() = manual + provider + mirror + none + unavailable
+        val total: Int get() = manual + store + provider + mirror + none + unavailable
     }
 
     /**
@@ -248,19 +269,20 @@ object EpgSourceLadder {
         }
 
         fun tally(accountId: String): Tally {
-            var manual = 0; var provider = 0; var mirror = 0; var none = 0; var unavailable = 0
+            var manual = 0; var store = 0; var provider = 0; var mirror = 0; var none = 0; var unavailable = 0
             val prefix = "$accountId|"
             for ((key, source) in sources) {
                 if (!key.startsWith(prefix)) continue
                 when (source) {
                     Source.MANUAL -> manual++
+                    Source.STORE -> store++
                     Source.PROVIDER -> provider++
                     Source.MIRROR -> mirror++
                     Source.NONE -> none++
                     Source.UNAVAILABLE -> unavailable++
                 }
             }
-            return Tally(manual, provider, mirror, none, unavailable)
+            return Tally(manual, provider, mirror, none, unavailable, store)
         }
 
         private fun key(accountId: String, streamId: Int) = "$accountId|$streamId"
