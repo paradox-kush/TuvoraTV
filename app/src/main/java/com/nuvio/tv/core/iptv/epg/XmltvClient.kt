@@ -102,9 +102,16 @@ class XmltvClient @Inject constructor(
                 setInput(reader)
             }
             var count = 0
-            db.replaceEpg(acc.id, System.currentTimeMillis()) { w ->
+            // Bounded on the way IN ([XmltvIngestWindow]), not cleaned up afterwards: a feed
+            // carrying a week of schedule for thousands of channels must never reach the disk in
+            // the first place on a 1 GB box. The parse is streaming, so a refused row costs
+            // nothing beyond the parse it already did.
+            val nowMs = System.currentTimeMillis()
+            db.replaceEpg(acc.id, nowMs) { w ->
                 XmltvParser.parseProgrammes(parser, channelIds) { programme ->
-                    w.add(programme); count++
+                    if (XmltvIngestWindow.keeps(programme.startMs, programme.endMs, nowMs)) {
+                        w.add(programme); count++
+                    }
                 }
             }
             Log.i(TAG, "EPG for ${acc.name}: stored $count programmes across ${channelIds.size} channels")
