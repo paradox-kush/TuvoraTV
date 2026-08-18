@@ -661,7 +661,9 @@ class XtreamClient @Inject constructor(
         runCatching { block() }
 
     private fun <T> Response<T>.requireBody(): T {
-        if (!isSuccessful) error("HTTP ${code()}: ${message()}")
+        // Typed so a provider WAF (403/429) is distinguishable from a sick panel — see
+        // IptvLoadFailurePolicy. Message unchanged, so every existing catch site behaves the same.
+        if (!isSuccessful) throw HttpStatusException(code(), "HTTP ${code()}: ${message()}")
         return body() ?: error("Empty response")
     }
 }

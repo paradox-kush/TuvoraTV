@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.IptvLoadFailurePolicy
 import com.nuvio.tv.core.iptv.IptvPanelGuard
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
@@ -320,8 +321,20 @@ class XtreamHubViewModel @Inject constructor(
                     _uiState.update { it.copy(categories = visible, loading = false) }
                 }
                 .onFailure { e ->
+                    // The raw message used to land on screen verbatim: a provider's Cloudflare block
+                    // read as "HTTP 403", which explains nothing and looks like a portal outage.
+                    // Classify it, then append the breadcrumb so a photo of the TV is debuggable.
+                    val failure = IptvLoadFailurePolicy.classify(e, IptvPanelGuard.panelOriginUrlOf(acc))
+                    val text = when (failure.kind) {
+                        IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER ->
+                            context.getString(R.string.iptv_hub_error_blocked, failure.status ?: 0)
+                        IptvLoadFailurePolicy.Kind.REFUSED ->
+                            failure.portalText ?: context.getString(R.string.iptv_hub_error_unreachable)
+                        IptvLoadFailurePolicy.Kind.UNREACHABLE ->
+                            context.getString(R.string.iptv_hub_error_unreachable)
+                    }
                     _uiState.update {
-                        it.copy(loading = false, error = e.message ?: context.getString(R.string.iptv_hub_error_load_failed))
+                        it.copy(loading = false, error = "$text\n\n${failure.detail}")
                     }
                 }
         }

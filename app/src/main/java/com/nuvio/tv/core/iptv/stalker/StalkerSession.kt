@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.nuvio.tv.core.iptv.HttpStatusException
 import com.nuvio.tv.core.iptv.IptvPanelGuard
 import com.nuvio.tv.core.iptv.PanelHostGuard
 import com.nuvio.tv.core.iptv.XtreamAccount
@@ -40,6 +41,16 @@ open class StalkerPortalRefusedException(message: String) : IllegalStateExceptio
  * pinned to this MAC. The one refusal with a user remedy, so it gets its own type and message.
  */
 class StalkerDeviceConflictException(message: String) : StalkerPortalRefusedException(message)
+
+/**
+ * The portal is reachable and our identity is fine — it just will not serve THIS session now. A
+ * Stalker line is single-device: another box holding the MAC evicts us, and a re-auth that failed
+ * to win it back puts us in the cooldown that stops the two devices stampeding each other.
+ *
+ * Typed because it is the one browse failure with a user-facing explanation that is neither "the
+ * portal is down" nor "your MAC is wrong" — see [com.nuvio.tv.core.iptv.IptvLoadFailurePolicy].
+ */
+class StalkerSessionUnavailableException(message: String) : IllegalStateException(message)
 
 /**
  * A stateful Stalker-portal (MAG/Ministra) session for ONE playlist. Owns:
@@ -130,14 +141,14 @@ class StalkerSession(
         // the request storm is what gets a portal to ban the IP.
         val now = System.currentTimeMillis()
         if (lastFailedReauthAtMs != 0L && now - lastFailedReauthAtMs < REAUTH_COOLDOWN_MS) {
-            error("Stalker session for ${account.name} is held by another device — cooling down")
+            throw StalkerSessionUnavailableException("Stalker session for ${account.name} is held by another device — cooling down")
         }
         Log.d(TAG, "Stalker request stale for ${account.name} (${params["action"]}) — re-authenticating")
         reauthenticate(staleToken)
         val retried = rawRequest(params).jsOrNull()
         if (retried == null) {
             lastFailedReauthAtMs = now
-            error("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
+            throw StalkerSessionUnavailableException("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
         }
         lastFailedReauthAtMs = 0L
         retried
@@ -195,7 +206,7 @@ class StalkerSession(
                 if (resp.code == 401 || resp.code == 403) {
                     throw StalkerAuthException("Stalker portal answered ${resp.code} for ${account.name}")
                 }
-                if (!resp.isSuccessful) error("Stalker portal answered HTTP ${resp.code}")
+                if (!resp.isSuccessful) throw HttpStatusException(resp.code, "Stalker portal answered HTTP ${resp.code}")
                 val source = resp.body?.source() ?: return@use false
                 var sniffing = true
                 val sniff = StringBuilder()
@@ -550,7 +561,7 @@ class StalkerSession(
                     // Signal a stale token to the retry path by returning an empty envelope.
                     return@use JsonObject()
                 }
-                if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                if (!resp.isSuccessful) throw HttpStatusException(resp.code, "HTTP ${resp.code}")
                 // A portal that rejects the STB identity replies HTTP 200 with the plain text
                 // "Authorization failed." (not JSON). A stale token recovers via re-auth; a persistent
                 // rejection would otherwise surface as a vague "no data". Throw an actionable error — it

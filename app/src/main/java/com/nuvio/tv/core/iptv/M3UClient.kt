@@ -125,7 +125,7 @@ class M3UClient @Inject constructor(
             .build()
         // Fetch through the playlist's DoH resolver when it opts into one (shares the ingest pool).
         playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
-            check(resp.isSuccessful) { "HTTP ${resp.code}" }
+            if (!resp.isSuccessful) throw HttpStatusException(resp.code, "HTTP ${resp.code}")
             // charStream() decodes the (possibly gunzipped) source incrementally — no full buffer.
             // checkNotNull: body is nullable on OkHttp 4 (playstore flavor) but not on 5 (full).
             val reader = checkNotNull(resp.body) { "empty response body" }.charStream().buffered()
