@@ -86,6 +86,38 @@ object EpgTelemetry {
     }
 
     /**
+     * Which source is actually feeding the viewer's channels, once enough have resolved to mean
+     * something ([EpgSourceLadder.MIN_REPORT_SAMPLE], once per account per session).
+     *
+     * This is the half `epg_ingest` and `epg_mapping` cannot show. Those measure the MIRROR — how
+     * much of the backup we downloaded and how many channels it could match. Neither says anything
+     * about the panel's own EPG, which is the primary source, so "13% matched" was being read as
+     * "only 13% of my channels have a guide" when the two are independent and overlapping. This
+     * event answers the actual question: of the channels this viewer encountered, how many were
+     * fed by the panel, how many fell through to the mirror, and how many had nothing.
+     *
+     * Note the sample is what the viewer BROWSED, not the whole lineup — coverage as experienced,
+     * which is the more useful number, but not a lineup-wide census. Counts only; no account,
+     * host, or channel name.
+     */
+    fun resolveTallied(manual: Int, provider: Int, mirror: Int, none: Int) {
+        val total = manual + provider + mirror + none
+        if (total <= 0) return
+        runCatching {
+            PostHog.capture(
+                event = "epg_resolve",
+                properties = mapOf(
+                    "manual" to manual,
+                    "provider" to provider,
+                    "mirror" to mirror,
+                    "none" to none,
+                    "total" to total,
+                ),
+            )
+        }
+    }
+
+    /**
      * A playlist's channels were matched against the mirror index.
      *
      * The expensive half of a mirror sync and the half that decides whether the guide has anything

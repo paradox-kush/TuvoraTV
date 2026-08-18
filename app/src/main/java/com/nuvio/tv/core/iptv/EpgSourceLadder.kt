@@ -126,11 +126,41 @@ object EpgSourceLadder {
             mirror = mirror,
         )
         memory.remember(accountId, streamId, resolution.source)
+        // Which rung actually feeds this viewer's channels — the number every "my EPG is patchy"
+        // report is really about, and the one thing the ingest events cannot show. epg_mapping
+        // counts what the MIRROR could match; this counts what each channel RESOLVED to, so the
+        // panel's own coverage finally becomes visible.
+        val tally = memory.tally(accountId)
+        if (shouldReport(tally, memory.hasReported(accountId))) {
+            memory.markReported(accountId)
+            com.nuvio.tv.core.epg.EpgTelemetry.resolveTallied(
+                manual = tally.manual,
+                provider = tally.provider,
+                mirror = tally.mirror,
+                none = tally.none,
+            )
+        }
         return resolution
     }
 
     /** How many channels the session memory may hold before insertion-order eviction. */
     const val MEMORY_CAP = 2_000
+
+    /**
+     * Resolutions an account needs before its tally is worth reporting.
+     *
+     * A settled guide window is ~17 channels, so this is a few screens' worth — enough that the
+     * ratio means something, small enough that a viewer who opens Live TV once still reports.
+     * Below it the split is noise (three channels resolving MIRROR is not "100% mirror coverage").
+     */
+    const val MIN_REPORT_SAMPLE = 50
+
+    /**
+     * Whether an account's tally should be reported now: a meaningful sample, and only once per
+     * account per session so a long browse cannot turn into a stream of events.
+     */
+    fun shouldReport(tally: Tally, alreadyReported: Boolean): Boolean =
+        !alreadyReported && tally.total >= MIN_REPORT_SAMPLE
 
     /** Per-account counts of which rung is feeding the guide — the settings coverage line. */
     data class Tally(val manual: Int, val provider: Int, val mirror: Int, val none: Int) {
@@ -160,8 +190,19 @@ object EpgSourceLadder {
         }
 
         /** The account's offset changed, or its mapping was rebuilt: measured sources are stale. */
+        /** Accounts whose coverage split has already been reported this session. */
+        private val reported = mutableSetOf<String>()
+
+        fun hasReported(accountId: String): Boolean = accountId in reported
+
+        fun markReported(accountId: String) {
+            reported.add(accountId)
+        }
+
         fun forgetAccount(accountId: String) {
             sources.keys.removeAll { it.startsWith("$accountId|") }
+            // The split that was reported described the old mapping; let the new one be reported.
+            reported.remove(accountId)
         }
 
         fun tally(accountId: String): Tally {
