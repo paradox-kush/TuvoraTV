@@ -105,6 +105,107 @@ class GuidePreviewFreezePolicyTest {
             )
         )
     }
+    @Test
+    fun `a recovered channel gets its budget back`() {
+        assertEquals(
+            "a rendered frame proves recovery worked — the next death is a new incident",
+            0,
+            GuidePreviewFreezePolicy.attemptsAfterSuccess()
+        )
+        assertTrue(
+            "so a channel that died, recovered, played and died again can recover again",
+            GuidePreviewFreezePolicy.shouldRetune(
+                GuidePreviewFreezePolicy.STATE_ENDED,
+                isLiveFeed = true,
+                attemptsUsed = GuidePreviewFreezePolicy.attemptsAfterSuccess(),
+            )
+        )
+    }
+
+    @Test
+    fun `the reason names the signal, the duration and the recovery`() {
+        val ended = GuidePreviewFreezePolicy.freezeReason(
+            playbackState = GuidePreviewFreezePolicy.STATE_ENDED,
+            playedMs = 200_000L,
+            attemptsUsed = 2,
+        )
+        assertTrue("names the provider as the source: $ended", ended.contains("provider ended the stream"))
+        assertTrue("says how long it lasted: $ended", ended.contains("3m 20s"))
+        assertTrue("says what recovery was tried: $ended", ended.contains("reconnected 2 times"))
+
+        val dropped = GuidePreviewFreezePolicy.freezeReason(
+            playbackState = GuidePreviewFreezePolicy.STATE_IDLE,
+            playedMs = 45_000L,
+            attemptsUsed = 0,
+        )
+        assertTrue("IDLE is a dropped connection: $dropped", dropped.contains("connection dropped"))
+        assertTrue("short durations stay in seconds: $dropped", dropped.contains("45s"))
+    }
+
+    @Test
+    fun `a provider refusal during recovery is quoted verbatim`() {
+        val reason = GuidePreviewFreezePolicy.freezeReason(
+            playbackState = GuidePreviewFreezePolicy.STATE_ENDED,
+            playedMs = 10_000L,
+            attemptsUsed = 1,
+            resolveError = "HTTP 429",
+        )
+        assertTrue(
+            "the provider's own words are the most useful thing in a bug report: $reason",
+            reason.contains("HTTP 429")
+        )
+    }
+
+    @Test
+    fun `durations read naturally`() {
+        assertEquals("zero is not blank", "0s", GuidePreviewFreezePolicy.formatDuration(0L))
+        assertEquals("sub-minute", "45s", GuidePreviewFreezePolicy.formatDuration(45_000L))
+        assertEquals("exact minute keeps the seconds", "3m 0s", GuidePreviewFreezePolicy.formatDuration(180_000L))
+    }
+
+    @Test
+    fun `the technical line never leaks the account credentials`() {
+        // A real Xtream stream URL carries the account user and password in the PATH.
+        val credentialed = "http://panel.example.com:8080/live/kush_user/s3cr3tP4ss/12345.ts"
+        val host = GuidePreviewFreezePolicy.hostOf(credentialed)
+        val line = GuidePreviewFreezePolicy.technicalDetail(
+            container = "ts",
+            host = host,
+            playbackState = GuidePreviewFreezePolicy.STATE_ENDED,
+            attemptsUsed = 1,
+            appVersion = "0.8.1-beta",
+        )
+        assertFalse("username must never reach the screen: $line", line.contains("kush_user"))
+        assertFalse("password must never reach the screen: $line", line.contains("s3cr3tP4ss"))
+        assertFalse("the raw path must not be echoed: $line", line.contains("/live/"))
+        assertTrue("but the panel host is what we need to triage: $line", line.contains("panel.example.com"))
+    }
+
+    @Test
+    fun `userinfo in the authority is stripped too`() {
+        assertEquals(
+            "user:pass@host must reduce to the host",
+            "panel.example.com",
+            GuidePreviewFreezePolicy.hostOf("http://kush:hunter2@panel.example.com/live/1.ts")
+        )
+        assertEquals("no scheme is unparseable, not a guess", null, GuidePreviewFreezePolicy.hostOf("not a url"))
+        assertEquals("blank is null", null, GuidePreviewFreezePolicy.hostOf(""))
+    }
+
+    @Test
+    fun `the technical line names what we would go and look at`() {
+        val line = GuidePreviewFreezePolicy.technicalDetail(
+            container = "m3u8",
+            host = "panel.example.com",
+            playbackState = GuidePreviewFreezePolicy.STATE_IDLE,
+            attemptsUsed = 2,
+        )
+        assertTrue("container identifies the lane: $line", line.contains("m3u8"))
+        assertTrue("state code is unambiguous: $line", line.contains("IDLE(1)"))
+        assertTrue("says whether recovery ran: $line", line.contains("retry 2/2"))
+        assertTrue("names the engine: $line", line.contains("ExoPlayer"))
+    }
+
 }
 
 /**

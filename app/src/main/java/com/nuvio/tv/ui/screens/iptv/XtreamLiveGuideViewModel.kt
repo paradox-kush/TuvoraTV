@@ -425,6 +425,18 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private var previewFreezeRecoveryChannelId: String? = null
 
     /**
+     * A recovery re-tune is in flight.
+     *
+     * Re-preparing the player transitions it through IDLE, which lands straight back in
+     * [onPreviewPlaybackStalled] — without this the recovery would spend its own budget reacting
+     * to itself.
+     */
+    private var previewFreezeRecoveryInFlight: Boolean = false
+
+    /** When the current preview tune started playing — the "it lasted N" half of the reason. */
+    private var previewPlayingSinceMs: Long = 0L
+
+    /**
      * The preview reported ENDED/IDLE on a live channel — a dropped feed, not a completion.
      *
      * ExoPlayer raises no error when a provider closes the socket mid-stream, so this is the only
@@ -432,6 +444,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * attempts are spent (most drops self-heal on the first re-tune).
      */
     fun onPreviewPlaybackStalled(playbackState: Int) {
+        // Our own re-prepare passes through IDLE — never treat that as a fresh death.
+        if (previewFreezeRecoveryInFlight) return
         val channel = _uiState.value.previewChannel ?: return
         // A different channel than the one we were recovering: its budget starts fresh.
         if (previewFreezeRecoveryChannelId != channel.contentId) {
@@ -447,7 +461,15 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 attemptsUsed = previewFreezeRecoveryAttempts,
             )
         ) {
-            _uiState.update { it.copy(error = "\"${channel.name}\" stopped — the provider dropped the stream") }
+            val reason = GuidePreviewFreezePolicy.freezeReason(
+                playbackState = playbackState,
+                playedMs = playedMsForReason(),
+                attemptsUsed = previewFreezeRecoveryAttempts,
+            )
+            val tech = freezeTechnicalDetail(channel, playbackState)
+            android.util.Log.w("LiveGuide", "preview froze on ${channel.name}: $reason [$tech]")
+            _uiState.update { it.copy(error = "\"${channel.name}\" stopped. $reason\n$tech") }
+            previewPlayingSinceMs = 0L
             return
         }
         if (!GuidePreviewFreezePolicy.shouldRetune(
@@ -459,6 +481,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             return
         }
         previewFreezeRecoveryAttempts += 1
+        previewFreezeRecoveryInFlight = true
         android.util.Log.w(
             "LiveGuide",
             "preview stalled (state=$playbackState) on ${channel.name}; re-tune ${previewFreezeRecoveryAttempts}/${GuidePreviewFreezePolicy.MAX_RECOVERY_ATTEMPTS}"
@@ -466,14 +489,58 @@ class XtreamLiveGuideViewModel @Inject constructor(
         viewModelScope.launch {
             val acc = account ?: return@launch
             // forceFresh: the URL that just died may be a burnt single-use Stalker link.
-            val fresh = clientFactory.clientFor(acc)
-                .resolveStreamUrl(acc, "live", channel.streamId, forceFresh = true)
-            if (fresh.isNullOrBlank()) {
-                _uiState.update { it.copy(error = "\"${channel.name}\" stopped — the provider dropped the stream") }
-                return@launch
+            try {
+                val fresh = clientFactory.clientFor(acc)
+                    .resolveStreamUrl(acc, "live", channel.streamId, forceFresh = true)
+                if (fresh.isNullOrBlank()) {
+                    val reason = GuidePreviewFreezePolicy.freezeReason(
+                        playbackState = playbackState,
+                        playedMs = playedMsForReason(),
+                        attemptsUsed = previewFreezeRecoveryAttempts,
+                        resolveError = clientFactory.clientFor(acc).lastResolveError,
+                    )
+                    val tech = freezeTechnicalDetail(channel, playbackState)
+                    android.util.Log.w("LiveGuide", "preview froze on ${channel.name}: $reason [$tech]")
+                    _uiState.update { it.copy(error = "\"${channel.name}\" stopped. $reason\n$tech") }
+                    previewPlayingSinceMs = 0L
+                    return@launch
+                }
+                tunePreview(channel.copy(streamUrl = fresh))
+            } finally {
+                previewFreezeRecoveryInFlight = false
             }
-            tunePreview(channel.copy(streamUrl = fresh))
         }
+    }
+
+    /**
+     * The credential-free technical footprint of the current preview, for a bug report.
+     *
+     * Built from the channel's own URL only to derive container + host — never echoed whole,
+     * because Xtream paths carry the account user and password.
+     */
+    private fun freezeTechnicalDetail(channel: GuideChannel, playbackState: Int): String {
+        val url = _uiState.value.previewPlayback?.url ?: channel.streamUrl
+        return GuidePreviewFreezePolicy.technicalDetail(
+            container = com.nuvio.tv.core.analytics.LivePlaybackFreezeReporter.streamContainerOf(url),
+            host = GuidePreviewFreezePolicy.hostOf(url),
+            playbackState = playbackState,
+            attemptsUsed = previewFreezeRecoveryAttempts,
+            appVersion = com.nuvio.tv.BuildConfig.VERSION_NAME,
+        )
+    }
+
+    private fun playedMsForReason(): Long =
+        if (previewPlayingSinceMs == 0L) 0L else System.currentTimeMillis() - previewPlayingSinceMs
+
+    /**
+     * A frame rendered: whatever we did worked, so the next failure is a new incident.
+     *
+     * Without this a flaky channel that recovers, plays for minutes and dies again would find its
+     * budget already spent and freeze with no recovery (seen on an Onn 4K, 2026-08-18).
+     */
+    fun onPreviewFramePlayed() {
+        previewFreezeRecoveryAttempts = GuidePreviewFreezePolicy.attemptsAfterSuccess()
+        if (previewPlayingSinceMs == 0L) previewPlayingSinceMs = System.currentTimeMillis()
     }
 
     /**
