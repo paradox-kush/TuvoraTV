@@ -247,6 +247,21 @@ fun LiveGuide(
                     /* handleAudioFocus = */ true
                 )
                 addListener(object : Player.Listener {
+                    /**
+                     * The freeze that raises no error.
+                     *
+                     * A provider closing the socket mid-stream surfaces as ENDED (or IDLE), not as
+                     * a PlaybackException — so [onPlayerError] never fires and, before this, the
+                     * preview simply stopped on a frozen frame with nothing detecting it. Caught on
+                     * an Onn 4K, 2026-08-18. PlayerScreen has had this rule for its own surface
+                     * since 2026-08-17 (PlayerLiveSamplingPolicy); the guide never got it.
+                     */
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                            viewModel.onPreviewPlaybackStalled(playbackState)
+                        }
+                    }
+
                     override fun onPlayerError(error: PlaybackException) {
                         // No engine failover here — OK on the row re-tunes. Log for field triage.
                         Log.w("LiveGuide", "preview playback error: ${error.errorCodeName}")

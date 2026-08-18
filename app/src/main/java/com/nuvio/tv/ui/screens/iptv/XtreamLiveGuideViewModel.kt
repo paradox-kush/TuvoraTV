@@ -389,6 +389,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // A user-initiated tune resolves fresh below, so it always deserves a new recovery shot.
         previewLinkRefreshBurntForChannelId = null
         previewContainerRetryBurntForChannelId = null
+        previewFreezeRecoveryAttempts = 0
+        previewFreezeRecoveryChannelId = null
         viewModelScope.launch {
             // Stalker needs a fresh create_link; Xtream/M3U reuse the browse-time URL. Then tunePreview
             // applies the playlist's DNS (resolve → rewrite) before handing the URL to the player.
@@ -417,6 +419,62 @@ class XtreamLiveGuideViewModel @Inject constructor(
     // One fresh link per user tune: a second token failure on the same channel means the
     // account/session is the problem, not the link — stop re-minting so we don't hammer the portal.
     private var previewLinkRefreshBurntForChannelId: String? = null
+
+    /** Automatic re-tunes spent on the currently frozen channel (see [GuidePreviewFreezePolicy]). */
+    private var previewFreezeRecoveryAttempts: Int = 0
+    private var previewFreezeRecoveryChannelId: String? = null
+
+    /**
+     * The preview reported ENDED/IDLE on a live channel — a dropped feed, not a completion.
+     *
+     * ExoPlayer raises no error when a provider closes the socket mid-stream, so this is the only
+     * signal that the picture has died. Re-tune in place, bounded, and only say something once the
+     * attempts are spent (most drops self-heal on the first re-tune).
+     */
+    fun onPreviewPlaybackStalled(playbackState: Int) {
+        val channel = _uiState.value.previewChannel ?: return
+        // A different channel than the one we were recovering: its budget starts fresh.
+        if (previewFreezeRecoveryChannelId != channel.contentId) {
+            previewFreezeRecoveryChannelId = channel.contentId
+            previewFreezeRecoveryAttempts = 0
+        }
+        // Catch-up replays are launched into PlayerScreen, never this surface (see LiveGuide's
+        // onPlayCatchUp doc), so anything playing here is a live feed by construction.
+        val isLiveFeed = true
+        if (GuidePreviewFreezePolicy.shouldSurfaceError(
+                playbackState = playbackState,
+                isLiveFeed = isLiveFeed,
+                attemptsUsed = previewFreezeRecoveryAttempts,
+            )
+        ) {
+            _uiState.update { it.copy(error = "\"${channel.name}\" stopped — the provider dropped the stream") }
+            return
+        }
+        if (!GuidePreviewFreezePolicy.shouldRetune(
+                playbackState = playbackState,
+                isLiveFeed = isLiveFeed,
+                attemptsUsed = previewFreezeRecoveryAttempts,
+            )
+        ) {
+            return
+        }
+        previewFreezeRecoveryAttempts += 1
+        android.util.Log.w(
+            "LiveGuide",
+            "preview stalled (state=$playbackState) on ${channel.name}; re-tune ${previewFreezeRecoveryAttempts}/${GuidePreviewFreezePolicy.MAX_RECOVERY_ATTEMPTS}"
+        )
+        viewModelScope.launch {
+            val acc = account ?: return@launch
+            // forceFresh: the URL that just died may be a burnt single-use Stalker link.
+            val fresh = clientFactory.clientFor(acc)
+                .resolveStreamUrl(acc, "live", channel.streamId, forceFresh = true)
+            if (fresh.isNullOrBlank()) {
+                _uiState.update { it.copy(error = "\"${channel.name}\" stopped — the provider dropped the stream") }
+                return@launch
+            }
+            tunePreview(channel.copy(streamUrl = fresh))
+        }
+    }
 
     /**
      * The guide's preview player hit a token-shaped HTTP failure (401/403/410): the Stalker
