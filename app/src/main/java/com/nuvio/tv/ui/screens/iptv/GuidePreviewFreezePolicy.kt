@@ -63,12 +63,73 @@ object GuidePreviewFreezePolicy {
      * frozen frame — true once the feed died and the automatic attempts are spent.
      */
     /**
-     * The attempt budget once the feed has actually played again.
+     * How long a tune must actually play before we call the recovery a success.
      *
-     * A rendered frame proves the recovery worked, so the next failure is a new incident and
-     * deserves the full budget rather than inheriting a spent one.
+     * A single rendered frame is NOT proof: a channel that renders one frame and dies would reset
+     * its budget on every attempt and reconnect for ever, which is the portal-hammering loop
+     * [MAX_RECOVERY_ATTEMPTS] exists to prevent. Thirty seconds is comfortably longer than the
+     * render-then-die pattern and far shorter than the multi-minute stretches a genuinely working
+     * channel manages (the Onn feed played 3m 20s between deaths).
      */
+    const val MIN_STABLE_PLAYBACK_MS = 30_000L
+
+    /**
+     * How long after we start a re-tune the player's own transitions are ignored.
+     *
+     * Re-preparing goes IDLE -> BUFFERING -> READY, and that IDLE lands straight back in the stall
+     * handler. A boolean "in flight" flag does not cover it: the flag clears when the coroutine
+     * that started the re-tune finishes, while the IDLE arrives asynchronously afterwards.
+     * Measured on an Onn 4K, 2026-08-18 — re-tune at 14:24:58.819, self-inflicted IDLE at
+     * 14:25:00.357, 1.5s later, which spent the second attempt on nothing.
+     *
+     * Five seconds comfortably covers a re-prepare while staying far below the interval between
+     * genuine provider drops (minutes).
+     */
+    const val RETUNE_SETTLE_MS = 5_000L
+
+    /**
+     * Whether this stall is just our own re-tune settling, and must not count against the budget.
+     *
+     * @param msSinceRetuneStarted time since we asked for a re-tune, or null if none is pending.
+     */
+    fun isSelfInflictedTransition(msSinceRetuneStarted: Long?): Boolean =
+        msSinceRetuneStarted != null && msSinceRetuneStarted < RETUNE_SETTLE_MS
+
+    /**
+     * Whether a stall begins a NEW incident rather than continuing the last one.
+     *
+     * True when the previous tune played long enough to count as working — that channel earned its
+     * budget back. False for a feed that never really started, so its attempts keep counting down
+     * and recovery eventually gives up instead of looping.
+     */
+    fun isNewIncident(playedMs: Long): Boolean = playedMs >= MIN_STABLE_PLAYBACK_MS
+
+    /** The budget a new incident starts with. */
     fun attemptsAfterSuccess(): Int = 0
+
+    /**
+     * The rolling window, and how many re-tunes may happen inside it before we stop.
+     *
+     * The consecutive-failure budget alone is not enough. A feed that plays 30-60s and dies, over
+     * and over, resets that budget every time and reconnects for ever — observed on an Onn 4K,
+     * 2026-08-18: re-tunes at 15:05:38, 15:06:37 and 15:07:04, every one reported as attempt 1 of
+     * 2, with no end in sight. Each re-tune is a fresh provider handshake, so an endless loop is
+     * both useless to the viewer and abusive to the panel.
+     *
+     * Four re-tunes in five minutes tolerates a briefly flaky feed while catching one that is
+     * simply broken.
+     */
+    const val RETUNE_WINDOW_MS = 5 * 60_000L
+    const val MAX_RETUNES_PER_WINDOW = 4
+
+    /**
+     * Whether the recent re-tune history says this channel is looping rather than recovering.
+     *
+     * @param retuneTimestampsMs when recent re-tunes happened.
+     * @param nowMs current time.
+     */
+    fun isRetuneLooping(retuneTimestampsMs: List<Long>, nowMs: Long): Boolean =
+        retuneTimestampsMs.count { nowMs - it <= RETUNE_WINDOW_MS } >= MAX_RETUNES_PER_WINDOW
 
     /**
      * A one-line, reportable account of why the picture stopped.

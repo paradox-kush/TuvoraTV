@@ -391,6 +391,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         previewContainerRetryBurntForChannelId = null
         previewFreezeRecoveryAttempts = 0
         previewFreezeRecoveryChannelId = null
+        previewRetuneTimestampsMs.clear()
         viewModelScope.launch {
             // Stalker needs a fresh create_link; Xtream/M3U reuse the browse-time URL. Then tunePreview
             // applies the playlist's DNS (resolve → rewrite) before handing the URL to the player.
@@ -425,16 +426,20 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private var previewFreezeRecoveryChannelId: String? = null
 
     /**
-     * A recovery re-tune is in flight.
+     * When the last recovery re-tune was started, or 0.
      *
-     * Re-preparing the player transitions it through IDLE, which lands straight back in
-     * [onPreviewPlaybackStalled] — without this the recovery would spend its own budget reacting
-     * to itself.
+     * A boolean "in flight" flag was not enough: it cleared when the coroutine finished, while the
+     * player's own IDLE arrived ~1.5s later and spent an attempt on nothing (Onn 4K, 2026-08-18).
+     * The timestamp lets [GuidePreviewFreezePolicy.isSelfInflictedTransition] ignore the whole
+     * settling window instead.
      */
-    private var previewFreezeRecoveryInFlight: Boolean = false
+    private var previewRetuneStartedAtMs: Long = 0L
 
     /** When the current preview tune started playing — the "it lasted N" half of the reason. */
     private var previewPlayingSinceMs: Long = 0L
+
+    /** Recent recovery re-tunes, for the rolling-window loop guard. */
+    private val previewRetuneTimestampsMs = ArrayDeque<Long>()
 
     /**
      * The preview reported ENDED/IDLE on a live channel — a dropped feed, not a completion.
@@ -445,12 +450,38 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     fun onPreviewPlaybackStalled(playbackState: Int) {
         // Our own re-prepare passes through IDLE — never treat that as a fresh death.
-        if (previewFreezeRecoveryInFlight) return
+        val sinceRetune = if (previewRetuneStartedAtMs == 0L) null
+            else System.currentTimeMillis() - previewRetuneStartedAtMs
+        if (GuidePreviewFreezePolicy.isSelfInflictedTransition(sinceRetune)) return
         val channel = _uiState.value.previewChannel ?: return
         // A different channel than the one we were recovering: its budget starts fresh.
         if (previewFreezeRecoveryChannelId != channel.contentId) {
             previewFreezeRecoveryChannelId = channel.contentId
             previewFreezeRecoveryAttempts = 0
+        }
+        val playedMs = playedMsForReason()
+        // A feed that keeps dying and coming back is looping, not recovering. Stop and say so,
+        // rather than reconnecting for ever against a panel that charges a handshake each time.
+        if (GuidePreviewFreezePolicy.isRetuneLooping(previewRetuneTimestampsMs.toList(), System.currentTimeMillis())) {
+            val reason = GuidePreviewFreezePolicy.freezeReason(
+                playbackState = playbackState,
+                playedMs = playedMs,
+                attemptsUsed = previewRetuneTimestampsMs.size,
+            )
+            val tech = freezeTechnicalDetail(channel, playbackState)
+            android.util.Log.w("LiveGuide", "preview looping on ${channel.name}: $reason [$tech]")
+            _uiState.update {
+                it.copy(error = "\"${channel.name}\" keeps dropping. $reason\n$tech")
+            }
+            previewRetuneTimestampsMs.clear()
+            previewPlayingSinceMs = 0L
+            return
+        }
+        // The last tune actually worked for a while, so this is a new incident, not a continuation
+        // — give the channel its budget back. A tune that never really played does NOT reset,
+        // otherwise a render-then-die feed would reconnect for ever.
+        if (GuidePreviewFreezePolicy.isNewIncident(playedMs)) {
+            previewFreezeRecoveryAttempts = GuidePreviewFreezePolicy.attemptsAfterSuccess()
         }
         // Catch-up replays are launched into PlayerScreen, never this surface (see LiveGuide's
         // onPlayCatchUp doc), so anything playing here is a live feed by construction.
@@ -463,7 +494,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         ) {
             val reason = GuidePreviewFreezePolicy.freezeReason(
                 playbackState = playbackState,
-                playedMs = playedMsForReason(),
+                playedMs = playedMs,
                 attemptsUsed = previewFreezeRecoveryAttempts,
             )
             val tech = freezeTechnicalDetail(channel, playbackState)
@@ -481,7 +512,17 @@ class XtreamLiveGuideViewModel @Inject constructor(
             return
         }
         previewFreezeRecoveryAttempts += 1
-        previewFreezeRecoveryInFlight = true
+        val nowMs = System.currentTimeMillis()
+        previewRetuneStartedAtMs = nowMs
+        previewRetuneTimestampsMs.addLast(nowMs)
+        // Keep only the window's worth, so the deque cannot grow across a long viewing session.
+        while (previewRetuneTimestampsMs.isNotEmpty() &&
+            nowMs - previewRetuneTimestampsMs.first() > GuidePreviewFreezePolicy.RETUNE_WINDOW_MS
+        ) {
+            previewRetuneTimestampsMs.removeFirst()
+        }
+        // Each tune measures its own playing time; the next rendered frame restamps it.
+        previewPlayingSinceMs = 0L
         android.util.Log.w(
             "LiveGuide",
             "preview stalled (state=$playbackState) on ${channel.name}; re-tune ${previewFreezeRecoveryAttempts}/${GuidePreviewFreezePolicy.MAX_RECOVERY_ATTEMPTS}"
@@ -489,13 +530,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
         viewModelScope.launch {
             val acc = account ?: return@launch
             // forceFresh: the URL that just died may be a burnt single-use Stalker link.
-            try {
+            run {
                 val fresh = clientFactory.clientFor(acc)
                     .resolveStreamUrl(acc, "live", channel.streamId, forceFresh = true)
                 if (fresh.isNullOrBlank()) {
                     val reason = GuidePreviewFreezePolicy.freezeReason(
                         playbackState = playbackState,
-                        playedMs = playedMsForReason(),
+                        playedMs = playedMs,
                         attemptsUsed = previewFreezeRecoveryAttempts,
                         resolveError = clientFactory.clientFor(acc).lastResolveError,
                     )
@@ -506,8 +547,6 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     return@launch
                 }
                 tunePreview(channel.copy(streamUrl = fresh))
-            } finally {
-                previewFreezeRecoveryInFlight = false
             }
         }
     }
@@ -539,8 +578,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * budget already spent and freeze with no recovery (seen on an Onn 4K, 2026-08-18).
      */
     fun onPreviewFramePlayed() {
-        previewFreezeRecoveryAttempts = GuidePreviewFreezePolicy.attemptsAfterSuccess()
         if (previewPlayingSinceMs == 0L) previewPlayingSinceMs = System.currentTimeMillis()
+        // Video is on screen, so the re-tune has settled — later stalls are genuine again.
+        previewRetuneStartedAtMs = 0L
     }
 
     /**

@@ -283,7 +283,8 @@ fun LiveGuide(
                         // Only does anything after a container retry — that is when the guess the
                         // retry made becomes a fact worth remembering for the rest of the session.
                         viewModel.onPreviewContainerRetryPlayed()
-                        // Playback is genuinely alive again — restore the freeze-recovery budget.
+                        // Start this tune's playing clock; the budget is restored only if it goes
+                        // on to play for MIN_STABLE_PLAYBACK_MS (see GuidePreviewFreezePolicy).
                         viewModel.onPreviewFramePlayed()
                     }
                 })

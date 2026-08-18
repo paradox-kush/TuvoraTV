@@ -106,19 +106,51 @@ class GuidePreviewFreezePolicyTest {
         )
     }
     @Test
-    fun `a recovered channel gets its budget back`() {
-        assertEquals(
-            "a rendered frame proves recovery worked — the next death is a new incident",
-            0,
-            GuidePreviewFreezePolicy.attemptsAfterSuccess()
+    fun `a channel that played properly gets its budget back`() {
+        assertTrue(
+            "3m20s of playback between deaths is a working channel, not a spent one (the Onn case)",
+            GuidePreviewFreezePolicy.isNewIncident(200_000L)
         )
         assertTrue(
-            "so a channel that died, recovered, played and died again can recover again",
+            "so it can recover again",
             GuidePreviewFreezePolicy.shouldRetune(
                 GuidePreviewFreezePolicy.STATE_ENDED,
                 isLiveFeed = true,
                 attemptsUsed = GuidePreviewFreezePolicy.attemptsAfterSuccess(),
             )
+        )
+    }
+
+    @Test
+    fun `a render-then-die channel cannot reconnect for ever`() {
+        assertFalse(
+            "two seconds of playback is not a successful recovery",
+            GuidePreviewFreezePolicy.isNewIncident(2_000L)
+        )
+        assertFalse(
+            "a frame rendered and nothing more must not refill the budget",
+            GuidePreviewFreezePolicy.isNewIncident(0L)
+        )
+        // ...so the counter keeps climbing and recovery gives up instead of hammering the portal.
+        assertFalse(
+            "budget stays spent, so no further re-tune",
+            GuidePreviewFreezePolicy.shouldRetune(
+                GuidePreviewFreezePolicy.STATE_ENDED,
+                isLiveFeed = true,
+                attemptsUsed = GuidePreviewFreezePolicy.MAX_RECOVERY_ATTEMPTS,
+            )
+        )
+    }
+
+    @Test
+    fun `the stability threshold sits between the two observed behaviours`() {
+        assertTrue(
+            "must be longer than a render-then-die burst",
+            GuidePreviewFreezePolicy.MIN_STABLE_PLAYBACK_MS > 5_000L
+        )
+        assertTrue(
+            "must be shorter than the multi-minute stretch a working channel manages",
+            GuidePreviewFreezePolicy.MIN_STABLE_PLAYBACK_MS < 200_000L
         )
     }
 
@@ -204,6 +236,72 @@ class GuidePreviewFreezePolicyTest {
         assertTrue("state code is unambiguous: $line", line.contains("IDLE(1)"))
         assertTrue("says whether recovery ran: $line", line.contains("retry 2/2"))
         assertTrue("names the engine: $line", line.contains("ExoPlayer"))
+    }
+
+    @Test
+    fun `our own re-prepare must not spend the budget`() {
+        // Onn 4K, 2026-08-18: re-tune at 14:24:58.819, self-inflicted IDLE at 14:25:00.357.
+        assertTrue(
+            "an IDLE 1.5s after our own re-tune is the re-prepare, not a new death",
+            GuidePreviewFreezePolicy.isSelfInflictedTransition(1_538L)
+        )
+        assertFalse(
+            "a stall minutes later is a genuine provider drop",
+            GuidePreviewFreezePolicy.isSelfInflictedTransition(245_000L)
+        )
+        assertFalse(
+            "no re-tune pending means every stall is genuine",
+            GuidePreviewFreezePolicy.isSelfInflictedTransition(null)
+        )
+    }
+
+    @Test
+    fun `the settle window is shorter than any real gap between drops`() {
+        assertTrue(
+            "must cover a re-prepare",
+            GuidePreviewFreezePolicy.RETUNE_SETTLE_MS >= 3_000L
+        )
+        assertTrue(
+            "but must not swallow a genuine drop — the Onn saw 4 minutes between them",
+            GuidePreviewFreezePolicy.RETUNE_SETTLE_MS < GuidePreviewFreezePolicy.MIN_STABLE_PLAYBACK_MS
+        )
+    }
+
+    @Test
+    fun `a channel that keeps dropping is looping, not recovering`() {
+        // Onn 4K, 2026-08-18: re-tunes at 15:05:38, 15:06:37, 15:07:04 — each reported "1 of 2"
+        // because every re-tune rendered a frame and refilled the budget. Unbounded.
+        val now = 1_000_000L
+        val looping = listOf(now - 200_000L, now - 140_000L, now - 90_000L, now - 30_000L)
+        assertTrue(
+            "four re-tunes inside the window is a loop, not recovery",
+            GuidePreviewFreezePolicy.isRetuneLooping(looping, now)
+        )
+    }
+
+    @Test
+    fun `an occasional drop is not a loop`() {
+        val now = 1_000_000L
+        assertFalse(
+            "one recovery is exactly what the feature is for",
+            GuidePreviewFreezePolicy.isRetuneLooping(listOf(now - 10_000L), now)
+        )
+        assertFalse(
+            "three inside the window is still tolerated",
+            GuidePreviewFreezePolicy.isRetuneLooping(
+                listOf(now - 200_000L, now - 100_000L, now - 20_000L), now
+            )
+        )
+    }
+
+    @Test
+    fun `re-tunes older than the window are forgotten`() {
+        val now = 1_000_000L
+        val old = List(6) { now - GuidePreviewFreezePolicy.RETUNE_WINDOW_MS - (it * 1_000L) - 1L }
+        assertFalse(
+            "a channel that misbehaved an hour ago starts clean",
+            GuidePreviewFreezePolicy.isRetuneLooping(old, now)
+        )
     }
 
 }
