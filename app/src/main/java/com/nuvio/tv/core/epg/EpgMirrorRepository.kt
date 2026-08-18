@@ -232,6 +232,14 @@ class EpgMirrorRepository @Inject constructor(
                         }
                     }
                     Log.i(TAG, "mirror sync: $stored programmes for ${covered.size} channels from $chosen")
+                    EpgTelemetry.ingestFinished(
+                        source = EpgTelemetry.Source.MIRROR,
+                        outcome = if (stored > 0) EpgTelemetry.Outcome.OK else EpgTelemetry.Outcome.EMPTY,
+                        programmes = stored,
+                        channels = mappedIds.size,
+                        channelsCovered = covered.size,
+                        durationMs = System.currentTimeMillis() - now,
+                    )
                 }
             }
 
@@ -239,6 +247,11 @@ class EpgMirrorRepository @Inject constructor(
             db.setMeta(META_SYNCED_AT, now.toString())
         } catch (t: Throwable) {
             Log.w(TAG, "mirror sync failed", t)
+            EpgTelemetry.ingestFinished(
+                source = EpgTelemetry.Source.MIRROR,
+                outcome = EpgTelemetry.Outcome.ERROR,
+                errorClass = t::class.simpleName,
+            )
         } finally {
             syncMutex.unlock()
         }
@@ -290,6 +303,7 @@ class EpgMirrorRepository @Inject constructor(
         val index = EpgChannelIndex.build(pairs)
 
         for (acc in due) {
+            val matchStartedMs = System.currentTimeMillis()
             db.setMeta(attemptAtKey(acc.id), nowMs.toString())
             val channels = runCatching { clientFactory.clientFor(acc).liveChannels(acc) }
                 .getOrNull()?.getOrNull()
@@ -304,6 +318,14 @@ class EpgMirrorRepository @Inject constructor(
             // Stamped even at zero hits: the run COMPLETED against this index.
             db.setMeta(mappedGenKey(acc.id), generation.ifEmpty { NO_GENERATION })
             Log.i(TAG, "mapped ${mappings.size}/${channels.size} channels for ${acc.name}")
+            // The match rate is what "my EPG stopped working" almost always turns out to be — it
+            // collapses when a provider renumbers its catalog, and we have never been able to see
+            // it. No account name or host here: counts only.
+            EpgTelemetry.mappingFinished(
+                matched = mappings.size,
+                channels = channels.size,
+                durationMs = System.currentTimeMillis() - matchStartedMs,
+            )
         }
     }
 

@@ -115,6 +115,14 @@ class XmltvClient @Inject constructor(
                 }
             }
             Log.i(TAG, "EPG for ${acc.name}: stored $count programmes across ${channelIds.size} channels")
+            com.nuvio.tv.core.epg.EpgTelemetry.ingestFinished(
+                source = com.nuvio.tv.core.epg.EpgTelemetry.Source.PLAYLIST_XMLTV,
+                outcome = if (count > 0) com.nuvio.tv.core.epg.EpgTelemetry.Outcome.OK
+                else com.nuvio.tv.core.epg.EpgTelemetry.Outcome.EMPTY,
+                programmes = count,
+                channels = channelIds.size,
+                durationMs = System.currentTimeMillis() - nowMs,
+            )
         }
     }
 
