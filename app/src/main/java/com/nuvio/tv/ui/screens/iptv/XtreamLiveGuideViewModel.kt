@@ -148,7 +148,15 @@ class XtreamLiveGuideViewModel @Inject constructor(
     init {
         // Warm the canonical-EPG mirror (12h TTL, no-op when fresh) — it backs the guide's
         // now/next whenever the panel's own EPG is missing.
-        viewModelScope.launch { epgMirror.ensureFresh() }
+        viewModelScope.launch {
+            epgMirror.ensureFresh()
+            // Programmes may have just landed, so any "nothing for this channel" verdict taken
+            // before them is stale. Without this the cooldown holds a row on "No EPG" for a
+            // further minute with the data already on disk beside it (seen on the mobile twin,
+            // 2026-08-18: two tiles asked 1s apart, only the later one saw the new guide).
+            epgAdmission.invalidate()
+            epgRequested.clear()
+        }
     }
 
     /** Live channel ids currently in the platform Library (drives the ★ + add/remove). */
