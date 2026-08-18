@@ -131,8 +131,8 @@ object EpgSourceLadder {
         // counts what the MIRROR could match; this counts what each channel RESOLVED to, so the
         // panel's own coverage finally becomes visible.
         val tally = memory.tally(accountId)
-        if (shouldReport(tally, memory.hasReported(accountId))) {
-            memory.markReported(accountId)
+        if (shouldReport(tally, memory.lastReportedTotal(accountId))) {
+            memory.markReported(accountId, tally.total)
             com.nuvio.tv.core.epg.EpgTelemetry.resolveTallied(
                 manual = tally.manual,
                 provider = tally.provider,
@@ -153,14 +153,28 @@ object EpgSourceLadder {
      * ratio means something, small enough that a viewer who opens Live TV once still reports.
      * Below it the split is noise (three channels resolving MIRROR is not "100% mirror coverage").
      */
-    const val MIN_REPORT_SAMPLE = 50
+    const val MIN_REPORT_SAMPLE = 10
 
     /**
-     * Whether an account's tally should be reported now: a meaningful sample, and only once per
-     * account per session so a long browse cannot turn into a stream of events.
+     * How much the sample must grow before an account reports again.
+     *
+     * Doubling gives a handful of progressively better samples per session (10, 20, 40, 80…)
+     * rather than one weak one or a stream of near-identical ones.
      */
-    fun shouldReport(tally: Tally, alreadyReported: Boolean): Boolean =
-        !alreadyReported && tally.total >= MIN_REPORT_SAMPLE
+    const val REPORT_GROWTH = 2
+
+    /**
+     * Whether an account's tally should be reported now. [lastReportedTotal] is 0 when the account
+     * has never reported.
+     *
+     * Sized from a real session, not a guess: the first version used 50, and a real browse on an
+     * S24 (2026-08-18) resolved 19 channels and stopped — so the event never fired at all.
+     */
+    fun shouldReport(tally: Tally, lastReportedTotal: Int): Boolean {
+        if (tally.total < MIN_REPORT_SAMPLE) return false
+        if (lastReportedTotal <= 0) return true
+        return tally.total >= lastReportedTotal * REPORT_GROWTH
+    }
 
     /** Per-account counts of which rung is feeding the guide — the settings coverage line. */
     data class Tally(val manual: Int, val provider: Int, val mirror: Int, val none: Int) {
@@ -190,19 +204,19 @@ object EpgSourceLadder {
         }
 
         /** The account's offset changed, or its mapping was rebuilt: measured sources are stale. */
-        /** Accounts whose coverage split has already been reported this session. */
-        private val reported = mutableSetOf<String>()
+        /** Sample size at each account's last report; absent = never reported. */
+        private val reportedAt = mutableMapOf<String, Int>()
 
-        fun hasReported(accountId: String): Boolean = accountId in reported
+        fun lastReportedTotal(accountId: String): Int = reportedAt[accountId] ?: 0
 
-        fun markReported(accountId: String) {
-            reported.add(accountId)
+        fun markReported(accountId: String, total: Int) {
+            reportedAt[accountId] = total
         }
 
         fun forgetAccount(accountId: String) {
             sources.keys.removeAll { it.startsWith("$accountId|") }
             // The split that was reported described the old mapping; let the new one be reported.
-            reported.remove(accountId)
+            reportedAt.remove(accountId)
         }
 
         fun tally(accountId: String): Tally {
