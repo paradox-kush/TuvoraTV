@@ -549,7 +549,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 streamId = streamId,
                 nowMs = nowMs,
                 manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
-                provider = { clientFactory.clientFor(acc).shortEpg(acc, streamId).getOrDefault(emptyList()) },
+                // null = the ask FAILED. Collapsing that into emptyList() told the ladder "this
+                // panel has no EPG for this channel", which is a coverage claim a timeout cannot
+                // support — see EpgSourceLadder.Source.UNAVAILABLE.
+                provider = { runCatching { clientFactory.clientFor(acc).shortEpg(acc, streamId).getOrNull() }.getOrNull() },
                 mirror = {
                     runCatching { epgMirror.programmesWindow(acc.id, streamId, nowMs, nowMs + GUIDE_EPG_WINDOW_MS) }
                         .getOrDefault(emptyList())

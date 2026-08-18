@@ -99,9 +99,13 @@ object EpgTelemetry {
      * Note the sample is what the viewer BROWSED, not the whole lineup — coverage as experienced,
      * which is the more useful number, but not a lineup-wide census. Counts only; no account,
      * host, or channel name.
+     *
+     * `none` counts channels with genuinely no guide anywhere; `unavailable` counts channels whose
+     * panel ask failed with no mirror to fall back on. Reading them as one number is what made the
+     * first field sample unreadable, so they are reported apart.
      */
-    fun resolveTallied(manual: Int, provider: Int, mirror: Int, none: Int) {
-        val total = manual + provider + mirror + none
+    fun resolveTallied(manual: Int, provider: Int, mirror: Int, none: Int, unavailable: Int = 0) {
+        val total = manual + provider + mirror + none + unavailable
         if (total <= 0) return
         runCatching {
             PostHog.capture(
@@ -111,6 +115,10 @@ object EpgTelemetry {
                     "provider" to provider,
                     "mirror" to mirror,
                     "none" to none,
+                    // A FAILED panel ask, not a coverage fact. Kept apart from `none` because the
+                    // two were conflated and the tally lied on the first field read: a saturated
+                    // box reported none=68/80 for a panel another device resolved 37% from.
+                    "unavailable" to unavailable,
                     "total" to total,
                 ),
             )

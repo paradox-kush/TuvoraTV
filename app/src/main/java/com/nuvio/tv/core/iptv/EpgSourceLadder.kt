@@ -22,7 +22,25 @@ package com.nuvio.tv.core.iptv
 object EpgSourceLadder {
 
     /** Which rung answered for a channel. */
-    enum class Source { MANUAL, PROVIDER, MIRROR, NONE }
+    enum class Source {
+        MANUAL, PROVIDER, MIRROR,
+
+        /** Every rung answered and none had a programme: this channel genuinely has no guide. */
+        NONE,
+
+        /**
+         * Nothing could be determined right now — the panel request FAILED (timeout, socket
+         * error, HTTP error) and the mirror had nothing to fall back on.
+         *
+         * Split out of [NONE] because conflating the two made the coverage tally lie, in the
+         * field, on the first day it was read: an Onn 4K browsing the guide *during* a 76-second
+         * mirror sync reported `provider=0, none=68/80`, which reads as "this panel has no EPG".
+         * An S24 on the same account an hour later resolved 37% from the same panel. The panel
+         * was fine; the box was saturated and every request failed. A failure is not a coverage
+         * fact, so it is no longer counted as one.
+         */
+        UNAVAILABLE,
+    }
 
     data class Resolution(val source: Source, val programmes: List<XtreamProgram>)
 
@@ -63,6 +81,9 @@ object EpgSourceLadder {
 
     /**
      * Resolves one channel's guide programmes. Rungs are invoked lazily and in ladder order;
+     *
+     * [provider] returns null when the ask FAILED and an empty list when the panel answered with
+     * nothing — the distinction the caller must preserve, because only the second is coverage.
      * [remembered] short-circuits the panel ask for a channel that already fell to the mirror
      * (the memory is a hint, never a cage — a mirror that stops answering falls back through
      * the full ladder, and a remembered provider is still gated every time).
@@ -71,7 +92,7 @@ object EpgSourceLadder {
         nowMs: Long,
         remembered: Source? = null,
         manual: (suspend () -> List<XtreamProgram>?)? = null,
-        provider: suspend () -> List<XtreamProgram>,
+        provider: suspend () -> List<XtreamProgram>?,
         mirror: suspend () -> List<XtreamProgram>,
     ): Resolution {
         // Rung 1 — manual mapping. An explicit user assignment outranks everything, including
@@ -86,13 +107,13 @@ object EpgSourceLadder {
             // The mirror dried up (mapping purged, ingest gap): fall through — but don't ask it
             // twice below, it just answered.
             val fromProvider = provider()
-            if (providerPassesGate(fromProvider, nowMs)) return Resolution(Source.PROVIDER, fromProvider)
-            return Resolution(Source.NONE, emptyList())
+            if (fromProvider != null && providerPassesGate(fromProvider, nowMs)) return Resolution(Source.PROVIDER, fromProvider)
+            return Resolution(if (fromProvider == null) Source.UNAVAILABLE else Source.NONE, emptyList())
         }
 
         // Rung 2 — the provider's own rows, behind the sanity gate.
         val fromProvider = provider()
-        if (providerPassesGate(fromProvider, nowMs)) return Resolution(Source.PROVIDER, fromProvider)
+        if (fromProvider != null && providerPassesGate(fromProvider, nowMs)) return Resolution(Source.PROVIDER, fromProvider)
 
         // Rung 3 — the mirror window. Empty-or-garbage provider responses both land here.
         val fromMirror = mirror()
@@ -101,7 +122,7 @@ object EpgSourceLadder {
         // Rung 4 — nothing. Garbage provider rows are deliberately NOT shown as a consolation:
         // the wa12 shape rendered a fully empty visible guide anyway, and rows that bracket
         // nothing mislabel every cell they'd fill.
-        return Resolution(Source.NONE, emptyList())
+        return Resolution(if (fromProvider == null) Source.UNAVAILABLE else Source.NONE, emptyList())
     }
 
     /**
@@ -115,7 +136,7 @@ object EpgSourceLadder {
         streamId: Int,
         nowMs: Long,
         manual: ManualResolver? = null,
-        provider: suspend () -> List<XtreamProgram>,
+        provider: suspend () -> List<XtreamProgram>?,
         mirror: suspend () -> List<XtreamProgram>,
     ): Resolution {
         val resolution = resolve(
@@ -138,6 +159,7 @@ object EpgSourceLadder {
                 provider = tally.provider,
                 mirror = tally.mirror,
                 none = tally.none,
+                unavailable = tally.unavailable,
             )
         }
         return resolution
@@ -177,8 +199,14 @@ object EpgSourceLadder {
     }
 
     /** Per-account counts of which rung is feeding the guide — the settings coverage line. */
-    data class Tally(val manual: Int, val provider: Int, val mirror: Int, val none: Int) {
-        val total: Int get() = manual + provider + mirror + none
+    data class Tally(
+        val manual: Int,
+        val provider: Int,
+        val mirror: Int,
+        val none: Int,
+        val unavailable: Int = 0,
+    ) {
+        val total: Int get() = manual + provider + mirror + none + unavailable
     }
 
     /**
@@ -220,7 +248,7 @@ object EpgSourceLadder {
         }
 
         fun tally(accountId: String): Tally {
-            var manual = 0; var provider = 0; var mirror = 0; var none = 0
+            var manual = 0; var provider = 0; var mirror = 0; var none = 0; var unavailable = 0
             val prefix = "$accountId|"
             for ((key, source) in sources) {
                 if (!key.startsWith(prefix)) continue
@@ -229,9 +257,10 @@ object EpgSourceLadder {
                     Source.PROVIDER -> provider++
                     Source.MIRROR -> mirror++
                     Source.NONE -> none++
+                    Source.UNAVAILABLE -> unavailable++
                 }
             }
-            return Tally(manual, provider, mirror, none)
+            return Tally(manual, provider, mirror, none, unavailable)
         }
 
         private fun key(accountId: String, streamId: Int) = "$accountId|$streamId"
