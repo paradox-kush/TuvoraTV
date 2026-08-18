@@ -9,6 +9,9 @@ import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.data.local.XtreamAccountStore
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
@@ -130,6 +133,35 @@ class EpgMirrorRepository @Inject constructor(
         scope.launch { ensureFresh(force = true) }
     }
 
+    /**
+     * Emits once a sync has COMMITTED programmes.
+     *
+     * A screen holding "this channel had nothing" verdicts (the guide's per-channel cooldown)
+     * should retire them when this fires — the data it concluded was absent has just landed.
+     * Replay-less on purpose: a screen opened afterwards reads the committed rows directly.
+     */
+    private val _programmesCommitted = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val programmesCommitted: SharedFlow<Unit> = _programmesCommitted.asSharedFlow()
+
+    /**
+     * Start a sync that OUTLIVES the caller.
+     *
+     * Every screen that wants a warm mirror must use this rather than launching [ensureFresh] in
+     * its own `viewModelScope`, because the sync is minutes long and the viewer will not stay.
+     * Measured on an Onn 4K (2026-08-18, telemetry): the guide's `viewModelScope.launch` reached
+     * the match phase (`mapped 1616/11429`, ~11.6 s) and was then killed —
+     * `epg_ingest{outcome=error, JobCancellationException, programmes=0}`, twice — so the mirror
+     * downloaded NOTHING. The S24 ran the identical code against the identical panels in the same
+     * hour and committed 61,320 programmes, because mobile launches it off a repository-scoped
+     * job. Worse than losing one run: `META_GENERATION` is written at the very END, so a cancelled
+     * sync never records completion and the next visit repeats the whole expensive episode.
+     *
+     * Cheap to call repeatedly — [ensureFresh] is single-flighted by [syncMutex] and TTL-gated.
+     */
+    fun warm() {
+        scope.launch { ensureFresh() }
+    }
+
     // --- sync ---------------------------------------------------------------------
 
     /**
@@ -240,6 +272,8 @@ class EpgMirrorRepository @Inject constructor(
                         channelsCovered = covered.size,
                         durationMs = System.currentTimeMillis() - now,
                     )
+                    // Tell any live screen its "no EPG" verdicts are stale now.
+                    _programmesCommitted.tryEmit(Unit)
                 }
             }
 

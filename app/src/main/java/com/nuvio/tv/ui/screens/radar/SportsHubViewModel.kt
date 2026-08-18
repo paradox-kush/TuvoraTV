@@ -137,7 +137,11 @@ class SportsHubViewModel @Inject constructor(
     init {
         // The match sheet reads the mirror; refresh it (12h TTL, no-op when fresh) so the
         // EPG tier is warm by the time a fixture is opened.
-        viewModelScope.launch { epgMirror.ensureFresh() }
+        //
+        // NOT on viewModelScope: the sync is minutes long and would be cancelled the moment the
+        // viewer leaves the Sports tab — the same way the live guide's copy was, which the Onn
+        // telemetry caught downloading nothing at all (2026-08-18).
+        epgMirror.warm()
     }
 
     fun ensureLoaded() = repository.ensureLoaded()

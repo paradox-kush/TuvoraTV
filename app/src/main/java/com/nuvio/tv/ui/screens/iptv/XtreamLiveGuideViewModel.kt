@@ -148,14 +148,18 @@ class XtreamLiveGuideViewModel @Inject constructor(
     init {
         // Warm the canonical-EPG mirror (12h TTL, no-op when fresh) — it backs the guide's
         // now/next whenever the panel's own EPG is missing.
+        //
+        // NOT on viewModelScope: the sync is minutes long and dies the moment the viewer leaves
+        // the guide. Measured on an Onn (2026-08-18): it reached the match phase and was then
+        // cancelled, twice, so the mirror downloaded nothing at all.
+        epgMirror.warm()
+        // If programmes land while this screen is still open, the "nothing for this channel"
+        // verdicts taken before them are stale — retire them so rows can resolve.
         viewModelScope.launch {
-            epgMirror.ensureFresh()
-            // Programmes may have just landed, so any "nothing for this channel" verdict taken
-            // before them is stale. Without this the cooldown holds a row on "No EPG" for a
-            // further minute with the data already on disk beside it (seen on the mobile twin,
-            // 2026-08-18: two tiles asked 1s apart, only the later one saw the new guide).
-            epgAdmission.invalidate()
-            epgRequested.clear()
+            epgMirror.programmesCommitted.collect {
+                epgAdmission.invalidate()
+                epgRequested.clear()
+            }
         }
     }
 
