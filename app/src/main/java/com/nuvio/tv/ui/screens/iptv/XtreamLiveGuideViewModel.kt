@@ -22,6 +22,7 @@ import com.nuvio.tv.ui.screens.player.PlayerMediaSourceFactory
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -159,6 +160,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private var channelsJob: Job? = null
     private var epgFocusJob: Job? = null
     private val epgRequested = mutableSetOf<Int>()
+
+    /**
+     * The one gate to this panel's EPG endpoint, and the memory of which channels are not worth
+     * asking again yet — the TV counterparts of the mobile/desktop TileEpgQueue's two workers and
+     * TileEpgAdmission's per-channel cooldown, so every platform is polite in the same way.
+     */
+    private val epgFetchGate = kotlinx.coroutines.sync.Semaphore(EPG_FETCH_PERMITS)
+    private val epgAdmission = com.nuvio.tv.core.iptv.TileEpgAdmission()
 
     // Caches so revisiting an account/category is instant (no spinner flash, no re-fetch).
     private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> full list
@@ -498,8 +507,22 @@ class XtreamLiveGuideViewModel @Inject constructor(
     fun ensureEpg(streamId: Int) {
         val acc = account ?: return
         if (streamId <= 0 || !epgRequested.add(streamId)) return
+        // A cooled-down channel is not asked again yet: the panel having no guide for it is the
+        // common case (Starshare fills 6% of epg_channel_id), and without this every settle that
+        // brings it back into the prefetch window spends another request that cannot succeed.
+        // Release the once-only mark so the retry after the cooldown still happens.
+        if (!epgAdmission.admits(streamId.toString(), System.currentTimeMillis())) {
+            epgRequested.remove(streamId)
+            return
+        }
         viewModelScope.launch {
-            val nowMs = System.currentTimeMillis()
+            // One gate to the panel's EPG endpoint, matching the mobile/desktop TileEpgQueue's two
+            // workers. GuideEpgPrefetchPolicy already bounds a settle to a window of ~17 channels,
+            // but it launched all of them at once: 17 concurrent requests at a host that commonly
+            // sells max_connections=1 is the same shape (smaller) as the guide fan-out measured at
+            // 390 concurrent on mobile.
+            epgFetchGate.withPermit {
+                val nowMs = System.currentTimeMillis()
             // Per-channel source ladder (replacing the old provider-first `.ifEmpty { mirror }`):
             // (future) manual mapping → the playlist's own short EPG if its rows pass the sanity
             // gate → the mirror's programme window (the timeline needs more than now/next, and the
@@ -521,12 +544,20 @@ class XtreamLiveGuideViewModel @Inject constructor(
                         .map { XtreamProgram(it.title, it.desc.orEmpty(), it.startMs, it.endMs, nowPlaying = nowMs in it.startMs until it.endMs) }
                 },
             )
-            val programs = resolution.programmes
-            val nowIdx = programs.indexOfFirst { it.nowPlaying || (nowMs in it.startMs until it.endMs) }
-                .takeIf { it >= 0 } ?: 0
-            val now = programs.getOrNull(nowIdx)
-            val next = programs.getOrNull(nowIdx + 1)
-            _uiState.update { it.copy(epg = it.epg + (streamId to GuideEpg(now, next, programs))) }
+                val programs = resolution.programmes
+                // No rung answered: cool the channel down rather than re-asking on every settle.
+                if (programs.isEmpty()) {
+                    epgAdmission.recordEmpty(streamId.toString(), nowMs)
+                    epgRequested.remove(streamId)
+                    return@withPermit
+                }
+                epgAdmission.recordAnswered(streamId.toString())
+                val nowIdx = programs.indexOfFirst { it.nowPlaying || (nowMs in it.startMs until it.endMs) }
+                    .takeIf { it >= 0 } ?: 0
+                val now = programs.getOrNull(nowIdx)
+                val next = programs.getOrNull(nowIdx + 1)
+                _uiState.update { it.copy(epg = it.epg + (streamId to GuideEpg(now, next, programs))) }
+            }
         }
     }
 
@@ -742,6 +773,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
         private const val ALL_ID = "__all"
         private const val ALL_CAP = 600   // ponytail: don't render 26k rows; categories are the real browse path
         private const val EPG_FOCUS_DEBOUNCE_MS = 250L   // wait for focus to settle before fetching EPG
+
+        /** Concurrent EPG requests allowed at the panel — the same ceiling TileEpgQueue uses, and
+         *  the same one iptvnator settled on for the identical reason (providers rate-limit). */
+        private const val EPG_FETCH_PERMITS = 2
         private const val GUIDE_EPG_WINDOW_MS = 3 * 60 * 60 * 1000L  // mirror-fallback fetch span for the timeline
         private const val RETRY_DELAY_MS = 1000L         // pause before the single panel-flake retry
         private const val EPG_CHANNEL_PREFIX = "sid:"    // keeps stream ids out of the tvg-id namespace
