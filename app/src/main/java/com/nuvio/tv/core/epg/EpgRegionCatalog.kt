@@ -125,12 +125,50 @@ object EpgRegionCatalog {
      * Unclassified sources are always kept: hiding a source the backend never labelled would
      * silently drop coverage the viewer never chose to drop.
      */
-    fun slugsFor(selection: Set<String>, sources: List<EpgSourceInfo>): Set<String> {
+    /** Prefix of the backend's hand-allowlisted EPGenius feeds (`epgenius-<catalog id>`). */
+    const val EPGENIUS_PREFIX = "epgenius-"
+
+    /**
+     * Sources whose value is not regional, so a GUIDE region must never remove them.
+     *
+     * Two kinds:
+     *  - **Sports feeds.** They back the Sports Centre's event matching, not the channel guide.
+     *    `epgshare-us-sports1` is published with `countries: "United States"`, so before this a
+     *    viewer who picked "United Kingdom" for their guide was also deleting the feed the sports
+     *    matcher runs on — with nothing on screen connecting the two settings.
+     *  - **The curated EPGenius allowlist.** The backend allowlists seven catalog ids BY HAND for
+     *    coverage, not by region, and they are the sports backbone. Region-filtering a curated
+     *    allowlist throws away the curation. We cannot tell which of them are sports from the
+     *    client either — the service names are things like "B1G", not "sports" — so the whole
+     *    allowlist survives. The cleaner fix is a `purpose` tag on the published source; until the
+     *    backend carries one, keeping seven small curated feeds beats silently losing sports.
+     */
+    private fun isRegionIndependent(src: EpgSourceInfo): Boolean =
+        src.slug.startsWith(EPGENIUS_PREFIX) ||
+            src.slug.contains("sport", ignoreCase = true) ||
+            src.label.contains("sport", ignoreCase = true)
+
+    /**
+     * The source slugs a [selection] keeps.
+     *
+     * [alsoKeepRegions] carries regions the viewer implied somewhere OTHER than the picker — the
+     * countries of the leagues they follow in Radar — so following Liga MX keeps Mexico's feed
+     * even on a UK-only guide. Empty selection still means "everything" (the picker is opt-in).
+     */
+    @JvmOverloads
+    fun slugsFor(
+        selection: Set<String>,
+        sources: List<EpgSourceInfo>,
+        alsoKeepRegions: Set<String> = emptySet(),
+    ): Set<String> {
         if (selection.isEmpty()) return sources.map { it.slug }.toSet()
-        val wanted = selection.map { it.trim().lowercase() }.toSet()
+        val wanted = (selection + alsoKeepRegions)
+            .map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() }
+            .toSet()
         return sources.filter { src ->
-            val regions = regionsOf(src.countries)
-            regions.any { it == UNCLASSIFIED || it.lowercase() in wanted }
+            if (isRegionIndependent(src)) return@filter true
+            regionsOf(src.countries).any { it == UNCLASSIFIED || it.lowercase() in wanted }
         }.map { it.slug }.toSet()
     }
 }

@@ -78,4 +78,51 @@ class EpgRegionCatalogTest {
         // Dropping the shared feed would take Greece's EPG away with Cyprus's.
         assertTrue("epgenius-31" in EpgRegionCatalog.slugsFor(setOf("Greece"), sources))
     }
+
+    // --- Sports Centre must not be collateral damage of a GUIDE setting -----------------------
+    //
+    // Found 2026-08-18: the picker was scoped to one job (shrink the guide index) and silently
+    // acquired a second (choose which feeds Sports Centre can match against). epgshare-us-sports1
+    // is published with countries "United States", so a viewer who picked "United Kingdom" for
+    // their guide was also deleting the feed the sports matcher runs on.
+    //
+    // NOTE assertion order: this is JUnit, so it is assertTrue(message, condition) — the twin in
+    // NuvioMobile/NuvioDesktop commonTest is kotlin.test and puts the message LAST.
+
+    private val sportsSources = sources + listOf(
+        EpgSourceInfo("epgshare-us-sports1", "epgshare US sports", "United States", 120),
+        EpgSourceInfo("epgenius-14", "EPGenius someone/B1G", "United States", 60),
+    )
+
+    @Test
+    fun `a guide region selection keeps the sports feeds`() {
+        val kept = EpgRegionCatalog.slugsFor(setOf("United Kingdom"), sportsSources)
+        assertTrue(
+            "a sports feed backs Sports Centre, not the guide — a guide region must never delete it",
+            "epgshare-us-sports1" in kept,
+        )
+    }
+
+    @Test
+    fun `a guide region selection keeps the curated EPGenius feeds`() {
+        // The backend allowlists 7 EPGenius ids by hand for COVERAGE, not by region; they are the
+        // sports backbone. Region-filtering a curated allowlist throws away the curation.
+        val kept = EpgRegionCatalog.slugsFor(setOf("United Kingdom"), sportsSources)
+        assertTrue("curated EPGenius feeds survive any region selection", "epgenius-14" in kept)
+    }
+
+    @Test
+    fun `keeping sports does not readmit the general feeds the viewer filtered out`() {
+        val kept = EpgRegionCatalog.slugsFor(setOf("United Kingdom"), sportsSources)
+        assertTrue("a general US guide feed is still filtered out", "epgshare-us2" !in kept)
+    }
+
+    @Test
+    fun `regions implied by followed leagues survive the selection`() {
+        // A viewer following Liga MX needs Mexico's feed even though their guide is UK-only.
+        val withMx = sportsSources + EpgSourceInfo("epgshare-mx1", "epgshare MX1", "Mexico", 200)
+        val kept = EpgRegionCatalog.slugsFor(setOf("United Kingdom"), withMx, setOf("Mexico"))
+        assertTrue("a followed league's country is not optional coverage", "epgshare-mx1" in kept)
+        assertTrue("and nothing else leaks back in", "epgshare-us2" !in kept)
+    }
 }
