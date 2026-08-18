@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.iptv
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -138,6 +139,30 @@ fun LiveGuide(
     // RIGHT from a category must land on the channel list — without this, focus search looks
     // rightward at the (non-focusable) preview pane and jumps up to the tabs instead.
     val channelListFocus = remember { FocusRequester() }
+
+    // Moving right off the category list hands the whole width to the guide: the category column
+    // collapses and the timeline gains roughly two more half-hour columns. LEFT brings it back.
+    //
+    // The column is never merely hidden — it animates to zero width and the way back is an
+    // explicit key handler rather than Compose focus search, because a zero-width LazyColumn has
+    // nothing focusable for a focus search to find. Expand first, then request focus.
+    val categoryListFocus = remember { FocusRequester() }
+    var inCategory by remember(uiState.selectedCategoryId) { mutableStateOf(false) }
+    var pendingCategoryFocus by remember { mutableStateOf(false) }
+    val categoryColWidth by animateDpAsState(
+        targetValue = if (inCategory) 0.dp else CATEGORY_COL_WIDTH,
+        label = "guideCategoryColumnWidth"
+    )
+    LaunchedEffect(pendingCategoryFocus, inCategory) {
+        if (pendingCategoryFocus && !inCategory) {
+            runCatching { categoryListFocus.requestFocus() }
+            pendingCategoryFocus = false
+        }
+    }
+    fun exitCategory() {
+        inCategory = false
+        pendingCategoryFocus = true
+    }
     // focusRestorer with no saved child fails the enter and focus wanders — fall back to row 1.
     val firstChannelFocus = remember { FocusRequester() }
 
@@ -182,6 +207,14 @@ fun LiveGuide(
         if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
             runCatching { firstChannelFocus.requestFocus() }
         }
+    }
+
+    // ...and then BACK unwinds the category depth before it leaves the guide. Entering a category
+    // is now a navigation step (the column collapses), so BACK has to undo that step rather than
+    // exiting the screen from underneath it. Guarded against the timeline handler above (and
+    // against fullscreen, whose own handler collapses the video) so exactly one is ever enabled.
+    BackHandler(enabled = !fullscreen && timelineChannelId == null && inCategory) {
+        exitCategory()
     }
 
     // Moving off the row (DOWN out of the timeline lands on the next channel) leaves the old row's
@@ -253,6 +286,34 @@ fun LiveGuide(
     var controlsTick by remember { mutableStateOf(0) }
     fun showControls() { controlsVisible = true; controlsTick++ }
 
+    // Channel zapping while fullscreen. UP/DOWN move a *pending* selection immediately — the
+    // overlay names it right away so the remote feels instant — and the actual tune is debounced,
+    // so holding the key walks ten channels without opening ten provider connections (panels cap
+    // concurrent connections, often at 1, and each tune is a fresh handshake).
+    var pendingZap by remember { mutableStateOf<GuideChannel?>(null) }
+    fun zap(delta: Int) {
+        val channels = uiState.channels
+        val current = pendingZap ?: uiState.previewChannel
+        val currentIndex = channels.indexOfFirst { it.contentId == current?.contentId }
+        val target = LiveChannelZapPolicy.targetIndex(currentIndex, delta, channels.size) ?: return
+        pendingZap = channels.getOrNull(target) ?: return
+        showControls()
+    }
+    // Commit the pending zap once the viewer stops moving. Re-keyed on pendingZap, so every further
+    // press cancels the previous wait and restarts it.
+    LaunchedEffect(pendingZap?.contentId) {
+        val target = pendingZap ?: return@LaunchedEffect
+        if (target.contentId == uiState.previewChannel?.contentId) return@LaunchedEffect
+        delay(LiveChannelZapPolicy.COMMIT_DELAY_MS)
+        viewModel.playPreview(target)
+    }
+    // The pending marker has done its job the moment the preview actually carries that channel.
+    LaunchedEffect(uiState.previewChannel?.contentId, pendingZap?.contentId) {
+        if (pendingZap != null && pendingZap?.contentId == uiState.previewChannel?.contentId) {
+            pendingZap = null
+        }
+    }
+
     // The player tunes ONLY when the preview channel changes (OK press / last-played restore) —
     // never on focus movement. ExoPlayer calls are main-looper-bound and non-blocking.
     // previewPlayback carries the (DoH-rewritten when the playlist opts in) URL + Host header.
@@ -291,11 +352,13 @@ fun LiveGuide(
         showControls()
     }
 
-    // Entering fullscreen peeks the controls; leaving it rejoins the live edge if paused.
+    // Entering fullscreen peeks the controls; leaving it drops any half-walked zap and rejoins the
+    // live edge if paused.
     LaunchedEffect(fullscreen) {
         if (fullscreen) showControls()
         else {
             controlsVisible = false
+            pendingZap = null
             if (paused) togglePause()
         }
     }
@@ -331,8 +394,7 @@ fun LiveGuide(
             .fillMaxSize()
             // Fullscreen key handling. Focus stays locked on the (hidden) channel row, so keys
             // arrive there — intercept them in the preview phase before the row's clickable.
-            // BACK is NOT consumed (BackHandler collapses). (ponytail: no channel zap yet — wire
-            // DirectionUp/Down to prev/next channel if requested.)
+            // BACK is NOT consumed (BackHandler collapses). UP/DOWN zap channels.
             .onPreviewKeyEvent { event ->
                 if (!fullscreen) return@onPreviewKeyEvent false
                 val handled = when (event.key) {
@@ -347,6 +409,9 @@ fun LiveGuide(
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> togglePause()
                         Key.MediaPlay -> if (paused) togglePause() else showControls()
                         Key.MediaPause -> if (!paused) togglePause() else showControls()
+                        // The live-TV remote split: UP/DOWN are the channel keys.
+                        Key.DirectionUp -> zap(-1)
+                        Key.DirectionDown -> zap(1)
                         else -> showControls()
                     }
                 }
@@ -364,9 +429,13 @@ fun LiveGuide(
                 ),
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
         ) {
-            // Category column
+            // Category column — collapses to zero width once focus moves into the guide.
             LazyColumn(
-                modifier = Modifier.width(CATEGORY_COL_WIDTH).fillMaxHeight().focusRestorer(),
+                modifier = Modifier
+                    .width(categoryColWidth)
+                    .fillMaxHeight()
+                    .focusRequester(categoryListFocus)
+                    .focusRestorer(),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
             ) {
                 itemsIndexed(uiState.categories, key = { _, it -> it.id }) { index, cat ->
@@ -414,6 +483,9 @@ fun LiveGuide(
                     else -> LazyColumn(
                         modifier = Modifier.fillMaxSize()
                             .focusRequester(channelListFocus)
+                            // Focus arriving anywhere in the guide means the viewer has committed
+                            // to this category — give the grid the width.
+                            .onFocusChanged { if (it.hasFocus) inCategory = true }
                             .focusRestorer(firstChannelFocus),
                         contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxl)
                     ) {
@@ -440,7 +512,7 @@ fun LiveGuide(
                                 isFavorite = ch.contentId in favoriteIds,
                                 // While fullscreen, focus is locked in place behind the video;
                                 // keys are intercepted by the root onPreviewKeyEvent (controls
-                                // overlay + play/pause), BACK collapses.
+                                // overlay + play/pause + zapping), BACK collapses.
                                 lockFocus = fullscreen,
                                 onFocused = { viewModel.onChannelFocused(ch, index) },
                                 // OK: tune the preview; OK on the tuned channel: go fullscreen.
@@ -452,6 +524,7 @@ fun LiveGuide(
                                 channel = ch,
                                 catchUpSupported = uiState.catchUpSupported,
                                 timelineActive = isTimelineRow,
+                                onExitCategory = if (inCategory) ({ exitCategory() }) else null,
                                 // RIGHT steps off the channel into its timeline (the artifact's
                                 // model); only the focused row's cells are focusable, so the tree
                                 // never carries thousands of targets.
@@ -497,7 +570,9 @@ fun LiveGuide(
                     .align(Alignment.TopStart)
                     // The guide row is inset by the content gutter and the category column gap —
                     // offset the overlay by the same amounts so it lands exactly on the video slot.
-                    .padding(start = GUIDE_START_PADDING + CATEGORY_COL_WIDTH + NuvioTheme.spacing.md)
+                    // Tracks the animated column so the overlay stays on the video slot as the
+                    // category column collapses.
+                    .padding(start = GUIDE_START_PADDING + categoryColWidth + NuvioTheme.spacing.md)
                     .height(PREVIEW_PANE_HEIGHT)
                     .aspectRatio(16f / 9f)
                 ).background(Color.Black)
@@ -516,10 +591,13 @@ fun LiveGuide(
                 modifier = Modifier.fillMaxSize()
             )
             if (fullscreen && controlsVisible) {
+                // A half-walked zap names the channel the viewer is ON, not the one still playing.
+                val overlayChannel = pendingZap ?: uiState.previewChannel
                 LiveControlsOverlay(
-                    channel = uiState.previewChannel,
-                    epg = uiState.previewChannel?.let { uiState.epg[it.streamId] },
-                    paused = paused
+                    channel = overlayChannel,
+                    epg = overlayChannel?.let { uiState.epg[it.streamId] },
+                    paused = paused,
+                    tuning = pendingZap != null,
                 )
             }
         }
@@ -550,6 +628,8 @@ private fun BoxScope.LiveControlsOverlay(
     channel: GuideChannel?,
     epg: GuideEpg?,
     paused: Boolean,
+    /** A zap is walking ahead of the stream — the channel named here is not on screen yet. */
+    tuning: Boolean = false,
 ) {
     Column(
         modifier = Modifier
@@ -596,15 +676,23 @@ private fun BoxScope.LiveControlsOverlay(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
             ) {
-                val stateColor = if (paused) Color.White else NuvioTheme.colors.Primary
+                // Tuning outranks paused: it is the newer fact, and the frame on screen still
+                // belongs to the old channel either way.
+                val stateColor = if (paused && !tuning) Color.White else NuvioTheme.colors.Primary
                 Icon(
-                    imageVector = if (paused) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    imageVector = if (paused && !tuning) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = null,
                     tint = stateColor,
                     modifier = Modifier.size(NuvioTheme.spacing.xl)
                 )
                 Text(
-                    text = stringResource(if (paused) R.string.iptv_guide_paused else R.string.iptv_guide_live),
+                    text = stringResource(
+                        when {
+                            tuning -> R.string.iptv_guide_tuning
+                            paused -> R.string.iptv_guide_paused
+                            else -> R.string.iptv_guide_live
+                        }
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = stateColor
@@ -727,7 +815,12 @@ private fun GuideCategoryRow(
             // (stayed on "All channels"). clickable focuses reliably; Enter selects, and moving
             // focus selects via the LaunchedEffect above. Matches GuideChannelRow.
             .onFocusChanged { focused = it.isFocused }
-            .clickable { latestOnFocused() }
+            // OK enters the category, the same as RIGHT. Selection already happened on focus, so
+            // re-running it was a no-op — pressing OK on a category appeared to do nothing at all.
+            .clickable {
+                latestOnFocused()
+                runCatching { rightFocus.requestFocus() }
+            }
             .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm)
     ) {
         Text(
@@ -763,6 +856,8 @@ private fun GuideChannelRow(
     catchUpSupported: Boolean,
     timelineActive: Boolean,
     onEnterTimeline: () -> Unit,
+    /** LEFT off the channel list re-opens the collapsed category column. Null while it is open. */
+    onExitCategory: (() -> Unit)? = null,
     onLeaveTimeline: () -> Unit,
     onTravel: (Int) -> Unit,
     onProgrammeClick: (XtreamProgram) -> Unit,
@@ -812,13 +907,26 @@ private fun GuideChannelRow(
             // RIGHT steps off the channel and into its timeline — the artifact's TV model. The
             // channel row itself keeps its own OK semantics untouched (preview, then fullscreen,
             // hold to favourite); the catch-up OK rule belongs to the CELLS, one level in.
+            //
+            // lockFocus short-circuits everything: while fullscreen the row is a hidden focus
+            // anchor and every key belongs to the root handler (play/pause, zapping).
             .onPreviewKeyEvent { event ->
                 if (lockFocus || timelineActive || !isFocused) return@onPreviewKeyEvent false
-                if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionRight) {
-                    return@onPreviewKeyEvent false
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionRight -> {
+                        onEnterTimeline()
+                        true
+                    }
+                    // LEFT re-opens the category column. Handled here rather than left to focus
+                    // search: the column is collapsed to zero width at this point, so there is
+                    // nothing for a search to land on.
+                    Key.DirectionLeft -> {
+                        val exit = onExitCategory
+                        if (exit == null) false else { exit(); true }
+                    }
+                    else -> false
                 }
-                onEnterTimeline()
-                true
             }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = NuvioTheme.spacing.sm),

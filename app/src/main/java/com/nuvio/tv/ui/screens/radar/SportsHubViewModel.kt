@@ -9,6 +9,7 @@ import com.nuvio.tv.core.radar.RadarLeague
 import com.nuvio.tv.core.radar.RadarRepository
 import com.nuvio.tv.core.radar.RadarTeam
 import com.nuvio.tv.core.radar.RadarUiState
+import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.posthog.PostHog
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -119,6 +120,7 @@ class SportsHubViewModel @Inject constructor(
     private val matcher: RadarChannelMatcher,
     private val catalogClient: com.nuvio.tv.core.radar.RadarCatalogClient,
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
+    private val livePlaylist: com.nuvio.tv.core.iptv.XtreamLivePlaylist,
     accountStore: XtreamAccountStore,
 ) : ViewModel() {
 
@@ -363,6 +365,25 @@ class SportsHubViewModel @Inject constructor(
                 val url = runCatching { matcher.playbackUrlFor(candidate) }.getOrNull()
                 if (url != null && isChannelPlayable(candidate, url)) {
                     matcher.ensurePlayable(candidate, url)
+                    // Hand the player this match's channels, in the order the sheet listed them,
+                    // so UP/DOWN zaps between the broadcasts of THIS fixture. Without it the
+                    // player is left holding whatever the guide last published — or nothing, in
+                    // which case zapping silently did nothing when arriving from Sports.
+                    //
+                    // Blank stream URLs are fine: zapLive re-resolves by id at zap time (Stalker
+                    // links are single-use, so a browse-time URL would be stale anyway).
+                    livePlaylist.set(
+                        current.matches
+                            .filterNot { it.channel.contentId in current.deadContentIds }
+                            .map { m ->
+                                LiveChannelRef(
+                                    id = m.channel.contentId,
+                                    name = m.channel.name,
+                                    logo = m.channel.logo,
+                                    streamUrl = m.channel.streamUrl,
+                                )
+                            }
+                    )
                     closeMatch()
                     onPlay(candidate.channel.name, url, candidate.channel.contentId)
                     return@launch

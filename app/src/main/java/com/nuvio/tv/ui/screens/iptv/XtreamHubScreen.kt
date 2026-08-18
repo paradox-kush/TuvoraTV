@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -175,16 +176,28 @@ fun XtreamHubScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(top = if (liveFullscreen) 0.dp else NuvioTheme.spacing.xl)) {
-        // Header: account dropdown + section tabs
+        // Header: section tabs lead, provider picker sits out on the right.
+        //
+        // The provider chip is NOT a section — it selects data, not a destination. Sitting first
+        // in the row, in identical clothing, it read as a fourth tab and put a data control in
+        // front of the navigation. Out on the right it stays one press away without competing,
+        // and LEFT from the first tab now leaves the header for the sidebar, which is how every
+        // other screen behaves.
         if (!liveFullscreen) Row(
             modifier = Modifier
-                .padding(start = HubRowStartPadding, bottom = NuvioTheme.spacing.md)
+                .fillMaxWidth()
+                .padding(start = HubRowStartPadding, end = HubRowStartPadding, bottom = NuvioTheme.spacing.md)
                 .focusRestorer(headerRestoreTarget),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
         ) {
-            // ponytail: the provider chip is NOT a section — render it un-selected so it doesn't
-            // share the active-tab's primary tint (that read as "this is the selected section").
+            if (showLive) HubChip(stringResource(R.string.iptv_hub_tab_live), uiState.section == XtreamSection.LIVE, focusRequester = liveTab,
+                onFocusSelect = { if (uiState.section != XtreamSection.LIVE) viewModel.selectSection(XtreamSection.LIVE) }) { viewModel.selectSection(XtreamSection.LIVE) }
+            if (showMovies) HubChip(stringResource(R.string.type_movies), uiState.section == XtreamSection.MOVIES, focusRequester = moviesTab,
+                onFocusSelect = { if (uiState.section != XtreamSection.MOVIES) viewModel.selectSection(XtreamSection.MOVIES) }) { viewModel.selectSection(XtreamSection.MOVIES) }
+            if (showSeries) HubChip(stringResource(R.string.type_series), uiState.section == XtreamSection.SERIES, focusRequester = seriesTab,
+                onFocusSelect = { if (uiState.section != XtreamSection.SERIES) viewModel.selectSection(XtreamSection.SERIES) }) { viewModel.selectSection(XtreamSection.SERIES) }
+            Spacer(Modifier.weight(1f))
             HubChip(
                 label = uiState.selectedAccount?.name ?: stringResource(R.string.iptv_hub_account_fallback),
                 selected = false,
@@ -192,13 +205,6 @@ fun XtreamHubScreen(
                 showDropdownIcon = uiState.accounts.size > 1,
                 onClick = { if (uiState.accounts.size > 1) showAccountPicker = true }
             )
-            Spacer(Modifier.width(NuvioTheme.spacing.md))
-            if (showLive) HubChip(stringResource(R.string.iptv_hub_tab_live), uiState.section == XtreamSection.LIVE, focusRequester = liveTab,
-                onFocusSelect = { if (uiState.section != XtreamSection.LIVE) viewModel.selectSection(XtreamSection.LIVE) }) { viewModel.selectSection(XtreamSection.LIVE) }
-            if (showMovies) HubChip(stringResource(R.string.type_movies), uiState.section == XtreamSection.MOVIES, focusRequester = moviesTab,
-                onFocusSelect = { if (uiState.section != XtreamSection.MOVIES) viewModel.selectSection(XtreamSection.MOVIES) }) { viewModel.selectSection(XtreamSection.MOVIES) }
-            if (showSeries) HubChip(stringResource(R.string.type_series), uiState.section == XtreamSection.SERIES, focusRequester = seriesTab,
-                onFocusSelect = { if (uiState.section != XtreamSection.SERIES) viewModel.selectSection(XtreamSection.SERIES) }) { viewModel.selectSection(XtreamSection.SERIES) }
         }
 
         // Live TV = TiViMate-style guide (category col + live preview + EPG channel list).
@@ -716,12 +722,17 @@ private fun XtreamHubItem.toMetaPreview(): MetaPreview = MetaPreview(
 )
 
 /**
- * Header chip for the provider picker + section tabs. Section tabs switch on FOCUS
+ * Header control for the provider picker + section tabs. Section tabs switch on FOCUS
  * (TiViMate-style) — arrow onto a tab and it selects, no OK needed; OK/click still works.
  *
- * Focus and selection stay visually distinct (hard product rule): focus = solid Primary fill with
- * a 2dp FocusRing border; the selected-but-unfocused tab = translucent Primary fill, Primary
- * hairline border, and the underline bar.
+ * Speaks the sidebar's dialect ([SidebarNavigation]) rather than a header vocabulary of its own:
+ * nothing is drawn at rest, the active section takes a soft neutral fill, and focus takes a solid
+ * accent fill. No outlined capsules around idle controls and no underline bar — neither idiom
+ * exists anywhere else in the app, and together they were what made this screen read as a
+ * different product bolted on.
+ *
+ * Focus and selection stay visually distinct (hard product rule), and now differ by *surface*
+ * rather than by alpha of the same colour — see [hubChipSurface].
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -736,68 +747,55 @@ private fun HubChip(
     var focused by remember { mutableStateOf(false) }
     val latestOnFocusSelect by rememberUpdatedState(onFocusSelect)
     LaunchedEffect(focused) { if (focused) latestOnFocusSelect?.invoke() }
-    val chipShape = NuvioTheme.shapes.chip
-    val contentColor = when {
-        focused -> NuvioTheme.colors.OnPrimary
-        selected -> NuvioTheme.colors.TextPrimary
-        else -> NuvioTheme.colors.TextSecondary
+    // The sidebar's nav-item radius, not a full pill: the hub is app navigation, so it should
+    // look like the app's navigation.
+    val chipShape = NuvioTheme.shapes.button
+    val surface = hubChipSurface(selected = selected, focused = focused)
+    val containerColor = when (surface) {
+        HubChipSurface.AccentFill -> NuvioTheme.colors.Primary
+        HubChipSurface.SoftFill -> NuvioTheme.colors.FocusBackground
+        HubChipSurface.None -> Color.Transparent
     }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Card(
-            onClick = onClick,
-            modifier = Modifier
-                .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-                .onFocusChanged { focused = it.isFocused },
-            shape = CardDefaults.shape(shape = chipShape),
-            colors = CardDefaults.colors(
-                containerColor = if (selected) NuvioTheme.colors.Primary.copy(alpha = 0.26f) else NuvioTheme.colors.BackgroundElevated,
-                focusedContainerColor = NuvioTheme.colors.Primary
-            ),
-            border = CardDefaults.border(
-                border = Border(
-                    border = BorderStroke(
-                        NuvioTheme.spacing.hairline,
-                        if (selected) NuvioTheme.colors.Primary else NuvioTheme.colors.Border
-                    ),
-                    shape = chipShape
-                ),
-                focusedBorder = Border(
-                    border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
-                    shape = chipShape
-                )
-            ),
-            scale = CardDefaults.scale(focusedScale = 1.02f)
+    val contentColor = when (surface) {
+        HubChipSurface.AccentFill -> NuvioTheme.colors.OnPrimary
+        HubChipSurface.SoftFill -> NuvioTheme.colors.TextPrimary
+        HubChipSurface.None -> NuvioTheme.colors.TextSecondary
+    }
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .onFocusChanged { focused = it.isFocused },
+        shape = CardDefaults.shape(shape = chipShape),
+        colors = CardDefaults.colors(
+            containerColor = containerColor,
+            focusedContainerColor = NuvioTheme.colors.Primary
+        ),
+        border = CardDefaults.border(
+            border = Border.None,
+            focusedBorder = Border.None
+        ),
+        scale = CardDefaults.scale(focusedScale = 1.02f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.sm),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = contentColor
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = contentColor
+            )
+            if (showDropdownIcon) {
+                Icon(
+                    imageVector = Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(NuvioTheme.spacing.lg)
                 )
-                if (showDropdownIcon) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowDropDown,
-                        contentDescription = null,
-                        tint = contentColor,
-                        modifier = Modifier.size(NuvioTheme.spacing.lg)
-                    )
-                }
             }
         }
-        // Underline marks the ACTIVE section even while focus is elsewhere — deliberately
-        // different from the focus treatment (solid fill + ring).
-        Spacer(Modifier.height(3.dp))
-        Box(
-            modifier = Modifier
-                .width(24.dp)
-                .height(3.dp)
-                .clip(RoundedCornerShape(NuvioTheme.radii.xxs))
-                .background(if (selected) NuvioTheme.colors.Primary else Color.Transparent)
-        )
     }
 }
 

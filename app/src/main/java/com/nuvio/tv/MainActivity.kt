@@ -776,6 +776,12 @@ class MainActivity : ComponentActivity() {
                             add(Screen.Home.route)
                             add(Screen.Search.route)
                             add(Screen.Library.route)
+                            // Live TV and Sports are sidebar destinations like any other. Leaving
+                            // them out made showSidebar false there, which cost all three of the
+                            // sidebar's behaviours at once: no rail, no LEFT-to-open, and BACK
+                            // popping to Home instead of returning focus to the sidebar.
+                            add(Screen.XtreamHub.route)
+                            add(Screen.SportsHub.route)
                             add(Screen.Settings.route)
                             if (discoverLocation == DiscoverLocation.IN_SIDEBAR) {
                                 add(Screen.Discover.route)

@@ -622,7 +622,17 @@ fun PlayerScreen(
                     when (keyEvent.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                             if (!uiState.showControls) {
-                                viewModel.onEvent(PlayerEvent.OnPlayPause)
+                                val isLive = CatchUpPlaybackPolicy.allowsChannelZap(
+                                    isLive = uiState.contentType.equals("live", ignoreCase = true),
+                                    isCatchUpPlayback = uiState.isCatchUpPlayback,
+                                )
+                                // On live, UP/DOWN are the channel keys and OK opens the controls —
+                                // the standard live-TV remote split. Pausing a live stream from a
+                                // stray OK press is rarely what was meant. VOD and catch-up (which
+                                // are seekable recordings) keep OK as play/pause.
+                                viewModel.onEvent(
+                                    if (isLive) PlayerEvent.OnToggleControls else PlayerEvent.OnPlayPause
+                                )
                                 true
                             } else {
                                 // Let the focused button handle it

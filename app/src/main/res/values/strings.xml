@@ -3022,7 +3022,8 @@
     <string name="iptv_guide_min_left">%1$d min left</string>
     <string name="iptv_guide_next_programme">Next: %1$s · %2$s</string>
     <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK favorite · ▶ guide</string>
-    <string name="iptv_guide_fullscreen_hint">OK play/pause · BACK exit fullscreen</string>
+    <string name="iptv_guide_fullscreen_hint">OK play/pause · ▲▼ channel · BACK exit fullscreen</string>
     <string name="iptv_guide_paused">Paused</string>
     <string name="iptv_guide_live">Live</string>
+    <string name="iptv_guide_tuning">Tuning…</string>
 </resources>
