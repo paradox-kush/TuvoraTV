@@ -165,9 +165,13 @@ suspend fun XtreamItemRegistry.rebuildFromId(
     // episode miss isn't rebuildable here.
     if (parsed.kind == "episode") return null
     val streamId = parsed.streamId.toIntOrNull() ?: return null
-    val client = clientFactory.clientFor(account)
-    // Xtream derives the URL by formula; M3U looks it up in the ingested catalog (may be null
-    // if the item is no longer in the playlist -> caller treats as "no longer available").
+    // Rebuild DISPLAY metadata only; the stream URL stays blank and is resolved FRESH at play time
+    // (StreamRepositoryImpl.resolveXtreamPlayStreams -> refreshIptvStreamUrl). This is the app's
+    // standard "browse-time items carry a blank stream URL" contract — and eager resolution here
+    // was pathological for Stalker: resolveStreamUrl on a cold registry miss re-pages the whole VOD
+    // catalog (get_ordered_list until the id is found, ~23 requests/item) just to fill a field the
+    // meta path discards and the play path re-mints anyway (Stalker create_link URLs are single-use).
+    // That scan fired for every Stalker Continue-Watching item on EVERY cold start. See anti-jank F1.
     val item = when (parsed.kind) {
         "series" -> XtreamResolvedItem(
             id = id, type = ContentType.SERIES, name = "", poster = null,
@@ -176,13 +180,13 @@ suspend fun XtreamItemRegistry.rebuildFromId(
         )
         "live" -> XtreamResolvedItem(
             id = id, type = ContentType.TV, name = "", poster = null,
-            streamUrl = client.resolveStreamUrl(account, "live", streamId) ?: return null,
-            kind = XtreamKind.LIVE, accountId = account.id, streamId = streamId
+            streamUrl = "", kind = XtreamKind.LIVE,
+            accountId = account.id, streamId = streamId
         )
         else -> XtreamResolvedItem( // "vod"
             id = id, type = ContentType.MOVIE, name = "", poster = null,
-            streamUrl = client.resolveStreamUrl(account, "movie", streamId) ?: return null,
-            kind = XtreamKind.VOD, accountId = account.id, streamId = streamId
+            streamUrl = "", kind = XtreamKind.VOD,
+            accountId = account.id, streamId = streamId
         )
     }
     register(item)
