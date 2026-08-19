@@ -678,7 +678,7 @@
     <string name="playback_player_auto">Auto (Best for Content)</string>
     <string name="playback_player_auto_desc">ExoPlayer for Movies &amp; TV Shows · MPV for Anime</string>
     <string name="playback_engine_exoplayer_desc">Best compatibility with current Tuvora features.</string>
-    <string name="playback_engine_mvplayer_desc">Uses libmpv with Tuvora OSD controls. Experimental.</string>
+    <string name="playback_engine_mvplayer_desc">Wider codec support via libmpv — fixes blocky or corrupted video some hardware decoders produce on certain streams. With Tuvora OSD controls. Experimental.</string>
 
     <string name="video_section">Video</string>
     <string name="audio_trailer_section">Trailer</string>

@@ -167,9 +167,13 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         // join point, which makes ExoPlayer buffer forever without ever reaching READY. These TS
         // extractor flags tell it to detect frame boundaries itself and accept non-IDR keyframes.
         val extractorsFactory = customExtractorsFactory ?: DefaultExtractorsFactory()
+            // Live .ts is single-program; default multi-PMT mode can mis-frame it -> macroblocking.
+            // Match StreamVault/TiviMate. (Phase 0, research/iptv-playback-engine-design.md)
+            .setTsExtractorMode(androidx.media3.extractor.ts.TsExtractor.MODE_SINGLE_PMT)
             .setTsExtractorFlags(
                 androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
-                    androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+                    androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+                    androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
             )
         val defaultFactory = DefaultMediaSourceFactory(progressiveFactory, extractorsFactory).apply {
             setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)

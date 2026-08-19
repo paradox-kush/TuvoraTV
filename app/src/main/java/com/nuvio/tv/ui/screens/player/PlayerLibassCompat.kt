@@ -33,9 +33,12 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     extractorsFactory: ExtractorsFactory = DefaultExtractorsFactory()
         // IPTV live MPEG-TS streams often lack AUDs / IDR keyframes -> ExoPlayer buffers forever.
         // These flags let it detect frame boundaries itself and accept non-IDR keyframes.
+        // SINGLE_PMT + ignore-splice match StreamVault/TiviMate for direct live .ts (Phase 0).
+        .setTsExtractorMode(androidx.media3.extractor.ts.TsExtractor.MODE_SINGLE_PMT)
         .setTsExtractorFlags(
             androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
-                androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+                androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+                androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
         ),
     renderersFactory: RenderersFactory = DefaultRenderersFactory(context)
 ): ExoPlayer {
