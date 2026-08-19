@@ -10,7 +10,6 @@ import com.nuvio.tv.data.remote.supabase.TvLoginStartResult
 import com.nuvio.tv.domain.model.AuthState
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.status.SessionStatus
-import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.ServerResponseException
 import kotlinx.coroutines.Dispatchers
@@ -49,7 +48,7 @@ private const val TAG = "AuthManager"
 // and skip a manual refresh — supabase-kt's alwaysAutoRefresh already owns background refresh.
 private val REFRESH_SKEW = 60.seconds
 
-private enum class SessionRefreshResult {
+internal enum class SessionRefreshResult {
     REFRESHED,
     INVALID_SESSION,
     TRANSIENT_FAILURE
@@ -386,27 +385,20 @@ class AuthManager @Inject constructor(
             Log.d(TAG, "$reason; session was already refreshed by another request")
             return@withLock SessionRefreshResult.REFRESHED
         }
-        // ponytail: don't fire a second refresh that races supabase-kt's alwaysAutoRefresh loop.
-        // Two POSTs presenting the same refresh token can trip GoTrue reuse detection
-        // (refresh_token_not_found -> the library clears the session -> spurious "signed out" +
-        // playback teardown). If the library already keeps the access token valid, we're done.
+        // Single refresher: the app NEVER fires its own refresh. supabase-kt's alwaysAutoRefresh
+        // loop is the sole refresher, so two POSTs can never present the same rotating refresh token
+        // and trip GoTrue reuse detection (refresh_token_not_found -> the library clears the session
+        // -> spurious "signed out" + playback teardown; supabase/auth-js#213 — the fix there is a
+        // single refresher / leader election). If the access token is still valid the caller can
+        // proceed now; if it has lapsed we defer to the loop and report a transient failure so the
+        // caller keeps the session and retries once the loop has rotated a fresh token.
         val expiresAt = activeSession.expiresAt
-        if (expiresAt > Clock.System.now() + REFRESH_SKEW) {
+        return@withLock if (expiresAt > Clock.System.now() + REFRESH_SKEW) {
             Log.d(TAG, "$reason; access token still valid, deferring to auto-refresh")
-            return@withLock SessionRefreshResult.REFRESHED
-        }
-        return@withLock try {
-            Log.w(TAG, "$reason; refreshing Supabase session")
-            auth.refreshCurrentSession()
             SessionRefreshResult.REFRESHED
-        } catch (refreshError: Exception) {
-            val result = refreshError.toSessionRefreshResult()
-            if (result == SessionRefreshResult.INVALID_SESSION) {
-                Log.e(TAG, "Supabase session refresh failed with invalid session", refreshError)
-            } else {
-                Log.w(TAG, "Supabase session refresh failed transiently", refreshError)
-            }
-            result
+        } else {
+            Log.w(TAG, "$reason; access token lapsed, deferring to the auto-refresh loop (single refresher)")
+            SessionRefreshResult.TRANSIENT_FAILURE
         }
     }
 
@@ -534,49 +526,42 @@ private fun Throwable.toSessionRefreshResult(): SessionRefreshResult {
         return SessionRefreshResult.TRANSIENT_FAILURE
     }
 
-    findCause<ClientRequestException>()?.let { error ->
-        val status = error.response.status.value
-        return when (status) {
-            400, 401, 403 -> SessionRefreshResult.INVALID_SESSION
-            408, 429 -> SessionRefreshResult.TRANSIENT_FAILURE
-            else -> SessionRefreshResult.TRANSIENT_FAILURE
-        }
-    }
-
-    val message = causeMessages().lowercase()
-    val invalidMarkers = listOf(
-        "invalid refresh token",
-        "refresh token not found",
-        "refresh_token_not_found",
-        "invalid_grant",
-        "session not found",
-        "invalid session",
-        "invalid token"
-    )
-    if (invalidMarkers.any { marker -> message.contains(marker) }) {
-        return SessionRefreshResult.INVALID_SESSION
-    }
-
-    val transientMarkers = listOf(
-        "timeout",
-        "timed out",
-        "unable to resolve host",
-        "failed to connect",
-        "connection reset",
-        "connection refused",
-        "network",
-        "server error",
-        "service unavailable",
-        "502",
-        "503",
-        "504"
-    )
-    if (transientMarkers.any { marker -> message.contains(marker) }) {
-        return SessionRefreshResult.TRANSIENT_FAILURE
-    }
-
-    return SessionRefreshResult.TRANSIENT_FAILURE
+    // Decide on the actual GoTrue reason, NOT the bare status code. A 400/401/403 is a real
+    // sign-out only when the reply says the refresh token is dead; a bare 4xx (a Cloudflare
+    // edge-403, a rate-limit, an ambiguous refusal) keeps the session so the auto-refresh loop can
+    // recover rather than ejecting the user mid-session (recover-not-eject; supabase/auth-js#213).
+    // Ktor's ClientRequestException and supabase-kt's AuthRestException both carry that text in the
+    // message, which causeMessages() collects.
+    return sessionRefreshResultForMessage(causeMessages().lowercase())
 }
+
+/**
+ * Markers GoTrue returns when the refresh token is genuinely dead (rotated away, or its family
+ * revoked by reuse detection). Only these justify a forced sign-out. See [sessionRefreshResultForMessage].
+ */
+internal val INVALID_SESSION_MARKERS: List<String> = listOf(
+    "invalid refresh token",
+    "refresh token is not valid",
+    "refresh token not found",
+    "refresh_token_not_found",
+    "invalid_grant",
+    "session not found",
+    "session_not_found",
+    "invalid session",
+    "invalid token",
+)
+
+/**
+ * Pure eject-vs-recover classifier: a failure is a genuine invalid session (eject) only if its
+ * message carries one of [INVALID_SESSION_MARKERS]; everything else is transient (keep the session
+ * and let the auto-refresh loop recover). Extracted so the decision is unit-tested without the SDK.
+ */
+internal fun sessionRefreshResultForMessage(lowercaseMessage: String): SessionRefreshResult =
+    if (INVALID_SESSION_MARKERS.any(lowercaseMessage::contains)) {
+        SessionRefreshResult.INVALID_SESSION
+    } else {
+        SessionRefreshResult.TRANSIENT_FAILURE
+    }
 
 private inline fun <reified T : Throwable> Throwable.hasCause(): Boolean =
     findCause<T>() != null
