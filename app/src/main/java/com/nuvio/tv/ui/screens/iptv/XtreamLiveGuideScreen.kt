@@ -542,7 +542,13 @@ fun LiveGuide(
                                 channel = ch,
                                 catchUpSupported = uiState.catchUpSupported,
                                 timelineActive = isTimelineRow,
-                                onExitCategory = if (inCategory) ({ exitCategory() }) else null,
+                                // LEFT off any channel returns to the category list. Wired
+                                // unconditionally (not `if (inCategory)`): the gated version left a
+                                // gap where a channel row focused before inCategory flipped true
+                                // carried a null handler, so LEFT fell through to spatial search,
+                                // found the zero-width category column, and escaped up to the tab
+                                // bar (Live TV -> Movies). exitCategory() is safe in both states.
+                                onExitCategory = { exitCategory() },
                                 // RIGHT steps off the channel into its timeline (the artifact's
                                 // model); only the focused row's cells are focusable, so the tree
                                 // never carries thousands of targets.
@@ -874,7 +880,7 @@ private fun GuideChannelRow(
     catchUpSupported: Boolean,
     timelineActive: Boolean,
     onEnterTimeline: () -> Unit,
-    /** LEFT off the channel list re-opens the collapsed category column. Null while it is open. */
+    /** LEFT off any channel returns to the category list (re-expanding it when collapsed). */
     onExitCategory: (() -> Unit)? = null,
     onLeaveTimeline: () -> Unit,
     onTravel: (Int) -> Unit,
