@@ -49,6 +49,7 @@ class EpgMirrorRepository @Inject constructor(
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
+        .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("EPG"))
         .build()
     private val syncMutex = Mutex()
     /** Survives the settings screen: a region change rebuilds even after the picker closes. */

@@ -238,6 +238,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                                 .dns(IPv4FirstDns())
                                 .followRedirects(true)
                                 .followSslRedirects(true)
+                                .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("IMG"))
                                 .build()
                         }
                     )

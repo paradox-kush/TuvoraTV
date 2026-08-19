@@ -123,6 +123,7 @@ object NetworkModule {
         }
         return OkHttpClient.Builder()
             .dns(IPv4FirstDns())
+            .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("API"))
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
             .hostnameVerifier { _, _ -> true }
             .cache(Cache(File(context.cacheDir, "http_cache"), 50L * 1024 * 1024)) // 50 MB disk cache
@@ -220,6 +221,7 @@ object NetworkModule {
         }
         return OkHttpClient.Builder()
             .dns(IPv4FirstDns())
+            .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("M3U"))
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
             .hostnameVerifier { _, _ -> true }
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -247,6 +249,7 @@ object NetworkModule {
         }
         return OkHttpClient.Builder()
             .dns(IPv4FirstDns())
+            .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("STK"))
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
             .hostnameVerifier { _, _ -> true }
             .connectTimeout(15, TimeUnit.SECONDS)
