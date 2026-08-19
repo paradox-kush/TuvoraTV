@@ -5,7 +5,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
 import com.nuvio.tv.core.auth.AuthManager
+import com.nuvio.tv.core.epg.EpgMirrorRepository
+import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.isM3UBacked
+import com.nuvio.tv.core.iptv.isXtream
+import com.nuvio.tv.core.iptv.content.IptvContentDb
+import com.nuvio.tv.core.iptv.match.MatchKind
+import com.nuvio.tv.core.iptv.match.XtreamMatchIndex
+import com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
 import com.nuvio.tv.data.local.DebugSettingsDataStore
+import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.LibraryPreferences
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
@@ -17,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -29,6 +40,12 @@ class DebugSettingsViewModel @Inject constructor(
     private val playerSettingsDataStore: PlayerSettingsDataStore,
     private val authManager: AuthManager,
     private val libraryPreferences: LibraryPreferences,
+    private val accountStore: XtreamAccountStore,
+    private val clientFactory: IptvClientFactory,
+    private val resolver: XtreamTmdbResolver,
+    private val matchIndex: XtreamMatchIndex,
+    private val contentDb: IptvContentDb,
+    private val epgMirror: EpgMirrorRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -109,6 +126,68 @@ class DebugSettingsViewModel @Inject constructor(
                     }
                 }
             }
+            DebugSettingsEvent.ForceEpgRedownload -> runReingest("EPG mirror re-download") {
+                epgMirror.ensureFresh(force = true)
+                "manifest + feeds refetched"
+            }
+            DebugSettingsEvent.ReindexXtream -> runReingest("Reindex Xtream") {
+                val accounts = accountStore.accounts.first().filter { it.enabled && it.isXtream() }
+                var items = 0
+                for (acc in accounts) {
+                    for (kind in listOf(MatchKind.MOVIE, MatchKind.SERIES, MatchKind.LIVE)) {
+                        resolver.ensureIndexed(acc, kind, force = true)
+                        items += matchIndex.indexedCount(acc.id, kind) ?: 0
+                    }
+                }
+                "${accounts.size} provider(s), $items items indexed"
+            }
+            DebugSettingsEvent.ReindexM3U -> runReingest("Reindex M3U") {
+                val accounts = accountStore.accounts.first().filter { it.enabled && it.isM3UBacked() }
+                for (acc in accounts) clientFactory.m3u().ensureIngested(acc, force = true)
+                "${accounts.size} playlist(s) re-parsed"
+            }
+            DebugSettingsEvent.ReindexStalker -> runReingest("Reindex Stalker") {
+                val accounts = accountStore.accounts.first().filter { it.enabled && it.sourceType == XtreamAccount.SOURCE_STALKER }
+                var channels = 0
+                for (acc in accounts) {
+                    contentDb.clear(acc.id)
+                    clientFactory.stalker().evictCaches(acc.id)
+                    channels += clientFactory.stalker().liveChannels(acc, null).getOrNull()?.size ?: 0
+                }
+                "${accounts.size} portal(s), $channels live channels"
+            }
+            DebugSettingsEvent.ReindexAll -> runReingest("Reindex ALL + EPG") {
+                val accounts = accountStore.accounts.first().filter { it.enabled }
+                for (acc in accounts) {
+                    when {
+                        acc.isM3UBacked() -> clientFactory.m3u().ensureIngested(acc, force = true)
+                        acc.sourceType == XtreamAccount.SOURCE_STALKER -> {
+                            contentDb.clear(acc.id)
+                            clientFactory.stalker().liveChannels(acc, null)
+                        }
+                        acc.isXtream() -> for (kind in listOf(MatchKind.MOVIE, MatchKind.SERIES, MatchKind.LIVE)) {
+                            resolver.ensureIndexed(acc, kind, force = true)
+                        }
+                    }
+                }
+                epgMirror.ensureFresh(force = true)
+                "${accounts.size} account(s) reindexed + EPG"
+            }
+        }
+    }
+
+    /** Runs a force re-ingest with timing, surfacing the result on [DebugSettingsUiState.reingestResult]. */
+    private fun runReingest(label: String, block: suspend () -> String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(reingestLoading = true, reingestResult = "$label…") }
+            val started = System.currentTimeMillis()
+            val outcome = try {
+                val summary = block()
+                "$label \u2713 " + "%.1f".format((System.currentTimeMillis() - started) / 1000.0) + "s — " + summary
+            } catch (e: Exception) {
+                "Failed: $label — " + (e.message ?: e::class.simpleName)
+            }
+            _uiState.update { it.copy(reingestLoading = false, reingestResult = outcome) }
         }
     }
 
@@ -164,7 +243,9 @@ data class DebugSettingsUiState(
     val generateLibraryLoading: Boolean = false,
     val generateLibraryResult: String? = null,
     val signInLoading: Boolean = false,
-    val signInResult: String? = null
+    val signInResult: String? = null,
+    val reingestLoading: Boolean = false,
+    val reingestResult: String? = null
 )
 
 sealed class DebugSettingsEvent {
@@ -174,4 +255,9 @@ sealed class DebugSettingsEvent {
     data class ToggleBufferLogs(val enabled: Boolean) : DebugSettingsEvent()
     data class GenerateLibraryItems(val count: Int) : DebugSettingsEvent()
     data class SignIn(val email: String, val password: String) : DebugSettingsEvent()
+    object ForceEpgRedownload : DebugSettingsEvent()
+    object ReindexXtream : DebugSettingsEvent()
+    object ReindexM3U : DebugSettingsEvent()
+    object ReindexStalker : DebugSettingsEvent()
+    object ReindexAll : DebugSettingsEvent()
 }

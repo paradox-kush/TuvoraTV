@@ -199,6 +199,29 @@ fun DebugSettingsContent(
                     }
                 )
             }
+
+            // ── IPTV / EPG Re-ingest ──
+            item(key = "debug_reingest_header") {
+                Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+                Text(
+                    text = "IPTV / EPG Re-ingest",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = NuvioTheme.colors.TextTertiary,
+                    modifier = Modifier.padding(bottom = NuvioTheme.spacing.xs)
+                )
+            }
+
+            item(key = "debug_reingest_card") {
+                DebugReingestCard(
+                    isLoading = uiState.reingestLoading,
+                    result = uiState.reingestResult,
+                    onForceEpg = { viewModel.onEvent(DebugSettingsEvent.ForceEpgRedownload) },
+                    onXtream = { viewModel.onEvent(DebugSettingsEvent.ReindexXtream) },
+                    onM3U = { viewModel.onEvent(DebugSettingsEvent.ReindexM3U) },
+                    onStalker = { viewModel.onEvent(DebugSettingsEvent.ReindexStalker) },
+                    onAll = { viewModel.onEvent(DebugSettingsEvent.ReindexAll) }
+                )
+            }
         }
         SettingsVerticalScrollIndicators(state = debugListState)
         }
@@ -418,6 +441,49 @@ private fun DebugDialogButton(
                 .padding(vertical = NuvioTheme.spacing.md, horizontal = NuvioTheme.spacing.lg),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
+    }
+}
+
+@Composable
+private fun DebugReingestCard(
+    isLoading: Boolean,
+    result: String?,
+    onForceEpg: () -> Unit,
+    onXtream: () -> Unit,
+    onM3U: () -> Unit,
+    onStalker: () -> Unit,
+    onAll: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(NuvioTheme.spacing.xs),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "Force a full re-download + reindex. Heavy on the box \u2014 watch CPU/memory while profiling.",
+            style = MaterialTheme.typography.bodySmall,
+            color = NuvioTheme.colors.TextSecondary
+        )
+        DebugActionCard("Force EPG mirror re-download", "ensureFresh(force=true) \u2014 refetch manifest + feeds", onForceEpg)
+        DebugActionCard("Reindex Xtream (VOD + Live + Series)", "ensureIndexed(force) for every Xtream account", onXtream)
+        DebugActionCard("Reindex M3U playlists", "re-parse + re-index every M3U account", onM3U)
+        DebugActionCard("Reindex Stalker portals", "clear + refetch the live lineup", onStalker)
+        DebugActionCard("Reindex ALL + EPG", "everything above, one account at a time", onAll)
+        if (isLoading) {
+            Text(
+                text = "Running\u2026",
+                style = MaterialTheme.typography.bodySmall,
+                color = NuvioTheme.colors.Secondary
+            )
+        }
+        if (result != null) {
+            Text(
+                text = result,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (result.startsWith("Failed")) NuvioTheme.colors.Error else NuvioTheme.colors.Secondary
+            )
+        }
     }
 }
 
