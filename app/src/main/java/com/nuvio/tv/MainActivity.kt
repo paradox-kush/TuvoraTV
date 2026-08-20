@@ -47,7 +47,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -778,6 +780,12 @@ class MainActivity : ComponentActivity() {
                             add(Screen.Home.route)
                             add(Screen.Search.route)
                             add(Screen.Library.route)
+                            // Live TV and Sports are sidebar destinations like any other. Leaving
+                            // them out made showSidebar false there, which cost all three of the
+                            // sidebar's behaviours at once: no rail, no LEFT-to-open, and BACK
+                            // popping to Home instead of returning focus to the sidebar.
+                            add(Screen.XtreamHub.route)
+                            add(Screen.SportsHub.route)
                             add(Screen.Settings.route)
                             if (discoverLocation == DiscoverLocation.IN_SIDEBAR) {
                                 add(Screen.Discover.route)
@@ -827,6 +835,20 @@ class MainActivity : ComponentActivity() {
                                     route = Screen.Library.route,
                                     label = strNavLibrary,
                                     iconRes = R.raw.sidebar_library
+                                )
+                            )
+                            add(
+                                DrawerItem(
+                                    route = Screen.XtreamHub.route,
+                                    label = "IPTV",
+                                    icon = Icons.Default.LiveTv
+                                )
+                            )
+                            add(
+                                DrawerItem(
+                                    route = Screen.SportsHub.route,
+                                    label = "Sports",
+                                    icon = Icons.Default.SportsSoccer
                                 )
                             )
                             add(
