@@ -93,7 +93,6 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.nuvio.tv.ui.components.CatalogRowSection
-import com.nuvio.tv.ui.components.SearchSkeletonRow
 import com.nuvio.tv.ui.components.EmptyScreenState
 import com.nuvio.tv.ui.components.ErrorState
 import com.nuvio.tv.ui.components.LoadingIndicator
@@ -281,11 +280,8 @@ fun SearchScreen(
         }
     }
 
-    val posterCardStyle = remember(uiState.posterCardWidthDp, uiState.posterCardCornerRadiusDp) {
-        val computedHeightDp = (uiState.posterCardWidthDp * 1.5f).roundToInt()
+    val posterCardStyle = remember(uiState.posterCardCornerRadiusDp) {
         PosterCardStyle(
-            width = uiState.posterCardWidthDp.dp,
-            height = computedHeightDp.dp,
             cornerRadius = uiState.posterCardCornerRadiusDp.dp,
             focusedBorderWidth = PosterCardDefaults.Style.focusedBorderWidth,
             focusedScale = PosterCardDefaults.Style.focusedScale
@@ -532,7 +528,12 @@ fun SearchScreen(
                     isVoiceListening = isVoiceListening,
                     voiceRmsLevel = voiceRmsLevel,
                     onVoiceSearch = launchVoiceSearch,
-                    onMoveToResults = { focusResults = true },
+                    onMoveToResults = {
+                        // D-pad down from the text field is the user's confirmation that the
+                        // live-search results are useful, even before a particular card opens.
+                        viewModel.onEvent(SearchEvent.RememberSearchFromTextInput)
+                        focusResults = true
+                    },
                     onOpenDiscover = onOpenDiscover,
                     showDiscoverButton = uiState.discoverLocation == DiscoverLocation.IN_SEARCH,
                     keyboardController = keyboardController,
@@ -605,8 +606,36 @@ fun SearchScreen(
                     // skeletons on every keystroke, which on a remote reads as flicker because each
                     // letter outlasts the debounce, so existing results are kept instead.
                     (hasPendingUnsubmittedQuery || uiState.isSearching) && visibleCatalogRows.isEmpty() -> {
-                        items(SEARCH_SKELETON_ROW_COUNT) {
-                            SearchSkeletonRow(
+                        items(SEARCH_SKELETON_ROW_COUNT, key = { "search_skeleton_$it" }) { index ->
+                            val skeletonRow = remember(index) {
+                                com.nuvio.tv.domain.model.CatalogRow(
+                                    addonId = "__skeleton",
+                                    addonName = "",
+                                    addonBaseUrl = "",
+                                    catalogId = "skeleton_$index",
+                                    catalogName = "",
+                                    type = com.nuvio.tv.domain.model.ContentType.MOVIE,
+                                    items = (0 until 8).map { i ->
+                                        com.nuvio.tv.domain.model.MetaPreview(
+                                            id = "__placeholder_skeleton_${index}_$i",
+                                            type = com.nuvio.tv.domain.model.ContentType.MOVIE,
+                                            name = " ",
+                                            poster = com.nuvio.tv.domain.model.PLACEHOLDER_IMAGE_URL,
+                                            posterShape = com.nuvio.tv.domain.model.PosterShape.POSTER,
+                                            background = null,
+                                            logo = null,
+                                            description = null,
+                                            releaseInfo = " ",
+                                            imdbRating = null,
+                                            genres = emptyList()
+                                        )
+                                    },
+                                    isLoading = true
+                                )
+                            }
+                            CatalogRowSection(
+                                catalogRow = skeletonRow,
+                                onItemClick = { _, _, _ -> },
                                 posterCardStyle = posterCardStyle,
                                 showAddonName = uiState.catalogAddonNameEnabled,
                                 modifier = Modifier.padding(bottom = 24.dp)
@@ -623,7 +652,7 @@ fun SearchScreen(
                         }
                     }
 
-                    !uiState.isSearching && (visibleCatalogRows.isEmpty()) -> {
+                    !uiState.isSearching && !hasPendingUnsubmittedQuery && visibleCatalogRows.isEmpty() -> {
                         item {
                             EmptyScreenState(
                                 title = stringResource(R.string.search_no_results_title),
@@ -696,6 +725,10 @@ fun SearchScreen(
                                     // pending auto-focus so it doesn't steal focus later.
                                     pendingFocusMoveToResultsQuery = null
                                     searchRowFocusedItemIndex[catalogKey] = itemIndex
+                                    // Prefetch meta for the focused item to warm cache for detail screen.
+                                    catalogRow.items.getOrNull(itemIndex)?.let { item ->
+                                        viewModel.prefetchMetaOnFocus(item.id, item.rawType)
+                                    }
                                     lastFocusedRowKey = catalogKey
                                 },
                                 onItemClick = { id, type, addonBaseUrl ->
@@ -708,7 +741,9 @@ fun SearchScreen(
                                     }
                                     viewModel.hasSavedSearchFocus = true
                                     val clickedItem = catalogRow.items.firstOrNull { it.id == id }
-                                    HeroBackdropState.update(clickedItem?.backdropUrl)
+                                    val backdrop = viewModel.getCachedBackdrop(id, type)
+                                        ?: clickedItem?.backdropUrl
+                                    HeroBackdropState.update(backdrop)
                                     onNavigateToDetail(id, type, addonBaseUrl)
                                 },
                                 onItemLongPress = { item, addonBaseUrl ->
@@ -727,7 +762,35 @@ fun SearchScreen(
                         // Results are up but more catalogs are still answering, as on mobile.
                         if (uiState.isSearching || hasPendingUnsubmittedQuery) {
                             item(key = "search_loading_more") {
-                                SearchSkeletonRow(
+                                val skeletonRow = remember {
+                                    com.nuvio.tv.domain.model.CatalogRow(
+                                        addonId = "__skeleton",
+                                        addonName = "",
+                                        addonBaseUrl = "",
+                                        catalogId = "skeleton_more",
+                                        catalogName = "",
+                                        type = com.nuvio.tv.domain.model.ContentType.MOVIE,
+                                        items = (0 until 8).map { i ->
+                                            com.nuvio.tv.domain.model.MetaPreview(
+                                                id = "__placeholder_skeleton_more_$i",
+                                                type = com.nuvio.tv.domain.model.ContentType.MOVIE,
+                                                name = " ",
+                                                poster = com.nuvio.tv.domain.model.PLACEHOLDER_IMAGE_URL,
+                                                posterShape = com.nuvio.tv.domain.model.PosterShape.POSTER,
+                                                background = null,
+                                                logo = null,
+                                                description = null,
+                                                releaseInfo = " ",
+                                                imdbRating = null,
+                                                genres = emptyList()
+                                            )
+                                        },
+                                        isLoading = true
+                                    )
+                                }
+                                CatalogRowSection(
+                                    catalogRow = skeletonRow,
+                                    onItemClick = { _, _, _ -> },
                                     posterCardStyle = posterCardStyle,
                                     showAddonName = uiState.catalogAddonNameEnabled,
                                     modifier = Modifier.padding(bottom = 24.dp)

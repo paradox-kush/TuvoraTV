@@ -107,7 +107,9 @@
     <string name="continue_watching">Продолжить просмотр</string>
     <string name="cw_upcoming">Скоро</string>
     <string name="cw_next_up">Далее</string>
+    <string name="cw_next_up_short">Далее</string>
     <string name="cw_new_episode">Новый эпизод</string>
+    <string name="cw_new_episode_short">Новый</string>
     <string name="cw_new_season">Новый сезон</string>
     <string name="cw_resume">Продолжить</string>
     <string name="cw_percent_watched">%1$d%% просмотрено</string>
@@ -122,6 +124,16 @@
         <item quantity="few">Выходит через %d дня</item>
         <item quantity="many">Выходит через %d дней</item>
         <item quantity="other">Выходит через %d дней</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">Сегодня</string>
+    <string name="cw_airs_tomorrow_short">Завтра</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Через %d день</item>
+        <item quantity="few">Через %d дня</item>
+        <item quantity="many">Через %d дней</item>
+        <item quantity="other">Через %d дней</item>
     </plurals>
     <string name="cw_action_go_to_details">Перейти к деталям</string>
     <string name="cw_action_start_from_beginning">Начать сначала</string>
@@ -465,13 +477,6 @@
     <string name="sub_org_none_desc">Показывать субтитры в порядке выдачи аддоном по умолчанию.</string>
     <string name="sub_org_by_lang_desc">Группировать субтитры по языку.</string>
     <string name="sub_org_by_addon_desc">Группировать субтитры по источнику (аддону).</string>
-    <string name="sub_startup_mode_title">Загрузка субтитров аддона</string>
-    <string name="sub_startup_mode_fast">Быстрый запуск</string>
-    <string name="sub_startup_mode_preferred">Предпочитаемые языки</string>
-    <string name="sub_startup_mode_all">Все субтитры аддонов</string>
-    <string name="sub_startup_mode_fast_desc">Запускать воспроизведение немедленно. Выбор субтитров из аддона может однократно перезапустить плеер.</string>
-    <string name="sub_startup_mode_preferred_desc">Предварительно загружать субтитры аддона перед воспроизведением и прикреплять предпочитаемые языковые дорожки.</string>
-    <string name="sub_startup_mode_all_desc">Предварительно загружать и прикреплять все субтитры аддонов перед воспроизведением. Самый долгий запуск.</string>
 
     <!-- PlaybackAutoPlaySettings -->
     <string name="autoplay_reuse_last_link">Использовать последнюю ссылку</string>
@@ -1738,7 +1743,6 @@
     <string name="audio_number_of_channels">Количество каналов</string>
     <string name="audio_number_of_channels_desc">Задаёт раскладку динамиков для подмешивания FFmpeg.</string>
     <string name="audio_enable_downmix_title">Включить подмешивание</string>
-    <string name="audio_enable_downmix_subtitle">Использует путь подмешивания FFmpeg. При отключении аудио следует предыдущему пути Android/устройства.</string>
     <string name="dv7_handling_title">Обработка Dolby Vision Profile 7</string>
     <string name="dv7_handling_dialog_subtitle">Выберите, как обрабатываются потоки DV Profile 7 при воспроизведении.</string>
     <string name="dv7_mode_auto">Авто (рекомендуется)</string>

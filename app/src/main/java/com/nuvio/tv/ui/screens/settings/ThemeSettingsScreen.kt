@@ -6,7 +6,6 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 
 import com.nuvio.tv.ui.util.findActivity
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
@@ -66,6 +65,7 @@ import com.nuvio.tv.domain.model.SettingsUiStyle
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.ui.theme.ThemeColors
+import com.nuvio.tv.ui.theme.accentBrush
 import com.nuvio.tv.ui.theme.getFontFamily
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -137,6 +137,15 @@ fun ThemeSettingsContent(
 
     val themeScrollState = rememberScrollState()
     val themeRowState = rememberLazyListState()
+    var initialTheme by remember { mutableStateOf<AppTheme?>(null) }
+    LaunchedEffect(uiState.themesLoaded) {
+        if (!uiState.themesLoaded || initialTheme != null) return@LaunchedEffect
+        initialTheme = uiState.selectedTheme
+        val selectedIndex = uiState.availableThemes.indexOf(initialTheme)
+        if (selectedIndex < 0) return@LaunchedEffect
+        themeRowState.scrollToItem(selectedIndex)
+        initialFocusRequester?.requestFocusAfterFrames()
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -164,12 +173,16 @@ fun ThemeSettingsContent(
                         itemsIndexed(
                             items = uiState.availableThemes,
                             key = { _, theme -> theme.name }
-                        ) { index, theme ->
+                        ) { _, theme ->
                             ThemeSwatchChip(
                                 theme = theme,
                                 isSelected = theme == uiState.selectedTheme,
                                 onClick = { viewModel.onEvent(ThemeSettingsEvent.SelectTheme(theme)) },
-                                modifier = if (index == 0 && initialFocusRequester != null) {
+                                modifier = if (
+                                    uiState.themesLoaded &&
+                                    theme == initialTheme &&
+                                    initialFocusRequester != null
+                                ) {
                                     Modifier.focusRequester(initialFocusRequester)
                                 } else {
                                     Modifier
@@ -321,7 +334,7 @@ private fun ThemeSwatchChip(
         border = CardDefaults.border(
             border = Border.None,
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = chipShape
             )
         ),
@@ -338,7 +351,7 @@ private fun ThemeSwatchChip(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(palette.secondary),
+                    .background(palette.accentBrush()),
                 contentAlignment = Alignment.Center
             ) {
                 if (isSelected) {
@@ -388,11 +401,11 @@ private fun SettingsStyleOptionCard(
         ),
         border = CardDefaults.border(
             border = if (isSelected) Border(
-                border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.hairline),
                 shape = cardShape
             ) else Border.None,
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = cardShape
             )
         ),
@@ -453,6 +466,11 @@ private fun SettingsUiStyle.localizedDescription(): String = when (this) {
 @Composable
 private fun AppTheme.localizedName(): String = when (this) {
     AppTheme.MARIGOLD -> stringResource(R.string.theme_color_marigold)
+    AppTheme.GOLD -> stringResource(R.string.theme_color_gold)
+    AppTheme.JADE -> stringResource(R.string.theme_color_jade)
+    AppTheme.ROSE_GOLD -> stringResource(R.string.theme_color_rose_gold)
+    AppTheme.ARCTIC_BLUE -> stringResource(R.string.theme_color_arctic_blue)
+    AppTheme.GRAPHITE -> stringResource(R.string.theme_color_graphite)
     AppTheme.CRIMSON -> stringResource(R.string.theme_color_crimson)
     AppTheme.OCEAN -> stringResource(R.string.theme_color_ocean)
     AppTheme.VIOLET -> stringResource(R.string.theme_color_violet)

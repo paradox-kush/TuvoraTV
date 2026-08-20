@@ -1,10 +1,12 @@
 package com.nuvio.tv.data.local
 
+import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.nuvio.tv.core.profile.ProfileManager
@@ -17,6 +19,7 @@ import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.CardDepthStyle
 import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.domain.model.Collection
+import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_COVERAGE
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_STRENGTH
@@ -24,19 +27,27 @@ import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_SHEEN_STRENGTH
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LayoutPreferenceDataStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
     private val profileManager: ProfileManager
 ) {
     companion object {
+        private const val TAG = "LayoutPreferenceDS"
         private const val FEATURE = "layout_settings"
         private const val DEFAULT_POSTER_CARD_WIDTH_DP = 126
         private const val DEFAULT_POSTER_CARD_HEIGHT_DP = 189
@@ -44,6 +55,8 @@ class LayoutPreferenceDataStore @Inject constructor(
         private const val DEFAULT_FOCUSED_POSTER_BACKDROP_EXPAND_DELAY_SECONDS = 3
         private const val MIN_FOCUSED_POSTER_BACKDROP_EXPAND_DELAY_SECONDS = 0
     }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private fun store(profileId: Int = profileManager.activeProfileId.value) =
         factory.get(profileId, FEATURE)
@@ -87,6 +100,8 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val cardDepthTrailersEnabledKey = booleanPreferencesKey("card_depth_trailers_enabled")
     private val blurUnwatchedEpisodesKey = booleanPreferencesKey("blur_unwatched_episodes")
     private val useEpisodeThumbnailsInCwKey = booleanPreferencesKey("use_episode_thumbnails_in_cw")
+    private val continueWatchingEnabledKey = booleanPreferencesKey("continue_watching_enabled")
+    private val continueWatchingCardStyleKey = stringPreferencesKey("continue_watching_card_style")
     private val showUnairedNextUpKey = booleanPreferencesKey("show_unaired_next_up")
     private val nextUpFromFurthestEpisodeKey = booleanPreferencesKey("next_up_from_furthest_episode")
     private val blurContinueWatchingNextUpKey = booleanPreferencesKey("blur_continue_watching_next_up")
@@ -107,6 +122,22 @@ class LayoutPreferenceDataStore @Inject constructor(
             factory.get(pid, FEATURE).data.map { prefs -> extract(prefs) }
         }
 
+    private fun Preferences.getStringOrMigrateSet(key: Preferences.Key<String>): String? {
+        return try {
+            this[key]
+        } catch (e: ClassCastException) {
+            val setKey = stringSetPreferencesKey(key.name)
+            val legacySet = try { this[setKey] } catch (_: Exception) { null }
+            if (legacySet != null) {
+                Log.w(TAG, "Key '${key.name}' stored as Set instead of String (${legacySet.size} items), converting")
+                gson.toJson(legacySet.toList())
+            } else {
+                Log.e(TAG, "ClassCastException for key '${key.name}' but no Set value found", e)
+                null
+            }
+        }
+    }
+
     private fun positiveOrDefault(value: Int?, defaultValue: Int): Int =
         value?.takeIf { it > 0 } ?: defaultValue
 
@@ -119,16 +150,29 @@ class LayoutPreferenceDataStore @Inject constructor(
         }
     }
 
+    val continueWatchingEnabled: Flow<Boolean> = profileFlow { prefs ->
+        prefs[continueWatchingEnabledKey] ?: true
+    }
+
+    val continueWatchingCardStyle: Flow<ContinueWatchingCardStyle> = profileFlow { prefs ->
+        val styleName = prefs[continueWatchingCardStyleKey] ?: ContinueWatchingCardStyle.CARD.name
+        try {
+            ContinueWatchingCardStyle.valueOf(styleName)
+        } catch (e: IllegalArgumentException) {
+            ContinueWatchingCardStyle.CARD
+        }
+    }
+
     val hasChosenLayout: Flow<Boolean> = profileFlow { prefs ->
         prefs[hasChosenKey] ?: false
     }
 
     val heroCatalogSelections: Flow<List<String>> = profileFlow { prefs ->
-        val multiSelection = parseCatalogKeys(prefs[heroCatalogKeysKey])
+        val multiSelection = parseCatalogKeys(prefs.getStringOrMigrateSet(heroCatalogKeysKey))
         if (multiSelection.isNotEmpty()) {
             multiSelection
         } else {
-            prefs[heroCatalogKey]
+            prefs.getStringOrMigrateSet(heroCatalogKey)
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
                 ?.let(::listOf)
@@ -145,7 +189,7 @@ class LayoutPreferenceDataStore @Inject constructor(
         val usePrimary = profile != null && !profile.isPrimary && profile.usesPrimaryAddons
         val effectivePid = if (usePrimary) 1 else pid
         factory.get(effectivePid, FEATURE).data.map { prefs ->
-            parseCatalogKeys(prefs[homeCatalogOrderKeysKey])
+            parseCatalogKeys(prefs.getStringOrMigrateSet(homeCatalogOrderKeysKey))
         }
     }
 
@@ -154,7 +198,7 @@ class LayoutPreferenceDataStore @Inject constructor(
         val usePrimary = profile != null && !profile.isPrimary && profile.usesPrimaryAddons
         val effectivePid = if (usePrimary) 1 else pid
         factory.get(effectivePid, FEATURE).data.map { prefs ->
-            parseCatalogKeys(prefs[disabledHomeCatalogKeysKey])
+            parseCatalogKeys(prefs.getStringOrMigrateSet(disabledHomeCatalogKeysKey))
         }
     }
 
@@ -163,7 +207,7 @@ class LayoutPreferenceDataStore @Inject constructor(
         val usePrimary = profile != null && !profile.isPrimary && profile.usesPrimaryAddons
         val effectivePid = if (usePrimary) 1 else pid
         factory.get(effectivePid, FEATURE).data.map { prefs ->
-            parseCustomTitles(prefs[customCatalogTitlesKey])
+            parseCustomTitles(prefs.getStringOrMigrateSet(customCatalogTitlesKey))
         }
     }
 
@@ -296,9 +340,9 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[showUnairedNextUpKey] ?: true
     }
 
-    val nextUpFromFurthestEpisode: Flow<Boolean> = profileFlow { prefs ->
+    val nextUpFromFurthestEpisode: StateFlow<Boolean> = profileFlow { prefs ->
         prefs[nextUpFromFurthestEpisodeKey] ?: true
-    }
+    }.stateIn(scope, SharingStarted.Eagerly, true)
 
     val blurContinueWatchingNextUp: Flow<Boolean> = profileFlow { prefs ->
         prefs[blurContinueWatchingNextUpKey] ?: false
@@ -314,9 +358,9 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[detailPageTrailerButtonEnabledKey] ?: true
     }
 
-    val preferExternalMetaAddonDetail: Flow<Boolean> = profileFlow { prefs ->
+    val preferExternalMetaAddonDetail: StateFlow<Boolean> = profileFlow { prefs ->
         prefs[preferExternalMetaAddonDetailKey] ?: true
-    }
+    }.stateIn(scope, SharingStarted.Eagerly, true)
 
     val hideUnreleasedContent: Flow<Boolean> = profileFlow { prefs ->
         prefs[hideUnreleasedContentKey] ?: false
@@ -628,6 +672,18 @@ class LayoutPreferenceDataStore @Inject constructor(
         }
     }
 
+    suspend fun setContinueWatchingEnabled(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[continueWatchingEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setContinueWatchingCardStyle(style: ContinueWatchingCardStyle) {
+        store().edit { prefs ->
+            prefs[continueWatchingCardStyleKey] = style.name
+        }
+    }
+
     suspend fun setShowUnairedNextUp(enabled: Boolean) {
         store().edit { prefs ->
             prefs[showUnairedNextUpKey] = enabled
@@ -769,9 +825,9 @@ class LayoutPreferenceDataStore @Inject constructor(
 
     private fun readHomeCatalogSettingsState(prefs: Preferences): LocalHomeCatalogSettingsState {
         return LocalHomeCatalogSettingsState(
-            orderKeys = parseCatalogKeys(prefs[homeCatalogOrderKeysKey]),
-            disabledKeys = parseCatalogKeys(prefs[disabledHomeCatalogKeysKey]).toSet(),
-            customTitles = parseCustomTitles(prefs[customCatalogTitlesKey]),
+            orderKeys = parseCatalogKeys(prefs.getStringOrMigrateSet(homeCatalogOrderKeysKey)),
+            disabledKeys = parseCatalogKeys(prefs.getStringOrMigrateSet(disabledHomeCatalogKeysKey)).toSet(),
+            customTitles = parseCustomTitles(prefs.getStringOrMigrateSet(customCatalogTitlesKey)),
             hideUnreleasedContent = prefs[hideUnreleasedContentKey] ?: false
         )
     }

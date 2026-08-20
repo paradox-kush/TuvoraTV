@@ -413,11 +413,14 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                         liveInProgress.forEach { progress ->
                             val cached = cachedEnrichmentFromInProgress[progress.contentId]
                             val displayProgress = if (cached != null && (cached.backdrop != null || cached.poster != null || cached.logo != null || cached.name.isNotBlank())) {
+                                val sameEpisode = cached.season == progress.season && cached.episode == progress.episode
                                 progress.copy(
                                     backdrop = cached.backdrop ?: progress.backdrop,
                                     poster = cached.poster ?: progress.poster,
                                     logo = cached.logo ?: progress.logo,
-                                    name = cached.name.takeIf { it.isNotBlank() } ?: progress.name
+                                    name = cached.name.takeIf { it.isNotBlank() } ?: progress.name,
+                                    episodeTitle = if (sameEpisode) (cached.episodeTitle ?: progress.episodeTitle) else progress.episodeTitle,
+                                    videoId = if (sameEpisode) (cached.videoId.takeIf { it.isNotBlank() } ?: progress.videoId) else progress.videoId
                                 )
                             } else {
                                 progress
@@ -773,7 +776,7 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                     val processedContentIds = synchronized(cwLastProcessedNextUpContentIds) {
                         cwLastProcessedNextUpContentIds.toSet()
                     }
-                    val olderSeedContentIds = allSeedContentIds - processedContentIds
+                    val olderSeedContentIds = allSeedContentIds - processedContentIds - cwProcessedOlderSeedContentIds
                     val uncachedOlderSeedIds = olderSeedContentIds.filter { contentId ->
                         // Skip series validated recently — no new episodes expected within TTL.
                         if (fullyWatchedSeriesIds.isSeriesValidationFresh(contentId)) return@filter false
@@ -822,6 +825,7 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                                 val discoveredNextUpItems = mutableListOf<ContinueWatchingItem.NextUp>()
                                 var resolvedSinceLastEmit = 0
                                 for (seed in uncachedSeeds) {
+                                    cwProcessedOlderSeedContentIds += seed.contentId
                                     // Re-check freshness — badge pipeline may have validated
                                     // this series while we were processing earlier seeds.
                                     if (fullyWatchedSeriesIds.isSeriesValidationFresh(seed.contentId)) {
@@ -885,6 +889,10 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                                             }
                                         }
                                     } else {
+                                        val seedKey = "${seed.contentId}|${seed.season ?: 1}|${seed.episode ?: 1}"
+                                        synchronized(cwNextUpResolutionCache) {
+                                            cwNextUpResolutionCache[seedKey] = null
+                                        }
                                         // No next-up — mark as validated with smart deadline
                                         // ONLY if meta was actually resolved (confirming no next episode).
                                         // If meta was unavailable (network error), skip marking to avoid
@@ -1548,8 +1556,63 @@ private suspend fun HomeViewModel.enrichVisibleContinueWatchingItems(
             async(Dispatchers.IO) {
                 enrichmentSemaphore.withPermit {
                     index to when (item) {
-                        is ContinueWatchingItem.InProgress -> enrichInProgressItem(item, metaCache, debug)
-                        is ContinueWatchingItem.NextUp -> enrichNextUpItem(item, metaCache, debug)
+                        is ContinueWatchingItem.InProgress -> {
+                            val overlay = cwEnrichedInProgressOverlay[item.progress.contentId]
+                            if (overlay != null &&
+                                overlay.progress.videoId == item.progress.videoId &&
+                                overlay.progress.season == item.progress.season &&
+                                overlay.progress.episode == item.progress.episode
+                            ) {
+                                overlay.copy(
+                                    progress = overlay.progress.copy(
+                                        position = item.progress.position,
+                                        duration = item.progress.duration,
+                                        lastWatched = item.progress.lastWatched,
+                                        progressPercent = item.progress.progressPercent
+                                    )
+                                )
+                            } else {
+                                enrichInProgressItem(item, metaCache, debug)
+                            }
+                        }
+                        is ContinueWatchingItem.NextUp -> {
+                            val overlay = cwEnrichedNextUpOverlay[item.info.contentId]
+                            if (overlay != null &&
+                                overlay.season == item.info.season &&
+                                overlay.episode == item.info.episode
+                            ) {
+                                // Recalculate hasAired/isReleaseAlert from current time
+                                // so overlays cached while an episode was unaired don't
+                                // keep it stuck in "upcoming" after the air date passes.
+                                val freshHasAired = hasEpisodeAired(overlay.released, fallback = overlay.hasAired)
+                                if (freshHasAired != overlay.hasAired) {
+                                    val releaseTimestamp = parseEpisodeReleaseInstant(overlay.released)?.toEpochMilli()
+                                    val nowMs = System.currentTimeMillis()
+                                    val sixtyDaysMs = 60L * 24 * 60 * 60 * 1000
+                                    val isReleaseAlert = freshHasAired &&
+                                        releaseTimestamp != null &&
+                                        releaseTimestamp > overlay.lastWatched &&
+                                        (nowMs - releaseTimestamp) < sixtyDaysMs
+                                    val isNewSeasonRelease = isReleaseAlert &&
+                                        overlay.seedSeason != null &&
+                                        overlay.season != overlay.seedSeason
+                                    val updatedOverlay = overlay.copy(
+                                        hasAired = freshHasAired,
+                                        airDateLabel = if (freshHasAired) null else overlay.airDateLabel,
+                                        sortTimestamp = if (isReleaseAlert && releaseTimestamp != null) releaseTimestamp else overlay.lastWatched,
+                                        releaseTimestamp = releaseTimestamp,
+                                        isReleaseAlert = isReleaseAlert,
+                                        isNewSeasonRelease = isNewSeasonRelease
+                                    )
+                                    cwEnrichedNextUpOverlay[item.info.contentId] = updatedOverlay
+                                    item.copy(info = updatedOverlay)
+                                } else {
+                                    item.copy(info = overlay)
+                                }
+                            } else {
+                                enrichNextUpItem(item, metaCache, debug)
+                            }
+                        }
                     }
                 }
             }
@@ -2631,25 +2694,52 @@ private suspend fun HomeViewModel.applyContinueWatchingEnrichmentOverlay(
                         cwEnrichedNextUpOverlay.remove(item.info.contentId)
                         return@map item
                     }
-                    if (overlay.sortTimestamp != item.info.sortTimestamp) sortChanged = true
+                    // Recalculate hasAired from current time so stale overlays
+                    // don't keep episodes stuck in "upcoming".
+                    val freshHasAired = hasEpisodeAired(overlay.released, fallback = overlay.hasAired)
+                    val effectiveOverlay = if (freshHasAired != overlay.hasAired) {
+                        val releaseTimestamp = parseEpisodeReleaseInstant(overlay.released)?.toEpochMilli()
+                        val nowMs = System.currentTimeMillis()
+                        val sixtyDaysMs = 60L * 24 * 60 * 60 * 1000
+                        val isReleaseAlert = freshHasAired &&
+                            releaseTimestamp != null &&
+                            releaseTimestamp > overlay.lastWatched &&
+                            (nowMs - releaseTimestamp) < sixtyDaysMs
+                        val isNewSeasonRelease = isReleaseAlert &&
+                            overlay.seedSeason != null &&
+                            overlay.season != overlay.seedSeason
+                        val updated = overlay.copy(
+                            hasAired = freshHasAired,
+                            airDateLabel = if (freshHasAired) null else overlay.airDateLabel,
+                            sortTimestamp = if (isReleaseAlert && releaseTimestamp != null) releaseTimestamp else overlay.lastWatched,
+                            releaseTimestamp = releaseTimestamp,
+                            isReleaseAlert = isReleaseAlert,
+                            isNewSeasonRelease = isNewSeasonRelease
+                        )
+                        cwEnrichedNextUpOverlay[item.info.contentId] = updated
+                        updated
+                    } else {
+                        overlay
+                    }
+                    if (effectiveOverlay.sortTimestamp != item.info.sortTimestamp) sortChanged = true
                     item.copy(info = item.info.copy(
-                        name = overlay.name.takeIf { it.isNotBlank() } ?: item.info.name,
-                        episodeTitle = overlay.episodeTitle ?: item.info.episodeTitle,
-                        episodeDescription = overlay.episodeDescription ?: item.info.episodeDescription,
-                        thumbnail = overlay.thumbnail ?: item.info.thumbnail,
-                        poster = overlay.poster ?: item.info.poster,
-                        backdrop = overlay.backdrop ?: item.info.backdrop,
-                        logo = overlay.logo ?: item.info.logo,
-                        imdbRating = overlay.imdbRating ?: item.info.imdbRating,
-                        genres = overlay.genres.ifEmpty { item.info.genres },
-                        releaseInfo = overlay.releaseInfo ?: item.info.releaseInfo,
-                        sortTimestamp = overlay.sortTimestamp,
-                        isReleaseAlert = overlay.isReleaseAlert,
-                        isNewSeasonRelease = overlay.isNewSeasonRelease,
-                        hasAired = overlay.hasAired,
-                        airDateLabel = overlay.airDateLabel ?: item.info.airDateLabel,
-                        releaseTimestamp = overlay.releaseTimestamp ?: item.info.releaseTimestamp,
-                        contentLanguage = overlay.contentLanguage ?: item.info.contentLanguage
+                        name = effectiveOverlay.name.takeIf { it.isNotBlank() } ?: item.info.name,
+                        episodeTitle = effectiveOverlay.episodeTitle ?: item.info.episodeTitle,
+                        episodeDescription = effectiveOverlay.episodeDescription ?: item.info.episodeDescription,
+                        thumbnail = effectiveOverlay.thumbnail ?: item.info.thumbnail,
+                        poster = effectiveOverlay.poster ?: item.info.poster,
+                        backdrop = effectiveOverlay.backdrop ?: item.info.backdrop,
+                        logo = effectiveOverlay.logo ?: item.info.logo,
+                        imdbRating = effectiveOverlay.imdbRating ?: item.info.imdbRating,
+                        genres = effectiveOverlay.genres.ifEmpty { item.info.genres },
+                        releaseInfo = effectiveOverlay.releaseInfo ?: item.info.releaseInfo,
+                        sortTimestamp = effectiveOverlay.sortTimestamp,
+                        isReleaseAlert = effectiveOverlay.isReleaseAlert,
+                        isNewSeasonRelease = effectiveOverlay.isNewSeasonRelease,
+                        hasAired = effectiveOverlay.hasAired,
+                        airDateLabel = effectiveOverlay.airDateLabel ?: item.info.airDateLabel,
+                        releaseTimestamp = effectiveOverlay.releaseTimestamp ?: item.info.releaseTimestamp,
+                        contentLanguage = effectiveOverlay.contentLanguage ?: item.info.contentLanguage
                     ))
                 }
                 is ContinueWatchingItem.InProgress -> {

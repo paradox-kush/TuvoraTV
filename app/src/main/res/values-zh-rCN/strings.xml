@@ -139,7 +139,9 @@
     <string name="continue_watching">继续观看</string>
     <string name="cw_upcoming">即将播出</string>
     <string name="cw_next_up">下一集</string>
+    <string name="cw_next_up_short">下一集</string>
     <string name="cw_new_episode">新剧集</string>
+    <string name="cw_new_episode_short">新</string>
     <string name="cw_new_season">新季</string>
     <string name="cw_resume">继续播放</string>
     <string name="cw_percent_watched">已观看 %1$d%%</string>
@@ -152,6 +154,14 @@
     <plurals name="cw_airs_in_days">
         <item quantity="one">%d 天后播出</item>
         <item quantity="other">%d 天后播出</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">今天</string>
+    <string name="cw_airs_tomorrow_short">明天</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">%d 天后</item>
+        <item quantity="other">%d 天后</item>
     </plurals>
     <string name="cw_action_go_to_details">前往详情</string>
     <string name="cw_action_start_from_beginning">从头播放</string>
@@ -667,7 +677,6 @@
     <string name="audio_decoder_prefer_app">偏好应用解码器 (FFmpeg)</string>
     <string name="audio_decoder_priority">解码器优先级</string>
     <string name="audio_enable_downmix_title">启用混音下转</string>
-    <string name="audio_enable_downmix_subtitle">使用 FFmpeg 混音下转路径。禁用时，音频将遵循先前的 Android/设备路径。</string>
     <string name="audio_tunneled">通道化播放</string>
     <string name="audio_tunneled_sub">硬件级别的音频/视频同步。可能在部分 Android TV 设备上改善播放。</string>
     <string name="audio_force_optical_passthrough">强制 AC-3 转码 (光纤/SPDIF)</string>
@@ -760,13 +769,6 @@
     <string name="sub_org_none_desc">以扩展默认顺序显示字幕。</string>
     <string name="sub_org_by_lang_desc">按语言分组字幕。</string>
     <string name="sub_org_by_addon_desc">按扩展来源分组字幕。</string>
-    <string name="sub_startup_mode_title">扩展字幕加载</string>
-    <string name="sub_startup_mode_fast">快速启动</string>
-    <string name="sub_startup_mode_preferred">偏好语言</string>
-    <string name="sub_startup_mode_all">所有扩展字幕</string>
-    <string name="sub_startup_mode_fast_desc">立即开始播放。选择扩展字幕可能需要重新加载播放器一次。</string>
-    <string name="sub_startup_mode_preferred_desc">在播放前预加载扩展字幕，并附加偏好/次要语言音轨。</string>
-    <string name="sub_startup_mode_all_desc">在播放前预加载并附加所有扩展字幕。启动速度最慢。</string>
 
     <string name="autoplay_reuse_last_link">重复使用上次链接</string>
     <string name="autoplay_reuse_last_link_sub">当缓存仍有效时，自动播放同一部电影/剧集的上次可用流</string>

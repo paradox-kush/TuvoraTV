@@ -127,7 +127,6 @@ fun PlaybackSettingsContent(
     // Dialog states
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showSecondaryLanguageDialog by remember { mutableStateOf(false) }
-    var showSubtitleStartupModeDialog by remember { mutableStateOf(false) }
     var showTextColorDialog by remember { mutableStateOf(false) }
     var showBackgroundColorDialog by remember { mutableStateOf(false) }
     var showOutlineColorDialog by remember { mutableStateOf(false) }
@@ -151,7 +150,6 @@ fun PlaybackSettingsContent(
     fun dismissAllDialogs() {
         showLanguageDialog = false
         showSecondaryLanguageDialog = false
-        showSubtitleStartupModeDialog = false
         showTextColorDialog = false
         showBackgroundColorDialog = false
         showOutlineColorDialog = false
@@ -211,7 +209,6 @@ fun PlaybackSettingsContent(
                 onShowMpvHardwareDecodeModeDialog = { openDialog { showMpvHardwareDecodeModeDialog = true } },
                 onShowLanguageDialog = { openDialog { showLanguageDialog = true } },
                 onShowSecondaryLanguageDialog = { openDialog { showSecondaryLanguageDialog = true } },
-                onShowSubtitleStartupModeDialog = { openDialog { showSubtitleStartupModeDialog = true } },
                 onShowTextColorDialog = { openDialog { showTextColorDialog = true } },
                 onShowBackgroundColorDialog = { openDialog { showBackgroundColorDialog = true } },
                 onShowOutlineColorDialog = { openDialog { showOutlineColorDialog = true } },
@@ -224,6 +221,9 @@ fun PlaybackSettingsContent(
                 onShowReuseLastLinkCacheDialog = { openDialog { showReuseLastLinkCacheDialog = true } },
                 onSetStreamAutoPlayNextEpisodeEnabled = { enabled ->
                     coroutineScope.launch { viewModel.setStreamAutoPlayNextEpisodeEnabled(enabled) }
+                },
+                onSetStreamAutoPlayNextEpisodeFallbackEnabled = { enabled ->
+                    coroutineScope.launch { viewModel.setStreamAutoPlayNextEpisodeFallbackEnabled(enabled) }
                 },
                 onSetStreamAutoPlayPreferBingeGroupForNextEpisode = { enabled ->
                     coroutineScope.launch {
@@ -323,6 +323,9 @@ fun PlaybackSettingsContent(
                 onSetUseForcedSubtitles = { enabled -> coroutineScope.launch { viewModel.setUseForcedSubtitles(enabled) } },
                 onSetSubtitleShowOnlyPreferredLanguages = { enabled ->
                     coroutineScope.launch { viewModel.setSubtitleShowOnlyPreferredLanguages(enabled) }
+                },
+                onSetSubtitleStripSdh = { enabled ->
+                    coroutineScope.launch { viewModel.setSubtitleStripSdh(enabled) }
                 },
                 onSetSubtitleOutlineEnabled = { enabled -> coroutineScope.launch { viewModel.setSubtitleOutlineEnabled(enabled) } },
                 onSetUseLibass = { enabled -> coroutineScope.launch { viewModel.setUseLibass(enabled) } },
@@ -477,7 +480,6 @@ fun PlaybackSettingsContent(
         showInternalPlayerEngineDialog = showInternalPlayerEngineDialog,
         showLanguageDialog = showLanguageDialog,
         showSecondaryLanguageDialog = showSecondaryLanguageDialog,
-        showSubtitleStartupModeDialog = showSubtitleStartupModeDialog,
         showTextColorDialog = showTextColorDialog,
         showBackgroundColorDialog = showBackgroundColorDialog,
         showOutlineColorDialog = showOutlineColorDialog,
@@ -507,9 +509,6 @@ fun PlaybackSettingsContent(
         },
         onSetSubtitleSecondaryLanguage = { language ->
             coroutineScope.launch { viewModel.setSubtitleSecondaryLanguage(language) }
-        },
-        onSetAddonSubtitleStartupMode = { mode ->
-            coroutineScope.launch { viewModel.setAddonSubtitleStartupMode(mode) }
         },
         onSetSubtitleTextColor = { color ->
             coroutineScope.launch { viewModel.setSubtitleTextColor(color.toArgb()) }
@@ -561,7 +560,6 @@ fun PlaybackSettingsContent(
         },
         onDismissLanguageDialog = ::dismissAllDialogs,
         onDismissSecondaryLanguageDialog = ::dismissAllDialogs,
-        onDismissSubtitleStartupModeDialog = ::dismissAllDialogs,
         onDismissTextColorDialog = ::dismissAllDialogs,
         onDismissBackgroundColorDialog = ::dismissAllDialogs,
         onDismissOutlineColorDialog = ::dismissAllDialogs,
@@ -623,7 +621,7 @@ internal fun ToggleSettingsItem(
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, if (enabled) NuvioTheme.colors.FocusRing else NuvioTheme.colors.FocusRing.copy(alpha = 0.3f)),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs, alpha = if (enabled) 1f else 0.3f),
                 shape = RoundedCornerShape(SettingsPillRadius)
             )
         ),
@@ -728,7 +726,7 @@ internal fun RenderTypeSettingsItem(
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing.copy(alpha = contentAlpha)),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs, alpha = contentAlpha),
                 shape = RoundedCornerShape(SettingsSecondaryCardRadius)
             ),
             border = if (isSelected) Border(
@@ -803,7 +801,7 @@ internal fun NavigationSettingsItem(
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, if (enabled) NuvioTheme.colors.FocusRing else NuvioTheme.colors.FocusRing.copy(alpha = 0.3f)),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs, alpha = if (enabled) 1f else 0.3f),
                 shape = RoundedCornerShape(SettingsPillRadius)
             )
         ),
@@ -981,7 +979,7 @@ private fun SliderSettingsItemLayout(
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, if (enabled) NuvioTheme.colors.FocusRing else NuvioTheme.colors.FocusRing.copy(alpha = 0.3f)),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs, alpha = if (enabled) 1f else 0.3f),
                 shape = RoundedCornerShape(SettingsSecondaryCardRadius)
             )
         ),
@@ -1061,7 +1059,7 @@ private fun SliderSettingsItemLayout(
                     ),
                     border = CardDefaults.border(
                         focusedBorder = Border(
-                            border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                             shape = CircleShape
                         )
                     ),
@@ -1114,7 +1112,7 @@ private fun SliderSettingsItemLayout(
                     ),
                     border = CardDefaults.border(
                         focusedBorder = Border(
-                            border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                             shape = CircleShape
                         )
                     ),
@@ -1168,7 +1166,7 @@ internal fun ColorSettingsItem(
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, if (enabled) NuvioTheme.colors.FocusRing else NuvioTheme.colors.FocusRing.copy(alpha = 0.3f)),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs, alpha = if (enabled) 1f else 0.3f),
                 shape = RoundedCornerShape(SettingsPillRadius)
             )
         ),
@@ -1354,7 +1352,7 @@ internal fun ColorSelectionDialog(
                     ),
                     border = CardDefaults.border(
                         focusedBorder = Border(
-                            border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                             shape = RoundedCornerShape(NuvioTheme.radii.sm)
                         )
                     ),
@@ -1396,7 +1394,7 @@ internal fun ColorSelectionDialog(
                     ),
                     border = CardDefaults.border(
                         focusedBorder = Border(
-                            border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                             shape = RoundedCornerShape(NuvioTheme.radii.sm)
                         )
                     ),
@@ -1426,7 +1424,7 @@ internal fun ColorSelectionDialog(
                     ),
                     border = CardDefaults.border(
                         focusedBorder = Border(
-                            border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                             shape = RoundedCornerShape(NuvioTheme.radii.sm)
                         )
                     ),
@@ -1451,7 +1449,7 @@ internal fun ColorSelectionDialog(
                     ),
                     border = CardDefaults.border(
                         focusedBorder = Border(
-                            border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                             shape = RoundedCornerShape(NuvioTheme.radii.sm)
                         )
                     ),
@@ -1498,7 +1496,7 @@ private fun ColorOption(
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(3.dp, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(3.dp),
                 shape = CircleShape
             ),
             border = if (isSelected) Border(

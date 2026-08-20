@@ -22,12 +22,10 @@ import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -84,11 +82,11 @@ import com.nuvio.tv.domain.model.Video
 import com.nuvio.tv.ui.components.FocusMarqueeText
 import com.nuvio.tv.ui.components.ImdbRatingSourceLabel
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.components.WatchedMarker
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.ui.components.LocalCardDepthStyle
 import com.nuvio.tv.ui.components.nuvioCardDepth
-import com.nuvio.tv.ui.theme.ThemeColors
 import android.text.format.DateFormat
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
@@ -124,7 +122,7 @@ fun SeasonTabs(
     val tabShape = remember { RoundedCornerShape(20.dp) }
     val tabBorder = CardDefaults.border(
         focusedBorder = Border(
-            border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
             shape = RoundedCornerShape(20.dp)
         )
     )
@@ -585,7 +583,6 @@ private fun EpisodeCard(
             }
             .build()
     }
-    val strCdWatched = stringResource(R.string.episodes_cd_watched)
     val strEpisode = stringResource(R.string.episodes_episode)
     val strUnavailable = stringResource(R.string.episodes_unavailable)
     val episodeCode = remember(episode.episode, strEpisode) {
@@ -595,7 +592,7 @@ private fun EpisodeCard(
 
     val primaryColor = NuvioTheme.colors.Primary
     val textPrimary = NuvioTheme.colors.TextPrimary
-    val focusRing = NuvioTheme.colors.FocusRing
+    val focusRingBorder = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs)
     val cardShape = CardDefaults.shape(shape = shape)
     val cardColors = CardDefaults.colors(
         containerColor = Color.Transparent,
@@ -603,7 +600,7 @@ private fun EpisodeCard(
     )
     val cardBorder = CardDefaults.border(
         focusedBorder = Border(
-            border = BorderStroke(NuvioTheme.spacing.xxs, focusRing),
+            border = focusRingBorder,
             shape = shape
         )
     )
@@ -860,25 +857,16 @@ private fun EpisodeCard(
             }
 
             if (showCompletedBadge) {
-                Box(
+                WatchedMarker(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(
                             start = cardMetrics.statusBadgeInset,
                             top = cardMetrics.statusBadgeInset
-                        )
-                        .size(cardMetrics.statusBadgeSize)
-                        .shadow(10.dp, shape = CircleShape, spotColor = Color.Transparent)
-                        .background(NuvioTheme.colors.Secondary, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = strCdWatched,
-                        tint = if (NuvioTheme.colors.Secondary == ThemeColors.White.secondary) Color.Black else Color.White,
-                        modifier = Modifier.size(cardMetrics.statusIconSize)
-                    )
-                }
+                        ),
+                    size = cardMetrics.statusBadgeSize,
+                    iconSize = cardMetrics.statusIconSize
+                )
             }
 
             if (isUnavailable) {

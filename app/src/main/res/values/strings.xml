@@ -139,12 +139,14 @@
     <string name="continue_watching">Continue Watching</string>
     <string name="cw_upcoming">Upcoming</string>
     <string name="cw_next_up">Next Up</string>
+    <string name="cw_next_up_short">Next</string>
     <string name="cw_new_episode">New Episode</string>
+    <string name="cw_new_episode_short">New</string>
     <string name="cw_new_season">New Season</string>
     <string name="cw_resume">Resume</string>
     <string name="cw_percent_watched">%1$d%% Watched</string>
     <string name="cw_hours_min_left">%1$dh %2$dm left</string>
-    <string name="cw_min_left">%1$dm Left</string>
+    <string name="cw_min_left">%1$dm left</string>
     <string name="cw_almost_done">Almost Done</string>
     <string name="cw_airs_date">Airs %1$s</string>
     <string name="cw_airs_today">Airs Today</string>
@@ -152,6 +154,14 @@
     <plurals name="cw_airs_in_days">
         <item quantity="one">Airs in %d Day</item>
         <item quantity="other">Airs in %d Days</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">Today</string>
+    <string name="cw_airs_tomorrow_short">Tomorrow</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">In %d Day</item>
+        <item quantity="other">In %d Days</item>
     </plurals>
     <string name="cw_action_go_to_details">Go to details</string>
     <string name="cw_action_start_from_beginning">Start from beginning</string>
@@ -257,6 +267,9 @@
     <string name="collections_editor_tmdb_watch_providers">Watch provider IDs</string>
     <string name="collections_editor_tmdb_watch_providers_helper">Use TMDB watch provider IDs. Separate multiple with commas for AND, or pipes for OR.</string>
     <string name="collections_editor_tmdb_watch_providers_placeholder">8|337|350</string>
+    <string name="collections_editor_tmdb_without_watch_providers">Excluded watch provider IDs</string>
+    <string name="collections_editor_tmdb_without_watch_providers_helper">Exclude titles available from these TMDB watch provider numbers in the selected region.</string>
+    <string name="collections_editor_tmdb_without_watch_providers_placeholder">8|337|350</string>
     <string name="collections_editor_tmdb_quick_watch_providers">Quick watch providers</string>
     <string name="tmdb_error_load_source">Could not load TMDB source</string>
     <string name="tmdb_error_list_not_found">TMDB list not found</string>
@@ -311,6 +324,11 @@
     <string name="appearance_subtitle">Choose your color theme, font and language</string>
     <string name="appearance_color_theme">Color Theme</string>
     <string name="appearance_color_theme_subtitle">Pick the accent color used across the app</string>
+    <string name="theme_color_gold">Gold</string>
+    <string name="theme_color_jade">Jade</string>
+    <string name="theme_color_rose_gold">Rose Gold</string>
+    <string name="theme_color_arctic_blue">Arctic Blue</string>
+    <string name="theme_color_graphite">Graphite</string>
     <string name="theme_color_crimson">Crimson</string>
     <string name="theme_color_ocean">Ocean</string>
     <string name="theme_color_violet">Violet</string>
@@ -347,8 +365,9 @@
     <string name="about_discord_qr_instruction">Scan with your phone to join the Tuvora Discord</string>
     <string name="about_privacy_policy">Privacy Policy</string>
     <string name="about_privacy_policy_subtitle">View our privacy policy</string>
-    <string name="about_supporters_contributors">Supporters &amp; Contributors</string>
-    <string name="about_supporters_contributors_subtitle">Open recognition and project credits</string>
+    <string name="support_nuvio_name">Support Nuvio</string>
+    <string name="about_supporters_contributors">Support Nuvio</string>
+    <string name="about_supporters_contributors_subtitle">Support the project and view community credits</string>
     <string name="about_licenses_attributions">Licenses &amp; Attribution</string>
     <string name="about_licenses_attributions_subtitle">Data sources, acknowledgements, and Android licenses</string>
     <string name="licenses_attributions_title">Licenses &amp; Attribution</string>
@@ -599,7 +618,11 @@
     <string name="supporters_empty">No supporters found yet.</string>
     <string name="supporters_error_title">Couldn’t load supporters</string>
     <string name="supporters_no_message">No message shared.</string>
-    <string name="supporters_open_donations">Open donations page</string>
+    <string name="supporters_level_supporter">Supporter</string>
+    <string name="supporters_level_supporter_plus">Supporter+</string>
+    <string name="supporters_since">Supporting Nuvio since %1$s</string>
+    <string name="supporters_since_unknown">Proudly supporting Nuvio</string>
+    <string name="supporters_open_donations">Open support page</string>
     <string name="sponsors_loading">Loading sponsors…</string>
     <string name="sponsors_empty">No sponsors found yet.</string>
     <string name="sponsors_error_title">Couldn’t load sponsors</string>
@@ -704,7 +727,7 @@
     <string name="audio_decoder_prefer_app">Prefer app decoders (FFmpeg)</string>
     <string name="audio_decoder_priority">Decoder Priority</string>
     <string name="audio_enable_downmix_title">Enable downmix</string>
-    <string name="audio_enable_downmix_subtitle">Uses the FFmpeg downmix path. When disabled, audio follows the previous Android/device path.</string>
+    <string name="audio_enable_downmix_subtitle">Uses the FFmpeg downmix path. Requires Prefer app decoders (FFmpeg). When disabled, audio follows the previous Android/device path.</string>
     <string name="audio_tunneled">Tunneled Playback</string>
     <string name="audio_tunneled_sub">Hardware-level audio/video sync. May improve playback on some Android TV devices</string>
     <string name="audio_force_optical_passthrough">Force AC-3 Transcoding (Optical/SPDIF)</string>
@@ -768,6 +791,8 @@
     <string name="sub_use_forced_subtitles_desc">Prefer forced subtitles when audio matches subtitle language; if unavailable, select nothing</string>
     <string name="sub_show_only_preferred_languages">Show Only Preferred Languages</string>
     <string name="sub_show_only_preferred_languages_desc">Hide all other subtitles languages from selection list</string>
+    <string name="sub_strip_sdh">Strip SDH subtitles</string>
+    <string name="sub_strip_sdh_desc">Hide sound descriptions and speaker labels from text subtitles</string>
     <string name="sub_organization">Subtitle Organization</string>
     <string name="sub_size">Size</string>
     <string name="sub_vertical_offset">Vertical Offset</string>
@@ -797,13 +822,6 @@
     <string name="sub_org_none_desc">Show subtitles in default addon result order.</string>
     <string name="sub_org_by_lang_desc">Group subtitles by language.</string>
     <string name="sub_org_by_addon_desc">Group subtitles by addon source.</string>
-    <string name="sub_startup_mode_title">Addon Subtitle Loading</string>
-    <string name="sub_startup_mode_fast">Fast startup</string>
-    <string name="sub_startup_mode_preferred">Preferred languages</string>
-    <string name="sub_startup_mode_all">All addon subtitles</string>
-    <string name="sub_startup_mode_fast_desc">Start playback immediately. Selecting addon subtitles may reload the player once.</string>
-    <string name="sub_startup_mode_preferred_desc">Prefetch addon subtitles before playback and attach preferred/secondary language tracks.</string>
-    <string name="sub_startup_mode_all_desc">Prefetch and attach all addon subtitles before playback. Slowest startup.</string>
 
     <string name="autoplay_reuse_last_link">Reuse Last Link</string>
     <string name="autoplay_reuse_last_link_sub">Auto-play your last working stream for this same movie/episode when cache is still valid</string>
@@ -819,6 +837,8 @@
     <string name="autoplay_stream_selection">Auto Stream Selection</string>
     <string name="autoplay_next_episode">Auto-play Next Episode</string>
     <string name="autoplay_next_episode_sub">Start next episode automatically when prompt appears.</string>
+    <string name="autoplay_next_episode_fallback">Fallback when binge group fails</string>
+    <string name="autoplay_next_episode_fallback_sub">Auto-select first available stream if binge group is not found. When off, shows the stream picker instead.</string>
     <string name="autoplay_prefer_binge_group">Prefer Binge Group (Next Episode)</string>
     <string name="autoplay_prefer_binge_group_sub">Try the same source profile first (same addon/quality group) before normal auto-play rules.</string>
     <string name="autoplay_reuse_binge_group">Reuse Binge Group</string>
@@ -909,6 +929,8 @@
     <string name="layout_section_streams_desc">Display settings for stream results and player source panels.</string>
     <string name="layout_section_continue_watching">Continue Watching</string>
     <string name="layout_section_continue_watching_desc">Settings for the Continue Watching section.</string>
+    <string name="layout_cw_enabled">Show Continue Watching</string>
+    <string name="layout_cw_enabled_sub">Show the Continue Watching row on the home screen.</string>
     <string name="layout_use_episode_thumbnails_cw">Use Episode Thumbnails in Continue Watching</string>
     <string name="layout_use_episode_thumbnails_cw_sub">Use episode thumbnails as default image. When disabled, uses backdrop.</string>
     <string name="layout_blur_unwatched">Blur Unwatched Episodes</string>
@@ -919,6 +941,9 @@
     <string name="layout_next_up_furthest_episode_sub">Show next episode based on the furthest watched episode. Disable for rewatches to use the most recently watched episode instead.</string>
     <string name="layout_show_unaired_next_up">Show Unaired Next Up Episodes</string>
     <string name="layout_show_unaired_next_up_sub">Include upcoming episodes in Continue Watching before they air.</string>
+    <string name="layout_cw_card_style_card">Card</string>
+    <string name="layout_cw_card_style_wide">Wide</string>
+    <string name="layout_cw_card_style_poster">Poster</string>
     <string name="layout_cw_sort_mode">Sort Order</string>
     <string name="layout_cw_sort_mode_sub">How Continue Watching items are arranged</string>
     <string name="layout_cw_sort_default">Default</string>
@@ -1332,6 +1357,11 @@
     <string name="debug_account_tab_subtitle">Show the Account tab in Settings navigation</string>
     <string name="debug_sync_code_title">Sync Code Features</string>
     <string name="debug_sync_code_subtitle">Show Generate/Enter Sync Code buttons in Account settings</string>
+    <string name="debug_member_tier_title">Simulate Supporter Tier</string>
+    <string name="debug_member_tier_subtitle">Choose the verified supporter tier returned in this debug build</string>
+    <string name="debug_member_tier_none">None</string>
+    <string name="debug_member_tier_one">Supporter</string>
+    <string name="debug_member_tier_two">Supporter+</string>
     <string name="debug_buffer_logs_title">Enable BUFFER Logs</string>
     <string name="debug_buffer_logs_subtitle">Emit periodic player buffer diagnostics to logcat (disabled by default)</string>
     <string name="debug_section_account">Account</string>
@@ -1379,6 +1409,7 @@
     <string name="profile_avatar_none_selected">No avatar selected</string>
     <string name="profile_avatar_focus_hint">Focus an avatar to view its name</string>
     <string name="profile_avatar_category_all">All</string>
+    <string name="profile_avatar_category_supporter">Supporter</string>
     <string name="profile_avatar_category_anime">Anime</string>
     <string name="profile_avatar_category_animation">Animation</string>
     <string name="profile_avatar_category_movie">Movie</string>
@@ -1650,6 +1681,7 @@
     <string name="subtitle_tab_languages">Languages</string>
     <string name="subtitle_tab_style">Style</string>
     <string name="subtitle_tab_delay">Delay</string>
+    <string name="subtitle_delay_reset">Reset</string>
     <string name="subtitle_none">None</string>
     <string name="subtitle_built_in">Built in</string>
     <string name="subtitle_all">All</string>
@@ -1732,6 +1764,10 @@
     <string name="library_filter_sort">Sort</string>
     <string name="library_filter_genre">Genre</string>
     <string name="library_filter_year">Year</string>
+    <string name="library_filter_watched">Watched</string>
+    <string name="library_watched_filter_all">All</string>
+    <string name="library_watched_filter_watched">Watched</string>
+    <string name="library_watched_filter_unwatched">Unwatched</string>
     <string name="genre_action">Action</string>
     <string name="genre_adventure">Adventure</string>
     <string name="genre_animation">Animation</string>
@@ -1787,6 +1823,11 @@
     <string name="library_source_saved">Saved</string>
     <string name="library_source_cloud">Cloud</string>
     <string name="library_watchlist">Watchlist</string>
+    <string name="library_status_watching">Watching</string>
+    <string name="library_status_plan_to_watch">Plan to Watch</string>
+    <string name="library_status_on_hold">On Hold</string>
+    <string name="library_status_completed">Completed</string>
+    <string name="library_status_dropped">Dropped</string>
     <string name="library_syncing_library">Syncing library\u2026</string>
     <string name="library_type_all">All</string>
     <string name="library_type_items">items</string>
@@ -1871,6 +1912,46 @@
     <string name="auth_password_placeholder">Password</string>
     <string name="auth_email_sign_in">Sign In</string>
     <string name="auth_email_signing_in">Signing in\u2026</string>
+    <string name="server_options_content_description">Server options</string>
+    <string name="server_options_connect_custom">Connect to custom server</string>
+    <string name="server_options_change_custom">Connect to another server</string>
+    <string name="server_options_use_official">Use official server</string>
+    <string name="custom_server_title">Connect to custom server</string>
+    <string name="custom_server_description">Enter the Backend URL provided by your server administrator.</string>
+    <string name="custom_server_url_placeholder">https://backend.example.com</string>
+    <string name="custom_server_check">Check server</string>
+    <string name="custom_server_checking">Checking\u2026</string>
+    <string name="custom_server_review_title">Review custom server</string>
+    <string name="custom_server_review_description">The discovery document is valid. Connecting will sign you out of the current server and restart the app. Confirm that this is a server you own or trust.</string>
+    <string name="custom_server_verified_label">Discovered backend</string>
+    <string name="custom_server_key_label">Client configuration</string>
+    <string name="custom_server_key_discovered">Publishable key discovered automatically</string>
+    <string name="custom_server_warning_title">Only connect to a server you trust</string>
+    <string name="custom_server_warning_public">This server uses a public hostname. The app cannot verify who owns or operates it.</string>
+    <string name="custom_server_warning_http">This server is on a private network, but HTTP traffic is not encrypted. Other devices on the network may be able to read it.</string>
+    <string name="custom_server_warning_public_http">This server uses a public hostname and unencrypted HTTP. Credentials and synced data may be exposed in transit.</string>
+    <string name="custom_server_warning_private">This appears to be a private-network server, but the app still cannot verify who controls it.</string>
+    <string name="custom_server_warning_credentials">The server operator can receive your account credentials and access data you sync through this server.</string>
+    <string name="custom_server_trust_action">I trust this server</string>
+    <string name="custom_server_switching">Switching\u2026</string>
+    <string name="official_server_title">Use official server?</string>
+    <string name="official_server_description">You will be signed out of the custom server and the app will restart with the official service.</string>
+    <string name="official_server_action">Use official server</string>
+    <string name="custom_server_error_invalid_url">Enter a valid HTTP or HTTPS Backend URL.</string>
+    <string name="custom_server_error_official_active">api.nuvio.tv is the official server and is already selected.</string>
+    <string name="custom_server_error_official_available">api.nuvio.tv is the official server. Close this dialog and choose Use official server to switch back.</string>
+    <string name="custom_server_error_connection">Could not reach the discovery endpoint. Check the URL and server availability.</string>
+    <string name="custom_server_error_http">The discovery endpoint returned HTTP %1$d.</string>
+    <string name="custom_server_error_response_too_large">The discovery document is larger than allowed.</string>
+    <string name="custom_server_error_invalid_document">The server returned an invalid discovery document.</string>
+    <string name="custom_server_error_version">This discovery document version is not supported.</string>
+    <string name="custom_server_error_service">The discovery document is not for this app.</string>
+    <string name="custom_server_error_not_self_hosted">The discovery document does not identify a self-hosted server.</string>
+    <string name="custom_server_error_missing_configuration">The discovery document is missing a valid Backend URL or publishable key.</string>
+    <string name="custom_server_error_no_auth">The server does not advertise a supported sign-in method.</string>
+    <string name="custom_server_save_failed">Could not save the server configuration.</string>
+    <string name="custom_server_session_clear_failed">Could not safely clear the current session. The server was not changed.</string>
+    <string name="custom_server_restart_failed">The server was saved, but the app could not restart automatically. Restart it manually.</string>
 
     <string name="auth_qr_title">Sign In With QR</string>
     <string name="auth_qr_tagline">Watch your library, anywhere</string>
@@ -2339,6 +2420,8 @@
     <string name="collections_editor_tmdb_quick_networks">Quick networks</string>
     <string name="collections_editor_tmdb_genres">Genre IDs</string>
     <string name="collections_editor_tmdb_genres_helper">Use TMDB genre numbers. Separate multiple with commas for AND, or pipes for OR.</string>
+    <string name="collections_editor_tmdb_without_genres">Excluded genre IDs</string>
+    <string name="collections_editor_tmdb_without_genres_helper">Exclude titles matching these TMDB genre numbers.</string>
     <string name="collections_editor_tmdb_date_from">Release or air date from</string>
     <string name="collections_editor_tmdb_date_to">Release or air date to</string>
     <string name="collections_editor_tmdb_date_helper">Use YYYY-MM-DD, for example 2024-01-01.</string>
@@ -2353,8 +2436,12 @@
     <string name="collections_editor_tmdb_country_helper">Use two-letter country codes, for example US, KR, JP, IN.</string>
     <string name="collections_editor_tmdb_keywords">Keyword IDs</string>
     <string name="collections_editor_tmdb_keywords_helper">Use TMDB keyword numbers. Quick chips fill common examples.</string>
+    <string name="collections_editor_tmdb_without_keywords">Excluded keyword IDs</string>
+    <string name="collections_editor_tmdb_without_keywords_helper">Exclude titles matching these TMDB keyword numbers.</string>
     <string name="collections_editor_tmdb_companies">Company IDs</string>
     <string name="collections_editor_tmdb_companies_helper">Use studio/company IDs. Quick chips fill common examples.</string>
+    <string name="collections_editor_tmdb_without_companies">Excluded company IDs</string>
+    <string name="collections_editor_tmdb_without_companies_helper">Exclude titles associated with these TMDB company numbers.</string>
     <string name="collections_editor_tmdb_networks">Network IDs</string>
     <string name="collections_editor_tmdb_networks_helper">For series only. Use network IDs like Netflix 213 or HBO 49.</string>
     <string name="collections_editor_tmdb_year">Year</string>
@@ -2391,6 +2478,7 @@
     <string name="collections_editor_url_short_placeholder">https://...</string>
     <string name="collections_editor_tmdb_genres_movie_placeholder">28,12</string>
     <string name="collections_editor_tmdb_genres_tv_placeholder">18,35</string>
+    <string name="collections_editor_tmdb_without_genres_placeholder">16 for Animation</string>
     <string name="collections_editor_tmdb_date_from_placeholder">2020-01-01</string>
     <string name="collections_editor_tmdb_date_to_placeholder">2024-12-31</string>
     <string name="collections_editor_tmdb_rating_min_placeholder">7.0</string>
@@ -2451,7 +2539,9 @@
     <string name="collections_editor_tmdb_person_title_placeholder">Tom Hanks Movies, Favorite Actors</string>
     <string name="collections_editor_tmdb_director_title_placeholder">Christopher Nolan Movies, Favorite Directors</string>
     <string name="collections_editor_tmdb_keywords_placeholder">9715 for superhero</string>
+    <string name="collections_editor_tmdb_without_keywords_placeholder">9715</string>
     <string name="collections_editor_tmdb_companies_placeholder">420 for Marvel Studios</string>
+    <string name="collections_editor_tmdb_without_companies_placeholder">420</string>
     <string name="collections_editor_tmdb_networks_placeholder">213 for Netflix</string>
     <string name="folder_detail_not_found">Folder not found</string>
     <string name="cast_error_load_details_for">Could not load details for %1$s</string>
@@ -3026,4 +3116,10 @@
     <string name="iptv_guide_paused">Paused</string>
     <string name="iptv_guide_live">Live</string>
     <string name="iptv_guide_tuning">Tuning…</string>
+    <string name="profile_editor_tab_avatar">Avatar</string>
+    <string name="profile_editor_tab_background">Background</string>
+    <string name="profile_choose_background">Choose Profile Background</string>
+    <string name="profile_background_member_note">Custom background URLs can be configured from the Tuvora web panel.</string>
+    <string name="profile_background_normal">Normal</string>
+    <string name="profile_background_custom">Custom</string>
 </resources>

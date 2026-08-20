@@ -140,7 +140,9 @@
     <string name="continue_watching">Продовжити перегляд</string>
     <string name="cw_upcoming">Незабаром</string>
     <string name="cw_next_up">Далі</string>
+    <string name="cw_next_up_short">Далі</string>
     <string name="cw_new_episode">Новий епізод</string>
+    <string name="cw_new_episode_short">Новий</string>
     <string name="cw_new_season">Новий сезон</string>
     <string name="cw_resume">Продовжити</string>
     <string name="cw_percent_watched">%1$d%% переглянуто</string>
@@ -156,6 +158,16 @@
             <item quantity="many">Виходить через %d днів</item>
             <item quantity="other">Виходить через %d днів</item>
         </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">Сьогодні</string>
+    <string name="cw_airs_tomorrow_short">Завтра</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Через %d день</item>
+        <item quantity="few">Через %d дні</item>
+        <item quantity="many">Через %d днів</item>
+        <item quantity="other">Через %d днів</item>
+    </plurals>
     <string name="cw_action_go_to_details">Перейти до деталей</string>
     <string name="cw_action_start_from_beginning">Почати спочатку</string>
     <string name="cw_action_remove">Видалити</string>
@@ -625,7 +637,6 @@
     <string name="audio_decoder_prefer_app">Надавати перевагу програмним декодерам (FFmpeg)</string>
     <string name="audio_decoder_priority">Пріоритет декодерів</string>
     <string name="audio_enable_downmix_title">Увімкнути мікшування</string>
-    <string name="audio_enable_downmix_subtitle">Використовує шлях мікшування FFmpeg. При вимкненні аудіо слідує попередньому шляху Android/пристрою.</string>
     <string name="audio_tunneled">Тунельне відтворення</string>
     <string name="audio_tunneled_sub">Апаратна синхронізація аудіо/відео. Може покращити відтворення на деяких пристроях Android TV</string>
     <!-- DV7 Handling Mode -->
@@ -714,13 +725,6 @@
     <string name="sub_org_none_desc">Показувати субтитри в порядку видачі адоном за замовчуванням.</string>
     <string name="sub_org_by_lang_desc">Групувати субтитри за мовою.</string>
     <string name="sub_org_by_addon_desc">Групувати субтитри за джерелом (адоном).</string>
-    <string name="sub_startup_mode_title">Завантаження субтитрів адона</string>
-    <string name="sub_startup_mode_fast">Швидкий запуск</string>
-    <string name="sub_startup_mode_preferred">Бажані мови</string>
-    <string name="sub_startup_mode_all">Всі субтитри адонів</string>
-    <string name="sub_startup_mode_fast_desc">Запускати відтворення негайно. Вибір субтитрів з адона може одноразово перезапустити плеєр.</string>
-    <string name="sub_startup_mode_preferred_desc">Попередньо завантажувати субтитри адона перед відтворенням та прикріплювати бажані мовні доріжки.</string>
-    <string name="sub_startup_mode_all_desc">Попередньо завантажувати та прикріплювати всі субтитри адонів перед відтворенням. Найдовший запуск.</string>
 
     <string name="autoplay_reuse_last_link">Використовувати останнє посилання</string>
     <string name="autoplay_reuse_last_link_sub">Автовідтворення останнього робочого потоку для того ж фільму/епізоду, поки кеш дійсний</string>

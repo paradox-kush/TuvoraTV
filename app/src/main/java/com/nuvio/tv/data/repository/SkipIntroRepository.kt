@@ -55,9 +55,9 @@ class SkipIntroRepository @Inject constructor(
         }
 
         return@coroutineScope mergeByPriority(
-            introDbDeferred.await(),
+            aniSkipDeferred.await(),
             animeSkipDeferred.await(),
-            aniSkipDeferred.await()
+            introDbDeferred.await()
         ).also { cache[cacheKey] = it }
     }
 
@@ -92,7 +92,7 @@ class SkipIntroRepository @Inject constructor(
             if (anilistId != null) animeSkip = fetchFromAnimeSkip(anilistId, episode, season = null)
         }
 
-        return@coroutineScope mergeByPriority(introDb, animeSkip, aniSkipDeferred.await()).also { cache[cacheKey] = it }
+        return@coroutineScope mergeByPriority(aniSkipDeferred.await(), animeSkip, introDb).also { cache[cacheKey] = it }
     }
 
     suspend fun getSkipIntervalsForKitsu(kitsuId: String, episode: Int): List<SkipInterval> = coroutineScope {
@@ -133,14 +133,14 @@ class SkipIntroRepository @Inject constructor(
             if (anilistId != null) animeSkip = fetchFromAnimeSkip(anilistId, episode, season = null)
         }
 
-        return@coroutineScope mergeByPriority(introDb, animeSkip, aniSkipDeferred.await()).also { cache[cacheKey] = it }
+        return@coroutineScope mergeByPriority(aniSkipDeferred.await(), animeSkip, introDb).also { cache[cacheKey] = it }
     }
 
     /**
      * Merge provider results into one best-of: fill each segment category (opening / ending /
      * recap) from the highest-priority provider that has it. Arguments MUST be passed in priority
-     * order (IntroDB has the broadest coverage, then Anime-Skip, then AniSkip), so a partial
-     * result from one provider never shadows a complete segment from another.
+     * order (AniSkip has native anime IDs, then Anime-Skip, then IntroDB as fallback),
+     * so a partial result from one provider never shadows a complete segment from another.
      */
     private fun mergeByPriority(vararg providerResults: List<SkipInterval>): List<SkipInterval> {
         val chosen = LinkedHashMap<String, SkipInterval>()

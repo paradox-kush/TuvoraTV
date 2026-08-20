@@ -139,7 +139,9 @@
     <string name="continue_watching">繼續觀看</string>
     <string name="cw_upcoming">即將播出</string>
     <string name="cw_next_up">下一集</string>
+    <string name="cw_next_up_short">下一集</string>
     <string name="cw_new_episode">新集數</string>
+    <string name="cw_new_episode_short">新</string>
     <string name="cw_new_season">新季數</string>
     <string name="cw_resume">繼續播放</string>
     <string name="cw_percent_watched">已觀看 %1$d%%</string>
@@ -152,6 +154,14 @@
     <plurals name="cw_airs_in_days">
         <item quantity="one">%d 天後播出</item>
         <item quantity="other">%d 天後播出</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">今天</string>
+    <string name="cw_airs_tomorrow_short">明天</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">%d 天後</item>
+        <item quantity="other">%d 天後</item>
     </plurals>
     <string name="cw_action_go_to_details">前往詳情</string>
     <string name="cw_action_start_from_beginning">從頭開始播放</string>
@@ -667,7 +677,6 @@
     <string name="audio_decoder_prefer_app">偏好應用程式解碼器 (FFmpeg)</string>
     <string name="audio_decoder_priority">解碼器優先順序</string>
     <string name="audio_enable_downmix_title">啟用混音下轉</string>
-    <string name="audio_enable_downmix_subtitle">使用 FFmpeg 混音下轉路徑。停用時，音訊將遵循先前的 Android/裝置路徑。</string>
     <string name="audio_tunneled">通道化播放</string>
     <string name="audio_tunneled_sub">硬體層級的音訊/影片同步。可能在部分 Android TV 裝置上改善播放。</string>
     <string name="audio_force_optical_passthrough">強制 AC-3 轉碼 (光纖/SPDIF)</string>
@@ -760,13 +769,6 @@
     <string name="sub_org_none_desc">以擴充套件預設順序顯示字幕。</string>
     <string name="sub_org_by_lang_desc">依語言分組字幕。</string>
     <string name="sub_org_by_addon_desc">依擴充套件來源分組字幕。</string>
-    <string name="sub_startup_mode_title">擴充套件字幕載入</string>
-    <string name="sub_startup_mode_fast">快速啟動</string>
-    <string name="sub_startup_mode_preferred">偏好語言</string>
-    <string name="sub_startup_mode_all">所有擴充套件字幕</string>
-    <string name="sub_startup_mode_fast_desc">立即開始播放。選擇擴充套件字幕可能需要重新載入播放器一次。</string>
-    <string name="sub_startup_mode_preferred_desc">在播放前預先載入擴充套件字幕，並附加偏好/次要語言音軌。</string>
-    <string name="sub_startup_mode_all_desc">在播放前預先載入並附加所有擴充套件字幕。啟動速度最慢。</string>
 
     <string name="autoplay_reuse_last_link">重複使用上次連結</string>
     <string name="autoplay_reuse_last_link_sub">當快取仍有效時，自動播放同一部電影/集數的上次可用串流</string>

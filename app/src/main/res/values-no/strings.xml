@@ -50,7 +50,9 @@
     <string name="continue_watching">Fortsett å se</string>
     <string name="cw_upcoming">Kommende</string>
     <string name="cw_next_up">Neste</string>
+    <string name="cw_next_up_short">Neste</string>
     <string name="cw_new_episode">Ny episode</string>
+    <string name="cw_new_episode_short">Ny</string>
     <string name="cw_new_season">Ny sesong</string>
     <string name="cw_resume">Gjenoppta</string>
     <string name="cw_percent_watched">%1$d%% sett</string>
@@ -63,6 +65,14 @@
     <plurals name="cw_airs_in_days">
         <item quantity="one">Sendes om %d dag</item>
         <item quantity="other">Sendes om %d dager</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">I dag</string>
+    <string name="cw_airs_tomorrow_short">I morgen</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Om %d dag</item>
+        <item quantity="other">Om %d dager</item>
     </plurals>
     <string name="cw_action_go_to_details">Gå til detaljer</string>
     <string name="cw_action_start_from_beginning">Start fra begynnelsen</string>
@@ -383,13 +393,6 @@
     <string name="sub_org_none_desc">Vis undertekster i standard tilleggsresultatrekkefølge.</string>
     <string name="sub_org_by_lang_desc">Grupper undertekster etter språk.</string>
     <string name="sub_org_by_addon_desc">Grupper undertekster etter tileggskilder.</string>
-    <string name="sub_startup_mode_title">Last undertekster fra tillegg</string>
-    <string name="sub_startup_mode_fast">Rask oppstart</string>
-    <string name="sub_startup_mode_preferred">Foretrukne språk</string>
-    <string name="sub_startup_mode_all">Alle tilleggsundertekster</string>
-    <string name="sub_startup_mode_fast_desc">Start avspilling umiddelbart. Valg av undertekst fra tillegg kan laste spilleren på nytt en gang.</string>
-    <string name="sub_startup_mode_preferred_desc">Hent undertekster fra tillegg før avspilling og legger ved foretrukne/sekundære språkspor.</string>
-    <string name="sub_startup_mode_all_desc">Hent og legger ved alle tilleggsundertekster før avspilling. Langsom oppstart.</string>
 
     <!-- PlaybackAutoPlaySettings -->
     <string name="autoplay_reuse_last_link">Bruk siste lenke på nytt</string>

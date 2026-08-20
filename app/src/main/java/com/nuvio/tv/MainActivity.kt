@@ -3,7 +3,6 @@ package com.nuvio.tv
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
@@ -48,9 +47,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -67,12 +64,14 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.RectangleShape
@@ -120,10 +119,8 @@ import androidx.tv.material3.rememberDrawerState
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import com.nuvio.tv.R
-import com.nuvio.tv.core.analytics.AppExitReporter
-import com.nuvio.tv.core.analytics.Breadcrumbs
 import com.nuvio.tv.core.auth.AuthManager
-import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.auth.DeviceSessionRegistration
 import com.nuvio.tv.core.deeplink.DeepLinkHandler
 import com.nuvio.tv.core.deeplink.DeepLinkParser
 import com.nuvio.tv.core.profile.ProfileManager
@@ -138,31 +135,39 @@ import com.nuvio.tv.data.local.ExperienceModeDataStore
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.StartupAuthNotice
 import com.nuvio.tv.data.local.ThemeDataStore
+import com.nuvio.tv.data.repository.MemberAccessRepository
 import com.nuvio.tv.data.remote.supabase.AvatarRepository
 import com.nuvio.tv.domain.model.AppFont
 import com.nuvio.tv.domain.model.AppTheme
 import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.domain.model.CardDepthStyle
+import com.nuvio.tv.domain.model.CosmeticEntitlement
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.ExperienceMode
+import com.nuvio.tv.domain.model.MemberAccess
 import com.nuvio.tv.domain.model.SettingsUiStyle
+import com.nuvio.tv.domain.model.resolveAppTheme
 import com.nuvio.tv.domain.deeplink.AppDeepLink
 import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.ui.components.NuvioScrollDefaults
+import com.nuvio.tv.ui.components.BrandWordmark
 import com.nuvio.tv.ui.components.LocalCardDepthStyle
 import com.nuvio.tv.ui.components.ProfileAvatarCircle
 import com.nuvio.tv.ui.navigation.NuvioNavHost
 import com.nuvio.tv.ui.navigation.Screen
+import com.nuvio.tv.ui.membership.LocalMemberAccess
 import com.nuvio.tv.ui.screens.account.AuthQrSignInScreen
-import com.nuvio.tv.ui.screens.account.AuthSignInScreen
 import com.nuvio.tv.ui.screens.addon.EssentialAddonSetupScreen
 import com.nuvio.tv.ui.screens.profile.ProfileSelectionScreen
 import com.nuvio.tv.ui.theme.NuvioComponents
+import com.nuvio.tv.ui.theme.NuvioLayout
 import com.nuvio.tv.ui.theme.NuvioMotion
 import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioRadii
 import com.nuvio.tv.ui.theme.NuvioStrokes
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.theme.ThemeColors
+import com.nuvio.tv.ui.theme.accentBrush
 import com.nuvio.tv.ui.util.LocalFastHorizontalNavigationEnabled
 import com.nuvio.tv.ui.util.LocalRecompositionHighlighterEnabled
 import com.nuvio.tv.ui.util.rememberDrawerItemFocusRequesters
@@ -192,7 +197,8 @@ data class DrawerItem(
 )
 
 private data class MainUiPrefs(
-    val theme: AppTheme = AppTheme.MARIGOLD,
+    val theme: AppTheme = AppTheme.WHITE,
+    val memberAccess: MemberAccess = MemberAccess.None,
     val font: AppFont = AppFont.INTER,
     val amoledMode: Boolean = false,
     val amoledSurfacesMode: Boolean = false,
@@ -224,6 +230,9 @@ class MainActivity : ComponentActivity() {
     lateinit var experienceModeDataStore: ExperienceModeDataStore
 
     @Inject
+    lateinit var memberAccessRepository: MemberAccessRepository
+
+    @Inject
     lateinit var addonRepository: AddonRepository
 
     @Inject
@@ -246,6 +255,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var authManager: AuthManager
+
+    @Inject
+    lateinit var deviceSessionRegistration: DeviceSessionRegistration
 
     @Inject
     lateinit var authSessionNoticeDataStore: AuthSessionNoticeDataStore
@@ -302,18 +314,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        // Opt the whole window out of autofill — twin of the mobile fix.
-        //
-        // Mobile hit an unhandled `TransactionTooLargeException` (765KB parcel) on 1.4.35 when a
-        // recomposition reached Compose's AndroidAutofillManager, which marshals the autofill view
-        // structure across Binder. TV runs the same Compose autofill machinery and is therefore
-        // exposed to the same trap; no TV crash has been observed, so this is prevention, not a
-        // reported fix. Costs nothing here: this app never integrated autofill (no autofillHints /
-        // contentType anywhere), and a TV has no password-manager ecosystem to lose.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.decorView.importantForAutofill =
-                android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        }
         isFirstResumeAfterCreate = true
         window?.setBackgroundDrawable(null)
 
@@ -396,9 +396,14 @@ class MainActivity : ComponentActivity() {
             }
 
             var avatarCatalog by remember { mutableStateOf(emptyList<com.nuvio.tv.data.remote.supabase.AvatarCatalogItem>()) }
+            val avatarMemberAccess by memberAccessRepository.access.collectAsState()
+            val hasProfileAvatarAccess = avatarMemberAccess.entitlements
+                .includes(CosmeticEntitlement.PROFILE_AVATARS)
 
-            LaunchedEffect(Unit) {
-                avatarCatalog = runCatching { avatarRepository.getAvatarCatalog() }
+            LaunchedEffect(hasProfileAvatarAccess) {
+                avatarCatalog = runCatching {
+                    avatarRepository.getAvatarCatalog()
+                }
                     .getOrDefault(emptyList())
             }
 
@@ -407,19 +412,31 @@ class MainActivity : ComponentActivity() {
                     ?: activeProfile?.avatarId?.let { avatarRepository.getAvatarImageUrl(it, avatarCatalog) }
             }
 
-            val mainUiPrefsFlow = remember(themeDataStore, layoutPreferenceDataStore, experienceModeDataStore) {
+            val mainUiPrefsFlow = remember(
+                themeDataStore,
+                layoutPreferenceDataStore,
+                experienceModeDataStore,
+                memberAccessRepository
+            ) {
+                val activeThemeFlow = combine(
+                    themeDataStore.selectedThemePreference,
+                    memberAccessRepository.access
+                ) { selectedTheme, memberAccess ->
+                    resolveAppTheme(selectedTheme, memberAccess.entitlements) to memberAccess
+                }
                 // Group flows into two batches to reduce intermediate flow allocations.
                 // Each batch uses a single combine() instead of chaining .combine() calls,
                 // which avoids N intermediate flow objects and redundant emissions on startup.
                 val themeAndExperienceFlow = combine(
-                    themeDataStore.selectedTheme,
+                    activeThemeFlow,
                     themeDataStore.selectedFont,
                     themeDataStore.amoledMode,
                     themeDataStore.amoledSurfacesMode,
                     experienceModeDataStore.mode,
-                ) { theme, font, amoledMode, amoledSurfacesMode, experienceMode ->
+                ) { themeAndAccess, font, amoledMode, amoledSurfacesMode, experienceMode ->
                     MainUiPrefs(
-                        theme = theme,
+                        theme = themeAndAccess.first,
+                        memberAccess = themeAndAccess.second,
                         font = font,
                         amoledMode = amoledMode,
                         amoledSurfacesMode = amoledSurfacesMode,
@@ -502,6 +519,7 @@ class MainActivity : ComponentActivity() {
                     LocalFastHorizontalNavigationEnabled provides mainUiPrefs.fastHorizontalNavigationEnabled,
                     LocalRecompositionHighlighterEnabled provides (BuildConfig.IS_DEBUG_BUILD && mainUiPrefs.composeHighlighterEnabled),
                     LocalCardDepthStyle provides mainUiPrefs.cardDepthStyle,
+                    LocalMemberAccess provides mainUiPrefs.memberAccess,
                     com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool
                 ) {
                 Surface(
@@ -534,57 +552,44 @@ class MainActivity : ComponentActivity() {
                         authState !is AuthState.FullAccount &&
                         !onboardingCompletedThisSession
                     ) {
-                        // ponytail: onboarding stays QR-primary, but a brand-new user must be able to
-                        // CREATE an account from the first screen too (B1) — toggle to the email screen inline.
-                        var showEmailSignIn by remember { mutableStateOf(false) }
-                        val completeOnboarding: () -> Unit = {
-                            lifecycleScope.launch {
-                                val shouldRunRemoteOnboardingSync =
-                                    authManager.authState.value is AuthState.FullAccount
+                        AuthQrSignInScreen(
+                            onBackPress = { finish() },
+                            onContinue = {
+                                lifecycleScope.launch {
+                                    val shouldRunRemoteOnboardingSync =
+                                        authManager.authState.value is AuthState.FullAccount
 
-                                if (shouldRunRemoteOnboardingSync) {
-                                    if (onboardingProfileSyncInProgress) return@launch
-                                    onboardingProfileSyncInProgress = true
-                                    val maxAttempts = 3
-                                    var synced = false
-                                    for (attempt in 0 until maxAttempts) {
-                                        val result = profileSyncService.pullFromRemote()
-                                        if (result.isSuccess) {
-                                            synced = true
-                                            break
+                                    if (shouldRunRemoteOnboardingSync) {
+                                        if (onboardingProfileSyncInProgress) return@launch
+                                        onboardingProfileSyncInProgress = true
+                                        val maxAttempts = 3
+                                        var synced = false
+                                        for (attempt in 0 until maxAttempts) {
+                                            val result = profileSyncService.pullFromRemote()
+                                            if (result.isSuccess) {
+                                                synced = true
+                                                break
+                                            }
+                                            if (attempt < maxAttempts - 1) {
+                                                delay(1_000)
+                                            }
                                         }
-                                        if (attempt < maxAttempts - 1) {
-                                            delay(1_000)
+                                        if (!synced) {
+                                            android.util.Log.w(
+                                                "MainActivity",
+                                                "Onboarding profile sync failed after retries; continuing"
+                                            )
                                         }
                                     }
-                                    if (!synced) {
-                                        android.util.Log.w(
-                                            "MainActivity",
-                                            "Onboarding profile sync failed after retries; continuing"
-                                        )
-                                    }
+                                    appOnboardingDataStore.setHasSeenAuthQrOnFirstLaunch(true)
+                                    onboardingCompletedThisSession = true
+                                    onboardingProfileSyncInProgress = false
                                 }
-                                appOnboardingDataStore.setHasSeenAuthQrOnFirstLaunch(true)
-                                onboardingCompletedThisSession = true
-                                onboardingProfileSyncInProgress = false
+                                if (authManager.authState.value is AuthState.FullAccount) {
+                                    startupSyncService.requestSyncNow()
+                                }
                             }
-                            if (authManager.authState.value is AuthState.FullAccount) {
-                                startupSyncService.requestSyncNow()
-                            }
-                        }
-                        if (showEmailSignIn) {
-                            AuthSignInScreen(
-                                onBackPress = { showEmailSignIn = false },
-                                onNavigateToQrSignIn = { showEmailSignIn = false },
-                                onSuccess = completeOnboarding
-                            )
-                        } else {
-                            AuthQrSignInScreen(
-                                onBackPress = { finish() },
-                                onNavigateToEmailSignIn = { showEmailSignIn = true },
-                                onContinue = completeOnboarding
-                            )
-                        }
+                        )
                         return@Surface
                     }
 
@@ -663,9 +668,6 @@ class MainActivity : ComponentActivity() {
 
                     LaunchedEffect(actualRoute) {
                         optimisticRoute = null
-                        // One breadcrumb path: persists the route for app_exit attribution AND
-                        // emits a real $screen event (autocapture only ever names MainActivity).
-                        actualRoute?.let(Breadcrumbs::screenChanged)
                     }
 
                     // Auto-play next episode for EXTERNAL players: the tracker resolves the
@@ -776,12 +778,6 @@ class MainActivity : ComponentActivity() {
                             add(Screen.Home.route)
                             add(Screen.Search.route)
                             add(Screen.Library.route)
-                            // Live TV and Sports are sidebar destinations like any other. Leaving
-                            // them out made showSidebar false there, which cost all three of the
-                            // sidebar's behaviours at once: no rail, no LEFT-to-open, and BACK
-                            // popping to Home instead of returning focus to the sidebar.
-                            add(Screen.XtreamHub.route)
-                            add(Screen.SportsHub.route)
                             add(Screen.Settings.route)
                             if (discoverLocation == DiscoverLocation.IN_SIDEBAR) {
                                 add(Screen.Discover.route)
@@ -835,20 +831,6 @@ class MainActivity : ComponentActivity() {
                             )
                             add(
                                 DrawerItem(
-                                    route = Screen.XtreamHub.route,
-                                    label = "IPTV",
-                                    icon = Icons.Default.LiveTv
-                                )
-                            )
-                            add(
-                                DrawerItem(
-                                    route = Screen.SportsHub.route,
-                                    label = "Sports",
-                                    icon = Icons.Default.SportsSoccer
-                                )
-                            )
-                            add(
-                                DrawerItem(
                                     route = Screen.Settings.route,
                                     label = strNavSettings,
                                     iconRes = R.raw.sidebar_settings
@@ -863,9 +845,12 @@ class MainActivity : ComponentActivity() {
 
                     val updateViewModel: UpdateViewModel = hiltViewModel(this@MainActivity)
                     val updateState by updateViewModel.uiState.collectAsState()
+                    val updateBannerState = updateState.copy(
+                        showBanner = updateState.showBanner && currentRoute?.startsWith("player/") != true
+                    )
 
                     UpdateBannerHost(
-                        state = updateState,
+                        state = updateBannerState,
                         onDismissBanner = updateViewModel::dismissBanner,
                         onDownload = updateViewModel::downloadUpdate,
                         onInstall = updateViewModel::installUpdateOrRequestPermission,
@@ -952,10 +937,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (::jankStats.isInitialized) jankStats.isTrackingEnabled = true
+        memberAccessRepository.refreshIfStale()
         lifecycleScope.launch {
-            // Upstream's DeviceSessionRegistration (RPC register_current_device) is NOT wired here:
-            // the Tuvora backend reports devices through SyncDeviceReporter (RPC report_device),
-            // and that RPC doesn't exist self-hosted. The upstream class stays inert for merges.
+            deviceSessionRegistration.requestForegroundRegistration()
             startupSyncService.requestForegroundSync()
         }
         lifecycleScope.launch {
@@ -1071,14 +1055,7 @@ private fun LegacySidebarScaffold(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val drawerItemFocusRequesters = rememberDrawerItemFocusRequesters(drawerItems)
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    // Route says "this screen has a sidebar"; the immersive gate says "a player owns the screen
-    // right now". Both must agree, or a fullscreen live channel on the IPTV/Sports hub keeps the
-    // nav rail painted over the video (those routes are rootRoutes so LEFT-to-open works there).
-    val immersivePlayback by com.nuvio.tv.updater.ImmersivePlaybackGate.isActive.collectAsState()
-    val showSidebar = com.nuvio.tv.ui.navigation.SidebarVisibilityPolicy.showSidebar(
-        routeHasSidebar = currentRoute in rootRoutes,
-        immersivePlayback = immersivePlayback,
-    )
+    val showSidebar = currentRoute in rootRoutes
 
     LaunchedEffect(currentRoute) {
         drawerState.setValue(DrawerValue.Closed)
@@ -1226,8 +1203,7 @@ private fun LegacySidebarScaffold(
                                     }
                                 }
                             } else {
-                                Image(
-                                    painter = painterResource(id = R.drawable.app_logo_wordmark),
+                                BrandWordmark(
                                     contentDescription = stringResource(R.string.app_name),
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1278,7 +1254,11 @@ private fun LegacySidebarScaffold(
         }
     ) {
         val contentStartPadding by animateDpAsState(
-            targetValue = if (showSidebar) closedDrawerWidth else NuvioTheme.spacing.none,
+            targetValue = if (showSidebar && !sidebarCollapsed) {
+                NuvioLayout.tokens.sidebarContentOffset
+            } else {
+                NuvioTheme.spacing.none
+            },
             animationSpec = tween(NuvioMotion.tokens.durations.medium),
             label = "contentStartPadding"
         )
@@ -1358,6 +1338,11 @@ private fun LegacySidebarButton(
         },
         label = "legacySidebarItemIconTint"
     )
+    val selectedCollapsedIconBrush = if (selected && !expanded) {
+        ThemeColors.getColorPalette(NuvioTheme.currentTheme).accentBrush()
+    } else {
+        null
+    }
     val itemScale by animateFloatAsState(
         targetValue = if (isFocused && expanded) 1.1f else 1f,
         animationSpec = tween(durationMillis = NuvioMotion.tokens.durations.fast, easing = NuvioMotion.tokens.easings.standard),
@@ -1394,6 +1379,7 @@ private fun LegacySidebarButton(
             iconRes = iconRes,
             icon = icon,
             tint = iconTint,
+            brush = selectedCollapsedIconBrush,
             modifier = Modifier
                 .size(NuvioComponents.tokens.sidebar.iconSize)
                 .align(Alignment.CenterStart)
@@ -1433,14 +1419,7 @@ private fun ModernSidebarScaffold(
     onNavigate: (String) -> Unit,
     onExitApp: () -> Unit
 ) {
-    // Route says "this screen has a sidebar"; the immersive gate says "a player owns the screen
-    // right now". Both must agree, or a fullscreen live channel on the IPTV/Sports hub keeps the
-    // nav rail painted over the video (those routes are rootRoutes so LEFT-to-open works there).
-    val immersivePlayback by com.nuvio.tv.updater.ImmersivePlaybackGate.isActive.collectAsState()
-    val showSidebar = com.nuvio.tv.ui.navigation.SidebarVisibilityPolicy.showSidebar(
-        routeHasSidebar = currentRoute in rootRoutes,
-        immersivePlayback = immersivePlayback,
-    )
+    val showSidebar = currentRoute in rootRoutes
     val sidebarTokens = NuvioComponents.tokens.sidebar
     val collapsedSidebarWidth = if (sidebarCollapsed) NuvioTheme.spacing.none else sidebarTokens.collapsedWidth
     val openSidebarWidth = sidebarTokens.expandedWidth
@@ -1984,21 +1963,35 @@ private fun DrawerItemIcon(
     iconRes: Int?,
     icon: ImageVector?,
     modifier: Modifier = Modifier,
-    tint: Color = androidx.tv.material3.LocalContentColor.current
+    tint: Color = androidx.tv.material3.LocalContentColor.current,
+    brush: Brush? = null
 ) {
+    val iconModifier = if (brush == null) {
+        modifier
+    } else {
+        modifier
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithCache {
+                onDrawWithContent {
+                    drawContent()
+                    drawRect(brush = brush, blendMode = BlendMode.SrcIn)
+                }
+            }
+    }
+    val iconTint = if (brush == null) tint else Color.White
     when {
         icon != null -> Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = tint,
-            modifier = modifier
+            tint = iconTint,
+            modifier = iconModifier
         )
 
         iconRes != null -> Icon(
             painter = rememberRawSvgPainter(iconRes),
             contentDescription = null,
-            tint = tint,
-            modifier = modifier
+            tint = iconTint,
+            modifier = iconModifier
         )
     }
 }

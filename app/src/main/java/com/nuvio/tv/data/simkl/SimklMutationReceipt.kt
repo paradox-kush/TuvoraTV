@@ -116,8 +116,7 @@ internal fun SimklApiResponse.toHistoryMutationReceipt(
         mutation = SimklCommittedMutation.AddToHistory(accepted),
         requiresReconciliation = accepted.any { resolved ->
             resolved.status == null ||
-                resolved.request.media.kind != TrackingMediaKind.MOVIE &&
-                resolved.request.media.episode == null
+                resolved.request.media.kind != TrackingMediaKind.MOVIE
         }
     )
 }

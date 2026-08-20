@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.domain.model.PLACEHOLDER_IMAGE_URL
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withPermit
 import com.nuvio.tv.core.util.filterReleasedItems
@@ -104,7 +105,6 @@ internal fun HomeViewModel.loadCustomCatalogTitlesPipeline() {
 internal fun HomeViewModel.observeTmdbSettingsPipeline() {
     viewModelScope.launch {
         tmdbSettingsDataStore.settings
-            .distinctUntilChanged()
             .collectLatest { settings ->
                 val languageChanged = currentTmdbSettings.language != settings.language
                 val releaseDatesChanged = currentTmdbSettings.useReleaseDates != settings.useReleaseDates
@@ -517,7 +517,6 @@ internal fun HomeViewModel.loadMoreCatalogItemsPipeline(catalogId: String, addon
 
     updateCatalogRow(key) { it.copy(isLoading = true) }
     _loadingCatalogs.update { it + key }
-    scheduleUpdateCatalogRows()
 
     viewModelScope.launch {
         val addon = addonsCache.find { it.id == addonId }
@@ -754,7 +753,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                                     type = com.nuvio.tv.domain.model.ContentType.fromString(placeholder.apiType),
                                     rawType = placeholder.apiType,
                                     name = " ",
-                                    poster = "placeholder://empty",
+                                    poster = PLACEHOLDER_IMAGE_URL,
                                     posterShape = com.nuvio.tv.domain.model.PosterShape.POSTER,
                                     background = null,
                                     logo = null,

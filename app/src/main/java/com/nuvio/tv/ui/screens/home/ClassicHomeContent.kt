@@ -28,6 +28,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -54,10 +55,12 @@ import androidx.compose.ui.Alignment
 import com.nuvio.tv.ui.components.CatalogRowSection
 import com.nuvio.tv.ui.components.CollectionRowSection
 import com.nuvio.tv.ui.components.ContinueWatchingSection
+import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.ui.components.HeroCarousel
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.PosterCardStyle
 import androidx.compose.ui.res.stringResource
+import androidx.tv.material3.MaterialTheme
 import com.nuvio.tv.R
 
 private class FocusSnapshot(
@@ -123,11 +126,25 @@ fun ClassicHomeContent(
             height = posterCardStyle.height * CLASSIC_SECONDARY_ROW_POSTER_SCALE
         )
     }
-    val classicContinueWatchingCardWidth = remember(classicSecondaryPosterCardStyle) {
-        classicSecondaryPosterCardStyle.width * (16f / 9f)
+    val classicContinueWatchingCardWidth = remember(classicCatalogPosterCardStyle, classicSecondaryPosterCardStyle, uiState.continueWatchingCardStyle) {
+        when (uiState.continueWatchingCardStyle) {
+            ContinueWatchingCardStyle.POSTER -> classicCatalogPosterCardStyle.width
+            ContinueWatchingCardStyle.WIDE -> classicSecondaryPosterCardStyle.width * 2.5f
+            ContinueWatchingCardStyle.CARD -> classicSecondaryPosterCardStyle.width * (16f / 9f)
+        }
     }
-    val classicContinueWatchingImageHeight = remember(classicSecondaryPosterCardStyle) {
-        classicSecondaryPosterCardStyle.width
+    val classicContinueWatchingImageHeight = remember(classicCatalogPosterCardStyle, classicSecondaryPosterCardStyle, uiState.continueWatchingCardStyle) {
+        when (uiState.continueWatchingCardStyle) {
+            ContinueWatchingCardStyle.POSTER -> classicCatalogPosterCardStyle.height
+            ContinueWatchingCardStyle.WIDE -> classicSecondaryPosterCardStyle.width * 2.5f * 0.4f
+            ContinueWatchingCardStyle.CARD -> classicSecondaryPosterCardStyle.width
+        }
+    }
+    // Match catalog poster label style so CW poster titles look the same as catalog ones.
+    val classicPosterTitleStyle = if (uiState.continueWatchingCardStyle == ContinueWatchingCardStyle.POSTER) {
+        MaterialTheme.typography.titleMedium
+    } else {
+        null
     }
 
     // Nested prefetch: when LazyColumn prefetches a row ahead of scrolling,
@@ -317,25 +334,25 @@ fun ClassicHomeContent(
         return
     }
 
-    // Lazy catalog loading: trigger load after scroll settles
+    // Lazy catalog loading: trigger load when rows approach visibility
     val latestOnRequestLazyCatalogLoad = rememberUpdatedState(onRequestLazyCatalogLoad)
     val latestVisibleHomeRows = rememberUpdatedState(visibleHomeRows)
     LaunchedEffect(columnListState) {
         val prefetchAhead = 1
         snapshotFlow {
-            val scrolling = columnListState.isScrollInProgress
             val info = columnListState.layoutInfo
             val firstVisible = info.visibleItemsInfo.firstOrNull()?.index ?: -1
             val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-            Triple(scrolling, firstVisible, lastVisible)
-        }.collect { (scrolling, firstVisible, lastVisible) ->
-            if (scrolling || lastVisible < 0) return@collect
-            delay(150)
-            if (columnListState.isScrollInProgress) return@collect
+            firstVisible to lastVisible
+        }.collectLatest { (firstVisible, lastVisible) ->
+            if (lastVisible < 0) return@collectLatest
+            // Debounce: restarts on every new emission during rapid scroll.
+            // Only fires when visible indices stabilize for 240ms.
+            delay(240)
             val rows = latestVisibleHomeRows.value
             // Offset for hero + CW sections that precede homeRows in LazyColumn
             val heroOffset = if (uiState.heroSectionEnabled && uiState.heroItems.isNotEmpty()) 1 else 0
-            val cwOffset = if (uiState.continueWatchingItems.isNotEmpty()) 1 else 0
+            val cwOffset = if (uiState.continueWatchingEnabled && uiState.continueWatchingItems.isNotEmpty()) 1 else 0
             val rowsOffset = heroOffset + cwOffset
             for (idx in firstVisible.coerceAtLeast(0)..(lastVisible + prefetchAhead)) {
                 val rowIdx = idx - rowsOffset
@@ -453,7 +470,7 @@ fun ClassicHomeContent(
             }
         }
 
-        if (uiState.continueWatchingItems.isNotEmpty()) {
+        if (uiState.continueWatchingEnabled && uiState.continueWatchingItems.isNotEmpty()) {
             item(key = "continue_watching", contentType = "continue_watching") {
                 val firstRowKey = visibleHomeRows.firstOrNull()?.let { row ->
                     when (row) {
@@ -520,12 +537,15 @@ fun ClassicHomeContent(
                     downFocusRequester = cwDownRequester,
                     focusRequesters = cwItemFocusRequesters,
                     cardWidth = classicContinueWatchingCardWidth,
-                    imageHeight = classicContinueWatchingImageHeight
+                    imageHeight = classicContinueWatchingImageHeight,
+                    cardStyle = uiState.continueWatchingCardStyle,
+                    cornerRadius = posterCardStyle.cornerRadius,
+                    posterTitleOverride = classicPosterTitleStyle
                 )
             }
         }
 
-        if (uiState.upcomingItems.isNotEmpty()) {
+        if (uiState.continueWatchingEnabled && uiState.upcomingItems.isNotEmpty()) {
             item(key = "upcoming_section", contentType = "upcoming_section") {
                 val firstRowKey = visibleHomeRows.firstOrNull()?.let { row ->
                     when (row) {
@@ -580,7 +600,10 @@ fun ClassicHomeContent(
                     focusRequesters = upcomingItemFocusRequesters,
                     lastFocusedIndexState = lastFocusedUpcomingIndex,
                     cardWidth = classicContinueWatchingCardWidth,
-                    imageHeight = classicContinueWatchingImageHeight
+                    imageHeight = classicContinueWatchingImageHeight,
+                    cardStyle = uiState.continueWatchingCardStyle,
+                    cornerRadius = posterCardStyle.cornerRadius,
+                    posterTitleOverride = classicPosterTitleStyle
                 )
             }
         }
@@ -615,7 +638,7 @@ fun ClassicHomeContent(
                     val shouldInitialFocusFirstCatalogRow =
                         shouldRequestInitialFocus &&
                             !heroVisible &&
-                            uiState.continueWatchingItems.isEmpty() &&
+                            (!uiState.continueWatchingEnabled || uiState.continueWatchingItems.isEmpty()) &&
                             index == 0
                     val focusedItemIndex = when {
                         shouldRestoreFocus -> focusState.focusedItemIndex

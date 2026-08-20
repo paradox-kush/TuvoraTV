@@ -143,7 +143,9 @@
     <string name="continue_watching">Lanjutkan Menonton</string>
     <string name="cw_upcoming">Akan Datang</string>
     <string name="cw_next_up">Selanjutnya</string>
+    <string name="cw_next_up_short">Lanjut</string>
     <string name="cw_new_episode">Episode Baru</string>
+    <string name="cw_new_episode_short">Baru</string>
     <string name="cw_new_season">Musim Baru</string>
     <string name="cw_resume">Lanjutkan</string>
     <string name="cw_percent_watched">%1$d%% ditonton</string>
@@ -156,6 +158,14 @@
     <plurals name="cw_airs_in_days">
         <item quantity="one">Tayang dalam %d hari</item>
         <item quantity="other">Tayang dalam %d hari</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">Hari ini</string>
+    <string name="cw_airs_tomorrow_short">Besok</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">%d hari lagi</item>
+        <item quantity="other">%d hari lagi</item>
     </plurals>
     <string name="cw_action_go_to_details">Lihat detail</string>
     <string name="cw_action_start_from_beginning">Mulai dari awal</string>
@@ -630,7 +640,6 @@
     <string name="audio_decoder_prefer_app">Utamakan dekoder aplikasi (FFmpeg)</string>
     <string name="audio_decoder_priority">Prioritas Dekoder</string>
     <string name="audio_enable_downmix_title">Aktifkan downmix</string>
-    <string name="audio_enable_downmix_subtitle">Menggunakan jalur downmix FFmpeg. Jika dinonaktifkan, audio akan mengikuti jalur Android/perangkat sebelumnya.</string>
     <string name="audio_tunneled">Tunneled Playback</string>
     <string name="audio_tunneled_sub">Sinkronisasi audio/video tingkat hardware. Mungkin meningkatkan pemutaran di beberapa perangkat Android TV</string>
     <string name="audio_mpv_hwdec_title">Dekoding Hardware (Hanya MPV)</string>
@@ -689,13 +698,6 @@
     <string name="sub_org_none_desc">Tampilkan subtitle sesuai urutan hasil addon bawaan.</string>
     <string name="sub_org_by_lang_desc">Kelompokkan subtitle berdasarkan bahasa.</string>
     <string name="sub_org_by_addon_desc">Kelompokkan subtitle berdasarkan sumber addon.</string>
-    <string name="sub_startup_mode_title">Pemuatan Subtitle Addon</string>
-    <string name="sub_startup_mode_fast">Mulai cepat</string>
-    <string name="sub_startup_mode_preferred">Bahasa yang diutamakan</string>
-    <string name="sub_startup_mode_all">Semua subtitle addon</string>
-    <string name="sub_startup_mode_fast_desc">Mulai pemutaran segera. Memilih subtitle addon mungkin memuat ulang pemutar sekali.</string>
-    <string name="sub_startup_mode_preferred_desc">Pra-ambil subtitle addon sebelum pemutaran dan lampirkan trek bahasa yang diutamakan/kedua.</string>
-    <string name="sub_startup_mode_all_desc">Pra-ambil dan lampirkan semua subtitle addon sebelum pemutaran. Startup paling lambat.</string>
 
     <!-- PlaybackAutoPlaySettings -->
     <string name="autoplay_reuse_last_link">Gunakan Ulang Tautan Terakhir</string>

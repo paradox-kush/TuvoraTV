@@ -2,9 +2,11 @@ package com.nuvio.tv.data.local
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.nuvio.tv.core.analytics.resolveDiagnosticsEnabled
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -14,7 +16,10 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private val Context.sentrySettingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "sentry_settings")
+private val Context.sentrySettingsDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "sentry_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
 
 @Singleton
 class SentrySettingsDataStore @Inject constructor(

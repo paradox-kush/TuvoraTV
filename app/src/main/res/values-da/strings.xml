@@ -139,7 +139,9 @@
     <string name="continue_watching">Fortsæt med at se</string>
     <string name="cw_upcoming">Kommende</string>
     <string name="cw_next_up">Næste</string>
+    <string name="cw_next_up_short">Næste</string>
     <string name="cw_new_episode">Ny episode</string>
+    <string name="cw_new_episode_short">Ny</string>
     <string name="cw_new_season">Ny sæson</string>
     <string name="cw_resume">Genoptag</string>
     <string name="cw_percent_watched">%1$d%% set</string>
@@ -152,6 +154,14 @@
     <plurals name="cw_airs_in_days">
         <item quantity="one">Sendes om %d dag</item>
         <item quantity="other">Sendes om %d dage</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">I dag</string>
+    <string name="cw_airs_tomorrow_short">I morgen</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Om %d dag</item>
+        <item quantity="other">Om %d dage</item>
     </plurals>
     <string name="cw_action_go_to_details">Gå til detaljer</string>
     <string name="cw_action_start_from_beginning">Start fra begyndelsen</string>
@@ -626,7 +636,6 @@
     <string name="audio_decoder_prefer_app">Foretræk app-decodere (FFmpeg)</string>
     <string name="audio_decoder_priority">Decoder-prioritet</string>
     <string name="audio_enable_downmix_title">Aktivér downmix</string>
-    <string name="audio_enable_downmix_subtitle">Bruger FFmpeg-downmix-stien. Når deaktiveret følger lyden den tidligere Android/enheds-sti.</string>
     <string name="audio_tunneled">Tunneleret afspilning</string>
     <string name="audio_tunneled_sub">Lyd/video-synkronisering på hardwareniveau. Kan forbedre afspilning på nogle Android TV-enheder</string>
     <string name="audio_force_optical_passthrough">Gennemtving AC-3 Transkodning (Optical/SPDIF)</string>
@@ -719,13 +728,6 @@
     <string name="sub_org_none_desc">Vis undertekster i standard addon-resultatrækkefølge.</string>
     <string name="sub_org_by_lang_desc">Gruppér undertekster efter sprog.</string>
     <string name="sub_org_by_addon_desc">Gruppér undertekster efter addon-kilde.</string>
-    <string name="sub_startup_mode_title">Addon-undertekstindlæsning</string>
-    <string name="sub_startup_mode_fast">Hurtig opstart</string>
-    <string name="sub_startup_mode_preferred">Foretrukne sprog</string>
-    <string name="sub_startup_mode_all">Alle addon-undertekster</string>
-    <string name="sub_startup_mode_fast_desc">Start afspilning med det samme. Valg af addon-undertekster kan genindlæse afspilleren én gang.</string>
-    <string name="sub_startup_mode_preferred_desc">Forhentning af addon-undertekster før afspilning og tilknyt foretrukne/sekundære sprogspor.</string>
-    <string name="sub_startup_mode_all_desc">Forhent og tilknyt alle addon-undertekster før afspilning. Langsomst opstart.</string>
 
     <string name="autoplay_reuse_last_link">Genbrug sidste link</string>
     <string name="autoplay_reuse_last_link_sub">Afspil automatisk din senest fungerende stream for samme film/episode når cachen stadig er gyldig</string>

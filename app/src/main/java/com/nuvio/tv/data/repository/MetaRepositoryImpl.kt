@@ -43,8 +43,25 @@ class MetaRepositoryImpl @Inject constructor(
 ) : MetaRepository {
     companion object {
         private const val TAG = "MetaRepository"
-        /** Default TTL when addon response has no Cache-Control header (24 hours). */
-        private const val DEFAULT_TTL_MS = 24L * 60 * 60 * 1000
+        /** Default TTL when addon response has no Cache-Control header (6 hours). */
+        private const val DEFAULT_TTL_MS = 6L * 60 * 60 * 1000
+        /** Minimum TTL for meta responses even when server says no-cache/no-store (5 minutes).
+         *  Prevents excessive re-fetching on every details screen visit for addons
+         *  that don't set meaningful Cache-Control headers. */
+        private const val MIN_META_TTL_MS = 5L * 60 * 1000
+        private const val MAX_META_CACHE_ENTRIES = 32
+        private const val MAX_PRIMARY_META_CACHE_ENTRIES = 16
+    }
+
+    /**
+     * Creates a thread-safe LRU map that evicts oldest entries when [maxSize] is exceeded.
+     */
+    private fun <K, V> createLruCacheMap(maxSize: Int): MutableMap<K, V> {
+        val lru = object : LinkedHashMap<K, V>(maxSize, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean =
+                size > maxSize
+        }
+        return java.util.Collections.synchronizedMap(lru)
     }
 
     /** Internal result type for the deferred meta lookup to distinguish
@@ -80,10 +97,10 @@ class MetaRepositoryImpl @Inject constructor(
 
     // In-memory cache: "addonBaseUrl|type:id" -> CachedMeta with TTL.
     // Respects Cache-Control max-age from addon responses.
-    private val metaCache = ConcurrentHashMap<String, CachedMeta>()
+    private val metaCache = createLruCacheMap<String, CachedMeta>(MAX_META_CACHE_ENTRIES)
     // Separate cache for full meta fetched from addons (bypasses catalog-level cache)
-    private val addonMetaCache = ConcurrentHashMap<String, CachedMeta>()
-    private val primaryAddonMetaCache = ConcurrentHashMap<String, CachedMeta>()
+    private val addonMetaCache = createLruCacheMap<String, CachedMeta>(MAX_META_CACHE_ENTRIES)
+    private val primaryAddonMetaCache = createLruCacheMap<String, CachedMeta>(MAX_PRIMARY_META_CACHE_ENTRIES)
 
     // In-flight deduplication: prevents concurrent coroutines from firing duplicate requests
     private val inFlightMeta = ConcurrentHashMap<String, Deferred<Meta?>>()
@@ -115,7 +132,9 @@ class MetaRepositoryImpl @Inject constructor(
                         val metaDto = response.body()?.meta ?: return@async null
                         val meta = metaDto.toDomain(context.getString(R.string.episodes_episode))
                         val ttlMs = parseMaxAgeMs(response.headers()["Cache-Control"])
-                        metaCache[cacheKey] = CachedMeta(meta, System.currentTimeMillis() + ttlMs)
+                        val cached = CachedMeta(meta, System.currentTimeMillis() + ttlMs)
+                        metaCache[cacheKey] = cached
+                        addonMetaCache["$type:$id"] = cached
                         meta
                     } else {
                         null
@@ -248,6 +267,22 @@ class MetaRepositoryImpl @Inject constructor(
                 return@flow
             }
             addonMetaCache.remove(cacheKey)
+        }
+
+        inFlightAddonMeta[cacheKey]?.let { existingDeferred ->
+            when (val lookupResult = existingDeferred.await()) {
+                is MetaLookupResult.Found -> {
+                    emit(NetworkResult.Success(lookupResult.meta))
+                    return@flow
+                }
+                is MetaLookupResult.SourceSufficient -> {
+                    emit(NetworkResult.Error("Source addon sufficient", NetworkResult.SOURCE_SUFFICIENT_CODE))
+                    return@flow
+                }
+                is MetaLookupResult.NotFound -> {
+                    // Fall through — the in-flight request failed, try ourselves
+                }
+            }
         }
 
         emit(NetworkResult.Loading)
@@ -670,14 +705,17 @@ class MetaRepositoryImpl @Inject constructor(
     /**
      * Parses the max-age directive from a Cache-Control header value.
      * Returns the TTL in milliseconds, or [DEFAULT_TTL_MS] if the header is
-     * missing, malformed, or specifies no-store/no-cache.
+     * missing or malformed. Applies [MIN_META_TTL_MS] as a floor so that
+     * addons responding with no-cache/no-store/max-age=0 still get a short
+     * grace period, preventing re-fetches on every details screen visit.
      */
     private fun parseMaxAgeMs(cacheControl: String?): Long {
         if (cacheControl == null) return DEFAULT_TTL_MS
         val parsed = CacheControl.parse(okhttp3.Headers.headersOf("Cache-Control", cacheControl))
-        if (parsed.noStore || parsed.noCache) return 0L
+        if (parsed.noStore || parsed.noCache) return MIN_META_TTL_MS
         val maxAgeSec = parsed.maxAgeSeconds
-        return if (maxAgeSec >= 0) maxAgeSec * 1000L else DEFAULT_TTL_MS
+        val ttlMs = if (maxAgeSec >= 0) maxAgeSec * 1000L else DEFAULT_TTL_MS
+        return maxOf(ttlMs, MIN_META_TTL_MS)
     }
 
     override fun clearCache() {
@@ -687,5 +725,10 @@ class MetaRepositoryImpl @Inject constructor(
         inFlightMeta.clear()
         inFlightAddonMeta.clear()
         inFlightPrimaryMeta.clear()
+    }
+
+    override fun getCachedMeta(type: String, id: String): Meta? {
+        val cacheKey = "$type:$id"
+        return addonMetaCache[cacheKey]?.takeIf { !it.isExpired() }?.meta
     }
 }

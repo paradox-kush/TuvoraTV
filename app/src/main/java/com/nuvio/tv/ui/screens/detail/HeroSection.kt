@@ -179,8 +179,7 @@ fun HeroContentSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize(
-                    animationSpec = tween(600),
-                    alignment = Alignment.BottomStart
+                    animationSpec = tween(600)
                 )
                 .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.lg),
             verticalArrangement = Arrangement.Bottom
@@ -240,12 +239,7 @@ fun HeroContentSection(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         PlayButton(
-                            text = nextToWatch?.displayText ?: when {
-                                nextEpisode != null && nextEpisode.season != null && nextEpisode.episode != null ->
-                                    stringResource(R.string.hero_play_episode, nextEpisode.season, nextEpisode.episode)
-                                nextEpisode != null -> stringResource(R.string.hero_play)
-                                else -> stringResource(R.string.hero_play)
-                            },
+                            text = nextToWatch?.displayText,
                             onClick = onPlayClick,
                             onLongPress = onPlayLongPress,
                             focusRequester = playButtonFocusRequester,
@@ -417,7 +411,7 @@ fun HeroContentSection(
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun PlayButton(
-    text: String,
+    text: String?,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     focusRequester: FocusRequester? = null,
@@ -494,7 +488,7 @@ private fun PlayButton(
         ),
         border = ButtonDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = RoundedCornerShape(NuvioTheme.spacing.xxl)
             )
         ),
@@ -502,17 +496,29 @@ private fun PlayButton(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+            modifier = Modifier.animateContentSize(
+                animationSpec = tween(
+                    durationMillis = NuvioMotion.tokens.durations.fast,
+                    easing = NuvioMotion.tokens.easings.standard
+                )
+            )
         ) {
             Icon(
                 painter = playPainter,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp)
             )
-            Text(
-                text = text,
-                style = MaterialTheme.typography.labelLarge
-            )
+            AnimatedVisibility(
+                visible = text != null,
+                enter = fadeIn(animationSpec = tween(NuvioMotion.tokens.durations.fast)),
+                exit = fadeOut(animationSpec = tween(NuvioMotion.tokens.durations.quick))
+            ) {
+                Text(
+                    text = text ?: "",
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
         }
     }
 }
@@ -543,7 +549,7 @@ private fun ActionIconButtonPainter(
         ),
         border = IconButtonDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = CircleShape
             )
         ),
@@ -628,7 +634,7 @@ private fun ActionIconButton(
         ),
         border = IconButtonDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = CircleShape
             )
         ),

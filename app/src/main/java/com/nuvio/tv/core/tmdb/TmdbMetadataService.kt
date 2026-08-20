@@ -33,10 +33,13 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 private const val TAG = "TmdbMetadataService"
 private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
 private const val TMDB_TRAILER_FALLBACK_LANGUAGE = "en-US"
+private const val TMDB_SEASON_REQUEST_CONCURRENCY = 4
 private val YOUTUBE_VIDEO_ID_REGEX = Regex("^[a-zA-Z0-9_-]{11}$")
 
 @Singleton
@@ -87,8 +90,8 @@ class TmdbMetadataService(
                     append(",en,null")
                 }
 
-                // Fetch details, credits, images, and alt titles in parallel
-                val (details, credits, images, ageRating, altTitles) = coroutineScope {
+                // Fetch details, credits, images, alt titles, and trailers in parallel
+                val (details, credits, images, ageRating, altTitles, trailers) = coroutineScope {
                     val detailsDeferred = async {
                         when (tmdbType) {
                             "tv" -> tmdbApi.getTvDetails(numericId, TMDB_API_KEY, normalizedLanguage)
@@ -155,23 +158,26 @@ class TmdbMetadataService(
                                 .mapNotNull { it.title?.trim()?.takeIf(String::isNotBlank) }
                         }.getOrDefault(emptyList())
                     }
-                    Quintuple(
+                    val trailersDeferred = async {
+                        fetchTmdbTrailers(
+                            tmdbId = numericId,
+                            tmdbType = tmdbType,
+                            preferredLanguage = normalizedLanguage
+                        )
+                    }
+                    Sextuple(
                         detailsDeferred.await(),
                         creditsDeferred.await(),
                         imagesDeferred.await(),
                         ageRatingDeferred.await(),
-                        altTitlesDeferred.await()
+                        altTitlesDeferred.await(),
+                        trailersDeferred.await()
                     )
                 }
 
                 val genres = details?.genres?.mapNotNull { genre ->
                     genre.name.trim().takeIf { name -> name.isNotBlank() }
                 } ?: emptyList()
-                val trailers = fetchTmdbTrailers(
-                    tmdbId = numericId,
-                    tmdbType = tmdbType,
-                    preferredLanguage = normalizedLanguage
-                )
                 val description = details?.overview?.takeIf { it.isNotBlank() }
                 val status = details?.status?.trim()?.takeIf { it.isNotBlank() }
                 val releaseInfo = if (tmdbType == "tv") {
@@ -500,23 +506,37 @@ class TmdbMetadataService(
         episodeInFlight.putIfAbsent(cacheKey, requestDeferred)?.let { existing ->
             return@withContext existing.await()
         }
-        val result = mutableMapOf<Pair<Int, Int>, TmdbEpisodeEnrichment>()
-
         try {
-            seasonNumbers.distinct().forEach { season ->
-                try {
-                    val response = tmdbApi.getTvSeasonDetails(numericId, season, TMDB_API_KEY, normalizedLanguage)
-                    val episodes = response.body()?.episodes.orEmpty()
-                    episodes.forEach { ep ->
-                        val epNum = ep.episodeNumber ?: return@forEach
-                        result[season to epNum] = ep.toEnrichment()
+            val semaphore = Semaphore(TMDB_SEASON_REQUEST_CONCURRENCY)
+            val seasonResults = coroutineScope {
+                seasonNumbers.distinct().map { season ->
+                    async {
+                        semaphore.withPermit {
+                            try {
+                                val response = tmdbApi.getTvSeasonDetails(
+                                    numericId,
+                                    season,
+                                    TMDB_API_KEY,
+                                    normalizedLanguage
+                                )
+                                response.body()?.episodes.orEmpty().mapNotNull { episode ->
+                                    val episodeNumber = episode.episodeNumber ?: return@mapNotNull null
+                                    (season to episodeNumber) to episode.toEnrichment()
+                                }.toMap()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to fetch TMDB season $season: ${e.message}")
+                                emptyMap()
+                            }
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to fetch TMDB season $season: ${e.message}")
-                }
+                }.awaitAll()
             }
 
-            val finalResult = result.toMap()
+            val finalResult = buildMap {
+                seasonResults.forEach(::putAll)
+            }
             if (finalResult.isNotEmpty()) {
                 episodeCache[cacheKey] = finalResult
             }
@@ -1271,6 +1291,15 @@ private data class Quintuple<A, B, C, D, E>(
     val third: C,
     val fourth: D,
     val fifth: E
+)
+
+private data class Sextuple<A, B, C, D, E, F>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D,
+    val fifth: E,
+    val sixth: F
 )
 
 // Fallback regions for language codes that don't carry a region tag (e.g. "fr"

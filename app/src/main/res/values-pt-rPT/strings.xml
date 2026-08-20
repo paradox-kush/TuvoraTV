@@ -135,7 +135,9 @@
     <string name="continue_watching">Continuar a ver</string>
     <string name="cw_upcoming">Brevemente</string>
     <string name="cw_next_up">A seguir</string>
+    <string name="cw_next_up_short">Seguinte</string>
     <string name="cw_new_episode">Novo episódio</string>
+    <string name="cw_new_episode_short">Novo</string>
     <string name="cw_new_season">Nova temporada</string>
     <string name="cw_resume">Retomar</string>
     <string name="cw_percent_watched">%1$d%% visto</string>
@@ -148,6 +150,14 @@
     <plurals name="cw_airs_in_days">
         <item quantity="one">Estreia daqui a %d dia</item>
         <item quantity="other">Estreia daqui a %d dias</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">Hoje</string>
+    <string name="cw_airs_tomorrow_short">Amanhã</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Em %d dia</item>
+        <item quantity="other">Em %d dias</item>
     </plurals>
     <string name="cw_action_go_to_details">Ir para os detalhes</string>
     <string name="cw_action_start_from_beginning">Começar do início</string>
@@ -608,7 +618,6 @@
     <string name="audio_decoder_prefer_app">Preferir descodificadores da app (FFmpeg)</string>
     <string name="audio_decoder_priority">Prioridade do descodificador</string>
     <string name="audio_enable_downmix_title">Ativar downmix</string>
-    <string name="audio_enable_downmix_subtitle">Utiliza o caminho de downmix do FFmpeg. Quando desativado, o áudio segue o caminho anterior do Android/dispositivo.</string>
     <string name="audio_tunneled">Reprodução em túnel (Tunneled)</string>
     <string name="audio_tunneled_sub">Sincronização de áudio/vídeo ao nível do hardware. Pode melhorar a reprodução em alguns dispositivos Android TV</string>
     <!-- DV7 Handling Mode -->
@@ -696,13 +705,6 @@
     <string name="sub_org_none_desc">Mostrar as legendas na ordem de resultados predefinida do addon.</string>
     <string name="sub_org_by_lang_desc">Agrupar legendas por idioma.</string>
     <string name="sub_org_by_addon_desc">Agrupar legendas pela origem do addon.</string>
-    <string name="sub_startup_mode_title">Carregamento de legendas de addons</string>
-    <string name="sub_startup_mode_fast">Início rápido</string>
-    <string name="sub_startup_mode_preferred">Idiomas preferidos</string>
-    <string name="sub_startup_mode_all">Todas as legendas de addons</string>
-    <string name="sub_startup_mode_fast_desc">Iniciar a reprodução imediatamente. Selecionar legendas de addons pode recarregar o leitor uma vez.</string>
-    <string name="sub_startup_mode_preferred_desc">Pré-carregar as legendas de addons antes da reprodução e anexar as pistas dos idiomas preferidos/secundários.</string>
-    <string name="sub_startup_mode_all_desc">Pré-carregar e anexar todas as legendas de addons antes da reprodução. Início mais lento.</string>
     <string name="autoplay_reuse_last_link">Reutilizar último link</string>
     <string name="autoplay_reuse_last_link_sub">Reproduzir automaticamente o teu último stream funcional para este mesmo filme/episódio enquanto o cache for válido</string>
     <string name="autoplay_last_link_cache">Duração do cache do último link</string>

@@ -121,8 +121,8 @@ android {
         applicationId = "com.tuvora.tv"
         minSdk = 24
         targetSdk = 36
-        versionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull() ?: 1040
-        versionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() } ?: "0.8.1-beta"
+        versionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull() ?: 1047
+        versionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() } ?: "0.8.6-beta"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -136,6 +136,9 @@ android {
         buildConfigField("String", "SIMKL_CLIENT_ID", buildConfigString(resolveProperty(devProperties, localProperties, "SIMKL_CLIENT_ID")))
         buildConfigField("String", "SIMKL_APP_NAME", buildConfigString(resolveProperty(devProperties, localProperties, "SIMKL_APP_NAME", "tuvora")))
         buildConfigField("String", "TMDB_API_KEY", "\"${localProperties.getProperty("TMDB_API_KEY", "")}\"")
+        buildConfigField("boolean", "FEATURE_CUSTOM_SERVER_CONNECTIONS_ENABLED", "false")
+        buildConfigField("String", "SUPPORTERS_API_BASE_URL", buildConfigString(localProperties.getProperty("SUPPORTERS_API_BASE_URL", "https://tuvora.co/")))
+        buildConfigField("String", "SUPPORT_URL", buildConfigString(localProperties.getProperty("SUPPORT_URL", "https://tuvora.co/")))
         // Fork keeps its own TV-login approver + IPTV pairing page (upstream's nuvio.tv host
         // serves THEIR backend).
         buildConfigField("String", "TV_LOGIN_WEB_BASE_URL", "\"${localProperties.getProperty("TV_LOGIN_WEB_BASE_URL", "https://qsonncwknzdixurjyqap.functions.supabase.co/tv-login-approve")}\"")
@@ -585,6 +588,7 @@ dependencies {
     implementation(libs.supabase.auth)
     implementation(libs.supabase.postgrest)
     implementation(libs.supabase.realtime)
+    implementation(libs.supabase.storage)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.sentry.android)
 

@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.home
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.ui.theme.NuvioTheme
 
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import android.util.Log
@@ -90,6 +91,7 @@ fun HomeScreen(
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val modernPresentation by viewModel.modernHomePresentation.collectAsStateWithLifecycle()
     val initialCwResolved by viewModel.initialCwResolved.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
     val effectiveAutoplayEnabled by viewModel.effectiveAutoplayEnabled.collectAsStateWithLifecycle(
@@ -100,7 +102,7 @@ fun HomeScreen(
     val hasHeroContent = uiState.heroItems.isNotEmpty()
     val modernPresentationReady =
         uiState.homeLayout != HomeLayout.MODERN ||
-            uiState.modernHomePresentation.rows.list.isNotEmpty() ||
+            modernPresentation.rows.list.isNotEmpty() ||
             (uiState.heroSectionEnabled && hasHeroContent && !hasCatalogContent && !hasCollectionContent)
     var showHomeContentWithAnimation by rememberSaveable { mutableStateOf(false) }
     var hasShownInitialHomeContent by rememberSaveable { mutableStateOf(false) }
@@ -204,7 +206,7 @@ fun HomeScreen(
     val noAddonsError = stringResource(R.string.home_error_no_addons)
     val noCatalogAddonsError = stringResource(R.string.home_error_no_catalog_addons)
     val hasAnyContent = uiState.catalogRows.isNotEmpty() ||
-        uiState.continueWatchingItems.isNotEmpty() ||
+        (uiState.continueWatchingEnabled && uiState.continueWatchingItems.isNotEmpty()) ||
         uiState.heroItems.isNotEmpty() ||
         hasCollectionContent
     val showStartupLoader = when {
@@ -216,6 +218,9 @@ fun HomeScreen(
         !uiState.isLoading && !hasAnyContent -> !homeStableGateReleased
         else -> !homeStableGateReleased || !modernPresentationReady || !showHomeContentWithAnimation
     }
+
+    // Reports the home screen as fully drawn once it leaves the loading state so startup timing is measurable and post-launch work can be deferred.
+    ReportDrawnWhen { !showStartupLoader }
 
     Box(
         modifier = Modifier.fillMaxSize()
@@ -592,6 +597,7 @@ private fun ModernHomeRoute(
 ) {
     val focusState by viewModel.focusState.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
+    val modernPresentation by viewModel.modernHomePresentation.collectAsStateWithLifecycle()
     val enrichingItemId by viewModel.enrichingItemId.collectAsStateWithLifecycle()
     val lastEnrichedPreview by viewModel.lastEnrichedPreview.collectAsStateWithLifecycle()
     val enrichedPreviews by viewModel.enrichedPreviews.collectAsStateWithLifecycle()
@@ -623,6 +629,7 @@ private fun ModernHomeRoute(
     }
     ModernHomeContent(
         uiState = uiState,
+        modernPresentation = modernPresentation,
         focusState = focusState,
         scrollToTopTrigger = scrollToTopTrigger,
         enrichingItemId = enrichingItemId,

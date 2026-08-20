@@ -36,6 +36,7 @@ import com.nuvio.tv.ui.screens.home.HomeRow
 import com.nuvio.tv.ui.screens.home.HomeUiState
 import com.nuvio.tv.ui.screens.home.ModernCarouselRowBuildCache
 import com.nuvio.tv.ui.screens.home.ModernHomePresentationInput
+import com.nuvio.tv.domain.model.PLACEHOLDER_IMAGE_URL
 import com.nuvio.tv.ui.screens.home.buildModernHomePresentation
 import com.nuvio.tv.ui.screens.home.homeItemStatusKey
 import com.nuvio.tv.ui.screens.home.isPlaceholderItemId
@@ -133,6 +134,7 @@ class FolderDetailViewModel @Inject constructor(
     private var movieWatchedJob: Job? = null
     private var enrichFocusJob: Job? = null
     private val enrichedItemIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val backgroundMetaPrefetchedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val _enrichingItemId = MutableStateFlow<String?>(null)
     val enrichingItemId: StateFlow<String?> = _enrichingItemId.asStateFlow()
     private val _enrichedPreviews = MutableStateFlow<Map<String, MetaPreview>>(emptyMap())
@@ -282,7 +284,7 @@ class FolderDetailViewModel @Inject constructor(
                             type = com.nuvio.tv.domain.model.ContentType.fromString(apiType),
                             rawType = apiType,
                             name = " ",
-                            poster = "placeholder://empty",
+                            poster = PLACEHOLDER_IMAGE_URL,
                             posterShape = com.nuvio.tv.domain.model.PosterShape.POSTER,
                             background = null,
                             logo = null,
@@ -442,7 +444,7 @@ class FolderDetailViewModel @Inject constructor(
                             type = com.nuvio.tv.domain.model.ContentType.fromString(apiType),
                             rawType = apiType,
                             name = " ",
-                            poster = "placeholder://empty",
+                            poster = PLACEHOLDER_IMAGE_URL,
                             posterShape = com.nuvio.tv.domain.model.PosterShape.POSTER,
                             background = null,
                             logo = null,
@@ -1128,6 +1130,17 @@ class FolderDetailViewModel @Inject constructor(
         enrichFocusJob?.cancel()
         enrichFocusJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             kotlinx.coroutines.delay(350)
+
+            // Background-prefetch meta from addons so detail screen opens instantly.
+            if (backgroundMetaPrefetchedIds.add(item.id)) {
+                viewModelScope.launch {
+                    metaRepository.getMetaFromAllAddons(
+                        type = item.apiType,
+                        id = item.id
+                    ).first { it !is com.nuvio.tv.core.network.NetworkResult.Loading }
+                }
+            }
+
             val tmdbSettings = tmdbSettingsDataStore.settings.first()
             val homeLayout = _uiState.value.homeLayout
             val tmdbEnabled = tmdbSettings.enabled &&

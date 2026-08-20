@@ -106,7 +106,12 @@ fun DiscoverScreen(
                     pendingDiscoverRestoreOnResume = true
                     onNavigateToDetail(itemId, itemType, addonBaseUrl)
                 },
-                onDiscoverItemFocused = { discoverFocusedItemIndex = it },
+                onDiscoverItemFocused = { index ->
+                    discoverFocusedItemIndex = index
+                    uiState.discoverResults.getOrNull(index)?.let { item ->
+                        viewModel.prefetchMetaOnFocus(item.id, item.rawType)
+                    }
+                },
                 onSelectType = {
                     discoverFocusedItemIndex = 0
                     viewModel.onEvent(SearchEvent.SelectDiscoverType(it))

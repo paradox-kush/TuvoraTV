@@ -489,6 +489,7 @@ fun MetaDetailsScreen(
                     moreLikeThisSource = uiState.moreLikeThisSource,
                     collection = uiState.collection,
                     collectionName = uiState.collectionName,
+                    relatedWatchedStatus = uiState.relatedWatchedStatus,
                     episodeImdbRatings = uiState.episodeImdbRatings,
                     isEpisodeRatingsLoading = uiState.isEpisodeRatingsLoading,
                     episodeRatingsError = uiState.episodeRatingsError,
@@ -870,6 +871,7 @@ private fun MetaDetailsContent(
     moreLikeThisSource: MoreLikeThisSource?,
     collection: List<MetaPreview>,
     collectionName: String?,
+    relatedWatchedStatus: Map<String, Boolean> = emptyMap(),
     episodeImdbRatings: Map<Pair<Int, Int>, Double>,
     isEpisodeRatingsLoading: Boolean,
     episodeRatingsError: String?,
@@ -1887,6 +1889,7 @@ private fun MetaDetailsContent(
                                     onRestoreFocusHandled = {
                                         clearPendingRestore()
                                     },
+                                    isItemWatched = { item -> relatedWatchedStatus["${item.id}|${item.apiType}"] == true },
                                     onItemClick = { item ->
                                         markMoreLikeThisRestore(item.id)
                                         onNavigateToDetail(item.id, item.apiType, null)
@@ -1922,6 +1925,7 @@ private fun MetaDetailsContent(
                                     onRestoreFocusHandled = {
                                         clearPendingRestore()
                                     },
+                                    isItemWatched = { item -> relatedWatchedStatus["${item.id}|${item.apiType}"] == true },
                                     onItemClick = { item ->
                                         markCollectionRestore(item.id)
                                         onNavigateToDetail(item.id, item.apiType, null)
@@ -1982,6 +1986,7 @@ private fun MetaDetailsContent(
                             markCollectionRestore(item.id)
                             onNavigateToDetail(item.id, item.apiType, null)
                         },
+                        isItemWatched = { item -> relatedWatchedStatus["${item.id}|${item.apiType}"] == true },
                         onItemLongPress = { item ->
                             onPosterLongPress(item)
                         }

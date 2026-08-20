@@ -139,7 +139,9 @@
     <string name="continue_watching">Continuar Assistindo</string>
     <string name="cw_upcoming">Em breve</string>
     <string name="cw_next_up">A Seguir</string>
+    <string name="cw_next_up_short">Próximo</string>
     <string name="cw_new_episode">Novo Episódio</string>
+    <string name="cw_new_episode_short">Novo</string>
     <string name="cw_new_season">Nova Temporada</string>
     <string name="cw_resume">Continuar</string>
     <string name="cw_percent_watched">%1$d%% Assistido</string>
@@ -148,11 +150,19 @@
     <string name="cw_almost_done">Quase Acabando</string>
     <string name="cw_airs_date">Estreia %1$s</string>
     <string name="cw_airs_today">Estreia hoje</string>
-    <string name="cw_airs_tomorrow">Estreia amanhã</string>
-    <plurals name="cw_airs_in_days">
-        <item quantity="one">Estreia em %d dia</item>
-        <item quantity="other">Estreia em %d dias</item>
-    </plurals>
+    <string name="cw_airs_tomorrow">Estreia amanhã</string>
+    <plurals name="cw_airs_in_days">
+        <item quantity="one">Estreia em %d dia</item>
+        <item quantity="other">Estreia em %d dias</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">Hoje</string>
+    <string name="cw_airs_tomorrow_short">Amanhã</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Em %d dia</item>
+        <item quantity="other">Em %d dias</item>
+    </plurals>
     <string name="cw_action_go_to_details">Ver detalhes</string>
     <string name="cw_action_start_from_beginning">Assistir do início</string>
     <string name="cw_action_remove">Remover</string>
@@ -667,7 +677,6 @@
     <string name="audio_decoder_prefer_app">Preferir decodificadores do app</string>
     <string name="audio_decoder_priority">Prioridade do decodificador</string>
     <string name="audio_enable_downmix_title">Ativar mixagem de áudio (downmix)</string>
-    <string name="audio_enable_downmix_subtitle">Utiliza a mixagem do FFmpeg. Se desativado, o áudio segue o caminho padrão do dispositivo/Android.</string>
     <string name="audio_tunneled">Reprodução tunneled</string>
     <string name="audio_tunneled_sub">Melhora a sincronização de áudio e vídeo usando o hardware.</string>
     <string name="audio_force_optical_passthrough">Forçar transcodificação AC-3 (Óptico/SPDIF)</string>
@@ -760,13 +769,6 @@
     <string name="sub_org_none_desc">Mostrar na ordem padrão dos addons</string>
     <string name="sub_org_by_lang_desc">Agrupar por idioma</string>
     <string name="sub_org_by_addon_desc">Agrupar por addon</string>
-    <string name="sub_startup_mode_title">Carregamento de legendas</string>
-    <string name="sub_startup_mode_fast">Início rápido</string>
-    <string name="sub_startup_mode_preferred">Idiomas preferidos</string>
-    <string name="sub_startup_mode_all">Todas as legendas</string>
-    <string name="sub_startup_mode_fast_desc">Início imediato, mas pode causar um breve reinício do player.</string>
-    <string name="sub_startup_mode_preferred_desc">Busca idiomas preferidos antes de iniciar</string>
-    <string name="sub_startup_mode_all_desc">Busca todas antes de iniciar, mais lento</string>
 
     <string name="autoplay_reuse_last_link">Reutilizar último link</string>
     <string name="autoplay_reuse_last_link_sub">Use o último link válido se o cache estiver ativo.</string>

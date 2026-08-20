@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
-import com.nuvio.tv.data.mapper.toDomain
+import com.nuvio.tv.data.mapper.toDomainOrNull
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.ContentType
@@ -47,7 +47,10 @@ class CatalogRepositoryImpl @Inject constructor(
 
         when (val result = safeApiCall(context) { api.getCatalog(url) }) {
             is NetworkResult.Success -> {
-                val items = result.data.metas.map { it.toDomain(type, addonBaseUrl) }.distinctBy { it.id }
+                val rawItemCount = result.data.metas.size
+                val items = result.data.metas
+                    .mapNotNull { it?.toDomainOrNull(type, addonBaseUrl) }
+                    .distinctBy { it.id }
                 Log.d(
                     TAG,
                     "Catalog fetch success addonId=$addonId type=$type catalogId=$catalogId items=${items.size}"
@@ -63,11 +66,11 @@ class CatalogRepositoryImpl @Inject constructor(
                     rawType = type,
                     items = items,
                     isLoading = false,
-                    hasMore = supportsSkip && items.isNotEmpty(),
+                    hasMore = supportsSkip && rawItemCount > 0,
                     currentPage = if (skipStep > 0) skip / skipStep else 0,
                     supportsSkip = supportsSkip,
                     skipStep = skipStep,
-                    nextSkip = if (supportsSkip && items.isNotEmpty()) skip + items.size else skip,
+                    nextSkip = if (supportsSkip && rawItemCount > 0) skip + rawItemCount else skip,
                     extraArgs = extraArgs
                 )
                 emit(NetworkResult.Success(catalogRow))

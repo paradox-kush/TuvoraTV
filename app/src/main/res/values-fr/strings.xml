@@ -141,7 +141,9 @@
     <string name="continue_watching">Continuer à regarder</string>
     <string name="cw_upcoming">À venir</string>
     <string name="cw_next_up">Épisode suivant</string>
+    <string name="cw_next_up_short">Suivant</string>
     <string name="cw_new_episode">Nouvel épisode</string>
+    <string name="cw_new_episode_short">Nouveau</string>
     <string name="cw_new_season">Nouvelle saison</string>
     <string name="cw_resume">Reprendre</string>
     <string name="cw_percent_watched">%1$d%% regardé</string>
@@ -155,6 +157,15 @@
         <item quantity="one">Diffusion dans %d jour</item>
         <item quantity="many">Diffusion dans %d jours</item>
         <item quantity="other">Diffusion dans %d jours</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">Aujourd\'hui</string>
+    <string name="cw_airs_tomorrow_short">Demain</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Dans %d jour</item>
+        <item quantity="many">Dans %d jours</item>
+        <item quantity="other">Dans %d jours</item>
     </plurals>
     <string name="cw_action_go_to_details">Voir les détails</string>
     <string name="cw_action_start_from_beginning">Revoir depuis le début</string>
@@ -625,13 +636,6 @@
     <string name="sub_org_none_desc">Afficher les sous-titres dans l’ordre par défaut de l’addon.</string>
     <string name="sub_org_by_lang_desc">Regrouper les sous-titres par langue.</string>
     <string name="sub_org_by_addon_desc">Regrouper les sous-titres par source d’addon.</string>
-    <string name="sub_startup_mode_title">Chargement des sous-titres des addons</string>
-    <string name="sub_startup_mode_fast">Démarrage rapide</string>
-    <string name="sub_startup_mode_preferred">Langues préférées</string>
-    <string name="sub_startup_mode_all">Tous les sous-titres des addons</string>
-    <string name="sub_startup_mode_fast_desc">Lance la lecture immédiatement. La sélection des sous-titres d’un addon peut entraîner un rechargement du lecteur.</string>
-    <string name="sub_startup_mode_preferred_desc">Précharger les sous-titres des addons avant la lecture et lier les pistes des langues préférées/secondaires.</string>
-    <string name="sub_startup_mode_all_desc">Précharger et lier tous les sous-titres des addons avant la lecture. Démarrage le plus lent.</string>
 
     <!-- PlaybackAutoPlaySettings -->
     <string name="autoplay_reuse_last_link">Réutiliser le dernier lien</string>
@@ -2465,7 +2469,6 @@
 
     <!-- Audio&#160;: downmix FFmpeg -->
     <string name="audio_enable_downmix_title">Activer le downmix</string>
-    <string name="audio_enable_downmix_subtitle">Utilise le chemin de downmix FFmpeg. Quand il est désactivé, l’audio suit le chemin Android/appareil précédent.</string>
     <string name="audio_number_of_channels">Nombre de canaux</string>
     <string name="audio_number_of_channels_desc">Définit la disposition des haut-parleurs utilisée pour le downmix FFmpeg.</string>
     <string name="audio_center_mix_label">Downmix&#160;: niveau du canal central</string>

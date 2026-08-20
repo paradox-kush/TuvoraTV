@@ -78,6 +78,7 @@ import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.ui.components.GridContentCard
 import com.nuvio.tv.ui.components.LocalCardDepthStyle
 import com.nuvio.tv.ui.components.GridContinueWatchingSection
+import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.ui.components.HeroCarousel
 import com.nuvio.tv.ui.components.PosterCardDefaults
 import com.nuvio.tv.ui.components.PosterCardStyle
@@ -150,7 +151,7 @@ fun GridHomeContent(
 
     // Offset for section indices: pre-items + continue watching item (if present)
     val gridItems = uiState.gridItems
-    val continueWatchingItems = uiState.continueWatchingItems
+    val continueWatchingItems = if (uiState.continueWatchingEnabled) uiState.continueWatchingItems else emptyList()
     val continueWatchingOffset = if (continueWatchingItems.isNotEmpty()) 1 else 0
 
     LaunchedEffect(gridItems, gridFocusState.hasSavedFocus, gridFocusState.focusedItemKey) {
@@ -451,13 +452,15 @@ fun GridHomeContent(
                             onRemoveContinueWatching(contentId, season, episode, isNextUp)
                         },
                         blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
-                        useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw
+                        useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
+                        cardStyle = uiState.continueWatchingCardStyle,
+                        cornerRadius = posterCardStyle.cornerRadius
                     )
                 }
             }
 
             // Emit Upcoming section if SPLIT_UPCOMING mode has upcoming items
-            if (uiState.upcomingItems.isNotEmpty()) {
+            if (uiState.continueWatchingEnabled && uiState.upcomingItems.isNotEmpty()) {
                 item(
                     key = "upcoming_section",
                     span = { GridItemSpan(maxLineSpan) },
@@ -505,7 +508,9 @@ fun GridHomeContent(
                             onRemoveContinueWatching(contentId, season, episode, isNextUp)
                         },
                         blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
-                        useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw
+                        useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
+                        cardStyle = uiState.continueWatchingCardStyle,
+                        cornerRadius = posterCardStyle.cornerRadius
                     )
                 }
             }
@@ -772,7 +777,7 @@ private fun SeeAllGridCard(
             ),
             border = CardDefaults.border(
                 focusedBorder = Border(
-                    border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioTheme.colors.FocusRing),
+                    border = NuvioTheme.focusRing.border(posterCardStyle.focusedBorderWidth),
                     shape = seeAllCardShape
                 )
             ),
@@ -863,7 +868,7 @@ private fun GridCollectionFolderCard(
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(posterCardStyle.focusedBorderWidth),
                 shape = cardShape
             )
         ),

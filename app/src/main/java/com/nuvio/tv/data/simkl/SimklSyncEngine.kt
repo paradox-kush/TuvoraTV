@@ -76,9 +76,19 @@ fun mergeSimklDelta(
     val merged = current.mapNotNull { entry -> entry.stableKey()?.let { key -> key to entry } }
         .toMap()
         .toMutableMap()
+    val deltaEntries = mutableListOf<SimklLibraryEntry>()
     delta.presentTypes().forEach { type ->
         delta.entriesFor(type).forEach { entry ->
             entry.stableKey()?.let { key -> merged[key] = entry }
+            deltaEntries += entry
+        }
+    }
+    deltaEntries.forEach { deltaEntry ->
+        val deltaMedia = deltaEntry.media ?: return@forEach
+        merged.entries.removeIf { (key, existing) ->
+            key != deltaEntry.stableKey() &&
+                existing.mediaType == deltaEntry.mediaType &&
+                existing.media?.matchesTarget(deltaMedia) == true
         }
     }
     return merged.values.sortedWith(simklEntryComparator)
