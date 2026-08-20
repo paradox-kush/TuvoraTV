@@ -10,6 +10,7 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.storage.Storage
 import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.http.HttpHeaders
@@ -91,6 +92,8 @@ class SyncBackendSupabaseProvider @Inject constructor(
             install(Postgrest)
             // Backs upstream's realtime sync-invalidation service.
             install(Realtime)
+            // Backs upstream's cosmetic ProfileBackgroundRepository (kept inert without a member backend).
+            install(Storage)
         }
         clientHolder = ClientHolder(backend = backend, client = client)
         return client

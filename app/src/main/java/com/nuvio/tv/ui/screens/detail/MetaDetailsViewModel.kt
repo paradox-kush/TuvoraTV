@@ -5,6 +5,9 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
+import com.nuvio.tv.ui.util.bucketContaining
+import com.nuvio.tv.ui.util.episodeBuckets
+import com.nuvio.tv.ui.util.sliceForBucket
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.tmdb.TmdbMetadataService
@@ -292,8 +295,7 @@ class MetaDetailsViewModel @Inject constructor(
                 state.copy(
                     nextToWatch = nextToWatch,
                     selectedSeason = nextSeason,
-                    episodesForSeason = getEpisodesForSeason(meta.videos, nextSeason)
-                )
+                ).withEpisodesForSeason(getEpisodesForSeason(meta.videos, nextSeason))
             } else {
                 state.copy(nextToWatch = nextToWatch)
             }
@@ -315,6 +317,7 @@ class MetaDetailsViewModel @Inject constructor(
     fun onEvent(event: MetaDetailsEvent) {
         when (event) {
             is MetaDetailsEvent.OnSeasonSelected -> selectSeason(event.season)
+            is MetaDetailsEvent.OnEpisodeRangeSelected -> selectEpisodeRange(event.label)
             is MetaDetailsEvent.OnEpisodeClick -> { /* Navigate to stream */ }
             is MetaDetailsEvent.OnCommentsModeSelected -> selectCommentsMode(event.mode)
             is MetaDetailsEvent.OnCommentsEpisodeSelected -> selectCommentsEpisode(event.video)
@@ -868,7 +871,7 @@ class MetaDetailsViewModel @Inject constructor(
                 error = null,
                 commentsEpisodeTarget = null,
                 shouldShowCommentsSection = traktCommentsEnabled && traktAuthenticated && supportsComments(meta)
-            )
+            ).withEpisodesForSeason(effectiveEpisodes)
         }
 
         // Calculate next to watch after meta is loaded
@@ -1543,9 +1546,36 @@ class MetaDetailsViewModel @Inject constructor(
         val meta = _uiState.value.meta ?: return
         val episodes = getEpisodesForSeason(meta.videos, season)
         _uiState.update {
+            it.copy(selectedSeason = season).withEpisodesForSeason(episodes)
+        }
+    }
+
+    /** Overlay a season's episodes plus the range buckets that page long seasons (fork feature). */
+    private fun MetaDetailsUiState.withEpisodesForSeason(
+        episodes: List<Video>,
+        resumeVideoId: String? = nextToWatch?.nextVideoId,
+    ): MetaDetailsUiState {
+        val ranges = episodeBuckets(episodes)
+        val resumeIndex = resumeVideoId
+            ?.let { id -> episodes.indexOfFirst { it.id == id } }
+            ?.takeIf { it >= 0 }
+            ?: 0
+        val bucket = ranges.bucketContaining(resumeIndex)
+        return copy(
+            allEpisodesForSeason = episodes,
+            episodeRanges = ranges,
+            selectedEpisodeRange = bucket?.label,
+            episodesForSeason = episodes.sliceForBucket(bucket),
+        )
+    }
+
+    private fun selectEpisodeRange(label: String) {
+        val state = _uiState.value
+        val bucket = state.episodeRanges.firstOrNull { it.label == label } ?: return
+        _uiState.update {
             it.copy(
-                selectedSeason = season,
-                episodesForSeason = episodes
+                selectedEpisodeRange = bucket.label,
+                episodesForSeason = it.allEpisodesForSeason.sliceForBucket(bucket)
             )
         }
     }

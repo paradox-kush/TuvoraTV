@@ -113,7 +113,8 @@ class ProfileSelectionViewModel @Inject constructor(
 
     private suspend fun loadAvatarCatalog(hasMemberAccess: Boolean) {
         try {
-            _avatarCatalog.value = avatarRepository.getAvatarCatalog(hasMemberAccess)
+            // Fork avatar catalog is the free preset set; membership gating is inert here.
+            _avatarCatalog.value = avatarRepository.getAvatarCatalog()
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

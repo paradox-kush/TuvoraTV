@@ -436,7 +436,7 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 ),
                 border = ButtonDefaults.border(
                     focusedBorder = Border(
-                        border = NuvioTheme.focusRing.border(NuvioTheme.spacing.hairline),
+                        border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
                         shape = RoundedCornerShape(10.dp)
                     )
                 )
@@ -549,7 +549,7 @@ internal fun LazyListScope.bufferAndNetworkSettingsItems(
                 ),
                 border = ButtonDefaults.border(
                     focusedBorder = Border(
-                        border = NuvioTheme.focusRing.border(NuvioTheme.spacing.hairline),
+                        border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
                         shape = RoundedCornerShape(10.dp)
                     )
                 )

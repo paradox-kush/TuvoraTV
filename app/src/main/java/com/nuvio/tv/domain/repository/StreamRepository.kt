@@ -18,7 +18,10 @@ interface StreamRepository {
         type: String,
         videoId: String,
         season: Int? = null,
-        episode: Int? = null
+        episode: Int? = null,
+        // Accepted for API parity with upstream's force-refresh call site. The fork re-fetches
+        // streams on every collect (no result cache at this layer), so it is always "fresh".
+        forceRefresh: Boolean = false
     ): Flow<NetworkResult<List<AddonStreams>>>
 
     /**
@@ -74,4 +77,10 @@ interface StreamRepository {
         streamName: String?,
         failedUrl: String
     ): String?
+
+    /**
+     * Pause/resume local (installed-plugin) stream search. Upstream gates its local-plugin
+     * scraping on this so an IPTV/direct play does not also fire a redundant addon search.
+     */
+    fun setLocalPluginSearchPaused(paused: Boolean)
 }

@@ -1,6 +1,8 @@
 package com.nuvio.tv.core.di
 
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
+import com.nuvio.tv.data.local.ServerConfigurationStore
+import com.nuvio.tv.domain.model.ServerConfiguration
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -8,6 +10,8 @@ import dagger.hilt.components.SingletonComponent
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.storage.Storage
+import io.github.jan.supabase.storage.storage
 import javax.inject.Singleton
 
 /**
@@ -34,4 +38,18 @@ object SupabaseModule {
     @Provides
     @Singleton
     fun provideSupabasePostgrest(provider: SyncBackendSupabaseProvider): Postgrest = provider.postgrest
+
+    // Backs upstream's cosmetic ProfileBackgroundRepository. Kept inert (no member backend) but the
+    // binding must exist for the Hilt graph to validate. Resolves through the switchable client.
+    @Provides
+    @Singleton
+    fun provideSupabaseStorage(provider: SyncBackendSupabaseProvider): Storage = provider.client.storage
+
+    // Backs upstream's (gated-off) custom-server ServerConnectionViewModel; the fork reads the
+    // active server from its own store so the Hilt graph validates even though the UI is inert.
+    @Provides
+    @Singleton
+    fun provideActiveServerConfiguration(
+        configurationStore: ServerConfigurationStore
+    ): ServerConfiguration = configurationStore.loadActive()
 }

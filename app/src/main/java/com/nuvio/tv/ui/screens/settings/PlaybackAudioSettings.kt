@@ -157,18 +157,18 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
                 enabled = enabled
             )
         }
-    }
 
-    item(key = "audio_remember_delay_per_device") {
-        ToggleSettingsItem(
-            icon = Icons.Default.Timer,
-            title = stringResource(R.string.audio_remember_delay_per_device),
-            subtitle = stringResource(R.string.audio_remember_delay_per_device_sub),
-            isChecked = playerSettings.rememberAudioDelayPerDevice,
-            onCheckedChange = onSetRememberAudioDelayPerDevice,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
+        item(key = "audio_remember_delay_per_device") {
+            ToggleSettingsItem(
+                icon = Icons.Default.Timer,
+                title = stringResource(R.string.audio_remember_delay_per_device),
+                subtitle = stringResource(R.string.audio_remember_delay_per_device_sub),
+                isChecked = playerSettings.rememberAudioDelayPerDevice,
+                onCheckedChange = onSetRememberAudioDelayPerDevice,
+                onFocused = onItemFocused,
+                enabled = enabled
+            )
+        }
     }
 
     if (isExoEngine) {
@@ -214,16 +214,14 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
                 icon = Icons.Default.Tune,
                 title = stringResource(R.string.audio_enable_downmix_title),
                 subtitle = stringResource(R.string.audio_enable_downmix_subtitle),
-                // Show off outside Prefer app decoders so a persisted value doesn't
-                // read as active (same pattern as optical passthrough / DV8.1-only toggles).
-                isChecked = playerSettings.effectiveDownmixEnabled,
+                isChecked = playerSettings.downmixEnabled,
                 onCheckedChange = onSetDownmixEnabled,
                 onFocused = onItemFocused,
-                enabled = enabled && playerSettings.isPreferAppDecoder
+                enabled = enabled
             )
         }
 
-        if (playerSettings.effectiveDownmixEnabled) {
+        if (playerSettings.downmixEnabled) {
             item(key = "audio_number_of_channels") {
                 NavigationSettingsItem(
                     icon = Icons.Default.VolumeUp,
@@ -253,14 +251,10 @@ internal fun LazyListScope.trailerAndAudioSettingsItems(
                 icon = Icons.Default.VolumeUp,
                 title = stringResource(R.string.audio_tunneled),
                 subtitle = stringResource(R.string.audio_tunneled_sub),
-                // Show off when prefer-app decoder is active so a persisted value
-                // doesn't read as active (same pattern as optical passthrough /
-                // DV8.1-only toggles). Downmix also requires prefer-app, so this
-                // covers that path too.
-                isChecked = playerSettings.effectiveTunnelingEnabled,
+                isChecked = playerSettings.tunnelingEnabled,
                 onCheckedChange = onSetTunnelingEnabled,
                 onFocused = onItemFocused,
-                enabled = enabled && playerSettings.isTunnelingCompatible
+                enabled = enabled
             )
         }
 

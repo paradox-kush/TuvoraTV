@@ -33,6 +33,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
@@ -53,6 +54,15 @@ class StreamRepositoryImpl @Inject constructor(
     private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
     private val xtreamStreamSource: com.nuvio.tv.core.iptv.match.XtreamStreamSource
 ) : StreamRepository {
+    // When paused, local (installed-plugin) stream search is skipped so an IPTV/direct play
+    // does not also fire a redundant addon scrape. Fork-appropriate one-shot gate (checked at
+    // search time) vs upstream's reactive flow — same intent, this codebase's semantics.
+    private val localPluginSearchPaused = MutableStateFlow(false)
+
+    override fun setLocalPluginSearchPaused(paused: Boolean) {
+        localPluginSearchPaused.value = paused
+    }
+
     private enum class StreamFailureKind {
         MISSING,
         REQUEST_FAILED
@@ -160,7 +170,8 @@ class StreamRepositoryImpl @Inject constructor(
         type: String,
         videoId: String,
         season: Int?,
-        episode: Int?
+        episode: Int?,
+        forceRefresh: Boolean
     ): Flow<NetworkResult<List<AddonStreams>>> = flow {
         emit(NetworkResult.Loading)
         // HYBRID LANE: Xtream ids play their own single direct stream — skip addon + debrid.
@@ -463,6 +474,13 @@ class StreamRepositoryImpl @Inject constructor(
         // Check if plugins are enabled
         if (!pluginManager.pluginsEnabled.first()) {
             Log.d(TAG, "Plugins are disabled")
+            onComplete()
+            return
+        }
+
+        // Skip local-plugin search while paused (e.g. during an IPTV/direct play).
+        if (localPluginSearchPaused.value) {
+            Log.d(TAG, "Local plugin search paused — skipping $pluginSource: $pluginId")
             onComplete()
             return
         }

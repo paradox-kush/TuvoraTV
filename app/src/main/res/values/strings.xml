@@ -365,8 +365,8 @@
     <string name="about_discord_qr_instruction">Scan with your phone to join the Tuvora Discord</string>
     <string name="about_privacy_policy">Privacy Policy</string>
     <string name="about_privacy_policy_subtitle">View our privacy policy</string>
-    <string name="support_nuvio_name">Support Nuvio</string>
-    <string name="about_supporters_contributors">Support Nuvio</string>
+    <string name="support_nuvio_name">Support Tuvora</string>
+    <string name="about_supporters_contributors">Support Tuvora</string>
     <string name="about_supporters_contributors_subtitle">Support the project and view community credits</string>
     <string name="about_licenses_attributions">Licenses &amp; Attribution</string>
     <string name="about_licenses_attributions_subtitle">Data sources, acknowledgements, and Android licenses</string>
@@ -620,8 +620,8 @@
     <string name="supporters_no_message">No message shared.</string>
     <string name="supporters_level_supporter">Supporter</string>
     <string name="supporters_level_supporter_plus">Supporter+</string>
-    <string name="supporters_since">Supporting Nuvio since %1$s</string>
-    <string name="supporters_since_unknown">Proudly supporting Nuvio</string>
+    <string name="supporters_since">Supporting Tuvora since %1$s</string>
+    <string name="supporters_since_unknown">Proudly supporting Tuvora</string>
     <string name="supporters_open_donations">Open support page</string>
     <string name="sponsors_loading">Loading sponsors…</string>
     <string name="sponsors_empty">No sponsors found yet.</string>
@@ -1449,7 +1449,7 @@
     <string name="profile_pin_overlay_set_support">This PIN will be required before opening this profile.</string>
     <string name="profile_pin_overlay_confirm_support">Re-enter the same 4 digits to finish setup.</string>
     <string name="profile_pin_overlay_mismatch">PINs did not match. Enter a new PIN again.</string>
-    <string name="profile_pin_overlay_forgot_hint">Forgot PIN? Reset it from your Tuvora account on nuvio website.</string>
+    <string name="profile_pin_overlay_forgot_hint">Forgot PIN? Reset it from your Tuvora account on tuvora website.</string>
     <string name="profile_pin_overlay_back_hint">Press back to cancel</string>
 
 
@@ -1818,7 +1818,7 @@
     <string name="library_delete_subtitle">This removes the list and all list items from Trakt.</string>
     <string name="library_delete_confirm">Delete</string>
     <string name="library_source_local">LOCAL</string>
-    <string name="library_source_nuvio">NUVIO</string>
+    <string name="library_source_nuvio">TUVORA</string>
     <string name="library_source_trakt">TRAKT</string>
     <string name="library_source_saved">Saved</string>
     <string name="library_source_cloud">Cloud</string>
@@ -3122,4 +3122,12 @@
     <string name="profile_background_member_note">Custom background URLs can be configured from the Tuvora web panel.</string>
     <string name="profile_background_normal">Normal</string>
     <string name="profile_background_custom">Custom</string>
+
+    <string name="sub_startup_mode_title">Addon Subtitle Loading</string>
+    <string name="sub_startup_mode_fast">Fast startup</string>
+    <string name="sub_startup_mode_preferred">Preferred languages</string>
+    <string name="sub_startup_mode_all">All addon subtitles</string>
+    <string name="sub_startup_mode_fast_desc">Start playback immediately. Selecting addon subtitles may reload the player once.</string>
+    <string name="sub_startup_mode_preferred_desc">Prefetch addon subtitles before playback and attach preferred/secondary language tracks.</string>
+    <string name="sub_startup_mode_all_desc">Prefetch and attach all addon subtitles before playback. Slowest startup.</string>
 </resources>

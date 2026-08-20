@@ -134,12 +134,25 @@ private val localOnlyPlayerProfileSettingsKeys = setOf(
     "nuvio_performance_mode_enabled"
 )
 
+// Third-party provider credentials must never leave the device inside a synced profile-settings
+// blob (privacy). Ported from upstream — the fork previously synced these keys in plaintext.
+private val credentialProfileSettingsKeys = mapOf(
+    "debrid_settings" to setOf(
+        "torbox_api_key",
+        "premiumize_api_key",
+        "real_debrid_api_key"
+    ),
+    "mdblist_settings" to setOf("mdblist_api_key"),
+    "animeskip_settings" to setOf("animeskip_client_id")
+)
+
 internal fun shouldExcludePreferenceFromProfileSettingsSync(feature: String, keyName: String): Boolean {
     return when {
         feature == "layout_settings" && keyName in catalogKeysExcludedFromProfileSettingsBlob -> true
         feature == "layout_settings" && keyName in localOnlyLayoutProfileSettingsKeys -> true
         feature == "layout_settings" && keyName == "search_discover_enabled" -> true
         feature == PLAYER_SETTINGS_FEATURE && keyName in localOnlyPlayerProfileSettingsKeys -> true
+        keyName in credentialProfileSettingsKeys[feature].orEmpty() -> true
         else -> false
     }
 }

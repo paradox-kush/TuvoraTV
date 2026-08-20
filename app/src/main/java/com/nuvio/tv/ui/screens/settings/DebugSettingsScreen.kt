@@ -139,13 +139,6 @@ fun DebugSettingsContent(
                 )
             }
 
-            item(key = "debug_member_tier") {
-                DebugMemberTierCard(
-                    selectedTier = uiState.memberTier,
-                    onTierSelected = { viewModel.onEvent(DebugSettingsEvent.SelectMemberTier(it)) }
-                )
-            }
-
             item(key = "debug_toggle_compose_highlighter") {
                 DebugToggleCard(
                     title = stringResource(R.string.advanced_compose_highlighter),

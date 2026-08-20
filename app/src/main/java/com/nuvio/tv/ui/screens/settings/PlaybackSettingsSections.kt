@@ -67,6 +67,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.data.local.AddonSubtitleStartupMode
 import com.nuvio.tv.data.local.AudioOutputChannels
 import com.nuvio.tv.data.local.AutoSkipSegmentType
 import com.nuvio.tv.data.local.Dv7HandlingMode
@@ -119,6 +120,7 @@ internal fun PlaybackSettingsSections(
     onShowMpvHardwareDecodeModeDialog: () -> Unit,
     onShowLanguageDialog: () -> Unit,
     onShowSecondaryLanguageDialog: () -> Unit,
+    onShowSubtitleStartupModeDialog: () -> Unit,
     onShowTextColorDialog: () -> Unit,
     onShowBackgroundColorDialog: () -> Unit,
     onShowOutlineColorDialog: () -> Unit,
@@ -130,7 +132,6 @@ internal fun PlaybackSettingsSections(
     onShowNextEpisodeThresholdModeDialog: () -> Unit,
     onShowReuseLastLinkCacheDialog: () -> Unit,
     onSetStreamAutoPlayNextEpisodeEnabled: (Boolean) -> Unit,
-    onSetStreamAutoPlayNextEpisodeFallbackEnabled: (Boolean) -> Unit,
     onSetStreamAutoPlayPreferBingeGroupForNextEpisode: (Boolean) -> Unit,
     onSetStreamAutoPlayReuseBingeGroup: (Boolean) -> Unit,
     onSetAutoSwitchInternalPlayerOnError: (Boolean) -> Unit,
@@ -169,7 +170,6 @@ internal fun PlaybackSettingsSections(
     onSetSubtitleBold: (Boolean) -> Unit,
     onSetUseForcedSubtitles: (Boolean) -> Unit,
     onSetSubtitleShowOnlyPreferredLanguages: (Boolean) -> Unit,
-    onSetSubtitleStripSdh: (Boolean) -> Unit,
     onSetSubtitleOutlineEnabled: (Boolean) -> Unit,
     onSetUseLibass: (Boolean) -> Unit,
     onSetLibassRenderType: (LibassRenderType) -> Unit,
@@ -533,7 +533,6 @@ internal fun PlaybackSettingsSections(
                 onShowNextEpisodeThresholdModeDialog = onShowNextEpisodeThresholdModeDialog,
                 onShowReuseLastLinkCacheDialog = onShowReuseLastLinkCacheDialog,
                 onSetStreamAutoPlayNextEpisodeEnabled = onSetStreamAutoPlayNextEpisodeEnabled,
-                onSetStreamAutoPlayNextEpisodeFallbackEnabled = onSetStreamAutoPlayNextEpisodeFallbackEnabled,
                 onSetStreamAutoPlayPreferBingeGroupForNextEpisode = onSetStreamAutoPlayPreferBingeGroupForNextEpisode,
                 onSetStreamAutoPlayReuseBingeGroup = onSetStreamAutoPlayReuseBingeGroup,
                 onSetNextEpisodeThresholdPercent = onSetNextEpisodeThresholdPercent,
@@ -643,6 +642,7 @@ internal fun PlaybackSettingsSections(
                 playerSettings = playerSettings,
                 onShowLanguageDialog = onShowLanguageDialog,
                 onShowSecondaryLanguageDialog = onShowSecondaryLanguageDialog,
+                onShowSubtitleStartupModeDialog = onShowSubtitleStartupModeDialog,
                 onShowTextColorDialog = onShowTextColorDialog,
                 onShowBackgroundColorDialog = onShowBackgroundColorDialog,
                 onShowOutlineColorDialog = onShowOutlineColorDialog,
@@ -651,7 +651,6 @@ internal fun PlaybackSettingsSections(
                 onSetSubtitleBold = onSetSubtitleBold,
                 onSetUseForcedSubtitles = onSetUseForcedSubtitles,
                 onSetSubtitleShowOnlyPreferredLanguages = onSetSubtitleShowOnlyPreferredLanguages,
-                onSetSubtitleStripSdh = onSetSubtitleStripSdh,
                 onSetSubtitleOutlineEnabled = onSetSubtitleOutlineEnabled,
                 onSetUseLibass = onSetUseLibass,
                 onSetLibassRenderType = onSetLibassRenderType,
@@ -965,7 +964,7 @@ private fun AfrCapabilityDisableButton(
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
                 shape = RoundedCornerShape(SettingsPillRadius)
             )
         ),
@@ -997,6 +996,7 @@ internal fun PlaybackSettingsDialogsHost(
     showInternalPlayerEngineDialog: Boolean,
     showLanguageDialog: Boolean,
     showSecondaryLanguageDialog: Boolean,
+    showSubtitleStartupModeDialog: Boolean,
     showTextColorDialog: Boolean,
     showBackgroundColorDialog: Boolean,
     showOutlineColorDialog: Boolean,
@@ -1019,6 +1019,7 @@ internal fun PlaybackSettingsDialogsHost(
     onDismissInternalPlayerEngineDialog: () -> Unit,
     onSetSubtitlePreferredLanguage: (String?) -> Unit,
     onSetSubtitleSecondaryLanguage: (String?) -> Unit,
+    onSetAddonSubtitleStartupMode: (AddonSubtitleStartupMode) -> Unit,
     onSetSubtitleTextColor: (Color) -> Unit,
     onSetSubtitleBackgroundColor: (Color) -> Unit,
     onSetSubtitleOutlineColor: (Color) -> Unit,
@@ -1037,6 +1038,7 @@ internal fun PlaybackSettingsDialogsHost(
     onSetReuseLastLinkCacheHours: (Int) -> Unit,
     onDismissLanguageDialog: () -> Unit,
     onDismissSecondaryLanguageDialog: () -> Unit,
+    onDismissSubtitleStartupModeDialog: () -> Unit,
     onDismissTextColorDialog: () -> Unit,
     onDismissBackgroundColorDialog: () -> Unit,
     onDismissOutlineColorDialog: () -> Unit,
@@ -1079,17 +1081,20 @@ internal fun PlaybackSettingsDialogsHost(
     SubtitleSettingsDialogs(
         showLanguageDialog = showLanguageDialog,
         showSecondaryLanguageDialog = showSecondaryLanguageDialog,
+        showSubtitleStartupModeDialog = showSubtitleStartupModeDialog,
         showTextColorDialog = showTextColorDialog,
         showBackgroundColorDialog = showBackgroundColorDialog,
         showOutlineColorDialog = showOutlineColorDialog,
         playerSettings = playerSettings,
         onSetPreferredLanguage = onSetSubtitlePreferredLanguage,
         onSetSecondaryLanguage = onSetSubtitleSecondaryLanguage,
+        onSetAddonSubtitleStartupMode = onSetAddonSubtitleStartupMode,
         onSetTextColor = onSetSubtitleTextColor,
         onSetBackgroundColor = onSetSubtitleBackgroundColor,
         onSetOutlineColor = onSetSubtitleOutlineColor,
         onDismissLanguageDialog = onDismissLanguageDialog,
         onDismissSecondaryLanguageDialog = onDismissSecondaryLanguageDialog,
+        onDismissSubtitleStartupModeDialog = onDismissSubtitleStartupModeDialog,
         onDismissTextColorDialog = onDismissTextColorDialog,
         onDismissBackgroundColorDialog = onDismissBackgroundColorDialog,
         onDismissOutlineColorDialog = onDismissOutlineColorDialog

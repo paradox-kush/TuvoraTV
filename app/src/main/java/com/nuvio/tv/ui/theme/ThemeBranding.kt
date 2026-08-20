@@ -4,13 +4,9 @@ import androidx.annotation.DrawableRes
 import com.nuvio.tv.R
 import com.nuvio.tv.domain.model.AppTheme
 
+// Tuvora keeps a single brand wordmark across every theme. Upstream ships per-theme Nuvio-branded
+// wordmarks; we deliberately pin to the fork's Tuvora wordmark so no Nuvio branding ever renders
+// (the theme system still recolours everything else). The per-theme Nuvio variants were removed.
 @get:DrawableRes
 val AppTheme.brandWordmarkResource: Int
-    get() = when (this) {
-        AppTheme.GOLD -> R.drawable.app_logo_wordmark_gold
-        AppTheme.JADE -> R.drawable.app_logo_wordmark_jade
-        AppTheme.ROSE_GOLD -> R.drawable.app_logo_wordmark_rose_gold
-        AppTheme.ARCTIC_BLUE -> R.drawable.app_logo_wordmark_arctic_blue
-        AppTheme.GRAPHITE -> R.drawable.app_logo_wordmark_graphite
-        else -> R.drawable.app_logo_wordmark
-    }
+    get() = R.drawable.app_logo_wordmark

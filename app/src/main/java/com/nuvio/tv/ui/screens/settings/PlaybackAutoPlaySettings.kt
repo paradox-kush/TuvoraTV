@@ -31,7 +31,6 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Tune
@@ -84,7 +83,6 @@ internal fun LazyListScope.autoPlaySettingsItems(
     onShowNextEpisodeThresholdModeDialog: () -> Unit,
     onShowReuseLastLinkCacheDialog: () -> Unit,
     onSetStreamAutoPlayNextEpisodeEnabled: (Boolean) -> Unit,
-    onSetStreamAutoPlayNextEpisodeFallbackEnabled: (Boolean) -> Unit,
     onSetStreamAutoPlayPreferBingeGroupForNextEpisode: (Boolean) -> Unit,
     onSetStreamAutoPlayReuseBingeGroup: (Boolean) -> Unit,
     onSetNextEpisodeThresholdPercent: (Float) -> Unit,
@@ -174,19 +172,6 @@ internal fun LazyListScope.autoPlaySettingsItems(
     }
 
     if (playerSettings.streamAutoPlayNextEpisodeEnabled) {
-        if (playerSettings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL) {
-            item(key = "autoplay_next_episode_fallback") {
-                ToggleSettingsItem(
-                    icon = Icons.Default.SwapHoriz,
-                    title = stringResource(R.string.autoplay_next_episode_fallback),
-                    subtitle = stringResource(R.string.autoplay_next_episode_fallback_sub),
-                    isChecked = playerSettings.streamAutoPlayNextEpisodeFallbackEnabled,
-                    onCheckedChange = onSetStreamAutoPlayNextEpisodeFallbackEnabled,
-                    onFocused = onItemFocused
-                )
-            }
-        }
-
         item(key = "still_watching_enabled") {
             ToggleSettingsItem(
                 icon = Icons.Default.Visibility,
@@ -843,7 +828,7 @@ private fun StreamRegexDialog(
                             ),
                             border = CardDefaults.border(
                                 focusedBorder = Border(
-                                    border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                                    border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
                                     shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
                                 )
                             ),
@@ -875,7 +860,7 @@ private fun StreamRegexDialog(
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
                         ),
                         focusedBorder = Border(
-                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                            border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
                         )
                     ),

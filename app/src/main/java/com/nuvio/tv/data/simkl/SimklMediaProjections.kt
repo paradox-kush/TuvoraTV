@@ -22,13 +22,13 @@ fun SimklSyncSnapshot.toSimklWatchedProjection(): SimklWatchedProjection {
     entries.forEach { entry ->
         val media = entry.media ?: return@forEach
         val contentId = media.canonicalContentId() ?: return@forEach
-        val contentType = if (entry.isMovieEntry()) "movie" else "series"
+        val contentType = if (entry.mediaType == SimklMediaType.MOVIES) "movie" else "series"
         val title = media.title?.takeIf(String::isNotBlank) ?: contentId
         val watchedAt = parseSimklUtcEpochMs(entry.lastWatchedAt)
             ?: parseSimklUtcEpochMs(entry.addedToWatchlistAt)
             ?: 0L
 
-        if (entry.isMovieEntry()) {
+        if (entry.mediaType == SimklMediaType.MOVIES) {
             if (entry.lastWatchedAt != null || entry.status == SimklListStatus.COMPLETED) {
                 watchedItems += entry.toWatchedItem(contentId, contentType, title, media, watchedAt)
             }
@@ -171,7 +171,7 @@ fun SimklMedia.canonicalContentId(preference: SimklAnimeIdPreference): String? {
 
 fun simklPosterUrl(path: String?): String? = path?.trim()?.trim('/')
     ?.takeIf(String::isNotBlank)
-    ?.let { normalized -> "https://wsrv.nl/?url=https://simkl.in/posters/${normalized}_m.webp&q=90" }
+    ?.let { normalized -> "https://wsrv.nl/?url=https://simkl.in/posters/${normalized}_ca.webp&q=90" }
 
 fun SimklLibraryEntry.resolvedPosterUrl(): String? =
     simklPosterUrl(media?.poster) ?: localPosterUrl?.trim()?.takeIf(String::isNotBlank)
@@ -240,8 +240,7 @@ private fun SimklLibraryEntry.toWatchedItem(
 internal fun SimklPlaybackSession.toWatchProgress(): WatchProgress? {
     val media = media ?: return null
     val parentId = media.canonicalContentId() ?: return null
-    val isMovie = mediaType == SimklMediaType.MOVIES ||
-        (mediaType == SimklMediaType.ANIME && episode == null)
+    val isMovie = mediaType == SimklMediaType.MOVIES
     val season = episode?.tvdbSeason ?: episode?.season
     val episodeNumber = episode?.tvdbNumber ?: episode?.number
     if (!isMovie && episodeNumber == null) return null
