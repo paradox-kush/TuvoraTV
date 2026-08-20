@@ -1077,7 +1077,14 @@ private fun LegacySidebarScaffold(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val drawerItemFocusRequesters = rememberDrawerItemFocusRequesters(drawerItems)
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    val showSidebar = currentRoute in rootRoutes
+    // A live channel expands to fullscreen WITHIN the IPTV/Sports route, so route membership alone
+    // cannot tell "browsing the hub" (show rail) from "watching fullscreen" (hide rail) — the
+    // immersive-playback gate is the second half. Dropping it paints the rail over the video.
+    val immersivePlayback by com.nuvio.tv.updater.ImmersivePlaybackGate.isActive.collectAsState()
+    val showSidebar = com.nuvio.tv.ui.navigation.SidebarVisibilityPolicy.showSidebar(
+        routeHasSidebar = currentRoute in rootRoutes,
+        immersivePlayback = immersivePlayback,
+    )
 
     LaunchedEffect(currentRoute) {
         drawerState.setValue(DrawerValue.Closed)
@@ -1441,7 +1448,13 @@ private fun ModernSidebarScaffold(
     onNavigate: (String) -> Unit,
     onExitApp: () -> Unit
 ) {
-    val showSidebar = currentRoute in rootRoutes
+    // See the note at the other nav host: the immersive-playback gate is what keeps the rail off a
+    // fullscreen live channel that lives within the IPTV/Sports route.
+    val immersivePlayback by com.nuvio.tv.updater.ImmersivePlaybackGate.isActive.collectAsState()
+    val showSidebar = com.nuvio.tv.ui.navigation.SidebarVisibilityPolicy.showSidebar(
+        routeHasSidebar = currentRoute in rootRoutes,
+        immersivePlayback = immersivePlayback,
+    )
     val sidebarTokens = NuvioComponents.tokens.sidebar
     val collapsedSidebarWidth = if (sidebarCollapsed) NuvioTheme.spacing.none else sidebarTokens.collapsedWidth
     val openSidebarWidth = sidebarTokens.expandedWidth
