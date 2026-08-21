@@ -229,7 +229,7 @@ fun LiveGuide(
     val context = LocalContext.current
     val previewSourceFactory = remember(context) { PlayerMediaSourceFactory(context) }
     val previewPlayer = remember(context) {
-        ExoPlayer.Builder(context)
+        ExoPlayer.Builder(context, LivePreviewRenderersFactory(context))
             // Zap-style preview: a small buffer keeps memory flat on budget boxes.
             .setLoadControl(
                 DefaultLoadControl.Builder()
@@ -272,6 +272,16 @@ fun LiveGuide(
                             viewModel.onPreviewAuthError(authStatus)
                             return
                         }
+                        // Field telemetry: a decoding/other live error (the codec-reuse failure lands
+                        // here as ERROR_CODE_DECODING_FAILED at the mis-sized resolution). Privacy-safe
+                        // — code + exception CLASS + resolution numbers only, never the URL/message.
+                        val failedFormat = (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+                        LivePlaybackTelemetry.playbackError(
+                            errorCode = error.errorCodeName,
+                            causeClass = error.cause?.javaClass?.simpleName,
+                            width = failedFormat?.width ?: androidx.media3.common.Format.NO_VALUE,
+                            height = failedFormat?.height ?: androidx.media3.common.Format.NO_VALUE,
+                        )
                         // The panel answered our `.ts` request with a container that isn't TS
                         // (typically a 302 to an HLS playlist). One re-tune forcing HLS.
                         if (PlayerMediaSourceFactory.isContainerMismatch(error)) {

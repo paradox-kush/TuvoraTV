@@ -516,6 +516,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             val tech = freezeTechnicalDetail(channel, playbackState)
             android.util.Log.w("LiveGuide", "preview froze on ${channel.name}: $reason [$tech]")
             _uiState.update { it.copy(error = "\"${channel.name}\" stopped. $reason\n$tech") }
+            LivePlaybackTelemetry.previewStall(playbackState, previewFreezeRecoveryAttempts, surfaced = true)
             previewPlayingSinceMs = 0L
             return
         }
@@ -528,6 +529,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             return
         }
         previewFreezeRecoveryAttempts += 1
+        LivePlaybackTelemetry.previewStall(playbackState, previewFreezeRecoveryAttempts, surfaced = false)
         val nowMs = System.currentTimeMillis()
         previewRetuneStartedAtMs = nowMs
         previewRetuneTimestampsMs.addLast(nowMs)
