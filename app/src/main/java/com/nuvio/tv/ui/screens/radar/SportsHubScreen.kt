@@ -685,7 +685,8 @@ private fun MatchChannelsOverlay(
                         )
                     }
                 }
-                items(state.matches, key = { it.channel.contentId }) { match ->
+                // Dedup by channel contentId: the matcher partial can carry the same channel twice; a duplicate key crashes.
+                items(state.matches.distinctBy { it.channel.contentId }, key = { it.channel.contentId }) { match ->
                     val isProbing = state.probingContentId == match.channel.contentId
                     val isDead = match.channel.contentId in state.deadContentIds
                     FocusableRow(onClick = { onPlay(match) }) {

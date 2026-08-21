@@ -529,7 +529,8 @@ fun LiveGuide(
                             .focusRestorer(firstChannelFocus),
                         contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxl)
                     ) {
-                        itemsIndexed(uiState.channels, key = { _, it -> it.contentId }) { index, ch ->
+                        // Dedup by contentId: a duplicate Compose key is a hard crash; index checks below are position-only.
+                        itemsIndexed(uiState.channels.distinctBy { it.contentId }, key = { _, it -> it.contentId }) { index, ch ->
                             val isPlaying = ch.contentId == uiState.previewChannel?.contentId
                             val isTimelineRow = timelineChannelId == ch.contentId
                             GuideChannelRow(

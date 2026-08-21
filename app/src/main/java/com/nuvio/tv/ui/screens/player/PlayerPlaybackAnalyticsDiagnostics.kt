@@ -199,7 +199,7 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
         positionMs = position
         bufferedPositionMs = player.bufferedPosition.coerceAtLeast(position)
         durationMs = player.duration.takeIf { it > 0L }
-        bufferedPercentage = player.bufferedPercentage.takeIf { it >= 0 }
+        bufferedPercentage = BufferedPercent.of(player.bufferedPosition, player.duration)
         recordHealthSnapshotIfNeeded(
             now = now,
             rebufferCount = rebufferCount,

@@ -484,11 +484,15 @@ private fun HubPosterRow(
                 contentPadding = PaddingValues(horizontal = HubRowStartPadding),
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
             ) {
-                itemsIndexed(previews, key = { _, preview -> preview.id }) { index, preview ->
+                // Dedup by id before rendering: a provider can list the same stream_id twice in one
+                // window, and a duplicate Compose key is a hard crash. Reference the deduped list for
+                // the index/lastIndex logic too so the endless-scroll trigger stays consistent.
+                val shownPreviews = previews.distinctBy { it.id }
+                itemsIndexed(shownPreviews, key = { _, preview -> preview.id }) { index, preview ->
                     // Item-5 window append: composing the LAST loaded tile of a longer category
                     // pulls the next window in — endless-scroll inside the row.
-                    if (hasMore && onNearEnd != null && index == previews.lastIndex) {
-                        LaunchedEffect(rowKey, previews.size) { onNearEnd() }
+                    if (hasMore && onNearEnd != null && index == shownPreviews.lastIndex) {
+                        LaunchedEffect(rowKey, shownPreviews.size) { onNearEnd() }
                     }
                     val isPlaceholder = preview.id.startsWith("__placeholder_")
                     // ContentCard sizes LANDSCAPE cards from a fixed constant — hand it a

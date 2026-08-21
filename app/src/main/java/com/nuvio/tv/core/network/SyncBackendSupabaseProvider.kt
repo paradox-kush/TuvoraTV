@@ -91,7 +91,15 @@ class SyncBackendSupabaseProvider @Inject constructor(
             }
             install(Postgrest)
             // Backs upstream's realtime sync-invalidation service.
-            install(Realtime)
+            install(Realtime) {
+                // See mobile SupabaseProvider for the full rationale: the default provider force-
+                // refreshes an expired session on rejoin and throws TokenExpiredException on
+                // Realtime's own unguarded scope (-> process death), and is a SECOND refresher
+                // that trips GoTrue refresh-token reuse rotation -> spurious sign-out (auth-js#213,
+                // see AuthManager single-refresher discipline). Return the current token only;
+                // alwaysAutoRefresh keeps it fresh and propagates via setAuth.
+                accessToken = { auth.currentAccessTokenOrNull() }
+            }
             // Backs upstream's cosmetic ProfileBackgroundRepository (kept inert without a member backend).
             install(Storage)
         }
