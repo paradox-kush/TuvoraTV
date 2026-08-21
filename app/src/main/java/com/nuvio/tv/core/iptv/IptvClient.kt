@@ -27,6 +27,20 @@ interface IptvClient {
     /** Now/next EPG for a channel. M3U has no per-channel EPG yet (P2c/XMLTV): returns empty. */
     suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int = 4): Result<List<XtreamProgram>>
 
+    /**
+     * Warm this account's browse + guide data ahead of use, on the client's OWN scope — never the
+     * caller's, because a whole-guide fetch must outlive the screen that triggered it (the ViewModel
+     * -scope mistake that made the mirror re-sync forever). Fire-and-forget and safe to call on every
+     * visit (each source single-flights + TTL-gates internally).
+     *
+     * Default no-op: Xtream/M3U warm their guide separately via [epg.XmltvClient.warm] (the store
+     * lane). Stalker overrides this to pull its lineup + the ONE bulk `get_epg_info` into the local
+     * store up front, so browsing shows now/next as the user scrolls instead of only after they
+     * settle on a channel — the bulk otherwise runs inside a focus job that scrolling cancels
+     * (root-caused 2026-08-20).
+     */
+    fun warm(acc: XtreamAccount) {}
+
     /** Account status (expiry/connections) for the settings row. M3U has none — default failure. */
     suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> =
         Result.failure(UnsupportedOperationException("no account info for this source"))

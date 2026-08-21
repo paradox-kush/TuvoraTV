@@ -25,6 +25,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /** The portal rejected our identity/token — the ONLY failure that may trigger a re-handshake. */
 class StalkerAuthException(message: String) : IllegalStateException(message)
@@ -92,6 +93,15 @@ class StalkerSession(
     // connections; magplex (the reference client) caps this at 3 explicitly "to prevent rate
     // limiting". Ours is per-session so a busy UI can't fan out into a ban.
     private val gate = Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    // The shared [http] client caps reads at 20s — right for the small control JSON it was tuned for,
+    // wrong for the streamed bulk get_epg_info, which on a large portal computes server-side before
+    // the first byte and streams for a while (cf. the m3uIngest client's 10-minute read window for a
+    // ~192MB body). Derive a long-read client for [requestStreamOnce] ONLY, sharing the connection
+    // pool + dispatcher. Read timeout is between-bytes, so a healthy stream never trips it.
+    private val streamHttp: OkHttpClient by lazy {
+        http.newBuilder().readTimeout(10, TimeUnit.MINUTES).build()
+    }
 
     // The get_events keep-alive (see [StalkerWatchdogPolicy]). Session-owned so its lifetime IS
     // the session's: (re)started on every successful activation, gone on [shutdown] (the manager
@@ -202,7 +212,7 @@ class StalkerSession(
         // body bytes arrived, so the host is alive and the record clears.
         panelGuard.guardedPanelRequest(urlBuilder.build().toString()) {
         gate.withPermit {
-            http.newCall(builder.build()).execute().use { resp ->
+            streamHttp.newCall(builder.build()).execute().use { resp ->
                 if (resp.code == 401 || resp.code == 403) {
                     throw StalkerAuthException("Stalker portal answered ${resp.code} for ${account.name}")
                 }

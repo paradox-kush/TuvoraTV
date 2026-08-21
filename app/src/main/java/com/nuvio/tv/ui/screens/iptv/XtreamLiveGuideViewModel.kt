@@ -197,6 +197,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // and the per-channel asks stop. On the ingest's own scope — never this ViewModel's, which
         // is the mistake that cost the mirror 76 seconds of work per visit.
         xmltv.warm(acc)
+        // Stalker warms its lineup + the ONE bulk get_epg_info here (Xtream/M3U guide warming is the
+        // xmltv line above). Runs on the client's OWN scope, so now/next is ready as the user scrolls
+        // instead of only after they settle on a channel — see StalkerClient.warm.
+        clientFactory.clientFor(acc).warm(acc)
         if (sameAccount) {
             // Option-only change: re-filter the cached category column, keep everything else.
             categoriesCache[acc.id]?.let { full ->
@@ -216,10 +220,20 @@ class XtreamLiveGuideViewModel @Inject constructor(
             return
         }
         epgRequested.clear()
+        // Switching to a different playlist must not leave the OLD account's channel decoding in the
+        // shared preview player. Clear the preview state (the screen stops the player when
+        // previewChannel goes null) and reset this account's freeze bookkeeping — without this the
+        // preview keeps playing the previous playlist's channel after a switch (root-caused 2026-08-20).
+        previewFreezeRecoveryAttempts = 0
+        previewFreezeRecoveryChannelId = null
+        previewRetuneTimestampsMs.clear()
         _uiState.update {
             it.copy(
                 catchUpSupported = catchUp.supports(acc),
                 windowStartMs = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis()),
+                previewChannel = null,
+                previewPlayback = null,
+                previewMimeOverride = null,
             )
         }
         // Tune the preview to the LAST OPENED channel of this account (TiViMate-style resume).
@@ -227,11 +241,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // (OK on a row resolves a fresh URL); Xtream/M3U resume with their stable stored URL.
         if (acc.sourceType != XtreamAccount.SOURCE_STALKER) {
             viewModelScope.launch {
-                if (_uiState.value.previewChannel != null) return@launch
+                // Skip resume only if a preview for THIS account is already up — a stale preview from
+                // the previous account (now cleared above) must never block re-tuning the new one.
+                if (GuidePreviewOwnership.belongsTo(_uiState.value.previewChannel?.contentId, acc.id)) return@launch
                 liveStore.recents.first()
                     .firstOrNull { it.id.startsWith("${XtreamItemRegistry.PREFIX}${acc.id}:live:") }
                     ?.let { ref ->
-                        if (_uiState.value.previewChannel == null) {
+                        if (!GuidePreviewOwnership.belongsTo(_uiState.value.previewChannel?.contentId, acc.id)) {
                             tunePreview(GuideChannel(ref.id, ref.name, ref.logo, ref.streamUrl, streamIdOf(ref.id)))
                         }
                     }
@@ -767,19 +783,26 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     /** null = request failed (as opposed to a genuinely empty category). */
     private suspend fun fetchChannels(acc: XtreamAccount, categoryId: String?): List<GuideChannel>? {
-        return clientFactory.clientFor(acc).liveChannels(acc, categoryId).getOrNull()?.map { ch ->
-            val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
-            registry.register(
-                XtreamResolvedItem(
-                    id = id, type = ContentType.TV, name = ch.name, poster = ch.logo,
-                    streamUrl = ch.streamUrl, kind = XtreamKind.LIVE, accountId = acc.id, streamId = ch.streamId
+        val raw = clientFactory.clientFor(acc).liveChannels(acc, categoryId).getOrNull() ?: return null
+        // Map + registry.register the whole result OFF the main thread. "All channels" hands back the
+        // entire live catalog (tens of thousands of rows on real panels), and running this pass on the
+        // ViewModel's Main dispatcher is a measured cold-load stall + GC churn on weak TV boxes (Onn
+        // 4K). registry is a ConcurrentHashMap, so register() is safe on Dispatchers.Default.
+        return withContext(Dispatchers.Default) {
+            raw.map { ch ->
+                val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
+                registry.register(
+                    XtreamResolvedItem(
+                        id = id, type = ContentType.TV, name = ch.name, poster = ch.logo,
+                        streamUrl = ch.streamUrl, kind = XtreamKind.LIVE, accountId = acc.id, streamId = ch.streamId
+                    )
                 )
-            )
-            GuideChannel(
-                contentId = id, name = ch.name, logo = ch.logo, streamUrl = ch.streamUrl,
-                streamId = ch.streamId, categoryId = ch.categoryId,
-                hasArchive = ch.hasArchive, catchUpDays = ch.catchUpDays
-            )
+                GuideChannel(
+                    contentId = id, name = ch.name, logo = ch.logo, streamUrl = ch.streamUrl,
+                    streamId = ch.streamId, categoryId = ch.categoryId,
+                    hasArchive = ch.hasArchive, catchUpDays = ch.catchUpDays
+                )
+            }
         }
     }
 

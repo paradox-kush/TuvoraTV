@@ -359,6 +359,18 @@ fun LiveGuide(
         paused = false
         tunePreview(prepared.url, prepared.headers, previewMimeOverride)
     }
+    // Preview cleared to nothing (a playlist switch clears previewChannel/previewPlayback in the VM):
+    // stop the shared player so it stops decoding the previous playlist's channel. Keyed on
+    // previewChannel — the true "nothing to show" signal — NOT previewPlayback, which tunePreview
+    // nulls for a beat on every normal channel change; and onPreviewPlaybackStalled ignores the
+    // resulting STATE_IDLE while previewChannel is null, so the freeze watchdog won't fight this.
+    val hasPreviewChannel = uiState.previewChannel != null
+    LaunchedEffect(hasPreviewChannel) {
+        if (!hasPreviewChannel) {
+            previewPlayer.stop()
+            previewPlayer.clearMediaItems()
+        }
+    }
 
     // Pause holds the frame; resume reloads instead of unpausing (a paused live buffer goes
     // stale, and rejoining the live edge is the expected zap behavior).
