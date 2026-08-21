@@ -500,6 +500,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     .build()
             }
             val bandwidthMeter = SafeBandwidthMeter(rawBandwidthMeter, isHls)
+            var builtAllocator: androidx.media3.exoplayer.upstream.DefaultAllocator? = null
             val loadControl = if (playerSettings.nuvioPerformanceModeEnabled) {
                 effectiveBackBufferDurationMs = NuvioExoPlayerPerformanceHelper.backBufferMs
                 currentBitrateAwareLoadControl = null
@@ -508,6 +509,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     "BUFFER_GATE: engine=exo-native-perf master=on; NuvioExoPlayerPerformanceHelper.buildLoadControl host=${url.safeHost()}"
                 )
                 NuvioExoPlayerPerformanceHelper.buildLoadControl(context)
+                    .also { builtAllocator = NuvioExoPlayerPerformanceHelper.lastBuiltAllocator }
             } else if (playerSettings.bufferEngineEnabled) {
                 val bufferSettings = playerSettings.bufferSettings
                 // Managed (default) caps the buffer at the device budget; off uses Target Buffer Size.
@@ -541,7 +543,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     C.DEFAULT_BUFFER_SEGMENT_SIZE,
                     64,
                     playerSettings.nuvioPerformanceModeEnabled
-                )
+                ).also { builtAllocator = it }
                 BitrateAwareLoadControl(
                     minBufferMs = bufferSettings.minBufferMs,
                     maxBufferMs = bufferSettings.maxBufferMs,
@@ -571,6 +573,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     .build()
             }
             _loadControl = loadControl
+            _loadControlAllocator = builtAllocator
 
             // VOD cache sits under the buffer master in the UI, so gate it the same way at
             // runtime. The low-RAM + confirmed DV7 case is handled dynamically at first frame
@@ -658,11 +661,12 @@ internal fun PlayerRuntimeController.initializePlayer(
             )
             trackSelector = object : DefaultTrackSelector(context, adaptiveTrackSelectionFactory) {
                 override fun selectAllTracks(
+                    definitions: Array<ExoTrackSelection.Definition?>,
                     mappedTrackInfo: MappedTrackInfo,
                     rendererFormatSupports: Array<out Array<out IntArray>>,
                     rendererMixedMimeTypeAdaptationSupports: IntArray,
                     params: Parameters
-                ): Array<ExoTrackSelection.Definition?> {
+                ) {
                     val streamMime = currentStreamMimeType
                     val isHls = streamMime != null && (
                         streamMime.equals(MimeTypes.APPLICATION_M3U8, ignoreCase = true) ||
@@ -708,7 +712,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                             }
                         }
                     }
-                    return super.selectAllTracks(
+                    super.selectAllTracks(
+                        definitions,
                         mappedTrackInfo,
                         rendererFormatSupports,
                         rendererMixedMimeTypeAdaptationSupports,

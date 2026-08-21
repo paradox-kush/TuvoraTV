@@ -34,10 +34,10 @@ internal class PlaybackSpeedAwareAudioSink(
         super.setListener(listener)
     }
 
-    override fun configure(inputFormat: Format, specifiedBufferSize: Int, outputChannels: IntArray?) {
-        currentInputFormat = inputFormat
-        markPcmFallbackIfNeeded(inputFormat, playbackSpeed)
-        super.configure(inputFormat, specifiedBufferSize, outputChannels)
+    override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
+        currentInputFormat = audioSinkConfig.format
+        markPcmFallbackIfNeeded(audioSinkConfig.format, playbackSpeed)
+        super.configure(audioSinkConfig)
     }
 
     override fun setPlaybackParameters(playbackParameters: PlaybackParameters) {

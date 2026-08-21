@@ -32,13 +32,21 @@ class BitrateAwareLoadControl(
 ) : DefaultLoadControl(
     allocator,
     minBufferMs,
+    // media3 1.10+ keeps separate durations for local (file) playback; mirror the network values
+    // so local files behave exactly as before the bump.
+    /* minBufferForLocalPlaybackMs= */ minBufferMs,
     maxBufferMs,
+    /* maxBufferForLocalPlaybackMs= */ maxBufferMs,
     bufferForPlaybackMs,
+    /* bufferForPlaybackForLocalPlaybackMs= */ bufferForPlaybackMs,
     bufferForPlaybackAfterRebufferMs,
+    /* bufferForPlaybackAfterRebufferForLocalPlaybackMs= */ bufferForPlaybackAfterRebufferMs,
     /* targetBufferBytes= */ C.LENGTH_UNSET,
     prioritizeTimeOverSizeThresholds,
+    /* prioritizeTimeOverSizeThresholdsForLocalPlayback= */ prioritizeTimeOverSizeThresholds,
     backBufferDurationMs,
-    retainBackBufferFromKeyframe
+    retainBackBufferFromKeyframe,
+    /* playerTargetBufferBytes= */ emptyMap()
 ) {
 
     // Effective back buffer (µs) when >= 0, else the constructed value. The player polls

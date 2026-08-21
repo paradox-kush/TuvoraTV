@@ -71,12 +71,12 @@ internal class PlaybackSpeedAwareAudioRenderer(
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_DRM)
         }
         var decoderInfo = decoderInfos[0]
-        var isFormatSupported = decoderInfo.isFormatSupported(format)
+        var isFormatSupported = decoderInfo.isFormatSupported(rendererContext, format)
         var isPreferredDecoder = true
         if (!isFormatSupported) {
             for (i in 1 until decoderInfos.size) {
                 val otherDecoderInfo = decoderInfos[i]
-                if (otherDecoderInfo.isFormatSupported(format)) {
+                if (otherDecoderInfo.isFormatSupported(rendererContext, format)) {
                     decoderInfo = otherDecoderInfo
                     isFormatSupported = true
                     isPreferredDecoder = false
@@ -123,7 +123,7 @@ internal class PlaybackSpeedAwareAudioRenderer(
                 false
             )
         }
-        return MediaCodecUtil.getDecoderInfosSortedByFormatSupport(decoderInfos, format)
+        return MediaCodecUtil.getDecoderInfosSortedByFormatSupport(rendererContext, decoderInfos, format)
     }
 
     override fun shouldUseBypass(format: Format): Boolean {

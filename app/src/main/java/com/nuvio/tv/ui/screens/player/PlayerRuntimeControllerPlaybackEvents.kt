@@ -326,7 +326,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         Log.d(PlayerRuntimeController.TAG, "BUFFER: ahead=${bufAhead}s, loading=$loading, heap=$usedMb/${maxMb}MB, pos=${pos / 1000}s")
                         
                         if (NuvioExoPlayerPerformanceHelper.shouldLogMemoryFootprint()) {
-                            val defaultAllocator = _loadControl?.allocator as? androidx.media3.exoplayer.upstream.DefaultAllocator
+                            val defaultAllocator = _loadControlAllocator
                             val totalFootprintBytes = defaultAllocator?.let { allocator ->
                                 try {
                                     val method = allocator.javaClass.getMethod("getMemoryFootprint")

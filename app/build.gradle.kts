@@ -522,7 +522,7 @@ dependencies {
     // - media3-database: needed by lib-datasource (cache/storage layer)
     // - annotation-experimental: needed by lib-common (OptIn annotations)
     implementation("com.google.guava:guava:33.3.1-android")
-    implementation("androidx.media3:media3-database:1.8.0")
+    implementation("androidx.media3:media3-database:1.11.0")
     implementation("androidx.annotation:annotation-experimental:1.3.1")
 
     // Nuvio Engine local AARs (replaces lib-exoplayer, lib-common, lib-datasource, lib-datasource-okhttp, lib-exoplayer-hls, lib-extractor)

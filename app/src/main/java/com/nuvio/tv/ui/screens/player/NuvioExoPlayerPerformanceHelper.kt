@@ -73,6 +73,10 @@ object NuvioExoPlayerPerformanceHelper {
     @Volatile
     var backBufferMs: Int = DEFAULT_NUVIO_BACK_BUFFER_MS
 
+    /** The allocator created by the last [buildLoadControl] call in performance mode, else null. */
+    @Volatile
+    var lastBuiltAllocator: DefaultAllocator? = null
+
     @Volatile
     var targetBufferSizeMb: Int = 250
 
@@ -257,12 +261,16 @@ object NuvioExoPlayerPerformanceHelper {
      * or a standard ExoPlayer [DefaultLoadControl] when disabled.
      */
     fun buildLoadControl(context: Context? = null): DefaultLoadControl {
+        lastBuiltAllocator = null
         return if (enabled) {
             val targetBufferBytes = (targetBufferSizeMb.toLong() * 1024L * 1024L)
                 .coerceAtMost(Int.MAX_VALUE.toLong())
                 .toInt()
             DefaultLoadControl.Builder()
-                .setAllocator(DefaultAllocator(true, DEFAULT_NUVIO_ALLOCATOR_SEGMENT_SIZE, 64, enabled))
+                .setAllocator(
+                    DefaultAllocator(true, DEFAULT_NUVIO_ALLOCATOR_SEGMENT_SIZE, 64, enabled)
+                        .also { lastBuiltAllocator = it }
+                )
                 .setTargetBufferBytes(targetBufferBytes)
                 // Pinned to media3 1.8.0's default: the byte target above only bounds memory
                 // while this stays false — shouldContinueLoading keeps loading below

@@ -191,7 +191,8 @@ class TrackSelectionInvestigationTest {
             null,
             0L, // startTimeUs
             4_000_000L, // endTimeUs (4 seconds duration)
-            0L // chunkIndex
+            0L, // chunkIndex
+            null // steeredPathwayId (media3 1.11)
         ) {
             override fun isLoadCompleted(): Boolean = true
             override fun cancelLoad() {}
@@ -344,13 +345,14 @@ class TrackSelectionInvestigationTest {
                 /* forceSecure= */ false
             )
 
+            val capabilityContext = mockk<Context>(relaxed = true)
             for (format in formats) {
                 println("Evaluating format: ${format.id}, codecs: ${format.codecs}")
                 
                 try {
                     // Check format support using ExoPlayer's capability check logic
-                    val isSupported = codecInfo.isFormatSupported(format)
-                    val isFunctionallySupported = codecInfo.isFormatFunctionallySupported(format)
+                    val isSupported = codecInfo.isFormatSupported(capabilityContext, format)
+                    val isFunctionallySupported = codecInfo.isFormatFunctionallySupported(capabilityContext, format)
                     
                     println("Format ${format.id} (Size: ${format.width}x${format.height}):")
                     println("  - isFormatSupported (checkPerformanceCapabilities = true): $isSupported")
@@ -408,11 +410,12 @@ class TrackSelectionInvestigationTest {
         val isHls = true
         val selector = object : DefaultTrackSelector(context, adaptiveTrackSelectionFactory) {
             public override fun selectAllTracks(
+                definitions: Array<ExoTrackSelection.Definition?>,
                 mappedTrackInfo: MappedTrackInfo,
                 rendererFormatSupports: Array<out Array<out IntArray>>,
                 rendererMixedMimeTypeAdaptationSupports: IntArray,
                 params: Parameters
-            ): Array<ExoTrackSelection.Definition?> {
+            ) {
                 if (isHls) {
                     for (rendererIndex in 0 until mappedTrackInfo.rendererCount) {
                         if (mappedTrackInfo.getRendererType(rendererIndex) == C.TRACK_TYPE_VIDEO) {
@@ -448,11 +451,11 @@ class TrackSelectionInvestigationTest {
                           }
                       }
                   }
-                  return arrayOfNulls(mappedTrackInfo.rendererCount)
               }
           }
 
         selector.selectAllTracks(
+            arrayOfNulls(mappedTrackInfo.rendererCount),
             mappedTrackInfo,
             rendererFormatSupports,
             intArrayOf(),

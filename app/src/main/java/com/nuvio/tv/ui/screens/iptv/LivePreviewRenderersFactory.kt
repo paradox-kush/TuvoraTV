@@ -91,6 +91,7 @@ private class ResolutionAwareVideoRenderer(
         codecInfo: MediaCodecInfo,
         oldFormat: Format,
         newFormat: Format,
+        isAdaptiveFormatChange: Boolean,
     ): DecoderReuseEvaluation {
         if (LiveCodecReusePolicy.resolutionChanged(
                 oldFormat.width, oldFormat.height, newFormat.width, newFormat.height,
@@ -104,6 +105,6 @@ private class ResolutionAwareVideoRenderer(
                 DecoderReuseEvaluation.DISCARD_REASON_WORKAROUND,
             )
         }
-        return super.canReuseCodec(codecInfo, oldFormat, newFormat)
+        return super.canReuseCodec(codecInfo, oldFormat, newFormat, isAdaptiveFormatChange)
     }
 }

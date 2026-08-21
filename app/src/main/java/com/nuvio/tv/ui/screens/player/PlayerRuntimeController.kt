@@ -303,6 +303,9 @@ class PlayerRuntimeController(
     @Volatile var videoAspectRatio: Float = 0f
     @Volatile var exoPlayerView: androidx.media3.ui.PlayerView? = null
     internal var _loadControl: DefaultLoadControl? = null
+    // The DefaultAllocator behind _loadControl when we built it ourselves (perf mode / buffer
+    // engine); media3 1.11 only exposes DefaultLoadControl.getAllocator(PlayerId).
+    internal var _loadControlAllocator: androidx.media3.exoplayer.upstream.DefaultAllocator? = null
     internal var playbackSpeedAwareAudioSink: PlaybackSpeedAwareAudioSink? = null
 
     /** Reports live channels that freeze with no player error. Silent during healthy playback. */
