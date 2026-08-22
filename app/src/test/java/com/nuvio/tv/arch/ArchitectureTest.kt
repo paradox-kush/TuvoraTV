@@ -79,12 +79,14 @@ class ArchitectureTest {
      */
     @Test
     fun `only the mpv engine shell names libmpv`() {
-        val allowed = setOf(
-            "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt",
-        )
+        // The shell (declares the SurfaceView) + the fork-owned engine package (extracted internals:
+        // property shadow, and later the ctl queue / lifecycle) are the only places libmpv is named.
+        fun isEnginePackage(rel: String) =
+            rel == "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt" ||
+                rel.startsWith("com/nuvio/tv/player/mpv/")
         val libmpvRef = Regex("`is`\\.xyz\\.mpv|\\bBaseMPVView\\b")
         val violations = files
-            .filter { (p, _) -> rel(p) !in allowed }
+            .filter { (p, _) -> !isEnginePackage(rel(p)) }
             .filter { (_, text) -> libmpvRef.containsMatchIn(stripComments(text)) }
             .map { (p, _) -> rel(p) }
             .sorted()

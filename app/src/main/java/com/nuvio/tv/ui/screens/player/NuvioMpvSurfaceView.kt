@@ -14,6 +14,7 @@ import `is`.xyz.mpv.BaseMPVView
 import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
+import com.nuvio.tv.player.mpv.MpvPropertyShadow
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
@@ -22,9 +23,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.pow
 import kotlin.math.roundToLong
-
-/** libmpv mpv_event_id: MPV_EVENT_END_FILE (stable ABI value). */
-private const val MPV_EVENT_END_FILE = 7
 
 class NuvioMpvSurfaceView @JvmOverloads constructor(
     context: Context,
@@ -79,140 +77,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         applyAspectModeInternal(currentAspectMode, allowRetry = true)
     }
 
-    // Shadow of the observed playback properties, updated from mpv's event thread.
-    // The readers below (isPlayingNow, currentPositionMs, readTrackSnapshot, …) return
-    // these instead of calling mpv_get_property: a synchronous read takes the mpv core
-    // lock, which stalls for seconds while a live demuxer is busy or tearing down — on
-    // the main thread (500ms progress poll, seek gate, style/aspect application) that's
-    // an ANR (Play vitals: getPropertyBoolean → pthread_cond_wait).
-    @Volatile private var obsPaused = true
-    @Volatile private var obsPausedForCache = false
-    @Volatile private var obsCoreIdle = false
-    @Volatile private var obsTimePosMs = 0L
-    @Volatile private var obsDurationMs = 0L
-    @Volatile private var obsVid: String? = null
-    @Volatile private var obsAid: String? = null
-    @Volatile private var obsSid: String? = null
-    @Volatile private var obsTrackList: MPVNode? = null
-    @Volatile private var obsVideoOutParams: MPVNode? = null
-    @Volatile private var obsVideoParams: MPVNode? = null
-    // Rolling bitrate estimates. Live MPEG-TS almost never declares a bitrate in the
-    // container, so the demuxer's per-track `demux-bitrate` is usually absent — mpv's
-    // running estimate is the only number the stream info panel can show for live.
-    @Volatile private var obsVideoBitrate: Double? = null
+    // The mpv property shadow lives in the fork-owned engine package; the surface view reads these
+    // lock-free instead of calling mpv_get_property on the main thread (ANR). See MpvPropertyShadow.
+    private val shadow = MpvPropertyShadow(onEndFileError = { onPlaybackEndedWithError?.invoke(it) })
 
-    /**
-     * Counts samples where mpv reported the video output running. Written on the mpv event
-     * thread only — never read back through mpv from Main (see the ANR rules in this file).
-     *
-     * CAVEAT: `estimated-vf-fps` measures the *filter chain* output, so it proves frames are
-     * still being produced rather than presented. It catches the reported "picture frozen, audio
-     * playing" wedge; verify against a genuinely frozen channel before trusting it alone.
-     */
-    @Volatile private var obsVideoFrameTicks = 0L
-    @Volatile private var obsAudioBitrate: Double? = null
-
-    // VO-level counters, straight from mpv. `estimated-vf-fps` above proves decoding, not
-    // presentation; these are the closest signals mpv has to "the picture reached the screen"
-    // (no true presented-frames property exists). Diagnostics for the live-freeze work only —
-    // not a detection input yet.
-    @Volatile private var obsVoDroppedFrames = 0L
-    @Volatile private var obsVoDelayedFrames = 0L
-
-    private fun resetPropertyShadow() {
-        obsPaused = true
-        obsPausedForCache = false
-        obsCoreIdle = false
-        obsTimePosMs = 0L
-        obsDurationMs = 0L
-        obsVid = null
-        obsAid = null
-        obsSid = null
-        obsTrackList = null
-        obsVideoOutParams = null
-        obsVideoParams = null
-        obsVideoBitrate = null
-        obsAudioBitrate = null
-        // Per-core counters: a fresh core reports 0, so re-init starts them there too.
-        obsVoDroppedFrames = 0L
-        obsVoDelayedFrames = 0L
-    }
-
-    private val propertyShadow = object : MPV.EventObserver {
-        override fun eventProperty(property: String) {
-            // MPV_FORMAT_NONE: property became unavailable — fall back to the same
-            // defaults a failed synchronous read used to produce.
-            when (property) {
-                "pause" -> obsPaused = true
-                "paused-for-cache" -> obsPausedForCache = false
-                "core-idle" -> obsCoreIdle = false
-                "time-pos" -> obsTimePosMs = 0L
-                "duration" -> obsDurationMs = 0L
-                "vid" -> obsVid = null
-                "aid" -> obsAid = null
-                "sid" -> obsSid = null
-                "track-list" -> obsTrackList = null
-                "video-out-params" -> obsVideoOutParams = null
-                "video-params" -> obsVideoParams = null
-                "video-bitrate" -> obsVideoBitrate = null
-                "audio-bitrate" -> obsAudioBitrate = null
-                // Unavailable means no active VO — the same 0 a fresh core reports.
-                "frame-drop-count" -> obsVoDroppedFrames = 0L
-                "vo-delayed-frame-count" -> obsVoDelayedFrames = 0L
-            }
-        }
-
-        override fun eventProperty(property: String, value: Long) {
-            when (property) {
-                "frame-drop-count" -> obsVoDroppedFrames = value
-                "vo-delayed-frame-count" -> obsVoDelayedFrames = value
-            }
-        }
-
-        override fun eventProperty(property: String, value: Boolean) {
-            when (property) {
-                "pause" -> obsPaused = value
-                "paused-for-cache" -> obsPausedForCache = value
-                "core-idle" -> obsCoreIdle = value
-            }
-        }
-
-        override fun eventProperty(property: String, value: Double) {
-            when (property) {
-                "time-pos" -> obsTimePosMs = (value * 1000.0).roundToLong().coerceAtLeast(0L)
-                "duration" -> obsDurationMs = (value * 1000.0).roundToLong().coerceAtLeast(0L)
-                "video-bitrate" -> obsVideoBitrate = value.takeIf { it > 0.0 }
-                "estimated-vf-fps" -> if (value > 0.0) obsVideoFrameTicks++
-                "audio-bitrate" -> obsAudioBitrate = value.takeIf { it > 0.0 }
-            }
-        }
-
-        override fun eventProperty(property: String, value: String) {
-            when (property) {
-                "vid" -> obsVid = value
-                "aid" -> obsAid = value
-                "sid" -> obsSid = value
-            }
-        }
-
-        override fun eventProperty(property: String, value: MPVNode) {
-            when (property) {
-                "track-list" -> obsTrackList = value
-                "video-out-params" -> obsVideoOutParams = value
-                "video-params" -> obsVideoParams = value
-            }
-        }
-
-        override fun event(eventId: Int, data: MPVNode) {
-            if (eventId != MPV_EVENT_END_FILE) return
-            // mpv_event_to_node shape: {"reason": "eof"|"stop"|"quit"|"error"|"redirect",
-            //  "file_error": "<mpv error string>" (only when reason == "error")}.
-            val map = runCatching { data.asMap() }.getOrNull() ?: return
-            if (runCatching { map["reason"]?.asString() }.getOrNull() != "error") return
-            val fileError = runCatching { map["file_error"]?.asString() }.getOrNull()
-            onPlaybackEndedWithError?.invoke(fileError)
-        }
-    }
 
     override fun ensureInitialized() {
         if (initialized) return
@@ -409,7 +277,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         if (!initialized) return
         // Optimistic shadow echo so isPlayingNow() right after reflects the intent;
         // mpv's own pause event confirms (or corrects) it moments later.
-        obsPaused = paused
+        shadow.obsPaused = paused
         ctl { mpv.setPropertyBoolean("pause", paused) }
     }
 
@@ -420,17 +288,17 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     override fun isPlayingNow(): Boolean {
         if (!initialized) return false
-        return !obsPaused
+        return !shadow.obsPaused
     }
 
     override fun isPausedForCacheNow(): Boolean {
         if (!initialized) return false
-        return obsPausedForCache
+        return shadow.obsPausedForCache
     }
 
     override fun isCoreIdleNow(): Boolean {
         if (!initialized) return false
-        return obsCoreIdle
+        return shadow.obsCoreIdle
     }
 
     /**
@@ -438,10 +306,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      * change since the previous sample means a frame was produced. Audio cannot move it, which
      * is exactly why the playhead is not enough.
      */
-    override fun videoFrameTicksNow(): Long = obsVideoFrameTicks
+    override fun videoFrameTicksNow(): Long = shadow.obsVideoFrameTicks
 
     /** Whether a picture is expected at all — IPTV radio stations legitimately render none. */
-    override fun hasVideoTrackNow(): Boolean = initialized && obsVideoParams != null
+    override fun hasVideoTrackNow(): Boolean = initialized && shadow.obsVideoParams != null
 
     /**
      * mpv `frame-drop-count`, read off the shadow: frames the VO dropped, including frames it
@@ -452,10 +320,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      * `PlayerPlaybackSnapshot.voDroppedFrameCount`; recorded for the live-freeze work, not a
      * detection input yet. Resets with the core, so consumers must diff defensively.
      */
-    override fun voDroppedFrameCountNow(): Long = obsVoDroppedFrames
+    override fun voDroppedFrameCountNow(): Long = shadow.obsVoDroppedFrames
 
     /** mpv `vo-delayed-frame-count`: delayed-vsync estimate. See [voDroppedFrameCountNow]. */
-    override fun voDelayedFrameCountNow(): Long = obsVoDelayedFrames
+    override fun voDelayedFrameCountNow(): Long = shadow.obsVoDelayedFrames
 
     /**
      * Reinitialises the video track off the demuxer that is already connected, for a channel
@@ -475,17 +343,17 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     override fun currentPositionMs(): Long {
         if (!initialized) return 0L
-        return obsTimePosMs
+        return shadow.obsTimePosMs
     }
 
     override fun durationMs(): Long {
         if (!initialized) return 0L
-        return obsDurationMs
+        return shadow.obsDurationMs
     }
 
     override fun hasVideoTrackSelectedNow(): Boolean {
         if (!initialized) return false
-        val vid = obsVid?.trim()
+        val vid = shadow.obsVid?.trim()
         return !vid.isNullOrBlank() && !vid.equals("no", ignoreCase = true)
     }
 
@@ -755,23 +623,23 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      */
     override fun readVideoSnapshot(): MpvVideoSnapshot = runCatching {
         if (!initialized) return@runCatching MpvVideoSnapshot()
-        val videoTrack = obsTrackList?.asArray()?.toList().orEmpty().firstOrNull { node ->
+        val videoTrack = shadow.obsTrackList?.asArray()?.toList().orEmpty().firstOrNull { node ->
             node.nodeString("type")?.lowercase() == "video" && node.nodeBoolean("selected") == true
         }
         MpvVideoSnapshot(
-            width = obsVideoParams.nodeInt("w") ?: videoTrack.nodeInt("demux-w"),
-            height = obsVideoParams.nodeInt("h") ?: videoTrack.nodeInt("demux-h"),
+            width = shadow.obsVideoParams.nodeInt("w") ?: videoTrack.nodeInt("demux-w"),
+            height = shadow.obsVideoParams.nodeInt("h") ?: videoTrack.nodeInt("demux-h"),
             codec = videoTrack.nodeString("codec"),
             frameRate = videoTrack.nodeDouble("demux-fps")?.toFloat()?.takeIf { it > 0f },
             // All three are bits per second, same unit as ExoPlayer's Format.bitrate.
             // Measured first, then the container's average, then the HLS variant's
             // declared rate (the only one many Xtream live channels expose).
             bitrate = (
-                obsVideoBitrate
+                shadow.obsVideoBitrate
                     ?: videoTrack.nodeDouble("demux-bitrate")
                     ?: videoTrack.nodeDouble("hls-bitrate")
                 )?.takeIf { it > 0.0 }?.roundToLong()?.toInt(),
-            audioBitrate = obsAudioBitrate?.takeIf { it > 0.0 }?.roundToLong()?.toInt()
+            audioBitrate = shadow.obsAudioBitrate?.takeIf { it > 0.0 }?.roundToLong()?.toInt()
         )
     }.getOrElse {
         Log.w(TAG, "Failed to read mpv video snapshot: ${it.message}")
@@ -783,13 +651,13 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         // Built from the observed track-list shadow — no synchronous mpv reads. The old
         // current-tracks/* fallbacks are gone: the per-track selected flag plus aid/sid
         // cover selection, and the snapshot refreshes every progress tick anyway.
-        val nodes = obsTrackList?.asArray()?.toList().orEmpty()
+        val nodes = shadow.obsTrackList?.asArray()?.toList().orEmpty()
         if (nodes.isEmpty()) {
             return MpvTrackSnapshot(emptyList(), emptyList())
         }
 
-        val selectedAudioTrackId = obsAid?.toIntOrNull()
-        val selectedSubtitleTrackId = obsSid?.toIntOrNull()
+        val selectedAudioTrackId = shadow.obsAid?.toIntOrNull()
+        val selectedSubtitleTrackId = shadow.obsSid?.toIntOrNull()
 
         val audioTracks = mutableListOf<MpvTrack>()
         val subtitleTracks = mutableListOf<MpvTrack>()
@@ -874,7 +742,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                     // each other while the native core is releasing descriptors and buffers.
                     runCatching { mpv.command("stop") }
                     detachSurfaceInternal()
-                    runCatching { mpv.removeObserver(propertyShadow) }
+                    runCatching { mpv.removeObserver(shadow) }
                     runCatching { mpv.destroy() }
                         .onSuccess { destroyed = true }
                         .onFailure { Log.w(TAG, "Failed to destroy libmpv view cleanly: ${it.message}") }
@@ -985,10 +853,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     override fun observeProperties() {
         // Feed the property shadow (see fields above). PlayerRuntimeController still
         // polls, but the polls now read the shadow instead of the mpv core.
-        resetPropertyShadow()
+        shadow.reset()
         // releasePlayer() → ensureInitialized() re-runs this; don't double-register.
-        mpv.removeObserver(propertyShadow)
-        mpv.addObserver(propertyShadow)
+        mpv.removeObserver(shadow)
+        mpv.addObserver(shadow)
         val props = mapOf(
             "pause" to MPV.mpvFormat.MPV_FORMAT_FLAG,
             "paused-for-cache" to MPV.mpvFormat.MPV_FORMAT_FLAG,
@@ -1079,17 +947,17 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     private fun readVideoAspectRatio(): Float? {
         if (!initialized) return null
 
-        val directAspect = obsVideoOutParams.nodeDouble("aspect")
-            ?: obsVideoParams.nodeDouble("aspect")
+        val directAspect = shadow.obsVideoOutParams.nodeDouble("aspect")
+            ?: shadow.obsVideoParams.nodeDouble("aspect")
         if (directAspect != null && directAspect > 0.0) {
             return directAspect.toFloat()
         }
 
-        val width = obsVideoOutParams.nodeInt("dw")
-            ?: obsVideoParams.nodeInt("w")
+        val width = shadow.obsVideoOutParams.nodeInt("dw")
+            ?: shadow.obsVideoParams.nodeInt("w")
             ?: return null
-        val height = obsVideoOutParams.nodeInt("dh")
-            ?: obsVideoParams.nodeInt("h")
+        val height = shadow.obsVideoOutParams.nodeInt("dh")
+            ?: shadow.obsVideoParams.nodeInt("h")
             ?: return null
         if (width <= 0 || height <= 0) return null
 
