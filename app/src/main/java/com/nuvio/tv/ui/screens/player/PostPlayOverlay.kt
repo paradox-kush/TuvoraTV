@@ -62,12 +62,17 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
+import coil3.request.transformations
 import com.nuvio.tv.R
+import com.nuvio.tv.ui.util.BlurTransformation
 
 @Composable
 fun PostPlayOverlay(
     mode: PostPlayMode?,
     controlsVisible: Boolean,
+    blurUnwatchedEpisodes: Boolean,
     nextEpisodeFocusRequester: FocusRequester,
     progressBarFocusRequester: FocusRequester?,
     onPlayNext: () -> Unit,
@@ -138,9 +143,13 @@ fun PostPlayOverlay(
                 contentKey = { it?.let { current -> current::class } },
             ) { current ->
                 when (current) {
-                    is PostPlayMode.AutoPlay -> AutoPlayBody(mode = current)
+                    is PostPlayMode.AutoPlay -> AutoPlayBody(
+                        mode = current,
+                        blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                    )
                     is PostPlayMode.StillWatching -> StillWatchingBody(
                         mode = current,
+                        blurUnwatchedEpisodes = blurUnwatchedEpisodes,
                         onContinue = onContinueStillWatching,
                         onDismiss = onDismissStillWatching,
                     )
@@ -152,7 +161,10 @@ fun PostPlayOverlay(
 }
 
 @Composable
-private fun AutoPlayBody(mode: PostPlayMode.AutoPlay) {
+private fun AutoPlayBody(
+    mode: PostPlayMode.AutoPlay,
+    blurUnwatchedEpisodes: Boolean,
+) {
     val nextEpisode = mode.nextEpisode
     val isPlayable = nextEpisode.hasAired
     Row(
@@ -162,6 +174,7 @@ private fun AutoPlayBody(mode: PostPlayMode.AutoPlay) {
         NextEpisodeThumbnail(
             thumbnail = nextEpisode.thumbnail,
             contentDescription = stringResource(R.string.cd_next_episode_thumbnail),
+            blurred = blurUnwatchedEpisodes,
         )
 
         Spacer(modifier = Modifier.width(10.dp))
@@ -229,6 +242,7 @@ private fun AutoPlayBody(mode: PostPlayMode.AutoPlay) {
 @Composable
 private fun StillWatchingBody(
     mode: PostPlayMode.StillWatching,
+    blurUnwatchedEpisodes: Boolean,
     onContinue: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -245,6 +259,7 @@ private fun StillWatchingBody(
             NextEpisodeThumbnail(
                 thumbnail = nextEpisode.thumbnail,
                 contentDescription = stringResource(R.string.cd_next_episode_thumbnail),
+                blurred = blurUnwatchedEpisodes,
             )
             Spacer(modifier = Modifier.width(10.dp))
         }
@@ -362,15 +377,26 @@ private fun PostPlayPillButton(
 private fun NextEpisodeThumbnail(
     thumbnail: String?,
     contentDescription: String?,
+    blurred: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val imageRequest = remember(context, thumbnail, blurred) {
+        ImageRequest.Builder(context)
+            .data(thumbnail)
+            .crossfade(true)
+            .apply {
+                if (blurred) transformations(BlurTransformation())
+            }
+            .build()
+    }
     Box(
         modifier = modifier
             .size(width = 112.dp, height = 64.dp)
             .clip(RoundedCornerShape(9.dp)),
     ) {
         AsyncImage(
-            model = thumbnail,
+            model = imageRequest,
             contentDescription = contentDescription,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,

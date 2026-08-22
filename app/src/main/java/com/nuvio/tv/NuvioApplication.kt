@@ -23,6 +23,7 @@ import com.nuvio.tv.core.analytics.AppExitReporter
 import com.nuvio.tv.core.diagnostics.SentryInitializer
 import com.nuvio.tv.core.iptv.refresh.IptvRefreshScheduler
 import com.nuvio.tv.core.analytics.PostHogPrivacy
+import com.nuvio.tv.core.image.StaleWhileRevalidateCacheStrategy
 import com.nuvio.tv.core.runtime.PluginRuntimeHooks
 import com.nuvio.tv.core.sync.RealtimeSyncInvalidationService
 import com.nuvio.tv.core.sync.StartupSyncService
@@ -41,6 +42,7 @@ import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -221,6 +223,25 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     }
 
     override fun newImageLoader(context: android.content.Context): ImageLoader {
+        val imageOkHttpClient by lazy {
+            val imageDispatcher = okhttp3.Dispatcher().apply {
+                maxRequests = 32
+                maxRequestsPerHost = 16
+            }
+            OkHttpClient.Builder()
+                .dispatcher(imageDispatcher)
+                .dns(IPv4FirstDns())
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(8, TimeUnit.SECONDS)
+                .callTimeout(15, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("IMG"))
+                .build()
+        }
+
+        val imageLoaderRef: () -> ImageLoader = { SingletonImageLoader.get(this) }
+
         return ImageLoader.Builder(this)
             .components {
                 if (Build.VERSION.SDK_INT >= 28) {
@@ -229,18 +250,17 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                     add(GifDecoder.Factory())
                 }
                 add(SvgDecoder.Factory())
-                // Use a lean OkHttpClient for image fetching — no HTTP cache (Coil's own
-                // DiskCache handles caching), no cookie jar, no logging interceptors.
+                // Lean image client (no HTTP cache — Coil's DiskCache owns caching, no cookie jar) with
+                // bounded dispatcher + timeouts; stale-while-revalidate so dynamic posters refresh.
                 add(
                     coil3.network.okhttp.OkHttpNetworkFetcherFactory(
-                        callFactory = {
-                            OkHttpClient.Builder()
-                                .dns(IPv4FirstDns())
-                                .followRedirects(true)
-                                .followSslRedirects(true)
-                                .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("IMG"))
-                                .build()
-                        }
+                        callFactory = { imageOkHttpClient },
+                        cacheStrategy = {
+                            StaleWhileRevalidateCacheStrategy(
+                                revalidationClient = { imageOkHttpClient },
+                                imageLoaderProvider = imageLoaderRef,
+                            )
+                        },
                     )
                 )
             }

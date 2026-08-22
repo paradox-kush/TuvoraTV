@@ -1201,12 +1201,13 @@ private fun ModernCarouselCard(
         with(density) { cardHeight.roundToPx() }.coerceAtLeast(1)
     }
 
-    val imageModel = remember(context, imageUrl, requestWidthPx, requestHeightPx) {
+    val revalidationKey = com.nuvio.tv.core.image.rememberImageRevalidationKey(imageUrl)
+    val imageModel = remember(context, imageUrl, requestWidthPx, requestHeightPx, revalidationKey) {
         imageUrl?.let {
             ImageRequest.Builder(context)
                 .data(it)
-                .crossfade(true)
-                .memoryCacheKey("${it}_${requestWidthPx}x${requestHeightPx}")
+                .crossfade(revalidationKey == 0) // no crossfade on revalidation swap
+                .memoryCacheKey("${it}_${requestWidthPx}x${requestHeightPx}_v$revalidationKey")
                 .size(width = requestWidthPx, height = requestHeightPx)
                 .build()
         }

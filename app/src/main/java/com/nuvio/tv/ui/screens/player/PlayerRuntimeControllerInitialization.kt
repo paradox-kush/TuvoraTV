@@ -2291,7 +2291,7 @@ private class CueNormalizingTextOutput(
     }
 
     private fun processCue(cue: Cue): Cue {
-        var processed = fixRtlCueText(cue)
+        var processed = fixRtlCueText(SubtitleMojibakeSanitizer.sanitizeCue(cue))
         if (shouldNormalizeCuePositionProvider()) {
             processed = normalizeCuePosition(processed)
         }

@@ -922,6 +922,7 @@ fun PlayerScreen(
                     !uiState.showMoreDialog
             },
             controlsVisible = uiState.showControls,
+            blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
             nextEpisodeFocusRequester = nextEpisodeFocusRequester,
             progressBarFocusRequester = if (uiState.showControls) progressBarFocusRequester else null,
             onPlayNext = { viewModel.onEvent(PlayerEvent.OnPlayNextEpisode) },
@@ -2619,11 +2620,13 @@ private fun SubtitleDelayOverlay(
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 color = Color.White
             )
-            Text(
-                text = formatSubtitleDelay(subtitleDelayMs),
-                style = MaterialTheme.typography.titleLarge,
-                color = Color.White.copy(alpha = 0.95f)
-            )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    text = formatSubtitleDelay(subtitleDelayMs),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White.copy(alpha = 0.95f)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(18.dp))

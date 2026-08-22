@@ -175,12 +175,13 @@ fun GridContentCard(
                 val context = LocalContext.current
                 val bgCardColor = NuvioTheme.colors.BackgroundCard
                 val bgPainter = remember(bgCardColor) { androidx.compose.ui.graphics.painter.ColorPainter(bgCardColor) }
-                val imageModel = remember(item.poster, requestWidthPx, requestHeightPx) {
+                val revalidationKey = com.nuvio.tv.core.image.rememberImageRevalidationKey(item.poster)
+                val imageModel = remember(item.poster, requestWidthPx, requestHeightPx, revalidationKey) {
                     ImageRequest.Builder(context)
                         .data(item.poster)
-                        .crossfade(imageCrossfade)
+                        .crossfade(if (revalidationKey == 0) imageCrossfade else false)
                         .size(width = requestWidthPx, height = requestHeightPx)
-                        .memoryCacheKey("${item.poster}_${requestWidthPx}x${requestHeightPx}")
+                        .memoryCacheKey("${item.poster}_${requestWidthPx}x${requestHeightPx}_v$revalidationKey")
                         .build()
                 }
                 if (item.poster.isNullOrBlank()) {

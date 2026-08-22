@@ -398,13 +398,14 @@ internal fun continueWatchingShouldBlur(
     useEpisodeThumbnails: Boolean,
     preferPosterArtwork: Boolean = false
 ): Boolean {
-    val nextUp = (item as? ContinueWatchingItem.NextUp)?.info ?: return false
     if (!blurUnwatchedEpisodes || !useEpisodeThumbnails) return false
-    if (!preferPosterArtwork) return true
-    // Poster art carries no spoiler, so these cards only blur when they fell back to the episode thumbnail.
+    if (item is ContinueWatchingItem.InProgress && item.progress.isCompleted()) return false
+    val thumbnail = when (item) {
+        is ContinueWatchingItem.InProgress -> item.episodeThumbnail
+        is ContinueWatchingItem.NextUp -> item.info.thumbnail
+    }?.trim()?.takeIf { it.isNotBlank() } ?: return false
     val resolved = continueWatchingImageModel(item, useEpisodeThumbnails, preferPosterArtwork)
-    val thumbnail = nextUp.thumbnail?.trim()?.takeIf { it.isNotBlank() }
-    return resolved != null && resolved == thumbnail
+    return resolved?.trim() == thumbnail
 }
 
 // Builds the Coil memory-cache key that the card and prefetch must share, including the blur suffix, so the prefetch is not wasted.

@@ -679,6 +679,7 @@ private fun MetaInfoRow(
         }
     }
     val imdbRating = if (hideImdbRating) null else meta.imdbRating
+    val reserveImdbRatingHeight = meta.imdbRating != null
     val shouldShowImdbRating = imdbRating != null
     val shouldShowTmdbRating = tmdbRating != null
     val tmdbModel = remember(context) {
@@ -725,6 +726,7 @@ private fun MetaInfoRow(
     Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
         // Primary row: Genres, Release, Ratings
         Row(
+            modifier = if (reserveImdbRatingHeight) Modifier.height(30.dp) else Modifier,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
             verticalAlignment = Alignment.CenterVertically
         ) {
