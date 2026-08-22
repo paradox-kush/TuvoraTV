@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import com.nuvio.tv.ui.screens.player.IptvContainerMimeMemory
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.iptv.IptvClientFactory
@@ -657,7 +659,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             }
             tunePreview(
                 channel.copy(streamUrl = url),
-                mimeOverride = PlayerMediaSourceFactory.CONTAINER_MISMATCH_RETRY_MIME_TYPE
+                mimeOverride = IptvContainerMimeMemory.CONTAINER_MISMATCH_RETRY_MIME_TYPE
             )
         }
     }
@@ -672,7 +674,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val state = _uiState.value
         val mime = state.previewMimeOverride ?: return
         val url = state.previewPlayback?.url ?: return
-        PlayerMediaSourceFactory.rememberContainerMimeType(url, mime)
+        IptvContainerMimeMemory.rememberContainerMimeType(url, mime)
     }
 
     /**

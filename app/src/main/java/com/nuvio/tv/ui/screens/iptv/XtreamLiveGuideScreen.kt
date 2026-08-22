@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import com.nuvio.tv.ui.screens.player.IptvContainerMimeMemory
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
@@ -284,7 +286,7 @@ fun LiveGuide(
                         )
                         // The panel answered our `.ts` request with a container that isn't TS
                         // (typically a 302 to an HLS playlist). One re-tune forcing HLS.
-                        if (PlayerMediaSourceFactory.isContainerMismatch(error)) {
+                        if (IptvContainerMimeMemory.isContainerMismatch(error)) {
                             viewModel.onPreviewContainerMismatch()
                         }
                     }

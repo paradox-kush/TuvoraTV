@@ -818,15 +818,6 @@ internal fun PlayerRuntimeController.maybeScheduleFirstFrameWatchdog() {
     }
 }
 
-/**
- * Rebuilds the player on the current live URL, resuming at the live edge rather than any saved
- * position. This is the automated form of the workaround viewers use by hand — changing channel
- * and back — for a live stream that ended or wedged with no error.
- */
-internal fun PlayerRuntimeController.reinitializeLiveStreamFromLiveEdge() {
-    scheduleDeferredPlayerReinitialize(fromPositionMs = 0L, clearResumeProgress = true)
-}
-
 private fun PlayerRuntimeController.scheduleDeferredPlayerReinitialize(
     fromPositionMs: Long,
     clearResumeProgress: Boolean = false
@@ -875,4 +866,13 @@ internal fun PlayerRuntimeController.observeDeviceLocalAspectMode() {
                 }
             }
     }
+}
+
+/**
+ * Rebuilds the player on the current live URL, resuming at the live edge rather than any saved
+ * position. This is the automated form of the workaround viewers use by hand — changing channel
+ * and back — for a live stream that ended or wedged with no error.
+ */
+internal fun PlayerRuntimeController.reinitializeLiveStreamFromLiveEdge() {
+    scheduleDeferredPlayerReinitialize(fromPositionMs = 0L, clearResumeProgress = true)
 }
