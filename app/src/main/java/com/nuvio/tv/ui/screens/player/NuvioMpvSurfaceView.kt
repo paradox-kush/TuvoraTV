@@ -17,7 +17,6 @@ import `is`.xyz.mpv.Utils
 import com.nuvio.tv.player.mpv.MpvPropertyShadow
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -55,21 +54,16 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     // lock as reads: on a wedged live demuxer a lifecycle setPaused or a seek on the
     // main thread blocks >5s → ANR (reproduced on mobile; same call shape here). Reads
     // are lock-free via the property shadow; writes queue onto this thread.
-    private val mpvCtl = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "mpv-ctl")
-    }
+    // The mpv control thread lives in the fork-owned engine package; the lifecycle predicates come
+    // from this view (which owns initialized / nativeCoreAlive / the instance id).
+    private val controlQueue = com.nuvio.tv.player.mpv.MpvControlQueue(
+        currentInstanceId = { lifecycleInstanceId },
+        isInitialized = { initialized },
+        isCoreAlive = { nativeCoreAlive },
+    )
     @Volatile private var pendingDestroy: Future<*>? = null
 
-    private fun ctl(block: () -> Unit) {
-        val instanceId = lifecycleInstanceId
-        if (!initialized || !nativeCoreAlive || instanceId <= 0L) return
-        runCatching {
-            mpvCtl.execute {
-                if (!nativeCoreAlive || lifecycleInstanceId != instanceId) return@execute
-                runCatching(block)
-            }
-        }
-    }
+    private fun ctl(block: () -> Unit) = controlQueue.submit(block)
     private var hardwareDecodeMode: MpvHardwareDecodeMode = MpvHardwareDecodeMode.AUTO_SAFE
     private var currentAspectMode: AspectMode = AspectMode.ORIGINAL
     private var pendingAspectRetryCount = 0
@@ -735,7 +729,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         val destroyCompletion = CompletableFuture<Unit>()
         pendingDestroy = destroyCompletion
         runCatching {
-            mpvCtl.submit {
+            controlQueue.submitTeardown {
                 var destroyed = false
                 try {
                     // A single ordered teardown prevents stop/surface detach/destroy from racing
