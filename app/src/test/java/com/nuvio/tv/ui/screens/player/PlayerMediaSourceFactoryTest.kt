@@ -119,15 +119,15 @@ class PlayerMediaSourceFactoryTest {
     @Test
     fun `learned container type is remembered per host and extension`() {
         val url = "https://panel.example.com/live/user/pass/1300597937.ts"
-        assertNull(PlayerMediaSourceFactory.learnedContainerMimeType(url))
+        assertNull(IptvContainerMimeMemory.learnedContainerMimeType(url))
 
-        PlayerMediaSourceFactory.rememberContainerMimeType(url, MimeTypes.APPLICATION_M3U8)
+        IptvContainerMimeMemory.rememberContainerMimeType(url, MimeTypes.APPLICATION_M3U8)
 
         // Every other channel on the same panel is the point — one failure teaches the provider,
         // not the channel.
         assertEquals(
             MimeTypes.APPLICATION_M3U8,
-            PlayerMediaSourceFactory.learnedContainerMimeType(
+            IptvContainerMimeMemory.learnedContainerMimeType(
                 "https://panel.example.com/live/user/pass/999.ts"
             )
         )
@@ -135,14 +135,14 @@ class PlayerMediaSourceFactoryTest {
 
     @Test
     fun `learned live container does not leak into VOD on the same host`() {
-        PlayerMediaSourceFactory.rememberContainerMimeType(
+        IptvContainerMimeMemory.rememberContainerMimeType(
             "https://vodpanel.example.com/live/user/pass/1.ts",
             MimeTypes.APPLICATION_M3U8
         )
 
         // Same panel, real progressive mp4 — must not inherit what `.ts` learned.
         assertNull(
-            PlayerMediaSourceFactory.learnedContainerMimeType(
+            IptvContainerMimeMemory.learnedContainerMimeType(
                 "https://vodpanel.example.com/movie/user/pass/55.mp4"
             )
         )
@@ -150,13 +150,13 @@ class PlayerMediaSourceFactoryTest {
 
     @Test
     fun `learned container type is not shared across hosts`() {
-        PlayerMediaSourceFactory.rememberContainerMimeType(
+        IptvContainerMimeMemory.rememberContainerMimeType(
             "https://one.example.com/live/user/pass/1.ts",
             MimeTypes.APPLICATION_M3U8
         )
 
         assertNull(
-            PlayerMediaSourceFactory.learnedContainerMimeType(
+            IptvContainerMimeMemory.learnedContainerMimeType(
                 "https://two.example.com/live/user/pass/1.ts"
             )
         )
@@ -165,14 +165,14 @@ class PlayerMediaSourceFactoryTest {
     @Test
     fun `extensionless stalker links share one bucket per host despite rotating tokens`() {
         // create_link hands back a different token every play, so the host is the only stable part.
-        PlayerMediaSourceFactory.rememberContainerMimeType(
+        IptvContainerMimeMemory.rememberContainerMimeType(
             "http://portal.example.com/ch/12345_?token=aaaa",
             MimeTypes.APPLICATION_M3U8
         )
 
         assertEquals(
             MimeTypes.APPLICATION_M3U8,
-            PlayerMediaSourceFactory.learnedContainerMimeType(
+            IptvContainerMimeMemory.learnedContainerMimeType(
                 "http://portal.example.com/ch/98765_?token=bbbb"
             )
         )
@@ -182,14 +182,14 @@ class PlayerMediaSourceFactoryTest {
     fun `learned container key ignores query and credentials and is case insensitive on host`() {
         assertEquals(
             "panel.example.com|ts",
-            PlayerMediaSourceFactory.learnedContainerKey(
+            IptvContainerMimeMemory.learnedContainerKey(
                 "https://Panel.Example.COM/live/u/p/7.ts?token=abc#frag"
             )
         )
         assertEquals(
             "panel.example.com|",
-            PlayerMediaSourceFactory.learnedContainerKey("https://panel.example.com/ch/7_")
+            IptvContainerMimeMemory.learnedContainerKey("https://panel.example.com/ch/7_")
         )
-        assertNull(PlayerMediaSourceFactory.learnedContainerKey("not a url"))
+        assertNull(IptvContainerMimeMemory.learnedContainerKey("not a url"))
     }
 }
