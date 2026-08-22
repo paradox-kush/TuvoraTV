@@ -6,7 +6,7 @@ package com.nuvio.tv.arch
  * removes its files as it moves the reference behind a contract or a Hilt-bound interface. A change
  * that adds a NEW crossing goes red. Do not add entries to silence a rule; fix the crossing.
  *
- * 19 pre-existing crossings (22 − 3 drained by the Part B live-playback seam) — the coupling the KMP repos already drained to zero, now visible
+ * 17 pre-existing crossings (22 − 3 Part B live-playback seam − 2 Part A memory-budget port) — the coupling the KMP repos already drained to zero, now visible
  * and ratcheted on TV. Draining these is follow-on seam work.
  */
 object ArchBaseline {
@@ -23,8 +23,6 @@ object ArchBaseline {
         "com/nuvio/tv/ui/screens/account/AccountViewModel.kt",
         "com/nuvio/tv/ui/screens/home/HomeViewModelContinueWatching.kt",
         "com/nuvio/tv/ui/screens/home/ModernHomeRows.kt",
-        "com/nuvio/tv/ui/screens/player/NuvioExoPlayerPerformanceHelper.kt",
-        "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt",
         "com/nuvio/tv/ui/screens/settings/AdvancedSettingsViewModel.kt",
         "com/nuvio/tv/ui/screens/settings/DebugSettingsViewModel.kt",
         "com/nuvio/tv/ui/screens/settings/XtreamSettingsScreen.kt",

@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.player
 
 import android.content.Context
 import com.nuvio.tv.core.memory.MemoryTier
+import com.nuvio.tv.core.memory.exoTargetBufferBytesFor
 import com.nuvio.tv.core.memory.MemoryTierPolicy
 import io.mockk.every
 import io.mockk.mockk
@@ -145,7 +146,7 @@ class NuvioExoPlayerPerformanceHelperTest {
     fun `low tier keeps the 40MB floor regardless of heap`() {
         assertEquals(
             (40 * mb).toInt(),
-            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.LOW, 1024 * mb)
+            exoTargetBufferBytesFor(MemoryTier.LOW, 1024 * mb)
         )
     }
 
@@ -154,21 +155,21 @@ class NuvioExoPlayerPerformanceHelperTest {
         // The stick class: a 192m dalvik heap (post-largeHeap) budgets 48MB.
         assertEquals(
             (48 * mb).toInt(),
-            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.MID, 192 * mb)
+            exoTargetBufferBytesFor(MemoryTier.MID, 192 * mb)
         )
         assertEquals(
             (64 * mb).toInt(),
-            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.HIGH, 256 * mb)
+            exoTargetBufferBytesFor(MemoryTier.HIGH, 256 * mb)
         )
         // Clamp floor: tiny heaps never budget below the LOW size.
         assertEquals(
             (40 * mb).toInt(),
-            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.MID, 128 * mb)
+            exoTargetBufferBytesFor(MemoryTier.MID, 128 * mb)
         )
         // Clamp ceiling: big boxes stop at 100MB.
         assertEquals(
             (100 * mb).toInt(),
-            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(MemoryTier.HIGH, 512 * mb)
+            exoTargetBufferBytesFor(MemoryTier.HIGH, 512 * mb)
         )
     }
 
@@ -181,7 +182,7 @@ class NuvioExoPlayerPerformanceHelperTest {
         assertEquals(MemoryTier.LOW, tier)
         assertEquals(
             (40 * mb).toInt(),
-            NuvioExoPlayerPerformanceHelper.playerTargetBufferBytes(tier, 512 * mb)
+            exoTargetBufferBytesFor(tier, 512 * mb)
         )
     }
 

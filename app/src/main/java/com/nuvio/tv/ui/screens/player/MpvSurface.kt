@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.contracts.DemuxerBudgetBytes
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
 
@@ -72,6 +73,10 @@ interface MpvSurface {
     fun applyAudioAmplificationDb(db: Int)
     fun applyHardwareDecodeMode(mode: MpvHardwareDecodeMode)
     fun applyAspectMode(mode: AspectMode)
+
+    // ── Engine config set before the first setMedia (see attachMpvView) ────────
+    /** Device demuxer-cache budget; the controller sets it before [setMedia] so initOptions reads it. */
+    var demuxerBudget: DemuxerBudgetBytes?
 
     // ── Events out (fired on mpv's event thread — see invariants) ──────────────
     var onPlaybackEndedWithError: ((fileError: String?) -> Unit)?

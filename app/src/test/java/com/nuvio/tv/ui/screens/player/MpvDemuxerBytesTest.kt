@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.player
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import com.nuvio.tv.core.memory.MemoryTier
+import com.nuvio.tv.core.memory.demuxerBytesFor
 import org.junit.Test
 
 /**

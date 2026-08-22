@@ -90,6 +90,8 @@ class PlayerRuntimeController(
     internal val playbackIssueReportRepository: PlaybackIssueReportRepository,
     /** Neutral live/IPTV playback facade (classifier + DoH + catch-up + channel nav). Part B seam. */
     internal val livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
+    /** Device memory budget for the player buffers (Part A budget port). */
+    internal val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
     savedStateHandle: SavedStateHandle,
     internal val scope: CoroutineScope
 ) {

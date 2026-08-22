@@ -47,6 +47,9 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      * (e.g. "loading failed"). Deliberately silent for eof/stop/quit/redirect unloads, so channel
      * switches ("loadfile replace" → reason "stop") and natural EOF never fire it.
      */
+    /** Set by the controller in attachMpvView before setMedia; read in initOptions. */
+    @Volatile override var demuxerBudget: com.nuvio.tv.core.contracts.DemuxerBudgetBytes? = null
+
     @Volatile override var onPlaybackEndedWithError: ((fileError: String?) -> Unit)? = null
 
     // All mpv control calls (property writes, loadfile, seeks, teardown) run here,
@@ -964,7 +967,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         // largest native cache in the fleet, granted on the smallest devices; LOW now gets
         // 48+16MiB and everything else 64+32MiB — mobile's proven forward:back ratio, which
         // spends the budget on the forward window that actually absorbs network jitter.
-        val demuxerBytes = demuxerBytesFor(com.nuvio.tv.core.memory.AndroidMemoryTierProbe.tier(context))
+        // Budget is injected by the controller (device tier resolved via PlayerMemoryBudget); fall
+        // back to the MID/HIGH values if unset (matches the previous no-context default).
+        val demuxerBytes = demuxerBudget
+            ?: com.nuvio.tv.core.contracts.DemuxerBudgetBytes(64L * 1024 * 1024, 32L * 1024 * 1024)
         mpv.setOptionString("demuxer-max-bytes", "${demuxerBytes.maxBytes}")
         mpv.setOptionString("demuxer-max-back-bytes", "${demuxerBytes.maxBackBytes}")
         mpv.setOptionString("keep-open", "yes")
@@ -1163,25 +1169,3 @@ data class MpvVideoSnapshot(
     val audioBitrate: Int? = null
 )
 
-/** Device memory tier for the demuxer budget. MID and HIGH share one budget today. */
-
-/** Demuxer cache budget: the forward window plus the seek-back window, in bytes. */
-internal data class MpvDemuxerBytes(val maxBytes: Long, val maxBackBytes: Long)
-
-/**
- * mpv demuxer cache per memory tier. Pure so the numbers are testable.
- *
- * LOW keeps the forward:back ratio but at a smaller absolute size; MID/HIGH use mobile's
- * proven 64+32MiB split. The back buffer is the first thing cut because it only serves
- * seek-back, which live TV — the dominant mpv workload here — never uses.
- */
-internal fun demuxerBytesFor(tier: com.nuvio.tv.core.memory.MemoryTier): MpvDemuxerBytes = when (tier) {
-    com.nuvio.tv.core.memory.MemoryTier.LOW -> MpvDemuxerBytes(
-        maxBytes = 48L * 1024L * 1024L,
-        maxBackBytes = 16L * 1024L * 1024L,
-    )
-    com.nuvio.tv.core.memory.MemoryTier.MID, com.nuvio.tv.core.memory.MemoryTier.HIGH -> MpvDemuxerBytes(
-        maxBytes = 64L * 1024L * 1024L,
-        maxBackBytes = 32L * 1024L * 1024L,
-    )
-}

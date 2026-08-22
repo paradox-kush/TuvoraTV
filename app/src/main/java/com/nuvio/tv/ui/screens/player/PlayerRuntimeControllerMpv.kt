@@ -29,6 +29,8 @@ internal fun PlayerRuntimeController.attachMpvView(view: MpvSurface?) {
 
     runCatching {
         performPendingMpvHardRestartIfNeeded(view)
+        // Set the demuxer budget BEFORE setMedia — initOptions (inside ensureInitialized) reads it.
+        view.demuxerBudget = playerMemoryBudget.demuxerBytes()
         view.applyHardwareDecodeMode(mpvHardwareDecodeModeSetting)
         view.setMedia(currentStreamUrl, currentHeaders)
         view.setPlaybackSpeed(_uiState.value.playbackSpeed)
