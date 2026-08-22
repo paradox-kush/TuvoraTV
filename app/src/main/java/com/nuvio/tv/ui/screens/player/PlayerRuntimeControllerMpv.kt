@@ -4,7 +4,6 @@ import android.util.Log
 import androidx.media3.exoplayer.SeekParameters
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -223,15 +222,7 @@ internal fun PlayerRuntimeController.pauseForLifecycle() {
     logScrobbleDiagnostic("lifecycle_pause", "userPaused=$userPausedManually")
 
     if (isUsingMpvEngine()) {
-        if (isLiveFeed()) {
-            // Live: kill the demux now instead of pausing — a paused live socket goes
-            // stale and wedges the core, which then blocks the main thread inside the
-            // upcoming synchronous surface teardown. resumeForLifecycle reloads the
-            // stream anyway (rejoin-live-edge path), so nothing is lost.
-            mpvView?.stopPlayback()
-        } else {
-            mpvView?.setPaused(true)
-        }
+        pauseMpvForLifecycle()  // fork: live kills the demux, non-live pauses
         emitPauseScrobbleForCurrentProgress()
         stopWatchProgressSaving()
         stopProgressUpdates()
@@ -267,30 +258,8 @@ internal fun PlayerRuntimeController.resumeForLifecycle() {
         return
     }
 
-    // Live channels: the paused mpv buffer is stale and the upstream socket is likely dead —
-    // unpausing would play the leftover buffer then stall at the old position. Rejoin the
-    // live edge instead and resume (same pattern as XtreamLiveGuideScreen's ON_START).
-    // A catch-up replay is excluded: it has no live edge to rejoin, and reloading it would
-    // restart the recording from the top instead of resuming where the viewer left off.
-    if (isUsingMpvEngine() &&
-        isLiveFeed() &&
-        currentStreamUrl.isNotBlank()
-    ) {
-        val view = mpvView ?: return
-        userPausedManually = false
-        scope.launch(Dispatchers.Default) {
-            runCatching {
-                // loadfile keeps mpv's pause property — unpause or the rejoin stays frozen.
-                view.setPaused(false)
-                view.setMediaUsingLoadfile(currentStreamUrl, currentHeaders)
-            }
-        }
-        _uiState.update { it.copy(isPlaying = true, isBuffering = true) }
-        cancelPauseOverlay()
-        startProgressUpdates()
-        startWatchProgressSaving()
-        return
-    }
+    // fork: live channels rejoin the live edge instead of unpausing a stale buffer (catch-up excluded).
+    if (tryResumeLiveForLifecycle()) return
 
     val player = _exoPlayer
     if (player != null && !isUsingMpvEngine()) {
