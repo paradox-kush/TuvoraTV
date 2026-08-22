@@ -29,7 +29,7 @@ private const val MPV_EVENT_END_FILE = 7
 class NuvioMpvSurfaceView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
-) : BaseMPVView(context, attrs) {
+) : BaseMPVView(context, attrs), MpvSurface {
 
     private var initialized = false
     private var hasQueuedInitialMedia = false
@@ -47,7 +47,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      * (e.g. "loading failed"). Deliberately silent for eof/stop/quit/redirect unloads, so channel
      * switches ("loadfile replace" → reason "stop") and natural EOF never fire it.
      */
-    @Volatile var onPlaybackEndedWithError: ((fileError: String?) -> Unit)? = null
+    @Volatile override var onPlaybackEndedWithError: ((fileError: String?) -> Unit)? = null
 
     // All mpv control calls (property writes, loadfile, seeks, teardown) run here,
     // serialized in submission order. mpv_set_property/mpv_command take the same core
@@ -211,7 +211,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
-    fun ensureInitialized() {
+    override fun ensureInitialized() {
         if (initialized) return
         // A queued teardown from the previous session (releasePlayer) must finish before
         // re-creating the core on the same MPV instance. Only blocks when re-init races
@@ -241,7 +241,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         recordMpvStage("initialized")
     }
 
-    fun setMedia(url: String, headers: Map<String, String>, startPositionMs: Long = 0L) {
+    override fun setMedia(url: String, headers: Map<String, String>, startPositionMs: Long) {
         ensureInitialized()
         val requestKey = buildMediaRequestKey(url = url, headers = headers) +
             "#start=${startPositionMs.coerceAtLeast(0L)}"
@@ -359,7 +359,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         mpv.command("loadfile", url, "replace", LOADFILE_DEFAULT_INDEX, options)
     }
 
-    fun setMediaUsingLoadfile(url: String, headers: Map<String, String>) {
+    override fun setMediaUsingLoadfile(url: String, headers: Map<String, String>) {
         ensureInitialized()
         val requestKey = buildMediaRequestKey(url = url, headers = headers)
         applyHeaders(headers)
@@ -402,7 +402,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
-    fun setPaused(paused: Boolean) {
+    override fun setPaused(paused: Boolean) {
         if (!initialized) return
         // Optimistic shadow echo so isPlayingNow() right after reflects the intent;
         // mpv's own pause event confirms (or corrects) it moments later.
@@ -410,22 +410,22 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         ctl { mpv.setPropertyBoolean("pause", paused) }
     }
 
-    fun stopPlayback() {
+    override fun stopPlayback() {
         if (!initialized) return
         ctl { mpv.command("stop") }
     }
 
-    fun isPlayingNow(): Boolean {
+    override fun isPlayingNow(): Boolean {
         if (!initialized) return false
         return !obsPaused
     }
 
-    fun isPausedForCacheNow(): Boolean {
+    override fun isPausedForCacheNow(): Boolean {
         if (!initialized) return false
         return obsPausedForCache
     }
 
-    fun isCoreIdleNow(): Boolean {
+    override fun isCoreIdleNow(): Boolean {
         if (!initialized) return false
         return obsCoreIdle
     }
@@ -435,10 +435,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      * change since the previous sample means a frame was produced. Audio cannot move it, which
      * is exactly why the playhead is not enough.
      */
-    fun videoFrameTicksNow(): Long = obsVideoFrameTicks
+    override fun videoFrameTicksNow(): Long = obsVideoFrameTicks
 
     /** Whether a picture is expected at all — IPTV radio stations legitimately render none. */
-    fun hasVideoTrackNow(): Boolean = initialized && obsVideoParams != null
+    override fun hasVideoTrackNow(): Boolean = initialized && obsVideoParams != null
 
     /**
      * mpv `frame-drop-count`, read off the shadow: frames the VO dropped, including frames it
@@ -449,49 +449,49 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      * `PlayerPlaybackSnapshot.voDroppedFrameCount`; recorded for the live-freeze work, not a
      * detection input yet. Resets with the core, so consumers must diff defensively.
      */
-    fun voDroppedFrameCountNow(): Long = obsVoDroppedFrames
+    override fun voDroppedFrameCountNow(): Long = obsVoDroppedFrames
 
     /** mpv `vo-delayed-frame-count`: delayed-vsync estimate. See [voDroppedFrameCountNow]. */
-    fun voDelayedFrameCountNow(): Long = obsVoDelayedFrames
+    override fun voDelayedFrameCountNow(): Long = obsVoDelayedFrames
 
     /**
      * Reinitialises the video track off the demuxer that is already connected, for a channel
      * whose picture died while its audio kept playing. Costs the provider nothing — no new
      * create_link, nothing spent against its connection cap — unlike a full re-prepare.
      */
-    fun reloadVideoTrack() {
+    override fun reloadVideoTrack() {
         if (!initialized) return
         ctl { mpv.command("video-reload") }
     }
 
-    fun seekToMs(positionMs: Long) {
+    override fun seekToMs(positionMs: Long) {
         if (!initialized) return
         val seconds = (positionMs.coerceAtLeast(0L) / 1000.0)
         ctl { mpv.setPropertyDouble("time-pos", seconds) }
     }
 
-    fun currentPositionMs(): Long {
+    override fun currentPositionMs(): Long {
         if (!initialized) return 0L
         return obsTimePosMs
     }
 
-    fun durationMs(): Long {
+    override fun durationMs(): Long {
         if (!initialized) return 0L
         return obsDurationMs
     }
 
-    fun hasVideoTrackSelectedNow(): Boolean {
+    override fun hasVideoTrackSelectedNow(): Boolean {
         if (!initialized) return false
         val vid = obsVid?.trim()
         return !vid.isNullOrBlank() && !vid.equals("no", ignoreCase = true)
     }
 
-    fun setPlaybackSpeed(speed: Float) {
+    override fun setPlaybackSpeed(speed: Float) {
         if (!initialized) return
         ctl { mpv.setPropertyDouble("speed", speed.toDouble()) }
     }
 
-    fun applyAudioAmplificationDb(db: Int) {
+    override fun applyAudioAmplificationDb(db: Int) {
         if (!initialized) return
         val clampedDb = db.coerceIn(AUDIO_AMPLIFICATION_MIN_DB, AUDIO_AMPLIFICATION_MAX_DB)
         val linearScale = 10.0.pow(clampedDb / 20.0)
@@ -505,7 +505,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
-    fun applyAudioLanguagePreferences(languages: List<String>) {
+    override fun applyAudioLanguagePreferences(languages: List<String>) {
         if (!initialized) return
         val normalized = languages
             .mapNotNull { language ->
@@ -524,7 +524,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
-    fun applyHardwareDecodeMode(mode: MpvHardwareDecodeMode) {
+    override fun applyHardwareDecodeMode(mode: MpvHardwareDecodeMode) {
         hardwareDecodeMode = mode
         if (!initialized) return
         ctl {
@@ -536,7 +536,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
-    fun setSubtitleDelayMs(delayMs: Int) {
+    override fun setSubtitleDelayMs(delayMs: Int) {
         if (!initialized) return
         ctl {
             runCatching {
@@ -547,7 +547,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
-    fun applyAspectMode(mode: AspectMode) {
+    override fun applyAspectMode(mode: AspectMode) {
         currentAspectMode = mode
         pendingAspectRetryCount = 0
         removeCallbacks(aspectReapplyRunnable)
@@ -599,7 +599,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         postDelayed(aspectReapplyRunnable, delayMs)
     }
 
-    fun applySubtitleStyle(style: SubtitleStyleSettings) {
+    override fun applySubtitleStyle(style: SubtitleStyleSettings) {
         if (!initialized) return
         ctl { applySubtitleStyleNow(style) }
     }
@@ -651,7 +651,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     // The Boolean returns below report "accepted for dispatch": the write itself runs on
     // the mpv-ctl thread. With a live core the old synchronous calls only returned false
     // on a dead handle, which the initialized guard already covers.
-    fun selectAudioTrackById(trackId: Int): Boolean {
+    override fun selectAudioTrackById(trackId: Int): Boolean {
         if (!initialized) return false
         ctl {
             runCatching {
@@ -663,7 +663,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         return true
     }
 
-    fun selectSubtitleTrackById(trackId: Int): Boolean {
+    override fun selectSubtitleTrackById(trackId: Int): Boolean {
         if (!initialized) return false
         ctl {
             runCatching {
@@ -676,7 +676,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         return true
     }
 
-    fun disableSubtitles(): Boolean {
+    override fun disableSubtitles(): Boolean {
         if (!initialized) return false
         ctl {
             runCatching {
@@ -689,10 +689,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         return true
     }
 
-    fun addAndSelectExternalSubtitle(
+    override fun addAndSelectExternalSubtitle(
         url: String,
-        title: String? = null,
-        language: String? = null
+        title: String?,
+        language: String?
     ): Boolean {
         if (!initialized) return false
         if (url.isBlank()) return false
@@ -717,7 +717,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         return true
     }
 
-    fun applySubtitleLanguagePreferences(preferred: String, secondary: String?) {
+    override fun applySubtitleLanguagePreferences(preferred: String, secondary: String?) {
         if (!initialized) return
         val languages = listOfNotNull(
             preferred.takeIf { it.isNotBlank() && !it.equals("none", ignoreCase = true) },
@@ -750,7 +750,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      * straight from the UI event that opens the panel, where a throw would take the
      * player down.
      */
-    fun readVideoSnapshot(): MpvVideoSnapshot = runCatching {
+    override fun readVideoSnapshot(): MpvVideoSnapshot = runCatching {
         if (!initialized) return@runCatching MpvVideoSnapshot()
         val videoTrack = obsTrackList?.asArray()?.toList().orEmpty().firstOrNull { node ->
             node.nodeString("type")?.lowercase() == "video" && node.nodeBoolean("selected") == true
@@ -775,7 +775,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         MpvVideoSnapshot()
     }
 
-    fun readTrackSnapshot(): MpvTrackSnapshot {
+    override fun readTrackSnapshot(): MpvTrackSnapshot {
         if (!initialized) return MpvTrackSnapshot(emptyList(), emptyList())
         // Built from the observed track-list shadow — no synchronous mpv reads. The old
         // current-tracks/* fallbacks are gone: the per-track selected flag plus aid/sid
@@ -850,7 +850,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         )
     }
 
-    fun releasePlayer() {
+    override fun releasePlayer() {
         if (!initialized) return
         removeCallbacks(aspectReapplyRunnable)
         runCatching { holder.removeCallback(this) }

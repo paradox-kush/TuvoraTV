@@ -12,7 +12,7 @@ import kotlin.math.abs
 
 private const val MPV_RESUME_SEEK_TOLERANCE_MS = 1500L
 
-internal fun PlayerRuntimeController.attachMpvView(view: NuvioMpvSurfaceView?) {
+internal fun PlayerRuntimeController.attachMpvView(view: MpvSurface?) {
     if (mpvView === view) return
     mpvView?.onPlaybackEndedWithError = null
     mpvView = view
@@ -500,7 +500,7 @@ private fun PlayerRuntimeController.applyMpvTrackSnapshot(snapshot: MpvTrackSnap
     )
 }
 
-private fun PlayerRuntimeController.performPendingMpvHardRestartIfNeeded(view: NuvioMpvSurfaceView): Boolean {
+private fun PlayerRuntimeController.performPendingMpvHardRestartIfNeeded(view: MpvSurface): Boolean {
     if (!pendingMpvHardRestartOnNextAttach) return false
     pendingMpvHardRestartOnNextAttach = false
     runCatching {
@@ -513,7 +513,7 @@ private fun PlayerRuntimeController.performPendingMpvHardRestartIfNeeded(view: N
 }
 
 internal fun PlayerRuntimeController.applyPendingMpvSeekIfNeeded(
-    view: NuvioMpvSurfaceView,
+    view: MpvSurface,
     currentPositionMs: Long = view.currentPositionMs().coerceAtLeast(0L),
     durationMs: Long = view.durationMs().coerceAtLeast(0L)
 ) {

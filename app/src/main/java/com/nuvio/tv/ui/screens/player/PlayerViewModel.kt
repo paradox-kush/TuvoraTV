@@ -153,8 +153,22 @@ class PlayerViewModel @Inject constructor(
         controller.attachHostActivity(activity)
     }
 
-    fun attachMpvView(view: NuvioMpvSurfaceView?) {
+    fun attachMpvView(view: MpvSurface?) {
         controller.attachMpvView(view)
+    }
+
+    /**
+     * Aspect + subtitle style are applied to the mpv surface through the controller so the Composable
+     * (PlayerScreen) never calls an engine method on the concrete view — it uses the instance only as
+     * an Android View. Keeps the MpvSurface contract the single entry point for engine calls
+     * (research/tv-player-mpv-engine-ownership.md, D3).
+     */
+    fun applyMpvAspectMode(mode: AspectMode) {
+        controller.mpvView?.applyAspectMode(mode)
+    }
+
+    fun applyMpvSubtitleStyle(style: com.nuvio.tv.data.local.SubtitleStyleSettings) {
+        controller.mpvView?.applySubtitleStyle(style)
     }
 
     fun pauseForLifecycle() {

@@ -1393,7 +1393,7 @@ private fun MpvPlayerSurface(
 
     DisposableEffect(mpvView) {
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            mpvView.applyAspectMode(latestAspectMode)
+            viewModel.applyMpvAspectMode(latestAspectMode)
         }
         mpvView.addOnLayoutChangeListener(listener)
         onDispose {
@@ -1409,11 +1409,11 @@ private fun MpvPlayerSurface(
     }
 
     LaunchedEffect(mpvView, aspectMode) {
-        mpvView.applyAspectMode(aspectMode)
+        viewModel.applyMpvAspectMode(aspectMode)
     }
 
     LaunchedEffect(mpvView, subtitleStyle) {
-        mpvView.applySubtitleStyle(subtitleStyle)
+        viewModel.applyMpvSubtitleStyle(subtitleStyle)
     }
 }
 

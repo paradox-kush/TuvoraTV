@@ -484,7 +484,7 @@ class PlayerRuntimeController(
     internal var trackSelector: DefaultTrackSelector? = null
     internal var currentMediaSession: MediaSession? = null
     internal var ffmpegAudioRenderer: FfmpegAudioRenderer? = null
-    internal var mpvView: NuvioMpvSurfaceView? = null
+    internal var mpvView: MpvSurface? = null
     internal var mpvInitializationInProgress: Boolean = false
     internal var mpvTrackRefreshJob: Job? = null
     internal var mpvTrackRefreshInProgress: Boolean = false

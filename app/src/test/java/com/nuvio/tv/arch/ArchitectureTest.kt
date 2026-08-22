@@ -23,7 +23,9 @@ class ArchitectureTest {
     private val files: List<Pair<String, String>> =
         Konsist.scopeFromProject().files
             .map { it.path to it.text }
-            .filter { (p, _) -> "/app/src/main/" in p }
+            // Nested git worktrees (wt/<lane>/…) carry stale duplicate copies of every source file and
+            // are not part of any gradle sourceSet — exclude them, or a rule sees pre-refactor content.
+            .filter { (p, _) -> "/app/src/main/" in p && "/wt/" !in p }
 
     // Fork side = upstream-absent paths, not a directory-naming convention.
     private val forkPaths = listOf(
@@ -62,6 +64,58 @@ class ArchitectureTest {
         assertTrue(
             "NEW firewall crossing(s) — reach the fork feature through a contract / Hilt-bound " +
                 "interface, not a direct reference:\n" + violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    // ── mpv-engine seam (research/tv-player-mpv-engine-ownership.md, Part A, D5) ──────────────────
+
+    /**
+     * Rule A — libmpv containment. Only the mpv engine shell may name the `is.xyz.mpv` bindings /
+     * BaseMPVView, so libmpv calls can never be sprayed into controller files (by us or a merge).
+     * Matches the backtick-quoted `is` package reference — the plain string `"is.xyz.mpv.MPVActivity.result"`
+     * (an Intent action for the *external* mpv-android app in ExternalPlayerResultContract) is not a
+     * binding use and is correctly ignored.
+     */
+    @Test
+    fun `only the mpv engine shell names libmpv`() {
+        val allowed = setOf(
+            "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt",
+        )
+        val libmpvRef = Regex("`is`\\.xyz\\.mpv|\\bBaseMPVView\\b")
+        val violations = files
+            .filter { (p, _) -> rel(p) !in allowed }
+            .filter { (_, text) -> libmpvRef.containsMatchIn(stripComments(text)) }
+            .map { (p, _) -> rel(p) }
+            .sorted()
+        assertTrue(
+            "Only the mpv engine shell (NuvioMpvSurfaceView.kt) may name libmpv (`is.xyz.mpv` / " +
+                "BaseMPVView). Route through MpvSurface instead:\n" + violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    /**
+     * Rule B — concrete-type containment. Controllers must talk to the mpv engine through the
+     * [com.nuvio.tv.ui.screens.player.MpvSurface] contract, never the concrete NuvioMpvSurfaceView.
+     * Only the shell (which declares it) and PlayerScreen (the one AndroidView construction site, which
+     * uses it purely as a View) may name it.
+     */
+    @Test
+    fun `only the shell and PlayerScreen name the concrete NuvioMpvSurfaceView`() {
+        val allowed = setOf(
+            "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt",
+            "com/nuvio/tv/ui/screens/player/PlayerScreen.kt",
+        )
+        val concreteRef = Regex("\\bNuvioMpvSurfaceView\\b")
+        val violations = files
+            .filter { (p, _) -> rel(p) !in allowed }
+            .filter { (_, text) -> concreteRef.containsMatchIn(stripComments(text)) }
+            .map { (p, _) -> rel(p) }
+            .sorted()
+        assertTrue(
+            "Talk to the mpv engine through MpvSurface, not the concrete NuvioMpvSurfaceView:\n" +
+                violations.joinToString("\n"),
             violations.isEmpty(),
         )
     }
