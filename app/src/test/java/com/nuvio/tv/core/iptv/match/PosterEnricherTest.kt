@@ -112,25 +112,30 @@ class PosterEnricherTest {
     }
 
     @Test
-    fun `the newest window drains ahead of older pending rows`() = runBlocking {
-        // Hold the first window's workers mid-fetch, so the second enqueue lands with a known
-        // amount in flight: CONCURRENCY items taken, the rest still queued behind them.
+    fun `the newest window jumps ahead of the older pending tail`() = runBlocking {
+        // Hold BOTH workers mid-fetch so the pending queue can't drain while we read its order:
+        // once CONCURRENCY items are in flight (1, 2), the gate parks the workers before they can
+        // take a third, so the pending tail stays exactly 3, 4, 5, 6 until we open the gate.
         val gate = CountDownLatch(1)
         answerArtwork({ "https://img/$it.jpg" }, gate = gate)
         enricher.enqueue(acc, MatchKind.MOVIE, listOf(1, 2, 3, 4, 5, 6))
         await("both workers busy") { started.size == PosterEnricher.CONCURRENCY }
 
         enricher.enqueue(acc, MatchKind.MOVIE, listOf(9))
+
+        // Assert the reorder on the queue itself, under the lock, while the workers are gated — so
+        // this is about where enqueue() PLACED the visible window, not about how fast the workers
+        // happen to resume and drain (that order is scheduler-dependent and was flaky on CI). The
+        // just-served visible window heads the queue; the older window's tail is retained behind it.
+        assertEquals(
+            "newest window heads the queue, old tail behind it: ${enricher.pendingSids()}",
+            listOf(9, 3, 4, 5, 6),
+            enricher.pendingSids(),
+        )
+
+        // Liveness: opening the gate drains everything, including the item that jumped the queue.
         gate.countDown()
         await("everything drains") { fetched.containsAll(listOf(1, 2, 3, 4, 5, 6, 9)) }
-
-        // The just-served window jumps the queue (visible cards fill first); the older window's
-        // tail still completes behind it instead of being clobbered by prefetch enqueues. Items
-        // already in flight cannot be reordered, so the guarantee is against the pending tail.
-        assertTrue(
-            "9 should be asked before the old tail: $started",
-            started.indexOf(9) < started.indexOf(4)
-        )
     }
 
     @Test

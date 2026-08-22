@@ -119,6 +119,13 @@ class PosterEnricher @Inject constructor(
         }
     }
 
+    /**
+     * Test-only: the pending queue's sids in drain order (front first). Lets the priority test
+     * assert the reorder directly, under the lock, instead of inferring it from post-gate drain
+     * scheduling — which depends on how fast the workers resume and was flaky on slow CI.
+     */
+    internal fun pendingSids(): List<Int> = synchronized(lock) { queue.values.map { it.sid } }
+
     private suspend fun drain() {
         while (true) {
             val req = synchronized(lock) {
