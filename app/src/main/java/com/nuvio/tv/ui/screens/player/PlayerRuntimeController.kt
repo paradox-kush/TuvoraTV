@@ -88,9 +88,8 @@ class PlayerRuntimeController(
     internal val directDebridStreamPreparer: DirectDebridStreamPreparer,
     internal val streamBadgePresentation: com.nuvio.tv.core.streams.StreamBadgePresentation,
     internal val playbackIssueReportRepository: PlaybackIssueReportRepository,
-    internal val playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver,
-    /** Holds the catch-up dialect walk across the guide -> player boundary; see its docs. */
-    internal val catchUpCoordinator: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
+    /** Neutral live/IPTV playback facade (classifier + DoH + catch-up + channel nav). Part B seam. */
+    internal val livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
     savedStateHandle: SavedStateHandle,
     internal val scope: CoroutineScope
 ) {
@@ -322,7 +321,7 @@ class PlayerRuntimeController(
     internal fun isLiveContent(): Boolean {
         if (contentType.equals("live", ignoreCase = true)) return true
         val id = contentId ?: return false
-        return com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(id)
+        return livePlayback.classifier.isLiveId(id)
     }
 
     /**

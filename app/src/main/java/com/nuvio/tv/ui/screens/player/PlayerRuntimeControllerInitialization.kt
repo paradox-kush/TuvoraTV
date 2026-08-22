@@ -308,7 +308,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     var mpvUrl = url
                     var mpvHeaders = headers
                     if (contentType.equals("live", ignoreCase = true)) {
-                        val prepared = withContext(Dispatchers.IO) { playlistDnsResolver.prepareLive(contentId, url) }
+                        val prepared = withContext(Dispatchers.IO) { livePlayback.dns.prepareLive(contentId, url) }
                         if (prepared.url != url || prepared.headers.isNotEmpty()) {
                             mpvUrl = prepared.url
                             mpvHeaders = if (prepared.headers.isEmpty()) headers else headers + prepared.headers
@@ -603,8 +603,8 @@ internal fun PlayerRuntimeController.initializePlayer(
             // non-IPTV item or a system-DNS playlist) leaves the default system resolver. Reset every
             // playback so the factory never carries the previous stream's resolver.
             mediaSourceFactory.playbackDns =
-                playlistDnsResolver.dnsForVideoId(currentVideoId)
-                    ?: playlistDnsResolver.dnsForVideoId(contentId)
+                livePlayback.dns.dnsForVideoId(currentVideoId)
+                    ?: livePlayback.dns.dnsForVideoId(contentId)
 
             // Log the effective state (post-gating), not the raw settings.
             Log.i(

@@ -66,9 +66,7 @@ class PlayerViewModel @Inject constructor(
     private val playbackIssueReportRepository: com.nuvio.tv.data.repository.PlaybackIssueReportRepository,
     private val externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker,
     private val subtitleFileCache: com.nuvio.tv.core.player.SubtitleFileCache,
-    private val livePlaylist: com.nuvio.tv.core.iptv.XtreamLivePlaylist,
-    private val playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver,
-    private val catchUpCoordinator: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
+    private val livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
     private val playbackActivityTracker: com.nuvio.tv.core.player.PlaybackActivityTracker,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -114,8 +112,7 @@ class PlayerViewModel @Inject constructor(
         directDebridStreamPreparer = directDebridStreamPreparer,
         streamBadgePresentation = streamBadgePresentation,
         playbackIssueReportRepository = playbackIssueReportRepository,
-        playlistDnsResolver = playlistDnsResolver,
-        catchUpCoordinator = catchUpCoordinator,
+        livePlayback = livePlayback,
         savedStateHandle = savedStateHandle,
         scope = viewModelScope
     )
@@ -186,7 +183,7 @@ class PlayerViewModel @Inject constructor(
     /** Zap to the next (delta +1) or previous (delta -1) live channel, in place. */
     fun zapLive(delta: Int) {
         val cur = currentLiveContentId ?: return
-        val next = livePlaylist.relativeTo(cur, delta) ?: return
+        val next = livePlayback.channels.relativeChannel(cur, delta) ?: return
         currentLiveContentId = next.id
         viewModelScope.launch {
             // Resolve FRESH at zap time: Stalker refs carry a blank browse-time URL (create_link
@@ -200,7 +197,7 @@ class PlayerViewModel @Inject constructor(
             }
             // Prepare the DoH-rewritten URL/headers off-main (no-op for system-DNS playlists), then swap.
             val prepared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                playlistDnsResolver.prepareLive(next.id, playable)
+                livePlayback.dns.prepareLive(next.id, playable)
             }
             controller.switchToLiveChannel(
                 name = next.name,

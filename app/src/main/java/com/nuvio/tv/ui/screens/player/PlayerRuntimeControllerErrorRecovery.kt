@@ -331,8 +331,7 @@ internal fun isIptvRefreshableHttpStatus(code: Int): Boolean =
  * plays carry it as videoId.
  */
 internal fun PlayerRuntimeController.refreshableIptvVideoId(): String? =
-    listOfNotNull(currentVideoId, contentId)
-        .firstOrNull { it.startsWith(com.nuvio.tv.core.iptv.XtreamItemRegistry.PREFIX) }
+    livePlayback.classifier.refreshableIptvId(listOf(currentVideoId, contentId))
 
 /** ExoPlayer entry: refresh only for token-shaped HTTP failures (see [isIptvRefreshableHttpStatus]). */
 internal fun PlayerRuntimeController.attemptIptvLinkRefresh(
@@ -367,7 +366,7 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
     // a recording from zero after a token refresh throws the viewer back to the top of a programme
     // they were half way through.
     val isLive = refreshId != null &&
-        com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(refreshId) &&
+        livePlayback.classifier.isLiveId(refreshId) &&
         !isCatchUpPlayback
     val paused = userPausedManually
     // Engine-aware: mpv VOD keeps its position too, live always rejoins the live edge.
@@ -441,7 +440,7 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
         // exactly like the launch path.
         val prepared = if (isLive) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                playlistDnsResolver.prepareLive(refreshId, freshUrl)
+                livePlayback.dns.prepareLive(refreshId, freshUrl)
             }
         } else null
         val url = prepared?.url ?: freshUrl

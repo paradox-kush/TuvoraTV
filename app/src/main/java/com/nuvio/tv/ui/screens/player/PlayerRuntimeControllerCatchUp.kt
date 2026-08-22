@@ -37,7 +37,7 @@ internal fun PlayerRuntimeController.clampCatchUpSeekMs(positionMs: Long): Long 
  */
 internal fun PlayerRuntimeController.reportCatchUpPlayed() {
     if (!isCatchUpPlayback) return
-    catchUpCoordinator.onPlayed(contentId)
+    livePlayback.catchUp.onPlayed(contentId)
 }
 
 /**
@@ -51,7 +51,7 @@ internal fun PlayerRuntimeController.reportCatchUpPlayed() {
  */
 internal fun PlayerRuntimeController.advanceCatchUpDialect(errorCode: Int): Boolean {
     if (!isCatchUpPlayback) return false
-    val next = catchUpCoordinator.onFailed(contentId, errorCode) ?: return false
+    val next = livePlayback.catchUp.onFailed(contentId, errorCode) ?: return false
     Log.i(
         PlayerRuntimeController.TAG,
         "CATCHUP_DIALECT_WALK: attempt failed (code=$errorCode); trying the next URL shape",
