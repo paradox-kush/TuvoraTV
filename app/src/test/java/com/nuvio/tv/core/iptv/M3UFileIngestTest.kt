@@ -5,7 +5,7 @@ import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.core.iptv.content.M3UFileStore
 import com.nuvio.tv.core.iptv.epg.XmltvClient
 import kotlinx.coroutines.test.runTest
-import okhttp3.OkHttpClient
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -38,8 +38,8 @@ class M3UFileIngestTest {
     // The Xtream match index is only consulted for Xtream playlists; these are m3u_file, so it is
     // constructed but never queried.
     private val matchIndex = com.nuvio.tv.core.iptv.match.XtreamMatchIndex(app)
-    private val xmltv = XmltvClient(db, OkHttpClient(), dns, matchIndex)
-    private val client = M3UClient(db, OkHttpClient(), fileStore, xmltv, dns)
+    private val xmltv = XmltvClient(db, mockk(relaxed = true), dns, matchIndex)
+    private val client = M3UClient(db, mockk(relaxed = true), fileStore, xmltv, dns)
 
     private val SAMPLE = """
         #EXTM3U

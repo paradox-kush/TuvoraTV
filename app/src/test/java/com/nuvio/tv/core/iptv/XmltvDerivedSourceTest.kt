@@ -3,7 +3,7 @@ package com.nuvio.tv.core.iptv
 import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.core.iptv.epg.XmltvClient
 import com.nuvio.tv.core.iptv.match.XtreamMatchIndex
-import okhttp3.OkHttpClient
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -26,7 +26,7 @@ class XmltvDerivedSourceTest {
     private val app = RuntimeEnvironment.getApplication()
     private val xmltv = XmltvClient(
         IptvContentDb(app),
-        OkHttpClient(),
+        mockk(relaxed = true), // real OkHttpClient() triggers Conscrypt native load, absent on CI (Robolectric)
         com.nuvio.tv.core.iptv.dns.PlaylistDns(),
         XtreamMatchIndex(app),
     )
