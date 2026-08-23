@@ -3,13 +3,14 @@ package com.nuvio.tv.core.iptv
 import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.core.iptv.epg.XmltvClient
 import com.nuvio.tv.core.iptv.match.XtreamMatchIndex
-import io.mockk.mockk
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.ConscryptMode
 import org.robolectric.RuntimeEnvironment
 
 /**
@@ -21,12 +22,13 @@ import org.robolectric.RuntimeEnvironment
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = android.app.Application::class)
+@ConscryptMode(ConscryptMode.Mode.OFF)
 class XmltvDerivedSourceTest {
 
     private val app = RuntimeEnvironment.getApplication()
     private val xmltv = XmltvClient(
         IptvContentDb(app),
-        mockk(relaxed = true), // real OkHttpClient() triggers Conscrypt native load, absent on CI (Robolectric)
+        OkHttpClient(),
         com.nuvio.tv.core.iptv.dns.PlaylistDns(),
         XtreamMatchIndex(app),
     )
