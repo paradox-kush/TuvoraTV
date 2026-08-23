@@ -319,6 +319,21 @@ class PlayerRuntimeController(
     @Volatile internal var liveRecoveryInFlight: Boolean = false
     internal var liveRecoveryGaveUp: Boolean = false
 
+    /**
+     * Dual-engine escalation state (universal-playback-design §4 rung 4 / §3.6a). A persistent
+     * backward-PTS discontinuity (7TV) is fixed only by a clock-rebasing engine, so a live channel
+     * that keeps re-wedging on ExoPlayer escalates once to libmpv. Fed to [LiveRecoveryCoordinator].
+     */
+    /** Timestamps of distinct live freeze *incidents* (Decision.Start), for the re-wedge persistence
+     *  signal; pruned to the coordinator's stable window. */
+    internal val liveReWedgeTimestampsMs = ArrayDeque<Long>()
+    /** At most one engine switch per channel-dwell (§3.6a rule 5) — reset on a fresh channel. */
+    internal var liveEngineSwitchedThisDwell: Boolean = false
+    /** The largest backward content-time jump the direct signal saw this dwell, or null. */
+    internal var lastLiveBackwardJumpMs: Long? = null
+    /** Whether libmpv is a viable escalation target here (step-0 gate; Onn = confirmed). */
+    internal var livePlaybackMpvAvailable: Boolean = true
+
     /** A live channel never legitimately ends or stops advancing, so freezes are only tracked here. */
     internal fun isLiveContent(): Boolean {
         if (contentType.equals("live", ignoreCase = true)) return true

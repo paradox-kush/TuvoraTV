@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.Surface
 import android.view.SurfaceHolder
 import com.nuvio.tv.core.analytics.AppExitReporter
+import com.nuvio.tv.core.analytics.MpvVideoOutputSignal
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
 import `is`.xyz.mpv.BaseMPVView
@@ -296,11 +297,20 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     }
 
     /**
-     * Evidence the picture is alive, for live-freeze detection. Only ever increments, so any
-     * change since the previous sample means a frame was produced. Audio cannot move it, which
-     * is exactly why the playhead is not enough.
+     * Evidence the picture is alive, for live-freeze detection. Advanced once per sample while the
+     * shadow's mirrored `estimated-vf-fps` proves frames are still flowing, and held when they stop
+     * (see [MpvVideoOutputSignal]) — so any change since the previous sample means a frame was
+     * produced, and a held value is a frozen picture. Read off the cached shadow value, never a live
+     * mpv read on the main thread (the ANR fix). Monotonic and audio cannot move it, which is exactly
+     * why the playhead is not enough. Deliberately never reset: it is a plain counter the freeze
+     * policy reads by delta, so re-zeroing it across a core re-init could read as the picture
+     * returning.
      */
-    override fun videoFrameTicksNow(): Long = shadow.obsVideoFrameTicks
+    private var videoOutputTicks = 0L
+    override fun videoFrameTicksNow(): Long {
+        videoOutputTicks = MpvVideoOutputSignal.advance(videoOutputTicks, shadow.obsEstimatedVfFps)
+        return videoOutputTicks
+    }
 
     /** Whether a picture is expected at all — IPTV radio stations legitimately render none. */
     override fun hasVideoTrackNow(): Boolean = initialized && shadow.obsVideoParams != null
@@ -865,7 +875,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             "video-params" to MPV.mpvFormat.MPV_FORMAT_NODE,
             "video-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
             "audio-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
-            // Fires roughly per frame, like time-pos above; the handler is a volatile increment.
+            // The rate estimate; the handler mirrors its value, and the live-freeze tick is derived
+            // from that value at read time (see [MpvVideoOutputSignal] / [videoFrameTicksNow]).
             "estimated-vf-fps" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
             // VO-level counters: change only when a frame is dropped or a vsync runs long, so
             // they are near-silent during healthy playback.
@@ -1030,4 +1041,25 @@ data class MpvVideoSnapshot(
     val bitrate: Int? = null,
     val audioBitrate: Int? = null
 )
+
+/**
+ * A mounted mpv engine for a feature that is NOT allowed to name the concrete [NuvioMpvSurfaceView]
+ * (ArchitectureTest Rule B — only this shell file and PlayerScreen may). Carries the same instance
+ * as both the Android [android.view.View] to put in an `AndroidView` and the [MpvSurface] contract
+ * to drive it. Built by [createGuideMpvSurface]; `view === surface` so identity comparisons hold.
+ *
+ * WHY (research/tv-player-mpv-engine-ownership.md): the live-guide feature (`ui/screens/iptv`) needs
+ * to run its preview on libmpv for the escalation-only dual-engine path, but the firewall keeps it
+ * from reaching into the engine internals — it goes through this seam and the [MpvSurface] contract.
+ */
+class GuideMpvHandle internal constructor(
+    val view: android.view.View,
+    val surface: MpvSurface,
+)
+
+/** Rule-B seam: mount + drive the mpv engine from a feature that may not name the concrete view. */
+fun createGuideMpvSurface(context: android.content.Context): GuideMpvHandle {
+    val v = NuvioMpvSurfaceView(context)
+    return GuideMpvHandle(view = v, surface = v)
+}
 

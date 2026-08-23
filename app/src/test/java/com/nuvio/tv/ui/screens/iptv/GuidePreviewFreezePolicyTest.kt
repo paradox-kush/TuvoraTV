@@ -105,6 +105,68 @@ class GuidePreviewFreezePolicyTest {
             )
         )
     }
+    // --- video-only freezes in the guide: picture dead, audio alive, state stays READY ----------
+
+    @Test
+    fun `a video stall while READY is a dropped picture and must be re-tuned`() {
+        assertTrue(
+            "audio-alive video-dead never changes state, so only the sampler's videoStalled flag reveals it",
+            GuidePreviewFreezePolicy.shouldRetune(
+                playbackState = GuidePreviewFreezePolicy.STATE_READY,
+                isLiveFeed = true,
+                attemptsUsed = 0,
+                videoStalled = true,
+            )
+        )
+    }
+
+    @Test
+    fun `a healthy READY without a video stall never re-tunes`() {
+        assertFalse(
+            "plain READY is working playback; only the videoStalled flag changes that",
+            GuidePreviewFreezePolicy.shouldRetune(
+                GuidePreviewFreezePolicy.STATE_READY, isLiveFeed = true, attemptsUsed = 0, videoStalled = false
+            )
+        )
+    }
+
+    @Test
+    fun `a video stall is bounded by the same recovery budget`() {
+        assertFalse(
+            "the connection-cap guard applies to video stalls too",
+            GuidePreviewFreezePolicy.shouldRetune(
+                playbackState = GuidePreviewFreezePolicy.STATE_READY,
+                isLiveFeed = true,
+                attemptsUsed = GuidePreviewFreezePolicy.MAX_RECOVERY_ATTEMPTS,
+                videoStalled = true,
+            )
+        )
+    }
+
+    @Test
+    fun `a spent video stall surfaces an error like any other freeze`() {
+        assertTrue(
+            "once the budget is spent a frozen picture must be explained, READY state or not",
+            GuidePreviewFreezePolicy.shouldSurfaceError(
+                playbackState = GuidePreviewFreezePolicy.STATE_READY,
+                isLiveFeed = true,
+                attemptsUsed = GuidePreviewFreezePolicy.MAX_RECOVERY_ATTEMPTS,
+                videoStalled = true,
+            )
+        )
+    }
+
+    @Test
+    fun `the reason names a video freeze distinctly`() {
+        val r = GuidePreviewFreezePolicy.freezeReason(
+            playbackState = GuidePreviewFreezePolicy.STATE_READY,
+            playedMs = 60_000L,
+            attemptsUsed = 1,
+            videoStalled = true,
+        )
+        assertTrue("audio-alive video-dead is named for what it is: $r", r.contains("video froze"))
+    }
+
     @Test
     fun `a channel that played properly gets its budget back`() {
         assertTrue(

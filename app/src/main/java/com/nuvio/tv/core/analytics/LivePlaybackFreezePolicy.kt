@@ -46,6 +46,26 @@ internal object LivePlaybackFreezePolicy {
      */
     const val VIDEO_STARTUP_GRACE_MS = 8_000L
 
+    /**
+     * Shorter video-stall threshold used when the buffer is demonstrably healthy (rev 3).
+     *
+     * Fleet data (30d, `video_stalled`) showed the buffered edge sitting 24-39s ahead of the playhead
+     * at the moment of freeze on every platform — the bytes are already here, the render path just
+     * stopped. When the buffer proves it is not a rebuffer, there is nothing to wait for: report the
+     * freeze at ~2.5s so recovery starts sooner (ExoPlayer users were sitting ~8s on a frozen picture
+     * before the reconnect even fired). The full [FREEZE_THRESHOLD_MS] still governs the thin-buffer
+     * case, where a stall might yet be a rebuffer that resumes on its own.
+     */
+    const val FAST_VIDEO_STALL_MS = 2_500L
+
+    /**
+     * How much buffered-ahead media counts as "healthy" for [FAST_VIDEO_STALL_MS]. Below this the
+     * full threshold applies. Engines that do not expose a buffered edge (mpv reports the playhead as
+     * the buffered position) compute zero here and so always take the full-threshold path — safe,
+     * since without the signal we cannot prove it is not a rebuffer.
+     */
+    const val FAST_MIN_BUFFERED_AHEAD_MS = 3_000L
+
     enum class PlaybackState { IDLE, BUFFERING, READY, ENDED }
 
     enum class Kind { ENDED, STALLED, VIDEO_STALLED }
@@ -92,6 +112,8 @@ internal object LivePlaybackFreezePolicy {
         val thresholdMs: Long = FREEZE_THRESHOLD_MS,
         val positionToleranceMs: Long = POSITION_TOLERANCE_MS,
         val videoStartupGraceMs: Long = VIDEO_STARTUP_GRACE_MS,
+        val fastVideoStallMs: Long = FAST_VIDEO_STALL_MS,
+        val fastMinBufferedAheadMs: Long = FAST_MIN_BUFFERED_AHEAD_MS,
     )
 
     sealed class Decision {
@@ -135,11 +157,19 @@ internal object LivePlaybackFreezePolicy {
         // Audio alive, picture dead. This MUST be tested before the `moved` early-out below:
         // that check is precisely what hid this failure, since audio keeps the playhead moving.
         // Requiring `moved` is what separates it from a STALLED pipe, where nothing moves at all.
+        //
+        // A healthy buffered edge proves the bytes are already here and the render path — not the
+        // network — is what stopped, so a dead picture can be called at the fast threshold instead
+        // of waiting out a possible rebuffer. mpv reports the playhead as the buffered position, so
+        // bufferedAheadMs is 0 there and it always takes the full-threshold path.
+        val bufferedAheadMs = (input.bufferedPositionMs - input.positionMs).coerceAtLeast(0L)
+        val videoStallThresholdMs =
+            if (bufferedAheadMs >= input.fastMinBufferedAheadMs) input.fastVideoStallMs else input.thresholdMs
         if (moved &&
             input.hasVideoTrack &&
             !videoMoved &&
             input.sincePlaybackStartMs >= input.videoStartupGraceMs &&
-            input.sinceVideoAdvanceMs >= input.thresholdMs
+            input.sinceVideoAdvanceMs >= videoStallThresholdMs
         ) {
             return Decision.Start(Kind.VIDEO_STALLED)
         }

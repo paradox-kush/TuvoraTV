@@ -3,6 +3,8 @@ package com.nuvio.tv.ui.screens.player
 import android.util.Log
 import androidx.media3.common.C
 import com.nuvio.tv.R
+import com.nuvio.tv.core.analytics.LiveEngineMemory
+import com.nuvio.tv.core.analytics.LiveRecoveryCoordinator
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
@@ -121,6 +123,72 @@ internal fun PlayerRuntimeController.switchInternalPlayerEngineManually() {
         allowEngineFailover = true
     )
 
+    hidePlayerEngineSwitchInfoJob = scope.launch {
+        delay(2200)
+        _uiState.update { state -> state.copy(showPlayerEngineSwitchInfo = false) }
+    }
+}
+
+/**
+ * Escalate a persistently-freezing live channel from ExoPlayer to libmpv mid-playback
+ * (universal-playback-design §4 rung 4). Unlike [maybeAutoSwitchInternalPlayerOnStartupError] this
+ * is NOT startup-gated — it runs after first frame, when a backward-PTS stream (7TV) has rendered
+ * then wedged. Reuses the same full-teardown switch (one engine alive at a time, §3.6a rule 3) and
+ * resumes at the live edge. Driven only by [maybeSwitchEngineForPersistentLiveFreeze], which has
+ * already confirmed we are on ExoPlayer, mpv is viable, and the one-per-dwell budget is unspent.
+ */
+internal fun PlayerRuntimeController.switchEngineForPersistentLiveFreeze() {
+    if (currentStreamUrl.isBlank() || isUsingMpvEngine()) return
+    val target = InternalPlayerEngine.MVP_PLAYER
+
+    liveEngineSwitchedThisDwell = true
+    // Learn the winner (design §3.7): the next open of this channel starts directly on mpv, so this
+    // freeze-then-switch is one-time per channel. Keyed per-lane (live vs catch-up, F6).
+    LiveEngineMemory.remember(
+        contentId,
+        if (isCatchUpPlayback) LiveEngineMemory.Lane.CATCHUP else LiveEngineMemory.Lane.LIVE,
+        LiveRecoveryCoordinator.Engine.MPV,
+    )
+    val nowMs = System.currentTimeMillis()
+    liveRecoveryAttempts += 1
+    lastLiveRecoveryAtMs = nowMs
+    livePlaybackFreezeReporter.onRecoveryAttempt(nowMs)
+    // Guards the teardown just like a live reconnect: releasePlayer() must not close the open freeze
+    // record, and the rebuilt player's re-arm must not reset the dwell budget, until mpv renders.
+    liveRecoveryInFlight = true
+
+    beginSwitchTraceSession(reason = "live-persistent-freeze", targetEngine = target)
+    logSwitchTrace(
+        stage = "live-persistent-switch-trigger",
+        message = "reWedges=${liveReWedgeTimestampsMs.size} backwardJumpMs=$lastLiveBackwardJumpMs"
+    )
+    Log.w(
+        PlayerRuntimeController.TAG,
+        "LIVE_ENGINE_SWITCH: persistent live freeze — switching ExoPlayer -> libmpv (the durable backward-PTS fix)"
+    )
+    rememberCurrentTrackPreferenceForEngineSwitch()
+
+    val switchMessage = context.getString(R.string.player_engine_switching_message, targetEngineLabel(target))
+    hidePlayerEngineSwitchInfoJob?.cancel()
+    showRecoveryOverlay()
+    _uiState.update {
+        it.copy(
+            internalPlayerEngine = target,
+            showPlayerEngineSwitchInfo = true,
+            playerEngineSwitchInfoText = switchMessage
+        )
+    }
+
+    pendingMpvHardRestartOnNextAttach = true
+    delayMpvResumeSeekUntilVideoTrack = true
+    // Live resumes at the live edge, never a saved position.
+    releasePlayer(flushPlaybackState = false)
+    initializePlayer(
+        url = currentStreamUrl,
+        headers = currentHeaders,
+        overrideInternalPlayerEngine = target,
+        allowEngineFailover = false
+    )
     hidePlayerEngineSwitchInfoJob = scope.launch {
         delay(2200)
         _uiState.update { state -> state.copy(showPlayerEngineSwitchInfo = false) }

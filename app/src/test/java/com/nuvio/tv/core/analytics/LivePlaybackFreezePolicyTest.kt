@@ -10,6 +10,7 @@ import org.junit.Test
 class LivePlaybackFreezePolicyTest {
 
     private val threshold = LivePlaybackFreezePolicy.FREEZE_THRESHOLD_MS
+    private val fastThreshold = LivePlaybackFreezePolicy.FAST_VIDEO_STALL_MS
 
     /** Defaults describe a healthy channel: both the playhead and the buffered edge moving. */
     private fun input(
@@ -57,9 +58,13 @@ class LivePlaybackFreezePolicyTest {
         sincePlaybackStartMs: Long = 60_000L,
         freezeActive: Boolean = false,
         activeKind: Kind? = null,
+        // Default buffered edge is 10s ahead of the playhead: a healthy buffer, which is what the
+        // fast video-stall rung keys on. Override toward the playhead for a thin-buffer case.
+        bufferedPositionMs: Long = 70_000L,
     ) = input(
         state = PlaybackState.READY,
         hasVideoTrack = hasVideoTrack,
+        bufferedPositionMs = bufferedPositionMs,
         videoProgressTicks = 4_200L,
         lastAdvancedVideoTicks = 4_200L,
         sinceVideoAdvanceMs = frozenForMs,
@@ -189,8 +194,41 @@ class LivePlaybackFreezePolicyTest {
     }
 
     @Test
-    fun `a video stall below the threshold is not yet a freeze`() {
-        assertEquals(Decision.Idle, LivePlaybackFreezePolicy.evaluate(videoFrozen(threshold - 1)))
+    fun `a video stall below the full threshold with a thin buffer is not yet a freeze`() {
+        // Thin buffer: this could still be a rebuffer, so it waits the full threshold, not the fast one.
+        assertEquals(
+            Decision.Idle,
+            LivePlaybackFreezePolicy.evaluate(videoFrozen(threshold - 1, bufferedPositionMs = 60_000L)),
+        )
+    }
+
+    @Test
+    fun `a healthy-buffer video stall past the fast threshold is a freeze`() {
+        // The rev-3 fast rung: bytes are buffered (24-39s ahead in the fleet at freeze time), so a
+        // dead picture is a render wedge, not a rebuffer — act at ~2.5s instead of the full 6s.
+        assertEquals(
+            Decision.Start(Kind.VIDEO_STALLED),
+            LivePlaybackFreezePolicy.evaluate(videoFrozen(fastThreshold)),
+        )
+    }
+
+    @Test
+    fun `a healthy-buffer video stall below the fast threshold is not yet a freeze`() {
+        assertEquals(Decision.Idle, LivePlaybackFreezePolicy.evaluate(videoFrozen(fastThreshold - 1)))
+    }
+
+    @Test
+    fun `a thin-buffer video stall waits for the full threshold not the fast one`() {
+        // Past the fast threshold but the buffer is not healthy, so the fast rung must not fire.
+        assertEquals(
+            Decision.Idle,
+            LivePlaybackFreezePolicy.evaluate(videoFrozen(fastThreshold + 100L, bufferedPositionMs = 60_000L)),
+        )
+        // The full threshold still fires it.
+        assertEquals(
+            Decision.Start(Kind.VIDEO_STALLED),
+            LivePlaybackFreezePolicy.evaluate(videoFrozen(threshold, bufferedPositionMs = 60_000L)),
+        )
     }
 
     @Test

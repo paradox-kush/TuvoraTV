@@ -52,10 +52,21 @@ object GuidePreviewFreezePolicy {
      *   never plays in this surface, but the flag keeps the rule honest if that ever changes.
      * @param attemptsUsed how many automatic recoveries this channel has already consumed.
      */
-    fun shouldRetune(playbackState: Int, isLiveFeed: Boolean, attemptsUsed: Int): Boolean {
+    /**
+     * @param videoStalled the frame sampler found the picture dead while audio kept playing — a
+     *   freeze that leaves the state at READY, so [playbackState] alone can never reveal it. Wired
+     *   in 2026-08-22 once the guide fullscreen got rendered-frame sampling; before that the guide
+     *   could only see the ENDED/IDLE shape.
+     */
+    fun shouldRetune(
+        playbackState: Int,
+        isLiveFeed: Boolean,
+        attemptsUsed: Int,
+        videoStalled: Boolean = false,
+    ): Boolean {
         if (!isLiveFeed) return false
         if (attemptsUsed >= MAX_RECOVERY_ATTEMPTS) return false
-        return playbackState == STATE_ENDED || playbackState == STATE_IDLE
+        return videoStalled || playbackState == STATE_ENDED || playbackState == STATE_IDLE
     }
 
     /**
@@ -149,10 +160,12 @@ object GuidePreviewFreezePolicy {
         playedMs: Long,
         attemptsUsed: Int,
         resolveError: String? = null,
+        videoStalled: Boolean = false,
     ): String {
-        val signal = when (playbackState) {
-            STATE_ENDED -> "the provider ended the stream"
-            STATE_IDLE -> "the connection dropped"
+        val signal = when {
+            videoStalled -> "the video froze while audio kept playing"
+            playbackState == STATE_ENDED -> "the provider ended the stream"
+            playbackState == STATE_IDLE -> "the connection dropped"
             else -> "playback stopped unexpectedly"
         }
         val lasted = formatDuration(playedMs)
@@ -226,8 +239,13 @@ object GuidePreviewFreezePolicy {
         return if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
     }
 
-    fun shouldSurfaceError(playbackState: Int, isLiveFeed: Boolean, attemptsUsed: Int): Boolean =
+    fun shouldSurfaceError(
+        playbackState: Int,
+        isLiveFeed: Boolean,
+        attemptsUsed: Int,
+        videoStalled: Boolean = false,
+    ): Boolean =
         isLiveFeed &&
             attemptsUsed >= MAX_RECOVERY_ATTEMPTS &&
-            (playbackState == STATE_ENDED || playbackState == STATE_IDLE)
+            (videoStalled || playbackState == STATE_ENDED || playbackState == STATE_IDLE)
 }

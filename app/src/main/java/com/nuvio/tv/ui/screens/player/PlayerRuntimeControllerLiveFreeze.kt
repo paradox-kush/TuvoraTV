@@ -7,6 +7,7 @@ import com.nuvio.tv.core.analytics.Breadcrumbs
 import com.nuvio.tv.core.analytics.LivePlaybackFreezePolicy
 import com.nuvio.tv.core.analytics.LivePlaybackFreezeReporter
 import com.nuvio.tv.core.analytics.LivePlaybackRecoveryPolicy
+import com.nuvio.tv.core.analytics.LiveRecoveryCoordinator
 import com.nuvio.tv.data.local.PlayerSettings
 
 /**
@@ -47,6 +48,12 @@ internal fun PlayerRuntimeController.armLiveFreezeReporter() {
     )
     liveRecoveryAttempts = 0
     lastLiveRecoveryAtMs = 0L
+    // A fresh channel-dwell starts the dual-engine escalation budget over (§3.6a rule 5). This
+    // point is reached only on a genuinely new tune — the `isFreezeOpen` guard above returns early
+    // during a mid-recovery rebuild (including an engine switch), so the flag persists across it.
+    liveEngineSwitchedThisDwell = false
+    liveReWedgeTimestampsMs.clear()
+    lastLiveBackwardJumpMs = null
 }
 
 /**
@@ -112,10 +119,60 @@ internal fun PlayerRuntimeController.sampleLiveFreeze(positionMs: Long, buffered
     )
 
     when (decision) {
-        is LivePlaybackFreezePolicy.Decision.Start -> maybeReconnectLiveStream(decision.kind)
+        is LivePlaybackFreezePolicy.Decision.Start -> {
+            // A new freeze incident: record it for the coordinator's re-wedge persistence signal.
+            recordLiveWedgeIncident(System.currentTimeMillis())
+            maybeReconnectLiveStream(decision.kind)
+        }
         is LivePlaybackFreezePolicy.Decision.Continue -> maybeReconnectLiveStream(decision.kind)
         else -> Unit
     }
+}
+
+/** Records a distinct freeze incident and keeps only those within the coordinator's stable window,
+ *  so a channel that recovers and plays cleanly for [LiveRecoveryCoordinator.T_STABLE_MS] is not
+ *  counted as persistent. */
+private fun PlayerRuntimeController.recordLiveWedgeIncident(nowMs: Long) {
+    liveReWedgeTimestampsMs.addLast(nowMs)
+    while (liveReWedgeTimestampsMs.isNotEmpty() &&
+        nowMs - liveReWedgeTimestampsMs.first() > LiveRecoveryCoordinator.T_STABLE_MS
+    ) {
+        liveReWedgeTimestampsMs.removeFirst()
+    }
+}
+
+/**
+ * The dual-engine escalation rung (design §4 rung 4). Returns true when it has taken (or is
+ * deliberately waiting to take) ownership of this incident — the caller then skips the same-engine
+ * reconnect ladder, because re-opening ExoPlayer on a backward-PTS stream only re-wedges (the 7TV
+ * RCA). Only ExoPlayer escalates to libmpv, at most once per dwell; if we are already on mpv (or the
+ * switch was already spent), the normal ladder runs and eventually surfaces a specific error.
+ */
+private fun PlayerRuntimeController.maybeSwitchEngineForPersistentLiveFreeze(sinceLastAttemptMs: Long): Boolean {
+    if (isUsingMpvEngine() || liveEngineSwitchedThisDwell || !livePlaybackMpvAvailable) return false
+    val nowMs = System.currentTimeMillis()
+    val reWedges = liveReWedgeTimestampsMs.count { nowMs - it <= LiveRecoveryCoordinator.T_STABLE_MS }
+    val persistent = LiveRecoveryCoordinator.isPersistent(
+        LiveRecoveryCoordinator.Input(
+            fault = LiveRecoveryCoordinator.Fault.STALL,
+            engine = LiveRecoveryCoordinator.Engine.EXO,
+            isLiveFeed = true,
+            mpvAvailable = true,
+            engineSwitchedThisDwell = false,
+            connectionFreeAttempts = 0,
+            backwardJumpMs = lastLiveBackwardJumpMs,
+            reWedgesInWindow = reWedges,
+            reopensThisIncident = liveRecoveryAttempts,
+            sinceLastReopenMs = sinceLastAttemptMs,
+            maxConnectionsOne = false,
+        )
+    )
+    if (!persistent) return false
+    // Persistent: never re-open on the dying engine. Honour the ≥5 s handoff backoff (§3.6/F3) so
+    // the provider's slot can release before mpv opens cold — but hold the incident either way.
+    if (sinceLastAttemptMs < LiveRecoveryCoordinator.MIN_REOPEN_BACKOFF_MS) return true
+    switchEngineForPersistentLiveFreeze()
+    return true
 }
 
 /**
@@ -131,6 +188,12 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
         if (sinceLastAttemptMs < LIVE_RECOVERY_RENDER_TIMEOUT_MS) return
         liveRecoveryInFlight = false
     }
+
+    // Dual-engine escalation (design §4 rung 4): a persistent backward-PTS discontinuity (7TV) is
+    // fixed ONLY by switching to the clock-rebasing engine (libmpv) — never another re-open on the
+    // same one. The coordinator owns the persistence decision; when it fires, the same-engine
+    // reconnect ladder below is skipped entirely for this incident.
+    if (maybeSwitchEngineForPersistentLiveFreeze(sinceLastAttemptMs)) return
 
     when (
         LivePlaybackRecoveryPolicy.evaluate(

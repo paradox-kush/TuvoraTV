@@ -90,7 +90,23 @@ data class LiveGuideUiState(
      *  [XtreamLiveGuideViewModel.onPreviewContainerMismatch]). Null = infer from the URL. */
     val previewMimeOverride: String? = null,
     val loadingChannels: Boolean = false,
+    /** Channel-LIST load failure (there is nothing to show), rendered in place of the grid. */
     val error: String? = null,
+    /**
+     * A transient playback/action notice about the focused channel — the preview stopped, a
+     * channel would not open, a programme has no recording. Shown in the top-right info pane
+     * (next to the channel name), NOT over the channel grid, so the list stays visible and the
+     * viewer can keep zapping. Cleared on channel change, a fresh tune, or the next rendered frame.
+     */
+    val previewError: String? = null,
+    /**
+     * Whether the preview plays the focused channel on libmpv instead of ExoPlayer
+     * (universal-playback-design §6 step 1). ExoPlayer while browsing (cheap); escalates to mpv in
+     * place for a channel that persistently wedges (the durable backward-PTS fix), or opens straight
+     * on mpv for a channel already learned (LiveEngineMemory). The Composable swaps the AndroidView
+     * on this flag. (A Boolean, not the internal engine enum, so the public UiState stays clean.)
+     */
+    val previewOnMpv: Boolean = false,
     /**
      * Start of the visible two hours. Travels backward with LEFT past the window's edge; the minute
      * tick only rolls it forward while it is still anchored at live, so a viewer reading yesterday
@@ -130,7 +146,21 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val catchUp: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
+    private val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
 ) : ViewModel() {
+
+    /**
+     * mpv demuxer-cache budget for the escalation-only libmpv preview, tier-resolved once for this
+     * device (Onn = LOW = 48/16 MiB). MUST be set before mpv's first setMedia — the default 64/32
+     * froze the 2 GB Onn in the step-0 spike.
+     */
+    val demuxerBudget: com.nuvio.tv.core.contracts.DemuxerBudgetBytes = playerMemoryBudget.demuxerBytes()
+
+    /** Whether libmpv is a viable escalation target here (step-0 gate; Onn = confirmed). */
+    private val livePreviewMpvAvailable: Boolean = true
+
+    /** At most one preview engine escalation per channel-dwell (§3.6a rule 5); reset per channel. */
+    private var previewEngineSwitchedThisDwell: Boolean = false
 
     /**
      * Historical guide for the FOCUSED channel only — `get_simple_data_table`, which is the one
@@ -297,12 +327,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // + loadingChannels spinner flash on revisit. (FAVORITES/RECENT stay dynamic — not cached here.)
         if (category.special == null || category.special == GuideSpecial.ALL) {
             channelsCache["${acc.id}|${categoryId}"]?.let { cached ->
-                _uiState.update { it.copy(selectedCategoryId = categoryId, channels = cached, loadingChannels = false, error = null, focusedChannelId = cached.firstOrNull()?.contentId) }
+                _uiState.update { it.copy(selectedCategoryId = categoryId, channels = cached, loadingChannels = false, error = null, previewError = null, focusedChannelId = cached.firstOrNull()?.contentId) }
                 primeEpgFor(cached)
                 return
             }
         }
-        _uiState.update { it.copy(selectedCategoryId = categoryId, channels = emptyList(), focusedChannelId = null, loadingChannels = true, error = null) }
+        _uiState.update { it.copy(selectedCategoryId = categoryId, channels = emptyList(), focusedChannelId = null, loadingChannels = true, error = null, previewError = null) }
         channelsJob = viewModelScope.launch {
             // null = the panel request FAILED (these panels throw transient 403/500s and
             // rate-limit bursts) — retry once, then surface an error instead of faking "empty".
@@ -361,7 +391,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     fun onChannelFocused(channel: GuideChannel, index: Int = -1) {
         if (channel.contentId == _uiState.value.focusedChannelId) return
-        _uiState.update { it.copy(focusedChannelId = channel.contentId) }
+        // Moving to a different channel clears the previous channel's playback notice.
+        _uiState.update { it.copy(focusedChannelId = channel.contentId, previewError = null) }
         epgFocusJob?.cancel()
         epgFocusJob = viewModelScope.launch {
             delay(EPG_FOCUS_DEBOUNCE_MS)
@@ -405,6 +436,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
      *  [resolvedStreamUrl] returns it unchanged with no extra round-trip. */
     fun playPreview(channel: GuideChannel) {
         // A user-initiated tune resolves fresh below, so it always deserves a new recovery shot.
+        // Clear any prior notice so an OK-to-retry on the same channel starts from a clean slate.
+        if (_uiState.value.previewError != null) _uiState.update { it.copy(previewError = null) }
         previewLinkRefreshBurntForChannelId = null
         previewContainerRetryBurntForChannelId = null
         previewFreezeRecoveryAttempts = 0
@@ -418,7 +451,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 // The source sometimes knows exactly what went wrong (a Stalker session cap is
                 // fixed by closing the other device, not by retrying) — say that instead.
                 val specific = account?.let { clientFactory.clientFor(it).lastResolveError }
-                _uiState.update { it.copy(error = specific ?: "Couldn't open \"${channel.name}\"") }
+                _uiState.update { it.copy(previewError = specific ?: "Couldn't open \"${channel.name}\"") }
                 return@launch
             }
             val tuned = channel.copy(streamUrl = playable)
@@ -466,7 +499,62 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * signal that the picture has died. Re-tune in place, bounded, and only say something once the
      * attempts are spent (most drops self-heal on the first re-tune).
      */
-    fun onPreviewPlaybackStalled(playbackState: Int) {
+    fun onPreviewPlaybackStalled(playbackState: Int) = recoverPreview(playbackState, videoStalled = false)
+
+    /**
+     * The frame sampler found the picture dead while audio kept playing — a freeze the state
+     * machine never reveals, because it stays READY. Runs the exact same bounded recovery as
+     * [onPreviewPlaybackStalled] (budget, loop guard, self-inflicted window, fresh link), flagged
+     * so [GuidePreviewFreezePolicy] retunes and surfaces it despite the healthy state.
+     */
+    fun onPreviewVideoStalled() = recoverPreview(GuidePreviewFreezePolicy.STATE_READY, videoStalled = true)
+
+    /**
+     * The guide-preview engine-switch rung. Returns true when it has escalated the preview to
+     * libmpv (the caller then skips the same-engine re-tune ladder). Only ExoPlayer escalates, at
+     * most once per dwell; the [LiveRecoveryCoordinator] owns the persistence decision, using the
+     * count of recent re-tunes within its stable window as the re-wedge signal. On escalation the
+     * channel is learned ([LiveEngineMemory]) so its next open starts directly on mpv.
+     */
+    private fun maybeEscalatePreviewToMpv(channel: GuideChannel): Boolean {
+        if (_uiState.value.previewOnMpv) return false
+        if (previewEngineSwitchedThisDwell || !livePreviewMpvAvailable) return false
+        val nowMs = System.currentTimeMillis()
+        val reWedges = previewRetuneTimestampsMs.count {
+            nowMs - it <= com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.T_STABLE_MS
+        }
+        val persistent = com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.isPersistent(
+            com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.Input(
+                fault = com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.Fault.STALL,
+                engine = com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.Engine.EXO,
+                isLiveFeed = true,
+                mpvAvailable = true,
+                engineSwitchedThisDwell = false,
+                connectionFreeAttempts = 0,
+                backwardJumpMs = null,
+                reWedgesInWindow = reWedges,
+                reopensThisIncident = previewFreezeRecoveryAttempts,
+                sinceLastReopenMs = Long.MAX_VALUE,
+                maxConnectionsOne = false,
+            )
+        )
+        if (!persistent) return false
+        previewEngineSwitchedThisDwell = true
+        com.nuvio.tv.core.analytics.LiveEngineMemory.remember(
+            channel.contentId,
+            com.nuvio.tv.core.analytics.LiveEngineMemory.Lane.LIVE,
+            com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.Engine.MPV,
+        )
+        android.util.Log.w("LiveGuide", "preview persistent freeze on ${channel.name} — escalating ExoPlayer -> libmpv")
+        // Flip the engine; the Composable's tune driver (keyed on previewEngine) re-tunes on mpv
+        // with the same URL. Clear the notice + reset the same-engine re-tune history.
+        previewRetuneTimestampsMs.clear()
+        previewPlayingSinceMs = 0L
+        _uiState.update { it.copy(previewOnMpv = true, previewError = null) }
+        return true
+    }
+
+    private fun recoverPreview(playbackState: Int, videoStalled: Boolean) {
         // Our own re-prepare passes through IDLE — never treat that as a fresh death.
         val sinceRetune = if (previewRetuneStartedAtMs == 0L) null
             else System.currentTimeMillis() - previewRetuneStartedAtMs
@@ -477,6 +565,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
             previewFreezeRecoveryChannelId = channel.contentId
             previewFreezeRecoveryAttempts = 0
         }
+        // Dual-engine escalation (design §4 rung 4 / §6 step 1): a channel that keeps re-wedging on
+        // ExoPlayer is a persistent backward-PTS discontinuity — fixed only by the clock-rebasing
+        // engine. Escalate the preview to libmpv in place before the same-engine ladder below gives
+        // up as "looping". Once per dwell; a remembered channel already opened on mpv (tunePreview).
+        if (maybeEscalatePreviewToMpv(channel)) return
         val playedMs = playedMsForReason()
         // A feed that keeps dying and coming back is looping, not recovering. Stop and say so,
         // rather than reconnecting for ever against a panel that charges a handshake each time.
@@ -485,11 +578,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 playbackState = playbackState,
                 playedMs = playedMs,
                 attemptsUsed = previewRetuneTimestampsMs.size,
+                videoStalled = videoStalled,
             )
             val tech = freezeTechnicalDetail(channel, playbackState)
             android.util.Log.w("LiveGuide", "preview looping on ${channel.name}: $reason [$tech]")
             _uiState.update {
-                it.copy(error = "\"${channel.name}\" keeps dropping. $reason\n$tech")
+                it.copy(previewError = "\"${channel.name}\" keeps dropping. $reason\n$tech")
             }
             previewRetuneTimestampsMs.clear()
             previewPlayingSinceMs = 0L
@@ -508,16 +602,18 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 playbackState = playbackState,
                 isLiveFeed = isLiveFeed,
                 attemptsUsed = previewFreezeRecoveryAttempts,
+                videoStalled = videoStalled,
             )
         ) {
             val reason = GuidePreviewFreezePolicy.freezeReason(
                 playbackState = playbackState,
                 playedMs = playedMs,
                 attemptsUsed = previewFreezeRecoveryAttempts,
+                videoStalled = videoStalled,
             )
             val tech = freezeTechnicalDetail(channel, playbackState)
             android.util.Log.w("LiveGuide", "preview froze on ${channel.name}: $reason [$tech]")
-            _uiState.update { it.copy(error = "\"${channel.name}\" stopped. $reason\n$tech") }
+            _uiState.update { it.copy(previewError = "\"${channel.name}\" stopped. $reason\n$tech") }
             LivePlaybackTelemetry.previewStall(playbackState, previewFreezeRecoveryAttempts, surfaced = true)
             previewPlayingSinceMs = 0L
             return
@@ -526,6 +622,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 playbackState = playbackState,
                 isLiveFeed = isLiveFeed,
                 attemptsUsed = previewFreezeRecoveryAttempts,
+                videoStalled = videoStalled,
             )
         ) {
             return
@@ -559,10 +656,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
                         playedMs = playedMs,
                         attemptsUsed = previewFreezeRecoveryAttempts,
                         resolveError = clientFactory.clientFor(acc).lastResolveError,
+                        videoStalled = videoStalled,
                     )
                     val tech = freezeTechnicalDetail(channel, playbackState)
                     android.util.Log.w("LiveGuide", "preview froze on ${channel.name}: $reason [$tech]")
-                    _uiState.update { it.copy(error = "\"${channel.name}\" stopped. $reason\n$tech") }
+                    _uiState.update { it.copy(previewError = "\"${channel.name}\" stopped. $reason\n$tech") }
                     previewPlayingSinceMs = 0L
                     return@launch
                 }
@@ -599,6 +697,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     fun onPreviewFramePlayed() {
         if (previewPlayingSinceMs == 0L) previewPlayingSinceMs = System.currentTimeMillis()
+        // A frame reached the screen, so any prior playback notice is stale — the picture is back.
+        if (_uiState.value.previewError != null) _uiState.update { it.copy(previewError = null) }
         // Video is on screen, so the re-tune has settled — later stalls are genuine again.
         previewRetuneStartedAtMs = 0L
     }
@@ -613,7 +713,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (!com.nuvio.tv.ui.screens.player.isIptvRefreshableHttpStatus(httpStatus)) return
         val channel = _uiState.value.previewChannel ?: return
         if (previewLinkRefreshBurntForChannelId == channel.contentId) {
-            _uiState.update { it.copy(error = "Couldn't open \"${channel.name}\"") }
+            _uiState.update { it.copy(previewError = "Couldn't open \"${channel.name}\"") }
             return
         }
         previewLinkRefreshBurntForChannelId = channel.contentId
@@ -623,7 +723,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // 401/403/410 — this recovery exists to mint a genuinely new link.
             val fresh = clientFactory.clientFor(acc).resolveStreamUrl(acc, "live", channel.streamId, forceFresh = true)
             if (fresh.isNullOrBlank()) {
-                _uiState.update { it.copy(error = "Couldn't open \"${channel.name}\"") }
+                _uiState.update { it.copy(previewError = "Couldn't open \"${channel.name}\"") }
                 return@launch
             }
             tunePreview(channel.copy(streamUrl = fresh))
@@ -649,6 +749,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val channel = _uiState.value.previewChannel ?: return
         if (previewContainerRetryBurntForChannelId == channel.contentId) return
         previewContainerRetryBurntForChannelId = channel.contentId
+        // The same container error also trips ExoPlayer to IDLE, and onPreviewPlaybackStalled would
+        // "recover" that by re-tuning the SAME .ts URL — clobbering this forced-HLS retry before it
+        // can render a frame, so an HLS provider (.ts answered as m3u8) never plays. Device-confirmed
+        // on the Onn 4K with an HLS panel (xsc.loruhon.com), 2026-08-22: every channel died with
+        // ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED. Stamp the re-tune clock so that IDLE is treated
+        // as self-inflicted ([GuidePreviewFreezePolicy.isSelfInflictedTransition]) and ignored for
+        // the settle window, letting the HLS source get a clean shot.
+        previewRetuneStartedAtMs = System.currentTimeMillis()
         viewModelScope.launch {
             val acc = account ?: return@launch
             val url = if (acc.sourceType == XtreamAccount.SOURCE_STALKER) {
@@ -683,8 +791,21 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * URL + headers off-main. The prepare is defensive — any failure yields the plain URL.
      */
     private fun tunePreview(channel: GuideChannel, mimeOverride: String? = null) {
+        // A new channel = a fresh dwell: reset the one-per-dwell escalation budget, and pick the
+        // start engine from per-channel memory (a learned-mpv channel opens directly on mpv, so the
+        // freeze-then-switch is one-time; everything else browses on cheap ExoPlayer).
+        previewEngineSwitchedThisDwell = false
+        val startOnMpv = com.nuvio.tv.core.analytics.LiveEngineMemory.preferredEngine(
+            channel.contentId,
+            com.nuvio.tv.core.analytics.LiveEngineMemory.Lane.LIVE,
+        ) == com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.Engine.MPV
         _uiState.update {
-            it.copy(previewChannel = channel, previewPlayback = null, previewMimeOverride = mimeOverride)
+            it.copy(
+                previewChannel = channel,
+                previewPlayback = null,
+                previewMimeOverride = mimeOverride,
+                previewOnMpv = startOnMpv,
+            )
         }
         val provider = account?.dnsProvider
         viewModelScope.launch {
@@ -967,7 +1088,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             nowMs = nowMs,
         )
         if (session == null) {
-            _uiState.update { it.copy(error = "This provider has no recording of \"${programme.title}\"") }
+            _uiState.update { it.copy(previewError = "This provider has no recording of \"${programme.title}\"") }
             return
         }
         // Publish the channel list first so BACK from the player returns to a populated guide.
@@ -991,7 +1112,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
     }
 
     fun dismissError() {
-        if (_uiState.value.error != null) _uiState.update { it.copy(error = null) }
+        if (_uiState.value.error != null || _uiState.value.previewError != null) {
+            _uiState.update { it.copy(error = null, previewError = null) }
+        }
     }
 
     /**

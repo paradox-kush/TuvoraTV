@@ -33,7 +33,13 @@ internal class MpvPropertyShadow(
     @Volatile var obsVideoOutParams: MPVNode? = null
     @Volatile var obsVideoParams: MPVNode? = null
     @Volatile var obsVideoBitrate: Double? = null
-    @Volatile var obsVideoFrameTicks = 0L
+    // The estimated-vf-fps *value* (a level: ~content-fps while frames flow, decaying to ~0 when the
+    // filter chain stops). The mpv freeze signal is derived from this at READ time by
+    // MpvVideoOutputSignal — NOT from a change-callback count, which plateaus on healthy steady-state
+    // playback exactly as it does on a real freeze (device-proven, review pass 3 F1/F2), and shipped
+    // as a false VIDEO_STALLED / spurious live reconnect. Mirrored here; the count lives off-thread in
+    // the surface view so this stays a pure property mirror.
+    @Volatile var obsEstimatedVfFps = 0.0
     @Volatile var obsAudioBitrate: Double? = null
     @Volatile var obsVoDroppedFrames = 0L
     @Volatile var obsVoDelayedFrames = 0L
@@ -52,6 +58,7 @@ internal class MpvPropertyShadow(
         obsVideoParams = null
         obsVideoBitrate = null
         obsAudioBitrate = null
+        obsEstimatedVfFps = 0.0
         // Per-core counters: a fresh core reports 0, so re-init starts them there too.
         obsVoDroppedFrames = 0L
         obsVoDelayedFrames = 0L
@@ -74,6 +81,10 @@ internal class MpvPropertyShadow(
             "video-params" -> obsVideoParams = null
             "video-bitrate" -> obsVideoBitrate = null
             "audio-bitrate" -> obsAudioBitrate = null
+            // Unavailable means no active video output — mirror zero fps so the read-time liveness
+            // tick (MpvVideoOutputSignal, read via videoFrameTicksNow) holds rather than reading the
+            // last healthy rate forever.
+            "estimated-vf-fps" -> obsEstimatedVfFps = 0.0
             // Unavailable means no active VO — the same 0 a fresh core reports.
             "frame-drop-count" -> obsVoDroppedFrames = 0L
             "vo-delayed-frame-count" -> obsVoDelayedFrames = 0L
@@ -100,7 +111,7 @@ internal class MpvPropertyShadow(
             "time-pos" -> obsTimePosMs = (value * 1000.0).roundToLong().coerceAtLeast(0L)
             "duration" -> obsDurationMs = (value * 1000.0).roundToLong().coerceAtLeast(0L)
             "video-bitrate" -> obsVideoBitrate = value.takeIf { it > 0.0 }
-            "estimated-vf-fps" -> if (value > 0.0) obsVideoFrameTicks++
+            "estimated-vf-fps" -> obsEstimatedVfFps = value
             "audio-bitrate" -> obsAudioBitrate = value.takeIf { it > 0.0 }
         }
     }

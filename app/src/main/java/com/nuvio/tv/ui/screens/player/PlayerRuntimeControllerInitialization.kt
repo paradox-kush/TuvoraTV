@@ -228,6 +228,22 @@ internal fun PlayerRuntimeController.initializePlayer(
             if (effectiveInternalPlayerEngine == InternalPlayerEngine.AUTO) {
                 effectiveInternalPlayerEngine = resolveAutoInternalPlayerEngine()
             }
+            // Per-channel memory (universal-playback-design §3.7): a live channel the recovery
+            // coordinator has already escalated to libmpv for a persistent backward-PTS discontinuity
+            // opens directly on mpv, so the freeze-then-switch is one-time. Only for a FRESH live open
+            // (never a mid-switch override), and it wins over the resolved default/AUTO.
+            if (overrideInternalPlayerEngine == null && isLiveFeed() &&
+                com.nuvio.tv.core.analytics.LiveEngineMemory.preferredEngine(
+                    contentId,
+                    if (isCatchUpPlayback) {
+                        com.nuvio.tv.core.analytics.LiveEngineMemory.Lane.CATCHUP
+                    } else {
+                        com.nuvio.tv.core.analytics.LiveEngineMemory.Lane.LIVE
+                    },
+                ) == com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.Engine.MPV
+            ) {
+                effectiveInternalPlayerEngine = InternalPlayerEngine.MVP_PLAYER
+            }
             // Live no longer force-selects mpv. The old reason ("ExoPlayer buffers forever on raw
             // MPEG-TS") is handled now that PlayerMediaSourceFactory sets FLAG_DETECT_ACCESS_UNITS |
             // FLAG_ALLOW_NON_IDR_KEYFRAMES — the same fix that lets the inline Live Guide play live on

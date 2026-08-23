@@ -85,15 +85,21 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import com.nuvio.tv.core.analytics.Breadcrumbs
+import com.nuvio.tv.core.analytics.LivePlaybackFreezePolicy
 import com.nuvio.tv.core.analytics.LivePlaybackFreezeReporter
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import android.os.Handler
+import android.os.Looper
 import com.nuvio.tv.ui.screens.player.PlayerMediaSourceFactory
+import com.nuvio.tv.ui.screens.player.createGuideMpvSurface
+import com.nuvio.tv.data.local.MpvHardwareDecodeMode
 import com.nuvio.tv.ui.screens.player.enableComposeSurfaceSyncWorkaroundIfAvailable
 import com.nuvio.tv.ui.screens.player.findInvalidResponseCodeException
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 /**
  * TiViMate-style Live TV guide (B10): category column -> channel list with now/next EPG, and a
@@ -308,6 +314,27 @@ fun LiveGuide(
             previewPlayer.release()
         }
     }
+
+    // Escalation-only libmpv preview (universal-playback-design §6 step 1). Created once — a cheap
+    // View; the native mpv core is allocated only on ensureInitialized, when a channel actually
+    // escalates — and it renders in place of the ExoPlayer PlayerView while uiState.previewOnMpv.
+    val previewOnMpv = uiState.previewOnMpv
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val mpvHandle = remember(context) { createGuideMpvSurface(context) }
+    DisposableEffect(mpvHandle) {
+        // MUST precede the first setMedia (MpvSurface invariant; step-0: the default 64/32 MiB budget
+        // froze the 2 GB Onn — the tier-resolved value is 48/16 there).
+        mpvHandle.surface.demuxerBudget = viewModel.demuxerBudget
+        mpvHandle.surface.onPlaybackEndedWithError = { _ ->
+            // Fires on mpv's event thread — hop to main. mpv is the last engine (no ping-pong back
+            // to Exo), so a hard end is surfaced through the same bounded recovery path.
+            mainHandler.post { viewModel.onPreviewPlaybackStalled(GuidePreviewFreezePolicy.STATE_IDLE) }
+        }
+        onDispose {
+            mpvHandle.surface.onPlaybackEndedWithError = null
+            mpvHandle.surface.releasePlayer()
+        }
+    }
     BackHandler(enabled = fullscreen) { onFullscreenChange(false) }
 
     // Fullscreen controls overlay: shown on entry and on any key, auto-hides while playing.
@@ -315,6 +342,93 @@ fun LiveGuide(
     var controlsVisible by remember { mutableStateOf(false) }
     var controlsTick by remember { mutableStateOf(0) }
     fun showControls() { controlsVisible = true; controlsTick++ }
+
+    // Rendered-frame sampling for the preview player. An audio-alive/video-dead freeze never
+    // changes playbackState, so the ENDED/IDLE listener above can never see it — the freeze ladder
+    // had simply never been wired to this surface (rev 3, see GuidePreviewFreezePolicy header).
+    // Poll the decoder's rendered-frame counter against the playhead, feed the shared freeze policy,
+    // and route a detected VIDEO_STALLED into the guide's own bounded recovery (same budget, loop
+    // guard, self-inflicted window and fresh-link path as an ENDED/IDLE drop). Re-armed per channel.
+    val freezeReporter = remember { LivePlaybackFreezeReporter() }
+    // Re-armed per channel AND per engine: an escalation flips previewOnMpv, and the sampler must
+    // read the engine that is actually rendering (mpv's shadow, not the stopped ExoPlayer). The mpv
+    // reads are lock-free off the property shadow (never a core-lock read on the main thread).
+    LaunchedEffect(uiState.previewChannel?.contentId, previewOnMpv) {
+        val channel = uiState.previewChannel ?: return@LaunchedEffect
+        val onMpv = previewOnMpv
+        fun ticks(): Long =
+            if (onMpv) mpvHandle.surface.videoFrameTicksNow()
+            else previewPlayer.videoDecoderCounters?.renderedOutputBufferCount?.toLong() ?: 0L
+        fun positionMs(): Long =
+            if (onMpv) mpvHandle.surface.currentPositionMs().coerceAtLeast(0L)
+            else previewPlayer.currentPosition.coerceAtLeast(0L)
+        // mpv reports the playhead as the buffered position, so bufferedAhead is 0 there — the
+        // policy's fast rung needs a real buffered edge, so mpv always takes the full-threshold path.
+        fun bufferedMs(): Long =
+            if (onMpv) positionMs() else previewPlayer.bufferedPosition.coerceAtLeast(0L)
+        fun state(): LivePlaybackFreezePolicy.PlaybackState = if (onMpv) {
+            when {
+                mpvHandle.surface.isPausedForCacheNow() -> LivePlaybackFreezePolicy.PlaybackState.BUFFERING
+                mpvHandle.surface.isCoreIdleNow() -> LivePlaybackFreezePolicy.PlaybackState.IDLE
+                else -> LivePlaybackFreezePolicy.PlaybackState.READY
+            }
+        } else when (previewPlayer.playbackState) {
+            Player.STATE_BUFFERING -> LivePlaybackFreezePolicy.PlaybackState.BUFFERING
+            Player.STATE_READY -> LivePlaybackFreezePolicy.PlaybackState.READY
+            Player.STATE_ENDED -> LivePlaybackFreezePolicy.PlaybackState.ENDED
+            else -> LivePlaybackFreezePolicy.PlaybackState.IDLE
+        }
+        fun wantsToPlay(): Boolean =
+            if (onMpv) !paused else previewPlayer.playWhenReady && !paused
+        fun hasVideo(): Boolean =
+            if (onMpv) mpvHandle.surface.hasVideoTrackNow() else previewPlayer.videoFormat != null
+
+        freezeReporter.onLivePlaybackStarted(
+            profile = LivePlaybackFreezeReporter.Profile(
+                engine = if (onMpv) "mpv" else "exoplayer",
+                bufferEngineEnabled = false,
+                minBufferMs = 5_000,
+                maxBufferMs = 20_000,
+                bufferForPlaybackMs = 1_500,
+                bufferForPlaybackAfterRebufferMs = 2_000,
+                streamContainer = LivePlaybackFreezeReporter.streamContainerOf(channel.streamUrl),
+                iptvKind = "xtream",
+            ),
+            nowMs = System.currentTimeMillis(),
+            positionMs = positionMs(),
+            videoProgressTicks = ticks(),
+        )
+        try {
+            while (isActive) {
+                delay(500)
+                val decision = freezeReporter.onSample(
+                    nowMs = System.currentTimeMillis(),
+                    positionMs = positionMs(),
+                    bufferedPositionMs = bufferedMs(),
+                    state = state(),
+                    wantsToPlay = wantsToPlay(),
+                    rebufferCount = 0,
+                    rebufferTotalMs = 0L,
+                    videoProgressTicks = ticks(),
+                    hasVideoTrack = hasVideo(),
+                )
+                if (decision is LivePlaybackFreezePolicy.Decision.Start &&
+                    decision.kind == LivePlaybackFreezePolicy.Kind.VIDEO_STALLED
+                ) {
+                    freezeReporter.onRecoveryAttempt(System.currentTimeMillis())
+                    viewModel.onPreviewVideoStalled()
+                }
+            }
+        } finally {
+            freezeReporter.onLivePlaybackStopped(
+                nowMs = System.currentTimeMillis(),
+                positionMs = positionMs(),
+                bufferedPositionMs = bufferedMs(),
+                rebufferCount = 0,
+                rebufferTotalMs = 0L,
+            )
+        }
+    }
 
     // Channel zapping while fullscreen. UP/DOWN move a *pending* selection immediately — the
     // overlay names it right away so the remote feels instant — and the actual tune is debounced,
@@ -364,12 +478,39 @@ fun LiveGuide(
         previewPlayer.play()
     }
 
+    // The escalation-only libmpv tune. one-engine-alive (§3.6a rule 3): free ExoPlayer's decoder and
+    // buffers BEFORE mpv allocates its native core + demuxer cache, so the 2 GB Onn never holds both.
+    fun tuneMpvPreview(url: String, headers: Map<String, String>) {
+        previewPlayer.stop()
+        previewPlayer.clearMediaItems()
+        Breadcrumbs.playbackStarted(
+            kind = "live",
+            engine = "mpv",
+            surface = "live_guide",
+            container = LivePlaybackFreezeReporter.streamContainerOf(url),
+            nowMs = System.currentTimeMillis(),
+        )
+        // MpvSurface invariant order: demuxerBudget (set in the DisposableEffect above) →
+        // applyHardwareDecodeMode → ensureInitialized → setMedia.
+        mpvHandle.surface.applyHardwareDecodeMode(MpvHardwareDecodeMode.AUTO_SAFE)
+        mpvHandle.surface.ensureInitialized()
+        mpvHandle.surface.setMedia(url, headers)
+    }
+
     val previewPlayback = uiState.previewPlayback
     val previewMimeOverride = uiState.previewMimeOverride
-    LaunchedEffect(previewPlayback, previewMimeOverride) {
+    // Re-keyed on previewOnMpv too: an escalation flips it while the URL is unchanged, and that must
+    // re-tune on the other engine.
+    LaunchedEffect(previewPlayback, previewMimeOverride, previewOnMpv) {
         val prepared = previewPlayback ?: return@LaunchedEffect
         paused = false
-        tunePreview(prepared.url, prepared.headers, previewMimeOverride)
+        if (previewOnMpv) {
+            tuneMpvPreview(prepared.url, prepared.headers)
+        } else {
+            // one-engine-alive: release mpv before ExoPlayer tunes (returning from an mpv channel).
+            mpvHandle.surface.releasePlayer()
+            tunePreview(prepared.url, prepared.headers, previewMimeOverride)
+        }
     }
     // Preview cleared to nothing (a playlist switch clears previewChannel/previewPlayback in the VM):
     // stop the shared player so it stops decoding the previous playlist's channel. Keyed on
@@ -381,16 +522,21 @@ fun LiveGuide(
         if (!hasPreviewChannel) {
             previewPlayer.stop()
             previewPlayer.clearMediaItems()
+            mpvHandle.surface.stopPlayback()
         }
     }
 
     // Pause holds the frame; resume reloads instead of unpausing (a paused live buffer goes
-    // stale, and rejoining the live edge is the expected zap behavior).
+    // stale, and rejoining the live edge is the expected zap behavior). Routed to the active engine.
     fun togglePause() {
         val prepared = uiState.previewPlayback ?: return
         val target = !paused
         paused = target
-        if (target) previewPlayer.pause() else tunePreview(prepared.url, prepared.headers, previewMimeOverride)
+        if (previewOnMpv) {
+            if (target) mpvHandle.surface.setPaused(true) else tuneMpvPreview(prepared.url, prepared.headers)
+        } else {
+            if (target) previewPlayer.pause() else tunePreview(prepared.url, prepared.headers, previewMimeOverride)
+        }
         showControls()
     }
 
@@ -417,12 +563,15 @@ fun LiveGuide(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            // Read the engine fresh: this observer outlives an escalation (keyed on lifecycleOwner).
+            val onMpv = viewModel.uiState.value.previewOnMpv
             when (event) {
-                Lifecycle.Event.ON_STOP -> previewPlayer.stop()
+                Lifecycle.Event.ON_STOP -> if (onMpv) mpvHandle.surface.stopPlayback() else previewPlayer.stop()
                 Lifecycle.Event.ON_START -> {
                     val prepared = uiState.previewPlayback ?: return@LifecycleEventObserver
                     paused = false
-                    tunePreview(prepared.url, prepared.headers, uiState.previewMimeOverride)
+                    if (onMpv) tuneMpvPreview(prepared.url, prepared.headers)
+                    else tunePreview(prepared.url, prepared.headers, uiState.previewMimeOverride)
                 }
                 else -> Unit
             }
@@ -501,6 +650,9 @@ fun LiveGuide(
                         channelName = uiState.focusedChannel?.name,
                         epg = uiState.focusedChannel?.let { uiState.epg[it.streamId] },
                         nowMs = nowMs,
+                        // A playback notice (stopped / can't open / no recording) shows here beside the
+                        // channel name instead of over the channel grid, so the list stays visible.
+                        previewError = uiState.previewError,
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
@@ -626,19 +778,30 @@ fun LiveGuide(
                     .aspectRatio(16f / 9f)
                 ).background(Color.Black)
         ) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        keepScreenOn = true
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                        enableComposeSurfaceSyncWorkaroundIfAvailable()
-                        player = previewPlayer
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+            // Escalation-only engine swap: the wedged channel's preview renders on libmpv in place
+            // (§6 step 1). Two composition slots, so flipping disposes one View and creates the
+            // other — the ExoPlayer/mpv teardown ordering that keeps one engine alive is driven by
+            // the tune effect (tuneMpvPreview releases Exo; the EXO branch releases mpv).
+            if (previewOnMpv) {
+                AndroidView(
+                    factory = { mpvHandle.view },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = false
+                            keepScreenOn = true
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                            enableComposeSurfaceSyncWorkaroundIfAvailable()
+                            player = previewPlayer
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
             if (fullscreen && controlsVisible) {
                 // A half-walked zap names the channel the viewer is ON, not the one still playing.
                 val overlayChannel = pendingZap ?: uiState.previewChannel
@@ -1047,6 +1210,7 @@ private fun PreviewInfoPane(
     channelName: String?,
     epg: GuideEpg?,
     nowMs: Long,
+    previewError: String?,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1061,7 +1225,18 @@ private fun PreviewInfoPane(
             overflow = TextOverflow.Ellipsis
         )
         val now = epg?.now
-        if (now != null) {
+        if (previewError != null) {
+            // A playback notice for the focused channel — takes the info slot so it never covers
+            // the channel grid; the list stays focusable so OK on the channel re-tunes.
+            Spacer(Modifier.height(NuvioTheme.spacing.sm))
+            Text(
+                text = previewError,
+                style = MaterialTheme.typography.bodySmall,
+                color = NuvioTheme.colors.Error,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis
+            )
+        } else if (now != null) {
             Spacer(Modifier.height(2.dp))
             Text(
                 text = now.title,

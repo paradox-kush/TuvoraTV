@@ -68,10 +68,14 @@ class LivePlaybackFreezeReporterTest {
     fun `a video freeze reports frozen time from the video stall start`() {
         // Last frame at t=20s; audio keeps the playhead advancing afterwards.
         playHealthyThenStallVideo(videoStallAtMs = 20_000L)
-        sample(nowMs = 24_000L, ticks = 700L)
 
-        // Detection threshold crossed 6.5s after the last frame.
-        val start = sample(nowMs = 26_500L, ticks = 700L)
+        // The buffered edge is a healthy 5s ahead (see sample()), so the fast video-stall
+        // threshold (2.5s) applies. 2s after the last frame it has not been crossed yet.
+        val notYet = sample(nowMs = 22_000L, ticks = 700L)
+        assertEquals(LivePlaybackFreezePolicy.Decision.Idle, notYet)
+
+        // Past 2.5s since the last frame: the freeze is reported.
+        val start = sample(nowMs = 24_000L, ticks = 700L)
         assertEquals(
             LivePlaybackFreezePolicy.Decision.Start(LivePlaybackFreezePolicy.Kind.VIDEO_STALLED),
             start,
@@ -84,8 +88,8 @@ class LivePlaybackFreezeReporterTest {
         assertEquals(1, events.size)
         val properties = events.single().second
         // The viewer stared at a frozen picture from t=20s until t=27.5s. Basing this at the
-        // detection tick instead reported 1s — and in the field, sub-threshold impossibilities
-        // like 16ms — which is what made the first fleet numbers unusable.
+        // detection tick instead reported a fraction of that — and in the field, sub-threshold
+        // impossibilities like 16ms — which is what made the first fleet numbers unusable.
         assertEquals("frozen_ms must count from the video stall start", 7_500L, properties["frozen_ms"])
         assertEquals(
             "played_ms_before_freeze ends when the picture died, not when detection fired",

@@ -61,6 +61,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var androidTvChannelSyncService: AndroidTvChannelSyncService
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var iptvRefreshScheduler: IptvRefreshScheduler
+    // Eager so LiveEngineMemory is loaded from disk before the first live tune reads it (§3.7).
+    @Inject lateinit var liveEngineMemoryStore: com.nuvio.tv.core.memory.LiveEngineMemoryStore
     // Eagerly created so its accountId->dnsProvider mirror is warm before the first playback needs
     // it (its init observes the account store); otherwise a very-early first live/VOD play could
     // miss its playlist's DoH provider and fall back to system DNS.
