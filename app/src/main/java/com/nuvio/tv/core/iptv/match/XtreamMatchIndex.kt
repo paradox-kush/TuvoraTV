@@ -133,7 +133,7 @@ data class UnsyncedMapping(val kind: String, val tmdb: Int, val sid: Int?, val m
 @Singleton
 class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context) {
 
-    private val helper = object : SQLiteOpenHelper(context, "xtream_match.db", null, 5) {
+    private val helper = object : SQLiteOpenHelper(context, "xtream_match.db", null, 6) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, category_id TEXT, epg_id TEXT, tv_archive INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX items_cat ON items(provider, kind, category_id, pos)")
@@ -146,10 +146,17 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion >= 4) {
-                // v5 is additive: idx_meta.last_added_at (negatives are only trusted when they
-                // postdate the catalog's newest addition). Keep the v4 data — a full drop here
-                // would cost every user a re-index for one column.
-                db.execSQL("ALTER TABLE idx_meta ADD COLUMN last_added_at INTEGER NOT NULL DEFAULT 0")
+                if (oldVersion < 5) {
+                    // v5 is additive: idx_meta.last_added_at (negatives are only trusted when they
+                    // postdate the catalog's newest addition). Keep the v4 data — a full drop here
+                    // would cost every user a re-index for one column.
+                    db.execSQL("ALTER TABLE idx_meta ADD COLUMN last_added_at INTEGER NOT NULL DEFAULT 0")
+                }
+                // v6 ships the id-mismatch override in verifyDecision: "not on this provider"
+                // verdicts cached by the old rule can be junk-tmdb false negatives (a panel
+                // returning a constant tmdb_id rejected its whole catalog). One-time purge —
+                // positives untouched, a negative regenerates in a single resolve.
+                db.execSQL("DELETE FROM tmdb_map WHERE sid IS NULL")
                 return
             }
             // pre-v4: index tables are rebuildable caches; mappings re-pull from Supabase

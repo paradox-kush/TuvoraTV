@@ -34,6 +34,9 @@ data class XtreamMatch(val item: IndexedItem, val via: String)
 /** What the panel's info endpoint can tell us about a candidate. */
 data class VerifySignal(val tmdb: Int?, val year: Int?)
 
+/** [XtreamTmdbResolver.verifyDecision]'s verdict — PROVISIONAL wins only when nothing CONFIRMS. */
+enum class VerifyVerdict { CONFIRMED, PROVISIONAL, REJECTED }
+
 /**
  * Resolves a TMDB id to a concrete Xtream stream/series id for one account. Twin of
  * NuvioMobile's resolver; rules validated against live panels (8-round campaign).
@@ -170,6 +173,9 @@ class XtreamTmdbResolver @Inject constructor(
         if (variants.isEmpty()) return null
 
         var verifyCalls = 0
+        // best candidate whose panel tmdb id disagreed but whose year+exact-name confirmed
+        // (junk-id panels) — accepted only after the whole verify budget fails to CONFIRM
+        var provisional: XtreamMatch? = null
         for (probe in TitleNormalizer.probesFor(variants)) {
             val bucket = index.probe(provider, kind, probe.key)
             if (bucket.isEmpty()) continue
@@ -189,14 +195,27 @@ class XtreamTmdbResolver @Inject constructor(
                     exactTier = probe.exactTier && inYear,
                     via = probe.via,
                 )
-                if (decision) {
-                    Log.d(TAG, "matched tmdb=$tmdbId via=${probe.via} sid=${cand.sid} '${cand.name}'")
-                    index.putMapping(provider, kind, tmdbId, cand.sid, cand.name)
-                    sync.triggerPush(provider)
-                    return XtreamMatch(cand, probe.via)
+                when (decision) {
+                    VerifyVerdict.CONFIRMED -> {
+                        Log.d(TAG, "matched tmdb=$tmdbId via=${probe.via} sid=${cand.sid} '${cand.name}'")
+                        index.putMapping(provider, kind, tmdbId, cand.sid, cand.name)
+                        sync.triggerPush(provider)
+                        return XtreamMatch(cand, probe.via)
+                    }
+                    // probes run best-first, so the first provisional is the best-ranked one
+                    VerifyVerdict.PROVISIONAL -> if (provisional == null) {
+                        provisional = XtreamMatch(cand, "${probe.via}+id-mismatch")
+                    }
+                    VerifyVerdict.REJECTED -> {}
                 }
             }
             if (verifyCalls >= MAX_VERIFY_CALLS) break
+        }
+        provisional?.let {
+            Log.d(TAG, "matched tmdb=$tmdbId via=${it.via} sid=${it.item.sid} '${it.item.name}' (panel id overridden by exact name+year)")
+            index.putMapping(provider, kind, tmdbId, it.item.sid, it.item.name)
+            sync.triggerPush(provider)
+            return it
         }
 
         // only cache "not on this provider" when we actually had an index to search —
@@ -360,10 +379,18 @@ class XtreamTmdbResolver @Inject constructor(
         /**
          * The acceptance rules distilled from the live-panel campaign — pure so the test
          * suite can hammer them:
-         *  - panel tmdb id decides outright when present (equality or rejection)
+         *  - a matching panel tmdb id confirms outright
+         *  - a MISMATCHING panel id rejects — unless the panel's own year signal confirms
+         *    the target exactly on an exact-tier primary/original name hit, which downgrades
+         *    to PROVISIONAL instead: junk id feeds exist (a live panel ships the constant
+         *    tmdb_id 1111 for its entire catalog), and there the id contradicts the panel's
+         *    own metadata. A provisional candidate is used only when nothing CONFIRMS, so
+         *    panels with real ids behave exactly as before whenever a genuine match exists.
          *  - else best year signal (info year, then name year): exact tiers get ±1, inexact
-         *    tiers (trunc/skeleton/nodigit/off-year) demand an exact year
-         *  - no signal at all: only exact-tier primary/original matches pass
+         *    tiers (trunc/skeleton/nodigit/off-year) demand an exact year — which is also
+         *    why the provisional demands a year distance of exactly 0, never ±1
+         *  - no signal at all: only exact-tier primary/original matches pass (alt titles
+         *    can't ride the provisional either)
          */
         fun verifyDecision(
             signal: VerifySignal,
@@ -372,14 +399,22 @@ class XtreamTmdbResolver @Inject constructor(
             nameYear: Int?,
             exactTier: Boolean,
             via: String,
-        ): Boolean {
-            signal.tmdb?.let { return it == targetTmdb }
+        ): VerifyVerdict {
+            val exactPrimary = exactTier && (via.startsWith("primary") || via.startsWith("original"))
             val year = signal.year ?: nameYear
+            signal.tmdb?.let {
+                if (it == targetTmdb) return VerifyVerdict.CONFIRMED
+                return if (exactPrimary && year != null && targetYear != null && yearDistance(year, targetYear) == 0) {
+                    VerifyVerdict.PROVISIONAL
+                } else {
+                    VerifyVerdict.REJECTED
+                }
+            }
             if (year != null && targetYear != null) {
                 val d = yearDistance(year, targetYear)
-                return if (exactTier) d <= 1 else d == 0
+                return if (if (exactTier) d <= 1 else d == 0) VerifyVerdict.CONFIRMED else VerifyVerdict.REJECTED
             }
-            return exactTier && (via.startsWith("primary") || via.startsWith("original"))
+            return if (exactPrimary) VerifyVerdict.CONFIRMED else VerifyVerdict.REJECTED
         }
 
         private fun yearDistance(a: Int?, b: Int?): Int = if (a == null || b == null) 0 else if (a > b) a - b else b - a
