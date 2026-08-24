@@ -90,6 +90,33 @@ object TitleNormalizer {
         return k.substring(0, end).trim()
     }
 
+    /** Two-letter ISO-639-1 language + common region codes IPTV panels append as a suffix. */
+    private val SHORT_LANG_CODES = hashSetOf(
+        "en", "fr", "es", "sp", "de", "it", "pt", "nl", "sv", "no", "da", "fi", "pl", "ro", "cs",
+        "sk", "hu", "hr", "sr", "sl", "bg", "el", "gr", "ru", "uk", "tr", "ar", "he", "fa", "hi",
+        "ta", "te", "ml", "kn", "bn", "ur", "ja", "jp", "ko", "kr", "zh", "cn", "vi", "th", "id",
+        "ms", "us", "gb", "br", "mx", "ca", "au",
+    )
+
+    /**
+     * "breaking bad en" -> "breaking bad": drops a trailing run of 2-letter language/region codes,
+     * the marker split-season IPTV panels append ("Breaking Bad S5 En", "The Office Us"). Same shape
+     * as [stripTrailingLanguageWords] — a preceding word is required, so a title that IS a 2-letter
+     * code ("Us", "It") has no anchoring space and survives untouched. Additive: the caller keeps the
+     * un-stripped key too, and every match is still verified (year for movies, season structure for
+     * series), so a false strip cannot silently mis-match.
+     */
+    internal fun stripTrailingShortLangCodes(k: String): String {
+        var end = k.length
+        while (true) {
+            val space = k.lastIndexOf(' ', end - 1)
+            if (space < 0) break
+            if (k.substring(space + 1, end) !in SHORT_LANG_CODES) break
+            end = space
+        }
+        return k.substring(0, end).trim()
+    }
+
     /** The pattern requires `\d{1,2}`, so a key with no digit cannot match — skip the engine. */
     internal fun stripSeasonTokens(k: String): String =
         if (k.none { it in '0'..'9' }) k else SEASON_TOKENS.replace(k, " ")
@@ -223,6 +250,12 @@ object TitleNormalizer {
         // trailing language words outside parens: "heart beat tamil"
         for (k in keys.toList()) {
             val v = stripTrailingLanguageWords(k)
+            if (v != k && hasLetter(v)) keys.add(v)
+        }
+        // trailing 2-letter language/region codes, e.g. the "en" left after the season pass turns
+        // "breaking bad s5 en" into "breaking bad en" -> "breaking bad" ("The Office Us" too)
+        for (k in keys.toList()) {
+            val v = stripTrailingShortLangCodes(k)
             if (v != k && hasLetter(v)) keys.add(v)
         }
         for (k in keys.toList()) skeletonKey(k)?.let { keys.add(it) }

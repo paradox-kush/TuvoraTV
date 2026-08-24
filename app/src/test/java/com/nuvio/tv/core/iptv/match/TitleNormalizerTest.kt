@@ -128,6 +128,19 @@ class TitleNormalizerTest {
         assertTrue("nefarious" in keys("Nefarious (2023)(Tamil, Telugu, Hindi)"))
     }
 
+    @Test
+    fun trailingShortLanguageCodesStripAfterSeasonToken() {
+        // split-season panels (xsc.loruhon.com) name each season "<Show> S<n> <lang-code>";
+        // the base title must still index so a TMDB name probe can find it
+        assertTrue("breaking bad" in keys("Breaking Bad S5 En"))
+        assertTrue("breaking bad" in keys("Breaking Bad S5 Sp")) // colloquial Spanish code, not ISO "es"
+        assertTrue("stranger things" in keys("Stranger Things S4 En"))
+        assertTrue("the office" in keys("The Office Us"))
+        // a two-letter title that IS the whole name must survive (no preceding word to anchor on)
+        assertEquals("us", TitleNormalizer.normKey("Us"))
+        assertTrue("us" in keys("Us"))
+    }
+
     // --- basic folds ------------------------------------------------------------------
 
     @Test
