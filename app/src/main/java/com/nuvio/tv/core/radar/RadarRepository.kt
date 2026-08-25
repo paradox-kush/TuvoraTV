@@ -252,6 +252,50 @@ class RadarRepository @Inject constructor(
         }
     }
 
+    /**
+     * Fast score tick for the Sports screen: refresh ONLY followed leagues/teams that have a
+     * live-or-imminent fixture ([RadarLiveRefreshPolicy]), so the 2-minute poll transfers a live
+     * subset — often nothing — instead of the whole followed set every time. Merges results the
+     * same way [ensureLeagueLoaded] does (the livescore feed is per-sport and authoritative for the
+     * sports it returns; stale live ids are already defended by [RadarUiState.isLive]). Leaves the
+     * full-refresh throttle untouched: schedule discovery stays with [refreshFixtures].
+     */
+    fun refreshLiveFixtures() {
+        val nowMs = RadarTime.nowMs()
+        val state = _uiState.value
+        val candidateLeagues = state.followedLeagueIds + state.activeFeatured(nowMs).map { it.leagueId }
+        val targets = RadarLiveRefreshPolicy.targets(
+            candidateLeagueIds = candidateLeagues,
+            candidateTeamIds = state.followedTeamIds,
+            fixturesByLeague = state.fixturesByLeague,
+            fixturesByTeam = state.fixturesByTeam,
+            nowMs = nowMs,
+        )
+        if (targets.isEmpty) return // nothing live/imminent → no network call at all
+        val sports = (
+            targets.leagueIds.mapNotNull { id -> state.leagueById(id)?.sport?.lowercase() } +
+                state.teamFollows.filter { it.teamId in targets.teamIds }.map { it.sport.lowercase() }
+            ).filter { it in RADAR_LIVESCORE_SPORTS }.toSet()
+        scope.launch {
+            val response = fixturesClient.fetch(targets.leagueIds, sports, targets.teamIds) ?: return@launch
+            _uiState.update {
+                it.copy(
+                    fixturesByLeague = it.fixturesByLeague + response.fixtures,
+                    fixturesByTeam = it.fixturesByTeam + response.teamFixtures,
+                    liveEventIds = it.liveEventIds + liveIds(response),
+                    liveScores = it.liveScores + scoresById(response),
+                    livescoreSports = it.livescoreSports + coveredLivescoreSports(response),
+                )
+            }
+            store.saveFixtures(
+                response.copy(
+                    fixtures = _uiState.value.fixturesByLeague,
+                    teamFixtures = _uiState.value.fixturesByTeam,
+                ),
+            )
+        }
+    }
+
     fun toggleFollow(league: RadarLeague) {
         scope.launch {
             // Read the STORE, not _uiState — the ui mirror updates async via the collector,

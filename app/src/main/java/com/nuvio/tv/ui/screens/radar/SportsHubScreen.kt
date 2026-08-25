@@ -83,10 +83,19 @@ import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
 import com.nuvio.tv.ui.screens.collection.NuvioTextField
 import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioTheme
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
+/** Fast score tick: only leagues/teams with a live-or-imminent fixture, so it transfers a live
+ *  subset (often nothing) rather than the whole followed set. */
 private const val SPORTS_LIVE_REFRESH_INTERVAL_MS = 2 * 60 * 1000L
+
+/** Slow full refresh: re-pull the entire followed set to discover newly-scheduled fixtures. The
+ *  heavy call now runs 4×/hour instead of every 2 minutes — the core of the egress fix. */
+private const val SPORTS_FULL_REFRESH_INTERVAL_MS = 15 * 60 * 1000L
 
 /**
  * Sports Centre hub (drawer destination): featured event banners, live & upcoming fixtures for
@@ -107,13 +116,28 @@ fun SportsHubScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val sheet by viewModel.sheet.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) {
-        viewModel.ensureLoaded()
-        // The Sports destination can remain alive across kick-off. Refresh while it is visible so
-        // a pre-game card gains its live score without requiring a route change or app restart.
-        while (true) {
-            delay(SPORTS_LIVE_REFRESH_INTERVAL_MS)
-            viewModel.repository.refreshFixtures(force = true)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(Unit) { viewModel.ensureLoaded() }
+    // The Sports destination can remain alive across kick-off. Refresh while it is VISIBLE so a
+    // pre-game card gains its live score without a route change — but repeatOnLifecycle(RESUMED)
+    // stops the poll the moment the screen is backgrounded or navigated away from, and restarts a
+    // single loop on return. That both kills background polling and prevents the stacked, never-
+    // cancelled loops that made this the top egress source. The 2-minute tick refreshes only what
+    // is live ([RadarRepository.refreshLiveFixtures]); the heavy full refresh runs every 15 minutes
+    // just to discover newly-scheduled fixtures.
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var sinceFullMs = 0L
+            while (true) {
+                delay(SPORTS_LIVE_REFRESH_INTERVAL_MS)
+                sinceFullMs += SPORTS_LIVE_REFRESH_INTERVAL_MS
+                if (sinceFullMs >= SPORTS_FULL_REFRESH_INTERVAL_MS) {
+                    sinceFullMs = 0L
+                    viewModel.repository.refreshFixtures(force = true)
+                } else {
+                    viewModel.repository.refreshLiveFixtures()
+                }
+            }
         }
     }
 
