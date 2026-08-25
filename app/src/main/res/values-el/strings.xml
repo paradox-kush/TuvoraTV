@@ -1,4 +1,4 @@
-﻿<resources>
+<resources>
   <string name="app_name">Tuvora</string>
   <string name="tv_channel_continue_watching">Συνέχεια παρακολούθησης</string>
   <string name="type_movie">Ταινία</string>
@@ -139,7 +139,9 @@
   <string name="continue_watching">Συνέχεια παρακολούθησης</string>
   <string name="cw_upcoming">Επόμενα</string>
   <string name="cw_next_up">Επόμενο</string>
+  <string name="cw_next_up_short">Επόμενο</string>
   <string name="cw_new_episode">Νέο επεισόδιο</string>
+  <string name="cw_new_episode_short">Νέο</string>
   <string name="cw_new_season">Νέα σεζόν</string>
   <string name="cw_resume">Συνέχεια</string>
   <string name="cw_percent_watched">%1$d%% προβλήθηκε</string>
@@ -152,6 +154,14 @@
   <plurals name="cw_airs_in_days">
     <item quantity="one">Πρεμιέρα σε %d ημέρα</item>
     <item quantity="other">Πρεμιέρα σε %d ημέρες</item>
+  </plurals>
+  <!-- Short versions for compact card styles (wide/poster) -->
+  <string name="cw_airs_date_short">%1$s</string>
+  <string name="cw_airs_today_short">Σήμερα</string>
+  <string name="cw_airs_tomorrow_short">Αύριο</string>
+  <plurals name="cw_airs_in_days_short">
+    <item quantity="one">Σε %d ημέρα</item>
+    <item quantity="other">Σε %d ημέρες</item>
   </plurals>
   <string name="cw_action_go_to_details">Μετάβαση σε λεπτομέρειες</string>
   <string name="cw_action_start_from_beginning">Έναρξη από την αρχή</string>
@@ -256,6 +266,18 @@
   <string name="collections_editor_tmdb_watch_providers_helper">Χρησιμοποιήστε ID παρόχων προβολής TMDB. Χωρίστε πολλαπλά με κόμμα για ΚΑΙ, ή με κάθετη για Ή.</string>
   <string name="collections_editor_tmdb_watch_providers_placeholder">8|337|350</string>
   <string name="collections_editor_tmdb_quick_watch_providers">Γρήγοροι πάροχοι προβολής</string>
+  <string name="collections_editor_tmdb_without_watch_providers">Αποκλεισμένα ID παρόχων προβολής</string>
+  <string name="collections_editor_tmdb_without_watch_providers_helper">Αποκλείστε τίτλους διαθέσιμους από αυτούς τους αριθμούς παρόχων προβολής TMDB στην επιλεγμένη περιοχή.</string>
+  <string name="collections_editor_tmdb_without_watch_providers_placeholder">8|337|350</string>
+  <string name="collections_editor_tmdb_without_genres">Αποκλεισμένα ID ειδών</string>
+  <string name="collections_editor_tmdb_without_genres_helper">Αποκλείστε τίτλους που ταιριάζουν με αυτούς τους αριθμούς ειδών TMDB.</string>
+  <string name="collections_editor_tmdb_without_genres_placeholder">16 για Κινούμενα σχέδια</string>
+  <string name="collections_editor_tmdb_without_keywords">Αποκλεισμένα ID λέξεων-κλειδιών</string>
+  <string name="collections_editor_tmdb_without_keywords_helper">Αποκλείστε τίτλους που ταιριάζουν με αυτούς τους αριθμούς λέξεων-κλειδιών TMDB.</string>
+  <string name="collections_editor_tmdb_without_keywords_placeholder">9715</string>
+  <string name="collections_editor_tmdb_without_companies">Αποκλεισμένα ID εταιρειών</string>
+  <string name="collections_editor_tmdb_without_companies_helper">Αποκλείστε τίτλους που σχετίζονται με αυτούς τους αριθμούς εταιρειών TMDB.</string>
+  <string name="collections_editor_tmdb_without_companies_placeholder">420</string>
   <string name="tmdb_error_load_source">Δεν ήταν δυνατή η φόρτωση της πηγής TMDB</string>
   <string name="tmdb_error_list_not_found">Δεν βρέθηκε λίστα TMDB</string>
   <string name="tmdb_error_collection_not_found">Δεν βρέθηκε συλλογή TMDB</string>
@@ -316,6 +338,11 @@
   <string name="theme_color_amber">Κεχριμπάρι</string>
   <string name="theme_color_rose">Ροζ</string>
   <string name="theme_color_white">Λευκό</string>
+  <string name="theme_color_gold">Χρυσό</string>
+  <string name="theme_color_jade">Νεφρίτης</string>
+  <string name="theme_color_rose_gold">Ροζ χρυσό</string>
+  <string name="theme_color_arctic_blue">Αρκτικό μπλε</string>
+  <string name="theme_color_graphite">Γραφίτης</string>
   <string name="appearance_amoled_mode">Λειτουργία AMOLED</string>
   <string name="appearance_amoled_mode_subtitle">Χρήση καθαρού μαύρου στα φόντα της εφαρμογής</string>
   <string name="appearance_amoled_surfaces_mode">Καθαρά μαύρες επιφάνειες</string>
@@ -330,6 +357,8 @@
   <string name="about_version">Έκδοση %1$s</string>
   <string name="about_check_updates">Έλεγχος ενημερώσεων</string>
   <string name="about_check_updates_subtitle">Λήψη τελευταίας έκδοσης</string>
+  <string name="about_update_banner_title">Αυτόματο banner ενημέρωσης</string>
+  <string name="about_update_banner_subtitle">Εμφάνιση banner όταν είναι διαθέσιμη νέα έκδοση</string>
   <string name="about_privacy_policy">Πολιτική απορρήτου</string>
   <string name="about_privacy_policy_subtitle">Δείτε την πολιτική απορρήτου μας</string>
   <string name="about_supporters_contributors">Υποστηρικτές &amp; Συνεισφέροντες</string>
@@ -347,6 +376,8 @@
   <string name="licenses_attributions_tmdb_body">Το Nuvio χρησιμοποιεί το API του TMDB για μεταδεδομένα ταινιών και σειρών, εικόνες, τρέιλερ, ηθοποιούς, λεπτομέρειες παραγωγής, συλλογές και προτάσεις. Αυτό το προϊόν χρησιμοποιεί το API του TMDB αλλά δεν υποστηρίζεται ούτε πιστοποιείται από το TMDB.</string>
   <string name="licenses_attributions_trakt_title">Trakt</string>
   <string name="licenses_attributions_trakt_body">Το Nuvio συνδέεται με το Trakt για ταυτοποίηση λογαριασμού, ιστορικό παρακολούθησης, συγχρονισμό προόδου, δεδομένα βιβλιοθήκης, βαθμολογίες, λίστες και σχόλια. Το Nuvio δεν συνδέεται ούτε υποστηρίζεται από το Trakt.</string>
+  <string name="licenses_attributions_simkl_title">Simkl</string>
+  <string name="licenses_attributions_simkl_body">Το Nuvio συνδέεται με το Simkl για ταυτοποίηση λογαριασμού, λίστες παρακολούθησης, ιστορικό προβολής, πρόοδο αναπαραγωγής και scrobbling. Τα δεδομένα παρακολούθησης ταινιών, σειρών και anime παρέχονται από το Simkl. Το Nuvio δεν συνδέεται ούτε υποστηρίζεται επίσημα από το Simkl.</string>
   <string name="licenses_attributions_mdblist_title">MDBList</string>
   <string name="licenses_attributions_mdblist_body">Το Nuvio χρησιμοποιεί το MDBList για βαθμολογίες και δεδομένα εξωτερικών παρόχων βαθμολογίας. Το Nuvio δεν συνδέεται ούτε υποστηρίζεται από το MDBList.</string>
   <string name="licenses_attributions_introdb_title">IntroDB</string>
@@ -494,6 +525,7 @@
   <string name="action_apply">Εφαρμογή</string>
   <string name="sub_opacity">Αδιαφάνεια</string>
   <string name="action_none">Κανένα</string>
+  <string name="action_back">Πίσω</string>
   <string name="action_close">Κλείσιμο</string>
   <!-- SupportersContributorsScreen -->
   <string name="supporters_contributors_title">Υποστηρικτές &amp; Συνεισφέροντες</string>
@@ -527,6 +559,32 @@
   <string name="contributors_show_kofi_qr">Εμφάνιση QR Ko-fi</string>
   <string name="contributors_hide_kofi_qr">Απόκρυψη QR Ko-fi</string>
   <string name="contributors_profile_unavailable">Ο σύνδεσμος προφίλ GitHub δεν είναι διαθέσιμος.</string>
+  <!-- SupporterMembershipPanel -->
+  <string name="support_nuvio_name">Υποστήριξη Tuvora</string>
+  <string name="supporter_membership_title">Συνδρομή υποστηρικτή Tuvora</string>
+  <string name="supporter_membership_description">Η υποστήριξη του Tuvora βοηθά στην κάλυψη της υποδομής και της συνεχούς ανάπτυξης, διατηρώντας παράλληλα τη βασική εμπειρία δωρεάν για όλους.</string>
+  <string name="supporter_membership_view">Προβολή συνδρομής</string>
+  <string name="supporter_membership_manage">Διαχείριση συνδρομής</string>
+  <string name="supporter_membership_refresh">Ανανέωση</string>
+  <string name="supporter_membership_refreshing">Ανανέωση…</string>
+  <string name="supporter_membership_loading">Φόρτωση συνδρομής…</string>
+  <string name="supporter_membership_unable_load">Δεν ήταν δυνατή η φόρτωση της κατάστασης συνδρομής. Δοκιμάστε ξανά.</string>
+  <string name="supporter_membership_you_are">Είστε</string>
+  <string name="supporter_membership_thank_you">Σας ευχαριστούμε.</string>
+  <string name="supporter_membership_supporter_since">Υποστηρικτής από %1$s.</string>
+  <string name="supporter_membership_tier_supporter">Υποστηρικτής</string>
+  <string name="supporter_membership_tier_supporter_plus">Υποστηρικτής Plus</string>
+  <string name="supporter_membership_connected_title">Το Patreon είναι συνδεδεμένο</string>
+  <string name="supporter_membership_connected_description">Δεν βρέθηκε ενεργή βαθμίδα Tuvora σε αυτόν τον λογαριασμό Patreon. Δείτε τις διαθέσιμες επιλογές ή ανανεώστε μετά την αλλαγή της συνδρομής σας στο Patreon.</string>
+  <string name="supporter_membership_scan_support">Σάρωση για προβολή συνδρομής</string>
+  <string name="supporter_membership_scan_support_description">Ανοίξτε τη σελίδα Συνδρομή υποστηρικτή στο κινητό σας.</string>
+  <string name="supporter_membership_scan_manage">Σάρωση για διαχείριση συνδρομής</string>
+  <string name="supporter_membership_scan_manage_description">Ανοίξτε τις ρυθμίσεις συνδρομής Patreon στο κινητό σας.</string>
+  <string name="cd_membership_qr">QR code σελίδας συνδρομής</string>
+  <string name="supporters_level_supporter">Υποστηρικτής</string>
+  <string name="supporters_level_supporter_plus">Υποστηρικτής+</string>
+  <string name="supporters_since">Υποστηρίζει το Tuvora από %1$s</string>
+  <string name="supporters_since_unknown">Υποστηρίζει με υπερηφάνεια το Tuvora</string>
   <!-- PlaybackSettingsSections -->
   <string name="playback_section_general">Γενικά</string>
   <string name="playback_section_general_desc">Βασική συμπεριφορά αναπαραγωγής.</string>
@@ -612,7 +670,7 @@
   <string name="audio_decoder_prefer_app">Προτίμηση αποκωδικοποιητών εφαρμογής (FFmpeg)</string>
   <string name="audio_decoder_priority">Προτεραιότητα αποκωδικοποιητή</string>
   <string name="audio_enable_downmix_title">Ενεργοποίηση downmix</string>
-  <string name="audio_enable_downmix_subtitle">Χρησιμοποιεί τη διαδρομή downmix FFmpeg. Όταν είναι απενεργοποιημένο, ο ήχος ακολουθεί την προηγούμενη διαδρομή Android/συσκευής.</string>
+  <string name="audio_enable_downmix_subtitle">Χρησιμοποιεί τη διαδρομή downmix FFmpeg. Απαιτεί «Προτίμηση αποκωδικοποιητών εφαρμογής (FFmpeg)». Όταν είναι απενεργοποιημένο, ο ήχος ακολουθεί την προηγούμενη διαδρομή Android/συσκευής.</string>
   <string name="audio_tunneled">Αναπαραγωγή tunneled</string>
   <string name="audio_tunneled_sub">Συγχρονισμός ήχου/βίντεο σε επίπεδο υλικού. Μπορεί να βελτιώσει την αναπαραγωγή σε ορισμένες συσκευές Android TV</string>
   <string name="audio_mpv_hwdec_title">Αποκωδικοποίηση υλικού (μόνο MPV)</string>
@@ -670,13 +728,8 @@
   <string name="sub_org_none_desc">Εμφάνιση υπότιτλων με την προεπιλεγμένη σειρά αποτελεσμάτων πρόσθετου.</string>
   <string name="sub_org_by_lang_desc">Ομαδοποίηση υπότιτλων ανά γλώσσα.</string>
   <string name="sub_org_by_addon_desc">Ομαδοποίηση υπότιτλων ανά πηγή πρόσθετου.</string>
-  <string name="sub_startup_mode_title">Φόρτωση υπότιτλων πρόσθετου</string>
-  <string name="sub_startup_mode_fast">Γρήγορη εκκίνηση</string>
-  <string name="sub_startup_mode_preferred">Προτιμώμενες γλώσσες</string>
-  <string name="sub_startup_mode_all">Όλοι οι υπότιτλοι πρόσθετου</string>
-  <string name="sub_startup_mode_fast_desc">Άμεση έναρξη αναπαραγωγής. Η επιλογή υπότιτλων πρόσθετου μπορεί να επαναφορτώσει το πρόγραμμα αναπαραγωγής μία φορά.</string>
-  <string name="sub_startup_mode_preferred_desc">Προφόρτωση υπότιτλων πρόσθετου πριν την αναπαραγωγή και επισύναψη κομματιών προτιμώμενης/δευτερεύουσας γλώσσας.</string>
-  <string name="sub_startup_mode_all_desc">Προφόρτωση και επισύναψη όλων των υπότιτλων πρόσθετου πριν την αναπαραγωγή. Πιο αργή εκκίνηση.</string>
+  <string name="sub_strip_sdh">Αφαίρεση υποτίτλων SDH</string>
+  <string name="sub_strip_sdh_desc">Απόκρυψη περιγραφών ήχου και ετικετών ομιλητών από τους υποτίτλους κειμένου</string>
   <!-- PlaybackAutoPlaySettings -->
   <string name="autoplay_reuse_last_link">Επαναχρησιμοποίηση τελευταίας σύνδεσης</string>
   <string name="autoplay_reuse_last_link_sub">Αυτόματη αναπαραγωγή της τελευταίας λειτουργικής ροής για την ίδια ταινία/επεισόδιο όταν η προσωρινή μνήμη είναι ακόμα έγκυρη</string>
@@ -692,6 +745,8 @@
   <string name="autoplay_stream_selection">Αυτόματη επιλογή ροής</string>
   <string name="autoplay_next_episode">Αυτόματη αναπαραγωγή επόμενου επεισοδίου</string>
   <string name="autoplay_next_episode_sub">Αυτόματη έναρξη επόμενου επεισοδίου όταν εμφανιστεί η προτροπή.</string>
+  <string name="autoplay_next_episode_fallback">Εναλλακτική όταν αποτυγχάνει η ομάδα binge</string>
+  <string name="autoplay_next_episode_fallback_sub">Αυτόματη επιλογή της πρώτης διαθέσιμης ροής αν δεν βρεθεί ομάδα binge. Όταν είναι απενεργοποιημένο, εμφανίζεται αντί αυτού ο επιλογέας ροών.</string>
   <string name="autoplay_prefer_binge_group">Προτίμηση ομάδας binge (επόμενο επεισόδιο)</string>
   <string name="autoplay_prefer_binge_group_sub">Δοκιμή πρώτα του ίδιου προφίλ πηγής (ίδιο πρόσθετο/ομάδα ποιότητας) πριν από τους κανονικούς κανόνες αυτόματης αναπαραγωγής.</string>
   <string name="autoplay_reuse_binge_group">Επαναχρησιμοποίηση ομάδας Binge</string>
@@ -778,8 +833,18 @@
   <string name="layout_hide_unreleased_sub">Απόκρυψη ταινιών και σειρών που δεν έχουν κυκλοφορήσει ακόμα.</string>
   <string name="layout_section_detail">Σελίδα λεπτομερειών</string>
   <string name="layout_section_detail_desc">Ρυθμίσεις για την οθόνη λεπτομερειών και επεισοδίων.</string>
+  <string name="layout_overall_ratings">Συνολικές βαθμολογίες</string>
+  <string name="layout_overall_ratings_sub_on">Οι τυπικές βαθμολογίες και οι βαθμολογίες TMDB εμφανίζονται.</string>
+  <string name="layout_overall_ratings_sub_off">Οι τυπικές βαθμολογίες και οι βαθμολογίες TMDB είναι κρυμμένες. Οι ρυθμίσεις παρόχου MDBList έχουν προτεραιότητα στις σελίδες λεπτομερειών.</string>
+  <string name="layout_episode_ratings">Βαθμολογίες επεισοδίων</string>
+  <string name="layout_episode_ratings_sub">Επιλέξτε ποιες βαθμολογίες επεισοδίων είναι ορατές.</string>
+  <string name="layout_ratings_show">Εμφάνιση</string>
+  <string name="layout_ratings_hide">Απόκρυψη</string>
+  <string name="layout_ratings_hide_unwatched">Απόκρυψη μη προβληθέντων</string>
   <string name="layout_section_continue_watching">Συνέχεια παρακολούθησης</string>
   <string name="layout_section_continue_watching_desc">Ρυθμίσεις για την ενότητα Συνέχεια παρακολούθησης.</string>
+  <string name="layout_cw_enabled">Εμφάνιση Συνέχειας παρακολούθησης</string>
+  <string name="layout_cw_enabled_sub">Εμφάνιση της σειράς Συνέχεια παρακολούθησης στην αρχική οθόνη.</string>
   <string name="layout_use_episode_thumbnails_cw">Χρήση μικρογραφιών επεισοδίων στη Συνέχεια παρακολούθησης</string>
   <string name="layout_use_episode_thumbnails_cw_sub">Χρήση μικρογραφιών επεισοδίων ως προεπιλεγμένη εικόνα. Όταν είναι ανενεργό, χρησιμοποιείται backdrop.</string>
   <string name="layout_blur_unwatched">Θόλωμα μη προβληθέντων επεισοδίων</string>
@@ -790,10 +855,16 @@
   <string name="layout_next_up_furthest_episode_sub">Εμφάνιση επόμενου επεισοδίου με βάση το πιο προχωρημένο προβληθέν επεισόδιο. Απενεργοποιήστε το για επαναπροβολές ώστε να χρησιμοποιείται το πιο πρόσφατα προβληθέν επεισόδιο.</string>
   <string name="layout_show_unaired_next_up">Εμφάνιση μη προβληθέντων επόμενων επεισοδίων</string>
   <string name="layout_show_unaired_next_up_sub">Συμπερίληψη επερχόμενων επεισοδίων στη Συνέχεια παρακολούθησης πριν την προβολή τους.</string>
+  <string name="layout_cw_card_style_card">Κάρτα</string>
+  <string name="layout_cw_card_style_wide">Ευρεία</string>
+  <string name="layout_cw_card_style_poster">Αφίσα</string>
   <string name="layout_cw_sort_mode">Σειρά ταξινόμησης</string>
   <string name="layout_cw_sort_mode_sub">Πώς ταξινομούνται τα στοιχεία Συνέχεια παρακολούθησης</string>
   <string name="layout_cw_sort_default">Προεπιλογή</string>
   <string name="layout_cw_sort_default_desc">Ταξινόμηση όλων των στοιχείων κατά πρόσφατα</string>
+  <string name="layout_cw_sort_split_upcoming">Ξεχωριστή σειρά Επερχόμενων</string>
+  <string name="layout_cw_sort_split_upcoming_desc">Μεταφορά επεισοδίων που δεν έχουν προβληθεί σε ξεχωριστή σειρά Επερχόμενων</string>
+  <string name="upcoming_section_title">Επόμενα</string>
   <string name="layout_cw_sort_streaming">Στυλ streaming</string>
   <string name="layout_cw_sort_streaming_desc">Κυκλοφορημένα πρώτα, επερχόμενα στο τέλος</string>
   <string name="layout_trailer_button">Εμφάνιση κουμπιού τρέιλερ</string>
@@ -840,6 +911,34 @@
   <string name="layout_card_radius">Ακτίνα γωνιών</string>
   <string name="layout_reset_default">Επαναφορά σε προεπιλογή</string>
   <string name="layout_custom">Προσαρμοσμένο</string>
+  <!-- Card depth effect -->
+  <string name="settings_card_depth_title">Εφέ βάθους καρτών</string>
+  <string name="settings_card_depth_description">Προσθέτει φωτισμένη πάνω ακμή και απαλή λάμψη στις κάρτες εικόνων για διακριτική αίσθηση βάθους.</string>
+  <string name="settings_card_depth_enabled">Ενεργοποίηση εφέ βάθους</string>
+  <string name="settings_card_depth_edge">Λάμψη ακμής</string>
+  <string name="settings_card_depth_edge_subtle">Διακριτική</string>
+  <string name="settings_card_depth_edge_balanced">Ισορροπημένη</string>
+  <string name="settings_card_depth_edge_bold">Έντονη</string>
+  <string name="settings_card_depth_sheen">Πάνω λάμψη</string>
+  <string name="settings_card_depth_sheen_off">Απενεργοποιημένη</string>
+  <string name="settings_card_depth_sheen_soft">Απαλή</string>
+  <string name="settings_card_depth_sheen_bright">Φωτεινή</string>
+  <string name="settings_card_depth_apply_to">Εφαρμογή σε</string>
+  <string name="settings_card_depth_fine_tune">Λεπτομερής ρύθμιση</string>
+  <string name="settings_card_depth_fine_tune_title">Λεπτομερής ρύθμιση βάθους</string>
+  <string name="settings_card_depth_fine_tune_hint_tv">Χρησιμοποιήστε αριστερά και δεξιά στο τηλεχειριστήριο για να ρυθμίσετε κάθε τιμή.</string>
+  <string name="settings_card_depth_edge_value">Λάμψη ακμής</string>
+  <string name="settings_card_depth_sheen_value">Λάμψη</string>
+  <string name="settings_card_depth_edge_coverage">Κάλυψη ακμής</string>
+  <string name="settings_card_depth_coverage_top">Μόνο πάνω</string>
+  <string name="settings_card_depth_coverage_half">Μισή</string>
+  <string name="settings_card_depth_coverage_full">Πλήρες περίγραμμα</string>
+  <string name="settings_card_depth_coverage_value">Κάλυψη ακμής</string>
+  <string name="settings_card_depth_surface_posters">Αφίσες</string>
+  <string name="settings_card_depth_surface_continue_watching">Συνέχεια παρακολούθησης</string>
+  <string name="settings_card_depth_surface_episodes">Κάρτες επεισοδίων</string>
+  <string name="settings_card_depth_surface_cast">Ηθοποιοί</string>
+  <string name="settings_card_depth_surface_trailers">Τρέιλερ</string>
   <!-- MDBListSettingsScreen -->
   <string name="mdblist_title">Βαθμολογίες MDBList</string>
   <string name="mdblist_subtitle">Διαμόρφωση εξωτερικών βαθμολογιών που εμφανίζονται στην ηρωική ενότητα λεπτομερειών</string>
@@ -858,6 +957,8 @@
   <string name="mdblist_tomatoes_title">Rotten Tomatoes</string>
   <string name="mdblist_tomatoes_subtitle">Εμφάνιση βαθμολογίας κριτικών</string>
   <string name="mdblist_audience_title">Βαθμολογία κοινού</string>
+  <string name="mdblist_mal_title">MyAnimeList</string>
+  <string name="mdblist_mal_subtitle">Εμφάνιση βαθμολογίας MyAnimeList</string>
   <string name="mdblist_audience_subtitle">Εμφάνιση βαθμολογίας κοινού</string>
   <string name="mdblist_metacritic_title">Metacritic</string>
   <string name="mdblist_metacritic_subtitle">Εμφάνιση βαθμολογίας Metacritic</string>
@@ -1079,6 +1180,80 @@
   <string name="trakt_hide_unaired">Απόκρυψη επεισοδίων που δεν έχουν προβληθεί</string>
   <string name="trakt_all_history">Όλο το ιστορικό</string>
   <string name="trakt_days_format">%1$d ημέρες</string>
+  <!-- Tracking (Trakt / Simkl) -->
+  <string name="settings_tracking_title">Παρακολούθηση</string>
+  <string name="settings_tracking_subtitle">Διαχείριση συνδέσεων Trakt και Simkl</string>
+  <string name="settings_tracking_description">Συνδέστε υπηρεσίες παρακολούθησης και επιλέξτε ποια θα τροφοδοτεί τη Βιβλιοθήκη και τη Συνέχεια παρακολούθησης.</string>
+  <string name="tracking_accounts_title">Λογαριασμοί</string>
+  <string name="tracking_accounts_subtitle">Σύνδεση και διαχείριση υπηρεσιών παρακολούθησης</string>
+  <string name="tracking_sources_title">Πηγές</string>
+  <string name="tracking_sources_subtitle">Επιλέξτε από πού διαβάζει το Nuvio τη βιβλιοθήκη και την πρόοδο παρακολούθησης. Το scrobbling γίνεται σε κάθε συνδεδεμένη υπηρεσία.</string>
+  <string name="tracking_trakt_features_title">Δυνατότητες Trakt</string>
+  <string name="tracking_trakt_features_subtitle">Ιστορικό, κριτικές και προτάσεις ειδικά για το Trakt</string>
+  <string name="tracking_simkl_features_title">Δυνατότητες Simkl</string>
+  <string name="tracking_simkl_features_subtitle">Ρυθμίσεις ειδικά για το Simkl</string>
+  <string name="tracking_simkl_anime_id_title">Προτίμηση αναγνωριστικού anime</string>
+  <string name="tracking_simkl_anime_id_subtitle">Ελέγχει πώς αναγνωρίζονται οι σειρές anime. Η επιλογή MAL ή Kitsu δίνει σε κάθε σεζόν δική της καταχώρηση αντί να ομαδοποιείται κάτω από ένα ID IMDb.</string>
+  <string name="tracking_simkl_anime_id_imdb">Προτίμηση IMDb</string>
+  <string name="tracking_simkl_anime_id_mal">Προτίμηση MyAnimeList</string>
+  <string name="tracking_simkl_anime_id_kitsu">Προτίμηση Kitsu</string>
+  <string name="tracking_status_connected">Συνδεδεμένο</string>
+  <string name="tracking_status_disconnected">Δεν είναι συνδεδεμένο</string>
+  <string name="tracking_status_waiting">Αναμονή έγκρισης</string>
+  <string name="tracking_status_connecting">Σύνδεση</string>
+  <string name="tracking_finish_connection">Ολοκλήρωση έγκρισης σύνδεσης</string>
+  <string name="tracking_connecting_provider">Έναρξη σύνδεσης %1$s…</string>
+  <string name="tracking_watch_progress_dialog_subtitle">Επιλέξτε την υπηρεσία από την οποία διαβάζει το Nuvio την επανάληψη και τη Συνέχεια παρακολούθησης. Το scrobbling παραμένει ενεργό για κάθε συνδεδεμένη υπηρεσία.</string>
+  <string name="tracking_library_source_dialog_subtitle">Επιλέξτε την υπηρεσία από την οποία διαβάζει το Nuvio τη Βιβλιοθήκη. Το scrobbling αναπαραγωγής γίνεται σε κάθε συνδεδεμένη υπηρεσία.</string>
+  <string name="tracking_trakt_progress_required">Διαθέσιμο όταν το Trakt είναι η πηγή Προόδου παρακολούθησης</string>
+  <string name="trakt_name">Trakt</string>
+  <string name="simkl_name">Simkl</string>
+  <!-- SimklScreen -->
+  <string name="simkl_account_title">Λογαριασμός Simkl</string>
+  <string name="simkl_description">Συνδέστε το Simkl για συγχρονισμό λιστών, ιστορικού προβολής, προόδου αναπαραγωγής και scrobbles.</string>
+  <string name="simkl_connect">Σύνδεση με Simkl</string>
+  <string name="simkl_disconnect">Αποσύνδεση από το Simkl</string>
+  <string name="simkl_disconnect_title">Αποσύνδεση από το Simkl;</string>
+  <string name="simkl_disconnect_subtitle">Αυτό αφαιρεί τον λογαριασμό Simkl και τα αποθηκευμένα δεδομένα Simkl από αυτό το προφίλ.</string>
+  <string name="simkl_connected_as">Συνδεδεμένος ως %1$s</string>
+  <string name="simkl_user_fallback">Χρήστης Simkl</string>
+  <string name="simkl_awaiting_instruction">Ανοίξτε τη σελίδα επαλήθευσης του Simkl και εισάγετε αυτόν τον κωδικό.</string>
+  <string name="simkl_code_expires">Ο κωδικός λήγει σε %1$s</string>
+  <string name="simkl_sync_now">Συγχρονισμός τώρα</string>
+  <string name="simkl_visit">Επίσκεψη στο Simkl</string>
+  <string name="simkl_sync_info_action">Πώς λειτουργεί ο συγχρονισμός</string>
+  <string name="simkl_sync_info_title">Πώς λειτουργεί ο συγχρονισμός Simkl</string>
+  <string name="simkl_sync_info_description">Το Nuvio ελέγχει αυτόματα το Simkl το πολύ μία φορά κάθε %1$d λεπτά. Οι αλλαγές που γίνονται μέσω άλλης εφαρμογής ή του ιστότοπου Simkl μπορεί να χρειαστούν τόσο χρόνο για να εμφανιστούν.</string>
+  <string name="simkl_sync_info_activity">Κάθε ανανέωση ελέγχει πρώτα αν το Simkl αναφέρει αλλαγές και κατεβάζει μόνο τις ενημερώσεις. Αυτό ακολουθεί τους κανόνες API του Simkl, μειώνει την περιττή χρήση δεδομένων και βοηθά στη σταθερότητα της υπηρεσίας.</string>
+  <string name="simkl_sync_info_manual">Οι αλλαγές που γίνονται στο Nuvio αποστέλλονται αμέσως στο Simkl. Χρησιμοποιήστε το Συγχρονισμός τώρα όποτε θέλετε το Nuvio να ελέγξει νωρίτερα για απομακρυσμένες αλλαγές.</string>
+  <string name="simkl_sync_info_library_statuses">Οι σειρές που τοποθετούνται στις λίστες On Hold ή Dropped του Simkl κρύβονται από τη Συνέχεια παρακολούθησης. Παραμένουν κρυφές όσο βρίσκονται σε οποιαδήποτε από τις δύο λίστες.</string>
+  <string name="simkl_sync_info_docs">Διαβάστε τον οδηγό συγχρονισμού Simkl</string>
+  <string name="error_open_browser_failed">Αποτυχία ανοίγματος προγράμματος περιήγησης</string>
+  <string name="simkl_missing_credentials">Λείπει το SIMKL_CLIENT_ID</string>
+  <string name="simkl_status_enter_code">Εισάγετε τον κωδικό στο Simkl για ολοκλήρωση σύνδεσης</string>
+  <string name="simkl_status_waiting">Αναμονή έγκρισης από το Simkl…</string>
+  <string name="simkl_status_connected">Συνδεδεμένο με το Simkl</string>
+  <string name="simkl_status_disconnected">Αποσυνδέθηκε από το Simkl</string>
+  <string name="simkl_status_syncing">Συγχρονισμός με το Simkl…</string>
+  <string name="simkl_status_synced">Ο συγχρονισμός Simkl ολοκληρώθηκε</string>
+  <string name="simkl_watch_progress_selected">Το Simkl επιλέχθηκε για τη Συνέχεια παρακολούθησης</string>
+  <string name="simkl_library_source_selected">Το Simkl επιλέχθηκε για τη Βιβλιοθήκη</string>
+  <string name="simkl_error_code_expired">Ο κωδικός Simkl έληξε. Ξεκινήστε ξανά.</string>
+  <string name="simkl_error_authorization_revoked">Η εξουσιοδότηση Simkl ανακλήθηκε. Συνδεθείτε ξανά.</string>
+  <string name="simkl_error_network">Δεν ήταν δυνατή η πρόσβαση στο Simkl. Δοκιμάστε ξανά.</string>
+  <!-- Simkl removal + library fallbacks -->
+  <string name="tracking_removal_title">Αφαίρεση από το %1$s;</string>
+  <string name="tracking_removal_message">Η αφαίρεση του «%1$s» από το %2$s θα διαγράψει επίσης το %3$s εκεί. Αυτό δεν μπορεί να αναιρεθεί.</string>
+  <string name="tracking_removal_impact_history">ιστορικό προβολής</string>
+  <string name="tracking_removal_impact_rating">βαθμολογία</string>
+  <string name="tracking_removal_impact_history_rating">ιστορικό προβολής και βαθμολογία</string>
+  <string name="action_remove_anyway">Αφαίρεση ούτως ή άλλως</string>
+  <string name="cd_simkl_qr">QR ενεργοποίησης Simkl</string>
+  <string name="cd_simkl_logo">Λογότυπο Simkl</string>
+  <string name="library_empty_simkl_title">Δεν υπάρχουν %1$s σε αυτή την κατάσταση</string>
+  <string name="library_empty_simkl_subtitle">Χρησιμοποιήστε το + στις λεπτομέρειες για προσθήκη στοιχείων σε κατάσταση Simkl</string>
+  <string name="library_empty_simkl_not_auth_title">Το Simkl δεν είναι συνδεδεμένο</string>
+  <string name="library_empty_simkl_not_auth_subtitle">Συνδέστε τον λογαριασμό Simkl στις Ρυθμίσεις για να δείτε τη βιβλιοθήκη Simkl</string>
   <!-- DebugSettingsScreen -->
   <string name="debug_title">Αποσφαλμάτωση</string>
   <string name="debug_subtitle">Εργαλεία προγραμματιστή και σημαίες χαρακτηριστικών (μόνο σε debug builds)</string>
@@ -1090,6 +1265,11 @@
   <string name="debug_account_tab_subtitle">Εμφάνιση καρτέλας Λογαριασμός στην πλοήγηση Ρυθμίσεων</string>
   <string name="debug_sync_code_title">Λειτουργίες Sync Code</string>
   <string name="debug_sync_code_subtitle">Εμφάνιση κουμπιών Generate/Enter Sync Code στις Ρυθμίσεις λογαριασμού</string>
+  <string name="debug_member_tier_title">Προσομοίωση βαθμίδας υποστηρικτή</string>
+  <string name="debug_member_tier_subtitle">Επιλέξτε την επαληθευμένη βαθμίδα υποστηρικτή που επιστρέφεται σε αυτό το debug build</string>
+  <string name="debug_member_tier_none">Κανένα</string>
+  <string name="debug_member_tier_one">Υποστηρικτής</string>
+  <string name="debug_member_tier_two">Υποστηρικτής+</string>
   <string name="debug_section_account">Λογαριασμός</string>
   <string name="debug_manual_signin_title">Χειροκίνητη σύνδεση</string>
   <string name="debug_manual_signin_subtitle">Σύνδεση με email και κωδικό πρόσβασης (Supabase auth)</string>
@@ -1132,9 +1312,16 @@
   <string name="profile_plugins">πρόσθετα</string>
   <string name="profile_choose_avatar">Επιλογή avatar</string>
   <string name="profile_custom_avatar_web_panel_note">Οι URL προσαρμοσμένων avatar μπορούν να ρυθμιστούν από το web panel Tuvora.</string>
+  <string name="profile_editor_tab_avatar">Avatar</string>
+  <string name="profile_editor_tab_background">Φόντο</string>
+  <string name="profile_choose_background">Επιλογή φόντου προφίλ</string>
+  <string name="profile_background_member_note">Οι URL προσαρμοσμένων φόντων μπορούν να ρυθμιστούν από το web panel Tuvora.</string>
+  <string name="profile_background_normal">Κανονικό</string>
+  <string name="profile_background_custom">Προσαρμοσμένο</string>
   <string name="profile_avatar_none_selected">Δεν επιλέχθηκε avatar</string>
   <string name="profile_avatar_focus_hint">Εστιάστε σε ένα avatar για να δείτε το όνομά του</string>
   <string name="profile_avatar_category_all">Όλα</string>
+  <string name="profile_avatar_category_supporter">Υποστηρικτής</string>
   <string name="profile_avatar_category_anime">Anime</string>
   <string name="profile_avatar_category_animation">Κινούμενα σχέδια</string>
   <string name="profile_avatar_category_movie">Ταινία</string>
@@ -1197,6 +1384,10 @@
   <string name="addon_installed_section">Εγκατεστημένα</string>
   <string name="addon_empty">Δεν έχετε εγκαταστήσει πρόσθετα. Προσθέστε ένα για να ξεκινήσετε.</string>
   <string name="addon_remove">Αφαίρεση</string>
+  <string name="addon_delete_confirm_title">Διαγραφή πρόσθετου;</string>
+  <string name="addon_delete_confirm_message">Είστε σίγουροι ότι θέλετε να το διαγράψετε;</string>
+  <string name="addon_delete_no">Όχι</string>
+  <string name="addon_delete_yes">Ναι</string>
   <string name="addon_manage_from_phone_title">Διαχείριση από κινητό</string>
   <string name="addon_manage_from_phone_subtitle">Σαρώστε QR code για να διαχειριστείτε πρόσθετα και καταλόγους αρχικής οθόνης από το κινητό σας</string>
   <string name="addon_manage_addons_only_from_phone_subtitle">Σαρώστε QR code για εγκατάσταση ή αφαίρεση πρόσθετων από το κινητό σας</string>
@@ -1407,6 +1598,7 @@
   <string name="subtitle_style_customize">Προσαρμογή</string>
   <string name="subtitle_style_color">Χρώμα</string>
   <string name="subtitle_style_reset">Επαναφορά</string>
+  <string name="subtitle_delay_reset">Επαναφορά</string>
   <string name="subtitle_style_font_size">Μέγεθος γραμματοσειράς</string>
   <string name="subtitle_style_bold">Έντονα</string>
   <string name="subtitle_style_text_color">Χρώμα κειμένου</string>
@@ -1468,6 +1660,10 @@
   <string name="library_filter_sort">Ταξινόμηση</string>
   <string name="library_filter_genre">Είδος</string>
   <string name="library_filter_year">Έτος</string>
+  <string name="library_filter_watched">Προβληθέντα</string>
+  <string name="library_watched_filter_all">Όλα</string>
+  <string name="library_watched_filter_watched">Προβληθέντα</string>
+  <string name="library_watched_filter_unwatched">Μη προβληθέντα</string>
   <!-- Genre names (from TMDB movie + TV) -->
   <string name="genre_action">Δράση</string>
   <string name="genre_adventure">Περιπέτεια</string>
@@ -1493,10 +1689,27 @@
   <string name="genre_kids">Παιδικά</string>
   <string name="genre_news">Ειδήσεις</string>
   <string name="genre_reality">Ριάλιτι</string>
+  <string name="library_sort_provider_order">Σειρά παρόχου</string>
   <string name="genre_sci_fi_fantasy">Επιστημονική Φαντασία &amp; Φαντασία</string>
   <string name="genre_soap">Σαπουνόπερα</string>
   <string name="genre_talk">Συζήτηση</string>
   <string name="genre_war_politics">Πόλεμος &amp; Πολιτική</string>
+  <!-- Trakt-only genres -->
+  <string name="genre_anime">Anime</string>
+  <string name="genre_biography">Βιογραφία</string>
+  <string name="genre_children">Παιδικά</string>
+  <string name="genre_donghua">Donghua</string>
+  <string name="genre_game_show">Τηλεπαιχνίδι</string>
+  <string name="genre_holiday">Γιορτές</string>
+  <string name="genre_home_and_garden">Σπίτι και Κήπος</string>
+  <string name="genre_mini_series">Μίνι σειρά</string>
+  <string name="genre_musical">Μιούζικαλ</string>
+  <string name="genre_none">Κανένα</string>
+  <string name="genre_short">Μικρού μήκους</string>
+  <string name="genre_special_interest">Ειδικού ενδιαφέροντος</string>
+  <string name="genre_sporting_event">Αθλητική εκδήλωση</string>
+  <string name="genre_superhero">Υπερήρωες</string>
+  <string name="genre_suspense">Αγωνία</string>
   <string name="library_sort_trakt_order">Σειρά Trakt</string>
   <string name="library_sort_added_desc">Προστέθηκε ↓</string>
   <string name="library_sort_added_asc">Προστέθηκε ↑</string>
@@ -1524,6 +1737,11 @@
   <string name="library_source_saved">Αποθηκευμένα</string>
   <string name="library_source_cloud">Cloud</string>
   <string name="library_watchlist">Λίστα παρακολούθησης</string>
+  <string name="library_status_watching">Παρακολουθώ</string>
+  <string name="library_status_plan_to_watch">Σχεδιάζω να παρακολουθήσω</string>
+  <string name="library_status_on_hold">Σε αναμονή</string>
+  <string name="library_status_completed">Ολοκληρωμένα</string>
+  <string name="library_status_dropped">Εγκαταλείφθηκαν</string>
   <string name="library_syncing_library">Συγχρονισμός βιβλιοθήκης…</string>
   <string name="library_type_all">Όλα</string>
   <string name="library_type_items">στοιχεία</string>
@@ -1553,6 +1771,8 @@
   <string name="cloud_library_playable_file_count">%1$d αναπαραγώγιμα αρχεία</string>
   <string name="cloud_library_provider_all">Όλα</string>
   <string name="cloud_library_refresh">Ανανέωση βιβλιοθήκης cloud</string>
+  <string name="cloud_library_search_clear">Εκκαθάριση αναζήτησης</string>
+  <string name="cloud_library_search_label">Αναζήτηση στη βιβλιοθήκη cloud</string>
   <string name="cloud_library_select_provider">Επιλογή παρόχου</string>
   <string name="cloud_library_select_type">Επιλογή τύπου</string>
   <string name="cloud_library_status_ready">Έτοιμο για αναπαραγωγή</string>
@@ -1583,6 +1803,47 @@
   <string name="auth_password_placeholder">Κωδικός πρόσβασης</string>
   <string name="auth_email_sign_in">Σύνδεση</string>
   <string name="auth_email_signing_in">Σύνδεση\u2026</string>
+  <!-- ServerConnectionDialogs -->
+  <string name="server_options_content_description">Επιλογές διακομιστή</string>
+  <string name="server_options_connect_custom">Σύνδεση σε προσαρμοσμένο διακομιστή</string>
+  <string name="server_options_change_custom">Σύνδεση σε άλλο διακομιστή</string>
+  <string name="server_options_use_official">Χρήση επίσημου διακομιστή</string>
+  <string name="custom_server_title">Σύνδεση σε προσαρμοσμένο διακομιστή</string>
+  <string name="custom_server_description">Εισάγετε το URL Backend που παρέχεται από τον διαχειριστή του διακομιστή σας.</string>
+  <string name="custom_server_url_placeholder">https://backend.example.com</string>
+  <string name="custom_server_check">Έλεγχος διακομιστή</string>
+  <string name="custom_server_checking">Έλεγχος…</string>
+  <string name="custom_server_review_title">Επισκόπηση προσαρμοσμένου διακομιστή</string>
+  <string name="custom_server_review_description">Το έγγραφο ανακάλυψης είναι έγκυρο. Η σύνδεση θα σας αποσυνδέσει από τον τρέχοντα διακομιστή και θα επανεκκινήσει την εφαρμογή. Επιβεβαιώστε ότι αυτός είναι ένας διακομιστής που σας ανήκει ή τον εμπιστεύεστε.</string>
+  <string name="custom_server_verified_label">Backend που ανακαλύφθηκε</string>
+  <string name="custom_server_key_label">Διαμόρφωση πελάτη</string>
+  <string name="custom_server_key_discovered">Το publishable key ανακαλύφθηκε αυτόματα</string>
+  <string name="custom_server_warning_title">Συνδεθείτε μόνο σε διακομιστή που εμπιστεύεστε</string>
+  <string name="custom_server_warning_public">Αυτός ο διακομιστής χρησιμοποιεί δημόσιο hostname. Η εφαρμογή δεν μπορεί να επαληθεύσει ποιος τον κατέχει ή τον διαχειρίζεται.</string>
+  <string name="custom_server_warning_http">Αυτός ο διακομιστής βρίσκεται σε ιδιωτικό δίκτυο, αλλά η κίνηση HTTP δεν είναι κρυπτογραφημένη. Άλλες συσκευές στο δίκτυο μπορεί να μπορούν να τη διαβάσουν.</string>
+  <string name="custom_server_warning_public_http">Αυτός ο διακομιστής χρησιμοποιεί δημόσιο hostname και μη κρυπτογραφημένο HTTP. Τα διαπιστευτήρια και τα συγχρονισμένα δεδομένα ενδέχεται να εκτεθούν κατά τη μεταφορά.</string>
+  <string name="custom_server_warning_private">Αυτός φαίνεται να είναι διακομιστής ιδιωτικού δικτύου, αλλά η εφαρμογή εξακολουθεί να μην μπορεί να επαληθεύσει ποιος τον ελέγχει.</string>
+  <string name="custom_server_warning_credentials">Ο διαχειριστής του διακομιστή μπορεί να λάβει τα διαπιστευτήρια του λογαριασμού σας και να έχει πρόσβαση στα δεδομένα που συγχρονίζετε μέσω αυτού του διακομιστή.</string>
+  <string name="custom_server_trust_action">Εμπιστεύομαι αυτόν τον διακομιστή</string>
+  <string name="custom_server_switching">Εναλλαγή…</string>
+  <string name="official_server_title">Χρήση επίσημου διακομιστή;</string>
+  <string name="official_server_description">Θα αποσυνδεθείτε από τον προσαρμοσμένο διακομιστή και η εφαρμογή θα επανεκκινήσει με την επίσημη υπηρεσία.</string>
+  <string name="official_server_action">Χρήση επίσημου διακομιστή</string>
+  <string name="custom_server_error_invalid_url">Εισάγετε έγκυρο URL Backend HTTP ή HTTPS.</string>
+  <string name="custom_server_error_official_active">Το api.nuvio.tv είναι ο επίσημος διακομιστής και είναι ήδη επιλεγμένος.</string>
+  <string name="custom_server_error_official_available">Το api.nuvio.tv είναι ο επίσημος διακομιστής. Κλείστε αυτό το παράθυρο διαλόγου και επιλέξτε «Χρήση επίσημου διακομιστή» για να επιστρέψετε.</string>
+  <string name="custom_server_error_connection">Δεν ήταν δυνατή η πρόσβαση στο endpoint ανακάλυψης. Ελέγξτε το URL και τη διαθεσιμότητα του διακομιστή.</string>
+  <string name="custom_server_error_http">Το endpoint ανακάλυψης επέστρεψε HTTP %1$d.</string>
+  <string name="custom_server_error_response_too_large">Το έγγραφο ανακάλυψης είναι μεγαλύτερο από το επιτρεπόμενο.</string>
+  <string name="custom_server_error_invalid_document">Ο διακομιστής επέστρεψε μη έγκυρο έγγραφο ανακάλυψης.</string>
+  <string name="custom_server_error_version">Αυτή η έκδοση εγγράφου ανακάλυψης δεν υποστηρίζεται.</string>
+  <string name="custom_server_error_service">Το έγγραφο ανακάλυψης δεν αφορά αυτήν την εφαρμογή.</string>
+  <string name="custom_server_error_not_self_hosted">Το έγγραφο ανακάλυψης δεν προσδιορίζει έναν αυτοφιλοξενούμενο διακομιστή.</string>
+  <string name="custom_server_error_missing_configuration">Στο έγγραφο ανακάλυψης λείπει ένα έγκυρο URL Backend ή publishable key.</string>
+  <string name="custom_server_error_no_auth">Ο διακομιστής δεν προσφέρει μια υποστηριζόμενη μέθοδο σύνδεσης.</string>
+  <string name="custom_server_save_failed">Δεν ήταν δυνατή η αποθήκευση της διαμόρφωσης του διακομιστή.</string>
+  <string name="custom_server_session_clear_failed">Δεν ήταν δυνατή η ασφαλής εκκαθάριση της τρέχουσας συνεδρίας. Ο διακομιστής δεν άλλαξε.</string>
+  <string name="custom_server_restart_failed">Ο διακομιστής αποθηκεύτηκε, αλλά η εφαρμογή δεν μπόρεσε να επανεκκινήσει αυτόματα. Επανεκκινήστε την χειροκίνητα.</string>
   <!-- AuthQrSignInScreen -->
   <string name="auth_qr_title">Σύνδεση με QR</string>
   <string name="auth_qr_account_login">Σύνδεση λογαριασμού</string>
@@ -1682,6 +1943,12 @@
   <string name="update_title">Ενημέρωση εφαρμογής</string>
   <string name="update_downloading">Λήψη ενημέρωσης</string>
   <string name="update_download">Λήψη</string>
+  <string name="update_available">Διαθέσιμη ενημέρωση</string>
+  <string name="update_downloading_progress">Λήψη %1$d%%</string>
+  <string name="update_preparing_download">Προετοιμασία λήψης</string>
+  <string name="update_release_notes">Σημειώσεις έκδοσης</string>
+  <string name="update_no_release_notes">Δεν παρασχέθηκαν σημειώσεις έκδοσης.</string>
+  <string name="update_latest_version">Χρησιμοποιείτε την τελευταία έκδοση.</string>
   <string name="update_downloading_ellipsis">Λήψη…</string>
   <string name="update_unknown_sources">Επιτρέψτε εγκαταστάσεις από άγνωστες πηγές για να συνεχίσετε.</string>
   <!-- AccountScreen -->
@@ -1863,6 +2130,7 @@
   <string name="cd_remove">Αφαίρεση</string>
   <string name="cd_preview">Προεπισκόπηση</string>
   <string name="cd_test">Δοκιμή</string>
+  <string name="cd_clear_search">Εκκαθάριση αναζήτησης</string>
   <string name="cd_unlink">Αποσύνδεση</string>
   <string name="cd_nuvio_logo">Tuvora</string>
   <string name="cd_trakt_logo">Λογότυπο Trakt</string>
@@ -2748,4 +3016,11 @@
   <string name="debug_progress_indicator_small">Μικρό</string>
   <string name="debug_progress_indicator_default">Προεπιλογή</string>
   <string name="debug_progress_indicator_large">Μεγάλο</string>
+    <string name="sub_startup_mode_title">Φόρτωση υπότιτλων πρόσθετου</string>
+    <string name="sub_startup_mode_fast">Γρήγορη εκκίνηση</string>
+    <string name="sub_startup_mode_preferred">Προτιμώμενες γλώσσες</string>
+    <string name="sub_startup_mode_all">Όλοι οι υπότιτλοι πρόσθετου</string>
+    <string name="sub_startup_mode_fast_desc">Άμεση έναρξη αναπαραγωγής. Η επιλογή υπότιτλων πρόσθετου μπορεί να επαναφορτώσει το πρόγραμμα αναπαραγωγής μία φορά.</string>
+    <string name="sub_startup_mode_preferred_desc">Προφόρτωση υπότιτλων πρόσθετου πριν την αναπαραγωγή και επισύναψη κομματιών προτιμώμενης/δευτερεύουσας γλώσσας.</string>
+    <string name="sub_startup_mode_all_desc">Προφόρτωση και επισύναψη όλων των υπότιτλων πρόσθετου πριν την αναπαραγωγή. Πιο αργή εκκίνηση.</string>
 </resources>

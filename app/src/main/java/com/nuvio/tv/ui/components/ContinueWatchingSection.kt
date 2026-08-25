@@ -152,7 +152,7 @@ fun ContinueWatchingSection(
     var lastRequestedFocusIndex by remember { mutableIntStateOf(-1) }
     var pendingFocusIndex by remember { mutableStateOf<Int?>(null) }
     var optionsItem by remember { mutableStateOf<ContinueWatchingItem?>(null) }
-    
+
     val listState = rememberLazyListState()
 
     // Restore focus to specific item if requested
@@ -228,9 +228,12 @@ fun ContinueWatchingSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRestorer {
-                    val idx = if (lastFocusedIndex >= 0) lastFocusedIndex else 0
-                    focusRequesters[idx]
-                        ?: focusRequesters.values.firstOrNull()
+                    val visibleIndices = listState.layoutInfo.visibleItemsInfo
+                        .map { it.index }
+                        .filter { it in items.indices }
+                    val idx = lastFocusedIndex.takeIf { it in visibleIndices }
+                        ?: visibleIndices.firstOrNull()
+                    idx?.let { focusRequesters[it] }
                         ?: FocusRequester.Default
                 }
                 .focusGroup(),

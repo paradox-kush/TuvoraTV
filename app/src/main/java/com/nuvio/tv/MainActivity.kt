@@ -126,7 +126,6 @@ import com.nuvio.tv.core.auth.DeviceSessionRegistration
 import com.nuvio.tv.core.deeplink.DeepLinkHandler
 import com.nuvio.tv.core.deeplink.DeepLinkParser
 import com.nuvio.tv.core.profile.ProfileManager
-import com.nuvio.tv.core.sync.ProfileSettingsSyncService
 import com.nuvio.tv.core.sync.ProfileSyncService
 import com.nuvio.tv.core.sync.StartupSyncService
 import com.nuvio.tv.core.tracking.TrackingProgressRefreshCoordinator
@@ -245,9 +244,6 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var androidTvChannelSyncService: com.nuvio.tv.core.sync.androidtv.AndroidTvChannelSyncService
-
-    @Inject
-    lateinit var profileSettingsSyncService: ProfileSettingsSyncService
 
     @Inject
     lateinit var profileSyncService: ProfileSyncService
@@ -1044,7 +1040,6 @@ class MainActivity : ComponentActivity() {
         externalPlaybackTracker.raiseAutoNextOverlayOnReturn()
         super.onStart()
         startupSyncService.startPeriodicSurfacePulls()
-        profileSettingsSyncService.requestForegroundPull()
         androidTvChannelSyncService.onForegroundChanged(true)
     }
 

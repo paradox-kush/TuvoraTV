@@ -1059,7 +1059,7 @@ internal fun PlayerRuntimeController.schedulePauseOverlay() {
         val anyPanelOpen = s.showSubtitleOverlay || s.showSubtitleStylePanel ||
             s.showSpeedDialog || s.showMoreDialog || s.showEpisodesPanel ||
             s.showSourcesPanel || s.showAudioOverlay || s.showStreamInfoOverlay ||
-            s.showSubtitleTimingDialog
+            s.showSubtitleTimingDialog || s.showSubtitleDelayOverlay
         if (!s.isPlaying && s.pauseOverlayEnabled && s.error == null && !anyPanelOpen) {
             _uiState.update { it.copy(showPauseOverlay = true, showControls = false) }
         }
@@ -1087,7 +1087,9 @@ fun PlayerRuntimeController.hideControls() {
 }
 
 fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
-    onUserInteraction()
+    if (event != PlayerEvent.OnParentalGuideHide) {
+        onUserInteraction()
+    }
     when (event) {
         PlayerEvent.OnPlayPause -> {
             if (isUsingMpvEngine()) {

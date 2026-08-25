@@ -85,7 +85,8 @@ class ProfileSyncService @Inject constructor(
         }
     }
 
-    suspend fun pullFromRemote(): Result<List<UserProfile>> = withContext(Dispatchers.IO) {
+    // `force` accepted for upstream call-site compatibility; the fork always pulls (no freshness cache).
+    suspend fun pullFromRemote(force: Boolean = false): Result<List<UserProfile>> = withContext(Dispatchers.IO) {
         // Without a live session this RPC goes out as `anon` and comes back
         // `42501 permission denied for function sync_pull_profiles` — one of the launch-trio
         // errors measured on the backend (report_device / get_sync_owner / sync_pull_profiles).

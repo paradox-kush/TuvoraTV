@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.focusable
@@ -47,14 +48,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,9 +74,11 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Border
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.nuvio.tv.core.cloud.CloudLibraryFile
 import com.nuvio.tv.core.cloud.CloudLibraryItem
@@ -160,7 +167,9 @@ fun LibraryScreen(
         visibleItemKeys.associateWith { FocusRequester() }
     }
     val firstVisiblePosterKey = visibleItemKeys.firstOrNull()
-    val posterCardStyle = PosterCardDefaults.Style
+    val posterCardStyle = PosterCardDefaults.Style.copy(
+        cornerRadius = uiState.posterCardCornerRadiusDp.dp
+    )
 
     val routeCloudPlayback: (CloudLibraryPlaybackInfo) -> Unit = { info ->
         scope.launch {
@@ -752,19 +761,10 @@ private fun CloudLibraryItemType.localizedLabel(): String =
         CloudLibraryItemType.File -> stringResource(R.string.cloud_library_type_files)
     }
 
-private fun isCloudSearchSelectKey(keyCode: Int): Boolean {
-    return keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-        keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-        keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER
-}
-
 /**
  * Free-text filter over the already-loaded cloud library. Purely local: it never triggers a
  * provider request, it just narrows [LibraryUiState.visibleCloudItems]. Filtering is applied on
  * every keystroke, so results narrow live as you type.
- *
- * Follows the same D-pad text-entry pattern as the list editor dialog: the field stays read-only
- * until SELECT is pressed, so arrow keys keep navigating the grid instead of moving a caret.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -774,49 +774,101 @@ private fun CloudLibrarySearchRow(
 ) {
     var editing by remember { mutableStateOf(false) }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val fieldFocusRequester = remember { FocusRequester() }
+    val editorFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(editing) {
+        if (editing) {
+            editorFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
     ) {
-        androidx.compose.material3.OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
+        Surface(
+            onClick = { editing = true },
             modifier = Modifier
                 .weight(1f)
-                .onFocusChanged { if (!it.isFocused) editing = false }
-                .onPreviewKeyEvent { event ->
-                    val native = event.nativeKeyEvent
-                    if (native.action == AndroidKeyEvent.ACTION_DOWN && isCloudSearchSelectKey(native.keyCode)) {
-                        editing = true
-                        keyboardController?.show()
-                    }
-                    false
-                },
-            readOnly = !editing,
-            singleLine = true,
-            maxLines = 1,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(
-                onDone = {
-                    editing = false
-                    keyboardController?.hide()
-                }
+                .focusRequester(fieldFocusRequester),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = NuvioTheme.colors.BackgroundCard,
+                focusedContainerColor = NuvioTheme.colors.BackgroundCard
             ),
-            label = { androidx.compose.material3.Text(stringResource(R.string.cloud_library_search_label)) },
-            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                focusedTextColor = NuvioTheme.colors.TextPrimary,
-                unfocusedTextColor = NuvioTheme.colors.TextPrimary,
-                focusedContainerColor = NuvioTheme.colors.BackgroundCard,
-                unfocusedContainerColor = NuvioTheme.colors.BackgroundCard,
-                focusedBorderColor = NuvioTheme.colors.FocusRing,
-                unfocusedBorderColor = NuvioTheme.colors.Border,
-                focusedLabelColor = NuvioTheme.colors.TextSecondary,
-                unfocusedLabelColor = NuvioTheme.colors.TextTertiary,
-                cursorColor = NuvioTheme.colors.FocusRing
+            border = ClickableSurfaceDefaults.border(
+                border = Border(
+                    border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border),
+                    shape = RoundedCornerShape(NuvioTheme.radii.md)
+                ),
+                focusedBorder = Border(
+                    border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                    shape = RoundedCornerShape(NuvioTheme.radii.md)
+                )
+            ),
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md)),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1f)
+        ) {
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = NuvioTheme.spacing.lg, vertical = 14.dp)
+                    .focusRequester(editorFocusRequester)
+                    .focusProperties { canFocus = editing }
+                    .onFocusChanged {
+                        if (!it.isFocused && editing) {
+                            editing = false
+                            keyboardController?.hide()
+                        }
+                    }
+                    .onPreviewKeyEvent { event ->
+                        val native = event.nativeKeyEvent
+                        if (native.action != AndroidKeyEvent.ACTION_DOWN) {
+                            return@onPreviewKeyEvent false
+                        }
+                        val direction = when (native.keyCode) {
+                            AndroidKeyEvent.KEYCODE_DPAD_UP -> FocusDirection.Up
+                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> FocusDirection.Down
+                            else -> return@onPreviewKeyEvent false
+                        }
+                        editing = false
+                        keyboardController?.hide()
+                        focusManager.moveFocus(direction)
+                        true
+                    },
+                readOnly = !editing,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        editing = false
+                        keyboardController?.hide()
+                        fieldFocusRequester.requestFocus()
+                    }
+                ),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = NuvioTheme.colors.TextPrimary
+                ),
+                cursorBrush = SolidColor(
+                    if (editing) NuvioTheme.colors.FocusRing else Color.Transparent
+                ),
+                decorationBox = { innerTextField ->
+                    if (query.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.cloud_library_search_label),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NuvioTheme.colors.TextTertiary
+                        )
+                    }
+                    innerTextField()
+                }
             )
-        )
+        }
 
         if (query.isNotEmpty()) {
             Button(

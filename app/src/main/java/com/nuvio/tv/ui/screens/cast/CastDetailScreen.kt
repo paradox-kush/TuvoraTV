@@ -119,6 +119,7 @@ fun CastDetailScreen(
                         person = state.personDetail,
                         onNavigateToDetail = onNavigateToDetail,
                         posterOptions = viewModel.posterOptions,
+                        posterCardCornerRadiusDp = viewModel.posterCardCornerRadiusDp.collectAsState().value,
                         isItemWatched = { item ->
                             if (item.apiType == "movie") item.id in watchedMovieIds
                             else item.id in watchedSeriesIds
@@ -145,6 +146,7 @@ private fun CastDetailContent(
     person: PersonDetail,
     onNavigateToDetail: (itemId: String, itemType: String, addonBaseUrl: String?) -> Unit,
     posterOptions: com.nuvio.tv.ui.components.posteroptions.PosterOptionsController,
+    posterCardCornerRadiusDp: Int = 12,
     isItemWatched: (MetaPreview) -> Boolean = { false }
 ) {
     val backgroundColor = NuvioTheme.colors.Background
@@ -156,11 +158,11 @@ private fun CastDetailContent(
             .sortedByDescending { releaseYearSortKey(it.releaseInfo) }
     }
 
-    val filmographyPosterStyle = remember {
+    val filmographyPosterStyle = remember(posterCardCornerRadiusDp) {
         PosterCardStyle(
             width = 112.dp,
             height = 168.dp,
-            cornerRadius = PosterCardDefaults.Style.cornerRadius,
+            cornerRadius = posterCardCornerRadiusDp.dp,
             focusedBorderWidth = PosterCardDefaults.Style.focusedBorderWidth,
             focusedScale = PosterCardDefaults.Style.focusedScale
         )

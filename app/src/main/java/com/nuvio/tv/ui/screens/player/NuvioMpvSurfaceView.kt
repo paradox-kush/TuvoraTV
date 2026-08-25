@@ -402,7 +402,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     override fun applyHardwareDecodeMode(mode: MpvHardwareDecodeMode) {
         hardwareDecodeMode = mode
         if (!initialized) return
-        ctl {
+ctl {
             runCatching {
                 mpv.setPropertyString("hwdec", mode.toMpvHwdecValue())
             }.onFailure {

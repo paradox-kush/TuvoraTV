@@ -251,9 +251,7 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
                         } else {
                             availableAddons
                         }
-                        val selectedAddon = it.sourceSelectedAddonFilter?.takeIf { selected ->
-                            selected in mergedAvailableAddons
-                        }
+                        val selectedAddon = it.sourceSelectedAddonFilter
                         val filteredStreams = if (selectedAddon == null) {
                             badgePreserved
                         } else {
@@ -262,7 +260,6 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
                         it.copy(
                             isLoadingSourceStreams = false,
                             sourceAllStreams = badgePreserved,
-                            sourceSelectedAddonFilter = selectedAddon,
                             sourceFilteredStreams = filteredStreams,
                             sourceAvailableAddons = mergedAvailableAddons,
                             sourceChips = mergeSourceChipStatuses(
@@ -482,6 +479,78 @@ private fun PlayerRuntimeController.markRemainingSourceChipsAsError() {
         _uiState.update { state ->
             state.copy(
                 sourceChips = state.sourceChips.filterNot { it.status == SourceChipStatus.ERROR }
+            )
+        }
+    }
+}
+
+private suspend fun PlayerRuntimeController.updateEpisodeSourceChipsForFetchStart(
+    type: String,
+    videoId: String,
+    installedAddons: List<com.nuvio.tv.domain.model.Addon>
+) {
+    val addonNames = installedAddons
+        .filter { it.supportsStreamResourceForChip(type, videoId) }
+        .map { it.displayName }
+
+    val pluginNames = try {
+        if (pluginManager.pluginsEnabled.first()) {
+            val mediaType = when (type.lowercase()) {
+                "series", "tv", "show" -> "tv"
+                else -> type.lowercase()
+            }
+            val groupByRepository = pluginManager.groupStreamsByRepository.first()
+            val scrapers = pluginManager.enabledScrapers.first()
+                .filter { it.supportsType(mediaType) }
+            if (groupByRepository) {
+                val repositoriesById = pluginManager.repositories.first().associateBy { it.id }
+                scrapers
+                    .map { scraper ->
+                        repositoriesById[scraper.repositoryId]?.name?.takeIf { it.isNotBlank() } ?: scraper.name
+                    }
+                    .distinct()
+            } else {
+                scrapers
+                    .map { it.name }
+                    .distinct()
+            }
+        } else {
+            emptyList()
+        }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    val ordered = (addonNames + pluginNames).distinct()
+    _uiState.update {
+        it.copy(
+            episodeSourceChips = ordered.map { name -> SourceChipItem(name, SourceChipStatus.LOADING) }
+        )
+    }
+}
+
+private fun PlayerRuntimeController.markRemainingEpisodeSourceChipsAsError() {
+    var markedAnyError = false
+    _uiState.update { state ->
+        if (!state.episodeSourceChips.any { it.status == SourceChipStatus.LOADING }) return@update state
+        markedAnyError = true
+        state.copy(
+            episodeSourceChips = state.episodeSourceChips.map { chip ->
+                if (chip.status == SourceChipStatus.LOADING) {
+                    chip.copy(status = SourceChipStatus.ERROR)
+                } else {
+                    chip
+                }
+            }
+        )
+    }
+    if (!markedAnyError) return
+
+    scope.launch {
+        delay(1600L)
+        _uiState.update { state ->
+            state.copy(
+                episodeSourceChips = state.episodeSourceChips.filterNot { it.status == SourceChipStatus.ERROR }
             )
         }
     }
@@ -1048,6 +1117,7 @@ internal fun PlayerRuntimeController.loadStreamsForEpisode(video: Video, forceRe
                 episodeSelectedAddonFilter = if (forceRefresh || targetChanged) null else it.episodeSelectedAddonFilter,
                 episodeFilteredStreams = if (forceRefresh || targetChanged) emptyList() else it.episodeFilteredStreams,
                 episodeAvailableAddons = if (forceRefresh || targetChanged) emptyList() else it.episodeAvailableAddons,
+                episodeSourceChips = if (forceRefresh || targetChanged) emptyList() else it.episodeSourceChips,
                 episodeStreamsForVideoId = video.id,
                 episodeStreamsSeason = video.season,
                 episodeStreamsEpisode = video.episode,
@@ -1060,6 +1130,9 @@ internal fun PlayerRuntimeController.loadStreamsForEpisode(video: Video, forceRe
         val installedAddonNames = installedAddonOrder.toSet()
         var debridPreparationLaunched = false
 
+        // Initialize episode source chips with LOADING status
+        updateEpisodeSourceChipsForFetchStart(type, video.id, installedAddons)
+
         streamRepository.getStreamsFromAllAddons(
             type = type,
             videoId = video.id,
@@ -1071,19 +1144,22 @@ internal fun PlayerRuntimeController.loadStreamsForEpisode(video: Video, forceRe
                     val addonStreams = StreamAutoPlaySelector.orderAddonStreams(result.data, installedAddonOrder)
                     val allStreams = addonStreams.flatMap { it.streams }
                     val availableAddons = addonStreams.map { it.addonName }
-                    val selectedAddon = previousAddonFilter?.takeIf { it in availableAddons }
-                    val filteredStreams = if (selectedAddon == null) {
+                    val currentFilter = _uiState.value.episodeSelectedAddonFilter
+                    val filteredStreams = if (currentFilter == null) {
                         allStreams
                     } else {
-                        allStreams.filter { it.addonName == selectedAddon }
+                        allStreams.filter { it.addonName == currentFilter }
                     }
                     _uiState.update {
                         it.copy(
                             isLoadingEpisodeStreams = false,
                             episodeAllStreams = allStreams,
-                            episodeSelectedAddonFilter = selectedAddon,
                             episodeFilteredStreams = filteredStreams,
                             episodeAvailableAddons = availableAddons,
+                            episodeSourceChips = mergeSourceChipStatuses(
+                                existing = it.episodeSourceChips,
+                                succeededNames = addonStreams.map { group -> group.addonName }
+                            ),
                             episodeStreamsError = null
                         )
                     }
@@ -1111,6 +1187,7 @@ internal fun PlayerRuntimeController.loadStreamsForEpisode(video: Video, forceRe
                 }
             }
         }
+        markRemainingEpisodeSourceChipsAsError()
     }
 }
 
@@ -1311,6 +1388,9 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
         url = url,
         headers = newHeaders
     )
+    val playbackUrl = currentStreamUrl
+    val playbackHeaders = currentHeaders
+    persistSelectedStreamForReuse(stream = stream, url = playbackUrl, headers = playbackHeaders)
     persistedTrackPreference = null
     subtitleDisabledByPersistedPreference = false
     subtitleAddonRestoredByPersistedPreference = false
@@ -1321,7 +1401,6 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     currentSeason = targetVideo?.season ?: _uiState.value.episodeStreamsSeason ?: currentSeason
     currentEpisode = targetVideo?.episode ?: _uiState.value.episodeStreamsEpisode ?: currentEpisode
     currentEpisodeTitle = targetVideo?.title ?: _uiState.value.episodeStreamsTitle ?: currentEpisodeTitle
-    persistSelectedStreamForReuse(stream = stream, url = url, headers = newHeaders)
     currentTraktEpisodeMapping = null
     currentTraktEpisodeMappingKey = null
     lastSavedPosition = 0L
