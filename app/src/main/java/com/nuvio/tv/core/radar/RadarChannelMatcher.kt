@@ -111,12 +111,18 @@ class RadarChannelMatcher @Inject constructor(
         val homeTokens = teamTokens(fixture.home)
         val awayTokens = teamTokens(fixture.away)
         val eventTokens = if (homeTokens.isEmpty() && awayTokens.isEmpty()) teamTokens(fixture.event) else emptyList()
+        // The competition's home country, so the home broadcaster/feed leads its group.
+        val homeRegion = SportsBroadcastRegionPolicy.regionOfCountry(fixture.country)
 
         val candidates = assembleCandidates()
 
+        // An event-feed channel names both teams ("US (ESPN+) | Bills vs Steelers") → CONFIRMED; a
+        // home-country feed gets a rank nudge so it leads the "showing this match" group.
         val named = candidates.mapNotNull { c ->
             val scored = nameScored(normalize(c.name), keywords, homeTokens, awayTokens, eventTokens)
-            if (scored.score > 0) ChannelMatch(c, programme = null, score = scored.score, confidence = scored.confidence) else null
+            if (scored.score <= 0) return@mapNotNull null
+            val boost = SportsBroadcastRegionPolicy.homeRegionBoost(c.name, homeRegion)
+            ChannelMatch(c, programme = null, score = scored.score + boost, confidence = scored.confidence)
         }.sortedByDescending { it.score }.take(NAME_POOL_CAP)
 
         // Same rule for the early partial: flashing a list of guesses and then clearing it
@@ -149,7 +155,7 @@ class RadarChannelMatcher @Inject constructor(
         // cover — which is most of them outside the UK/EU.
         val providerEpg = providerEpgMatches(candidates, start, keywords, homeTokens, awayTokens, eventTokens)
         // TheSportsDB broadcasters matched to channel names (carries the country label).
-        val stationMatches = stationMatches(candidates, stations)
+        val stationMatches = stationMatches(candidates, stations, homeRegion)
 
         // Merge, best score per channel; keep any programme/language a weaker signal found.
         val merged = LinkedHashMap<String, ChannelMatch>()
@@ -276,6 +282,7 @@ class RadarChannelMatcher @Inject constructor(
     private fun stationMatches(
         candidates: List<CandidateChannel>,
         stations: List<RadarTvStation>,
+        homeRegion: String?,
     ): List<ChannelMatch> {
         if (stations.isEmpty()) return emptyList()
         val byCore = HashMap<String, MutableList<CandidateChannel>>()
@@ -291,17 +298,22 @@ class RadarChannelMatcher @Inject constructor(
                 val raw = st.channel ?: continue
                 val core = EpgNorm.coreNorm(raw)
                 if (core.isEmpty()) continue
-                val tries = LinkedHashSet<String>()
-                tries.add(core)
-                tries.add(dropStationCountryTail(core))
-                for (t in tries) {
-                    if (t.isEmpty()) continue
-                    val found = byCore[t] ?: bySquash[EpgNorm.squash(t)] ?: continue
-                    for (c in found) {
-                        // A broadcaster listing names THIS game's channel explicitly — an identity signal.
-                        add(ChannelMatch(c, programme = null, score = LISTING_SCORE, via = MatchVia.LISTING, language = st.country, confidence = MatchConfidence.CONFIRMED))
-                    }
-                    break
+                // Exact whole-name first, then the country-tail-dropped brand ("NFL Network US" -> "nfl network").
+                val brand = dropStationCountryTail(core)
+                val found = byCore[core] ?: bySquash[EpgNorm.squash(core)]
+                    ?: (if (brand != core) byCore[brand] ?: bySquash[EpgNorm.squash(brand)] else null)
+                    ?: continue
+                // The station broadcasts to one region; coreNorm strips a channel's country PREFIX, so
+                // "USA: ESPN 2" and "NL: ESPN 2" both look like "espn 2" and one country's feed would
+                // otherwise confirm every same-brand channel the user owns. Gate on region alignment.
+                val stationRegion = SportsBroadcastRegionPolicy.regionOfCountry(st.country)
+                    ?: SportsBroadcastRegionPolicy.regionOfChannel(raw)
+                val confidence = SportsBroadcastRegionPolicy.listingConfidence(stationRegion, homeRegion)
+                val score = LISTING_SCORE + SportsBroadcastRegionPolicy.listingScoreDelta(stationRegion, homeRegion)
+                for (c in found) {
+                    if (!SportsBroadcastRegionPolicy.listingAccepts(stationRegion, c.name)) continue
+                    // Home-country broadcaster leads and confirms; an out-of-country feed sinks to "carries".
+                    add(ChannelMatch(c, programme = null, score = score, via = MatchVia.LISTING, language = st.country, confidence = confidence))
                 }
             }
         }

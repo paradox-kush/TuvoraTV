@@ -139,8 +139,15 @@ data class RadarFixture(
     val postponed: String? = null,
     val homeScore: String? = null,
     val awayScore: String? = null,
+    /** Wide event artwork (TheSportsDB strBanner) for the spotlight hero backdrop; strThumb fallback. */
+    val banner: String? = null,
+    val thumb: String? = null,
 ) {
     val startEpochMs: Long? get() = radarTimestampToEpochMs(ts)
+
+    /** The best available backdrop image for the spotlight hero — wide banner, else the event thumb. */
+    val heroImage: String?
+        get() = banner?.takeIf { it.isNotBlank() } ?: thumb?.takeIf { it.isNotBlank() }
 
     val displayTitle: String
         get() = when {
