@@ -244,6 +244,19 @@ internal fun PlayerRuntimeController.initializePlayer(
             ) {
                 effectiveInternalPlayerEngine = InternalPlayerEngine.MVP_PLAYER
             }
+            // Fix 2 (telemetry-derived, 2026-08-25): a small set of TV hardware decoders video-stall
+            // on live MPEG-TS far above the fleet baseline — MediaTek MT8696 (Google TV Streamer 0.56,
+            // Fire TV 4K Max 1.0) and the Amlogic Onn 4K Streaming Box (0.38). The freeze correlates
+            // with the SoC decoder, not the stream, so on those decoders live opens on libmpv even when
+            // the setting is ExoPlayer. Live-only, device-gated (LiveHardwareDecoderPolicy, narrow +
+            // tunable); a learned-mpv channel or an explicit engine override already won above.
+            if (overrideInternalPlayerEngine == null && isLiveFeed() &&
+                effectiveInternalPlayerEngine == InternalPlayerEngine.EXOPLAYER &&
+                livePlaybackMpvAvailable &&
+                com.nuvio.tv.core.player.LiveHardwareDecoderProbe.preferLibmpvForLive()
+            ) {
+                effectiveInternalPlayerEngine = InternalPlayerEngine.MVP_PLAYER
+            }
             // Live no longer force-selects mpv. The old reason ("ExoPlayer buffers forever on raw
             // MPEG-TS") is handled now that PlayerMediaSourceFactory sets FLAG_DETECT_ACCESS_UNITS |
             // FLAG_ALLOW_NON_IDR_KEYFRAMES — the same fix that lets the inline Live Guide play live on

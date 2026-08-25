@@ -1540,6 +1540,8 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             _uiState.update { state ->
                 state.copy(
                     error = null,
+                    liveFreezeGaveUp = false,
+                    freezeReported = false,
                     playbackIssueReportStatus = PlaybackIssueReportStatus.Idle,
                     playbackIssueReportId = null,
                     playbackIssueReportError = null,
@@ -1577,6 +1579,13 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         }
         PlayerEvent.OnReportPlaybackIssue -> {
             submitPlaybackIssueReport()
+        }
+        PlayerEvent.OnReportFrozen -> {
+            // Lightweight, freeze-specific PostHog signal carrying user intent (stronger than the
+            // automatic gave_up event). PostHog attaches $device_model/$device_manufacturer, so the
+            // fleet can rank reported freezes by device without us sending it.
+            livePlaybackFreezeReporter.onUserReportFrozen(System.currentTimeMillis())
+            _uiState.update { it.copy(freezeReported = true) }
         }
         PlayerEvent.OnParentalGuideHide -> {
             _uiState.update { it.copy(showParentalGuide = false) }

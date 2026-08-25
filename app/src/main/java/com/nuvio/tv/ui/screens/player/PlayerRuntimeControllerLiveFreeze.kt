@@ -3,12 +3,14 @@ package com.nuvio.tv.ui.screens.player
 import android.util.Log
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
+import com.nuvio.tv.R
 import com.nuvio.tv.core.analytics.Breadcrumbs
 import com.nuvio.tv.core.analytics.LivePlaybackFreezePolicy
 import com.nuvio.tv.core.analytics.LivePlaybackFreezeReporter
 import com.nuvio.tv.core.analytics.LivePlaybackRecoveryPolicy
 import com.nuvio.tv.core.analytics.LiveRecoveryCoordinator
 import com.nuvio.tv.data.local.PlayerSettings
+import kotlinx.coroutines.flow.update
 
 /**
  * Keeps live channels playing, and reports the ones that could not be saved.
@@ -229,10 +231,33 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
         }
 
         LivePlaybackRecoveryPolicy.Decision.GiveUp -> {
-            // Out of attempts. Let the freeze stand so the normal error path can surface it
-            // rather than looping on a channel the provider is no longer serving.
+            // Before conceding, take the one escape the same-engine ladder cannot: switch engines.
+            // Telemetry (2026-08-25) shows the dominant live freeze is a plain video_stalled on raw
+            // .ts on BOTH engines, and 12 libmpv incidents sat frozen ~2h because nothing surfaced.
+            // So a persistent ExoPlayer freeze that never reached the backward-PTS "persistent" rung
+            // still gets one last-resort libmpv attempt here. If we are already on mpv (or the switch
+            // is spent), there is nothing left to try — surface it, never let the picture stand.
+            if (!isUsingMpvEngine() && !liveEngineSwitchedThisDwell && livePlaybackMpvAvailable) {
+                Log.w(
+                    PlayerRuntimeController.TAG,
+                    "LIVE_RECONNECT: out of ExoPlayer attempts (kind=$kind) — last-resort switch to libmpv",
+                )
+                switchEngineForPersistentLiveFreeze()
+                return
+            }
             if (!liveRecoveryGaveUp) {
                 liveRecoveryGaveUp = true
+                // Auto-report the terminal freeze (gave_up=true) so the fleet sees it without the
+                // viewer acting, then surface an actionable overlay — never a silent frozen picture.
+                val pos = currentLivePositionMs()
+                livePlaybackFreezeReporter.onRecoveryGaveUp(
+                    nowMs = System.currentTimeMillis(),
+                    positionMs = pos,
+                    bufferedPositionMs = currentLiveBufferedPositionMs(pos),
+                    rebufferCount = rebufferCount,
+                    rebufferTotalMs = rebufferTotalMs,
+                )
+                surfaceLiveFreezeGaveUp()
                 Log.w(
                     PlayerRuntimeController.TAG,
                     "LIVE_RECONNECT: giving up after $liveRecoveryAttempts attempts (kind=$kind)",
@@ -276,6 +301,24 @@ internal fun PlayerRuntimeController.stopLiveFreezeReporter() {
     liveRecoveryAttempts = 0
     lastLiveRecoveryAtMs = 0L
     liveRecoveryGaveUp = false
+}
+
+/**
+ * Surfaces a terminal live freeze as an actionable error overlay (Retry + Report Frozen) instead of
+ * a silently standing frozen picture — the fix for the fleet's never-recovered tail (telemetry
+ * 2026-08-25). [PlayerUiState.liveFreezeGaveUp] flags the overlay so the Report action appears even
+ * when generic issue reporting is off, and so its report emits freeze-specific telemetry.
+ */
+private fun PlayerRuntimeController.surfaceLiveFreezeGaveUp() {
+    _uiState.update {
+        it.copy(
+            error = context.getString(R.string.player_live_freeze_gave_up),
+            liveFreezeGaveUp = true,
+            showLoadingOverlay = false,
+            isBuffering = false,
+            showPauseOverlay = false,
+        )
+    }
 }
 
 private fun PlayerRuntimeController.currentLivePositionMs(): Long =

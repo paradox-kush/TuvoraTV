@@ -55,8 +55,13 @@ internal object LivePlaybackFreezePolicy {
      * freeze at ~2.5s so recovery starts sooner (ExoPlayer users were sitting ~8s on a frozen picture
      * before the reconnect even fired). The full [FREEZE_THRESHOLD_MS] still governs the thin-buffer
      * case, where a stall might yet be a rebuffer that resumes on its own.
+     *
+     * Lowered 2500→2000 (Fix 3, 2026-08-25): fleet data showed recovered ExoPlayer video-stalls
+     * still sitting ~18s frozen before the picture returned, so with a healthy buffer proving it is
+     * a render-path stall, 2s of a dead picture is already unambiguous — start recovery sooner. The
+     * new gave_up / frozen_ms-by-device telemetry will guide any further tuning.
      */
-    const val FAST_VIDEO_STALL_MS = 2_500L
+    const val FAST_VIDEO_STALL_MS = 2_000L
 
     /**
      * How much buffered-ahead media counts as "healthy" for [FAST_VIDEO_STALL_MS]. Below this the

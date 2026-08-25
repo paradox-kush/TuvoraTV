@@ -854,11 +854,18 @@ fun PlayerScreen(
         if (uiState.error != null) {
             ErrorOverlay(
                 message = uiState.error!!,
-                showReportAction = uiState.playbackIssueReportsEnabled,
+                showReportAction = uiState.playbackIssueReportsEnabled || uiState.liveFreezeGaveUp,
+                isFreezeReport = uiState.liveFreezeGaveUp,
+                freezeReported = uiState.freezeReported,
                 reportStatus = uiState.playbackIssueReportStatus,
                 reportId = uiState.playbackIssueReportId,
                 reportError = uiState.playbackIssueReportError,
-                onReport = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
+                onReport = {
+                    viewModel.onEvent(
+                        if (uiState.liveFreezeGaveUp) PlayerEvent.OnReportFrozen
+                        else PlayerEvent.OnReportPlaybackIssue
+                    )
+                },
                 onBack = exitPlayerFromError
             )
         }
@@ -2784,7 +2791,9 @@ private fun ErrorOverlay(
     reportId: String?,
     reportError: String?,
     onReport: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    isFreezeReport: Boolean = false,
+    freezeReported: Boolean = false,
 ) {
     val exitFocusRequester = remember { FocusRequester() }
     val reportFocusRequester = remember { FocusRequester() }
@@ -2826,7 +2835,7 @@ private fun ErrorOverlay(
                 PlaybackIssueReportStatus.Sent -> stringResource(R.string.player_report_issue_sent, reportId.orEmpty())
                 PlaybackIssueReportStatus.Failed -> reportError ?: stringResource(R.string.player_report_issue_failed)
             }
-            if (showReportAction && reportMessage != null) {
+            if (!isFreezeReport && showReportAction && reportMessage != null) {
                 Text(
                     text = reportMessage,
                     style = MaterialTheme.typography.bodyMedium,
@@ -2843,7 +2852,22 @@ private fun ErrorOverlay(
             Row(
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
             ) {
-                if (showReportAction) {
+                if (isFreezeReport) {
+                    // Freeze-specific report: lightweight PostHog signal (live_freeze_user_report),
+                    // shown even when generic issue reporting is off. Label flips to a thanks once sent.
+                    DialogButton(
+                        text = stringResource(
+                            if (freezeReported) R.string.player_report_frozen_thanks
+                            else R.string.player_report_frozen
+                        ),
+                        onClick = onReport,
+                        isPrimary = false,
+                        enabled = !freezeReported,
+                        modifier = Modifier
+                            .focusRequester(reportFocusRequester)
+                            .focusProperties { right = exitFocusRequester }
+                    )
+                } else if (showReportAction) {
                     DialogButton(
                         text = when (reportStatus) {
                             PlaybackIssueReportStatus.Sending -> stringResource(R.string.player_report_issue_sending_button)

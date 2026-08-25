@@ -58,6 +58,53 @@ internal class LivePlaybackFreezeReporter(
      * rebasing the jump away from the old position would read as the picture coming back before
      * a single frame has actually been decoded.
      */
+    /**
+     * The recovery ladder exhausted every rung on the open freeze (an ExoPlayer→libmpv escape
+     * included where one was possible). Emit it now with `gave_up = true` — distinct from a user
+     * bailing out — so the fleet can separate terminal freezes from channel-changes, and mark it
+     * emitted so the later [onLivePlaybackStopped] does not double-count. The freeze record stays
+     * open (no reset), so a still-frozen picture does not spawn a fresh incident.
+     */
+    fun onRecoveryGaveUp(
+        nowMs: Long,
+        positionMs: Long,
+        bufferedPositionMs: Long,
+        rebufferCount: Int,
+        rebufferTotalMs: Long,
+    ) {
+        if (!armed || !freezeActive || gaveUpEmitted) return
+        emit(
+            nowMs = nowMs,
+            recovered = false,
+            bufferedAheadAtResolveMs = (bufferedPositionMs - positionMs).coerceAtLeast(0L),
+            rebufferCount = rebufferCount,
+            rebufferTotalMs = rebufferTotalMs,
+            gaveUp = true,
+        )
+        gaveUpEmitted = true
+    }
+
+    /**
+     * The viewer explicitly reported the current (frozen) channel from the give-up overlay — a
+     * stronger, intent-carrying signal than the automatic `gave_up` event, so it is its own event.
+     * PostHog attaches `$device_model` / `$device_manufacturer`, so the fleet can rank reported
+     * freezes by device without this sending it.
+     */
+    fun onUserReportFrozen(nowMs: Long) {
+        val activeProfile = profile ?: return
+        capture(
+            USER_REPORT_EVENT,
+            buildMap {
+                put("engine", activeProfile.engine)
+                put("stream_container", activeProfile.streamContainer)
+                put("iptv_kind", activeProfile.iptvKind)
+                put("freeze_kind", (freezeKind ?: LivePlaybackFreezePolicy.Kind.VIDEO_STALLED).name.lowercase())
+                put("frozen_ms", (nowMs - freezeStartedAtMs).coerceAtLeast(0L))
+            },
+        )
+        Log.w(TAG, "LIVE_FREEZE: user reported frozen channel")
+    }
+
     fun onRecoveryAttempt(nowMs: Long) {
         if (!freezeActive) return
         freezeRecoveryAttempts += 1
@@ -90,6 +137,9 @@ internal class LivePlaybackFreezeReporter(
     private var freezePositionJumpedBack = false
     private var freezeStartRebufferCount = 0
     private var freezeRecoveryAttempts = 0
+    /** The recovery ladder conceded on this open freeze and it was emitted as such; keeps
+     *  [onLivePlaybackStopped] from double-counting the same incident. */
+    private var gaveUpEmitted = false
 
     private var eventsThisSession = 0
     private val recentEmitTimestampsMs = ArrayDeque<Long>()
@@ -229,7 +279,7 @@ internal class LivePlaybackFreezeReporter(
         rebufferCount: Int,
         rebufferTotalMs: Long,
     ) {
-        if (armed && freezeActive) {
+        if (armed && freezeActive && !gaveUpEmitted) {
             emit(
                 nowMs = nowMs,
                 recovered = false,
@@ -286,6 +336,7 @@ internal class LivePlaybackFreezeReporter(
         freezePositionJumpedBack = false
         freezeStartRebufferCount = 0
         freezeRecoveryAttempts = 0
+        gaveUpEmitted = false
     }
 
     private fun emit(
@@ -294,6 +345,7 @@ internal class LivePlaybackFreezeReporter(
         bufferedAheadAtResolveMs: Long,
         rebufferCount: Int,
         rebufferTotalMs: Long,
+        gaveUp: Boolean = false,
     ) {
         val activeProfile = profile ?: return
         val kind = freezeKind ?: return
@@ -308,6 +360,9 @@ internal class LivePlaybackFreezeReporter(
             put("freeze_kind", kind.name.lowercase())
             put("state_at_freeze", freezeStartState.name.lowercase())
             put("recovered", recovered)
+            // True only when the recovery ladder conceded (every rung + any engine escape spent),
+            // vs. an unrecovered freeze the viewer abandoned by changing channel.
+            put("gave_up", gaveUp)
             put("frozen_ms", frozenMs)
             put("played_ms_before_freeze", (freezeStartedAtMs - playbackStartedAtMs).coerceAtLeast(0L))
             put("freeze_index", eventsThisSession + 1)
@@ -354,6 +409,9 @@ internal class LivePlaybackFreezeReporter(
     companion object {
         private const val TAG = "LiveFreeze"
         const val EVENT = "live_playback_freeze"
+
+        /** Emitted when the viewer taps Report Frozen on the terminal-freeze overlay. */
+        const val USER_REPORT_EVENT = "live_freeze_user_report"
 
         /** Per player session. A channel that freezes repeatedly is proven by the first few. */
         const val MAX_EVENTS_PER_SESSION = 3

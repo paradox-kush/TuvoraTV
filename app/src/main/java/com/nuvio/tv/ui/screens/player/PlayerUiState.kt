@@ -176,6 +176,12 @@ data class PlayerUiState(
     val showAddonLogo: Boolean = true,
     val streamBadgePlacement: StreamBadgePlacement = StreamBadgePlacement.BOTTOM,
     val error: String? = null,
+    /** A terminal live freeze surfaced this error — the recovery ladder exhausted every rung and any
+     *  engine escape. Shows the Report Frozen action on the error overlay even when generic playback
+     *  issue reporting is off, and routes that report to freeze-specific telemetry. */
+    val liveFreezeGaveUp: Boolean = false,
+    /** The viewer tapped Report Frozen on the terminal-freeze overlay; flips the button to a thanks. */
+    val freezeReported: Boolean = false,
     val playbackIssueReportStatus: PlaybackIssueReportStatus = PlaybackIssueReportStatus.Idle,
     val playbackIssueReportId: String? = null,
     val playbackIssueReportError: String? = null,
@@ -324,6 +330,7 @@ sealed class PlayerEvent {
     data object OnDismissTransientOverlay : PlayerEvent()
     data object OnRetry : PlayerEvent()
     data object OnReportPlaybackIssue : PlayerEvent()
+    data object OnReportFrozen : PlayerEvent()
     data object OnParentalGuideHide : PlayerEvent()
     data class OnShowDisplayModeInfo(val info: DisplayModeInfo) : PlayerEvent()
     data object OnHideDisplayModeInfo : PlayerEvent()

@@ -70,11 +70,11 @@ class LivePlaybackFreezeReporterTest {
         playHealthyThenStallVideo(videoStallAtMs = 20_000L)
 
         // The buffered edge is a healthy 5s ahead (see sample()), so the fast video-stall
-        // threshold (2.5s) applies. 2s after the last frame it has not been crossed yet.
-        val notYet = sample(nowMs = 22_000L, ticks = 700L)
+        // threshold (2s, Fix 3) applies. 1s after the last frame it has not been crossed yet.
+        val notYet = sample(nowMs = 21_000L, ticks = 700L)
         assertEquals(LivePlaybackFreezePolicy.Decision.Idle, notYet)
 
-        // Past 2.5s since the last frame: the freeze is reported.
+        // Past 2s since the last frame: the freeze is reported.
         val start = sample(nowMs = 24_000L, ticks = 700L)
         assertEquals(
             LivePlaybackFreezePolicy.Decision.Start(LivePlaybackFreezePolicy.Kind.VIDEO_STALLED),
