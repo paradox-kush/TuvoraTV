@@ -32,6 +32,24 @@ internal object SportsChannelMatchPolicy {
     private fun competingLeague(keywords: List<String>, matches: (String) -> Boolean): Boolean =
         LEAGUE_MARKERS.any { it !in keywords && matches(it) }
 
+    /**
+     * Generic CLUB words shared across many teams ("Coventry City" / "Hull City" / "Man City" all carry
+     * "city"). A shared one of these used to fake a both-teams match against any channel that merely
+     * contained it ("New York City vs Seattle"). A team hit therefore requires a DISTINCTIVE token when
+     * the team has one — sport words ("cricket", "football") are deliberately NOT here, so a dedicated
+     * "Sky Sports Cricket" channel still surfaces for a cricket fixture.
+     */
+    private val GENERIC_TEAM_WORDS = setOf(
+        "city", "united", "town", "rovers", "athletic", "real", "sporting", "county",
+        "wanderers", "albion", "national", "team",
+    )
+
+    /** True when the channel text matches a DISTINCTIVE token of this team (falls back to any token if all are generic). */
+    private fun teamHit(tokens: List<String>, matches: (String) -> Boolean): Boolean {
+        val distinctive = tokens.filterNot { it in GENERIC_TEAM_WORDS }
+        return if (distinctive.isNotEmpty()) distinctive.any(matches) else tokens.any(matches)
+    }
+
     /** Channel-NAME tier (cheap, in-memory). The old inline ladder + the one-team cross-sport guard. */
     fun scoreName(
         homeTokens: List<String>,
@@ -41,11 +59,15 @@ internal object SportsChannelMatchPolicy {
         genericHit: Boolean,
         matches: (String) -> Boolean,
     ): Scored {
-        val homeHit = homeTokens.any(matches)
-        val awayHit = awayTokens.any(matches)
+        val homeHit = teamHit(homeTokens, matches)
+        val awayHit = teamHit(awayTokens, matches)
+        val keywordHit = keywords.any(matches)
         return when {
             homeHit && awayHit -> Scored(50, MatchConfidence.CONFIRMED)
-            keywords.any(matches) -> Scored(25, MatchConfidence.LEAGUE)
+            // This game's team on a league channel ("US NFL Tennessee Titans") ranks above a
+            // bare league-keyword channel ("US NFL Buffalo Bills") — the wrong team's own feed.
+            (homeHit || awayHit) && keywordHit -> Scored(30, MatchConfidence.LEAGUE)
+            keywordHit -> Scored(25, MatchConfidence.LEAGUE)
             eventTokens.count(matches) >= 2 -> Scored(20, MatchConfidence.CONFIRMED)
             (homeHit || awayHit) && !competingLeague(keywords, matches) -> Scored(12, MatchConfidence.LEAGUE)
             genericHit -> Scored(8, MatchConfidence.LEAGUE)
@@ -61,8 +83,8 @@ internal object SportsChannelMatchPolicy {
         eventTokens: List<String>,
         matches: (String) -> Boolean,
     ): Scored {
-        val home = homeTokens.any(matches)
-        val away = awayTokens.any(matches)
+        val home = teamHit(homeTokens, matches)
+        val away = teamHit(awayTokens, matches)
         val keyword = keywords.any(matches)
         return when {
             home && away -> Scored(100, MatchConfidence.CONFIRMED)

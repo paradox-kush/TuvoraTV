@@ -46,6 +46,12 @@ class SportsChannelMatchPolicyTest {
     }
 
     @Test
+    fun `this game's team on a league channel outranks the wrong team's league channel`() {
+        assertEquals("a fixture team + league keyword ranks above keyword-only", 30, name("US NFL Dallas Cowboys (HD)"))
+        assertEquals("a different team's league channel stays at keyword-only", 25, name("US NFL Buffalo Bills (HD)"))
+    }
+
+    @Test
     fun `a generic sports channel keeps its weak score`() {
         assertEquals("a generic sports channel keeps the weak tier", 8, name("beIN Sports 1", generic = true))
     }
@@ -57,6 +63,22 @@ class SportsChannelMatchPolicyTest {
         assertEquals("a same-sport one-team programme still matches weakly", 25, prog("Dallas Cowboys pre-game"))
         assertEquals("one team plus the league keyword is a strong programme hit", 70, prog("NFL coverage: Cardinals build-up"))
         assertEquals("both teams is the strongest programme hit", 100, prog("Arizona Cardinals vs Dallas Cowboys"))
+    }
+
+    @Test
+    fun `two City clubs do not both-teams-match an unrelated City channel`() {
+        val cov = listOf("coventry", "city")
+        val hull = listOf("hull", "city")
+        val pl = listOf("premier league")
+        assertEquals("a shared 'city' must not fake a both-teams match", 0, SportsChannelMatchPolicy.scoreName(cov, hull, pl, emptyList(), false, matcher("MLS: New York City vs Seattle")).score)
+        assertEquals("the actual matchup still scores both-teams", 50, SportsChannelMatchPolicy.scoreName(cov, hull, pl, emptyList(), false, matcher("Coventry City v Hull City")).score)
+    }
+
+    @Test
+    fun `a sport word is NOT treated as generic so cricket channels still surface`() {
+        val ind = listOf("india", "cricket")
+        val wi = listOf("west", "indies", "cricket")
+        assertEquals("a dedicated cricket channel still surfaces via the sport word", 50, SportsChannelMatchPolicy.scoreName(ind, wi, emptyList(), emptyList(), false, matcher("UK: Sky Sports Cricket")).score)
     }
 
     // --- B2: confidence — CONFIRMED (this fixture is on) vs LEAGUE (only carries the competition). JUnit arg order (message, expected, actual). ---

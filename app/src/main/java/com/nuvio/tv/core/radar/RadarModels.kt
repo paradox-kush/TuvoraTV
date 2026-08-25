@@ -142,6 +142,8 @@ data class RadarFixture(
     /** Wide event artwork (TheSportsDB strBanner) for the spotlight hero backdrop; strThumb fallback. */
     val banner: String? = null,
     val thumb: String? = null,
+    /** The competition's home country (TheSportsDB strCountry) — ranks the home broadcaster on top. */
+    val country: String? = null,
 ) {
     val startEpochMs: Long? get() = radarTimestampToEpochMs(ts)
 

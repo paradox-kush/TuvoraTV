@@ -702,34 +702,31 @@ private fun MatchChannelsOverlay(
                         )
                     }
                 }
-                // Two honest groups: channels we can prove are SHOWING this fixture (both teams, the
-                // event, or a broadcaster listing) vs channels that only CARRY the competition (a league
-                // keyword / one team). Dedup by contentId first: a duplicate Compose key is a hard crash.
+                // Three honest tiers by evidence strength: the channel's own GUIDE names the teams
+                // (Showing) > a broadcaster listing or the channel name names the match (Broadcasting) >
+                // a sport/league channel that only carries the competition (Carries). Dedup by contentId
+                // first: a duplicate Compose key is a hard crash.
                 val deduped = state.matches.distinctBy { it.channel.contentId }
-                val confirmed = deduped.filter { it.confidence == MatchConfidence.CONFIRMED }
+                val showing = deduped.filter { it.confidence == MatchConfidence.CONFIRMED && it.via == RadarChannelMatcher.MatchVia.EPG }
+                val broadcasting = deduped.filter { it.confidence == MatchConfidence.CONFIRMED && it.via != RadarChannelMatcher.MatchVia.EPG }
                 val carries = deduped.filter { it.confidence == MatchConfidence.LEAGUE }
                 val leagueLabel = fixture.league?.takeIf { it.isNotBlank() }
-                if (confirmed.isNotEmpty() && carries.isNotEmpty()) {
-                    item(key = "grp-showing") {
+                val labeled = listOf(showing, broadcasting, carries).count { it.isNotEmpty() } >= 2
+                fun label(text: String, key: String) {
+                    item(key = key) {
                         Text(
-                            "SHOWING THIS MATCH",
+                            text,
                             style = MaterialTheme.typography.labelMedium,
                             color = NuvioTheme.colors.TextSecondary,
                             modifier = Modifier.padding(vertical = NuvioTheme.spacing.xs),
                         )
                     }
                 }
-                channelMatchRows(confirmed, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
-                if (carries.isNotEmpty()) {
-                    item(key = "grp-carries") {
-                        Text(
-                            (leagueLabel?.let { "CARRIES $it" } ?: "CARRIES THIS COMPETITION").uppercase(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = NuvioTheme.colors.TextSecondary,
-                            modifier = Modifier.padding(vertical = NuvioTheme.spacing.xs),
-                        )
-                    }
-                }
+                if (labeled && showing.isNotEmpty()) label("SHOWING THIS MATCH", "grp-showing")
+                channelMatchRows(showing, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
+                if (labeled && broadcasting.isNotEmpty()) label("BROADCASTING THIS MATCH", "grp-broadcasting")
+                channelMatchRows(broadcasting, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
+                if (labeled && carries.isNotEmpty()) label((leagueLabel?.let { "CARRIES $it" } ?: "CARRIES THIS COMPETITION").uppercase(), "grp-carries")
                 channelMatchRows(carries, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
                 if (state.probingContentId == null && state.matches.isNotEmpty() &&
                     state.matches.all { it.channel.contentId in state.deadContentIds }
@@ -752,6 +749,14 @@ private fun MatchChannelsOverlay(
                             modifier = Modifier.padding(NuvioTheme.spacing.sm),
                         )
                     }
+                }
+                item(key = "src-note") {
+                    Text(
+                        "Matched from your channels' EPG, channel names, and broadcaster listings.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NuvioTheme.colors.TextSecondary,
+                        modifier = Modifier.padding(top = NuvioTheme.spacing.md, start = NuvioTheme.spacing.sm, end = NuvioTheme.spacing.sm),
+                    )
                 }
             }
         }

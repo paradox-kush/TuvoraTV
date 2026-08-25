@@ -102,5 +102,8 @@ internal object SportsBroadcastRegionPolicy {
         if (homeRegion != null && regionOfChannel(channelName) == homeRegion) HOME_LISTING_BOOST else 0
 
     private const val HOME_LISTING_BOOST = 10
-    private const val OUT_OF_COUNTRY_LISTING_PENALTY = -30
+    // Sink an out-of-country broadcaster listing (Sky Sports UK for a US game) below the user's own
+    // home-country league channels (e.g. "US: NFL Network" at name-keyword 25 + home boost) so those
+    // lead the "Carries" section instead of a wall of foreign feeds.
+    private const val OUT_OF_COUNTRY_LISTING_PENALTY = -60
 }
