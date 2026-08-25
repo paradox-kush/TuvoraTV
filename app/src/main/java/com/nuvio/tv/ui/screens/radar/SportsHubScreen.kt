@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -65,6 +66,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.nuvio.tv.core.radar.MatchConfidence
 import com.nuvio.tv.core.radar.RadarCatalog
 import com.nuvio.tv.core.radar.RadarCategory
 import com.nuvio.tv.core.radar.RadarTeam
@@ -700,66 +702,35 @@ private fun MatchChannelsOverlay(
                         )
                     }
                 }
-                // Dedup by channel contentId: the matcher partial can carry the same channel twice; a duplicate key crashes.
-                items(state.matches.distinctBy { it.channel.contentId }, key = { it.channel.contentId }) { match ->
-                    val isProbing = state.probingContentId == match.channel.contentId
-                    val isDead = match.channel.contentId in state.deadContentIds
-                    FocusableRow(onClick = { onPlay(match) }) {
-                        AsyncImage(
-                            model = match.channel.logo,
-                            contentDescription = null,
-                            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)),
-                        )
-                        Spacer(Modifier.width(NuvioTheme.spacing.md))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                match.channel.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (isDead) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            val programme = match.programme
-                            Text(
-                                when {
-                                    isProbing -> "Checking channel…"
-                                    isDead -> "Offline · ${match.channel.playlistName}"
-                                    programme != null -> listOfNotNull(
-                                        match.language,
-                                        "${programme.title} · ${RadarTime.formatTime(programme.startMs)} – ${RadarTime.formatTime(programme.endMs)}",
-                                    ).joinToString(" · ")
-                                    match.via == RadarChannelMatcher.MatchVia.LISTING -> listOfNotNull(
-                                        match.language,
-                                        "TV listing",
-                                        match.channel.playlistName,
-                                    ).joinToString(" · ")
-                                    else -> match.channel.playlistName
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = NuvioTheme.colors.TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                // Two honest groups: channels we can prove are SHOWING this fixture (both teams, the
+                // event, or a broadcaster listing) vs channels that only CARRY the competition (a league
+                // keyword / one team). Dedup by contentId first: a duplicate Compose key is a hard crash.
+                val deduped = state.matches.distinctBy { it.channel.contentId }
+                val confirmed = deduped.filter { it.confidence == MatchConfidence.CONFIRMED }
+                val carries = deduped.filter { it.confidence == MatchConfidence.LEAGUE }
+                val leagueLabel = fixture.league?.takeIf { it.isNotBlank() }
+                if (confirmed.isNotEmpty() && carries.isNotEmpty()) {
+                    item(key = "grp-showing") {
                         Text(
-                            if (isProbing) "…" else if (isDead) "✕" else "▶",
-                            color = if (isDead) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
+                            "SHOWING THIS MATCH",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = NuvioTheme.colors.TextSecondary,
+                            modifier = Modifier.padding(vertical = NuvioTheme.spacing.xs),
                         )
-                    }
-                    // Archived channel + started fixture -> its catch-up Replay, indented
-                    // under the channel as its own focusable row (no long-press on TV).
-                    state.replays[match.channel.contentId]?.let { replay ->
-                        FocusableRow(onClick = { onPlayReplay(replay) }) {
-                            Spacer(Modifier.width(48.dp))
-                            Text(
-                                "↩ Replay from kick-off",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = NuvioTheme.colors.TextPrimary,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
                     }
                 }
+                channelMatchRows(confirmed, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
+                if (carries.isNotEmpty()) {
+                    item(key = "grp-carries") {
+                        Text(
+                            (leagueLabel?.let { "CARRIES $it" } ?: "CARRIES THIS COMPETITION").uppercase(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = NuvioTheme.colors.TextSecondary,
+                            modifier = Modifier.padding(vertical = NuvioTheme.spacing.xs),
+                        )
+                    }
+                }
+                channelMatchRows(carries, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
                 if (state.probingContentId == null && state.matches.isNotEmpty() &&
                     state.matches.all { it.channel.contentId in state.deadContentIds }
                 ) {
@@ -782,6 +753,76 @@ private fun MatchChannelsOverlay(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/** One confidence group of channel rows in the match sheet; shared by the CONFIRMED and LEAGUE sections. */
+private fun LazyListScope.channelMatchRows(
+    matches: List<RadarChannelMatcher.ChannelMatch>,
+    probingContentId: String?,
+    deadContentIds: Set<String>,
+    replays: Map<String, RadarChannelMatcher.SportsReplay>,
+    onPlay: (RadarChannelMatcher.ChannelMatch) -> Unit,
+    onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit,
+) {
+    items(matches, key = { it.channel.contentId }) { match ->
+        val isProbing = probingContentId == match.channel.contentId
+        val isDead = match.channel.contentId in deadContentIds
+        FocusableRow(onClick = { onPlay(match) }) {
+            AsyncImage(
+                model = match.channel.logo,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)),
+            )
+            Spacer(Modifier.width(NuvioTheme.spacing.md))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    match.channel.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (isDead) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val programme = match.programme
+                Text(
+                    when {
+                        isProbing -> "Checking channel…"
+                        isDead -> "Offline · ${match.channel.playlistName}"
+                        programme != null -> listOfNotNull(
+                            match.language,
+                            "${programme.title} · ${RadarTime.formatTime(programme.startMs)} – ${RadarTime.formatTime(programme.endMs)}",
+                        ).joinToString(" · ")
+                        match.via == RadarChannelMatcher.MatchVia.LISTING -> listOfNotNull(
+                            match.language,
+                            "TV listing",
+                            match.channel.playlistName,
+                        ).joinToString(" · ")
+                        else -> match.channel.playlistName
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NuvioTheme.colors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                if (isProbing) "…" else if (isDead) "✕" else "▶",
+                color = if (isDead) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
+            )
+        }
+        // Archived channel + started fixture -> its catch-up Replay, indented
+        // under the channel as its own focusable row (no long-press on TV).
+        replays[match.channel.contentId]?.let { replay ->
+            FocusableRow(onClick = { onPlayReplay(replay) }) {
+                Spacer(Modifier.width(48.dp))
+                Text(
+                    "↩ Replay from kick-off",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioTheme.colors.TextPrimary,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }

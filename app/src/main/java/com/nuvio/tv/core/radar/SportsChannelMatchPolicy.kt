@@ -1,6 +1,14 @@
 package com.nuvio.tv.core.radar
 
 /**
+ * Whether a channel match proves THIS fixture is on the channel (CONFIRMED — both teams named, the
+ * specific event title, or a broadcaster listing) or only that the channel carries the competition
+ * (LEAGUE — a league keyword or a single team word). The matcher threads this onto [ChannelMatch] so
+ * the sheet can honestly say "Showing this match" vs "Carries <league>" instead of guessing from a score.
+ */
+enum class MatchConfidence { CONFIRMED, LEAGUE }
+
+/**
  * Pure name/programme scoring for the Sports Centre channel matcher, with the cross-sport guard.
  *
  * A single shared team word is cross-sport-risky: "Arizona Cardinals" (NFL) shares "Cardinals" with
@@ -13,6 +21,9 @@ package com.nuvio.tv.core.radar
  */
 internal object SportsChannelMatchPolicy {
 
+    /** A scored hit: how strongly it ranks, and whether it confirms the fixture or only the league. */
+    data class Scored(val score: Int, val confidence: MatchConfidence)
+
     /** League/sport abbreviations distinctive enough to flag a channel as a DIFFERENT competition. */
     private val LEAGUE_MARKERS = setOf(
         "nfl", "nba", "mlb", "nhl", "wnba", "ncaa", "mls", "cfl", "afl", "nrl", "ipl", "bbl",
@@ -22,6 +33,48 @@ internal object SportsChannelMatchPolicy {
         LEAGUE_MARKERS.any { it !in keywords && matches(it) }
 
     /** Channel-NAME tier (cheap, in-memory). The old inline ladder + the one-team cross-sport guard. */
+    fun scoreName(
+        homeTokens: List<String>,
+        awayTokens: List<String>,
+        keywords: List<String>,
+        eventTokens: List<String>,
+        genericHit: Boolean,
+        matches: (String) -> Boolean,
+    ): Scored {
+        val homeHit = homeTokens.any(matches)
+        val awayHit = awayTokens.any(matches)
+        return when {
+            homeHit && awayHit -> Scored(50, MatchConfidence.CONFIRMED)
+            keywords.any(matches) -> Scored(25, MatchConfidence.LEAGUE)
+            eventTokens.count(matches) >= 2 -> Scored(20, MatchConfidence.CONFIRMED)
+            (homeHit || awayHit) && !competingLeague(keywords, matches) -> Scored(12, MatchConfidence.LEAGUE)
+            genericHit -> Scored(8, MatchConfidence.LEAGUE)
+            else -> Scored(0, MatchConfidence.LEAGUE)
+        }
+    }
+
+    /** EPG-PROGRAMME-text tier, shared by panel short_epg and the canonical mirror. */
+    fun scoreProgramme(
+        homeTokens: List<String>,
+        awayTokens: List<String>,
+        keywords: List<String>,
+        eventTokens: List<String>,
+        matches: (String) -> Boolean,
+    ): Scored {
+        val home = homeTokens.any(matches)
+        val away = awayTokens.any(matches)
+        val keyword = keywords.any(matches)
+        return when {
+            home && away -> Scored(100, MatchConfidence.CONFIRMED)
+            eventTokens.count(matches) >= 2 -> Scored(90, MatchConfidence.CONFIRMED)
+            (home || away) && keyword -> Scored(70, MatchConfidence.LEAGUE)
+            keyword -> Scored(35, MatchConfidence.LEAGUE)
+            (home || away) && !competingLeague(keywords, matches) -> Scored(25, MatchConfidence.LEAGUE)
+            else -> Scored(0, MatchConfidence.LEAGUE)
+        }
+    }
+
+    /** Back-compat Int accessors (older callers/tests that only need the rank). */
     fun nameScore(
         homeTokens: List<String>,
         awayTokens: List<String>,
@@ -29,37 +82,17 @@ internal object SportsChannelMatchPolicy {
         eventTokens: List<String>,
         genericHit: Boolean,
         matches: (String) -> Boolean,
-    ): Int {
-        val homeHit = homeTokens.any(matches)
-        val awayHit = awayTokens.any(matches)
-        return when {
-            homeHit && awayHit -> 50
-            keywords.any(matches) -> 25
-            eventTokens.count(matches) >= 2 -> 20
-            (homeHit || awayHit) && !competingLeague(keywords, matches) -> 12
-            genericHit -> 8
-            else -> 0
-        }
-    }
+    ): Int = scoreName(homeTokens, awayTokens, keywords, eventTokens, genericHit, matches).score
 
-    /** EPG-PROGRAMME-text tier, shared by panel short_epg and the canonical mirror. */
     fun programmeScore(
         homeTokens: List<String>,
         awayTokens: List<String>,
         keywords: List<String>,
         eventTokens: List<String>,
         matches: (String) -> Boolean,
-    ): Int {
-        val home = homeTokens.any(matches)
-        val away = awayTokens.any(matches)
-        val keyword = keywords.any(matches)
-        return when {
-            home && away -> 100
-            eventTokens.count(matches) >= 2 -> 90
-            (home || away) && keyword -> 70
-            keyword -> 35
-            (home || away) && !competingLeague(keywords, matches) -> 25
-            else -> 0
-        }
-    }
+    ): Int = scoreProgramme(homeTokens, awayTokens, keywords, eventTokens, matches).score
+
+    /** The stronger of two confidences — CONFIRMED wins when merging signals for one channel. */
+    fun stronger(a: MatchConfidence, b: MatchConfidence): MatchConfidence =
+        if (a == MatchConfidence.CONFIRMED || b == MatchConfidence.CONFIRMED) MatchConfidence.CONFIRMED else MatchConfidence.LEAGUE
 }

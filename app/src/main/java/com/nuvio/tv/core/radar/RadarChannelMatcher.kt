@@ -90,6 +90,8 @@ class RadarChannelMatcher @Inject constructor(
         val via: MatchVia = MatchVia.NAME,
         /** Short language/region tag ("FR", "AR") or the broadcaster country ("France"). */
         val language: String? = null,
+        /** CONFIRMED = this fixture is on (both teams / event title / broadcaster listing); LEAGUE = only carries the competition. */
+        val confidence: MatchConfidence = MatchConfidence.LEAGUE,
     )
 
     // Live lists once per account per session (26k channels on real panels).
@@ -113,8 +115,8 @@ class RadarChannelMatcher @Inject constructor(
         val candidates = assembleCandidates()
 
         val named = candidates.mapNotNull { c ->
-            val score = nameScore(normalize(c.name), keywords, homeTokens, awayTokens, eventTokens)
-            if (score > 0) ChannelMatch(c, programme = null, score = score) else null
+            val scored = nameScored(normalize(c.name), keywords, homeTokens, awayTokens, eventTokens)
+            if (scored.score > 0) ChannelMatch(c, programme = null, score = scored.score, confidence = scored.confidence) else null
         }.sortedByDescending { it.score }.take(NAME_POOL_CAP)
 
         // Same rule for the early partial: flashing a list of guesses and then clearing it
@@ -129,7 +131,11 @@ class RadarChannelMatcher @Inject constructor(
                     semaphore.withPermit {
                         val programmes = epgFor(m.channel)
                         val hit = bestProgramme(programmes, start, keywords, homeTokens, awayTokens, eventTokens)
-                        if (hit != null) m.copy(programme = hit.first, score = m.score / 10 + hit.second) else m
+                        if (hit != null) m.copy(
+                            programme = hit.first,
+                            score = m.score / 10 + hit.second.score,
+                            confidence = SportsChannelMatchPolicy.stronger(m.confidence, hit.second.confidence),
+                        ) else m
                     }
                 }
             }.awaitAll() + named.drop(EPG_PROBE_CAP)
@@ -153,6 +159,7 @@ class RadarChannelMatcher @Inject constructor(
                 best.copy(
                     programme = best.programme ?: new.programme ?: old.programme,
                     language = best.language ?: new.language ?: old.language,
+                    confidence = SportsChannelMatchPolicy.stronger(new.confidence, old.confidence),
                 )
             }
         }
@@ -201,17 +208,18 @@ class RadarChannelMatcher @Inject constructor(
                     .getOrDefault(emptyList())
                 for (p in hits) {
                     val channel = byEpgId[p.channelId] ?: continue
-                    val score = programmeScore(
+                    val scored = programmeScored(
                         normalize("${p.title} ${p.desc.orEmpty()}"),
                         keywords, homeTokens, awayTokens, eventTokens,
                     )
-                    if (score <= 0) continue
+                    if (scored.score <= 0) continue
                     add(
                         ChannelMatch(
                             channel,
                             programme = XtreamProgram(p.title, p.desc.orEmpty(), p.startMs, p.endMs, false),
-                            score = MIRROR_BASE_SCORE + score / 10,
+                            score = MIRROR_BASE_SCORE + scored.score / 10,
                             via = MatchVia.EPG,
+                            confidence = scored.confidence,
                         )
                     )
                 }
@@ -235,11 +243,11 @@ class RadarChannelMatcher @Inject constructor(
             epgMirror.programmesInWindow(sqlTokens, startMs - PROGRAMME_WINDOW_BACK_MS, startMs + PROGRAMME_WINDOW_AHEAD_MS)
         }.getOrDefault(emptyList())
             .mapNotNull { p ->
-                val score = programmeScore(normalize("${p.title} ${p.desc.orEmpty()}"), keywords, homeTokens, awayTokens, eventTokens)
-                if (score > 0) Triple(p.channelId, p, score) else null
+                val scored = programmeScored(normalize("${p.title} ${p.desc.orEmpty()}"), keywords, homeTokens, awayTokens, eventTokens)
+                if (scored.score > 0) Triple(p.channelId, p, scored) else null
             }
             .groupBy { it.first }
-            .mapValues { (_, l) -> l.maxBy { it.third } }
+            .mapValues { (_, l) -> l.maxBy { it.third.score } }
         if (hits.isEmpty()) return emptyList()
 
         return buildList {
@@ -248,14 +256,15 @@ class RadarChannelMatcher @Inject constructor(
                 if (mapping.isEmpty()) continue
                 for (c in chans) {
                     val epgId = mapping[c.streamId] ?: continue
-                    val (_, p, score) = hits[epgId] ?: continue
+                    val (_, p, scored) = hits[epgId] ?: continue
                     add(
                         ChannelMatch(
                             channel = c,
                             programme = XtreamProgram(p.title, p.desc.orEmpty(), p.startMs, p.endMs, nowPlaying = false),
-                            score = MIRROR_BASE_SCORE + score / 10,
+                            score = MIRROR_BASE_SCORE + scored.score / 10,
                             via = MatchVia.EPG,
                             language = EpgLang.of(epgId, c.name, p.title),
+                            confidence = scored.confidence,
                         )
                     )
                 }
@@ -289,7 +298,8 @@ class RadarChannelMatcher @Inject constructor(
                     if (t.isEmpty()) continue
                     val found = byCore[t] ?: bySquash[EpgNorm.squash(t)] ?: continue
                     for (c in found) {
-                        add(ChannelMatch(c, programme = null, score = LISTING_SCORE, via = MatchVia.LISTING, language = st.country))
+                        // A broadcaster listing names THIS game's channel explicitly — an identity signal.
+                        add(ChannelMatch(c, programme = null, score = LISTING_SCORE, via = MatchVia.LISTING, language = st.country, confidence = MatchConfidence.CONFIRMED))
                     }
                     break
                 }
@@ -522,16 +532,16 @@ class RadarChannelMatcher @Inject constructor(
 
     // --- scoring (pure) --------------------------------------------------------
 
-    private fun nameScore(
+    private fun nameScored(
         name: String,
         keywords: List<String>,
         homeTokens: List<String>,
         awayTokens: List<String>,
         eventTokens: List<String>,
-    ): Int {
-        if (name.isBlank()) return 0
+    ): SportsChannelMatchPolicy.Scored {
+        if (name.isBlank()) return SportsChannelMatchPolicy.Scored(0, MatchConfidence.LEAGUE)
         val genericHit = GENERIC_SPORT_MARKERS.any { name.contains(it) }
-        return SportsChannelMatchPolicy.nameScore(
+        return SportsChannelMatchPolicy.scoreName(
             homeTokens, awayTokens, keywords, eventTokens, genericHit,
         ) { hits(name, it) }
     }
@@ -543,28 +553,28 @@ class RadarChannelMatcher @Inject constructor(
         homeTokens: List<String>,
         awayTokens: List<String>,
         eventTokens: List<String>,
-    ): Pair<XtreamProgram, Int>? {
+    ): Pair<XtreamProgram, SportsChannelMatchPolicy.Scored>? {
         val windowStart = startMs - PROGRAMME_WINDOW_BACK_MS
         val windowEnd = startMs + PROGRAMME_WINDOW_AHEAD_MS
         return programmes
             .filter { it.endMs > windowStart && it.startMs < windowEnd }
             .mapNotNull { p ->
-                val score = programmeScore(normalize("${p.title} ${p.description}"), keywords, homeTokens, awayTokens, eventTokens)
-                if (score > 0) p to score else null
+                val scored = programmeScored(normalize("${p.title} ${p.description}"), keywords, homeTokens, awayTokens, eventTokens)
+                if (scored.score > 0) p to scored else null
             }
-            .maxByOrNull { it.second }
+            .maxByOrNull { it.second.score }
     }
 
     /** Shared programme-text scoring for panel short_epg and the canonical mirror. */
-    private fun programmeScore(
+    private fun programmeScored(
         text: String,
         keywords: List<String>,
         homeTokens: List<String>,
         awayTokens: List<String>,
         eventTokens: List<String>,
-    ): Int {
-        if (text.isBlank()) return 0
-        return SportsChannelMatchPolicy.programmeScore(
+    ): SportsChannelMatchPolicy.Scored {
+        if (text.isBlank()) return SportsChannelMatchPolicy.Scored(0, MatchConfidence.LEAGUE)
+        return SportsChannelMatchPolicy.scoreProgramme(
             homeTokens, awayTokens, keywords, eventTokens,
         ) { hits(text, it) }
     }
