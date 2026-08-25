@@ -183,7 +183,43 @@ data class RadarFixture(
         val start = startEpochMs ?: return false
         return nowMs >= start && nowMs < start + typicalDurationMs(sport)
     }
+
+    /**
+     * A finished / postponed / cancelled fixture is never live, however stale the livescore feed's
+     * live set is. Reads the TheSportsDB `strStatus` the live-badge logic previously ignored — the
+     * root of finished games (a Sunday NFL game on Monday) reading "LIVE" (robustness inventory
+     * T1/BK1/#4). Conservative: only known terminal statuses match; anything else falls through to
+     * the window/feed logic, with [maxLiveWindowMs] as the backstop.
+     */
+    val isFinishedOrOff: Boolean
+        get() {
+            if (postponed == "yes") return true
+            val s = status?.trim()?.lowercase()?.replace('_', ' ') ?: return false
+            if (s.isEmpty()) return false
+            return s in FINISHED_STATUSES ||
+                s.contains("finish") || s.contains("full time") || s.contains("full-time") ||
+                s.startsWith("final") || s.contains("ended")
+        }
+
+    /**
+     * The longest a fixture of this sport can plausibly still be live — its typical duration plus a
+     * grace for overruns / OT / delays. A hard cap so a stale live-set entry (the feed served past
+     * its TTL, or a finished row it never dropped) can never read LIVE forever, even for a
+     * feed-covered sport.
+     */
+    fun maxLiveWindowMs(): Long = typicalDurationMs(sport) + LIVE_WINDOW_GRACE_MS
 }
+
+/** TheSportsDB `strStatus` values (normalised: trimmed, lower-cased, `_`→space) that mean the
+ *  fixture is over. Anything not here falls through to the window/feed logic. */
+private val FINISHED_STATUSES = setOf(
+    "match finished", "finished", "game finished", "ft", "aet", "pen", "ft pen", "aot",
+    "final", "final ot", "ended", "cancelled", "canceled", "postponed", "abandoned",
+    "awarded", "walkover", "wo",
+)
+
+/** Grace on top of a sport's typical duration before a fixture is force-expired from LIVE. */
+private const val LIVE_WINDOW_GRACE_MS = 2L * 60 * 60 * 1000
 
 @Serializable
 data class RadarLiveScore(

@@ -74,10 +74,19 @@ data class RadarUiState(
         catalog.featured.filter { it.isActive(nowMs) }
 
     fun isLive(fixture: RadarFixture, nowMs: Long): Boolean {
+        // A finished / postponed / cancelled fixture is never live, however stale the feed's live
+        // set is — the strStatus the badge logic used to ignore (inventory T1/BK1: a Sunday NFL
+        // game reading LIVE on Monday because its id lingered in the stale-served live set).
+        if (fixture.isFinishedOrOff) return false
+        // Hard plausibility cap: even a feed-covered sport cannot read LIVE past a sport-typical
+        // window plus grace — the backstop for a stale live-set entry whose finished status we
+        // never received.
+        fixture.startEpochMs?.let { start ->
+            if (nowMs >= start + fixture.maxLiveWindowMs()) return false
+        }
         val feedConfirmed = fixture.id?.let { it in liveEventIds } == true
         val sport = fixture.sport?.lowercase()
-        // Fresh feed coverage for this sport -> the feed decides (a finished match must
-        // lose its badge even inside the inferred window); otherwise infer from kick-off.
+        // Fresh feed coverage for this sport -> the feed decides; otherwise infer from kick-off.
         return if (sport != null && sport in livescoreSports) feedConfirmed
         else feedConfirmed || fixture.inferredLive(nowMs)
     }
