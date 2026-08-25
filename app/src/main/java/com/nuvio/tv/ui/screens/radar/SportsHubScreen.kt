@@ -65,7 +65,9 @@ import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.nuvio.tv.core.radar.RadarCatalog
 import com.nuvio.tv.core.radar.RadarCategory
+import com.nuvio.tv.core.radar.RadarTeam
 import com.nuvio.tv.core.radar.RadarChannelMatcher
 import com.nuvio.tv.core.radar.RadarFeaturedEvent
 import com.nuvio.tv.core.radar.RadarFixture
@@ -130,6 +132,22 @@ fun SportsHubScreen(
     var pickingTeam by remember { mutableStateOf(false) }
     // Set once a sport is chosen; the country list is the second step.
     var pickedSport by remember { mutableStateOf<String?>(null) }
+    // Top search bar: one place to find + follow sports, leagues, and teams.
+    var searchQuery by remember { mutableStateOf("") }
+    val trimmedSearch = searchQuery.trim()
+    val searchActive = trimmedSearch.length >= MIN_LEAGUE_QUERY
+    val leagueSearch by viewModel.leagueSearch.collectAsStateWithLifecycle()
+    val teamSearch by viewModel.teamSearch.collectAsStateWithLifecycle()
+    LaunchedEffect(trimmedSearch) {
+        if (trimmedSearch.length < MIN_LEAGUE_QUERY) {
+            viewModel.clearLeagueSearch()
+            viewModel.clearTeamSearch()
+            return@LaunchedEffect
+        }
+        delay(SEARCH_DEBOUNCE_MS)
+        viewModel.searchLeaguesByName(trimmedSearch)
+        viewModel.searchTeams(trimmedSearch)
+    }
     // Discovery drill-in: a league/event page listing everything happening in it.
     var leaguePage by remember { mutableStateOf<RadarLeague?>(null) }
     var fixturesPage by remember { mutableStateOf<SportsFixturesCollection?>(null) }
@@ -200,6 +218,27 @@ fun SportsHubScreen(
             color = NuvioTheme.colors.TextPrimary,
             modifier = Modifier.padding(start = SportsRowStartPadding, bottom = NuvioTheme.spacing.md),
         )
+        NuvioTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = "Search sports, leagues, teams",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = SportsRowStartPadding, vertical = NuvioTheme.spacing.sm),
+        )
+        if (searchActive) {
+            SportsCentreSearchResults(
+                leagueSearch = leagueSearch,
+                teamSearch = teamSearch,
+                query = trimmedSearch,
+                catalog = state.catalog,
+                followedLeagueIds = state.followedLeagueIds,
+                followedTeamIds = state.followedTeamIds,
+                onOpenCategory = { browseCategory = it },
+                onToggleLeague = { viewModel.toggleFollow(it) },
+                onToggleTeam = { viewModel.toggleFollowTeam(it) },
+            )
+        } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxxl),
@@ -330,34 +369,10 @@ fun SportsHubScreen(
                     }
                     // Anything we didn't curate. Lives at the END of the row so the popular
                     // leagues stay first — this is the escape hatch, not the main path.
-                    item(key = "__add_league__") {
-                        AddFollowTile(
-                            title = "Add a league",
-                            subtitle = state.customLeagues.size
-                                .let { if (it > 0) "$it added" else "Not in the list?" },
-                            onClick = {
-                                // Start clean: leaving the results dialog by any route other
-                                // than its own dismiss used to leave the last search sitting in
-                                // the view model, and it would reappear over the next sport.
-                                viewModel.clearLeagueSearch()
-                                pickedSport = null
-                                pickingSport = true
-                            },
-                        )
-                    }
-                    item(key = "__add_team__") {
-                        AddFollowTile(
-                            title = "Follow a team",
-                            subtitle = state.teamFollows.size
-                                .let { if (it > 0) "$it followed" else "Just your club" },
-                            onClick = {
-                                viewModel.clearTeamSearch()
-                                pickingTeam = true
-                            },
-                        )
-                    }
+                    // "Add a league" / "Follow a team" tiles removed — the top search bar covers both.
                 }
             }
+        }
         }
     }
 
@@ -1517,6 +1532,87 @@ private val MatchPillShape = RoundedCornerShape(percent = 50)
 
 
 private const val SEARCH_DEBOUNCE_MS = 350L
+
+/** Top-search results: sports (catalog), leagues (catalog + backend), teams (backend), all followable. */
+@Composable
+private fun SportsCentreSearchResults(
+    leagueSearch: LeagueSearchState,
+    teamSearch: TeamSearchState,
+    query: String,
+    catalog: RadarCatalog,
+    followedLeagueIds: Set<String>,
+    followedTeamIds: Set<String>,
+    onOpenCategory: (RadarCategory) -> Unit,
+    onToggleLeague: (RadarLeague) -> Unit,
+    onToggleTeam: (RadarTeam) -> Unit,
+) {
+    val sportMatches = remember(query, catalog) {
+        catalog.categories.filter { it.name.contains(query, ignoreCase = true) }
+    }
+    val mergedLeagues = remember(query, catalog, leagueSearch.results) {
+        val local = catalog.categories.flatMap { it.leagues }.filter {
+            it.name.contains(query, ignoreCase = true) ||
+                it.keywords.any { k -> k.contains(query, ignoreCase = true) }
+        }
+        (local + leagueSearch.results).distinctBy { it.id }
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxxl),
+    ) {
+        if (sportMatches.isNotEmpty()) {
+            item(key = "s-sports") { RowTitle("Sports") }
+            items(sportMatches, key = { "sport-${it.name}" }) { category ->
+                FocusableRow(onClick = { onOpenCategory(category) }) {
+                    Text(
+                        category.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = NuvioTheme.colors.TextPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("›", style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary)
+                }
+            }
+        }
+        if (mergedLeagues.isNotEmpty()) {
+            item(key = "s-leagues") { RowTitle("Leagues") }
+            items(mergedLeagues, key = { "league-${it.id}" }) { league ->
+                LeagueFollowRow(
+                    league = league,
+                    followed = league.id in followedLeagueIds,
+                    onClick = { onToggleLeague(league) },
+                )
+            }
+        }
+        if (teamSearch.results.isNotEmpty()) {
+            item(key = "s-teams") { RowTitle("Teams") }
+            items(teamSearch.results, key = { "team-${it.id}" }) { team ->
+                val followed = team.id in followedTeamIds
+                FocusableRow(onClick = { onToggleTeam(team) }) {
+                    AsyncImage(model = team.badge, contentDescription = null, modifier = Modifier.size(32.dp))
+                    Spacer(Modifier.width(NuvioTheme.spacing.md))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(team.name, style = MaterialTheme.typography.bodyLarge, color = NuvioTheme.colors.TextPrimary)
+                        listOfNotNull(team.league, team.country).firstOrNull { it.isNotBlank() }?.let { subtitle ->
+                            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary)
+                        }
+                    }
+                    Text(
+                        if (followed) "★ Following" else "+ Follow",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
+                    )
+                }
+            }
+        }
+        val loading = leagueSearch.loading || teamSearch.loading
+        if (loading || (sportMatches.isEmpty() && mergedLeagues.isEmpty() && teamSearch.results.isEmpty())) {
+            item(key = "s-hint") {
+                DialogHintText(if (loading) "Searching…" else "Nothing matches \"$query\".")
+            }
+        }
+    }
+}
 
 /** Follow/unfollow row shared by the name-search and country-browse league lists. */
 @Composable

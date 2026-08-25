@@ -263,9 +263,10 @@ class SportsHubViewModel @Inject constructor(
                     Log.w(TAG, "Broadcaster lookup failed", error)
                     emptyList()
                 }
-                val result = matcher.match(fixture, league, stations, onPartial = { partial ->
-                    updateMatchSheet(fixture, generation) { it.copy(matches = partial) }
-                })
+                // Render ONCE, when the fully-ranked result is ready (set below) — no name-only partial;
+                // the fast name pass and the EPG tiers score on different scales, so showing the partial
+                // then replacing it made the list visibly reorder and grow.
+                val result = matcher.match(fixture, league, stations)
                 val replays = buildMap {
                     result.forEach { match ->
                         val replay = try {
