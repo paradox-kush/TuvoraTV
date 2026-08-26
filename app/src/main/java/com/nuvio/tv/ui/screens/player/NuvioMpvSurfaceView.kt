@@ -148,7 +148,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             pendingInitialStartOption = null
             if (holder.surface?.isValid == true) {
                 ensureSurfaceAttachedIfAlreadyAvailable()
-                ctl { mpv.command("loadfile", url, "replace") }
+                ctl {
+                    Log.i(TAG, "loadfile-> replace (zap)")
+                    mpv.command("loadfile", url, "replace")
+                    Log.i(TAG, "loadfile<- returned")
+                }
             } else {
                 pendingInitialMediaUrl = url
             }
