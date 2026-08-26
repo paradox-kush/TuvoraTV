@@ -495,6 +495,12 @@ fun LiveGuide(
         mpvHandle.surface.applyHardwareDecodeMode(MpvHardwareDecodeMode.AUTO_SAFE)
         mpvHandle.surface.ensureInitialized()
         mpvHandle.surface.setMedia(url, headers)
+        // mpv's `pause` property PERSISTS across loadfile: after the user pauses a preview once,
+        // every later zap/resume re-tune loaded into a paused core — "playback restart complete …
+        // (paused)", picture frozen on the first frame while the UI said playing (field-traced on
+        // the Onn 2026-08-26; the resume-reloads-instead-of-unpausing design forgot the core-level
+        // unpause). A tune is always an intent to PLAY: unpause explicitly after every load.
+        mpvHandle.surface.setPaused(false)
     }
 
     val previewPlayback = uiState.previewPlayback
