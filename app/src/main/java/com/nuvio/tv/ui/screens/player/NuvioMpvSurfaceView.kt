@@ -113,7 +113,20 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         ensureInitialized()
         val requestKey = buildMediaRequestKey(url = url, headers = headers) +
             "#start=${startPositionMs.coerceAtLeast(0L)}"
-        if (hasQueuedInitialMedia && requestKey == lastMediaRequestKey) {
+        // Zap trace (kept cheap + permanent): which branch a tune takes, so a silent no-op zap
+        // (picture stays on the previous channel) is diagnosable from logcat in the field.
+        Log.i(
+            TAG,
+            "setMedia: dedupe=${hasQueuedInitialMedia && requestKey == lastMediaRequestKey} " +
+                "hasQueued=$hasQueuedInitialMedia surfaceValid=${holder.surface?.isValid == true} " +
+                "init=$initialized coreAlive=$nativeCoreAlive host=${runCatching { android.net.Uri.parse(url).host }.getOrNull()}"
+        )
+        // Dedupe ONLY against a request that actually reached the core. A request parked on an
+        // invalid surface (pendingInitialMediaUrl) never loaded — a repeat of it must be allowed
+        // through, or a zap whose first attempt parked is silently swallowed and the picture stays
+        // on the PREVIOUS channel forever (field bug: guide zap while the SurfaceView was mid-
+        // recreate; the tune driver's second emission hit this dedupe and returned).
+        if (hasQueuedInitialMedia && requestKey == lastMediaRequestKey && pendingInitialMediaUrl == null) {
             return
         }
         applyHeaders(headers)
@@ -170,6 +183,15 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         // Deliberately does NOT call super: the whole of BaseMPVView.surfaceChanged is that
         // one property write, which is what we are re-issuing off the main thread.
         ctl { mpv.setPropertyString("android-surface-size", "${width}x$height") }
+        // A load parked on an invalid surface (setMedia's pending branch) must fire on the FIRST
+        // callback that proves the surface is usable — which can be surfaceChanged, not only
+        // surfaceCreated (a re-validated surface after a resize/mode switch re-fires changed
+        // without created). Without this, a zap that parked waits forever and the picture stays
+        // on the previous channel. surfaceCreated remains the normal consumption path; this is
+        // the safety net, and it no-ops when nothing is parked.
+        if (pendingInitialMediaUrl != null && holder.surface?.isValid == true) {
+            surfaceCreated(holder)
+        }
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {

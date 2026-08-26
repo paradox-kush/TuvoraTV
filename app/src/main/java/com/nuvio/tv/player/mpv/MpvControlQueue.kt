@@ -29,13 +29,37 @@ internal class MpvControlQueue(
      */
     fun submit(block: () -> Unit) {
         val instanceId = currentInstanceId()
-        if (!isInitialized() || !isCoreAlive() || instanceId <= 0L) return
+        if (!isInitialized() || !isCoreAlive() || instanceId <= 0L) {
+            // Loud drop: a silently discarded control write here has already cost a field bug
+            // (guide zaps that never loaded — the picture stayed on the previous channel with no
+            // trace). Every gate decision must be visible in logcat.
+            android.util.Log.w(
+                TAG,
+                "drop@submit init=${isInitialized()} coreAlive=${isCoreAlive()} instance=$instanceId"
+            )
+            return
+        }
         runCatching {
             exec.execute {
-                if (!isCoreAlive() || currentInstanceId() != instanceId) return@execute
-                runCatching(block)
+                if (!isCoreAlive() || currentInstanceId() != instanceId) {
+                    android.util.Log.w(
+                        TAG,
+                        "drop@execute coreAlive=${isCoreAlive()} " +
+                            "instance=${currentInstanceId()} (submitted=$instanceId)"
+                    )
+                    return@execute
+                }
+                runCatching(block).onFailure {
+                    android.util.Log.w(TAG, "control write threw: ${it.message}")
+                }
             }
+        }.onFailure {
+            android.util.Log.w(TAG, "executor rejected control write: ${it.message}")
         }
+    }
+
+    private companion object {
+        private const val TAG = "MpvControlQueue"
     }
 
     /**
