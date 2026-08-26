@@ -897,6 +897,15 @@ ctl {
         mpv.setOptionString("demuxer-max-bytes", "${demuxerBytes.maxBytes}")
         mpv.setOptionString("demuxer-max-back-bytes", "${demuxerBytes.maxBackBytes}")
         mpv.setOptionString("keep-open", "yes")
+        // NEVER let the core self-quit. Without idle=yes, a FAILED load (a dead IPTV channel —
+        // "unrecognized file format" on a garbage/blocked response) empties mpv's playlist and the
+        // core exits (event: shutdown) — while this view's initialized/nativeCoreAlive flags still
+        // say alive, so every later zap writes into a quitting core that silently ignores loadfile
+        // and the picture stays frozen on the last good channel until the screen exits
+        // (device-traced on the Onn, 2026-08-26: THE "zapping stops working" bug). idle=yes is the
+        // canonical embedded-mpv setting (mpv-android ships it); the core idles and accepts the
+        // next loadfile after any failure.
+        mpv.setOptionString("idle", "yes")
         mpv.setOptionString("softvol", "yes")
         mpv.setOptionString("volume-max", MPV_MAX_VOLUME_PERCENT.toInt().toString())
     }
