@@ -76,7 +76,13 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     // The mpv property shadow lives in the fork-owned engine package; the surface view reads these
     // lock-free instead of calling mpv_get_property on the main thread (ANR). See MpvPropertyShadow.
-    private val shadow = MpvPropertyShadow(onEndFileError = { onPlaybackEndedWithError?.invoke(it) })
+    private val shadow = MpvPropertyShadow(onEndFileError = { error ->
+        // A load that ended in ERROR never played: the watchdog's retry of the SAME URL must not
+        // be swallowed by the request-dedupe (field-traced: dedupe=true on the re-tune of a failed
+        // channel). Cleared on the mpv event thread; worst-case race is a benign extra reload.
+        lastMediaRequestKey = null
+        onPlaybackEndedWithError?.invoke(error)
+    })
 
 
     override fun ensureInitialized() {
@@ -101,6 +107,25 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             configDir = context.filesDir.path,
             cacheDir = context.cacheDir.path
         )
+        // THE core-death fix (root-caused from library + mpv source, 2026-08-26):
+        // BaseMPVView.initialize() OVERWRITES idle with "once" AFTER initOptions() runs
+        // (mpv-android-lib v0.1.12 BaseMPVView.kt:38-39, "need to idle at least once for
+        // playFile() logic to work" — inherited from upstream mpv-android, whose lifecycle is
+        // one-Activity-one-core-finish-on-shutdown). Under idle=once the core QUITS when the
+        // first playlist finishes — and a dead channel's failed open (after `loadfile replace`
+        // cleared the playlist) IS a finished playlist (mp_play_files: quits iff
+        // player_idle_mode < 2; keep-open only masks AT_END_OF_FILE, never failed opens). One
+        // dead zap could therefore kill the core while our alive-flags said otherwise, and every
+        // later loadfile was silently inert. idle is runtime-settable (not in client.h's
+        // before-init list), so the LAST write wins — re-assert AFTER the library's overwrite,
+        // and verify: a core that is not idle=yes is a zap-session time bomb.
+        mpv.setOptionString("idle", "yes")
+        val idleNow = runCatching { mpv.getPropertyString("idle") }.getOrNull()
+        if (idleNow != "yes") {
+            Log.e(TAG, "mpv idle mode is '$idleNow' after re-assert — core WILL die on a dead channel")
+        } else {
+            Log.i(TAG, "mpv idle=yes verified post-init")
+        }
         initialized = true
         nativeCoreAlive = true
         lifecycleInstanceId = NEXT_MPV_INSTANCE_ID.getAndIncrement()
@@ -880,7 +905,9 @@ ctl {
         )
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
-        mpv.setOptionString("input-default-bindings", "yes")
+        // Builtin key bindings include q/Q/POWER/STOP/CLOSE_WIN -> quit (etc/input.conf) — a
+        // forwarded remote key could kill the core. Tuvora supplies its own controls; mpv gets none.
+        mpv.setOptionString("input-default-bindings", "no")
         // Tuvora supplies its own controls; do not load mpv's built-in Lua console.
         mpv.setOptionString("load-console", "no")
         // No youtube-dl/yt-dlp exists on this device, and mpv's ytdl_hook is FATAL without one:
