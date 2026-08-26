@@ -78,6 +78,15 @@ interface MpvSurface {
     /** Device demuxer-cache budget; the controller sets it before [setMedia] so initOptions reads it. */
     var demuxerBudget: DemuxerBudgetBytes?
 
+    /**
+     * Live playback renders via DIRECT mediacodec (zero-copy AImageReader interop under the gpu VO)
+     * instead of mediacodec-copy, which budget TV SoCs cannot sustain for high-bitrate live
+     * (stutter + drift behind the live audio). Set before [setMedia]; the guide preview is always
+     * live so it sets this at construction, the fullscreen controller sets it per feed. An explicit
+     * software-decode (DISABLED) user setting is still honored.
+     */
+    var directLiveRenderPath: Boolean
+
     // ── Events out (fired on mpv's event thread — see invariants) ──────────────
     var onPlaybackEndedWithError: ((fileError: String?) -> Unit)?
 }

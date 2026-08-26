@@ -795,17 +795,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // start engine from per-channel memory (a learned-mpv channel opens directly on mpv, so the
         // freeze-then-switch is one-time; everything else browses on cheap ExoPlayer).
         previewEngineSwitchedThisDwell = false
-        // Start on mpv when this channel already learned mpv (LiveEngineMemory), OR when this device's
-        // hardware decoder is a fleet top-freezer (Fix 2, telemetry-derived 2026-08-25: MediaTek MT8696,
-        // Amlogic Onn 4K Streaming Box) — the live_preview_stall path is where those freezes dominate,
-        // so the gate applies to the preview too, not just the fullscreen player.
-        val startOnMpv = livePreviewMpvAvailable && (
-            com.nuvio.tv.core.analytics.LiveEngineMemory.preferredEngine(
-                channel.contentId,
-                com.nuvio.tv.core.analytics.LiveEngineMemory.Lane.LIVE,
-            ) == com.nuvio.tv.core.analytics.LiveRecoveryCoordinator.Engine.MPV ||
-                com.nuvio.tv.core.player.LiveHardwareDecoderProbe.preferLibmpvForLive()
-            )
+        // Live defaults to the ffmpeg/libmpv engine (LiveDefaultEnginePolicy, 1.5.8): the preview
+        // opens on mpv wherever the lane exists — the same default as the fullscreen player. This
+        // supersedes both the per-channel learned-mpv memory for this lane (mpv is now the floor)
+        // and the 1.5.6 per-SoC decoder gate. A wedged mpv preview still runs the bounded same-
+        // engine re-tune ladder (recoverPreview), which is engine-agnostic.
+        val startOnMpv =
+            com.nuvio.tv.core.analytics.LiveDefaultEnginePolicy.preferMpvForLive(livePreviewMpvAvailable)
         _uiState.update {
             it.copy(
                 previewChannel = channel,

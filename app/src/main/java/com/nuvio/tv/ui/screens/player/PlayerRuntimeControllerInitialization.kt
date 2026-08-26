@@ -244,27 +244,15 @@ internal fun PlayerRuntimeController.initializePlayer(
             ) {
                 effectiveInternalPlayerEngine = InternalPlayerEngine.MVP_PLAYER
             }
-            // Fix 2 (telemetry-derived, 2026-08-25): a small set of TV hardware decoders video-stall
-            // on live MPEG-TS far above the fleet baseline — MediaTek MT8696 (Google TV Streamer 0.56,
-            // Fire TV 4K Max 1.0) and the Amlogic Onn 4K Streaming Box (0.38). The freeze correlates
-            // with the SoC decoder, not the stream, so on those decoders live opens on libmpv even when
-            // the setting is ExoPlayer. Live-only, device-gated (LiveHardwareDecoderPolicy, narrow +
-            // tunable); a learned-mpv channel or an explicit engine override already won above.
-            if (overrideInternalPlayerEngine == null && isLiveFeed() &&
-                effectiveInternalPlayerEngine == InternalPlayerEngine.EXOPLAYER &&
-                livePlaybackMpvAvailable &&
-                com.nuvio.tv.core.player.LiveHardwareDecoderProbe.preferLibmpvForLive()
-            ) {
-                effectiveInternalPlayerEngine = InternalPlayerEngine.MVP_PLAYER
-            }
-            // Live no longer force-selects mpv. The old reason ("ExoPlayer buffers forever on raw
-            // MPEG-TS") is handled now that PlayerMediaSourceFactory sets FLAG_DETECT_ACCESS_UNITS |
-            // FLAG_ALLOW_NON_IDR_KEYFRAMES — the same fix that lets the inline Live Guide play live on
-            // ExoPlayer smoothly. Forcing mpv here dragged live through vo=gpu + a 64MB demuxer cache +
-            // AFR-await, which is what made Sports Centre / Library / Search live clicks feel sticky on
-            // budget TVs. Live now respects the engine setting (AUTO → ExoPlayer); if a specific stream
-            // truly can't sustain on ExoPlayer, startup engine-failover switches it to mpv.
-            // ponytail: if a codec class regresses on ExoPlayer, narrow the force back by codec, not by "live".
+            // 1.5.8: live now DEFAULTS to the ffmpeg/libmpv engine — resolved inside
+            // resolveAutoInternalPlayerEngine() via LiveDefaultEnginePolicy (see its KDoc for the
+            // telemetry rationale). This supersedes the 1.5.6 per-SoC decoder gate
+            // (LiveHardwareDecoderPolicy — kept unwired/parked): instead of gating the worst
+            // decoders onto mpv, live opens on mpv everywhere the lane exists. The user's explicit
+            // engine choice still wins (an explicit setting never reaches the AUTO resolver), and
+            // the historical objections to force-mpv (vo=gpu-next fd leak, flat 64+64 MiB cache,
+            // AFR-await stickiness on budget TVs) have since been fixed in NuvioMpvSurfaceView
+            // (vo=gpu, tiered demuxer budget, off-main mpv-ctl).
             runtimeInternalPlayerEngineOverride = overrideInternalPlayerEngine
             if (overrideInternalPlayerEngine == null && playerSettings.internalPlayerEngine == InternalPlayerEngine.AUTO) {
                 resolvedAutoPlayerEngine = effectiveInternalPlayerEngine
@@ -1879,6 +1867,17 @@ internal fun PlayerRuntimeController.initializePlayer(
 }
 
 internal fun PlayerRuntimeController.resolveAutoInternalPlayerEngine(): InternalPlayerEngine {
+    // Live TV defaults to the ffmpeg/libmpv engine (LiveDefaultEnginePolicy, 1.5.8): the fleet's
+    // live freezes concentrate on ExoPlayer's hardware TS path (Fire TV/MediaTek worst), while the
+    // same streams play clean on mpv — the engine iPhone and Android phones already default to for
+    // live. Applies before the HDR branch (mpv's vo=gpu tone-maps live HDR); an explicit engine
+    // choice in settings never reaches this resolver, and devices without the mpv lane fall through
+    // to the ExoPlayer default below.
+    if (isLiveFeed() &&
+        com.nuvio.tv.core.analytics.LiveDefaultEnginePolicy.preferMpvForLive(livePlaybackMpvAvailable)
+    ) {
+        return InternalPlayerEngine.MVP_PLAYER
+    }
     val streamMetadataText = buildString {
         currentFilename?.let { appendLine(it) }
         streamName?.let { appendLine(it) }

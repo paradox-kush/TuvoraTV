@@ -30,6 +30,10 @@ internal fun PlayerRuntimeController.attachMpvView(view: MpvSurface?) {
         performPendingMpvHardRestartIfNeeded(view)
         // Set the demuxer budget BEFORE setMedia — initOptions (inside ensureInitialized) reads it.
         view.demuxerBudget = playerMemoryBudget.demuxerBytes()
+        // Live prefers the direct-mediacodec render path (see MpvSurface.directLiveRenderPath);
+        // set before applyHardwareDecodeMode/setMedia so both the init option and the runtime
+        // hwdec property resolve through it.
+        view.directLiveRenderPath = isLiveFeed()
         view.applyHardwareDecodeMode(mpvHardwareDecodeModeSetting)
         view.setMedia(currentStreamUrl, currentHeaders)
         view.setPlaybackSpeed(_uiState.value.playbackSpeed)
@@ -125,6 +129,9 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
             showOverlay = true
         )
         performPendingMpvHardRestartIfNeeded(view)
+        // Live prefers the direct-mediacodec render path — set before applyHardwareDecodeMode
+        // so the hwdec value resolves through it (see MpvSurface.directLiveRenderPath).
+        view.directLiveRenderPath = isLiveFeed()
         view.applyHardwareDecodeMode(mpvHardwareDecodeModeSetting)
         val initialResumePosition = resolvePendingInitialResumePosition()
         playbackAnalyticsDiagnostics.setStartupStartPosition(initialResumePosition)

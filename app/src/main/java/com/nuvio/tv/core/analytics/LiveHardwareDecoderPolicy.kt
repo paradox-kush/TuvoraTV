@@ -1,9 +1,15 @@
 package com.nuvio.tv.core.analytics
 
 /**
- * Whether live playback should open on the software engine (libmpv) instead of ExoPlayer's
- * hardware decoder, for a device whose video decoder video-stalls on live MPEG-TS far above the
- * fleet baseline.
+ * ⚠️ SUPERSEDED — NOT WIRED (since 1.5.8). This per-SoC gate shipped wired in 1.5.6 ("Fix 2")
+ * and was replaced in 1.5.8 by [LiveDefaultEnginePolicy]: live now opens on the ffmpeg/libmpv
+ * engine EVERYWHERE the lane exists, not just on the worst decoders, so gating by SoC is moot.
+ * The pure decision + the fleet telemetry below are kept, test-pinned, as the record of which
+ * decoders drove that product decision (and in case a per-SoC exception is ever needed again).
+ *
+ * Original intent: whether live playback should open on the software engine (libmpv) instead of
+ * ExoPlayer's hardware decoder, for a device whose video decoder video-stalls on live MPEG-TS far
+ * above the fleet baseline.
  *
  * Derived from PostHog fleet telemetry (project 494529, 30 d, 2026-08-25). Live freeze rate =
  * `(live_preview_stall + live_playback_freeze) / playback_started`:

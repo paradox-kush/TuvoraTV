@@ -47,6 +47,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      */
     /** Set by the controller in attachMpvView before setMedia; read in initOptions. */
     @Volatile override var demuxerBudget: com.nuvio.tv.core.contracts.DemuxerBudgetBytes? = null
+    /** See [MpvSurface.directLiveRenderPath]: live prefers direct mediacodec (effectiveHwdecValue). */
+    @Volatile override var directLiveRenderPath: Boolean = false
 
     @Volatile override var onPlaybackEndedWithError: ((fileError: String?) -> Unit)? = null
 
@@ -404,12 +406,32 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         if (!initialized) return
 ctl {
             runCatching {
-                mpv.setPropertyString("hwdec", mode.toMpvHwdecValue())
+                mpv.setPropertyString("hwdec", effectiveHwdecValue(mode))
             }.onFailure {
                 Log.w(TAG, "Failed to apply mpv hardware decode mode ($mode): ${it.message}")
             }
         }
     }
+
+    /**
+     * The one place the hwdec string is decided (both the init option and the runtime property
+     * setter go through here — the runtime setter used to silently overwrite the init value).
+     *
+     * Live playback prefers DIRECT mediacodec: the decoder's Surface frames are imported into the
+     * gpu VO zero-copy via the AImageReader interop (mpv `hwdec_aimagereader`, API 26+), instead of
+     * `mediacodec-copy`'s decode → CPU copy → GL upload round-trip. On budget TV SoCs the copy path
+     * cannot sustain high-bitrate live (device-measured: 4K HEVC Main-10 via copy on the Onn 4K =
+     * stuttery video drifting behind the live audio), which is exactly the "sticky / out of sync"
+     * complaint the 1.5.8 mpv-live default surfaced. Copy stays as the in-list fallback for codecs
+     * or devices where the direct interop is unavailable, and an explicit DISABLED (software)
+     * choice is always honored.
+     */
+    private fun effectiveHwdecValue(mode: MpvHardwareDecodeMode): String =
+        if (directLiveRenderPath && mode != MpvHardwareDecodeMode.DISABLED) {
+            "mediacodec,mediacodec-copy"
+        } else {
+            mode.toMpvHwdecValue()
+        }
 
     override fun setSubtitleDelayMs(delayMs: Int) {
         if (!initialized) return
@@ -815,7 +837,7 @@ ctl {
         mpv.setOptionString("sub-font", "Roboto")
         mpv.setOptionString("sub-use-margins", "yes")
         mpv.setOptionString("sub-ass-force-margins", "yes")
-        mpv.setOptionString("hwdec", hardwareDecodeMode.toMpvHwdecValue())
+        mpv.setOptionString("hwdec", effectiveHwdecValue(hardwareDecodeMode))
         mpv.setOptionString("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
         mpv.setOptionString("ao", "audiotrack,opensles")
         mpv.setOptionString("audio-set-media-role", "yes")
@@ -835,6 +857,13 @@ ctl {
         mpv.setOptionString("input-default-bindings", "yes")
         // Tuvora supplies its own controls; do not load mpv's built-in Lua console.
         mpv.setOptionString("load-console", "no")
+        // No youtube-dl/yt-dlp exists on this device, and mpv's ytdl_hook is FATAL without one:
+        // for an EXTENSIONLESS live URL (common in M3U playlists — /live/play/<token>/<id>) the
+        // hook takes over the load, fails to spawn the missing binary, and ends the file instead
+        // of falling through to ffmpeg ("loading failed (reason 4)", device-reproduced on the Onn
+        // 1.5.8). .ts URLs bypassed the hook, which is why the mpv lane looked fine before the
+        // live default flipped to mpv. Every URL goes straight to the ffmpeg demuxer.
+        mpv.setOptionString("ytdl", "no")
         // Demuxer cache tiered by device memory. The flat 64+64MiB this replaces was the
         // largest native cache in the fleet, granted on the smallest devices; LOW now gets
         // 48+16MiB and everything else 64+32MiB — mobile's proven forward:back ratio, which
@@ -1060,6 +1089,8 @@ class GuideMpvHandle internal constructor(
 /** Rule-B seam: mount + drive the mpv engine from a feature that may not name the concrete view. */
 fun createGuideMpvSurface(context: android.content.Context): GuideMpvHandle {
     val v = NuvioMpvSurfaceView(context)
+    // The guide preview only ever plays live channels — always take the direct live render path.
+    v.directLiveRenderPath = true
     return GuideMpvHandle(view = v, surface = v)
 }
 
