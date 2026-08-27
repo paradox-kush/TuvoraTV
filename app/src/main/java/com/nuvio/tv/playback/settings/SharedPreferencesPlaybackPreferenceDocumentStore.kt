@@ -20,7 +20,8 @@ class SharedPreferencesPlaybackPreferenceDocumentStore(
     )
 
     override suspend fun read(profileId: String): PlaybackPreferenceDocument? =
-        preferences.getString(documentKey(profileId), null)?.let(PlaybackPreferenceDocumentSerializer::deserialize)
+        preferences.getString(documentKey(profileId), null)
+            ?.let(PlaybackPreferenceDocumentSerializer::deserializeOrNull)
 
     override suspend fun write(profileId: String, document: PlaybackPreferenceDocument) = withContext(Dispatchers.IO) {
         val persisted = preferences.edit()
@@ -81,6 +82,20 @@ object PlaybackPreferenceDocumentSerializer {
             legacyImportToken = token,
         )
     }
+
+    /**
+     * An invalid or unsupported envelope must not prevent the player host from being created.
+     * Returning absent lets the repository seed a current document from the still-owned legacy
+     * snapshot. Unknown values and future schema revisions inside the supported NTP1 envelope are
+     * handled by PlaybackPreferenceSchema and retain their raw values; strict [deserialize]
+     * remains available for tests and migration tooling.
+     */
+    fun deserializeOrNull(encoded: String): PlaybackPreferenceDocument? =
+        try {
+            deserialize(encoded)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
 
     internal fun encodeText(value: String): String {
         val bytes = value.toByteArray(StandardCharsets.UTF_8)

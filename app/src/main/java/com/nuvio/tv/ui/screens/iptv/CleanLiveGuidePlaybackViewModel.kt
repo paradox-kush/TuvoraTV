@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.iptv
 
 import android.app.Activity
 import android.content.Context
+import android.util.Log
 import android.widget.FrameLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
@@ -500,7 +501,8 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            logBoundaryFailure("host-create", error)
             mutableState.value =
                 CleanLiveGuidePlaybackState.Rejected(CleanLiveGuideFailure.HOST_CREATION_FAILED)
             return
@@ -790,10 +792,17 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
                 block()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                logBoundaryFailure("contained-${failure.name.lowercase()}", error)
                 mutableState.value = CleanLiveGuidePlaybackState.Rejected(failure)
             }
         }
+    }
+
+    /** Failure class and throw site only: useful on TV hardware without logging provider data. */
+    private fun logBoundaryFailure(boundary: String, error: Exception) {
+        val throwSite = error.stackTrace.firstOrNull()?.toString().orEmpty()
+        Log.e(LOG_TAG, "$boundary failed: ${error::class.java.name} at $throwSite")
     }
 
     private data class ChannelBasis(
@@ -826,6 +835,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     }
 
     private companion object {
+        const val LOG_TAG = "CleanLiveGuide"
         const val INITIAL_CLEAR_RELEASE_BACKOFF_MS = 100L
         const val MAX_CLEAR_RELEASE_BACKOFF_MS = 5_000L
     }

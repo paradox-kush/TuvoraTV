@@ -67,6 +67,37 @@ class Media3BackendPrimitivesTest {
     }
 
     @Test
+    fun `slow codec release can consume several await windows without a second initiation`() {
+        var initiateCalls = 0
+        var awaitCalls = 0
+        val gate = Media3ReleaseProofGate(
+            initiateRelease = { initiateCalls++; false },
+            awaitRelease = { ++awaitCalls >= 3 },
+        )
+
+        assertFalse(gate.initiate())
+        assertTrue(gate.awaitUpTo(maxAttempts = 4))
+        assertTrue(gate.awaitUpTo(maxAttempts = 4))
+        assertEquals(1, initiateCalls)
+        assertEquals(3, awaitCalls)
+    }
+
+    @Test
+    fun `unproven codec release remains fail closed after the bounded await budget`() {
+        var initiateCalls = 0
+        var awaitCalls = 0
+        val gate = Media3ReleaseProofGate(
+            initiateRelease = { initiateCalls++; false },
+            awaitRelease = { awaitCalls++; false },
+        )
+
+        assertFalse(gate.initiate())
+        assertFalse(gate.awaitUpTo(maxAttempts = 4))
+        assertEquals(1, initiateCalls)
+        assertEquals(4, awaitCalls)
+    }
+
+    @Test
     fun `raw live byte progress emits before transfer completion and is rate limited`() {
         var now = 1_000L
         var emissions = 0

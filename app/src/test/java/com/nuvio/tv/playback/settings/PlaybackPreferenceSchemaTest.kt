@@ -278,6 +278,16 @@ class PlaybackPreferenceSchemaTest {
         )
     }
 
+    @Test
+    fun `invalid preference envelope is recoverable as an absent clean document`() {
+        val document = PlaybackPreferenceSchema.newDocument()
+        val encoded = PlaybackPreferenceDocumentSerializer.serialize(document)
+
+        assertEquals(document, PlaybackPreferenceDocumentSerializer.deserializeOrNull(encoded))
+        assertNull(PlaybackPreferenceDocumentSerializer.deserializeOrNull("$encoded" + "unexpected\n"))
+        assertNull(PlaybackPreferenceDocumentSerializer.deserializeOrNull("unsupported"))
+    }
+
     private class InMemoryStore : PlaybackPreferenceDocumentStore {
         private val documents = mutableMapOf<String, PlaybackPreferenceDocument>()
         var writeCount: Int = 0

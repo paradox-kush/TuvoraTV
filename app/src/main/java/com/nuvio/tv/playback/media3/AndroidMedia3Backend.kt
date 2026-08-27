@@ -419,6 +419,19 @@ internal class Media3ReleaseProofGate(
         proven = awaitRelease()
         return proven
     }
+
+    /**
+     * Waits again on the same release condition without re-entering ExoPlayer.release(). Some TV
+     * codec implementations acknowledge teardown after more than one Media3 release-timeout
+     * window, especially after rejecting an oversized hardware-decoder profile.
+     */
+    fun awaitUpTo(maxAttempts: Int): Boolean {
+        require(maxAttempts > 0) { "Release await attempts must be positive" }
+        repeat(maxAttempts) {
+            if (await()) return true
+        }
+        return false
+    }
 }
 
 @UnstableApi
@@ -690,7 +703,11 @@ private class AndroidMedia3Backend(
             val success = if (initiatedProof || !awaitExistingRelease) {
                 initiatedProof
             } else {
-                runCatching { releaseGate.await() }.getOrDefault(false)
+                // hardAbort is the second half of the session's bounded release barrier. Await the
+                // already-issued release repeatedly; never initiate a second player teardown.
+                runCatching {
+                    releaseGate.awaitUpTo(HARD_ABORT_RELEASE_AWAIT_ATTEMPTS)
+                }.getOrDefault(false)
             }
             if (success) {
                 surface?.confirmPlayerReleased()
@@ -704,6 +721,9 @@ private class AndroidMedia3Backend(
     private companion object {
         const val NETWORK_RELEASE_TIMEOUT_MS = 250L
         const val NETWORK_HARD_ABORT_TIMEOUT_MS = 750L
+        // Four 1 s fork await windows plus network cancellation stay inside the session's 5 s
+        // release barrier while covering slow Amlogic/MediaCodec teardown observed on ONN.
+        const val HARD_ABORT_RELEASE_AWAIT_ATTEMPTS = 4
     }
 }
 
