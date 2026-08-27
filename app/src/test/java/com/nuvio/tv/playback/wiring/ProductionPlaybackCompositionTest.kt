@@ -1,6 +1,7 @@
 package com.nuvio.tv.playback.wiring
 
 import android.app.Application
+import com.nuvio.tv.playback.core.ActiveWorkReleaseReason
 import com.nuvio.tv.playback.core.AudioOutputPreference
 import com.nuvio.tv.playback.core.BufferingPreference
 import com.nuvio.tv.playback.core.DecoderPreference
@@ -9,6 +10,9 @@ import com.nuvio.tv.playback.core.FrameRatePreference
 import com.nuvio.tv.playback.core.HdrPreference
 import com.nuvio.tv.playback.core.PlaybackLifecyclePort
 import com.nuvio.tv.playback.core.PlaybackOutputController
+import com.nuvio.tv.playback.core.PlaybackOutputApplication
+import com.nuvio.tv.playback.core.PlaybackOutputRequest
+import com.nuvio.tv.playback.core.PlaybackOutputStatus
 import com.nuvio.tv.playback.core.PlaybackRequirements
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.PlaybackState
@@ -142,10 +146,14 @@ class ProductionPlaybackCompositionTest {
 
     private object NoopOutputController : PlaybackOutputController {
         override suspend fun apply(
-            generation: Long,
-            requirements: PlaybackRequirements,
-        ): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
+            request: PlaybackOutputRequest,
+        ): PlaybackResult<PlaybackOutputApplication> = PlaybackResult.Success(
+            PlaybackOutputApplication(PlaybackOutputStatus.NOT_REQUESTED),
+        )
 
-        override suspend fun reset(generation: Long): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
+        override suspend fun reset(
+            releasedGeneration: Long?,
+            reason: ActiveWorkReleaseReason,
+        ): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
     }
 }
