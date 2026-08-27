@@ -18,6 +18,18 @@ fun interface PlaybackRequestResolver {
     suspend fun resolve(request: PlaybackRequest): PlaybackResult<ResolvedPlaybackRequest>
 }
 
+/**
+ * Resolves a URL-free provider selection after the session's release barrier. Implementations may
+ * mint single-use links and must cooperate with coroutine cancellation. Raw exceptions, provider
+ * messages, URLs, and credentials must not cross this port; failures use normalized enum facts.
+ */
+fun interface ProviderPlaybackResolver {
+    suspend fun resolve(
+        selection: ProviderPlaybackSelection,
+        context: ProviderResolutionContext,
+    ): PlaybackResult<ResolvedPlaybackRequest>
+}
+
 data class PlaybackEnvironmentSnapshot(
     val runtimeCapabilities: RuntimeCapabilities,
     val resourceBudget: ResourceBudget = ResourceBudget(),

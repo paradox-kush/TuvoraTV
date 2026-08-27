@@ -75,6 +75,301 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `deferred provider resolution starts only after the previous engine release proof`() = runTest {
+        val engine = FakeEngine()
+        var resolvedWhileConnected = false
+        val selection = providerSelection("deferred")
+        val session = session(
+            engine = engine,
+            providerPlaybackResolver = ProviderPlaybackResolver { selection, _ ->
+                resolvedWhileConnected = engine.activeConnections > 0
+                PlaybackResult.Success(providerResolved(selection))
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        assertEquals(1, engine.activeConnections)
+
+        session.dispatch(PlaybackCommand.Zap(selection, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertFalse(resolvedWhileConnected)
+        assertEquals(1, engine.releaseCalls)
+        assertEquals(2, engine.startCalls)
+        assertEquals(selection.contentKey.value, engine.lastStartInput?.request?.contentKey?.value)
+        assertEquals(ContainerType.MPEG_TS, engine.lastStartInput?.evidence?.container?.value)
+        close(session)
+    }
+
+    @Test
+    fun `failed release barrier never invokes the deferred provider resolver`() = runTest {
+        val engine = FakeEngine().apply {
+            releaseFailuresRemaining = 1
+            hardAbortFailuresRemaining = 1
+        }
+        var providerResolveCalls = 0
+        val session = session(
+            engine = engine,
+            providerPlaybackResolver = ProviderPlaybackResolver { selection, _ ->
+                providerResolveCalls++
+                PlaybackResult.Success(providerResolved(selection))
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        session.dispatch(
+            PlaybackCommand.Zap(providerSelection("blocked"), SessionProfile.FULLSCREEN),
+        )
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.RESOURCE_RELEASE_FAILED, session.snapshot.value.failure?.code)
+        assertEquals(0, providerResolveCalls)
+        close(session)
+    }
+
+    @Test
+    fun `superseded deferred resolution is cancelled and cannot start a stale generation`() = runTest {
+        val engine = FakeEngine()
+        val first = providerSelection("first")
+        val second = providerSelection("second")
+        val firstStarted = CompletableDeferred<Unit>()
+        val firstCancelled = CompletableDeferred<Unit>()
+        val resolvedIds = mutableListOf<String>()
+        val session = session(
+            engine = engine,
+            providerPlaybackResolver = ProviderPlaybackResolver { selection, _ ->
+                if (selection.itemId == first.itemId) {
+                    firstStarted.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        firstCancelled.complete(Unit)
+                    }
+                }
+                resolvedIds += selection.itemId.value
+                PlaybackResult.Success(providerResolved(selection))
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(first, SessionProfile.FULLSCREEN))
+        runCurrent()
+        firstStarted.await()
+
+        session.dispatch(PlaybackCommand.Zap(second, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertTrue(firstCancelled.isCompleted)
+        assertEquals(listOf(second.itemId.value), resolvedIds)
+        assertEquals(1, engine.startCalls)
+        assertEquals(2L, engine.lastStartInput?.generation)
+        assertEquals(second.contentKey.value, engine.lastStartInput?.request?.contentKey?.value)
+        close(session)
+    }
+
+    @Test
+    fun `deferred resolver failures remain typed secret-safe request-resolution facts`() = runTest {
+        val selection = providerSelection("private-provider-token")
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = session(
+            engine = FakeEngine(),
+            providerPlaybackResolver = ProviderPlaybackResolver { _, _ ->
+                PlaybackResult.Failure(
+                    PlaybackFailure(
+                        code = FailureCode.PROVIDER_CONNECTION_LIMIT,
+                        domain = FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
+                        phase = FailurePhase.PLAYBACK,
+                        retryability = Retryability.FATAL,
+                        deterministic = true,
+                    ),
+                )
+            },
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.Tune(selection, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        val failure = session.snapshot.value.failure
+        assertEquals(FailureCode.PROVIDER_CONNECTION_LIMIT, failure?.code)
+        assertEquals(FailureDomain.AUTHORIZATION_PROVIDER_LIMIT, failure?.domain)
+        assertEquals(FailurePhase.REQUEST_RESOLUTION, failure?.phase)
+        assertFalse(diagnostics.joinToString().contains(selection.contentKey.value))
+        close(session)
+    }
+
+    @Test
+    fun `concrete resolver cannot change request identity or ownership metadata`() = runTest {
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = PlaybackRequestResolver { original ->
+                val invalid = PlaybackRequest(
+                    url = original.url,
+                    contentType = ContentType.VOD,
+                    providerConnectionLimit = 2,
+                )
+                PlaybackResult.Success(
+                    ResolvedPlaybackRequest(
+                        invalid,
+                        original.summary(),
+                        StreamEvidence(),
+                    ),
+                )
+            },
+        )
+
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailurePhase.REQUEST_RESOLUTION, session.snapshot.value.failure?.phase)
+        assertEquals(0, engine.startCalls)
+        close(session)
+    }
+
+    @Test
+    fun `resolved summary is recomputed from the accepted concrete request`() = runTest {
+        val request = PlaybackRequest(
+            url = "https://example.invalid/live",
+            headers = mapOf("Authorization" to "secret"),
+            contentType = ContentType.LIVE,
+        )
+        val session = session(
+            engine = FakeEngine(),
+            requestResolver = PlaybackRequestResolver {
+                PlaybackResult.Success(
+                    ResolvedPlaybackRequest(
+                        request,
+                        request.summary().copy(hasAuthorization = false),
+                        StreamEvidence(),
+                    ),
+                )
+            },
+        )
+
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertTrue(session.snapshot.value.requestSummary?.hasAuthorization == true)
+        close(session)
+    }
+
+    @Test
+    fun `deferred handoff remints after release and decoder failure cannot advance catch-up dialect`() = runTest {
+        val media3 = FakeEngine(type = EngineType.MEDIA3)
+        val mpv = FakeEngine(type = EngineType.LIBMPV)
+        val contexts = mutableListOf<ProviderResolutionContext>()
+        var mint = 0
+        val selection = providerSelection("handoff")
+        val session = session(
+            engine = media3,
+            otherEngine = mpv,
+            providerPlaybackResolver = ProviderPlaybackResolver { selected, context ->
+                contexts += context
+                mint++
+                val request = PlaybackRequest(
+                    url = "https://resolved.invalid/live/$mint",
+                    contentType = selected.contentType,
+                    contentKey = SecretValue(selected.contentKey.value),
+                    providerConnectionLimit = selected.providerConnectionLimit,
+                )
+                PlaybackResult.Success(
+                    ResolvedPlaybackRequest(request, request.summary(), StreamEvidence()),
+                )
+            },
+            requirementsResolver = PlaybackRequirementsResolver {
+                PlaybackResult.Success(requirements(setOf(EngineType.MEDIA3, EngineType.LIBMPV)))
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(selection, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        media3.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        media3.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.VIDEO_DECODER_FAILED,
+                    FailureDomain.VIDEO_DECODER,
+                    FailurePhase.PLAYBACK,
+                    Retryability.HANDOFF_ELIGIBLE,
+                    deterministic = true,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(2, contexts.size)
+        assertEquals(ProviderResolutionTrigger.HANDOFF, contexts.last().trigger)
+        assertEquals(
+            ProviderDialectAdvanceEligibility.INELIGIBLE_PLAYBACK_FAILURE,
+            contexts.last().previousFailure?.dialectAdvanceEligibility,
+        )
+        assertEquals("https://resolved.invalid/live/2", mpv.lastStartInput?.request?.url)
+        assertEquals(0, media3.activeConnections)
+        close(session)
+    }
+
+    @Test
+    fun `fresh live resolution commits current request facts and transport feedback`() = runTest {
+        val contexts = mutableListOf<ProviderResolutionContext>()
+        var mint = 0
+        val engine = FakeEngine { start, input, events ->
+            if (start == 2) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+        }
+        val selection = providerSelection("fresh-live")
+        val session = session(
+            engine = engine,
+            providerPlaybackResolver = ProviderPlaybackResolver { selected, context ->
+                contexts += context
+                mint++
+                val request = PlaybackRequest(
+                    url = "https://resolved.invalid/live/$mint",
+                    cookies = if (mint == 2) mapOf("session" to "secret") else emptyMap(),
+                    contentType = selected.contentType,
+                    contentKey = SecretValue(selected.contentKey.value),
+                    providerConnectionLimit = selected.providerConnectionLimit,
+                )
+                PlaybackResult.Success(
+                    ResolvedPlaybackRequest(request, request.summary(), StreamEvidence()),
+                )
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(selection, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        engine.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.NETWORK_TIMEOUT,
+                    FailureDomain.NETWORK,
+                    FailurePhase.PLAYBACK,
+                    Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(2, contexts.size)
+        assertEquals(
+            ProviderDialectAdvanceEligibility.TRANSPORT_OR_DEMUX_FAILURE,
+            contexts.last().previousFailure?.dialectAdvanceEligibility,
+        )
+        assertTrue(session.snapshot.value.requestSummary?.hasCookies == true)
+        assertEquals("https://resolved.invalid/live/2", engine.lastStartInput?.request?.url)
+        close(session)
+    }
+
+    @Test
     fun `session owns profile impact and applies same graph quality promotion in place`() = runTest {
         val engine = FakeEngine()
         val capturedProfiles = mutableListOf<SessionProfile>()
@@ -973,6 +1268,7 @@ class PlaybackSessionTest {
             PlaybackResult.Success(requirements())
         },
         lifecycle: PlaybackLifecyclePort? = null,
+        providerPlaybackResolver: ProviderPlaybackResolver? = null,
         releaseTimeoutMs: Long = 5_000L,
         policy: PlaybackPolicy = PlaybackPolicy(
             PlaybackPolicy.WatchdogConfiguration(enabled = false),
@@ -999,6 +1295,7 @@ class PlaybackSessionTest {
         clock = TestClock,
         diagnostics = diagnostics,
         lifecycle = lifecycle,
+        providerPlaybackResolver = providerPlaybackResolver,
         policy = policy,
         releaseTimeoutMs = releaseTimeoutMs,
     )
@@ -1136,6 +1433,27 @@ class PlaybackSessionTest {
     }
 
     private fun PlaybackRequest.resolved() = ResolvedPlaybackRequest(this, summary(), StreamEvidence())
+
+    private fun providerSelection(suffix: String) = ProviderPlaybackSelection(
+        sourceType = ProviderSourceType.STALKER,
+        accountId = ProviderSelectionId("account-$suffix"),
+        itemId = ProviderSelectionId("item-$suffix"),
+        contentKey = ProviderSelectionId("content-$suffix"),
+        contentType = ContentType.LIVE,
+        declaredEvidence = StreamEvidence(
+            container = EvidenceFact(ContainerType.MPEG_TS, EvidenceProvenance.PROVIDER_DECLARED),
+        ),
+    )
+
+    private fun providerResolved(selection: ProviderPlaybackSelection): ResolvedPlaybackRequest {
+        val request = PlaybackRequest(
+            url = "https://resolved.invalid/live",
+            contentType = selection.contentType,
+            contentKey = SecretValue(selection.contentKey.value),
+            providerConnectionLimit = selection.providerConnectionLimit,
+        )
+        return ResolvedPlaybackRequest(request, request.summary(), StreamEvidence())
+    }
 
     private companion object {
         val liveRequest = PlaybackRequest("https://example.invalid/live", contentType = ContentType.LIVE)

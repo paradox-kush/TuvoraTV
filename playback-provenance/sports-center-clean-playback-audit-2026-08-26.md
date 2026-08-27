@@ -132,10 +132,9 @@ Additional observations:
   route diagnostics. The clean path must pass opaque state, never a provider URL route argument.
 - Redirect, cross-host authorization, TLS, DNS, timeout, MIME, and declared container/delivery facts
   are not carried by the current Sports callback.
-- The legacy DoH helper may itself perform a redirect GET before playback. Any replacement must use
-  the clean request's DNS policy without opening a second media body; libmpv currently cannot admit
-  the shared application resolver graph, so such requests may be Media3-only until that capability
-  gap is resolved.
+- The legacy DoH helper may itself perform a redirect GET before playback. Any replacement must keep
+  the clean request's logical DNS policy without opening a second media body. V1 Media3 can apply the
+  application resolver; libmpv truthfully records its approved system-DNS fallback.
 
 ## Required clean integration
 
@@ -190,29 +189,29 @@ Sports UI selection (opaque account/source/content id + display metadata + retur
   limit of one. Do not call `accountInfo` on every tune merely to obtain the maximum; that would add
   latency/egress and still would not cover M3U/Stalker.
 
-## Cutover blocker: unresolved input cannot yet be represented honestly
+## Deferred provider-selection seam (implemented in clean core)
 
-`NavigationPlaybackInput` currently requires a concrete URL, and `PlaybackCommand.Tune/Zap` accepts a
-concrete `PlaybackRequest`. The session resolves that request after its barrier through
-`PlaybackRequestResolver`, but the Sports Stalker selection has no safe concrete URL until
-`create_link` runs. Minting it before dispatch violates release-before-resolve; using a portal URL or
-synthetic placeholder would make request summary/evidence wrong and risks accidental playback.
+`NavigationPlaybackInput` still represents the concrete result of provider resolution, but
+`PlaybackCommand.Tune/Zap` now also accepts `ProviderPlaybackSelection`: a URL-free source/account/
+item/content identity with typed content/catch-up/provider-limit/evidence metadata. All identifiers
+use redacted value types.
 
-Also, `PlaybackRequestMapper.map` returns both request and evidence, while `PlaybackCommand.Tune/Zap`
-currently carries only the request. Provider-declared evidence from `NavigationPlaybackInput` has no
-direct path into the session unless the production request resolver can rehydrate it from an opaque
-selection key.
+`ProviderPlaybackResolver` runs inside `PlaybackSession` only when the reducer's release barrier has
+advanced to request resolution. It returns the concrete request and evidence together. The session
+validates content identity/type/connection-limit consistency, merges declared evidence by
+provenance, cancels superseded resolution, rejects stale generations, and uses the same provider
+resolver again for fresh recovery, live reconnect, and deferred engine handoff. Every fresh result
+is committed to the generation's current request/evidence/requirements before reuse, preventing a
+later graph rebuild from reopening a consumed single-use URL. Concrete migration requests receive
+the same identity/ownership validation and their summary is recomputed from the accepted request.
 
-Before production cutover, approve one explicit seam:
+`ProviderResolutionContext` supplies only typed, secret-safe prior-failure feedback. Catch-up
+dialect choice stays resolver-owned: transport/TLS/manifest/demux failures may advance its TS/HLS
+sequence, while decoder/renderer/audio/DRM failures are explicitly ineligible to advance it.
 
-- preferred: a session command/input that carries an unresolved opaque provider selection and lets
-  the session invoke a provider resolver after the release barrier, producing the
-  `NavigationPlaybackInput`/mapped request and evidence atomically; or
-- an equivalently safe resolver registration contract that preserves declared evidence and cannot
-  expose a placeholder URL to an engine.
-
-This is a core/application-boundary decision. It must not be improvised inside Sports, Media3, or
-libmpv.
+The existing concrete-request command remains as a temporary migration seam. Production cutover
+still needs the Android IPTV implementation of `ProviderPlaybackResolver` and the Sports/UI mapping;
+neither belongs in an engine adapter.
 
 ## Concrete production cutover and deletion targets
 
@@ -306,17 +305,17 @@ models is cross-platform behavior and must be ported/tested under the repository
 
 ## Open decisions before implementation
 
-1. Approve the deferred unresolved-provider-selection seam described above. This is the primary P0
-   blocker to a release-before-resolve Sports **live** cutover; catch-up also needs decision 5.
-2. Choose the application-level launch-origin contract and state restoration behavior.
-3. Decide where a cached provider connection maximum lives. Default unknown IPTV sources to one;
+1. Choose the application-level launch-origin contract and state restoration behavior.
+2. Decide where a cached provider connection maximum lives. Default unknown IPTV sources to one;
    do not fetch account info per tune.
-4. Define M3U media-request property support. Today only playlist-fetch UA exists; per-entry headers,
+3. Define M3U media-request property support. Today only playlist-fetch UA exists; per-entry headers,
    cookies, referrer, and Kodi/VLC-style properties are not modeled.
-5. Decide whether clean catch-up bounds/dialect state become request metadata or a provider resolver
-   side contract. They must not be smuggled through `ContentType.LIVE`.
-6. Keep playlist DoH requests Media3-only when required, or add an enforceable libmpv resolver path;
-   do not silently downgrade the declared DNS policy.
+4. Choose and test the Android resolver's provider-specific TS/HLS dialect ordering. Core now
+   provides typed advance eligibility; dialect state remains outside core and must not be smuggled
+   through `ContentType.LIVE`.
+5. V1 explicitly uses system DNS for libmpv when a playlist is configured for application DoH. The
+   logical request retains `SHARED_APPLICATION_RESOLVER`; the libmpv adapter records its explicit
+   system-fallback mode rather than claiming DoH was applied or inventing a proxy.
 
 Once these are approved, Sports can be cut over without creating a second player architecture: it
 becomes another source of clean fullscreen session commands.

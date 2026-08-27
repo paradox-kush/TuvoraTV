@@ -4,11 +4,13 @@ package com.nuvio.tv.playback.core
  * Pure state for [PlaybackStateMachine]. The session actor owns an instance and executes the
  * returned [PlaybackAction] values on its single serialized command lane.
  *
- * [request] is intentionally the secret-safe [PlaybackRequest] class rather than a data class;
- * diagnostic string conversion therefore remains redacted.
+ * [launch] retains the original concrete/deferred input for retry and fresh reconnect. [request]
+ * is null until a deferred selection resolves and is always the secret-safe [PlaybackRequest]
+ * class, so diagnostic string conversion remains redacted.
  */
 data class PlaybackMachineState(
     val snapshot: PlaybackSnapshot = PlaybackSnapshot(),
+    val launch: PlaybackLaunch? = null,
     val request: PlaybackRequest? = null,
     val evidence: StreamEvidence? = null,
     val sessionActive: Boolean = true,
@@ -71,7 +73,21 @@ sealed interface PlaybackAction {
 
     data class ResolveRequest(
         override val generation: Long,
-        val request: PlaybackRequest,
+        val launch: PlaybackLaunch,
+    ) : PlaybackAction {
+        constructor(generation: Long, request: PlaybackRequest) :
+            this(generation, PlaybackLaunch.ConcreteRequest(request))
+
+        /** Temporary compatibility accessor for concrete-request reducer tests. */
+        val request: PlaybackRequest?
+            get() = (launch as? PlaybackLaunch.ConcreteRequest)?.request
+    }
+
+    data class ResolveHandoffRequest(
+        override val generation: Long,
+        val launch: PlaybackLaunch,
+        val failedGraph: PlaybackGraph,
+        val failure: PlaybackFailure,
     ) : PlaybackAction
 
     data class SelectPrimaryGraph(
@@ -281,8 +297,8 @@ object PlaybackStateMachine {
         state: PlaybackMachineState,
         command: PlaybackCommand,
     ): PlaybackTransition = when (command) {
-        is PlaybackCommand.Tune -> startRequest(state, command.request, command.profile)
-        is PlaybackCommand.Zap -> startRequest(state, command.request, command.profile)
+        is PlaybackCommand.Tune -> startRequest(state, command.launch, command.profile)
+        is PlaybackCommand.Zap -> startRequest(state, command.launch, command.profile)
         PlaybackCommand.Pause -> pause(state)
         PlaybackCommand.Resume -> resume(state)
         PlaybackCommand.Retry -> retry(state)
@@ -297,7 +313,7 @@ object PlaybackStateMachine {
 
     private fun startRequest(
         state: PlaybackMachineState,
-        request: PlaybackRequest,
+        launch: PlaybackLaunch,
         profile: SessionProfile,
     ): PlaybackTransition {
         val generation = nextGeneration(state.snapshot.generation)
@@ -308,7 +324,8 @@ object PlaybackStateMachine {
                 profile = profile,
                 statusCode = PlaybackStatusCode.RESOLVING,
             ),
-            request = request,
+            launch = launch,
+            request = (launch as? PlaybackLaunch.ConcreteRequest)?.request,
             evidence = null,
             sessionActive = true,
             paused = false,
@@ -363,7 +380,7 @@ object PlaybackStateMachine {
                 ActiveWorkReleaseReason.REPLACE_REQUEST,
             )
         } else {
-            transition(base, PlaybackAction.ResolveRequest(generation, request))
+            transition(base, PlaybackAction.ResolveRequest(generation, launch))
         }
     }
 
@@ -456,7 +473,7 @@ object PlaybackStateMachine {
         return when (resume) {
             LifecycleResume.NONE -> transition(resumed)
             LifecycleResume.RESOLVE_REQUEST -> {
-                val request = resumed.request ?: return failedAfterBarrier(resumed)
+                val launch = resumed.launch ?: return failedAfterBarrier(resumed)
                 transition(
                     resumed.copy(
                         snapshot = resumed.snapshot.copy(
@@ -464,7 +481,7 @@ object PlaybackStateMachine {
                             statusCode = PlaybackStatusCode.RESOLVING,
                         ),
                     ),
-                    PlaybackAction.ResolveRequest(resumed.snapshot.generation, request),
+                    PlaybackAction.ResolveRequest(resumed.snapshot.generation, launch),
                 )
             }
             LifecycleResume.SELECT_PRIMARY_GRAPH -> selectAgain(resumed)
@@ -518,11 +535,11 @@ object PlaybackStateMachine {
     }
 
     private fun retry(state: PlaybackMachineState): PlaybackTransition {
-        val request = state.request ?: return unchanged(state)
+        val launch = state.launch ?: return unchanged(state)
         if (state.snapshot.state != PlaybackState.FAILED && state.snapshot.state != PlaybackState.STOPPED) {
             return unchanged(state)
         }
-        return startRequest(state, request, state.snapshot.profile)
+        return startRequest(state, launch, state.snapshot.profile)
     }
 
     private fun requestPreferencesChange(
@@ -696,6 +713,8 @@ object PlaybackStateMachine {
         if (event.generation != state.snapshot.generation) return unchanged(state)
         return when (event) {
             is PlaybackEvent.RequestResolved -> requestResolved(state, event)
+            is PlaybackEvent.RequestRefreshed -> requestRefreshed(state, event)
+            is PlaybackEvent.HandoffRequestResolved -> handoffRequestResolved(state, event)
             is PlaybackEvent.GraphSelected -> graphSelected(state, event)
             is PlaybackEvent.SurfaceAttached -> surfaceAttached(state)
             is PlaybackEvent.EngineStarting -> engineStarting(state)
@@ -744,7 +763,9 @@ object PlaybackStateMachine {
         event: PlaybackEvent.RequestResolved,
     ): PlaybackTransition {
         if (state.snapshot.state != PlaybackState.RESOLVING) return unchanged(state)
+        val request = event.request ?: state.request ?: return terminalFailure(state)
         val updated = state.copy(
+            request = request,
             evidence = event.evidence,
             snapshot = state.snapshot.copy(
                 state = PlaybackState.SELECTING_GRAPH,
@@ -758,6 +779,44 @@ object PlaybackStateMachine {
                 summary = event.summary,
                 evidence = event.evidence,
                 profile = updated.snapshot.profile,
+            ),
+        )
+    }
+
+    private fun requestRefreshed(
+        state: PlaybackMachineState,
+        event: PlaybackEvent.RequestRefreshed,
+    ): PlaybackTransition {
+        if (state.snapshot.state !in setOf(
+                PlaybackState.RECOVERING_IN_PLACE,
+                PlaybackState.LIVE_RECONNECTING,
+            )
+        ) return unchanged(state)
+        return transition(
+            state.copy(
+                request = event.request,
+                evidence = event.evidence,
+                snapshot = state.snapshot.copy(requestSummary = event.summary),
+            ),
+        )
+    }
+
+    private fun handoffRequestResolved(
+        state: PlaybackMachineState,
+        event: PlaybackEvent.HandoffRequestResolved,
+    ): PlaybackTransition {
+        if (state.snapshot.state != PlaybackState.SELECTING_GRAPH) return unchanged(state)
+        val updated = state.copy(
+            request = event.request,
+            evidence = event.evidence,
+            snapshot = state.snapshot.copy(requestSummary = event.summary),
+        )
+        return transition(
+            updated,
+            PlaybackAction.SelectHandoffGraph(
+                event.generation,
+                event.failedGraph,
+                event.failure,
             ),
         )
     }
@@ -942,7 +1001,7 @@ object PlaybackStateMachine {
         reason: PlaybackEndReason,
     ): PlaybackTransition {
         if (!state.snapshot.state.isPlaybackActive()) return unchanged(state)
-        val live = state.request?.contentType == ContentType.LIVE
+        val live = (state.request?.contentType ?: state.launch?.contentType) == ContentType.LIVE
         if (reason == PlaybackEndReason.EOF && live) {
             val (withIncident, incident) = state.ensureIncident()
             if (!state.sessionActive || state.paused) {
@@ -1084,7 +1143,7 @@ object PlaybackStateMachine {
         freshRequestRequired: Boolean,
     ): PlaybackTransition {
         if (freshRequestRequired || state.snapshot.state == PlaybackState.RESOLVING) {
-            val request = state.request ?: return terminalFailure(state)
+            val launch = state.launch ?: return terminalFailure(state)
             return transition(
                 state.copy(
                     snapshot = state.snapshot.copy(
@@ -1093,7 +1152,7 @@ object PlaybackStateMachine {
                         failure = null,
                     ),
                 ),
-                PlaybackAction.ResolveRequest(state.snapshot.generation, request),
+                PlaybackAction.ResolveRequest(state.snapshot.generation, launch),
             )
         }
         if (state.snapshot.state == PlaybackState.SELECTING_GRAPH) {
@@ -1172,7 +1231,7 @@ object PlaybackStateMachine {
                 ),
             )
             AfterRelease.START_NEW_REQUEST -> {
-                val request = cleared.request ?: return terminalFailure(cleared)
+                val launch = cleared.launch ?: return terminalFailure(cleared)
                 transition(
                     cleared.copy(
                         snapshot = cleared.snapshot.copy(
@@ -1181,7 +1240,7 @@ object PlaybackStateMachine {
                         ),
                         afterRelease = AfterRelease.NONE,
                     ),
-                    PlaybackAction.ResolveRequest(cleared.snapshot.generation, request),
+                    PlaybackAction.ResolveRequest(cleared.snapshot.generation, launch),
                 )
             }
             AfterRelease.REBUILD_CURRENT_GRAPH -> {
@@ -1207,13 +1266,31 @@ object PlaybackStateMachine {
             AfterRelease.HANDOFF -> {
                 val graph = releasedGraph ?: return terminalFailure(cleared)
                 val failure = state.snapshot.failure ?: return terminalFailure(cleared)
-                transition(
-                    cleared.copy(
-                        snapshot = cleared.snapshot.copy(state = PlaybackState.SELECTING_GRAPH),
-                        afterRelease = AfterRelease.NONE,
-                    ),
-                    PlaybackAction.SelectHandoffGraph(cleared.snapshot.generation, graph, failure),
+                val selecting = cleared.copy(
+                    snapshot = cleared.snapshot.copy(state = PlaybackState.SELECTING_GRAPH),
+                    afterRelease = AfterRelease.NONE,
                 )
+                val launch = selecting.launch ?: return terminalFailure(selecting)
+                if (launch is PlaybackLaunch.DeferredProvider) {
+                    transition(
+                        selecting,
+                        PlaybackAction.ResolveHandoffRequest(
+                            selecting.snapshot.generation,
+                            launch,
+                            graph,
+                            failure,
+                        ),
+                    )
+                } else {
+                    transition(
+                        selecting,
+                        PlaybackAction.SelectHandoffGraph(
+                            selecting.snapshot.generation,
+                            graph,
+                            failure,
+                        ),
+                    )
+                }
             }
             AfterRelease.FAIL -> failedAfterBarrier(cleared)
             AfterRelease.SUSPEND -> {

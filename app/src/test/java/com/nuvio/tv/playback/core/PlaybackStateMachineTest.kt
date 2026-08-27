@@ -169,6 +169,47 @@ class PlaybackStateMachineTest {
     }
 
     @Test
+    fun `deferred provider zap stays opaque behind the release barrier`() {
+        val selection = providerSelection("next")
+        val zap = PlaybackStateMachine.reduce(
+            playingState(ContentType.LIVE),
+            PlaybackCommand.Zap(selection, SessionProfile.FULLSCREEN),
+        )
+        val barrier = assertAction<PlaybackAction.ReleaseActiveWork>(zap)
+
+        assertEquals(PlaybackState.RELEASING, zap.state.snapshot.state)
+        assertEquals(selection, (zap.state.launch as PlaybackLaunch.DeferredProvider).selection)
+        assertEquals(null, zap.state.request)
+        assertTrue(zap.actions.none { it is PlaybackAction.ResolveRequest })
+
+        val completed = PlaybackStateMachine.reduce(
+            zap.state,
+            PlaybackReducerInput.BarrierCompleted(barrier.releaseEpoch),
+        )
+        val resolve = assertAction<PlaybackAction.ResolveRequest>(completed)
+        assertEquals(selection, (resolve.launch as PlaybackLaunch.DeferredProvider).selection)
+        assertEquals(null, resolve.request)
+
+        val concrete = PlaybackRequest(
+            url = "https://example.invalid/resolved",
+            contentType = ContentType.LIVE,
+            contentKey = SecretValue(selection.contentKey.value),
+            providerConnectionLimit = 1,
+        )
+        val resolved = PlaybackStateMachine.reduce(
+            completed.state,
+            PlaybackEvent.RequestResolved(
+                generation = completed.state.snapshot.generation,
+                summary = concrete.summary(),
+                evidence = StreamEvidence(),
+                request = concrete,
+            ),
+        )
+        assertSame(concrete, resolved.state.request)
+        assertEquals(PlaybackState.SELECTING_GRAPH, resolved.state.snapshot.state)
+    }
+
+    @Test
     fun `failed release barrier never advances its queued continuation`() {
         val zap = PlaybackStateMachine.reduce(
             playingState(ContentType.LIVE),
@@ -868,6 +909,14 @@ class PlaybackStateMachineTest {
         domain = FailureDomain.VIDEO_RENDERER_SURFACE,
         phase = FailurePhase.PLAYBACK,
         retryability = retryability,
+    )
+
+    private fun providerSelection(suffix: String) = ProviderPlaybackSelection(
+        sourceType = ProviderSourceType.STALKER,
+        accountId = ProviderSelectionId("account-$suffix"),
+        itemId = ProviderSelectionId("item-$suffix"),
+        contentKey = ProviderSelectionId("content-$suffix"),
+        contentType = ContentType.LIVE,
     )
 
     private inline fun <reified T : PlaybackAction> assertAction(transition: PlaybackTransition): T {

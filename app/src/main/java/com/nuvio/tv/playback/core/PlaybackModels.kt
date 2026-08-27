@@ -62,6 +62,108 @@ class SecretValue(val value: String) {
     override fun toString(): String = "[REDACTED]"
 }
 
+/** Stable provider identity that is usable by a resolver but never printable. */
+class ProviderSelectionId(val value: String) {
+    init {
+        require(value.isNotBlank()) { "Provider selection id must not be blank" }
+    }
+
+    override fun equals(other: Any?): Boolean = other is ProviderSelectionId && value == other.value
+    override fun hashCode(): Int = value.hashCode()
+    override fun toString(): String = "[REDACTED]"
+}
+
+enum class ProviderSourceType { XTREAM, M3U, STALKER }
+
+/** Programme bounds needed to resolve a finite provider catch-up stream after the release barrier. */
+class ProviderCatchUpWindow(
+    val startEpochMs: Long,
+    val endEpochMs: Long,
+) {
+    init {
+        require(startEpochMs >= 0) { "Catch-up start must not be negative" }
+        require(endEpochMs > startEpochMs) { "Catch-up end must be after start" }
+    }
+
+    override fun equals(other: Any?): Boolean = other is ProviderCatchUpWindow &&
+        startEpochMs == other.startEpochMs && endEpochMs == other.endEpochMs
+
+    override fun hashCode(): Int = 31 * startEpochMs.hashCode() + endEpochMs.hashCode()
+    override fun toString(): String = "ProviderCatchUpWindow(hasBounds=true)"
+}
+
+/**
+ * URL-free provider selection. It may cross the UI/session boundary before the current engine is
+ * released because it contains stable opaque ids and non-secret playback metadata only. A provider
+ * resolver turns it into a concrete [PlaybackRequest] inside the session's serialized lane.
+ */
+class ProviderPlaybackSelection(
+    val sourceType: ProviderSourceType,
+    val accountId: ProviderSelectionId,
+    val itemId: ProviderSelectionId,
+    val contentKey: ProviderSelectionId,
+    val contentType: ContentType,
+    val catchUpWindow: ProviderCatchUpWindow? = null,
+    val providerConnectionLimit: Int? = 1,
+    val declaredEvidence: StreamEvidence = StreamEvidence(),
+) {
+    init {
+        require(providerConnectionLimit == null || providerConnectionLimit > 0) {
+            "Provider connection limit must be positive"
+        }
+        require((contentType == ContentType.CATCH_UP) == (catchUpWindow != null)) {
+            "Catch-up selections require bounds and non-catch-up selections must not carry them"
+        }
+    }
+
+    override fun toString(): String =
+        "ProviderPlaybackSelection(sourceType=$sourceType, contentType=$contentType, " +
+            "hasCatchUpWindow=${catchUpWindow != null}, " +
+            "providerConnectionConstrained=${providerConnectionLimit != null}, " +
+            "hasDeclaredEvidence=${declaredEvidence != StreamEvidence()})"
+}
+
+/** Why a deferred provider link is being minted; it never carries provider text or URLs. */
+enum class ProviderResolutionTrigger { INITIAL, RECOVERY, HANDOFF }
+
+enum class ProviderDialectAdvanceEligibility {
+    NONE,
+    TRANSPORT_OR_DEMUX_FAILURE,
+    INELIGIBLE_PLAYBACK_FAILURE,
+}
+
+/**
+ * Typed feedback for resolver-owned catch-up dialect selection. A resolver may advance a TS/HLS
+ * dialect only for [ProviderDialectAdvanceEligibility.TRANSPORT_OR_DEMUX_FAILURE]; decoder and
+ * renderer failures are explicitly ineligible and must not walk provider URL dialects.
+ */
+data class ProviderResolutionFeedback(
+    val code: FailureCode,
+    val domain: FailureDomain,
+    val phase: FailurePhase,
+    val dialectAdvanceEligibility: ProviderDialectAdvanceEligibility,
+)
+
+data class ProviderResolutionContext(
+    val trigger: ProviderResolutionTrigger,
+    val previousFailure: ProviderResolutionFeedback? = null,
+)
+
+/** One startup target: either today's concrete migration input or a URL-free provider selection. */
+sealed interface PlaybackLaunch {
+    val contentType: ContentType
+
+    class ConcreteRequest(val request: PlaybackRequest) : PlaybackLaunch {
+        override val contentType: ContentType get() = request.contentType
+        override fun toString(): String = "PlaybackLaunch.ConcreteRequest($request)"
+    }
+
+    class DeferredProvider(val selection: ProviderPlaybackSelection) : PlaybackLaunch {
+        override val contentType: ContentType get() = selection.contentType
+        override fun toString(): String = "PlaybackLaunch.DeferredProvider($selection)"
+    }
+}
+
 class DrmRequest(
     val scheme: DrmScheme,
     val licenseUrl: String,
@@ -620,6 +722,26 @@ sealed interface PlaybackEvent {
         override val generation: Long,
         val summary: RequestSummary,
         val evidence: StreamEvidence,
+        /** Concrete request produced by deferred resolution; null preserves migration-test calls. */
+        val request: PlaybackRequest? = null,
+    ) : PlaybackEvent
+
+    /** Fresh concrete facts committed during recovery without changing the current recovery state. */
+    data class RequestRefreshed(
+        override val generation: Long,
+        val summary: RequestSummary,
+        val evidence: StreamEvidence,
+        val request: PlaybackRequest,
+    ) : PlaybackEvent
+
+    /** Fresh deferred facts that must precede selection of the one allowed handoff graph. */
+    data class HandoffRequestResolved(
+        override val generation: Long,
+        val summary: RequestSummary,
+        val evidence: StreamEvidence,
+        val request: PlaybackRequest,
+        val failedGraph: PlaybackGraph,
+        val failure: PlaybackFailure,
     ) : PlaybackEvent
 
     data class GraphSelected(override val generation: Long, val graph: PlaybackGraph) : PlaybackEvent
@@ -665,8 +787,45 @@ sealed interface PlaybackEvent {
 }
 
 sealed interface PlaybackCommand {
-    data class Tune(val request: PlaybackRequest, val profile: SessionProfile) : PlaybackCommand
-    data class Zap(val request: PlaybackRequest, val profile: SessionProfile) : PlaybackCommand
+    data class Tune(
+        /** Nullable only so the existing concrete-request constructor remains source compatible. */
+        val request: PlaybackRequest?,
+        val profile: SessionProfile,
+        val providerSelection: ProviderPlaybackSelection? = null,
+    ) : PlaybackCommand {
+        constructor(selection: ProviderPlaybackSelection, profile: SessionProfile) :
+            this(request = null, profile = profile, providerSelection = selection)
+
+        init {
+            require((request == null) != (providerSelection == null)) {
+                "Tune requires exactly one concrete request or deferred provider selection"
+            }
+        }
+
+        val launch: PlaybackLaunch
+            get() = request?.let(PlaybackLaunch::ConcreteRequest)
+                ?: PlaybackLaunch.DeferredProvider(requireNotNull(providerSelection))
+    }
+
+    data class Zap(
+        /** Nullable only so the existing concrete-request constructor remains source compatible. */
+        val request: PlaybackRequest?,
+        val profile: SessionProfile,
+        val providerSelection: ProviderPlaybackSelection? = null,
+    ) : PlaybackCommand {
+        constructor(selection: ProviderPlaybackSelection, profile: SessionProfile) :
+            this(request = null, profile = profile, providerSelection = selection)
+
+        init {
+            require((request == null) != (providerSelection == null)) {
+                "Zap requires exactly one concrete request or deferred provider selection"
+            }
+        }
+
+        val launch: PlaybackLaunch
+            get() = request?.let(PlaybackLaunch::ConcreteRequest)
+                ?: PlaybackLaunch.DeferredProvider(requireNotNull(providerSelection))
+    }
     data object Pause : PlaybackCommand
     data object Resume : PlaybackCommand
     data object Retry : PlaybackCommand

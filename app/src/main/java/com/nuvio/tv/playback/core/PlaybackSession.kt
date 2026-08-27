@@ -2,6 +2,7 @@ package com.nuvio.tv.playback.core
 
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -37,6 +38,7 @@ class PlaybackSession(
     private val clock: PlaybackClock,
     private val diagnostics: PlaybackDiagnostics,
     private val lifecycle: PlaybackLifecyclePort? = null,
+    private val providerPlaybackResolver: ProviderPlaybackResolver? = null,
     private val policy: PlaybackPolicy = PlaybackPolicy(),
     private val releaseTimeoutMs: Long = DEFAULT_RELEASE_TIMEOUT_MS,
 ) {
@@ -157,6 +159,8 @@ class PlaybackSession(
         when (message) {
             is LaneMessage.Reducer -> applyReducer(message.input)
             is LaneMessage.ResolutionFinished -> resolutionFinished(message)
+            is LaneMessage.HandoffResolutionFinished -> handoffResolutionFinished(message)
+            is LaneMessage.FreshResolutionReady -> freshResolutionReady(message)
             is LaneMessage.SelectionFinished -> selectionFinished(message)
             is LaneMessage.RequirementsChangeFinished -> requirementsChangeFinished(message)
             is LaneMessage.RequirementsApplied -> requirementsApplied(message)
@@ -194,6 +198,7 @@ class PlaybackSession(
     private suspend fun execute(action: PlaybackAction) {
         when (action) {
             is PlaybackAction.ResolveRequest -> resolve(action)
+            is PlaybackAction.ResolveHandoffRequest -> resolveHandoff(action)
             is PlaybackAction.SelectPrimaryGraph -> select(action, failedGraph = null)
             is PlaybackAction.SelectHandoffGraph -> select(action, failedGraph = action.failedGraph)
             is PlaybackAction.AttachSurface -> attachSurface(action)
@@ -222,10 +227,33 @@ class PlaybackSession(
             diagnostics.record(
                 PlaybackDiagnosticEvent(action.generation, PlaybackDiagnosticCode.REQUEST_RESOLUTION_STARTED),
             )
-            val result = safeResult(FailurePhase.REQUEST_RESOLUTION) {
-                requestResolver.resolve(action.request)
-            }
+            val result = resolveLaunch(
+                action.launch,
+                FailurePhase.REQUEST_RESOLUTION,
+                ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+            )
             lane.send(LaneMessage.ResolutionFinished(action.generation, result))
+        }
+    }
+
+    private fun resolveHandoff(action: PlaybackAction.ResolveHandoffRequest) {
+        generationScope(action.generation).launch {
+            val result = resolveLaunch(
+                action.launch,
+                FailurePhase.RECOVERY,
+                ProviderResolutionContext(
+                    ProviderResolutionTrigger.HANDOFF,
+                    action.failure.toProviderResolutionFeedback(),
+                ),
+            )
+            lane.send(
+                LaneMessage.HandoffResolutionFinished(
+                    action.generation,
+                    action.failedGraph,
+                    action.failure,
+                    result,
+                ),
+            )
         }
     }
 
@@ -243,12 +271,62 @@ class PlaybackSession(
                             message.generation,
                             result.value.summary,
                             result.value.evidence,
+                            result.value.request,
                         ),
                     ),
                 )
             }
             is PlaybackResult.Failure -> fail(message.generation, result.failure)
         }
+    }
+
+    private suspend fun handoffResolutionFinished(message: LaneMessage.HandoffResolutionFinished) {
+        if (!isCurrentGeneration(message.generation) ||
+            machine.snapshot.state != PlaybackState.SELECTING_GRAPH
+        ) return
+        when (val result = message.result) {
+            is PlaybackResult.Success -> {
+                resolved = GenerationValue(message.generation, result.value)
+                applyReducer(
+                    PlaybackReducerInput.Event(
+                        PlaybackEvent.HandoffRequestResolved(
+                            message.generation,
+                            result.value.summary,
+                            result.value.evidence,
+                            result.value.request,
+                            message.failedGraph,
+                            message.failure,
+                        ),
+                    ),
+                )
+            }
+            is PlaybackResult.Failure -> fail(message.generation, result.failure)
+        }
+    }
+
+    private suspend fun freshResolutionReady(message: LaneMessage.FreshResolutionReady) {
+        if (!isCurrentGeneration(message.generation) ||
+            machine.snapshot.state !in setOf(
+                PlaybackState.RECOVERING_IN_PLACE,
+                PlaybackState.LIVE_RECONNECTING,
+            )
+        ) {
+            message.accepted.complete(false)
+            return
+        }
+        resolved = GenerationValue(message.generation, message.resolved)
+        requirements = GenerationValue(message.generation, message.requirements)
+        applyReducer(
+            PlaybackReducerInput.Event(
+                PlaybackEvent.RequestRefreshed(
+                    message.generation,
+                    message.resolved.summary,
+                    message.resolved.evidence,
+                    message.resolved.request,
+                ),
+            ),
+        )
+        message.accepted.complete(true)
     }
 
     private fun select(action: PlaybackAction, failedGraph: PlaybackGraph?) {
@@ -648,9 +726,11 @@ class PlaybackSession(
     private fun recoverOnce(action: PlaybackAction.RecoverInPlace) {
         val graph = activeGraph ?: return
         val engine = engineRegistry.engine(graph.engine) ?: return
-        val original = machine.request ?: return
+        val original = machine.launch ?: return
         val cachedResolved = resolved.takeIf { it?.generation == action.generation }?.value
-        val effective = requirements.takeIf { it?.generation == action.generation }?.value ?: return
+        val cachedEffective = requirements.takeIf { it?.generation == action.generation }?.value ?: return
+        val profileSnapshot = machine.snapshot.profile
+        val preferenceSnapshot = preferences
         val startPaused = machine.paused
         generationScope(action.generation).launch {
             val release = releaseAdapterUntilComplete(action.generation, engine)
@@ -658,8 +738,20 @@ class PlaybackSession(
                 recoveryFailed(action.generation, release.failure)
                 return@launch
             }
-            val resolvedRequest = if (action.freshRequestRequired) {
-                when (val result = safeResult(FailurePhase.RECOVERY) { requestResolver.resolve(original) }) {
+            // Deferred links are resolved after every release even when the triggering failure did
+            // not explicitly demand freshness: Stalker/create-link and catch-up URLs may be
+            // single-use, so reopening the cached concrete URL would violate the provider contract.
+            val needsFreshResolution =
+                action.freshRequestRequired || original is PlaybackLaunch.DeferredProvider
+            val resolvedRequest = if (needsFreshResolution) {
+                when (val result = resolveLaunch(
+                    original,
+                    FailurePhase.RECOVERY,
+                    ProviderResolutionContext(
+                        ProviderResolutionTrigger.RECOVERY,
+                        action.failure.toProviderResolutionFeedback(),
+                    ),
+                )) {
                     is PlaybackResult.Success -> result.value
                     is PlaybackResult.Failure -> {
                         recoveryFailed(action.generation, result.failure)
@@ -669,6 +761,26 @@ class PlaybackSession(
             } else {
                 cachedResolved ?: return@launch
             }
+            val effective = if (needsFreshResolution) {
+                when (val result = resolveRequirements(
+                    resolvedRequest.summary,
+                    resolvedRequest.evidence,
+                    profileSnapshot,
+                    preferenceSnapshot,
+                    FailurePhase.RECOVERY,
+                )) {
+                    is PlaybackResult.Success -> result.value
+                    is PlaybackResult.Failure -> {
+                        recoveryFailed(action.generation, result.failure)
+                        return@launch
+                    }
+                }
+            } else {
+                cachedEffective
+            }
+            if (needsFreshResolution &&
+                !commitFreshResolution(action.generation, resolvedRequest, effective)
+            ) return@launch
             val outcome = async(start = CoroutineStart.UNDISPATCHED) {
                 awaitReconnectOutcome(action.generation)
             }
@@ -718,9 +830,10 @@ class PlaybackSession(
         if (reconnectJob?.isActive == true) return
         val graph = activeGraph ?: return
         val engine = engineRegistry.engine(graph.engine) ?: return
-        val original = machine.request ?: return
+        val original = machine.launch ?: return
         val profileSnapshot = machine.snapshot.profile
         val preferenceSnapshot = preferences
+        val reconnectFeedback = machine.snapshot.failure?.toProviderResolutionFeedback()
         reconnectJob = generationScope(action.generation).launch {
             var attempt = 0
             while (
@@ -750,9 +863,14 @@ class PlaybackSession(
 
                 // Always ask the resolver again. Static URLs may be returned unchanged; provider
                 // adapters can mint a fresh single-use link only after the prior connection closes.
-                val resolvedRequest = when (val result = safeResult(FailurePhase.RECOVERY) {
-                    requestResolver.resolve(original)
-                }) {
+                val resolvedRequest = when (val result = resolveLaunch(
+                    original,
+                    FailurePhase.RECOVERY,
+                    ProviderResolutionContext(
+                        ProviderResolutionTrigger.RECOVERY,
+                        reconnectFeedback,
+                    ),
+                )) {
                     is PlaybackResult.Success -> result.value
                     is PlaybackResult.Failure -> {
                         if (result.failure.shouldEscalateLiveReconnect()) {
@@ -779,6 +897,9 @@ class PlaybackSession(
                         attempt++
                         continue
                     }
+                }
+                if (!commitFreshResolution(action.generation, resolvedRequest, effective)) {
+                    return@launch
                 }
                 val outcome = async(start = CoroutineStart.UNDISPATCHED) {
                     awaitReconnectOutcome(action.generation)
@@ -1155,6 +1276,128 @@ class PlaybackSession(
         PlaybackResult.Failure(internalFailure(phase))
     }
 
+    /** The only provider-resolution entrance; callers invoke it after the relevant release proof. */
+    private suspend fun resolveLaunch(
+        launch: PlaybackLaunch,
+        phase: FailurePhase,
+        context: ProviderResolutionContext,
+    ): PlaybackResult<ResolvedPlaybackRequest> {
+        val raw = safeResult(phase) {
+            when (launch) {
+                is PlaybackLaunch.ConcreteRequest -> requestResolver.resolve(launch.request)
+                is PlaybackLaunch.DeferredProvider -> {
+                    val resolver = providerPlaybackResolver ?: return@safeResult PlaybackResult.Failure(
+                        internalFailure(phase).copy(deterministic = true),
+                    )
+                    resolver.resolve(launch.selection, context)
+                }
+            }
+        }
+        if (raw is PlaybackResult.Failure) {
+            return PlaybackResult.Failure(raw.failure.copy(phase = phase))
+        }
+        val resolvedRequest = (raw as PlaybackResult.Success).value
+        val request = resolvedRequest.request
+        val valid = when (launch) {
+            is PlaybackLaunch.ConcreteRequest ->
+                request.contentType == launch.request.contentType &&
+                    request.contentKey == launch.request.contentKey &&
+                    request.providerConnectionLimit == launch.request.providerConnectionLimit
+            is PlaybackLaunch.DeferredProvider -> {
+                val selection = launch.selection
+                request.contentType == selection.contentType &&
+                    request.contentKey?.value == selection.contentKey.value &&
+                    request.providerConnectionLimit == selection.providerConnectionLimit
+            }
+        }
+        if (!valid) {
+            return PlaybackResult.Failure(internalFailure(phase).copy(deterministic = true))
+        }
+        val evidence = when (launch) {
+            is PlaybackLaunch.ConcreteRequest -> resolvedRequest.evidence
+            is PlaybackLaunch.DeferredProvider ->
+                mergeEvidence(launch.selection.declaredEvidence, resolvedRequest.evidence)
+        }
+        return PlaybackResult.Success(
+            ResolvedPlaybackRequest(
+                request = request,
+                summary = request.summary(),
+                evidence = evidence,
+            ),
+        )
+    }
+
+    private suspend fun commitFreshResolution(
+        generation: Long,
+        resolvedRequest: ResolvedPlaybackRequest,
+        effective: PlaybackRequirements,
+    ): Boolean {
+        val accepted = CompletableDeferred<Boolean>()
+        lane.send(
+            LaneMessage.FreshResolutionReady(
+                generation,
+                resolvedRequest,
+                effective,
+                accepted,
+            ),
+        )
+        return accepted.await()
+    }
+
+    private fun PlaybackFailure.toProviderResolutionFeedback(): ProviderResolutionFeedback {
+        val transportFailure = domain in setOf(
+            FailureDomain.NETWORK,
+            FailureDomain.TLS,
+            FailureDomain.MANIFEST,
+            FailureDomain.DEMUX,
+        )
+        return ProviderResolutionFeedback(
+            code = code,
+            domain = domain,
+            phase = phase,
+            dialectAdvanceEligibility = if (transportFailure) {
+                ProviderDialectAdvanceEligibility.TRANSPORT_OR_DEMUX_FAILURE
+            } else {
+                ProviderDialectAdvanceEligibility.INELIGIBLE_PLAYBACK_FAILURE
+            },
+        )
+    }
+
+    private fun mergeEvidence(declared: StreamEvidence, resolved: StreamEvidence): StreamEvidence =
+        StreamEvidence(
+            delivery = strongest(declared.delivery, resolved.delivery),
+            container = strongest(declared.container, resolved.container),
+            videoCodec = strongest(declared.videoCodec, resolved.videoCodec),
+            audioCodec = strongest(declared.audioCodec, resolved.audioCodec),
+            subtitleFormat = strongest(declared.subtitleFormat, resolved.subtitleFormat),
+            drmScheme = strongest(declared.drmScheme, resolved.drmScheme),
+            dimensions = strongest(declared.dimensions, resolved.dimensions),
+            frameRate = strongest(declared.frameRate, resolved.frameRate),
+            adaptive = strongest(declared.adaptive, resolved.adaptive),
+        )
+
+    private fun <T> strongest(
+        declared: EvidenceFact<T>?,
+        resolved: EvidenceFact<T>?,
+    ): EvidenceFact<T>? = when {
+        declared == null -> resolved
+        resolved == null -> declared
+        resolved.provenance.strength >= declared.provenance.strength -> resolved
+        else -> declared
+    }
+
+    private val EvidenceProvenance.strength: Int
+        get() = when (this) {
+            EvidenceProvenance.EXTRACTOR_CONFIRMED -> 80
+            EvidenceProvenance.MANIFEST_CONFIRMED -> 70
+            EvidenceProvenance.HLS_CODECS_ATTRIBUTE -> 65
+            EvidenceProvenance.SEGMENT_HINT -> 60
+            EvidenceProvenance.PROVIDER_DECLARED -> 50
+            EvidenceProvenance.HTTP_MIME_HINT -> 40
+            EvidenceProvenance.URL_INFERRED -> 20
+            EvidenceProvenance.UNKNOWN -> 0
+        }
+
     private fun internalFailure(phase: FailurePhase) = PlaybackFailure(
         code = FailureCode.UNKNOWN,
         domain = FailureDomain.UNKNOWN,
@@ -1229,6 +1472,18 @@ class PlaybackSession(
         data class ResolutionFinished(
             val generation: Long,
             val result: PlaybackResult<ResolvedPlaybackRequest>,
+        ) : LaneMessage
+        data class HandoffResolutionFinished(
+            val generation: Long,
+            val failedGraph: PlaybackGraph,
+            val failure: PlaybackFailure,
+            val result: PlaybackResult<ResolvedPlaybackRequest>,
+        ) : LaneMessage
+        data class FreshResolutionReady(
+            val generation: Long,
+            val resolved: ResolvedPlaybackRequest,
+            val requirements: PlaybackRequirements,
+            val accepted: CompletableDeferred<Boolean>,
         ) : LaneMessage
         data class SelectionFinished(
             val generation: Long,

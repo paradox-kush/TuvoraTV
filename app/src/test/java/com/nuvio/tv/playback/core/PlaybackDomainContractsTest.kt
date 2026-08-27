@@ -110,6 +110,52 @@ class PlaybackDomainContractsTest {
     }
 
     @Test
+    fun `deferred provider selection is URL-free and redacted through command and state strings`() {
+        val accountSecret = "https://provider.invalid/get.php?username=alice&password=secret"
+        val itemSecret = "single-use-stream-token"
+        val contentSecret = "provider:live:private-channel"
+        val selection = ProviderPlaybackSelection(
+            sourceType = ProviderSourceType.STALKER,
+            accountId = ProviderSelectionId(accountSecret),
+            itemId = ProviderSelectionId(itemSecret),
+            contentKey = ProviderSelectionId(contentSecret),
+            contentType = ContentType.LIVE,
+            declaredEvidence = StreamEvidence(
+                container = EvidenceFact(ContainerType.MPEG_TS, EvidenceProvenance.PROVIDER_DECLARED),
+            ),
+        )
+        val command = PlaybackCommand.Tune(selection, SessionProfile.FULLSCREEN)
+        val state = PlaybackMachineState(launch = command.launch)
+        val rendered = listOf(selection, command, state).joinToString("\n")
+
+        assertFalse(rendered.contains(accountSecret))
+        assertFalse(rendered.contains(itemSecret))
+        assertFalse(rendered.contains(contentSecret))
+        assertFalse(ProviderPlaybackSelection::class.java.declaredFields.any {
+            it.name.equals("url", ignoreCase = true) ||
+                it.name.contains("password", ignoreCase = true) ||
+                it.name.contains("credential", ignoreCase = true)
+        })
+        assertTrue(rendered.contains("sourceType=STALKER"))
+        assertTrue(rendered.contains("contentType=LIVE"))
+    }
+
+    @Test
+    fun `catch-up provider selection requires finite bounds`() {
+        val selection = ProviderPlaybackSelection(
+            sourceType = ProviderSourceType.XTREAM,
+            accountId = ProviderSelectionId("account"),
+            itemId = ProviderSelectionId("channel"),
+            contentKey = ProviderSelectionId("content"),
+            contentType = ContentType.CATCH_UP,
+            catchUpWindow = ProviderCatchUpWindow(1_000, 2_000),
+        )
+
+        assertEquals(ContentType.CATCH_UP, selection.contentType)
+        assertEquals("ProviderCatchUpWindow(hasBounds=true)", selection.catchUpWindow.toString())
+    }
+
+    @Test
     fun `compatibility key is redacted and record expiration is deterministic`() {
         val key = CompatibilityScopeKey("provider-and-capability-scope")
         val record = CompatibilityRecord(
