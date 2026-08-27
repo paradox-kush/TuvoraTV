@@ -44,6 +44,7 @@ backups/
 scripts/*
 !scripts/generate-release-notes.sh
 !scripts/generate_release_notes.py
+!scripts/playback_device_smoke.py
 !scripts/release_notes/
 !scripts/release_notes/*.py
 !scripts/release-metadata.sh
