@@ -92,6 +92,19 @@ class SmokeEventParserTests(unittest.TestCase):
             )
         )
 
+    def test_libmpv_audio_and_direct_surface_facts_are_closed_schema(self) -> None:
+        events = parse_smoke_events(
+            "I/CleanPlaybackSmoke: CP_SMOKE v=1 event=AUDIO engine=LIBMPV "
+            "rendered_first_audio=true\n"
+            "I/CleanPlaybackSmoke: CP_SMOKE v=1 event=SURFACE engine=LIBMPV "
+            "surface_type=MPV_DIRECT surface_valid=true surface_width=1920 surface_height=1080\n"
+        )
+
+        self.assertEqual(events[0], {
+            "event": "AUDIO", "engine": "LIBMPV", "rendered_first_audio": True,
+        })
+        self.assertEqual(events[1]["surface_type"], "MPV_DIRECT")
+
     def test_path_or_email_causes_full_event_drop(self) -> None:
         events = parse_smoke_events(
             "I/CleanPlaybackSmoke: CP_SMOKE v=1 event=RENDERER "

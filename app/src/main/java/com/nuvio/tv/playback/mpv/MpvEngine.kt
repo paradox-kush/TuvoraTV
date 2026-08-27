@@ -46,7 +46,11 @@ class MpvEngine internal constructor(
         if (!graph.isStructurallyValid() || graph.engine != EngineType.LIBMPV) {
             return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
         }
-        if (backend != null || (this.generation != null && this.generation != generation)) {
+        if (this.generation != null && this.generation != generation) {
+            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+        }
+        val currentBackend = backend
+        if (currentBackend != null && activeStart?.graph != graph) {
             return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
         }
         if (lease != null) return@withLock PlaybackResult.Success(Unit)
@@ -57,6 +61,15 @@ class MpvEngine internal constructor(
                     acquired.value.release()
                     failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
                 } else {
+                    if (currentBackend != null) {
+                        when (val attached = currentBackend.attachSurface(acquired.value)) {
+                            is PlaybackResult.Failure -> {
+                                if (!acquired.value.release()) lease = acquired.value
+                                return@withLock attached
+                            }
+                            is PlaybackResult.Success -> Unit
+                        }
+                    }
                     this.generation = generation
                     lease = acquired.value
                     PlaybackResult.Success(Unit)
@@ -209,6 +222,8 @@ class MpvEngine internal constructor(
             )
             is MpvBackendEvent.VideoDecoderInitialized ->
                 PlaybackEvent.VideoDecoderInitialized(generation, event.decoderName)
+            is MpvBackendEvent.VideoInputFormatChanged ->
+                PlaybackEvent.VideoInputFormatChanged(generation, event.sampleMimeType)
             is MpvBackendEvent.VideoSizeChanged ->
                 PlaybackEvent.VideoSizeChanged(generation, event.width, event.height)
             is MpvBackendEvent.Ended -> PlaybackEvent.PlaybackEnded(generation, event.reason)

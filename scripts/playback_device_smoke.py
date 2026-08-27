@@ -137,7 +137,7 @@ def resolve_adb_binary() -> str:
     raise HarnessError("adb binary not found; set ANDROID_HOME or add platform-tools to PATH")
 
 
-EVENTS = {"SESSION", "STATE", "RENDERER", "SURFACE", "VIDEO", "ERROR", "RELEASE"}
+EVENTS = {"SESSION", "STATE", "RENDERER", "SURFACE", "VIDEO", "AUDIO", "ERROR", "RELEASE"}
 ENUM_FIELDS = {
     "engine": {"MEDIA3", "LIBMPV"},
     "profile": {"GUIDE", "FULLSCREEN"},
@@ -153,7 +153,7 @@ ENUM_FIELDS = {
 }
 BOOL_FIELDS = {
     "play_when_ready", "is_loading", "rendered_first_frame", "surface_valid",
-    "provider_owned", "surface_owned", "fatal", "secure",
+    "provider_owned", "surface_owned", "fatal", "secure", "rendered_first_audio",
 }
 INT_FIELDS = {
     "generation", "surface_width", "surface_height", "video_width", "video_height",

@@ -85,6 +85,45 @@ class AndroidMpvBackendTest {
         assertEquals(MpvBackendEvent.BytesReceived, event.await())
     }
 
+    @Test
+    fun `surface recreation does not recreate core or reload provider`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        val first = FakeLease()
+        val second = FakeLease()
+        assertSuccess(backend.attachSurface(first))
+        assertSuccess(backend.start())
+
+        assertSuccess(backend.detachSurface())
+        assertTrue(first.canRelease)
+        assertSuccess(backend.attachSurface(second))
+
+        assertEquals(1, core.createCalls)
+        assertEquals(1, core.initializeCalls)
+        assertEquals(2, core.attachCalls)
+        assertEquals(1, core.loadFileCalls)
+    }
+
+    @Test
+    fun `audio presentation and video codec properties publish factual events`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        assertSuccess(backend.attachSurface(FakeLease()))
+        val audio = async(start = CoroutineStart.UNDISPATCHED) {
+            backend.events.first { it == MpvBackendEvent.FirstAudio }
+        }
+        core.observer?.property("audio-pts", 1.25)
+        runCurrent()
+        assertEquals(MpvBackendEvent.FirstAudio, audio.await())
+
+        val codec = async(start = CoroutineStart.UNDISPATCHED) {
+            backend.events.first { it is MpvBackendEvent.VideoInputFormatChanged }
+        }
+        core.observer?.property("video-codec", "hevc")
+        runCurrent()
+        assertEquals(MpvBackendEvent.VideoInputFormatChanged("video/hevc"), codec.await())
+    }
+
     private fun TestScope.backend(core: FakeCore): AndroidMpvBackend {
         val files = File(System.getProperty("java.io.tmpdir"), "mpv-backend-${System.nanoTime()}").apply { mkdirs() }
         File(files, "cacert.pem").writeText("test-ca")
@@ -129,9 +168,13 @@ class AndroidMpvBackendTest {
         var detachResult = true
         var destroyResult = true
         var destroyCalls = 0
-        override fun create(context: Context) = Unit
+        var createCalls = 0
+        var initializeCalls = 0
+        var attachCalls = 0
+        var loadFileCalls = 0
+        override fun create(context: Context) { createCalls++ }
         override fun setOption(name: String, value: String) = true
-        override fun initialize() = Unit
+        override fun initialize() { initializeCalls++ }
         override fun addObserver(observer: MpvNativeObserver) { this.observer = observer }
         override fun removeObserver(observer: MpvNativeObserver) = Unit
         override fun observeLong(name: String) = Unit
@@ -139,9 +182,14 @@ class AndroidMpvBackendTest {
         override fun observeBoolean(name: String) = Unit
         override fun observeString(name: String) = Unit
         override fun observeNode(name: String) = Unit
-        override fun attachSurface(surface: Surface) = true
+        override fun attachSurface(surface: Surface): Boolean {
+            attachCalls++
+            return true
+        }
         override fun detachSurfaceWithResult() = detachResult
-        override fun command(vararg values: String) = Unit
+        override fun command(vararg values: String) {
+            if (values.firstOrNull() == "loadfile") loadFileCalls++
+        }
         override fun setString(name: String, value: String) = Unit
         override fun setBoolean(name: String, value: Boolean) = Unit
         override fun long(name: String): Long? = 0L

@@ -104,6 +104,53 @@ class MpvEngineTest {
     }
 
     @Test
+    fun `surface recreation reuses one libmpv backend and provider load`() = runTest {
+        val backend = FakeBackend()
+        val host = CountingSurfaceHost()
+        var backendCreations = 0
+        val engine = MpvEngine(
+            backgroundScope,
+            host,
+            MpvBackendFactory {
+                backendCreations++
+                PlaybackResult.Success(backend)
+            },
+        )
+        success(engine.attachSurface(11, graph()))
+        success(engine.start(start(11)))
+
+        success(engine.detachSurface(11))
+        success(engine.attachSurface(11, graph()))
+
+        assertEquals(2, host.acquireCalls)
+        assertEquals(2, backend.attachCalls)
+        assertEquals(1, backendCreations)
+        assertEquals(1, backend.startCalls)
+    }
+
+    @Test
+    fun `libmpv decoder format and dimensions remain generation facts`() = runTest {
+        val backend = FakeBackend()
+        val engine = engine(backend, backgroundScope)
+        success(engine.attachSurface(12, graph()))
+        success(engine.start(start(12)))
+        val expected = listOf(
+            MpvBackendEvent.VideoDecoderInitialized("mediacodec"),
+            MpvBackendEvent.VideoInputFormatChanged("video/hevc"),
+            MpvBackendEvent.VideoSizeChanged(1920, 1080),
+        )
+        val received = expected.map { fact ->
+            val event = async(start = CoroutineStart.UNDISPATCHED) { engine.events.first() }
+            backend.emit(fact)
+            event.await()
+        }
+
+        assertEquals(PlaybackEvent.VideoDecoderInitialized(12, "mediacodec"), received[0])
+        assertEquals(PlaybackEvent.VideoInputFormatChanged(12, "video/hevc"), received[1])
+        assertEquals(PlaybackEvent.VideoSizeChanged(12, 1920, 1080), received[2])
+    }
+
+    @Test
     fun `end file parser preserves all public mpv reasons`() {
         listOf("eof", "error", "stop", "quit", "redirect", "future").forEach { reason ->
             val parsed = parseEndFile(
@@ -174,6 +221,14 @@ class MpvEngineTest {
             PlaybackResult.Success(FakeLease(mode, secure))
     }
 
+    private class CountingSurfaceHost : MpvSurfaceHost {
+        var acquireCalls = 0
+        override suspend fun acquire(mode: SurfaceMode, secure: Boolean): PlaybackResult<MpvSurfaceLease> {
+            acquireCalls++
+            return PlaybackResult.Success(FakeLease(mode, secure))
+        }
+    }
+
     private class FakeLease(
         override val mode: SurfaceMode,
         override val secure: Boolean,
@@ -191,6 +246,7 @@ class MpvEngineTest {
         override val events: Flow<MpvBackendEvent> = flow.asSharedFlow()
         var eventOnStart: MpvBackendEvent? = null
         var startCalls = 0
+        var attachCalls = 0
         var releaseCalls = 0
         var abortCalls = 0
         var releaseSucceeds = true
@@ -199,6 +255,7 @@ class MpvEngineTest {
         private var lease: MpvSurfaceLease? = null
 
         override suspend fun attachSurface(lease: MpvSurfaceLease): PlaybackResult<Unit> {
+            attachCalls++
             lease.markAttached()
             this.lease = lease
             return PlaybackResult.Success(Unit)

@@ -1,6 +1,6 @@
 # Clean-player real-device adapter smoke harness
 
-**Status:** debug Media3 lab wired; it does not auto-launch or auto-open a stream.
+**Status:** debug Media3/libmpv lab wired; it does not auto-launch or auto-open a stream.
 
 `scripts/playback_device_smoke.py` is the sequential ADB evidence harness for the authorized ONN
 (`192.168.1.236:5555`) and Fire TV (`192.168.1.225:5555`) devices. It protects one-connection IPTV
@@ -14,7 +14,8 @@ fixture/account to ONN and Fire outside this tool; never place that mapping in a
 
 ## Adapter instrumentation contract
 
-The debug-only `CleanMedia3PlaybackLabActivity` emits single-line facts at info level under tag
+The debug-only `CleanMedia3PlaybackLabActivity` emits single-line facts for the explicitly selected
+Media3 or libmpv engine at info level under tag
 `CleanPlaybackSmoke`. The line starts with `CP_SMOKE v=1` and uses space-separated `key=value`
 tokens. It must not log raw exceptions or request material. Example:
 
@@ -25,8 +26,12 @@ CP_SMOKE v=1 event=RENDERER engine=MEDIA3 renderer=MediaCodecVideoRenderer codec
 CP_SMOKE v=1 event=SURFACE engine=MEDIA3 surface_type=SURFACE_VIEW surface_valid=true surface_width=960 surface_height=540 secure=false
 CP_SMOKE v=1 event=VIDEO engine=MEDIA3 rendered_first_frame=true
 CP_SMOKE v=1 event=VIDEO engine=MEDIA3 video_width=1920 video_height=1080
-CP_SMOKE v=1 event=ERROR error_domain=VIDEO_DECODER error_code=DECODER_INIT phase=STARTUP fatal=true
-CP_SMOKE v=1 event=RELEASE release_outcome=GRACEFUL provider_owned=false surface_owned=false release_nonce=0123456789abcdef
+CP_SMOKE v=1 event=STATE engine=LIBMPV profile=GUIDE generation=4 player_state=READY play_when_ready=true is_loading=false
+CP_SMOKE v=1 event=RENDERER engine=LIBMPV renderer=libmpv decoder=mediacodec codec=HEVC
+CP_SMOKE v=1 event=SURFACE engine=LIBMPV surface_type=MPV_DIRECT surface_valid=true surface_width=1920 surface_height=1080 secure=false
+CP_SMOKE v=1 event=AUDIO engine=LIBMPV rendered_first_audio=true
+CP_SMOKE v=1 event=ERROR engine=LIBMPV error_domain=VIDEO_DECODER error_code=DECODER_INIT phase=STARTUP fatal=true
+CP_SMOKE v=1 event=RELEASE engine=LIBMPV release_outcome=GRACEFUL provider_owned=false surface_owned=false release_nonce=0123456789abcdef
 ```
 
 The parser keeps only the closed version-1 event/field vocabulary in the script. Unknown fields are
@@ -52,9 +57,8 @@ python3 scripts/playback_device_smoke.py begin \
   --device onn --run-id wp4-media3-hls-ts --fixture-id onn-hls-ts-a
 ```
 
-After `begin`, install/open the debug lab manually and choose only ONN's assigned fixture. Capture at
-startup, first frame, stable playback, an injected failure if the matrix requires one, and after a
-surface recreation:
+After `begin`, install/open the debug lab manually and press **Start Media3** for ONN's assigned
+fixture. Capture startup, first frame, stable playback, and surface recreation, then quiesce:
 
 ```bash
 python3 scripts/playback_device_smoke.py capture --device onn --suffix first-frame
@@ -63,12 +67,31 @@ python3 scripts/playback_device_smoke.py quiesce --device onn --require-release-
 python3 scripts/playback_device_smoke.py status
 ```
 
-Only after quiesce succeeds and status reports both debug processes absent may Fire TV begin:
+Begin a second ONN run only after that release proof and press **Start libmpv**. The lab uses the
+same GUIDE/PREVIEW semantics with the clean libmpv direct graph; it never starts Media3 concurrently:
+
+```bash
+python3 scripts/playback_device_smoke.py begin \
+  --device onn --run-id wp5-libmpv-hls-ts --fixture-id onn-hls-ts-a
+python3 scripts/playback_device_smoke.py capture --device onn --suffix first-frame
+# Press Recreate surface, then capture the same-generation result.
+python3 scripts/playback_device_smoke.py capture --device onn --suffix surface-recreated
+python3 scripts/playback_device_smoke.py quiesce --device onn --require-release-proof
+```
+
+Only after both ONN engine runs quiesce successfully and status reports both debug processes absent
+may Fire TV begin. Repeat the same release-separated order, never both engines in one run:
 
 ```bash
 python3 scripts/playback_device_smoke.py begin \
   --device fire --run-id wp4-media3-hls-ts --fixture-id fire-hls-ts-b
-# Open only Fire TV's separately assigned fixture in the debug lab.
+# Press Start Media3 for Fire TV's separately assigned fixture.
+python3 scripts/playback_device_smoke.py capture --device fire --suffix first-frame
+python3 scripts/playback_device_smoke.py capture --device fire --suffix surface-recreated
+python3 scripts/playback_device_smoke.py quiesce --device fire --require-release-proof
+python3 scripts/playback_device_smoke.py begin \
+  --device fire --run-id wp5-libmpv-hls-ts --fixture-id fire-hls-ts-b
+# Press Start libmpv only after the Media3 release proof.
 python3 scripts/playback_device_smoke.py capture --device fire --suffix first-frame
 python3 scripts/playback_device_smoke.py capture --device fire --suffix surface-recreated
 python3 scripts/playback_device_smoke.py quiesce --device fire --require-release-proof
@@ -90,7 +113,8 @@ copy, export, hard-code, or pass production credentials to ADB.
 The lab selects exactly the active debug playlist and its newest live recent. It has no URL,
 credential, account, channel, or playlist Intent extras; missing state, a disabled playlist, and
 Stalker sources fail closed with a non-secret `LAB_*` readiness code. Playback starts only after the
-operator presses **Start selected recent channel**.
+operator presses **Start Media3** or **Start libmpv**; both actions are disabled while either clean
+engine owns the single active provider request.
 
 After `begin`, launch the Activity on the active device only:
 
@@ -99,18 +123,20 @@ adb -s 192.168.1.236:5555 shell am start \
   -n com.tuvora.tv.debug/com.nuvio.tv.playback.lab.CleanMedia3PlaybackLabActivity
 ```
 
-For the Fire pass, use `192.168.1.225:5555` only after ONN `quiesce` succeeds. The **Recreate
-surface** action detaches the selected clean Media3 surface, rebuilds the same graph-selected View,
-and reattaches it to the existing backend on the same generation. It does not resolve the URL again,
-construct a second backend, or restart the provider request. Leaving the lab foreground also starts
-the pause/release barrier; harness `quiesce` remains mandatory before switching devices.
+For the Fire pass, use `192.168.1.225:5555` only after both ONN runs quiesce. The **Recreate
+surface** action detaches the selected clean Media3 or libmpv surface, rebuilds the same
+graph-selected View, and reattaches it to the existing backend on the same generation. It does not
+resolve the URL again, construct a second backend, or restart the provider request. Leaving the lab
+foreground also starts the pause/release barrier; harness `quiesce` remains mandatory before
+switching engine or device.
 
 ## Report acceptance
 
-For every Media3 WP4 fixture, the report must contain normalized state plus the selected renderer,
+For every Media3 and libmpv fixture, the report must contain normalized state plus the selected renderer,
 decoder, surface type/validity/size, first-frame/video dimensions, and any stable error code/domain.
-The release report must prove `provider_owned=false` and `surface_owned=false`. Fire guide playback
-must show the exact policy-selected TextureView path; ONN must show its independently selected path.
+The release report must prove `provider_owned=false` and `surface_owned=false`. Fire Media3 guide
+playback must show the exact policy-selected TextureView path; libmpv must show its independently
+selected `MPV_DIRECT` path, and ONN must show each engine's independently selected path.
 No report may contain a network location, request value, account/provider/channel identity, raw
 exception, or device address.
 

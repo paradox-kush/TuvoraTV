@@ -47,6 +47,7 @@ internal sealed interface MpvBackendEvent {
         val isLoading: Boolean,
     ) : MpvBackendEvent
     data class VideoDecoderInitialized(val decoderName: String) : MpvBackendEvent
+    data class VideoInputFormatChanged(val sampleMimeType: String?) : MpvBackendEvent
     data class VideoSizeChanged(val width: Int, val height: Int) : MpvBackendEvent
     data class Ended(val reason: PlaybackEndReason) : MpvBackendEvent
     data class Failed(val failure: PlaybackFailure) : MpvBackendEvent
@@ -133,7 +134,6 @@ internal class AndroidMpvBackend(
     private var lastStreamPosition = -1L
     private var firstVideoFrameSent = false
     private var firstAudioSent = false
-    private var confirmedAudioOnly = false
     @Volatile private var terminalEventsSuppressed = false
     private var videoWidth = 0
     private var videoHeight = 0
@@ -142,25 +142,31 @@ internal class AndroidMpvBackend(
 
     override suspend fun attachSurface(lease: MpvSurfaceLease): PlaybackResult<Unit> =
         withContext(dispatcher) {
-            if (lifecycle != MpvBackendLifecycle.CREATED) return@withContext stateFailure(FailurePhase.SURFACE_ATTACHMENT)
+            if (this@AndroidMpvBackend.lease != null) {
+                return@withContext stateFailure(FailurePhase.SURFACE_ATTACHMENT)
+            }
             try {
-                core.create(context)
-                core.addObserver(this@AndroidMpvBackend)
-                if (plan.url.startsWith("https://", ignoreCase = true)) {
-                    if (!core.setOption("tls-ca-file", ensureTlsCaFile().absolutePath)) {
-                        throw IllegalStateException("Rejected mpv TLS trust option")
+                if (lifecycle == MpvBackendLifecycle.CREATED) {
+                    core.create(context)
+                    core.addObserver(this@AndroidMpvBackend)
+                    if (plan.url.startsWith("https://", ignoreCase = true)) {
+                        if (!core.setOption("tls-ca-file", ensureTlsCaFile().absolutePath)) {
+                            throw IllegalStateException("Rejected mpv TLS trust option")
+                        }
                     }
+                    plan.preInitOptions.forEach { (name, value) ->
+                        if (!core.setOption(name, value)) throw IllegalStateException("Rejected mpv option: $name")
+                    }
+                    core.initialize()
+                    observeFacts()
+                    lifecycle = MpvBackendLifecycle.INITIALIZED
+                } else if (lifecycle !in activeStates) {
+                    return@withContext stateFailure(FailurePhase.SURFACE_ATTACHMENT)
                 }
-                plan.preInitOptions.forEach { (name, value) ->
-                    if (!core.setOption(name, value)) throw IllegalStateException("Rejected mpv option: $name")
-                }
-                core.initialize()
-                observeFacts()
-                lifecycle = MpvBackendLifecycle.INITIALIZED
                 if (!core.attachSurface(lease.surface)) throw IllegalStateException("mpv surface rejected")
                 lease.markAttached()
                 this@AndroidMpvBackend.lease = lease
-                lifecycle = MpvBackendLifecycle.ATTACHED
+                if (lifecycle == MpvBackendLifecycle.INITIALIZED) lifecycle = MpvBackendLifecycle.ATTACHED
                 PlaybackResult.Success(Unit)
             } catch (_: Throwable) {
                 stateFailure(FailurePhase.SURFACE_ATTACHMENT)
@@ -208,6 +214,7 @@ internal class AndroidMpvBackend(
         val currentLease = lease ?: return@withContext PlaybackResult.Success(Unit)
         if (!core.detachSurfaceWithResult()) return@withContext releaseFailure(FailureCode.SURFACE_LOST)
         currentLease.confirmDetached()
+        lease = null
         PlaybackResult.Success(Unit)
     }
 
@@ -283,7 +290,7 @@ internal class AndroidMpvBackend(
     override fun property(name: String, value: Double) {
         scope.launch {
             if (terminalEventsSuppressed) return@launch
-            if (name == "audio-pts" && value.isFinite() && confirmedAudioOnly && !firstAudioSent) {
+            if (name == "audio-pts" && value.isFinite() && !firstAudioSent) {
                 firstAudioSent = true
                 _events.tryEmit(MpvBackendEvent.FirstAudio)
             }
@@ -296,6 +303,9 @@ internal class AndroidMpvBackend(
             if (name == "hwdec-current" && value.isNotBlank()) {
                 _events.tryEmit(MpvBackendEvent.VideoDecoderInitialized(value))
             }
+            if (name == "video-codec" && value.isNotBlank()) {
+                _events.tryEmit(MpvBackendEvent.VideoInputFormatChanged(value.toVideoMimeType()))
+            }
         }
     }
 
@@ -304,7 +314,6 @@ internal class AndroidMpvBackend(
         scope.launch {
             if (terminalEventsSuppressed) return@launch
             val tracks = parseTracks(value)
-            confirmedAudioOnly = !tracks.hasVideo && tracks.audio > 0
             _events.tryEmit(MpvBackendEvent.TracksAvailable(tracks.hasVideo, tracks.audio, tracks.subtitles))
         }
     }
@@ -320,7 +329,6 @@ internal class AndroidMpvBackend(
                 MPV_EVENT_FILE_LOADED -> {
                     val tracks = runCatching { parseTracks(core.node("track-list")) }.getOrNull()
                     if (tracks != null) {
-                        confirmedAudioOnly = !tracks.hasVideo && tracks.audio > 0
                         _events.tryEmit(MpvBackendEvent.TracksAvailable(tracks.hasVideo, tracks.audio, tracks.subtitles))
                     }
                     lifecycle = MpvBackendLifecycle.PLAYING
@@ -354,6 +362,7 @@ internal class AndroidMpvBackend(
         core.observeDouble("audio-pts")
         core.observeBoolean("paused-for-cache")
         core.observeString("hwdec-current")
+        core.observeString("video-codec")
         core.observeNode("track-list")
     }
 
@@ -361,6 +370,17 @@ internal class AndroidMpvBackend(
         if (videoWidth > 0 && videoHeight > 0) {
             _events.tryEmit(MpvBackendEvent.VideoSizeChanged(videoWidth, videoHeight))
         }
+    }
+
+    private fun String.toVideoMimeType(): String? = when (lowercase()) {
+        "h264", "avc", "avc1" -> "video/avc"
+        "hevc", "h265", "hev1", "hvc1" -> "video/hevc"
+        "av1", "av01" -> "video/av01"
+        "vp9", "vp09" -> "video/x-vnd.on2.vp9"
+        "mpeg2video", "mpeg2" -> "video/mpeg2"
+        "mpeg4", "mpeg4video" -> "video/mp4v-es"
+        "dolbyvision", "dovi" -> "video/dolby-vision"
+        else -> null
     }
 
     private fun ensureTlsCaFile(): File {

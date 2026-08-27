@@ -84,6 +84,37 @@ class CleanMedia3PlaybackLabPolicyTest {
     }
 
     @Test
+    fun `libmpv lab materializes only the approved direct surface graph`() {
+        val candidates = mpvLabCandidates(
+            requirements(setOf(SurfaceMode.NATIVE_EMBED)).copy(
+                eligibleEngines = setOf(EngineType.LIBMPV),
+            ),
+        )
+
+        assertEquals(1, candidates.size)
+        assertEquals(EngineType.LIBMPV, candidates.single().engine)
+        assertEquals(SurfaceMode.NATIVE_EMBED, candidates.single().surfaceMode)
+        assertEquals(com.nuvio.tv.playback.core.GraphOutputProfile.MPV_DIRECT, candidates.single().outputProfile)
+    }
+
+    @Test
+    fun `libmpv closed facts identify guide engine audio and direct surface`() {
+        assertTrue(CleanPlaybackSmokeLine.session(8, EngineType.LIBMPV).contains("profile=GUIDE"))
+        assertTrue(
+            CleanPlaybackSmokeLine.renderer(
+                decoderName = "mediacodec",
+                sampleMimeType = "video/hevc",
+                engine = EngineType.LIBMPV,
+            ).contains("engine=LIBMPV renderer=libmpv decoder=mediacodec codec=HEVC"),
+        )
+        assertTrue(CleanPlaybackSmokeLine.firstAudio(EngineType.LIBMPV).contains("rendered_first_audio=true"))
+        assertTrue(
+            CleanPlaybackSmokeLine.surface(SurfaceMode.NATIVE_EMBED, true, 1920, 1080)
+                .contains("engine=LIBMPV surface_type=MPV_DIRECT"),
+        )
+    }
+
+    @Test
     fun `closed state line uses supplied player facts even for terminal states`() {
         val line = CleanPlaybackSmokeLine.state(
             generation = 4,

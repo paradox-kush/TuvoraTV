@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.util.Log
+import android.view.Surface
 import android.view.Gravity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -28,6 +29,7 @@ import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.data.local.XtreamHubSelectionStore
 import com.nuvio.tv.data.local.XtreamLiveStore
 import com.nuvio.tv.playback.android.AndroidRuntimeCapabilityCollector
+import com.nuvio.tv.playback.android.AndroidPlaybackQuirkOverride
 import com.nuvio.tv.playback.android.FrameworkAndroidCapabilitySource
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.DefaultPlaybackRequirementsResolver
@@ -36,7 +38,9 @@ import com.nuvio.tv.playback.core.EnginePreference
 import com.nuvio.tv.playback.core.EngineType
 import com.nuvio.tv.playback.core.PlaybackEngineStart
 import com.nuvio.tv.playback.core.PlaybackEngineState
+import com.nuvio.tv.playback.core.PlaybackEngine
 import com.nuvio.tv.playback.core.PlaybackEvent
+import com.nuvio.tv.playback.core.PlaybackGraph
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackPolicy
 import com.nuvio.tv.playback.core.PlaybackRequirementsInput
@@ -51,7 +55,12 @@ import com.nuvio.tv.playback.media3.Media3Engine
 import com.nuvio.tv.playback.media3.Media3SurfaceHost
 import com.nuvio.tv.playback.media3.ViewMedia3SurfaceHost
 import com.nuvio.tv.playback.media3.surfaceFailure
+import com.nuvio.tv.playback.mpv.AndroidMpvBackendFactory
+import com.nuvio.tv.playback.mpv.MpvEngine
+import com.nuvio.tv.playback.mpv.MpvSurfaceHost
+import com.nuvio.tv.playback.mpv.ViewMpvSurfaceHost
 import com.nuvio.tv.playback.settings.CleanPlaybackPreferences
+import com.nuvio.tv.playback.settings.MpvOutputPreference
 import com.nuvio.tv.playback.settings.PlaybackPreferenceResolutionContext
 import com.nuvio.tv.playback.settings.PlaybackPreferenceResolver
 import com.nuvio.tv.playback.wiring.NavigationPlaybackInput
@@ -72,7 +81,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.OkHttpClient
+import kotlin.coroutines.resume
 
 internal class DebugProfileFixtureRepository @Inject constructor(
     private val accountStore: XtreamAccountStore,
@@ -101,10 +113,11 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
     private lateinit var surfaceContainer: FrameLayout
     private lateinit var status: TextView
     private lateinit var start: Button
+    private lateinit var startMpv: Button
     private lateinit var recreateSurface: Button
     private lateinit var stop: Button
     private var selectedFixture: SelectedDebugFixture? = null
-    private var runtime: CleanMedia3LabRuntime? = null
+    private var runtime: CleanPlaybackLabRuntime? = null
     private var surfaceView: SurfaceView? = null
     private var textureView: TextureView? = null
     private var receiverRegistered = false
@@ -133,12 +146,13 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
             ContextCompat.RECEIVER_EXPORTED,
         )
         receiverRegistered = true
-        runtime = CleanMedia3LabRuntime(
+        runtime = CleanPlaybackLabRuntime(
             context = applicationContext,
             scope = labScope,
             clients = clients,
             playlistDns = playlistDns,
-            surfaceHost = ::showSurface,
+            media3SurfaceHost = ::showMedia3Surface,
+            mpvSurfaceHost = ::showMpvSurface,
             status = ::setStatus,
         )
         lifecycleScope.launch {
@@ -148,6 +162,7 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
                     selectedFixture = result.fixture
                     setStatus(LabReadinessCode.READY)
                     start.isEnabled = true
+                    startMpv.isEnabled = true
                 }
             }
         }
@@ -169,6 +184,7 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
         // the screen. Main.immediate begins the pause/release barrier before onStop returns; the
         // force-stop in the host harness remains the independent device-switch safety barrier.
         start.isEnabled = false
+        startMpv.isEnabled = false
         recreateSurface.isEnabled = false
         stop.isEnabled = false
         val activeRuntime = runtime
@@ -177,6 +193,7 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
             val stillOwned = activeRuntime?.hasActiveSession() == true
             if (!isFinishing && !isDestroyed) {
                 start.isEnabled = released && !stillOwned && selectedFixture != null
+                startMpv.isEnabled = released && !stillOwned && selectedFixture != null
                 stop.isEnabled = stillOwned
             }
         }
@@ -192,22 +209,19 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
             text = "LAB_LOADING"
         }
         start = Button(this).apply {
-            text = "Start selected recent channel"
+            text = "Start Media3"
             isEnabled = false
             setOnClickListener {
                 val fixture = selectedFixture ?: return@setOnClickListener
-                isEnabled = false
-                labScope.launch {
-                    val viewport = VideoDimensions(
-                        surfaceContainer.width.coerceAtLeast(1),
-                        surfaceContainer.height.coerceAtLeast(1),
-                    )
-                    val started = runtime?.start(fixture, viewport) == true
-                    val stillOwned = runtime?.hasActiveSession() == true
-                    stop.isEnabled = started || stillOwned
-                    recreateSurface.isEnabled = started
-                    if (!started && !stillOwned) isEnabled = true
-                }
+                startEngine(fixture, EngineType.MEDIA3)
+            }
+        }
+        startMpv = Button(this).apply {
+            text = "Start libmpv"
+            isEnabled = false
+            setOnClickListener {
+                val fixture = selectedFixture ?: return@setOnClickListener
+                startEngine(fixture, EngineType.LIBMPV)
             }
         }
         recreateSurface = Button(this).apply {
@@ -233,6 +247,7 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
                     val stillOwned = runtime?.hasActiveSession() == true
                     recreateSurface.isEnabled = false
                     start.isEnabled = released && !stillOwned && selectedFixture != null
+                    startMpv.isEnabled = released && !stillOwned && selectedFixture != null
                     stop.isEnabled = stillOwned
                 }
             }
@@ -242,6 +257,7 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
             gravity = Gravity.CENTER_VERTICAL
             addView(status, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
             addView(start, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(startMpv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
             addView(recreateSurface, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
             addView(stop, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
@@ -255,7 +271,26 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
         )
     }
 
-    private fun showSurface(mode: SurfaceMode): Media3SurfaceHost {
+    private fun startEngine(fixture: SelectedDebugFixture, engine: EngineType) {
+        start.isEnabled = false
+        startMpv.isEnabled = false
+        labScope.launch {
+            val viewport = VideoDimensions(
+                surfaceContainer.width.coerceAtLeast(1),
+                surfaceContainer.height.coerceAtLeast(1),
+            )
+            val started = runtime?.start(fixture, viewport, engine) == true
+            val stillOwned = runtime?.hasActiveSession() == true
+            stop.isEnabled = started || stillOwned
+            recreateSurface.isEnabled = started
+            if (!started && !stillOwned) {
+                start.isEnabled = true
+                startMpv.isEnabled = true
+            }
+        }
+    }
+
+    private fun showMedia3Surface(mode: SurfaceMode): Media3SurfaceHost {
         check(mode == SurfaceMode.SURFACE_VIEW || mode == SurfaceMode.TEXTURE_VIEW)
         surfaceContainer.removeAllViews()
         surfaceView = null
@@ -273,13 +308,61 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
                     surfaceContainer.addView(view, matchParent())
                 }
             }
-            else -> error("Unsupported clean Media3 surface")
         }
         return ViewMedia3SurfaceHost(
             surfaceView = { surfaceView },
             textureView = { textureView },
         )
     }
+
+    private suspend fun showMpvSurface(mode: SurfaceMode): MpvSurfaceHost =
+        withContext(Dispatchers.Main.immediate) {
+            check(mode == SurfaceMode.NATIVE_EMBED || mode == SurfaceMode.GPU_RENDER)
+            surfaceContainer.removeAllViews()
+            textureView = null
+            val view = SurfaceView(this@CleanMedia3PlaybackLabActivity).also { created ->
+                surfaceView = created
+                created.holder.addCallback(smokeSurfaceCallback(mode))
+                surfaceContainer.addView(created, matchParent())
+            }
+            check(awaitValidSurface(view)) { "Debug libmpv surface was not created in time" }
+            ViewMpvSurfaceHost(
+                nativeEmbedSurface = { currentMpvSurface() },
+                gpuRenderSurface = { currentMpvSurface() },
+            )
+        }
+
+    private suspend fun awaitValidSurface(view: SurfaceView): Boolean =
+        withTimeoutOrNull(MPV_SURFACE_TIMEOUT_MS) {
+            if (!view.holder.surface.isValid) {
+                suspendCancellableCoroutine { continuation ->
+                    var finished = false
+                    lateinit var callback: SurfaceHolder.Callback
+                    fun complete() {
+                        if (finished || !continuation.isActive) return
+                        finished = true
+                        view.holder.removeCallback(callback)
+                        continuation.resume(Unit)
+                    }
+                    callback = object : SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: SurfaceHolder) = complete()
+                        override fun surfaceChanged(
+                            holder: SurfaceHolder,
+                            format: Int,
+                            width: Int,
+                            height: Int,
+                        ) = Unit
+                        override fun surfaceDestroyed(holder: SurfaceHolder) = Unit
+                    }
+                    view.holder.addCallback(callback)
+                    continuation.invokeOnCancellation { view.holder.removeCallback(callback) }
+                    if (view.holder.surface.isValid) complete()
+                }
+            }
+            true
+        } ?: false
+
+    private fun currentMpvSurface(): Surface? = surfaceView?.holder?.surface?.takeIf(Surface::isValid)
 
     private fun smokeSurfaceCallback(mode: SurfaceMode) = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
@@ -325,22 +408,25 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
 
     private companion object {
         const val RELEASE_ACTION = "com.tuvora.tv.debug.action.PLAYBACK_SMOKE_RELEASE"
+        const val MPV_SURFACE_TIMEOUT_MS = 3_000L
     }
 }
 
 @UnstableApi
-private class CleanMedia3LabRuntime(
+private class CleanPlaybackLabRuntime(
     private val context: Context,
     private val scope: CoroutineScope,
     private val clients: IptvClientFactory,
     private val playlistDns: PlaylistDns,
-    private val surfaceHost: (SurfaceMode) -> Media3SurfaceHost,
+    private val media3SurfaceHost: (SurfaceMode) -> Media3SurfaceHost,
+    private val mpvSurfaceHost: suspend (SurfaceMode) -> MpvSurfaceHost,
     private val status: (LabReadinessCode) -> Unit,
 ) {
     private data class Active(
         val generation: Long,
-        val graph: com.nuvio.tv.playback.core.PlaybackGraph,
-        val engine: Media3Engine,
+        val engineType: EngineType,
+        val graph: PlaybackGraph,
+        val engine: PlaybackEngine,
         val events: Job,
     )
 
@@ -358,8 +444,13 @@ private class CleanMedia3LabRuntime(
     private var lastPlayWhenReady = false
     private var lastLoading = false
 
-    suspend fun start(fixture: SelectedDebugFixture, viewport: VideoDimensions): Boolean = mutex.withLock {
+    suspend fun start(
+        fixture: SelectedDebugFixture,
+        viewport: VideoDimensions,
+        engineType: EngineType,
+    ): Boolean = mutex.withLock {
         if (active != null) return@withLock false
+        val profile = SessionProfile.GUIDE
         val rawUrl = withContext(Dispatchers.IO) {
             runCatching {
                 clients.clientFor(fixture.account).resolveStreamUrl(
@@ -393,8 +484,18 @@ private class CleanMedia3LabRuntime(
         val requested = CleanPlaybackPreferences.recommended().let { defaults ->
             defaults.copy(
                 playback = defaults.playback.copy(
-                    engine = EnginePreference.MEDIA3,
+                    engine = if (engineType == EngineType.MEDIA3) EnginePreference.MEDIA3 else EnginePreference.LIBMPV,
                     automaticFallback = false,
+                    // Keep the guide comparison semantically identical. Direct libmpv cannot
+                    // composite subtitles, so neither engine requests them in this adapter lab.
+                    subtitles = defaults.playback.subtitles.copy(enabled = false),
+                ),
+                expert = defaults.expert.copy(
+                    mpvOutput = if (engineType == EngineType.LIBMPV) {
+                        MpvOutputPreference.DIRECT
+                    } else {
+                        defaults.expert.mpvOutput
+                    },
                 ),
             )
         }
@@ -404,17 +505,38 @@ private class CleanMedia3LabRuntime(
                 request = mapped.request.summary(),
                 evidence = mapped.evidence,
                 capabilities = android.capabilities,
-                eligibleEngines = setOf(EngineType.MEDIA3),
+                eligibleEngines = setOf(engineType),
             ),
         )
+        val labAndroid = if (engineType == EngineType.LIBMPV) {
+            // The production collector deliberately leaves libmpv surface support unproven. This
+            // debug lab proves only its own SurfaceView host, then acquire() rechecks Surface.valid.
+            android.copy(
+                capabilities = android.capabilities.copy(
+                    surfaces = android.capabilities.surfaces.copy(nativeEmbedSupported = true),
+                ),
+                // The verified Fire override chooses between Media3's SurfaceView/TextureView
+                // guide outputs. It cannot describe libmpv's native-embed output, so the debug
+                // same-profile comparison excludes only that incompatible surface override.
+                appliedQuirks = android.appliedQuirks.filterNot { applied ->
+                    applied.quirk.override is AndroidPlaybackQuirkOverride.ForceEmbeddedSurface
+                },
+            )
+        } else {
+            android
+        }
         val environment = PlaybackEnvironmentSnapshotMapper.map(
             PlaybackEnvironmentMappingInput(
                 preferences = resolved,
-                android = android,
-                profile = SessionProfile.GUIDE,
+                android = labAndroid,
+                profile = profile,
                 previewViewport = viewport,
-                baseEligibleEngines = setOf(EngineType.MEDIA3),
-                baseAllowedSurfaceModes = setOf(SurfaceMode.SURFACE_VIEW, SurfaceMode.TEXTURE_VIEW),
+                baseEligibleEngines = setOf(engineType),
+                baseAllowedSurfaceModes = if (engineType == EngineType.MEDIA3) {
+                    setOf(SurfaceMode.SURFACE_VIEW, SurfaceMode.TEXTURE_VIEW)
+                } else {
+                    setOf(SurfaceMode.NATIVE_EMBED)
+                },
                 secureOutputRequired = false,
             ),
         )
@@ -423,27 +545,31 @@ private class CleanMedia3LabRuntime(
                 PlaybackRequirementsInput(
                     requestSummary = mapped.request.summary(),
                     evidence = mapped.evidence,
-                    profile = SessionProfile.GUIDE,
+                    profile = profile,
                     effectivePreferences = resolved.effective.playback,
                     environment = environment,
                 ),
             )
         ) {
             is PlaybackResult.Failure -> {
-                smoke(CleanPlaybackSmokeLine.error(result.failure))
+                smoke(CleanPlaybackSmokeLine.error(result.failure, engineType))
                 status(LabReadinessCode.POLICY_REJECTED)
                 return@withLock false
             }
             is PlaybackResult.Success -> result.value
         }
-        val candidates = media3LabCandidates(requirements)
+        val candidates = if (engineType == EngineType.MEDIA3) {
+            media3LabCandidates(requirements)
+        } else {
+            mpvLabCandidates(requirements)
+        }
         val graph = when (
             val selection = PlaybackPolicy().selectPrimary(
                 PlaybackPolicy.SelectionInput(requirements, candidates),
             )
         ) {
             is PlaybackPolicy.Selection.Rejected -> {
-                smoke(CleanPlaybackSmokeLine.error(selection.failure))
+                smoke(CleanPlaybackSmokeLine.error(selection.failure, engineType))
                 status(LabReadinessCode.POLICY_REJECTED)
                 return@withLock false
             }
@@ -453,25 +579,42 @@ private class CleanMedia3LabRuntime(
         val generation = nextGeneration++
         lastPlayWhenReady = false
         lastLoading = false
-        smoke(CleanPlaybackSmokeLine.session(generation))
-        val engine = Media3Engine(
-            scope = scope,
-            surfaceHost = surfaceHost(graph.surfaceMode),
-            backendFactory = AndroidMedia3BackendFactory(
-                context = context,
-                sharedHttpClient = http,
-                sharedApplicationDns = dns,
-                sharedClientTlsPolicy = TlsPolicy.STRICT,
-            ),
-        )
-        val eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            engine.events.collect { event -> onEvent(generation, event) }
+        smoke(CleanPlaybackSmokeLine.session(generation, engineType))
+        val preparedMpvHost = if (engineType == EngineType.LIBMPV) {
+            runCatching { mpvSurfaceHost(graph.surfaceMode) }.getOrNull()
+        } else {
+            null
         }
-        val running = Active(generation, graph, engine, eventJob)
+        if (engineType == EngineType.LIBMPV && preparedMpvHost == null) {
+            smoke(CleanPlaybackSmokeLine.error(surfaceFailure(), engineType))
+            status(LabReadinessCode.START_FAILED)
+            return@withLock false
+        }
+        val engine: PlaybackEngine = when (engineType) {
+            EngineType.MEDIA3 -> Media3Engine(
+                scope = scope,
+                surfaceHost = media3SurfaceHost(graph.surfaceMode),
+                backendFactory = AndroidMedia3BackendFactory(
+                    context = context,
+                    sharedHttpClient = http,
+                    sharedApplicationDns = dns,
+                    sharedClientTlsPolicy = TlsPolicy.STRICT,
+                ),
+            )
+            EngineType.LIBMPV -> MpvEngine(
+                scope = scope,
+                surfaceHost = requireNotNull(preparedMpvHost),
+                backendFactory = AndroidMpvBackendFactory(context),
+            )
+        }
+        val eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            engine.events.collect { event -> onEvent(generation, engineType, event) }
+        }
+        val running = Active(generation, engineType, graph, engine, eventJob)
         active = running
         val attached = engine.attachSurface(generation, graph)
         if (attached is PlaybackResult.Failure) {
-            smoke(CleanPlaybackSmokeLine.error(attached.failure))
+            smoke(CleanPlaybackSmokeLine.error(attached.failure, engineType))
             releaseActive(running, null)
             status(LabReadinessCode.START_FAILED)
             return@withLock false
@@ -487,7 +630,7 @@ private class CleanMedia3LabRuntime(
             ),
         )
         if (started is PlaybackResult.Failure) {
-            smoke(CleanPlaybackSmokeLine.error(started.failure))
+            smoke(CleanPlaybackSmokeLine.error(started.failure, engineType))
             releaseActive(running, null)
             status(LabReadinessCode.START_FAILED)
             return@withLock false
@@ -499,7 +642,7 @@ private class CleanMedia3LabRuntime(
         val current = active ?: return@withLock false
         when (val detached = current.engine.detachSurface(current.generation)) {
             is PlaybackResult.Failure -> {
-                smoke(CleanPlaybackSmokeLine.error(detached.failure))
+                smoke(CleanPlaybackSmokeLine.error(detached.failure, current.engineType))
                 status(LabReadinessCode.SURFACE_RECREATE_FAILED)
                 return@withLock false
             }
@@ -507,15 +650,20 @@ private class CleanMedia3LabRuntime(
         }
         // Rebuild only the selected View. The engine, backend, request, and provider connection are
         // deliberately retained; attachSurface reacquires through the original dynamic host.
-        val surfaceReplaced = runCatching { surfaceHost(current.graph.surfaceMode) }.isSuccess
+        val surfaceReplaced = runCatching {
+            when (current.engineType) {
+                EngineType.MEDIA3 -> media3SurfaceHost(current.graph.surfaceMode)
+                EngineType.LIBMPV -> mpvSurfaceHost(current.graph.surfaceMode)
+            }
+        }.isSuccess
         if (!surfaceReplaced) {
-            smoke(CleanPlaybackSmokeLine.error(surfaceFailure()))
+            smoke(CleanPlaybackSmokeLine.error(surfaceFailure(), current.engineType))
             status(LabReadinessCode.SURFACE_RECREATE_FAILED)
             return@withLock false
         }
         return@withLock when (val attached = current.engine.attachSurface(current.generation, current.graph)) {
             is PlaybackResult.Failure -> {
-                smoke(CleanPlaybackSmokeLine.error(attached.failure))
+                smoke(CleanPlaybackSmokeLine.error(attached.failure, current.engineType))
                 status(LabReadinessCode.SURFACE_RECREATE_FAILED)
                 false
             }
@@ -541,6 +689,7 @@ private class CleanMedia3LabRuntime(
                 CleanPlaybackSmokeLine.metrics(
                     metrics.value.videoFramesRendered,
                     metrics.value.videoFramesDropped,
+                    current.engineType,
                 ),
             )
             is PlaybackResult.Failure -> Unit
@@ -562,16 +711,17 @@ private class CleanMedia3LabRuntime(
                     LabPlayerState.RELEASED,
                     playWhenReady = false,
                     loading = false,
+                    engine = current.engineType,
                 ),
             )
-            if (nonce != null) smoke(CleanPlaybackSmokeLine.release(nonce, hardAbort))
+            if (nonce != null) smoke(CleanPlaybackSmokeLine.release(nonce, hardAbort, current.engineType))
         } else {
             status(LabReadinessCode.RELEASE_FAILED)
         }
         return released
     }
 
-    private fun onEvent(generation: Long, event: PlaybackEvent) {
+    private fun onEvent(generation: Long, engineType: EngineType, event: PlaybackEvent) {
         if (event.generation != generation) return
         when (event) {
             is PlaybackEvent.EngineStateObserved -> {
@@ -583,16 +733,18 @@ private class CleanMedia3LabRuntime(
                         state = event.state.toLabState(),
                         playWhenReady = event.playWhenReady,
                         loading = event.isLoading,
+                        engine = engineType,
                     ),
                 )
             }
             is PlaybackEvent.VideoDecoderInitialized ->
-                smoke(CleanPlaybackSmokeLine.renderer(decoderName = event.decoderName))
+                smoke(CleanPlaybackSmokeLine.renderer(decoderName = event.decoderName, engine = engineType))
             is PlaybackEvent.VideoInputFormatChanged ->
-                smoke(CleanPlaybackSmokeLine.renderer(sampleMimeType = event.sampleMimeType))
+                smoke(CleanPlaybackSmokeLine.renderer(sampleMimeType = event.sampleMimeType, engine = engineType))
             is PlaybackEvent.VideoSizeChanged ->
-                smoke(CleanPlaybackSmokeLine.videoSize(event.width, event.height))
-            is PlaybackEvent.FirstVideoFrame -> smoke(CleanPlaybackSmokeLine.firstFrame())
+                smoke(CleanPlaybackSmokeLine.videoSize(event.width, event.height, engineType))
+            is PlaybackEvent.FirstVideoFrame -> smoke(CleanPlaybackSmokeLine.firstFrame(engineType))
+            is PlaybackEvent.FirstAudio -> smoke(CleanPlaybackSmokeLine.firstAudio(engineType))
             is PlaybackEvent.PlaybackEnded ->
                 smoke(
                     CleanPlaybackSmokeLine.state(
@@ -600,23 +752,24 @@ private class CleanMedia3LabRuntime(
                         LabPlayerState.ENDED,
                         playWhenReady = lastPlayWhenReady,
                         loading = lastLoading,
+                        engine = engineType,
                     ),
                 )
             is PlaybackEvent.Failed -> {
-                smoke(CleanPlaybackSmokeLine.error(event.failure))
+                smoke(CleanPlaybackSmokeLine.error(event.failure, engineType))
                 smoke(
                     CleanPlaybackSmokeLine.state(
                         generation,
                         LabPlayerState.ERROR,
                         playWhenReady = lastPlayWhenReady,
                         loading = lastLoading,
+                        engine = engineType,
                     ),
                 )
             }
             is PlaybackEvent.BytesReceived,
             is PlaybackEvent.BufferingStarted,
             is PlaybackEvent.BufferingEnded,
-            is PlaybackEvent.FirstAudio,
             is PlaybackEvent.TracksAvailable,
             is PlaybackEvent.RequestResolved,
             is PlaybackEvent.GraphSelected,
