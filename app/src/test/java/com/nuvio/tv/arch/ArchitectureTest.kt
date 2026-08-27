@@ -217,6 +217,28 @@ class ArchitectureTest {
         )
     }
 
+    @Test
+    fun `live channel ports stay provider platform storage and UI neutral`() {
+        assertCleanPlaybackFilesCollected()
+        val forbiddenImport = Regex(
+            """^(?:android(?:x)?\.|com\.nuvio\.tv\.(?:core\.iptv|data|ui|core\.di)\.|""" +
+                """com\.nuvio\.tv\.playback\.(?:media3|mpv|provider|wiring)\.|dagger\.|javax\.inject\.)""",
+        )
+        val violations = files
+            .filter { (path, _) -> isCleanPlaybackPackage(path, "live") }
+            .mapNotNull { (path, text) ->
+                imports(text).filter(forbiddenImport::containsMatchIn)
+                    .takeIf(List<String>::isNotEmpty)
+                    ?.let { rel(path) + " -> " + it.joinToString() }
+            }
+            .sorted()
+        assertTrue(
+            "playback.live contains provider-neutral contracts only:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
     /** Direct SDK use is legal only inside the matching adapter package. */
     @Test
     fun `clean playback engine APIs stay inside their adapters`() {

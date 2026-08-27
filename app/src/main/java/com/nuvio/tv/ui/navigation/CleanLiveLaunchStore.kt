@@ -1,9 +1,9 @@
 package com.nuvio.tv.ui.navigation
 
 import com.nuvio.tv.playback.core.ContentType
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
+import com.nuvio.tv.playback.live.LiveMediaFingerprint
 import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -150,7 +150,10 @@ class CleanLiveLaunchStore internal constructor(
             activeProfileId = activeProfileId,
             metadata = CleanLiveLaunchMetadata.sanitized(title, subtitle, station),
             origin = origin,
-            mediaFingerprint = mediaFingerprint(selection, activeProfileId),
+            mediaFingerprint = LiveMediaFingerprint.create(
+                selection,
+                PlaybackProfileId(activeProfileId.toString()),
+            ),
         )
         return synchronized(lock) {
             pruneExpired(now)
@@ -199,29 +202,6 @@ class CleanLiveLaunchStore internal constructor(
 
     private fun isExpired(stored: StoredEntry, nowMs: Long): Boolean =
         (nowMs - stored.createdAtMs).coerceAtLeast(0L) >= ttlMs
-
-    private fun mediaFingerprint(
-        selection: ProviderPlaybackSelection,
-        activeProfileId: Int,
-    ): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        listOf(
-            activeProfileId.toString(),
-            selection.sourceType.name,
-            selection.accountId.value,
-            selection.itemId.value,
-            selection.contentKey.value,
-            selection.contentType.name,
-            selection.catchUpWindow?.startEpochMs?.toString().orEmpty(),
-            selection.catchUpWindow?.endEpochMs?.toString().orEmpty(),
-        ).forEach { component ->
-            val bytes = component.toByteArray(StandardCharsets.UTF_8)
-            digest.update(bytes.size.toString().toByteArray(StandardCharsets.US_ASCII))
-            digest.update(0.toByte())
-            digest.update(bytes)
-        }
-        return digest.digest().toHex()
-    }
 
     private fun ByteArray.toHex(): String =
         joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
