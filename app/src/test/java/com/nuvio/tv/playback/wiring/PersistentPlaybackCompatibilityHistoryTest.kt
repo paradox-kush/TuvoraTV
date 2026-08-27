@@ -75,13 +75,15 @@ class PersistentPlaybackCompatibilityHistoryTest {
     }
 
     @Test
-    fun `network authorization and TLS failures never establish engine history`() = runTest {
+    fun `network authorization TLS DRM resource and unknown failures never establish engine history`() = runTest {
         val storage = FakeStorage()
         val history = history(storage, FakeClock(1_000))
         listOf(
             FailureDomain.NETWORK to FailureCode.NETWORK_TIMEOUT,
             FailureDomain.AUTHORIZATION_PROVIDER_LIMIT to FailureCode.AUTHORIZATION_REJECTED,
             FailureDomain.TLS to FailureCode.TLS_HANDSHAKE_FAILED,
+            FailureDomain.DRM to FailureCode.DRM_LICENSE_FAILED,
+            FailureDomain.DEVICE_RESOURCE to FailureCode.RESOURCE_BUDGET_EXCEEDED,
             FailureDomain.UNKNOWN to FailureCode.PROVIDER_CONNECTION_LIMIT,
         ).forEachIndexed { index, (domain, code) ->
             history.record(
@@ -97,6 +99,57 @@ class PersistentPlaybackCompatibilityHistoryTest {
 
         assertTrue(history.records(scopeA).isEmpty())
         assertTrue(storage.value.isNullOrEmpty())
+    }
+
+    @Test
+    fun `only explicitly classified parser decoder and render failures are learned`() = runTest {
+        val accepted = listOf(
+            FailureDomain.MANIFEST to FailureCode.MANIFEST_INVALID,
+            FailureDomain.DEMUX to FailureCode.DEMUX_FAILED,
+            FailureDomain.VIDEO_DECODER to FailureCode.VIDEO_DECODER_UNAVAILABLE,
+            FailureDomain.VIDEO_DECODER to FailureCode.VIDEO_DECODER_FAILED,
+            FailureDomain.VIDEO_RENDERER_SURFACE to FailureCode.VIDEO_RENDERER_FAILED,
+            FailureDomain.VIDEO_RENDERER_SURFACE to FailureCode.SURFACE_LOST,
+        )
+
+        accepted.forEachIndexed { index, (domain, code) ->
+            val storage = FakeStorage()
+            val history = history(storage, FakeClock(1_000))
+            history.record(
+                fatal(
+                    scopeA,
+                    domain = domain,
+                    code = code,
+                    recordedAt = 1_000L + index,
+                    expiresAt = 10_000,
+                ),
+            )
+            assertEquals("$domain/$code", 1, history.records(scopeA).size)
+        }
+
+        val mismatched = history(FakeStorage(), FakeClock(1_000))
+        mismatched.record(
+            fatal(
+                scopeA,
+                domain = FailureDomain.VIDEO_DECODER,
+                code = FailureCode.NETWORK_TIMEOUT,
+                recordedAt = 1_000,
+                expiresAt = 10_000,
+            ),
+        )
+        assertTrue(mismatched.records(scopeA).isEmpty())
+
+        val audioWithoutRouteScope = history(FakeStorage(), FakeClock(1_000))
+        audioWithoutRouteScope.record(
+            fatal(
+                scopeA,
+                domain = FailureDomain.AUDIO,
+                code = FailureCode.AUDIO_OUTPUT_FAILED,
+                recordedAt = 1_000,
+                expiresAt = 10_000,
+            ),
+        )
+        assertTrue(audioWithoutRouteScope.records(scopeA).isEmpty())
     }
 
     @Test
@@ -119,6 +172,30 @@ class PersistentPlaybackCompatibilityHistoryTest {
                 .records(scopeA)
                 .isEmpty(),
         )
+
+        val engineStorage = FakeStorage()
+        history(engineStorage, FakeClock(1_000), media3Version = "media3-old").record(
+            fatal(
+                scopeA,
+                engineVersion = "media3-old",
+                recordedAt = 1_000,
+                expiresAt = 10_000,
+            ),
+        )
+        assertTrue(history(engineStorage, FakeClock(1_001)).records(scopeA).isEmpty())
+    }
+
+    @Test
+    fun `older or already expired outcomes cannot replace newer exact graph history`() = runTest {
+        val storage = FakeStorage()
+        val clock = FakeClock(2_000)
+        val history = history(storage, clock)
+        history.record(fatal(scopeA, recordedAt = 2_000, expiresAt = 10_000))
+        history.record(success(scopeA, recordedAt = 1_500, expiresAt = 10_000))
+        assertEquals(CompatibilityOutcome.DETERMINISTIC_FATAL, history.records(scopeA).single().outcome)
+
+        history.record(success(scopeA, recordedAt = 1_000, expiresAt = 1_500))
+        assertEquals(CompatibilityOutcome.DETERMINISTIC_FATAL, history.records(scopeA).single().outcome)
     }
 
     @Test
@@ -193,13 +270,14 @@ class PersistentPlaybackCompatibilityHistoryTest {
         maxRecords: Int = 512,
         maxEncodedBytes: Int = 256 * 1024,
         currentRuntime: CompatibilityRuntimeFingerprint = runtime,
+        media3Version: String = "media3-1",
     ) = PersistentPlaybackCompatibilityHistory(
         storage = storage,
         clock = clock,
         currentAppVersion = appVersion,
         currentRuntime = currentRuntime,
         currentEngineVersions = mapOf(
-            EngineType.MEDIA3 to "media3-1",
+            EngineType.MEDIA3 to media3Version,
             EngineType.LIBMPV to "mpv-1",
         ),
         maxRecords = maxRecords,
@@ -211,6 +289,7 @@ class PersistentPlaybackCompatibilityHistoryTest {
         domain: FailureDomain = FailureDomain.VIDEO_DECODER,
         code: FailureCode = FailureCode.VIDEO_DECODER_FAILED,
         appVersion: String = "app-1",
+        engineVersion: String = "media3-1",
         recordedAt: Long,
         expiresAt: Long,
     ) = CompatibilityRecord(
@@ -221,7 +300,7 @@ class PersistentPlaybackCompatibilityHistoryTest {
         failureDomain = domain,
         failureCode = code,
         appVersion = appVersion,
-        engineVersion = "media3-1",
+        engineVersion = engineVersion,
         recordedAtEpochMs = recordedAt,
         expiresAtEpochMs = expiresAt,
     )

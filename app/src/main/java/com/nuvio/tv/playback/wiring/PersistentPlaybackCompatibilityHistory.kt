@@ -41,8 +41,9 @@ class SharedPreferencesPlaybackCompatibilityStorage(
 }
 
 /**
- * Exact, versioned, expiring compatibility history. It stores deterministic engine/render outcomes;
- * transport, authorization, and TLS failures are deliberately excluded from learning.
+ * Exact, versioned, expiring compatibility history. It stores deterministic parser/decoder/render
+ * outcomes. Transport, authorization, TLS, DRM, resource, and non-route-scoped audio failures are
+ * deliberately excluded from engine learning.
  */
 class PersistentPlaybackCompatibilityHistory(
     private val storage: PlaybackCompatibilityStorage,
@@ -83,8 +84,8 @@ class PersistentPlaybackCompatibilityHistory(
     }
 
     override suspend fun record(value: CompatibilityRecord) = mutex.withLock {
-        if (!isLearnable(value)) return@withLock
         val now = clock.nowEpochMs()
+        if (!isLearnable(value) || value.isExpired(now)) return@withLock
         val existing = compact(decode(storage.read()), now).toMutableList()
         val sameGraph: (StoredRecord) -> Boolean = {
             it.record.scopeKey == value.scopeKey &&
@@ -92,6 +93,12 @@ class PersistentPlaybackCompatibilityHistory(
                 it.record.runtime == value.runtime &&
                 it.record.appVersion == value.appVersion &&
                 it.record.engineVersion == value.engineVersion
+        }
+        val newestExactRecord = existing.asSequence()
+            .filter(sameGraph)
+            .maxOfOrNull { it.record.recordedAtEpochMs }
+        if (newestExactRecord != null && newestExactRecord > value.recordedAtEpochMs) {
+            return@withLock
         }
         // A verified success invalidates prior fatal history for the exact graph. A newer fatal
         // likewise replaces stale success; history never votes with contradictory simultaneous rows.
@@ -104,10 +111,10 @@ class PersistentPlaybackCompatibilityHistory(
         if (record.appVersion != currentAppVersion) return false
         if (record.runtime != currentRuntime) return false
         if (currentEngineVersions[record.engine] != record.engineVersion) return false
-        if (record.outcome == CompatibilityOutcome.SUCCESS) return true
-        if (!record.deterministicFailure()) return false
-        return record.failureDomain !in NON_ENGINE_FAILURE_DOMAINS &&
-            record.failureCode !in NON_ENGINE_FAILURE_CODES
+        if (record.outcome == CompatibilityOutcome.SUCCESS) {
+            return record.failureDomain == null && record.failureCode == null
+        }
+        return record.deterministicFailure() && record.hasLearnableFailureClassification()
     }
 
     private fun matchesCurrentRuntime(record: CompatibilityRecord): Boolean =
@@ -117,6 +124,35 @@ class PersistentPlaybackCompatibilityHistory(
 
     private fun CompatibilityRecord.deterministicFailure(): Boolean =
         outcome == CompatibilityOutcome.DETERMINISTIC_FATAL && failureDomain != null && failureCode != null
+
+    /**
+     * V1 learns only exact engine/parser/decoder/render compatibility failures. A blacklist is not
+     * sufficient here: new transport, account, DRM, resource, or unknown codes must stay inert by
+     * default until they are deliberately classified.
+     */
+    private fun CompatibilityRecord.hasLearnableFailureClassification(): Boolean = when (failureDomain) {
+        FailureDomain.MANIFEST -> failureCode == FailureCode.MANIFEST_INVALID
+        FailureDomain.DEMUX -> failureCode == FailureCode.DEMUX_FAILED
+        FailureDomain.VIDEO_DECODER -> failureCode in setOf(
+            FailureCode.VIDEO_DECODER_UNAVAILABLE,
+            FailureCode.VIDEO_DECODER_FAILED,
+        )
+        FailureDomain.VIDEO_RENDERER_SURFACE -> failureCode in setOf(
+            FailureCode.VIDEO_RENDERER_FAILED,
+            FailureCode.SURFACE_LOST,
+        )
+        // The stable compatibility runtime intentionally excludes the dynamic audio route. Keep
+        // audio-output failures inert until the history key can identify the exact routed device.
+        FailureDomain.AUDIO,
+        FailureDomain.NETWORK,
+        FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
+        FailureDomain.TLS,
+        FailureDomain.DRM,
+        FailureDomain.DEVICE_RESOURCE,
+        FailureDomain.UNKNOWN,
+        null,
+        -> false
+    }
 
     private fun encode(records: List<StoredRecord>): String = buildString {
         appendLine(FORMAT_VERSION)
@@ -201,6 +237,9 @@ class PersistentPlaybackCompatibilityHistory(
     private fun compact(records: List<StoredRecord>, nowEpochMs: Long): List<StoredRecord> {
         val retained = records
             .asSequence()
+            // A version/runtime change invalidates the record, not merely its current lookup. Keeping
+            // stale rows would let them consume the bounded store and evict current exact evidence.
+            .filter { matchesCurrentRuntime(it.record) }
             .filterNot { it.record.isExpired(nowEpochMs) }
             .sortedWith(
                 compareByDescending<StoredRecord> { it.lastAccessedAtEpochMs }
@@ -219,18 +258,6 @@ class PersistentPlaybackCompatibilityHistory(
         const val FIELD_COUNT = 19
         const val DEFAULT_MAX_RECORDS = 512
         const val DEFAULT_MAX_ENCODED_BYTES = 256 * 1024
-        val NON_ENGINE_FAILURE_DOMAINS = setOf(
-            FailureDomain.NETWORK,
-            FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
-            FailureDomain.TLS,
-        )
-        val NON_ENGINE_FAILURE_CODES = setOf(
-            FailureCode.NETWORK_UNREACHABLE,
-            FailureCode.NETWORK_TIMEOUT,
-            FailureCode.AUTHORIZATION_REJECTED,
-            FailureCode.PROVIDER_CONNECTION_LIMIT,
-            FailureCode.TLS_HANDSHAKE_FAILED,
-        )
     }
 }
 

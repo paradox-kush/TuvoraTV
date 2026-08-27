@@ -22,6 +22,7 @@ import com.nuvio.tv.playback.core.EngineType
 import com.nuvio.tv.playback.core.EvidenceFact
 import com.nuvio.tv.playback.core.EvidenceProvenance
 import com.nuvio.tv.playback.core.FailureDomain
+import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FrameRatePreference
 import com.nuvio.tv.playback.core.GraphOutputProfile
 import com.nuvio.tv.playback.core.HdrPreference
@@ -116,7 +117,7 @@ class PlaybackPreferenceResolverTest {
         )
 
         assertEquals(EnginePreference.MEDIA3, result.engine.effective)
-        assertEquals(ResolutionAuthority.LEARNED_COMPATIBILITY, result.engine.authority)
+        assertEquals(ResolutionAuthority.HARD_CONSTRAINT, result.engine.authority)
         assertEquals(PreferenceReason.KNOWN_FATAL_INCOMPATIBILITY, result.engine.primaryReason)
     }
 
@@ -176,17 +177,19 @@ class PlaybackPreferenceResolverTest {
     }
 
     @Test
-    fun `network authorization provider and TLS failures never become compatibility exclusions`() {
+    fun `network authorization provider TLS DRM and unscoped audio failures never become compatibility exclusions`() {
         val scope = CompatibilityScopeKey("provider|device|stream")
         val requested = defaults(engine = EnginePreference.LIBMPV).copy(
             expert = ExpertPlaybackPreferences(MpvOutputPreference.DIRECT),
         )
 
         listOf(
-            FailureDomain.NETWORK,
-            FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
-            FailureDomain.TLS,
-        ).forEach { domain ->
+            FailureDomain.NETWORK to FailureCode.NETWORK_TIMEOUT,
+            FailureDomain.AUTHORIZATION_PROVIDER_LIMIT to FailureCode.AUTHORIZATION_REJECTED,
+            FailureDomain.TLS to FailureCode.TLS_HANDSHAKE_FAILED,
+            FailureDomain.DRM to FailureCode.DRM_LICENSE_FAILED,
+            FailureDomain.AUDIO to FailureCode.AUDIO_OUTPUT_FAILED,
+        ).forEach { (domain, code) ->
             val result = PlaybackPreferenceResolver.resolve(
                 requested,
                 context(
@@ -198,6 +201,7 @@ class PlaybackPreferenceResolverTest {
                             CompatibilityOutcome.DETERMINISTIC_FATAL,
                             GraphOutputProfile.MPV_DIRECT,
                             domain,
+                            code,
                         ),
                     ),
                 ),
@@ -206,6 +210,139 @@ class PlaybackPreferenceResolverTest {
             assertEquals(domain.name, EnginePreference.LIBMPV, result.engine.effective)
             assertEquals(domain.name, ResolutionAuthority.SAVED_USER_OVERRIDE, result.engine.authority)
         }
+    }
+
+    @Test
+    fun `AUTO prefers libmpv only after exact Media3 fatal then eligible libmpv success`() {
+        val scope = CompatibilityScopeKey("provider|device|stream")
+        val media3Fatal = record(
+            scope = scope,
+            engine = EngineType.MEDIA3,
+            outcome = CompatibilityOutcome.DETERMINISTIC_FATAL,
+            recordedAt = 10,
+        )
+        val mpvSuccess = record(
+            scope = scope,
+            engine = EngineType.LIBMPV,
+            outcome = CompatibilityOutcome.SUCCESS,
+            recordedAt = 11,
+        )
+
+        val result = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(
+                scope = scope,
+                records = listOf(media3Fatal, mpvSuccess),
+            ),
+        )
+
+        assertEquals(EnginePreference.LIBMPV, result.engine.effective)
+        assertEquals(ResolutionAuthority.LEARNED_COMPATIBILITY, result.engine.authority)
+    }
+
+    @Test
+    fun `AUTO does not prefer unpaired libmpv success or unproven libmpv fallback`() {
+        val scope = CompatibilityScopeKey("provider|device|stream")
+        val mpvSuccess = record(scope, EngineType.LIBMPV, CompatibilityOutcome.SUCCESS, recordedAt = 11)
+        val successOnly = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(
+                scope = scope,
+                records = listOf(mpvSuccess),
+            ),
+        )
+        assertEquals(EnginePreference.MEDIA3, successOnly.engine.effective)
+        assertEquals(ResolutionAuthority.DEFAULT_POLICY, successOnly.engine.authority)
+
+        val fatalOnly = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(
+                scope = scope,
+                records = listOf(
+                    record(
+                        scope,
+                        EngineType.MEDIA3,
+                        CompatibilityOutcome.DETERMINISTIC_FATAL,
+                        recordedAt = 12,
+                    ),
+                ),
+            ),
+        )
+        assertNull(fatalOnly.engine.effective)
+        assertEquals(PreferenceAvailability.UNAVAILABLE, fatalOnly.engine.availability)
+    }
+
+    @Test
+    fun `AUTO requires fallback success at or after the Media3 failure`() {
+        val scope = CompatibilityScopeKey("provider|device|stream")
+        val result = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(
+                scope = scope,
+                records = listOf(
+                    record(scope, EngineType.LIBMPV, CompatibilityOutcome.SUCCESS, recordedAt = 9),
+                    record(
+                        scope,
+                        EngineType.MEDIA3,
+                        CompatibilityOutcome.DETERMINISTIC_FATAL,
+                        recordedAt = 10,
+                    ),
+                ),
+            ),
+        )
+
+        assertNull(result.engine.effective)
+        assertEquals(PreferenceAvailability.UNAVAILABLE, result.engine.availability)
+    }
+
+    @Test
+    fun `AUTO ignores libmpv success for a different eligible graph`() {
+        val scope = CompatibilityScopeKey("provider|device|stream")
+        val media3Graph = graph(EngineType.MEDIA3, GraphOutputProfile.MEDIA3_STANDARD)
+        val renderGraph = graph(EngineType.LIBMPV, GraphOutputProfile.MPV_RENDER)
+        val result = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(
+                scope = scope,
+                records = listOf(
+                    record(
+                        scope,
+                        EngineType.MEDIA3,
+                        CompatibilityOutcome.DETERMINISTIC_FATAL,
+                        recordedAt = 10,
+                    ),
+                    record(scope, EngineType.LIBMPV, CompatibilityOutcome.SUCCESS, recordedAt = 11),
+                ),
+                eligibleGraphs = setOf(media3Graph, renderGraph),
+            ),
+        )
+
+        assertNull(result.engine.effective)
+        assertEquals(PreferenceAvailability.UNAVAILABLE, result.engine.availability)
+    }
+
+    @Test
+    fun `AUTO ignores otherwise valid failure success pair from another scope`() {
+        val scope = CompatibilityScopeKey("provider|device|stream")
+        val otherScope = CompatibilityScopeKey("other-provider|device|stream")
+        val result = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(
+                scope = scope,
+                records = listOf(
+                    record(
+                        scope,
+                        EngineType.MEDIA3,
+                        CompatibilityOutcome.DETERMINISTIC_FATAL,
+                        recordedAt = 10,
+                    ),
+                    record(otherScope, EngineType.LIBMPV, CompatibilityOutcome.SUCCESS, recordedAt = 11),
+                ),
+            ),
+        )
+
+        assertNull(result.engine.effective)
+        assertEquals(PreferenceAvailability.UNAVAILABLE, result.engine.availability)
     }
 
     @Test
@@ -557,6 +694,8 @@ class PlaybackPreferenceResolverTest {
             GraphOutputProfile.MPV_DIRECT
         },
         deterministicFailureDomain: FailureDomain = FailureDomain.VIDEO_DECODER,
+        deterministicFailureCode: FailureCode = FailureCode.VIDEO_DECODER_FAILED,
+        recordedAt: Long = 1,
     ) = CompatibilityRecord(
         scopeKey = scope,
         graph = graph(engine, output),
@@ -567,9 +706,14 @@ class PlaybackPreferenceResolverTest {
         } else {
             null
         },
+        failureCode = if (outcome == CompatibilityOutcome.DETERMINISTIC_FATAL) {
+            deterministicFailureCode
+        } else {
+            null
+        },
         appVersion = "app-1",
         engineVersion = if (engine == EngineType.MEDIA3) "media3-1" else "mpv-1",
-        recordedAtEpochMs = 1,
+        recordedAtEpochMs = recordedAt,
         expiresAtEpochMs = 1_000,
     )
 

@@ -14,6 +14,7 @@ import com.nuvio.tv.playback.core.EnginePreference
 import com.nuvio.tv.playback.core.EngineType
 import com.nuvio.tv.playback.core.FrameRatePreference
 import com.nuvio.tv.playback.core.FailureDomain
+import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.GraphOutputProfile
 import com.nuvio.tv.playback.core.HdrPreference
 import com.nuvio.tv.playback.core.HdrType
@@ -93,12 +94,6 @@ object PlaybackPreferenceResolver {
     private const val LOW_MEMORY_BUFFER_CAP_MS = 30_000
     private const val VERY_LOW_MEMORY_BUFFER_CAP_MS = 15_000
     private const val MIN_SAFE_SOFTWARE_4K_MEMORY_BYTES = 1_000_000_000L
-    private val nonCompatibilityFailureDomains = setOf(
-        FailureDomain.NETWORK,
-        FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
-        FailureDomain.TLS,
-    )
-
     fun resolve(
         requested: CleanPlaybackPreferences,
         context: PlaybackPreferenceResolutionContext,
@@ -315,7 +310,9 @@ object PlaybackPreferenceResolver {
                 return PreferenceResolution(
                     requested = selectedRequest,
                     effective = alternate?.toPreference(),
-                    authority = ResolutionAuthority.LEARNED_COMPATIBILITY,
+                    // An exact current deterministic-fatal record is the sole history outcome
+                    // promoted above an explicit override.
+                    authority = ResolutionAuthority.HARD_CONSTRAINT,
                     availability = PreferenceAvailability.UNAVAILABLE,
                     primaryReason = PreferenceReason.KNOWN_FATAL_INCOMPATIBILITY,
                     impact = ChangeImpact.RESELECT_GRAPH,
@@ -334,21 +331,12 @@ object PlaybackPreferenceResolver {
         val eligible = context.eligibleEngines.filterNot {
             isDeterministicFatal(it, effectiveMpvOutput, context)
         }
-        val historyChoice = eligible
-            .filter { hasCurrentSuccess(it, context) }
-            .maxByOrNull { engine ->
-                context.compatibilityRecords
-                    .filter {
-                        it.engine == engine &&
-                            it.graph in context.eligibleGraphFingerprints &&
-                            it.outcome == CompatibilityOutcome.SUCCESS &&
-                            isCurrentCompatibilityRecord(it, context)
-                    }
-                    .maxOfOrNull(CompatibilityRecord::recordedAtEpochMs) ?: Long.MIN_VALUE
-            }
+        val historyChoice = provenLibmpvChoice(eligible, effectiveMpvOutput, context)
         val chosen = historyChoice ?: when {
             EngineType.MEDIA3 in eligible -> EngineType.MEDIA3
-            else -> eligible.firstOrNull()
+            // AUTO never speculates on libmpv. It may pre-route there only after the exact current
+            // Media3 fatal + eligible libmpv success pair has been persisted.
+            else -> null
         }
         return PreferenceResolution(
             requested = saved,
@@ -606,29 +594,71 @@ object PlaybackPreferenceResolver {
         }
     }
 
-    private fun hasCurrentSuccess(
-        engine: EngineType,
+    private fun provenLibmpvChoice(
+        eligible: Collection<EngineType>,
+        effectiveMpvOutput: MpvOutputPreference,
         context: PlaybackPreferenceResolutionContext,
-    ): Boolean {
-        val scope = context.compatibilityScopeKey ?: return false
-        return context.compatibilityRecords.any { record ->
+    ): EngineType? {
+        val scope = context.compatibilityScopeKey ?: return null
+        if (EngineType.LIBMPV !in eligible) return null
+        if (!isDeterministicFatal(EngineType.MEDIA3, effectiveMpvOutput, context)) return null
+        val latestMedia3Fatal = context.compatibilityRecords.asSequence()
+            .filter { record ->
+                record.scopeKey == scope &&
+                    record.engine == EngineType.MEDIA3 &&
+                    record.graph in context.eligibleGraphFingerprints &&
+                    record.outcome == CompatibilityOutcome.DETERMINISTIC_FATAL &&
+                    isCurrentCompatibilityRecord(record, context)
+            }
+            .maxOfOrNull(CompatibilityRecord::recordedAtEpochMs)
+            ?: return null
+        val provenFallback = context.compatibilityRecords.any { record ->
             record.scopeKey == scope &&
-                record.engine == engine &&
+                record.engine == EngineType.LIBMPV &&
                 record.graph in context.eligibleGraphFingerprints &&
                 record.outcome == CompatibilityOutcome.SUCCESS &&
+                record.recordedAtEpochMs >= latestMedia3Fatal &&
                 isCurrentCompatibilityRecord(record, context)
         }
+        return EngineType.LIBMPV.takeIf { provenFallback }
     }
 
     private fun isCurrentCompatibilityRecord(
         record: CompatibilityRecord,
         context: PlaybackPreferenceResolutionContext,
-    ): Boolean = record.failureDomain !in nonCompatibilityFailureDomains &&
+    ): Boolean = record.hasValidCompatibilityOutcome() &&
         !record.isExpired(context.nowEpochMs) &&
         record.appVersion == context.appVersion &&
         record.engineVersion == context.engineVersions[record.engine] &&
         context.compatibilityRuntime != null &&
         record.runtime == context.compatibilityRuntime
+
+    private fun CompatibilityRecord.hasValidCompatibilityOutcome(): Boolean = when (outcome) {
+        CompatibilityOutcome.SUCCESS -> failureDomain == null && failureCode == null
+        CompatibilityOutcome.DETERMINISTIC_FATAL -> when (failureDomain) {
+            FailureDomain.MANIFEST -> failureCode == FailureCode.MANIFEST_INVALID
+            FailureDomain.DEMUX -> failureCode == FailureCode.DEMUX_FAILED
+            FailureDomain.VIDEO_DECODER -> failureCode in setOf(
+                FailureCode.VIDEO_DECODER_UNAVAILABLE,
+                FailureCode.VIDEO_DECODER_FAILED,
+            )
+            FailureDomain.VIDEO_RENDERER_SURFACE -> failureCode in setOf(
+                FailureCode.VIDEO_RENDERER_FAILED,
+                FailureCode.SURFACE_LOST,
+            )
+            // The stable compatibility runtime intentionally excludes the dynamic audio route.
+            // Audio failures cannot become engine preference until a route-exact key exists.
+            FailureDomain.AUDIO,
+            FailureDomain.NETWORK,
+            FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
+            FailureDomain.TLS,
+            FailureDomain.DRM,
+            FailureDomain.DEVICE_RESOURCE,
+            FailureDomain.UNKNOWN,
+            null,
+            -> false
+        }
+    }
 
     private fun alternateEngine(
         failed: EngineType,
