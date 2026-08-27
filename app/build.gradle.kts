@@ -11,7 +11,20 @@ plugins {
 }
 
 import java.io.File
+import java.security.MessageDigest
 import java.util.Properties
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+fun File.sha256(): String = inputStream().use { input ->
+    val digest = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        digest.update(buffer, 0, count)
+    }
+    digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+}
 
 fun parseBooleanProperty(value: String?): Boolean {
     val normalized = value?.trim()?.lowercase() ?: return false
@@ -396,14 +409,78 @@ composeCompiler {
     stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose_stability_config.conf"))
 }
 
-// Globally exclude stock media3 modules — replaced by local :nuvio-exoplayer-engine module
-configurations.all {
+val approvedMedia3Version = libs.versions.media3.get()
+
+// The six forked modules are local AARs. Every remaining stock Media3 module must resolve to the
+// same approved version; ass-media 0.4.0 otherwise introduces media3-effect 1.8.0 at runtime.
+configurations.configureEach {
     exclude(group = "androidx.media3", module = "media3-exoplayer")
     exclude(group = "androidx.media3", module = "media3-common")
     exclude(group = "androidx.media3", module = "media3-datasource")
     exclude(group = "androidx.media3", module = "media3-datasource-okhttp")
     exclude(group = "androidx.media3", module = "media3-exoplayer-hls")
     exclude(group = "androidx.media3", module = "media3-extractor")
+    resolutionStrategy.eachDependency {
+        if (requested.group == "androidx.media3") {
+            useVersion(approvedMedia3Version)
+            because("Nuvio's Media3 fork and all stock runtime modules must remain ABI-converged")
+        }
+    }
+}
+
+val forkedMedia3Hashes = mapOf(
+    "lib-common-release.aar" to "210854ff01a54a9913784d46f4e88f43acd8abd0901d3c9f35c1edf9bd469f08",
+    "lib-datasource-release.aar" to "45584164bbafdb96810fdd5cde5f35e3a2c50c0a7ac621b4dac3c86f80ac7e29",
+    "lib-datasource-okhttp-release.aar" to "0c99d6850bb3c4d829c0586084d9056a68514b7fee6b1a2a7bfcf42a6a9b2d06",
+    "lib-exoplayer-release.aar" to "95ca1b1aa58db24d393d204bbdd77e982bfcf10afb13783a28396443422d3ee7",
+    "lib-exoplayer-hls-release.aar" to "c8683e22cbc44355a0c6c0400c02516d5f906732f370d0a64e362f0af10c5a04",
+    "lib-extractor-release.aar" to "a4f9513a30e6e54c1bda6a1e31bb5b9fcfab5285885baa971a7958193d35f30a",
+)
+
+val mpvReferenceArtifact = configurations.detachedConfiguration(
+    dependencies.create("io.github.abdallahmehiz:mpv-android-lib:0.1.12")
+).apply {
+    isTransitive = false
+}
+
+val verifyPlaybackEngineArtifacts by tasks.registering {
+    group = "verification"
+    description = "Verifies the pinned Media3 fork and libmpv reference artifacts."
+    inputs.files(forkedMedia3Hashes.keys.map { layout.projectDirectory.file("libs/$it") })
+    doLast {
+        forkedMedia3Hashes.forEach { (name, expected) ->
+            val artifact = layout.projectDirectory.file("libs/$name").asFile
+            check(artifact.isFile) { "Missing forked Media3 artifact: ${artifact.path}" }
+            check(artifact.sha256() == expected) { "Unexpected SHA-256 for $name" }
+        }
+
+        val mpvArtifact = mpvReferenceArtifact.singleFile
+        check(mpvArtifact.sha256() == "bb1a007c545cc7ac3304293ae79866b5361a48449ee7648c4030d5355869effc") {
+            "Unexpected SHA-256 for mpv-android-lib:0.1.12"
+        }
+    }
+}
+
+val verifyMedia3RuntimeConvergence by tasks.registering {
+    group = "verification"
+    description = "Fails when a stock Media3 runtime module does not resolve to the approved version."
+    doLast {
+        val modules = configurations.getByName("fullDebugRuntimeClasspath")
+            .incoming
+            .resolutionResult
+            .allComponents
+            .mapNotNull { it.id as? ModuleComponentIdentifier }
+            .filter { it.group == "androidx.media3" }
+        val mismatches = modules.filter { it.version != approvedMedia3Version }
+        check(mismatches.isEmpty()) {
+            "Mixed Media3 runtime: " + mismatches.joinToString { "${it.module}:${it.version}" }
+        }
+        check(modules.isNotEmpty()) { "No stock Media3 runtime modules were resolved" }
+    }
+}
+
+tasks.named("check").configure {
+    dependsOn(verifyPlaybackEngineArtifacts, verifyMedia3RuntimeConvergence)
 }
 
 baselineProfile {
@@ -551,6 +628,8 @@ dependencies {
 
     // libass-android for ASS/SSA subtitle support (from Maven Central)
     implementation("io.github.peerless2012:ass-media:0.4.0")
+    // ass-media declares media3-effect 1.8.0; keep it converged with the 1.11.0 fork/runtime.
+    implementation("androidx.media3:media3-effect:$approvedMedia3Version")
     // Local nextlib-mediainfo fork (static FFmpeg; no libav*.so in final AAR)
     implementation(files("libs/nextlib-mediainfo-local.aar"))
     implementation("io.github.abdallahmehiz:mpv-android-lib:0.1.12")
