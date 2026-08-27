@@ -137,6 +137,7 @@ class MpvEngineTest {
         val expected = listOf(
             MpvBackendEvent.VideoDecoderInitialized("mediacodec"),
             MpvBackendEvent.VideoInputFormatChanged("video/hevc"),
+            MpvBackendEvent.VideoFrameRateChanged(50f),
             MpvBackendEvent.VideoSizeChanged(1920, 1080),
         )
         val received = expected.map { fact ->
@@ -147,7 +148,8 @@ class MpvEngineTest {
 
         assertEquals(PlaybackEvent.VideoDecoderInitialized(12, "mediacodec"), received[0])
         assertEquals(PlaybackEvent.VideoInputFormatChanged(12, "video/hevc"), received[1])
-        assertEquals(PlaybackEvent.VideoSizeChanged(12, 1920, 1080), received[2])
+        assertEquals(PlaybackEvent.VideoFrameRateChanged(12, 50f), received[2])
+        assertEquals(PlaybackEvent.VideoSizeChanged(12, 1920, 1080), received[3])
     }
 
     @Test
@@ -198,7 +200,7 @@ class MpvEngineTest {
         priority = SessionPriority.QUALITY_AND_STABILITY,
         qualityIntent = VideoQualityIntent.FULL,
         displayModeSwitchAllowed = true,
-        frameRatePreference = FrameRatePreference.ON_COMMITTED_PLAYBACK,
+        frameRatePreference = FrameRatePreference.ON_START,
         hdrPreference = HdrPreference.AUTO,
         decoderPreference = DecoderPreference.AUTO,
         softwareDecodeFallbackAllowed = true,

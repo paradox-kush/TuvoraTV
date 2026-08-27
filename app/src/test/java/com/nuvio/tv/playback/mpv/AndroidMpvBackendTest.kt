@@ -124,6 +124,44 @@ class AndroidMpvBackendTest {
         assertEquals(MpvBackendEvent.VideoInputFormatChanged("video/hevc"), codec.await())
     }
 
+    @Test
+    fun `selected track demux fps publishes a factual frame rate`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        assertSuccess(backend.attachSurface(FakeLease()))
+        val frameRate = async(start = CoroutineStart.UNDISPATCHED) {
+            backend.events.first { it is MpvBackendEvent.VideoFrameRateChanged }
+        }
+
+        core.observer?.property("track-list", trackList(selectedFrameRate = 59.94))
+        runCurrent()
+
+        assertEquals(MpvBackendEvent.VideoFrameRateChanged(59.94f), frameRate.await())
+
+        val changed = async(start = CoroutineStart.UNDISPATCHED) {
+            backend.events.first { it is MpvBackendEvent.VideoFrameRateChanged }
+        }
+        core.observer?.property("track-list", trackList(selectedFrameRate = 59.94))
+        runCurrent()
+        assertTrue(!changed.isCompleted)
+        core.observer?.property("track-list", trackList(selectedFrameRate = 50.0))
+        runCurrent()
+        assertEquals(MpvBackendEvent.VideoFrameRateChanged(50f), changed.await())
+    }
+
+    @Test
+    fun `mpv track parser ignores unselected estimated and implausible rates`() {
+        assertEquals(24f, parseMpvTracks(trackList(selectedFrameRate = 24.0)).selectedVideoFrameRate)
+        listOf(null, Double.NaN, Double.POSITIVE_INFINITY, 9.99, 120.01).forEach { rate ->
+            assertEquals(null, parseMpvTracks(trackList(selectedFrameRate = rate)).selectedVideoFrameRate)
+        }
+        assertEquals(
+            null,
+            parseMpvTracks(trackList(selectedFrameRate = null, estimatedFrameRate = 60.0))
+                .selectedVideoFrameRate,
+        )
+    }
+
     private fun TestScope.backend(core: FakeCore): AndroidMpvBackend {
         val files = File(System.getProperty("java.io.tmpdir"), "mpv-backend-${System.nanoTime()}").apply { mkdirs() }
         File(files, "cacert.pem").writeText("test-ca")
@@ -151,6 +189,29 @@ class AndroidMpvBackendTest {
     }
 
     private fun assertSuccess(result: PlaybackResult<Unit>) = assertTrue(result is PlaybackResult.Success)
+
+    private fun trackList(
+        selectedFrameRate: Double?,
+        estimatedFrameRate: Double? = null,
+    ): MPVNode = MPVNode.ArrayNode(
+        arrayOf(
+            MPVNode.MapNode(
+                buildMap {
+                    put("type", MPVNode.StringNode("video"))
+                    put("selected", MPVNode.BooleanNode(true))
+                    selectedFrameRate?.let { put("demux-fps", MPVNode.DoubleNode(it)) }
+                    estimatedFrameRate?.let { put("estimated-vf-fps", MPVNode.DoubleNode(it)) }
+                },
+            ),
+            MPVNode.MapNode(
+                mapOf(
+                    "type" to MPVNode.StringNode("video"),
+                    "selected" to MPVNode.BooleanNode(false),
+                    "demux-fps" to MPVNode.DoubleNode(120.0),
+                ),
+            ),
+        ),
+    )
 
     private class FakeLease : MpvSurfaceLease {
         override val mode = SurfaceMode.GPU_RENDER

@@ -524,7 +524,7 @@ private class AndroidMedia3Backend(
             format: Format,
             decoderReuseEvaluation: DecoderReuseEvaluation?,
         ) {
-            _events.tryEmit(Media3BackendEvent.VideoInputFormatChanged(format.sampleMimeType))
+            media3VideoFormatFacts(format).forEach { _events.tryEmit(it) }
         }
 
         override fun onAudioPositionAdvancing(
@@ -706,6 +706,20 @@ private class AndroidMedia3Backend(
         const val NETWORK_HARD_ABORT_TIMEOUT_MS = 750L
     }
 }
+
+/** Extracts only facts carried by Media3's selected video input format. */
+internal fun media3VideoFormatFacts(format: Format): List<Media3BackendEvent> = buildList {
+    add(Media3BackendEvent.VideoInputFormatChanged(format.sampleMimeType))
+    validMedia3VideoFrameRate(format.frameRate)
+        ?.let { add(Media3BackendEvent.VideoFrameRateChanged(it)) }
+}
+
+internal fun validMedia3VideoFrameRate(frameRate: Float): Float? = frameRate.takeIf {
+    it != C.RATE_UNSET && it.isFinite() && it in MIN_CONTENT_FRAME_RATE..MAX_CONTENT_FRAME_RATE
+}
+
+private const val MIN_CONTENT_FRAME_RATE = 10f
+private const val MAX_CONTENT_FRAME_RATE = 120f
 
 /**
  * Reports byte activity while an endless HTTP load is still open. The first callback is immediate;

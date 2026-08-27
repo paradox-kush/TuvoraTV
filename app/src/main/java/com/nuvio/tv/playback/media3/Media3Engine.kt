@@ -46,6 +46,7 @@ internal sealed interface Media3BackendEvent {
     ) : Media3BackendEvent
     data class VideoDecoderInitialized(val decoderName: String) : Media3BackendEvent
     data class VideoInputFormatChanged(val sampleMimeType: String?) : Media3BackendEvent
+    data class VideoFrameRateChanged(val frameRate: Float) : Media3BackendEvent
     data class VideoSizeChanged(val width: Int, val height: Int) : Media3BackendEvent
     data object Ended : Media3BackendEvent
     data class Failed(val failure: PlaybackFailure) : Media3BackendEvent
@@ -342,6 +343,8 @@ class Media3Engine internal constructor(
                 PlaybackEvent.VideoDecoderInitialized(generation, event.decoderName)
             is Media3BackendEvent.VideoInputFormatChanged ->
                 PlaybackEvent.VideoInputFormatChanged(generation, event.sampleMimeType)
+            is Media3BackendEvent.VideoFrameRateChanged ->
+                PlaybackEvent.VideoFrameRateChanged(generation, event.frameRate)
             is Media3BackendEvent.VideoSizeChanged ->
                 PlaybackEvent.VideoSizeChanged(generation, event.width, event.height)
             Media3BackendEvent.Ended -> PlaybackEvent.PlaybackEnded(generation, PlaybackEndReason.EOF)

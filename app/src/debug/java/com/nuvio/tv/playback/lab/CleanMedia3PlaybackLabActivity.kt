@@ -727,6 +727,9 @@ private class CleanPlaybackLabRuntime(
                 smoke(CleanPlaybackSmokeLine.renderer(decoderName = event.decoderName, engine = engineType))
             is PlaybackEvent.VideoInputFormatChanged ->
                 smoke(CleanPlaybackSmokeLine.renderer(sampleMimeType = event.sampleMimeType, engine = engineType))
+            // The smoke schema has no AFR/display-mode field; the generation-bound fact is
+            // exercised by adapter tests and must not be mislabeled as renderer cadence.
+            is PlaybackEvent.VideoFrameRateChanged -> Unit
             is PlaybackEvent.VideoSizeChanged ->
                 smoke(CleanPlaybackSmokeLine.videoSize(event.width, event.height, engineType))
             is PlaybackEvent.FirstVideoFrame -> smoke(CleanPlaybackSmokeLine.firstFrame(engineType))

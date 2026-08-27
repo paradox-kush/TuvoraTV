@@ -1,14 +1,54 @@
 package com.nuvio.tv.playback.media3
 
+import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Media3BackendPrimitivesTest {
+    @Test
+    fun `selected video format emits only a valid factual frame rate`() {
+        val facts = media3VideoFormatFacts(
+            Format.Builder().setSampleMimeType("video/avc").setFrameRate(59.94f).build(),
+        )
+
+        assertEquals(
+            listOf(
+                Media3BackendEvent.VideoInputFormatChanged("video/avc"),
+                Media3BackendEvent.VideoFrameRateChanged(59.94f),
+            ),
+            facts,
+        )
+    }
+
+    @Test
+    fun `unset and out of range Media3 frame rates stay unknown`() {
+        listOf(C.RATE_UNSET, Float.NaN, Float.POSITIVE_INFINITY, 9f, 121f).forEach { frameRate ->
+            assertNull(validMedia3VideoFrameRate(frameRate))
+        }
+        listOf(9f, 121f).forEach { frameRate ->
+            assertNull(
+                media3VideoFormatFacts(Format.Builder().setFrameRate(frameRate).build())
+                    .filterIsInstance<Media3BackendEvent.VideoFrameRateChanged>()
+                    .singleOrNull(),
+            )
+        }
+        assertEquals(
+            Media3BackendEvent.VideoFrameRateChanged(10f),
+            media3VideoFormatFacts(Format.Builder().setFrameRate(10f).build()).last(),
+        )
+        assertEquals(
+            Media3BackendEvent.VideoFrameRateChanged(120f),
+            media3VideoFormatFacts(Format.Builder().setFrameRate(120f).build()).last(),
+        )
+    }
+
     @Test
     fun `timed out release is initiated once then awaited without facade reentry`() {
         var initiateCalls = 0

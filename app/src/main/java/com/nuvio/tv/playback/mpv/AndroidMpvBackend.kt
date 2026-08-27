@@ -48,6 +48,7 @@ internal sealed interface MpvBackendEvent {
     ) : MpvBackendEvent
     data class VideoDecoderInitialized(val decoderName: String) : MpvBackendEvent
     data class VideoInputFormatChanged(val sampleMimeType: String?) : MpvBackendEvent
+    data class VideoFrameRateChanged(val frameRate: Float) : MpvBackendEvent
     data class VideoSizeChanged(val width: Int, val height: Int) : MpvBackendEvent
     data class Ended(val reason: PlaybackEndReason) : MpvBackendEvent
     data class Failed(val failure: PlaybackFailure) : MpvBackendEvent
@@ -137,6 +138,7 @@ internal class AndroidMpvBackend(
     @Volatile private var terminalEventsSuppressed = false
     private var videoWidth = 0
     private var videoHeight = 0
+    private var lastVideoFrameRate: Float? = null
     private var paused = plan.startPaused
     private var releaseTask: kotlinx.coroutines.Deferred<PlaybackResult<Unit>>? = null
 
@@ -313,8 +315,7 @@ internal class AndroidMpvBackend(
         if (name != "track-list") return
         scope.launch {
             if (terminalEventsSuppressed) return@launch
-            val tracks = parseTracks(value)
-            _events.tryEmit(MpvBackendEvent.TracksAvailable(tracks.hasVideo, tracks.audio, tracks.subtitles))
+            emitTrackFacts(parseMpvTracks(value))
         }
     }
 
@@ -327,9 +328,11 @@ internal class AndroidMpvBackend(
                     _events.tryEmit(MpvBackendEvent.StateObserved(PlaybackEngineState.BUFFERING, !paused, true))
                 }
                 MPV_EVENT_FILE_LOADED -> {
-                    val tracks = runCatching { parseTracks(core.node("track-list")) }.getOrNull()
+                    val tracks = runCatching { parseMpvTracks(core.node("track-list")) }.getOrNull()
                     if (tracks != null) {
-                        _events.tryEmit(MpvBackendEvent.TracksAvailable(tracks.hasVideo, tracks.audio, tracks.subtitles))
+                        // Availability keeps the existing file-loaded fallback. Stable frame-rate
+                        // evidence is emitted only by the already-observed track-list callback.
+                        emitTrackFacts(tracks, includeFrameRate = false)
                     }
                     lifecycle = MpvBackendLifecycle.PLAYING
                     _events.tryEmit(MpvBackendEvent.StateObserved(PlaybackEngineState.READY, !paused, false))
@@ -370,6 +373,20 @@ internal class AndroidMpvBackend(
         if (videoWidth > 0 && videoHeight > 0) {
             _events.tryEmit(MpvBackendEvent.VideoSizeChanged(videoWidth, videoHeight))
         }
+    }
+
+    private fun emitTrackFacts(
+        tracks: ParsedMpvTracks,
+        includeFrameRate: Boolean = true,
+    ) {
+        _events.tryEmit(MpvBackendEvent.TracksAvailable(tracks.hasVideo, tracks.audio, tracks.subtitles))
+        if (!includeFrameRate) return
+        tracks.selectedVideoFrameRate
+            ?.takeIf { it != lastVideoFrameRate }
+            ?.let { frameRate ->
+                lastVideoFrameRate = frameRate
+                _events.tryEmit(MpvBackendEvent.VideoFrameRateChanged(frameRate))
+            }
     }
 
     private fun String.toVideoMimeType(): String? = when (lowercase()) {
@@ -491,16 +508,32 @@ internal fun parseEndFile(data: MPVNode): ParsedMpvEndFile {
     return ParsedMpvEndFile(reason, values["file_error"]?.asString())
 }
 
-private data class ParsedTracks(val hasVideo: Boolean, val audio: Int, val subtitles: Int)
+internal data class ParsedMpvTracks(
+    val hasVideo: Boolean,
+    val audio: Int,
+    val subtitles: Int,
+    val selectedVideoFrameRate: Float?,
+)
 
-private fun parseTracks(node: MPVNode): ParsedTracks {
-    val types = node.asArray().orEmpty().mapNotNull { it.asMap()?.get("type")?.asString() }
-    return ParsedTracks(
+/** Uses the selected track's demux header; estimated-vf-fps is runtime cadence, not content rate. */
+internal fun parseMpvTracks(node: MPVNode): ParsedMpvTracks {
+    val tracks = node.asArray().orEmpty().mapNotNull { it.asMap() }
+    val types = tracks.mapNotNull { it["type"]?.asString() }
+    val selectedVideoFrameRate = tracks.firstOrNull { track ->
+        track["type"]?.asString() == "video" && track["selected"]?.asBoolean() == true
+    }?.get("demux-fps")?.asDouble()?.toFloat()?.takeIf { frameRate ->
+        frameRate.isFinite() && frameRate in MIN_CONTENT_FRAME_RATE..MAX_CONTENT_FRAME_RATE
+    }
+    return ParsedMpvTracks(
         hasVideo = types.any { it == "video" },
         audio = types.count { it == "audio" },
         subtitles = types.count { it == "sub" },
+        selectedVideoFrameRate = selectedVideoFrameRate,
     )
 }
+
+private const val MIN_CONTENT_FRAME_RATE = 10f
+private const val MAX_CONTENT_FRAME_RATE = 120f
 
 internal fun normalizeMpvError(raw: String?): PlaybackFailure {
     val value = raw.orEmpty().lowercase()
