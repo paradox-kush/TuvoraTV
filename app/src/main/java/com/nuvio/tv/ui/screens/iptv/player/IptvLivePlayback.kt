@@ -12,6 +12,8 @@ import com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamLivePlaylist
 import com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver
+import com.nuvio.tv.core.profile.ProfileManager
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import okhttp3.Dns
 import javax.inject.Inject
 
@@ -25,6 +27,8 @@ class IptvLivePlayback @Inject constructor(
     private val dnsResolver: PlaylistDnsResolver,
     private val catchUpCoordinator: CatchUpPlaybackCoordinator,
     private val livePlaylist: XtreamLivePlaylist,
+    private val itemRegistry: XtreamItemRegistry,
+    private val profileManager: ProfileManager,
 ) : LivePlayback {
 
     override val classifier: IptvContentClassifier = object : IptvContentClassifier {
@@ -49,8 +53,18 @@ class IptvLivePlayback @Inject constructor(
     }
 
     override val channels: LiveChannelNavigator = object : LiveChannelNavigator {
-        override fun relativeChannel(contentId: String, delta: Int): LiveChannelTarget? =
-            livePlaylist.relativeTo(contentId, delta)
-                ?.let { LiveChannelTarget(id = it.id, name = it.name, streamUrl = it.streamUrl) }
+        override fun relativeChannel(contentId: String, delta: Int): LiveChannelTarget? {
+            val identity = livePlaylist.relativeTo(
+                profileId = PlaybackProfileId(profileManager.activeProfileId.value.toString()),
+                contentId = contentId,
+                delta = delta,
+            ) ?: return null
+            val item = itemRegistry.get(identity.contentId.value) ?: return null
+            return LiveChannelTarget(
+                id = identity.contentId.value,
+                name = identity.title,
+                streamUrl = item.streamUrl,
+            )
+        }
     }
 }

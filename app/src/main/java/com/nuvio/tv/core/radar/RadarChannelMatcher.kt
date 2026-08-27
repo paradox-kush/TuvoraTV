@@ -453,42 +453,6 @@ class RadarChannelMatcher @Inject constructor(
         return hits.values.take(RECORDING_CAP)
     }
 
-    /**
-     * The URL to hand the player for a matched channel. Xtream and M3U carry a browse-time URL;
-     * Stalker channels list with a blank one because the portal mints a single-use link per play,
-     * so those resolve a FRESH `create_link` here — the same rule the live guide plays by. Null
-     * when the source can't produce one (dead portal session, item gone from an M3U catalog).
-     */
-    suspend fun playbackUrlFor(match: ChannelMatch): String? {
-        if (match.channel.streamUrl.isNotBlank()) return match.channel.streamUrl
-        val account = accountStore.accounts.first().firstOrNull { it.id == match.channel.playlistId }
-            ?: return null
-        return clientFactory.clientFor(account)
-            .resolveStreamUrl(account, "live", match.channel.streamId)
-            ?.takeIf { it.isNotBlank() }
-    }
-
-    /**
-     * Registers the match's channel so the player route can resolve it like any live id.
-     * [streamUrl] is the resolved URL from [playbackUrlFor] — never `match.channel.streamUrl`,
-     * which is blank for Stalker.
-     */
-    fun ensurePlayable(match: ChannelMatch, streamUrl: String) {
-        if (registry.get(match.channel.contentId) != null) return
-        registry.register(
-            XtreamResolvedItem(
-                id = match.channel.contentId,
-                type = ContentType.TV,
-                name = match.channel.name,
-                poster = match.channel.logo,
-                streamUrl = streamUrl,
-                kind = XtreamKind.LIVE,
-                accountId = match.channel.playlistId,
-                streamId = match.channel.streamId,
-            )
-        )
-    }
-
     fun resetForProfile() {
         channelCache.clear()
     }

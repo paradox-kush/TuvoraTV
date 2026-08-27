@@ -11,6 +11,7 @@ import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.SurfaceMode
+import com.nuvio.tv.playback.core.VideoDimensions
 import com.nuvio.tv.playback.mediasession.CleanMediaSessionMetadata
 import com.nuvio.tv.playback.wiring.ProductionPlaybackSessionFactory
 import javax.inject.Inject
@@ -51,9 +52,11 @@ internal class AndroidCleanLiveHostInput(
     val activity: Activity,
     val lifecycle: Lifecycle,
     val surfaceOwner: FrameLayout,
+    val previewViewport: VideoDimensions? = null,
 ) {
     override fun toString(): String =
-        "AndroidCleanLiveHostInput(profileBound=true, surfaceOwnerBound=true)"
+        "AndroidCleanLiveHostInput(profileBound=true, surfaceOwnerBound=true, " +
+            "previewViewportKnown=${previewViewport != null})"
 }
 
 internal fun interface CleanLiveHostFactory {
@@ -81,6 +84,7 @@ internal class AndroidCleanLiveHostFactory @Inject constructor(
             surfaces = surfaces,
             outputController = AndroidPlaybackOutputController(input.activity),
             lifecycle = AndroidPlaybackLifecyclePort(input.lifecycle),
+            previewViewport = input.previewViewport,
         )
         return AndroidCleanLiveHost(host)
     }

@@ -5,7 +5,7 @@ import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamKind
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
 import com.nuvio.tv.core.iptv.LiveChannelPresentation
-import com.nuvio.tv.data.local.LiveChannelRef
+import com.nuvio.tv.core.iptv.XtreamLiveChannelIdentity
 import com.nuvio.tv.domain.model.ContentType as CatalogContentType
 import com.nuvio.tv.playback.core.ContainerType
 import com.nuvio.tv.playback.core.ContentType
@@ -221,7 +221,7 @@ class IptvIngressSelectionFactoryTest {
         val factory = IptvIngressSelectionFactory(
             registry = XtreamItemRegistry(),
             accounts = IngressAccountSource { error("private provider failure") },
-            relativeLive = RelativeLivePresentationSource { _, _ -> null },
+            relativeLive = RelativeLivePresentationSource { _, _, _ -> null },
             profileAccounts = IngressProfileAccountSource { error("private provider failure") },
         )
         assertRejected(
@@ -241,19 +241,20 @@ class IptvIngressSelectionFactoryTest {
         val factory = IptvIngressSelectionFactory(
             registry = XtreamItemRegistry(),
             accounts = IngressAccountSource { listOf(account) },
-            relativeLive = RelativeLivePresentationSource { contentId, delta ->
-                lookupInput = "$contentId:$delta"
+            relativeLive = RelativeLivePresentationSource { contentId, delta, profileId ->
+                lookupInput = "$contentId:$delta:$profileId"
                 LiveChannelPresentation.from(
-                    LiveChannelRef(next, "Next", "logo.png", "https://secret.invalid/live"),
+                    identity(next, "Next", "logo.png"),
                     playlistVersion = 7,
                 )
             },
             profileAccounts = IngressProfileAccountSource { listOf(account) },
         )
 
-        val result = factory.relativeLive(current, 1) as IptvIngressSelectionResult.Selected
+        val result = factory.relativeLive(current, 1, profileId = 2)
+            as IptvIngressSelectionResult.Selected
         val selected = result.selection
-        assertEquals("$current:1", lookupInput)
+        assertEquals("$current:1:2", lookupInput)
         assertEquals(next, selected.contentKey.value)
         assertEquals("2", selected.itemId.value)
         assertEquals(next, result.presentation?.contentId?.value)
@@ -267,7 +268,7 @@ class IptvIngressSelectionFactoryTest {
         assertFalse(rendered.contains("secret.invalid"))
 
         assertRejected(
-            factory.relativeLive(current, 0),
+            factory.relativeLive(current, 0, profileId = 2),
             IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE,
         )
     }
@@ -279,15 +280,17 @@ class IptvIngressSelectionFactoryTest {
         val next = XtreamItemRegistry.liveId(account.id, 2)
         var activeReads = 0
         val explicitProfiles = mutableListOf<Int>()
+        val presentationProfiles = mutableListOf<Int>()
         val factory = IptvIngressSelectionFactory(
             registry = XtreamItemRegistry(),
             accounts = IngressAccountSource {
                 activeReads++
                 emptyList()
             },
-            relativeLive = RelativeLivePresentationSource { _, _ ->
+            relativeLive = RelativeLivePresentationSource { _, _, profileId ->
+                presentationProfiles += profileId
                 LiveChannelPresentation.from(
-                    LiveChannelRef(next, "Next", null, "https://must-not-cross.invalid/live"),
+                    identity(next, "Next"),
                     playlistVersion = 11,
                 )
             },
@@ -302,8 +305,16 @@ class IptvIngressSelectionFactoryTest {
 
         assertEquals(0, activeReads)
         assertEquals(listOf(2), explicitProfiles)
+        assertEquals(listOf(2), presentationProfiles)
         assertEquals(next, result.selection.contentKey.value)
         assertEquals(result.selection.contentKey, result.presentation?.contentId)
+
+        assertRejected(
+            factory.relativeLiveForProfile(current, 1, profileId = 0),
+            IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE,
+        )
+        assertEquals(listOf(2), presentationProfiles)
+        assertEquals(listOf(2), explicitProfiles)
     }
 
     @Test
@@ -328,7 +339,7 @@ class IptvIngressSelectionFactoryTest {
     ) = IptvIngressSelectionFactory(
         registry = registry,
         accounts = IngressAccountSource { accounts },
-        relativeLive = RelativeLivePresentationSource { _, _ -> null },
+        relativeLive = RelativeLivePresentationSource { _, _, _ -> null },
         profileAccounts = IngressProfileAccountSource { accounts },
     )
 
@@ -361,4 +372,12 @@ class IptvIngressSelectionFactoryTest {
             },
         )
     }
+
+    private fun identity(
+        contentId: String,
+        title: String,
+        logo: String? = null,
+    ): XtreamLiveChannelIdentity = requireNotNull(
+        XtreamLiveChannelIdentity.from(contentId, title, logo),
+    )
 }

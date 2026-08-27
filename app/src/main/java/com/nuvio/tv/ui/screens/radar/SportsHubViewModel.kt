@@ -3,14 +3,16 @@ package com.nuvio.tv.ui.screens.radar
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.core.iptv.XtreamLiveChannelIdentity
+import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.radar.RadarChannelMatcher
 import com.nuvio.tv.core.radar.RadarFixture
 import com.nuvio.tv.core.radar.RadarLeague
 import com.nuvio.tv.core.radar.RadarRepository
 import com.nuvio.tv.core.radar.RadarTeam
 import com.nuvio.tv.core.radar.RadarUiState
-import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.data.local.XtreamAccountStore
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.posthog.PostHog
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -25,9 +27,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
-import java.net.URL
 import javax.inject.Inject
 
 /** The channel-matching overlay's state for one fixture. */
@@ -43,10 +42,6 @@ data class MatchSheetState(
     /** True when matching stopped because a provider or local index failed unexpectedly. */
     val matchingFailed: Boolean = false,
     val hasPlaylists: Boolean = true,
-    /** Channel currently being health-probed before playback (shows "Checking…"). */
-    val probingContentId: String? = null,
-    /** Channels that failed the health probe this session (shown as Offline, skipped on fallback). */
-    val deadContentIds: Set<String> = emptySet(),
 )
 
 /**
@@ -111,9 +106,6 @@ val RADAR_LEAGUE_COUNTRIES: List<String> = listOf(
     "India", "Pakistan", "South Africa", "Nigeria",
 )
 
-internal fun radarChannelNeedsHealthProbe(browseStreamUrl: String): Boolean =
-    browseStreamUrl.isNotBlank()
-
 @HiltViewModel
 class SportsHubViewModel @Inject constructor(
     val repository: RadarRepository,
@@ -121,6 +113,7 @@ class SportsHubViewModel @Inject constructor(
     private val catalogClient: com.nuvio.tv.core.radar.RadarCatalogClient,
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
     private val livePlaylist: com.nuvio.tv.core.iptv.XtreamLivePlaylist,
+    private val profileManager: ProfileManager,
     accountStore: XtreamAccountStore,
 ) : ViewModel() {
 
@@ -307,7 +300,6 @@ class SportsHubViewModel @Inject constructor(
     fun closeMatch() {
         ++matchGeneration
         matchJob?.cancel()
-        probeJob?.cancel()
         _sheet.value = null
     }
 
@@ -345,96 +337,32 @@ class SportsHubViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Probes the chosen channel before playback and falls through to the other matched
-     * channels when it's dead — IPTV panels routinely keep offline channels listed, and a
-     * dead one answers with an empty body that the player can only report as a generic
-     * format error. First healthy candidate wins; dead ones are marked Offline in the sheet.
-     */
+    /** Publishes one URL-free Sports lineup, closes the sheet, then emits stable identity only. */
     fun playMatch(
         match: RadarChannelMatcher.ChannelMatch,
-        onPlay: (title: String, streamUrl: String, contentId: String) -> Unit,
+        onPlay: (contentId: String) -> Unit,
     ) {
         val current = _sheet.value ?: return
-        val queue = (listOf(match) + current.matches.filterNot { it.channel.contentId == match.channel.contentId })
-            .filterNot { it.channel.contentId in current.deadContentIds }
-            .take(PROBE_CAP)
-        probeJob?.cancel()
-        probeJob = viewModelScope.launch {
-            for (candidate in queue) {
-                _sheet.update { it?.copy(probingContentId = candidate.channel.contentId) }
-                val url = runCatching { matcher.playbackUrlFor(candidate) }.getOrNull()
-                if (url != null && isChannelPlayable(candidate, url)) {
-                    matcher.ensurePlayable(candidate, url)
-                    // Hand the player this match's channels, in the order the sheet listed them,
-                    // so UP/DOWN zaps between the broadcasts of THIS fixture. Without it the
-                    // player is left holding whatever the guide last published — or nothing, in
-                    // which case zapping silently did nothing when arriving from Sports.
-                    //
-                    // Blank stream URLs are fine: zapLive re-resolves by id at zap time (Stalker
-                    // links are single-use, so a browse-time URL would be stale anyway).
-                    livePlaylist.set(
-                        current.matches
-                            .filterNot { it.channel.contentId in current.deadContentIds }
-                            .map { m ->
-                                LiveChannelRef(
-                                    id = m.channel.contentId,
-                                    name = m.channel.name,
-                                    logo = m.channel.logo,
-                                    streamUrl = m.channel.streamUrl,
-                                )
-                            }
-                    )
-                    closeMatch()
-                    onPlay(candidate.channel.name, url, candidate.channel.contentId)
-                    return@launch
-                }
-                _sheet.update {
-                    it?.copy(
-                        probingContentId = null,
-                        deadContentIds = it.deadContentIds + candidate.channel.contentId,
-                    )
-                }
+        if (current.matches.none { it.channel.contentId == match.channel.contentId }) return
+        val lineup = current.matches
+            .distinctBy { it.channel.contentId }
+            .mapNotNull { item ->
+                XtreamLiveChannelIdentity.from(
+                    contentId = item.channel.contentId,
+                    title = item.channel.name,
+                    logo = item.channel.logo,
+                )
             }
-            _sheet.update { it?.copy(probingContentId = null) }
-        }
+        if (lineup.none { it.contentId.value == match.channel.contentId }) return
+        livePlaylist.set(
+            profileId = PlaybackProfileId(profileManager.activeProfileId.value.toString()),
+            channels = lineup,
+        )
+        closeMatch()
+        onPlay(match.channel.contentId)
     }
-
-    /**
-     * A channel that lists WITH a URL (Xtream, M3U) gets health-probed. A channel that lists
-     * without one (Stalker) must not be: [RadarChannelMatcher.playbackUrlFor] just minted a
-     * single-use create_link, and reading a byte off it burns the very link the player is about
-     * to open. Resolving at all is the liveness signal there, and a channel that dies between
-     * resolve and play still hits the player's one-shot link refresh.
-     */
-    private suspend fun isChannelPlayable(
-        candidate: RadarChannelMatcher.ChannelMatch,
-        resolvedUrl: String,
-    ): Boolean = !radarChannelNeedsHealthProbe(candidate.channel.streamUrl) || isStreamAlive(resolvedUrl)
-
-    /** True when the URL streams at least one byte of non-HTML content within the timeout. */
-    private suspend fun isStreamAlive(url: String): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = PROBE_TIMEOUT_MS
-                readTimeout = PROBE_TIMEOUT_MS
-                instanceFollowRedirects = true
-            }
-            try {
-                if (connection.responseCode !in 200..299) return@runCatching false
-                if (connection.contentType.orEmpty().startsWith("text/html")) return@runCatching false
-                connection.inputStream.use { it.read() != -1 }
-            } finally {
-                connection.disconnect()
-            }
-        }.getOrDefault(false)
-    }
-
-    private var probeJob: Job? = null
 
     private companion object {
         const val TAG = "SportsHubViewModel"
-        const val PROBE_CAP = 6
-        const val PROBE_TIMEOUT_MS = 2_500
     }
 }

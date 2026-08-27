@@ -22,12 +22,18 @@ class CleanLivePlayerNavigationTest {
     }
 
     @Test
-    fun `destination is registered without switching any production live caller`() {
+    fun `destination is registered and production ingress navigates with only its token`() {
         val navSource = source("ui/navigation/NuvioNavHost.kt")
 
         assertTrue(navSource.contains("route = Screen.CleanLivePlayer.route"))
         assertTrue(navSource.contains("CleanLivePlayerRoute("))
-        assertFalse(navSource.contains("Screen.CleanLivePlayer.createRoute("))
+        assertEquals(
+            1,
+            Regex("""Screen\.CleanLivePlayer\.createRoute\(result\.token\)""")
+                .findAll(navSource)
+                .count(),
+        )
+        assertFalse(navSource.contains("XtreamLiveResolverViewModel"))
     }
 
     @Test

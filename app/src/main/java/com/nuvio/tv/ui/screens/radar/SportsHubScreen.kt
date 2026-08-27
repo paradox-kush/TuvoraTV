@@ -100,13 +100,13 @@ private const val SPORTS_FULL_REFRESH_INTERVAL_MS = 15 * 60 * 1000L
 /**
  * Sports Centre hub (drawer destination): featured event banners, live & upcoming fixtures for
  * followed leagues, and browse-by-sport with OK-toggle follows. OK on a match opens the
- * channel-matching overlay; OK on a channel plays it fullscreen through the live/mpv route.
+ * channel-matching overlay; OK on a channel dispatches its stable identity to clean live playback.
  * D-pad only — no long-press idioms.
  */
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SportsHubScreen(
-    onPlayChannel: (title: String, streamUrl: String, contentId: String) -> Unit,
+    onPlayChannel: (contentId: String) -> Unit,
     onAddProvider: () -> Unit,
     onOpenDetail: (contentId: String, type: String) -> Unit = { _, _ -> },
     /** A catch-up replay launch — the guide's route shape, so the player gets the flag + bounds. */
@@ -747,23 +747,11 @@ private fun MatchChannelsOverlay(
                     }
                 }
                 if (labeled && showing.isNotEmpty()) label("SHOWING THIS MATCH", "grp-showing")
-                channelMatchRows(showing, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
+                channelMatchRows(showing, state.replays, onPlay, onPlayReplay)
                 if (labeled && broadcasting.isNotEmpty()) label("BROADCASTING THIS MATCH", "grp-broadcasting")
-                channelMatchRows(broadcasting, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
+                channelMatchRows(broadcasting, state.replays, onPlay, onPlayReplay)
                 if (labeled && carries.isNotEmpty()) label((leagueLabel?.let { "CARRIES $it" } ?: "CARRIES THIS COMPETITION").uppercase(), "grp-carries")
-                channelMatchRows(carries, state.probingContentId, state.deadContentIds, state.replays, onPlay, onPlayReplay)
-                if (state.probingContentId == null && state.matches.isNotEmpty() &&
-                    state.matches.all { it.channel.contentId in state.deadContentIds }
-                ) {
-                    item(key = "all-offline") {
-                        Text(
-                            "All matched channels appear offline right now. Try a recording or replay if available.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = NuvioTheme.colors.TextSecondary,
-                            modifier = Modifier.padding(NuvioTheme.spacing.sm),
-                        )
-                    }
-                }
+                channelMatchRows(carries, state.replays, onPlay, onPlayReplay)
                 if (state.matching) {
                     item {
                         Text(
@@ -790,15 +778,11 @@ private fun MatchChannelsOverlay(
 /** One confidence group of channel rows in the match sheet; shared by the CONFIRMED and LEAGUE sections. */
 private fun LazyListScope.channelMatchRows(
     matches: List<RadarChannelMatcher.ChannelMatch>,
-    probingContentId: String?,
-    deadContentIds: Set<String>,
     replays: Map<String, RadarChannelMatcher.SportsReplay>,
     onPlay: (RadarChannelMatcher.ChannelMatch) -> Unit,
     onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit,
 ) {
     items(matches, key = { it.channel.contentId }) { match ->
-        val isProbing = probingContentId == match.channel.contentId
-        val isDead = match.channel.contentId in deadContentIds
         FocusableRow(onClick = { onPlay(match) }) {
             AsyncImage(
                 model = match.channel.logo,
@@ -810,15 +794,13 @@ private fun LazyListScope.channelMatchRows(
                 Text(
                     match.channel.name,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (isDead) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
+                    color = NuvioTheme.colors.TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val programme = match.programme
                 Text(
                     when {
-                        isProbing -> "Checking channel…"
-                        isDead -> "Offline · ${match.channel.playlistName}"
                         programme != null -> listOfNotNull(
                             match.language,
                             "${programme.title} · ${RadarTime.formatTime(programme.startMs)} – ${RadarTime.formatTime(programme.endMs)}",
@@ -837,8 +819,8 @@ private fun LazyListScope.channelMatchRows(
                 )
             }
             Text(
-                if (isProbing) "…" else if (isDead) "✕" else "▶",
-                color = if (isDead) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
+                "▶",
+                color = NuvioTheme.colors.TextPrimary,
             )
         }
         // Archived channel + started fixture -> its catch-up Replay, indented

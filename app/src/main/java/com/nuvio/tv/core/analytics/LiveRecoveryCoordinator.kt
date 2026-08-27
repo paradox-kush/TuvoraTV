@@ -4,9 +4,8 @@ package com.nuvio.tv.core.analytics
  * The single live-recovery owner (design §3.5 / §4): one serialized, ordered ladder that
  * classifies the fault and drives exactly one action, replacing today's racing recovery callbacks.
  *
- * This EXTENDS the existing pure policies rather than duplicating them (design §3.5):
- *  - the transient-vs-persistent split reuses [GuidePreviewFreezePolicy]'s stable-play window
- *    ([T_STABLE_MS] = its `MIN_STABLE_PLAYBACK_MS`) as the re-wedge reset;
+ * This preserves the existing pure-policy recovery contracts (design §3.5):
+ *  - the transient-vs-persistent split uses [T_STABLE_MS] as the re-wedge reset;
  *  - the cheap connection-free resync reuses [LivePlaybackRecoveryPolicy.VIDEO_RESET_ATTEMPTS]
  *    (audio-alive ⇒ the fault is downstream of the connection, so touch the video pipeline only);
  *  - it ADDS the fault-family rungs the design calls for: `PROVIDER_LIMIT` terminal, `AUTH`
@@ -95,9 +94,8 @@ internal object LiveRecoveryCoordinator {
      *  fallback, K=2 ≈ 2× the observed 13.5 s 7TV cadence). */
     const val PERSISTENT_REWEDGE_COUNT = 2
 
-    /** The clean-play window that resets the re-wedge counter. Matches
-     *  `GuidePreviewFreezePolicy.MIN_STABLE_PLAYBACK_MS` (duplicated as a literal because
-     *  `core/analytics` must not depend on `ui/screens/iptv`). */
+    /** The clean-play window that resets the re-wedge counter. Kept local so analytics remains
+     *  independent of the guide UI. */
     const val T_STABLE_MS = 30_000L
 
     /** Minimum time between re-opens (§3.6): ≥ the mpv `reconnect_delay_max`. Every re-open — a

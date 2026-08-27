@@ -3,8 +3,8 @@ package com.nuvio.tv.core.iptv.playback
 import com.nuvio.tv.core.iptv.LiveChannelPresentation
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamKind
+import com.nuvio.tv.core.iptv.XtreamLiveChannelIdentity
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
-import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.data.local.StoredLiveChannelIdentity
 import com.nuvio.tv.domain.model.ContentType
 import kotlinx.coroutines.CancellationException
@@ -21,10 +21,12 @@ class IptvInitialLivePresentationReaderTest {
         val contentId = XtreamItemRegistry.liveId("account", 7)
         var registryReads = 0
         var persistedReads = 0
+        val playlistProfiles = mutableListOf<Int>()
         val subject = reader(
-            playlist = {
+            playlist = { profileId, _ ->
+                playlistProfiles += profileId
                 LiveChannelPresentation.from(
-                    LiveChannelRef(contentId, "Playlist", "playlist.png", "https://must-not-cross.invalid"),
+                    identity(contentId, "Playlist", "playlist.png"),
                     playlistVersion = 3,
                 )
             },
@@ -42,6 +44,7 @@ class IptvInitialLivePresentationReaderTest {
 
         assertEquals("Playlist", result?.title)
         assertEquals("playlist.png", result?.logo)
+        assertEquals(listOf(2), playlistProfiles)
         assertEquals(0, registryReads)
         assertEquals(0, persistedReads)
     }
@@ -139,7 +142,7 @@ class IptvInitialLivePresentationReaderTest {
     fun `invalid profile and non live identities fail closed without consulting sources`() = runTest {
         var reads = 0
         val subject = reader(
-            playlist = { reads++; null },
+            playlist = { _, _ -> reads++; null },
             registry = { reads++; null },
             persisted = { _, _ -> reads++; null },
         )
@@ -168,7 +171,7 @@ class IptvInitialLivePresentationReaderTest {
     }
 
     private fun reader(
-        playlist: (String) -> LiveChannelPresentation? = { null },
+        playlist: (Int, String) -> LiveChannelPresentation? = { _, _ -> null },
         registry: (String) -> XtreamResolvedItem? = { null },
         persisted: suspend (Int, String) -> StoredLiveChannelIdentity? = { _, _ -> null },
     ) = IptvInitialLivePresentationReader(
@@ -192,5 +195,13 @@ class IptvInitialLivePresentationReaderTest {
         kind = XtreamKind.LIVE,
         accountId = accountId,
         streamId = streamId,
+    )
+
+    private fun identity(
+        contentId: String,
+        title: String,
+        logo: String? = null,
+    ): XtreamLiveChannelIdentity = requireNotNull(
+        XtreamLiveChannelIdentity.from(contentId, title, logo),
     )
 }

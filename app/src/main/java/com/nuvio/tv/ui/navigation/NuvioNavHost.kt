@@ -8,9 +8,14 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -52,6 +57,9 @@ import com.nuvio.tv.ui.screens.profile.ProfileSelectionMode
 import com.nuvio.tv.ui.screens.profile.ProfileSelectionScreen
 import com.nuvio.tv.ui.screens.tmdb.TmdbEntityBrowseScreen
 import com.nuvio.tv.ui.screens.home.HeroBackdropState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicReference
 
 @Composable
 fun NuvioNavHost(
@@ -59,6 +67,46 @@ fun NuvioNavHost(
     startDestination: String = Screen.Home.route,
     hideBuiltInHeaders: Boolean = false
 ) {
+    val cleanLiveIngressViewModel =
+        androidx.hilt.navigation.compose.hiltViewModel<CleanLiveIngressViewModel>()
+    val cleanLiveIngressJob = remember { AtomicReference<Job?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            cleanLiveIngressJob.getAndSet(null)?.cancel()
+        }
+    }
+
+    /** One URL-free launch path for every production content-card Live TV ingress in this host. */
+    fun dispatchLiveOrElse(
+        owner: NavBackStackEntry,
+        contentId: String,
+        origin: CleanLiveLaunchOrigin,
+        onNonLive: () -> Unit,
+    ) {
+        cleanLiveIngressJob.getAndSet(null)?.cancel()
+        if (!com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(contentId)) {
+            onNonLive()
+            return
+        }
+
+        cleanLiveIngressJob.set(owner.lifecycleScope.launch {
+            when (val result = cleanLiveIngressViewModel.launch(contentId, origin)) {
+                is CleanLiveIngressResult.Ready -> {
+                    val ownerCanNavigate =
+                        owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                            navController.currentBackStackEntry === owner
+                    if (ownerCanNavigate) {
+                        navController.navigate(Screen.CleanLivePlayer.createRoute(result.token)) {
+                            launchSingleTop = true
+                        }
+                    }
+                }
+                is CleanLiveIngressResult.Rejected -> Unit
+            }
+        })
+    }
+
     fun isStreamToPlayer(from: String, to: String): Boolean {
         return from.startsWith("stream/") && to.startsWith("player/")
     }
@@ -1083,27 +1131,21 @@ fun NuvioNavHost(
         composable(Screen.Search.route) { backStackEntry ->
             val searchViewModel: com.nuvio.tv.ui.screens.search.SearchViewModel =
                 androidx.hilt.navigation.compose.hiltViewModel(backStackEntry)
-            val liveResolver: com.nuvio.tv.ui.screens.iptv.XtreamLiveResolverViewModel = androidx.hilt.navigation.compose.hiltViewModel()
             SearchScreen(
                 viewModel = searchViewModel,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    val live = if (com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(itemId)) liveResolver.resolve(itemId) else null
-                    if (live != null) {
-                        liveResolver.recordPlayed(itemId)
-                        navController.navigate(
-                            Screen.Player.createRoute(
-                                streamUrl = live.url, title = live.name,
-                                contentId = itemId, contentType = "live"
-                            )
-                        )
-                    } else {
+                    dispatchLiveOrElse(
+                        owner = backStackEntry,
+                        contentId = itemId,
+                        origin = CleanLiveLaunchOrigin.SEARCH,
+                    ) {
                         val heroBackdrop = HeroBackdropState.consumeAndClear()
                         navController.navigate(
                             Screen.Detail.createRoute(
                                 itemId = itemId,
                                 itemType = itemType,
                                 addonBaseUrl = addonBaseUrl,
-                                heroBackdropUrl = heroBackdrop
+                                heroBackdropUrl = heroBackdrop,
                             )
                         )
                     }
@@ -1134,22 +1176,15 @@ fun NuvioNavHost(
             )
         }
 
-        composable(Screen.Library.route) {
-            val liveResolver: com.nuvio.tv.ui.screens.iptv.XtreamLiveResolverViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+        composable(Screen.Library.route) { backStackEntry ->
             LibraryScreen(
                 showBuiltInHeader = !hideBuiltInHeaders,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    // A favorited live channel has no detail screen — play it directly.
-                    val live = if (com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(itemId)) liveResolver.resolve(itemId) else null
-                    if (live != null) {
-                        liveResolver.recordPlayed(itemId)
-                        navController.navigate(
-                            Screen.Player.createRoute(
-                                streamUrl = live.url, title = live.name,
-                                contentId = itemId, contentType = "live"
-                            )
-                        )
-                    } else {
+                    dispatchLiveOrElse(
+                        owner = backStackEntry,
+                        contentId = itemId,
+                        origin = CleanLiveLaunchOrigin.LIBRARY,
+                    ) {
                         navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl))
                     }
                 },
@@ -1237,20 +1272,14 @@ fun NuvioNavHost(
             )
         }
 
-        composable(Screen.SportsHub.route) {
+        composable(Screen.SportsHub.route) { backStackEntry ->
             com.nuvio.tv.ui.screens.radar.SportsHubScreen(
-                onPlayChannel = { title, streamUrl, contentId ->
-                    // Same proven live path as Library/Search live clicks: contentType="live"
-                    // drives live UI + DoH + returnToLiveGuideOrPop (routes BACK to this hub).
-                    // Engine is no longer forced to mpv here — live respects the engine setting
-                    // (AUTO → ExoPlayer) with mpv as failover; see PlayerRuntimeControllerInitialization.
-                    navController.navigate(
-                        Screen.Player.createRoute(
-                            streamUrl = streamUrl,
-                            title = title,
-                            contentType = "live",
-                            contentId = contentId,
-                        )
+                onPlayChannel = { contentId ->
+                    dispatchLiveOrElse(
+                        owner = backStackEntry,
+                        contentId = contentId,
+                        origin = CleanLiveLaunchOrigin.SPORTS,
+                        onNonLive = {},
                     )
                 },
                 onAddProvider = { navController.navigate(Screen.IptvSettings.route) },
@@ -1378,11 +1407,24 @@ fun NuvioNavHost(
                 navArgument("collectionId") { type = NavType.StringType },
                 navArgument("folderId") { type = NavType.StringType }
             )
-        ) {
+        ) { backStackEntry ->
             com.nuvio.tv.ui.screens.collection.FolderDetailScreen(
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    val heroBackdrop = HeroBackdropState.consumeAndClear()
-                    navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl, heroBackdropUrl = heroBackdrop))
+                    dispatchLiveOrElse(
+                        owner = backStackEntry,
+                        contentId = itemId,
+                        origin = CleanLiveLaunchOrigin.FOLDER,
+                    ) {
+                        val heroBackdrop = HeroBackdropState.consumeAndClear()
+                        navController.navigate(
+                            Screen.Detail.createRoute(
+                                itemId,
+                                itemType,
+                                addonBaseUrl,
+                                heroBackdropUrl = heroBackdrop,
+                            ),
+                        )
+                    }
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -1475,7 +1517,15 @@ fun NuvioNavHost(
                 searchViewModel = searchViewModel,
                 viewModel = homeViewModel,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl))
+                    dispatchLiveOrElse(
+                        owner = backStackEntry,
+                        contentId = itemId,
+                        origin = CleanLiveLaunchOrigin.CATALOG_SEE_ALL,
+                    ) {
+                        navController.navigate(
+                            Screen.Detail.createRoute(itemId, itemType, addonBaseUrl),
+                        )
+                    }
                 },
                 onBackPress = { navController.popBackStack() }
             )

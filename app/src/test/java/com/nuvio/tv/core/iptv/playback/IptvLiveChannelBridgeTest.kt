@@ -2,7 +2,7 @@ package com.nuvio.tv.core.iptv.playback
 
 import com.nuvio.tv.core.iptv.LiveChannelPresentation
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
-import com.nuvio.tv.data.local.LiveChannelRef
+import com.nuvio.tv.core.iptv.XtreamLiveChannelIdentity
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
@@ -43,7 +43,8 @@ class IptvLiveChannelBridgeTest {
                 calls += "$contentId:$profileId"
                 selected(nextId)
             },
-            initialPresentation = { contentId ->
+            initialPresentation = { profileId, contentId ->
+                assertEquals(2, profileId)
                 assertEquals(nextId.value, contentId)
                 presentation(nextId)
             },
@@ -115,7 +116,7 @@ class IptvLiveChannelBridgeTest {
         )
 
         assertInitialRejected(
-            bridge(initialPresentation = { null })
+            bridge(initialPresentation = { _, _ -> null })
                 .select(LiveInitialRequest(nextId, profile)),
             LiveInitialFailure.UNAVAILABLE,
         )
@@ -295,7 +296,9 @@ class IptvLiveChannelBridgeTest {
         initial: suspend (String, Int) -> IptvIngressSelectionResult = { _, _ ->
             selected(nextId)
         },
-        initialPresentation: (String) -> LiveChannelPresentation? = { presentation(nextId) },
+        initialPresentation: (Int, String) -> LiveChannelPresentation? = { _, _ ->
+            presentation(nextId)
+        },
         relative: suspend (String, Int, Int) -> IptvIngressSelectionResult = { _, _, _ ->
             selected(nextId)
         },
@@ -329,11 +332,12 @@ class IptvLiveChannelBridgeTest {
     private fun presentation(contentId: ProviderSelectionId): LiveChannelPresentation =
         checkNotNull(
             LiveChannelPresentation.from(
-                LiveChannelRef(
-                    id = contentId.value,
-                    name = "Next News",
-                    logo = "logo.png",
-                    streamUrl = "https://transport-must-not-cross.invalid/live",
+                requireNotNull(
+                    XtreamLiveChannelIdentity.from(
+                        contentId = contentId.value,
+                        title = "Next News",
+                        logo = "logo.png",
+                    ),
                 ),
                 playlistVersion = 9,
             ),

@@ -93,16 +93,9 @@ class RadarSportsReplayTest {
     }
 
     @Test
-    fun `a live sports tune stays live`() = runTest {
+    fun `a live sports identity stays outside catch-up sessions`() = runTest {
         val coordinator = coordinator()
-        val registry = XtreamItemRegistry()
-        val matcher = matcher(xtreamAccount(), registry, coordinator)
         val liveMatch = match(hasArchive = true)
-
-        // The live half of the sheet: resolve the browse URL and register — no replay anywhere.
-        val url = matcher.playbackUrlFor(liveMatch)
-        assertNotNull("an xtream channel lists with a playable browse URL", url)
-        matcher.ensurePlayable(liveMatch, url!!)
 
         assertNull(
             "a live tune must never create a catch-up session",

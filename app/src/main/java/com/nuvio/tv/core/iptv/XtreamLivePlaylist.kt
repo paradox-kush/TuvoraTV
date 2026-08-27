@@ -1,37 +1,54 @@
 package com.nuvio.tv.core.iptv
 
-import com.nuvio.tv.data.local.LiveChannelRef
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The ordered channel list currently being watched, so the fullscreen player can zap
- * up/down to the next/previous channel (TiViMate-style). The guide sets it before launching
- * a channel; the player reads the neighbour of the channel it's on.
+ * The ordered, profile-bound channel identities currently being watched, so a player can select
+ * the next/previous channel (TiViMate-style) without retaining provider transport. The guide or
+ * Sports publishes it before launching a channel; playback resolves fresh media after selection.
  *
  * ponytail: a single process-lifetime list — only one live session is active at a time.
  */
 @Singleton
 class XtreamLivePlaylist @Inject constructor() {
-    @Volatile private var snapshot = PlaylistSnapshot(version = 0, channels = emptyList())
+    @Volatile
+    private var snapshot: PlaylistSnapshot? = null
 
     @Synchronized
-    fun set(list: List<LiveChannelRef>) {
-        check(snapshot.version < Long.MAX_VALUE) { "Live playlist version exhausted" }
-        snapshot = PlaylistSnapshot(snapshot.version + 1, list.toList())
+    fun set(
+        profileId: PlaybackProfileId,
+        channels: List<XtreamLiveChannelIdentity>,
+    ) {
+        require(profileId.isPositiveNumeric()) { "Live playlist profile id must be positive" }
+        val currentVersion = snapshot?.version ?: 0
+        check(currentVersion < Long.MAX_VALUE) { "Live playlist version exhausted" }
+        snapshot = PlaylistSnapshot(
+            version = currentVersion + 1,
+            profileId = profileId,
+            channels = channels.toList(),
+        )
     }
 
     /** Display-only lookup for the exact current immutable playlist snapshot. */
-    fun presentationFor(contentId: String): LiveChannelPresentation? {
-        val current = snapshot
-        return current.channels.firstOrNull { it.id == contentId }
+    fun presentationFor(
+        profileId: PlaybackProfileId,
+        contentId: String,
+    ): LiveChannelPresentation? {
+        val current = snapshot?.takeFor(profileId) ?: return null
+        return current.channels.firstOrNull { it.contentId.value == contentId }
             ?.toPresentation(current.version)
     }
 
     /** Display-only neighbor from one immutable snapshot; no transport value crosses the result. */
-    fun relativePresentation(contentId: String, delta: Int): LiveChannelPresentation? {
-        val current = snapshot
+    fun relativePresentation(
+        profileId: PlaybackProfileId,
+        contentId: String,
+        delta: Int,
+    ): LiveChannelPresentation? {
+        val current = snapshot?.takeFor(profileId) ?: return null
         return current.relativeTo(contentId, delta)?.toPresentation(current.version)
     }
 
@@ -43,22 +60,54 @@ class XtreamLivePlaylist @Inject constructor() {
      * broken remote. Every live entry point (guide, search, sports) hands off to the same player,
      * so one D-pad press means the same thing however the viewer arrived.
      */
-    fun relativeTo(contentId: String, delta: Int): LiveChannelRef? {
-        val current = snapshot
+    fun relativeTo(
+        profileId: PlaybackProfileId,
+        contentId: String,
+        delta: Int,
+    ): XtreamLiveChannelIdentity? {
+        val current = snapshot?.takeFor(profileId) ?: return null
         return current.relativeTo(contentId, delta)
     }
 
     private data class PlaylistSnapshot(
         val version: Long,
-        val channels: List<LiveChannelRef>,
+        val profileId: PlaybackProfileId,
+        val channels: List<XtreamLiveChannelIdentity>,
     ) {
-        fun relativeTo(contentId: String, delta: Int): LiveChannelRef? {
+        fun relativeTo(contentId: String, delta: Int): XtreamLiveChannelIdentity? {
             if (channels.isEmpty()) return null
-            val index = channels.indexOfFirst { it.id == contentId }
+            val index = channels.indexOfFirst { it.contentId.value == contentId }
             if (index < 0) return null
             val target = ((index + delta) % channels.size + channels.size) % channels.size
             return channels.getOrNull(target)
         }
+    }
+
+    private fun PlaylistSnapshot.takeFor(requestedProfile: PlaybackProfileId): PlaylistSnapshot? =
+        takeIf {
+            requestedProfile.isPositiveNumeric() &&
+                profileId == requestedProfile &&
+                profileId.isPositiveNumeric()
+        }
+}
+
+/** Immutable, URL-free channel identity retained by the process-local playlist snapshot. */
+class XtreamLiveChannelIdentity private constructor(
+    val contentId: ProviderSelectionId,
+    val title: String,
+    val logo: String?,
+) {
+    override fun toString(): String =
+        "XtreamLiveChannelIdentity(hasLogo=${logo != null})"
+
+    companion object {
+        fun from(
+            contentId: String,
+            title: String,
+            logo: String?,
+        ): XtreamLiveChannelIdentity? = contentId
+            .takeIf(String::isNotBlank)
+            ?.let { XtreamLiveChannelIdentity(ProviderSelectionId(it), title, logo) }
     }
 }
 
@@ -87,12 +136,14 @@ class LiveChannelPresentation private constructor(
             "cookie:",
         )
 
-        internal fun from(ref: LiveChannelRef, playlistVersion: Long): LiveChannelPresentation? {
-            if (ref.id.isBlank()) return null
+        internal fun from(
+            identity: XtreamLiveChannelIdentity,
+            playlistVersion: Long,
+        ): LiveChannelPresentation {
             return LiveChannelPresentation(
-                contentId = ProviderSelectionId(ref.id),
-                title = sanitizeTitle(ref.name),
-                logo = sanitizeLogo(ref.logo),
+                contentId = identity.contentId,
+                title = sanitizeTitle(identity.title),
+                logo = sanitizeLogo(identity.logo),
                 playlistVersion = playlistVersion,
             )
         }
@@ -121,5 +172,8 @@ class LiveChannelPresentation private constructor(
     }
 }
 
-private fun LiveChannelRef.toPresentation(version: Long): LiveChannelPresentation? =
+private fun XtreamLiveChannelIdentity.toPresentation(version: Long): LiveChannelPresentation =
     LiveChannelPresentation.from(this, version)
+
+private fun PlaybackProfileId.isPositiveNumeric(): Boolean =
+    value.toIntOrNull()?.let { it > 0 } == true

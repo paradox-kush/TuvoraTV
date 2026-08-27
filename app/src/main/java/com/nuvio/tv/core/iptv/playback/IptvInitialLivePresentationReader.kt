@@ -7,12 +7,13 @@ import com.nuvio.tv.core.iptv.XtreamLivePlaylist
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
 import com.nuvio.tv.data.local.StoredLiveChannelIdentity
 import com.nuvio.tv.data.local.XtreamLiveStore
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 
 internal fun interface InitialLivePlaylistPresentationSource {
-    fun presentationFor(contentId: String): LiveChannelPresentation?
+    fun presentationFor(profileId: Int, contentId: String): LiveChannelPresentation?
 }
 
 internal fun interface InitialLiveRegistryItemSource {
@@ -50,7 +51,12 @@ class IptvInitialLivePresentationReader internal constructor(
         itemRegistry: XtreamItemRegistry,
         liveStore: XtreamLiveStore,
     ) : this(
-        playlist = InitialLivePlaylistPresentationSource(livePlaylist::presentationFor),
+        playlist = InitialLivePlaylistPresentationSource { profileId, contentId ->
+            livePlaylist.presentationFor(
+                profileId = PlaybackProfileId(profileId.toString()),
+                contentId = contentId,
+            )
+        },
         registry = InitialLiveRegistryItemSource(itemRegistry::get),
         persisted = ExplicitProfileStoredLiveIdentitySource(liveStore::identityForProfile),
     )
@@ -66,7 +72,7 @@ class IptvInitialLivePresentationReader internal constructor(
         if (parsed.kind != LIVE_KIND) return null
         val streamId = parsed.streamId.toIntOrNull()?.takeIf { it > 0 } ?: return null
 
-        readSafely { playlist.presentationFor(contentId) }
+        readSafely { playlist.presentationFor(profileId, contentId) }
             ?.takeIf { it.contentId.value == contentId }
             ?.let { return sanitized(it.title, it.logo) }
 

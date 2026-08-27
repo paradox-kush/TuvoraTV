@@ -12,6 +12,7 @@ import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.DeliveryType
 import com.nuvio.tv.playback.core.EvidenceFact
 import com.nuvio.tv.playback.core.EvidenceProvenance
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderCatchUpWindow
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ProviderSelectionId
@@ -31,7 +32,11 @@ internal fun interface IngressProfileAccountSource {
 }
 
 internal fun interface RelativeLivePresentationSource {
-    fun relativePresentation(contentId: String, delta: Int): LiveChannelPresentation?
+    fun relativePresentation(
+        contentId: String,
+        delta: Int,
+        profileId: Int,
+    ): LiveChannelPresentation?
 }
 
 /** Secret-bearing input whose string form deliberately exposes only request shape. */
@@ -93,8 +98,12 @@ class IptvIngressSelectionFactory internal constructor(
     ) : this(
         registry = registry,
         accounts = IngressAccountSource { accountStore.accounts.first() },
-        relativeLive = RelativeLivePresentationSource { contentId, delta ->
-            livePlaylist.relativePresentation(contentId, delta)
+        relativeLive = RelativeLivePresentationSource { contentId, delta, profileId ->
+            livePlaylist.relativePresentation(
+                profileId = PlaybackProfileId(profileId.toString()),
+                contentId = contentId,
+                delta = delta,
+            )
         },
         profileAccounts = IngressProfileAccountSource(accountStore::accountsForProfile),
     )
@@ -123,24 +132,30 @@ class IptvIngressSelectionFactory internal constructor(
     suspend fun relativeLive(
         contentId: String,
         delta: Int,
-    ): IptvIngressSelectionResult = relativeLiveChecked(contentId, delta) { input -> create(input) }
+        profileId: Int,
+    ): IptvIngressSelectionResult = relativeLiveChecked(contentId, delta, profileId) { input ->
+        createForProfile(input, profileId)
+    }
 
     /** Profile-explicit relative lookup for the clean live playback owner. */
     internal suspend fun relativeLiveForProfile(
         contentId: String,
         delta: Int,
         profileId: Int,
-    ): IptvIngressSelectionResult = relativeLiveChecked(contentId, delta) { input ->
+    ): IptvIngressSelectionResult = relativeLiveChecked(contentId, delta, profileId) { input ->
         createForProfile(input, profileId)
     }
 
     private suspend fun relativeLiveChecked(
         contentId: String,
         delta: Int,
+        profileId: Int,
         createSelection: suspend (IptvIngressSelectionInput) -> IptvIngressSelectionResult,
     ): IptvIngressSelectionResult {
-        if (delta == 0) return rejected(IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE)
-        val presentation = relativeLive.relativePresentation(contentId, delta)
+        if (delta == 0 || profileId <= 0) {
+            return rejected(IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE)
+        }
+        val presentation = relativeLive.relativePresentation(contentId, delta, profileId)
             ?: return rejected(IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE)
         val result = createSelection(
             IptvIngressSelectionInput(

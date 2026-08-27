@@ -17,7 +17,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.Executors
@@ -25,8 +24,7 @@ import java.util.concurrent.Executors
 /**
  * Sports Centre matches every playlist type, not just Xtream panels: assembly routes through
  * [IptvClientFactory], so a Stalker portal's lineup is a candidate like any other. Stalker lists
- * channels with a BLANK url (the portal mints a single-use link per play), so playback resolves
- * a fresh link at play time instead of reading the browse row.
+ * channels with a BLANK url because the portal mints a single-use link only inside playback.
  */
 class RadarChannelMatcherSourcesTest {
 
@@ -74,41 +72,6 @@ class RadarChannelMatcherSourcesTest {
             setOf(XTREAM_ID, M3U_ID, STALKER_ID),
             matched.map { it.channel.playlistId }.toSet(),
         )
-    }
-
-    @Test
-    fun `stalker playback resolves a fresh link instead of the blank browse url`() = runTest {
-        val client = clientWith(channel(3, "Austria Spain Live", ""))
-        coEvery { client.resolveStreamUrl(any(), "live", 3) } returns CREATE_LINK_URL
-        val matcher = matcher(stalkerAccount() to client)
-
-        val match = matcher.match(FIXTURE, league = null).single()
-
-        assertEquals("", match.channel.streamUrl)
-        assertEquals(CREATE_LINK_URL, matcher.playbackUrlFor(match))
-    }
-
-    @Test
-    fun `xtream playback uses the browse url without asking the panel again`() = runTest {
-        val client = clientWith(channel(1, "Spain Austria Sports", XTREAM_URL))
-        coEvery { client.resolveStreamUrl(any(), any(), any()) } throws
-            AssertionError("must not re-resolve a URL the source already listed")
-        val matcher = matcher(xtreamAccount() to client)
-
-        val match = matcher.match(FIXTURE, league = null).single()
-
-        assertEquals(XTREAM_URL, matcher.playbackUrlFor(match))
-    }
-
-    @Test
-    fun `stalker playback is null when the portal cannot mint a link`() = runTest {
-        val client = clientWith(channel(3, "Austria Spain Live", ""))
-        coEvery { client.resolveStreamUrl(any(), any(), any()) } returns null
-        val matcher = matcher(stalkerAccount() to client)
-
-        val match = matcher.match(FIXTURE, league = null).single()
-
-        assertNull(matcher.playbackUrlFor(match))
     }
 
     @Test
@@ -244,8 +207,6 @@ class RadarChannelMatcherSourcesTest {
         const val STALKER_ID = "stalker|portal"
         const val XTREAM_URL = "http://panel.example:8080/live/user/pass/1.ts"
         const val M3U_URL = "http://cdn.example/playlist/2.m3u8"
-        const val CREATE_LINK_URL = "http://portal.example/play/live.php?token=single-use"
-
         /** Kickoff in the past, so the EPG stage runs like it would for a real opened fixture. */
         val FIXTURE = RadarFixture(
             id = "1",

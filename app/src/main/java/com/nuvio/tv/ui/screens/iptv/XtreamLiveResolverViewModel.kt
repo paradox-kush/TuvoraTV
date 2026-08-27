@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamLivePlaylist
+import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.data.local.XtreamLiveStore
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -18,7 +20,8 @@ import javax.inject.Inject
 class XtreamLiveResolverViewModel @Inject constructor(
     private val registry: XtreamItemRegistry,
     private val liveStore: XtreamLiveStore,
-    private val livePlaylist: XtreamLivePlaylist
+    private val livePlaylist: XtreamLivePlaylist,
+    private val profileManager: ProfileManager,
 ) : ViewModel() {
 
     data class ResolvedLive(val id: String, val name: String, val url: String)
@@ -31,7 +34,15 @@ class XtreamLiveResolverViewModel @Inject constructor(
 
     /** The channel [delta] steps from [currentId] in the active live playlist (for up/down zap). */
     fun zap(currentId: String, delta: Int): ResolvedLive? {
-        val ref = livePlaylist.relativeTo(currentId, delta) ?: return null
+        val identity = livePlaylist.relativeTo(
+            profileId = PlaybackProfileId(profileManager.activeProfileId.value.toString()),
+            contentId = currentId,
+            delta = delta,
+        ) ?: return null
+        val id = identity.contentId.value
+        val ref = registry.get(id)?.let { item ->
+            LiveChannelRef(id, identity.title, identity.logo, item.streamUrl)
+        } ?: liveStore.refFor(id) ?: return null
         viewModelScope.launch { liveStore.recordPlayed(ref) }
         return ResolvedLive(ref.id, ref.name, ref.streamUrl)
     }

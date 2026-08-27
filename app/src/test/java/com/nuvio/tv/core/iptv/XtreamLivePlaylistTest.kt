@@ -1,6 +1,6 @@
 package com.nuvio.tv.core.iptv
 
-import com.nuvio.tv.data.local.LiveChannelRef
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.ui.screens.iptv.LiveChannelZapPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -10,76 +10,102 @@ import org.junit.Test
 
 /** JUnit here, so the argument order is (message, expected, actual). */
 class XtreamLivePlaylistTest {
+    private val profile = PlaybackProfileId("2")
 
     private fun playlist(vararg ids: String) = XtreamLivePlaylist().apply {
-        set(ids.map { LiveChannelRef(id = it, name = "Channel $it", logo = null, streamUrl = "http://x/$it") })
+        set(profile, ids.map { identity(it, "Channel $it") })
     }
 
     @Test
     fun `steps to the neighbour in each direction`() {
         val list = playlist("a", "b", "c")
 
-        assertEquals("next", "c", list.relativeTo("b", 1)?.id)
-        assertEquals("previous", "a", list.relativeTo("b", -1)?.id)
+        assertEquals("next", "c", list.relativeTo(profile, "b", 1)?.contentId?.value)
+        assertEquals("previous", "a", list.relativeTo(profile, "b", -1)?.contentId?.value)
     }
 
     @Test
     fun `wraps past the last channel`() {
         val list = playlist("a", "b", "c")
 
-        assertEquals("down from the last returns to the first", "a", list.relativeTo("c", 1)?.id)
+        assertEquals(
+            "down from the last returns to the first",
+            "a",
+            list.relativeTo(profile, "c", 1)?.contentId?.value,
+        )
     }
 
     @Test
     fun `wraps before the first channel`() {
         val list = playlist("a", "b", "c")
 
-        assertEquals("up from the first lands on the last", "c", list.relativeTo("a", -1)?.id)
+        assertEquals(
+            "up from the first lands on the last",
+            "c",
+            list.relativeTo(profile, "a", -1)?.contentId?.value,
+        )
     }
 
     @Test
     fun `a single channel resolves to itself`() {
         val list = playlist("only")
 
-        assertEquals("next", "only", list.relativeTo("only", 1)?.id)
-        assertEquals("previous", "only", list.relativeTo("only", -1)?.id)
+        assertEquals("next", "only", list.relativeTo(profile, "only", 1)?.contentId?.value)
+        assertEquals("previous", "only", list.relativeTo(profile, "only", -1)?.contentId?.value)
     }
 
     @Test
     fun `an unknown channel has no neighbour`() {
-        assertNull("not in the published list", playlist("a", "b").relativeTo("zzz", 1))
+        assertNull("not in the published list", playlist("a", "b").relativeTo(profile, "zzz", 1))
     }
 
     @Test
     fun `an empty playlist has no neighbour`() {
-        assertNull("nothing published yet", playlist().relativeTo("a", 1))
+        assertNull("nothing published yet", playlist().relativeTo(profile, "a", 1))
     }
 
     @Test
     fun `current and relative presentation share an immutable snapshot version without transport`() {
         val list = XtreamLivePlaylist().apply {
             set(
+                profile,
                 listOf(
-                    LiveChannelRef("a", "Channel A", "https://images.invalid/a.png", "https://secret.invalid/a"),
-                    LiveChannelRef("b", "Channel B", null, "https://secret.invalid/b"),
+                    identity("a", "Channel A", "https://images.invalid/a.png"),
+                    identity("b", "Channel B"),
                 ),
             )
         }
 
-        val current = requireNotNull(list.presentationFor("a"))
-        val relative = requireNotNull(list.relativePresentation("a", 1))
+        val current = requireNotNull(list.presentationFor(profile, "a"))
+        val relative = requireNotNull(list.relativePresentation(profile, "a", 1))
 
         assertEquals(current.playlistVersion, relative.playlistVersion)
         assertEquals("a", current.contentId.value)
         assertEquals("b", relative.contentId.value)
         assertEquals("Channel B", relative.title)
         val rendered = listOf(current, relative).joinToString()
-        assertFalse(rendered.contains("secret.invalid"))
         assertFalse(rendered.contains("Channel A"))
         assertFalse(rendered.contains("Channel B"))
         assertFalse(
-            LiveChannelPresentation::class.java.declaredFields.any {
-                it.name.contains("stream", ignoreCase = true)
+            XtreamLiveChannelIdentity::class.java.declaredFields.any {
+                it.name.contains("stream", ignoreCase = true) ||
+                    it.name.contains("transport", ignoreCase = true)
+            },
+        )
+        val snapshotType = requireNotNull(
+            XtreamLivePlaylist::class.java.declaredClasses
+                .firstOrNull { it.simpleName == "PlaylistSnapshot" },
+        )
+        assertTrue(
+            snapshotType.declaredFields.any {
+                it.name == "profileId" && it.type == PlaybackProfileId::class.java
+            },
+        )
+        assertFalse(
+            snapshotType.declaredFields.any {
+                it.genericType.typeName.contains("LiveChannelRef") ||
+                    it.name.contains("stream", ignoreCase = true) ||
+                    it.name.contains("transport", ignoreCase = true)
             },
         )
     }
@@ -88,24 +114,63 @@ class XtreamLivePlaylistTest {
     fun `presentation sanitizes transport shaped title logo secrets and increments snapshot version`() {
         val list = XtreamLivePlaylist()
         list.set(
+            profile,
             listOf(
-                LiveChannelRef(
-                    "a",
-                    "https://provider.invalid/live?token=secret",
-                    "https://images.invalid/logo?token=secret",
-                    "https://provider.invalid/live",
+                identity(
+                    id = "a",
+                    title = "https://provider.invalid/live?token=secret",
+                    logo = "https://images.invalid/logo?token=secret",
                 ),
             ),
         )
-        val first = requireNotNull(list.presentationFor("a"))
-        list.set(listOf(LiveChannelRef("a", "News\u0000  HD", "logo.png", "")))
-        val second = requireNotNull(list.presentationFor("a"))
+        val first = requireNotNull(list.presentationFor(profile, "a"))
+        list.set(profile, listOf(identity("a", "News\u0000  HD", "logo.png")))
+        val second = requireNotNull(list.presentationFor(profile, "a"))
 
         assertEquals("Live TV", first.title)
         assertNull(first.logo)
         assertEquals("News HD", second.title)
         assertEquals("logo.png", second.logo)
         assertTrue(second.playlistVersion > first.playlistVersion)
+    }
+
+    @Test
+    fun `all lookups fail closed for a different invalid or superseded profile`() {
+        val list = playlist("a", "b")
+
+        listOf(PlaybackProfileId("1"), PlaybackProfileId("0"), PlaybackProfileId("invalid"))
+            .forEach { requestedProfile ->
+                assertNull(list.presentationFor(requestedProfile, "a"))
+                assertNull(list.relativePresentation(requestedProfile, "a", 1))
+                assertNull(list.relativeTo(requestedProfile, "a", 1))
+            }
+
+        list.set(PlaybackProfileId("3"), listOf(identity("c", "Channel C")))
+        assertNull(list.presentationFor(profile, "a"))
+        assertEquals("c", list.presentationFor(PlaybackProfileId("3"), "c")?.contentId?.value)
+    }
+
+    @Test
+    fun `publishing requires a positive numeric playback profile`() {
+        listOf(PlaybackProfileId("0"), PlaybackProfileId("-1"), PlaybackProfileId("profile"))
+            .forEach { invalidProfile ->
+                assertTrue(
+                    runCatching {
+                        XtreamLivePlaylist().set(invalidProfile, listOf(identity("a", "A")))
+                    }.isFailure,
+                )
+            }
+    }
+
+    @Test
+    fun `publisher list mutation cannot alter the accepted snapshot`() {
+        val identities = mutableListOf(identity("a", "Channel A"))
+        val list = XtreamLivePlaylist()
+
+        list.set(profile, identities)
+        identities.clear()
+
+        assertEquals("a", list.presentationFor(profile, "a")?.contentId?.value)
     }
 
     /**
@@ -123,11 +188,19 @@ class XtreamLivePlaylistTest {
                 assertEquals(
                     "from $id by $delta",
                     LiveChannelZapPolicyBridge.relativeTo(ids, id, delta),
-                    list.relativeTo(id, delta)?.id
+                    list.relativeTo(profile, id, delta)?.contentId?.value,
                 )
             }
         }
     }
+
+    private fun identity(
+        id: String,
+        title: String,
+        logo: String? = null,
+    ): XtreamLiveChannelIdentity = requireNotNull(
+        XtreamLiveChannelIdentity.from(id, title, logo),
+    )
 }
 
 /**
