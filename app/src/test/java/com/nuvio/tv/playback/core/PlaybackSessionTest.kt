@@ -262,6 +262,48 @@ class PlaybackSessionTest {
             close(session)
         }
     }
+
+    @Test
+    fun `many zaps retain compatibility bookkeeping for only the active generation`() = runTest {
+        val history = FakeCompatibilityHistory()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = scopedResolver(CompatibilityScopeKey("many-zaps")),
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+
+        repeat(20) { index ->
+            val request = PlaybackRequest(
+                url = "https://example.invalid/live/$index",
+                contentType = ContentType.LIVE,
+            )
+            val command = if (index == 0) {
+                PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN)
+            } else {
+                PlaybackCommand.Zap(request, SessionProfile.FULLSCREEN)
+            }
+            session.dispatch(command)
+            advanceUntilIdle()
+            val generation = (index + 1).toLong()
+            engine.emit(PlaybackEvent.VideoDecoderInitialized(generation, "decoder-$generation"))
+            engine.emit(PlaybackEvent.FirstVideoFrame(generation))
+            advanceUntilIdle()
+        }
+
+        val decoderIds = PlaybackSession::class.java.getDeclaredField("decoderStableIds")
+            .apply { isAccessible = true }
+            .get(session) as Map<*, *>
+        val recordedOutcomes = PlaybackSession::class.java
+            .getDeclaredField("recordedCompatibilityOutcomes")
+            .apply { isAccessible = true }
+            .get(session) as Set<*>
+        assertEquals(1, decoderIds.size)
+        assertEquals(1, recordedOutcomes.size)
+        assertEquals(20, history.values.size)
+        close(session)
+    }
     @Test
     fun `one actor drives request selection surface engine and immutable snapshot`() = runTest {
         val engine = FakeEngine()

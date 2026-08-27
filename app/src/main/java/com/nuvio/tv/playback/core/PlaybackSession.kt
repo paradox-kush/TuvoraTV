@@ -194,6 +194,11 @@ class PlaybackSession(
             runtimeMetricsUnavailableAttempt = null
         }
         machine = transition.state
+        if (before.snapshot.generation != transition.state.snapshot.generation) {
+            val activeGeneration = transition.state.snapshot.generation
+            decoderStableIds.keys.removeAll { (generation, _) -> generation != activeGeneration }
+            recordedCompatibilityOutcomes.removeAll { it.generation != activeGeneration }
+        }
         _snapshot.value = transition.state.snapshot
         _surfaceAvailable.value = transition.state.surfaceAvailable
         reconcileWatchdog()
