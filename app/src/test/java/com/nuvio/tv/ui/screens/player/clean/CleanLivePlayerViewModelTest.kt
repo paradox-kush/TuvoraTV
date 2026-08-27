@@ -507,13 +507,30 @@ class CleanLivePlayerViewModelTest {
             selection: ProviderPlaybackSelection,
             profile: SessionProfile,
             metadata: CleanMediaSessionMetadata,
-        ) {
+        ): Long {
             operations += "tune"
             tunedSelection = selection
             tunedProfile = profile
             tunedMetadata = metadata
             tuneFailure?.let { throw it }
             tuneCompleted()
+            val acceptedGeneration = snapshotFlow.value.generation + 1
+            snapshotFlow.value = snapshotFlow.value.copy(generation = acceptedGeneration)
+            return acceptedGeneration
+        }
+
+        override suspend fun zap(
+            selection: ProviderPlaybackSelection,
+            profile: SessionProfile,
+            metadata: CleanMediaSessionMetadata,
+        ): Long {
+            operations += "zap"
+            tunedSelection = selection
+            tunedProfile = profile
+            tunedMetadata = metadata
+            val acceptedGeneration = snapshotFlow.value.generation + 1
+            snapshotFlow.value = snapshotFlow.value.copy(generation = acceptedGeneration)
+            return acceptedGeneration
         }
 
         override suspend fun pause() {

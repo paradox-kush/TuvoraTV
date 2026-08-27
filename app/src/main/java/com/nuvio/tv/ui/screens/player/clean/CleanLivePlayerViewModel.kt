@@ -90,7 +90,13 @@ internal interface CleanLiveDestinationHost {
         selection: ProviderPlaybackSelection,
         profile: SessionProfile,
         metadata: CleanMediaSessionMetadata,
-    )
+    ): Long
+
+    suspend fun zap(
+        selection: ProviderPlaybackSelection,
+        profile: SessionProfile,
+        metadata: CleanMediaSessionMetadata,
+    ): Long
 
     suspend fun pause()
     suspend fun resume()
@@ -460,7 +466,13 @@ private class AndroidCleanLiveDestinationHost(
         selection: ProviderPlaybackSelection,
         profile: SessionProfile,
         metadata: CleanMediaSessionMetadata,
-    ) = host.tune(selection, profile, metadata)
+    ): Long = host.tune(selection, profile, metadata)
+
+    override suspend fun zap(
+        selection: ProviderPlaybackSelection,
+        profile: SessionProfile,
+        metadata: CleanMediaSessionMetadata,
+    ): Long = host.zap(selection, profile, metadata)
 
     override suspend fun pause() = host.pause()
     override suspend fun resume() = host.resume()

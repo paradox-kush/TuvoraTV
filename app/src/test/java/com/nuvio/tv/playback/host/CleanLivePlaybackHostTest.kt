@@ -38,6 +38,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -71,8 +72,8 @@ class CleanLivePlaybackHostTest {
             isPlaying = true,
         )
         fixture.operations.clear()
-        host.tune(liveSelection("one"), SessionProfile.GUIDE, safeMetadata)
-        host.zap(liveSelection("two"), SessionProfile.FULLSCREEN, safeMetadata)
+        val tuneGeneration = host.tune(liveSelection("one"), SessionProfile.GUIDE, safeMetadata)
+        val zapGeneration = host.zap(liveSelection("two"), SessionProfile.FULLSCREEN, safeMetadata)
         host.pause()
         host.resume()
         host.retry()
@@ -80,6 +81,8 @@ class CleanLivePlaybackHostTest {
         host.stop()
 
         assertEquals(PlaybackState.PLAYING, host.snapshot.value.state)
+        assertEquals(2L, tuneGeneration)
+        assertEquals(3L, zapGeneration)
         assertEquals(null, host.presentation.value.bottomStatusCode)
         assertEquals(
             listOf(
@@ -109,6 +112,30 @@ class CleanLivePlaybackHostTest {
             ),
             fixture.operations,
         )
+        host.release()
+        fixture.parentJob.cancel()
+    }
+
+    @Test
+    fun `accepted command returns only after the session publishes its generation`() = runTest {
+        val fixture = fixture(autoAdvanceAcceptedGeneration = false)
+        val host = fixture.create()
+        val metadata = CleanMediaSessionMetadata.fromIngress(
+            redactedContentFingerprint = "ab12ab12ab12ab12",
+            title = "Live News",
+        )
+
+        val acknowledgement = async {
+            host.tune(liveSelection("one"), SessionProfile.FULLSCREEN, metadata)
+        }
+        runCurrent()
+
+        assertFalse(acknowledgement.isCompleted)
+        assertTrue(fixture.commands.last() is PlaybackCommand.Tune)
+        verify(exactly = 1) { fixture.mediaOwner.updateMetadata(metadata) }
+
+        fixture.snapshot.value = fixture.snapshot.value.copy(generation = 1)
+        assertEquals(1L, acknowledgement.await())
         host.release()
         fixture.parentJob.cancel()
     }
@@ -188,7 +215,10 @@ class CleanLivePlaybackHostTest {
         fixture.parentJob.cancel()
     }
 
-    private fun fixture(mediaSessionCreationFails: Boolean = false) = Fixture(mediaSessionCreationFails)
+    private fun fixture(
+        mediaSessionCreationFails: Boolean = false,
+        autoAdvanceAcceptedGeneration: Boolean = true,
+    ) = Fixture(mediaSessionCreationFails, autoAdvanceAcceptedGeneration)
 
     private fun liveSelection(id: String) = ProviderPlaybackSelection(
         sourceType = ProviderSourceType.XTREAM,
@@ -200,6 +230,7 @@ class CleanLivePlaybackHostTest {
 
     private class Fixture(
         private val mediaSessionCreationFails: Boolean,
+        private val autoAdvanceAcceptedGeneration: Boolean,
     ) {
         val parentJob = SupervisorJob()
         private val parentScope = CoroutineScope(Dispatchers.Unconfined + parentJob)
@@ -215,6 +246,12 @@ class CleanLivePlaybackHostTest {
             dispatchCommand = {
                 commands += it
                 operations += "command:${it::class.simpleName}"
+                if (
+                    autoAdvanceAcceptedGeneration &&
+                    (it is PlaybackCommand.Tune || it is PlaybackCommand.Zap)
+                ) {
+                    snapshot.value = snapshot.value.copy(generation = snapshot.value.generation + 1)
+                }
             },
             releaseSession = ::releaseSession,
         )

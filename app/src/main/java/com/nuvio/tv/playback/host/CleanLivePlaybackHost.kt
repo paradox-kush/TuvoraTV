@@ -29,6 +29,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
@@ -77,20 +78,16 @@ internal class CleanLivePlaybackHost private constructor(
         selection: ProviderPlaybackSelection,
         profile: SessionProfile,
         metadata: CleanMediaSessionMetadata,
-    ) = withActiveHost {
-        requireLive(selection)
+    ): Long = acceptLiveCommand(selection, metadata) {
         controller.tune(selection, profile)
-        releaseAuthority.updateMetadata(metadata)
     }
 
     suspend fun zap(
         selection: ProviderPlaybackSelection,
         profile: SessionProfile,
         metadata: CleanMediaSessionMetadata,
-    ) = withActiveHost {
-        requireLive(selection)
+    ): Long = acceptLiveCommand(selection, metadata) {
         controller.zap(selection, profile)
-        releaseAuthority.updateMetadata(metadata)
     }
 
     suspend fun pause() = withActiveHost(controller::pause)
@@ -121,6 +118,26 @@ internal class CleanLivePlaybackHost private constructor(
     private suspend fun <T> withActiveHost(block: suspend () -> T): T = commandMutex.withLock {
         check(!releaseStarted) { "Clean live playback host is releasing or released" }
         block()
+    }
+
+    /**
+     * Returns the generation assigned by the session, rather than guessing that a queued command
+     * has already become current. Dispatch and MediaSession metadata form one accepted-command
+     * section. Once dispatch is accepted, cancellation cannot split metadata/cursor correlation or
+     * abandon the short generation acknowledgement wait.
+     */
+    private suspend fun acceptLiveCommand(
+        selection: ProviderPlaybackSelection,
+        metadata: CleanMediaSessionMetadata,
+        dispatch: suspend () -> Unit,
+    ): Long = withActiveHost {
+        requireLive(selection)
+        val priorGeneration = snapshot.value.generation
+        withContext(NonCancellable) {
+            dispatch()
+            releaseAuthority.updateMetadata(metadata)
+            snapshot.first { it.generation > priorGeneration }.generation
+        }
     }
 
     private fun requireLive(selection: ProviderPlaybackSelection) {
