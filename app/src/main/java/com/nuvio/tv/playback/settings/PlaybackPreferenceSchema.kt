@@ -17,7 +17,7 @@ import com.nuvio.tv.playback.core.SubtitlePreference
 import com.nuvio.tv.playback.core.VideoDimensions
 import com.nuvio.tv.playback.core.VideoPreference
 
-const val CLEAN_PLAYBACK_PREFERENCE_SCHEMA_VERSION: Int = 1
+const val CLEAN_PLAYBACK_PREFERENCE_SCHEMA_VERSION: Int = 2
 
 enum class PlaybackPreferenceGroup {
     ENGINE,
@@ -68,6 +68,7 @@ enum class PreferenceDecodeWarning {
     INVALID_NUMBER,
     INVALID_CUSTOM_BUFFER,
     MIGRATED_V0,
+    MIGRATED_V1_FRAME_RATE,
 }
 
 data class DecodedPlaybackPreferences(
@@ -137,9 +138,9 @@ object PlaybackPreferenceSchema {
     private val knownKeys: Set<String> = groupKeys.values.flatten().toSet()
 
     fun decode(source: PlaybackPreferenceDocument): DecodedPlaybackPreferences {
-        val (document, migrated) = migrate(source)
+        val (document, migrationWarning) = migrate(source)
         val warnings = linkedSetOf<PreferenceDecodeWarning>()
-        if (migrated) warnings += PreferenceDecodeWarning.MIGRATED_V0
+        migrationWarning?.let(warnings::add)
         if (document.schemaVersion > CLEAN_PLAYBACK_PREFERENCE_SCHEMA_VERSION) {
             warnings += PreferenceDecodeWarning.FUTURE_SCHEMA
         }
@@ -376,28 +377,43 @@ object PlaybackPreferenceSchema {
         put(MPV_OUTPUT, preferences.expert.mpvOutput.name)
     }
 
-    private fun migrate(source: PlaybackPreferenceDocument): Pair<PlaybackPreferenceDocument, Boolean> {
-        if (source.schemaVersion != 0) return source to false
+    private fun migrate(
+        source: PlaybackPreferenceDocument,
+    ): Pair<PlaybackPreferenceDocument, PreferenceDecodeWarning?> {
+        if (source.schemaVersion >= CLEAN_PLAYBACK_PREFERENCE_SCHEMA_VERSION) return source to null
         val values = source.values.toMutableMap()
-        values.remove("player_engine")?.let { raw ->
-            values[ENGINE] = when (raw) {
-                "EXOPLAYER" -> EnginePreference.MEDIA3.name
-                "MVP_PLAYER" -> EnginePreference.LIBMPV.name
-                else -> EnginePreference.AUTO.name
+        if (source.schemaVersion == 0) {
+            values.remove("player_engine")?.let { raw ->
+                values[ENGINE] = when (raw) {
+                    "EXOPLAYER" -> EnginePreference.MEDIA3.name
+                    "MVP_PLAYER" -> EnginePreference.LIBMPV.name
+                    else -> EnginePreference.AUTO.name
+                }
+            }
+            values.remove("auto_switch_on_error")?.let { values[AUTOMATIC_FALLBACK] = it }
+            values.remove("low_latency")?.let {
+                values[BUFFERING] = if (it == "true") {
+                    BufferingPreference.LOW_LATENCY_LIVE.name
+                } else {
+                    BufferingPreference.RECOMMENDED.name
+                }
             }
         }
-        values.remove("auto_switch_on_error")?.let { values[AUTOMATIC_FALLBACK] = it }
-        values.remove("low_latency")?.let {
-            values[BUFFERING] = if (it == "true") {
-                BufferingPreference.LOW_LATENCY_LIVE.name
-            } else {
-                BufferingPreference.RECOMMENDED.name
+        values[FRAME_RATE]?.let { frameRate ->
+            values[FRAME_RATE] = when (frameRate) {
+                "ON_COMMITTED_PLAYBACK" -> FrameRatePreference.ON_START.name
+                "ALWAYS" -> FrameRatePreference.ON_RATE_CHANGE.name
+                else -> frameRate
             }
         }
         return source.copy(
             schemaVersion = CLEAN_PLAYBACK_PREFERENCE_SCHEMA_VERSION,
             revision = source.revision + 1,
             values = values.toMap(),
-        ) to true
+        ) to if (source.schemaVersion == 0) {
+            PreferenceDecodeWarning.MIGRATED_V0
+        } else {
+            PreferenceDecodeWarning.MIGRATED_V1_FRAME_RATE
+        }
     }
 }

@@ -1587,6 +1587,79 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    @Test
+    fun `session applies output once before start and again from committed runtime facts`() = runTest {
+        val engine = FakeEngine()
+        val output = RecordingOutputController()
+        val session = session(engine, outputController = output)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(1, output.requests.size)
+        assertFalse(output.requests.single().committed)
+        assertEquals(VideoOutputFacts(), output.requests.single().facts)
+
+        engine.emit(PlaybackEvent.VideoFrameRateChanged(1, 25f))
+        engine.emit(PlaybackEvent.VideoSizeChanged(1, 1_920, 1_080))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        val runtime = output.requests.last()
+        assertTrue(runtime.committed)
+        assertTrue(runtime.facts.revision > output.requests.first().facts.revision)
+        assertEquals(25f, runtime.facts.frameRate)
+        assertEquals(VideoDimensions(1_920, 1_080), runtime.facts.dimensions)
+        assertEquals(PlaybackOutputStatus.APPLIED, session.snapshot.value.playbackOutputStatus)
+        close(session)
+    }
+
+    @Test
+    fun `replacement reset identifies the released graph generation`() = runTest {
+        val engine = FakeEngine()
+        val output = RecordingOutputController()
+        val session = session(engine, outputController = output)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertTrue(output.resets.contains(1L to ActiveWorkReleaseReason.REPLACE_REQUEST))
+        assertFalse(output.resets.contains(2L to ActiveWorkReleaseReason.REPLACE_REQUEST))
+        close(session)
+    }
+
+    @Test
+    fun `optional output failure remains playing and emits a sanitized diagnostic`() = runTest {
+        val engine = FakeEngine()
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val output = RecordingOutputController(committedStatus = PlaybackOutputStatus.APPLY_FAILED)
+        val session = session(
+            engine,
+            outputController = output,
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.VideoFrameRateChanged(1, 24f))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        assertEquals(PlaybackOutputStatus.APPLY_FAILED, session.snapshot.value.playbackOutputStatus)
+        assertTrue(
+            diagnostics.any {
+                it.code == PlaybackDiagnosticCode.PLAYBACK_OUTPUT_NONFATAL &&
+                    it.outputStatus == PlaybackOutputStatus.APPLY_FAILED &&
+                    it.failure == null
+            },
+        )
+        close(session)
+    }
+
     private fun TestScope.session(
         engine: FakeEngine,
         otherEngine: FakeEngine? = null,
@@ -1607,6 +1680,7 @@ class PlaybackSessionTest {
             PlaybackPolicy.WatchdogConfiguration(enabled = false),
         ),
         diagnostics: PlaybackDiagnostics = PlaybackDiagnostics { },
+        outputController: PlaybackOutputController = FakeOutputController,
     ) = PlaybackSession(
         parentScope = this,
         requestResolver = requestResolver,
@@ -1624,7 +1698,7 @@ class PlaybackSessionTest {
                 else -> null
             }
         },
-        outputController = FakeOutputController,
+        outputController = outputController,
         clock = TestClock,
         diagnostics = diagnostics,
         lifecycle = lifecycle,
@@ -1751,12 +1825,40 @@ class PlaybackSessionTest {
     }
 
     private data object FakeOutputController : PlaybackOutputController {
-        override suspend fun apply(
-            generation: Long,
-            requirements: PlaybackRequirements,
-        ): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
+        override suspend fun apply(request: PlaybackOutputRequest): PlaybackResult<PlaybackOutputApplication> =
+            PlaybackResult.Success(PlaybackOutputApplication(PlaybackOutputStatus.DISABLED))
 
-        override suspend fun reset(generation: Long): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
+        override suspend fun reset(
+            releasedGeneration: Long?,
+            reason: ActiveWorkReleaseReason,
+        ): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
+    }
+
+    private class RecordingOutputController(
+        private val committedStatus: PlaybackOutputStatus = PlaybackOutputStatus.APPLIED,
+    ) : PlaybackOutputController {
+        val requests = mutableListOf<PlaybackOutputRequest>()
+        val resets = mutableListOf<Pair<Long?, ActiveWorkReleaseReason>>()
+
+        override suspend fun apply(
+            request: PlaybackOutputRequest,
+        ): PlaybackResult<PlaybackOutputApplication> {
+            requests += request
+            val status = if (request.committed) {
+                committedStatus
+            } else {
+                PlaybackOutputStatus.WAITING_FOR_COMMIT
+            }
+            return PlaybackResult.Success(PlaybackOutputApplication(status))
+        }
+
+        override suspend fun reset(
+            releasedGeneration: Long?,
+            reason: ActiveWorkReleaseReason,
+        ): PlaybackResult<Unit> {
+            resets += releasedGeneration to reason
+            return PlaybackResult.Success(Unit)
+        }
     }
 
     private data object TestClock : PlaybackClock {

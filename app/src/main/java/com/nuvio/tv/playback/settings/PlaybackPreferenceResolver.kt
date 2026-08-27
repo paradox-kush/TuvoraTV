@@ -484,13 +484,13 @@ object PlaybackPreferenceResolver {
     ): PreferenceResolution<FrameRatePreference> {
         val value = requested.playback.display.frameRate
         if (
-            value == FrameRatePreference.ALWAYS &&
+            value == FrameRatePreference.ON_RATE_CHANGE &&
             context.rapidLiveZapping &&
             context.request.contentType == ContentType.LIVE
         ) {
             return PreferenceResolution(
                 requested = value,
-                effective = FrameRatePreference.ON_COMMITTED_PLAYBACK,
+                effective = FrameRatePreference.ON_START,
                 authority = ResolutionAuthority.HARD_CONSTRAINT,
                 availability = PreferenceAvailability.SUPPORTED,
                 primaryReason = PreferenceReason.AFR_DEFERRED_DURING_ZAP,
@@ -501,7 +501,7 @@ object PlaybackPreferenceResolver {
                 impact = ChangeImpact.APPLY_IN_PLACE,
             )
         }
-        return resolved(value, FrameRatePreference.ON_COMMITTED_PLAYBACK, ChangeImpact.APPLY_IN_PLACE)
+        return resolved(value, FrameRatePreference.ON_START, ChangeImpact.APPLY_IN_PLACE)
     }
 
     private fun resolveMpvOutput(

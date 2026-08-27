@@ -421,7 +421,7 @@ class PlaybackPreferenceResolverTest {
         val requested = defaults.copy(
             playback = defaults.playback.copy(
                 subtitles = defaults.playback.subtitles.copy(fidelity = SubtitleFidelity.FULL),
-                display = defaults.playback.display.copy(frameRate = FrameRatePreference.ALWAYS),
+                display = defaults.playback.display.copy(frameRate = FrameRatePreference.ON_RATE_CHANGE),
             ),
             expert = ExpertPlaybackPreferences(MpvOutputPreference.DIRECT),
         )
@@ -437,7 +437,7 @@ class PlaybackPreferenceResolverTest {
 
         assertEquals(MpvOutputPreference.RENDER, result.mpvOutput.effective)
         assertEquals(PreferenceReason.SUBTITLE_FIDELITY_REQUIRES_RENDER, result.mpvOutput.primaryReason)
-        assertEquals(FrameRatePreference.ON_COMMITTED_PLAYBACK, result.frameRate.effective)
+        assertEquals(FrameRatePreference.ON_START, result.frameRate.effective)
         assertEquals(PreferenceReason.AFR_DEFERRED_DURING_ZAP, result.frameRate.primaryReason)
     }
 

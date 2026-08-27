@@ -403,7 +403,7 @@ data class PlaybackPreferences(
     val behavior: PlaybackBehaviorPreference = PlaybackBehaviorPreference(),
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION: Int = 1
+        const val CURRENT_SCHEMA_VERSION: Int = 2
         fun recommended(): PlaybackPreferences = PlaybackPreferences()
     }
 }
@@ -413,7 +413,20 @@ enum class DecoderPreference { AUTO, HARDWARE_ONLY, SOFTWARE_ONLY }
 enum class BufferingPreference { RECOMMENDED, BALANCED, LOW_LATENCY_LIVE, CUSTOM }
 enum class AudioOutputPreference { AUTO, PASSTHROUGH, PCM }
 enum class SubtitleFidelity { COMPATIBLE, FULL }
-enum class FrameRatePreference { OFF, ON_COMMITTED_PLAYBACK, ALWAYS }
+enum class FrameRatePreference {
+    OFF,
+    ON_START,
+    ON_RATE_CHANGE;
+
+    companion object {
+        /** Source-compatibility aliases only; persisted aliases are migrated by the clean schema. */
+        @Deprecated("Use ON_START", ReplaceWith("ON_START"))
+        val ON_COMMITTED_PLAYBACK: FrameRatePreference = ON_START
+
+        @Deprecated("Use ON_RATE_CHANGE", ReplaceWith("ON_RATE_CHANGE"))
+        val ALWAYS: FrameRatePreference = ON_RATE_CHANGE
+    }
+}
 enum class HdrPreference { AUTO, SDR, HDR10, DOLBY_VISION }
 
 data class CustomBufferPreference(
@@ -446,7 +459,7 @@ data class SubtitlePreference(
 )
 
 data class DisplayPreference(
-    val frameRate: FrameRatePreference = FrameRatePreference.ON_COMMITTED_PLAYBACK,
+    val frameRate: FrameRatePreference = FrameRatePreference.ON_START,
     val resolutionMatching: Boolean = false,
 )
 
@@ -534,6 +547,7 @@ data class PlaybackRequirements(
     val adaptiveDimensionCeiling: VideoDimensions? = null,
     val bitrateCeiling: Long? = null,
     val displayModeSwitchAllowed: Boolean,
+    val resolutionMatchingEnabled: Boolean = false,
     val frameRatePreference: FrameRatePreference,
     val hdrPreference: HdrPreference,
     val decoderPreference: DecoderPreference,
@@ -793,6 +807,10 @@ sealed interface PlaybackEvent {
         override val generation: Long,
         val sampleMimeType: String?,
     ) : PlaybackEvent
+    data class VideoFrameRateChanged(
+        override val generation: Long,
+        val frameRate: Float,
+    ) : PlaybackEvent
     data class VideoSizeChanged(
         override val generation: Long,
         val width: Int,
@@ -872,6 +890,44 @@ data class TrackSummary(
     val hasVideoTrack: Boolean = false,
 )
 
+/** Runtime video facts reported by an engine. Values are factual and never URL-derived guesses. */
+data class VideoOutputFacts(
+    /** Monotonic within one playback generation, including graph rebuilds and handoffs. */
+    val revision: Long = 0,
+    val frameRate: Float? = null,
+    val dimensions: VideoDimensions? = null,
+) {
+    init {
+        require(revision >= 0) { "Video output fact revision must not be negative" }
+    }
+}
+
+/** Secret-safe result of applying the effective display-output policy. */
+enum class PlaybackOutputStatus {
+    NOT_REQUESTED,
+    WAITING_FOR_COMMIT,
+    WAITING_FOR_FRAME_RATE,
+    WAITING_FOR_VIDEO_SIZE,
+    DISABLED,
+    UNSUPPORTED,
+    NO_COMPATIBLE_MODE,
+    APPLY_NOT_CONFIRMED,
+    APPLY_FAILED,
+    APPLIED,
+    ALREADY_EFFECTIVE,
+}
+
+data class PlaybackOutputApplication(
+    val status: PlaybackOutputStatus,
+)
+
+data class PlaybackOutputRequest(
+    val generation: Long,
+    val requirements: PlaybackRequirements,
+    val facts: VideoOutputFacts,
+    val committed: Boolean,
+)
+
 data class PlaybackSnapshot(
     val generation: Long = 0,
     val state: PlaybackState = PlaybackState.IDLE,
@@ -887,6 +943,8 @@ data class PlaybackSnapshot(
     val durationMs: Long? = null,
     val tracks: TrackSummary = TrackSummary(),
     val progress: PlaybackProgressEvidence = PlaybackProgressEvidence(),
+    val videoOutputFacts: VideoOutputFacts = VideoOutputFacts(),
+    val playbackOutputStatus: PlaybackOutputStatus = PlaybackOutputStatus.NOT_REQUESTED,
     val failure: PlaybackFailure? = null,
     val statusCode: PlaybackStatusCode? = null,
     val previewAvailability: PreviewAvailability = PreviewAvailability.Unknown,

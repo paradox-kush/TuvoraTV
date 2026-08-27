@@ -69,7 +69,7 @@ object LegacyPlaybackPreferenceImporter {
         val forcedPassthrough = values.boolean("forceOpticalPassthrough", false)
         val buffering = mapBuffer(values, notes)
         val frameRate = when (values["frameRateMatchingMode"]) {
-            "START", "START_STOP" -> FrameRatePreference.ON_COMMITTED_PLAYBACK
+            "START", "START_STOP" -> FrameRatePreference.ON_START
             else -> FrameRatePreference.OFF
         }
         val hasLegacyDolbyTransform = values.boolean("dv5ToDv81Enabled", false) ||

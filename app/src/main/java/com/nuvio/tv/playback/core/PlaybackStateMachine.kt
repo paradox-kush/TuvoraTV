@@ -136,6 +136,12 @@ sealed interface PlaybackAction {
         val requirements: PlaybackRequirements,
     ) : PlaybackAction
 
+    /** Re-evaluates display output from current engine-neutral facts on the session lane. */
+    data class ApplyPlaybackOutput(
+        override val generation: Long,
+        val facts: VideoOutputFacts,
+    ) : PlaybackAction
+
     /**
      * Cancels every active job, including work from superseded generations (resolution, selection,
      * recovery, reconnect), and releases the graph when one exists. [generation] identifies the
@@ -202,6 +208,12 @@ sealed interface PlaybackReducerInput {
     data class RequirementsChangeRejected(
         val generation: Long,
         val previousProfile: SessionProfile?,
+    ) : PlaybackReducerInput
+
+    /** Factual, secret-safe result of a session-owned output application request. */
+    data class PlaybackOutputApplied(
+        val request: PlaybackOutputRequest,
+        val application: PlaybackOutputApplication,
     ) : PlaybackReducerInput
 
     data class LifecycleChanged(val active: Boolean) : PlaybackReducerInput
@@ -288,6 +300,7 @@ object PlaybackStateMachine {
                 transition(state.copy(snapshot = state.snapshot.copy(profile = input.previousProfile)))
             }
         }
+        is PlaybackReducerInput.PlaybackOutputApplied -> playbackOutputApplied(state, input)
         is PlaybackReducerInput.LifecycleChanged -> lifecycleChanged(state, input.active)
         is PlaybackReducerInput.BarrierCompleted -> barrierCompleted(state, input.releaseEpoch)
         is PlaybackReducerInput.BarrierFailed -> barrierFailed(state, input.releaseEpoch, input.failure)
@@ -728,9 +741,9 @@ object PlaybackStateMachine {
             is PlaybackEvent.VideoDecoderInitialized -> progressFact(state) {
                 it.copy(decoderReady = true)
             }
-            is PlaybackEvent.VideoInputFormatChanged,
-            is PlaybackEvent.VideoSizeChanged,
-            -> unchanged(state)
+            is PlaybackEvent.VideoInputFormatChanged -> unchanged(state)
+            is PlaybackEvent.VideoFrameRateChanged -> videoFrameRateChanged(state, event.frameRate)
+            is PlaybackEvent.VideoSizeChanged -> videoSizeChanged(state, event.width, event.height)
             is PlaybackEvent.PlaybackEnded -> playbackEnded(state, event.reason)
             is PlaybackEvent.Failed -> failed(state, event.failure)
             // Engine release alone cannot satisfy the barrier: resolution/recovery/reconnect jobs
@@ -866,6 +879,10 @@ object PlaybackStateMachine {
                     statusCode = PlaybackStatusCode.STARTING,
                     tracks = TrackSummary(),
                     progress = PlaybackProgressEvidence(),
+                    videoOutputFacts = VideoOutputFacts(
+                        revision = nextOutputRevision(state.snapshot.videoOutputFacts.revision),
+                    ),
+                    playbackOutputStatus = PlaybackOutputStatus.NOT_REQUESTED,
                 ),
             ),
         )
@@ -942,7 +959,13 @@ object PlaybackStateMachine {
     }
 
     private fun firstVideoFrame(state: PlaybackMachineState): PlaybackTransition {
-        if (!state.snapshot.state.acceptsProgress()) return unchanged(state)
+        if (
+            !state.snapshot.state.acceptsProgress() ||
+            (state.snapshot.state == PlaybackState.PLAYING && state.snapshot.progress.renderedVideoFrame)
+        ) {
+            return unchanged(state)
+        }
+        val facts = state.snapshot.videoOutputFacts
         return transition(
             state.copy(
                 snapshot = state.snapshot.copy(
@@ -962,8 +985,73 @@ object PlaybackStateMachine {
                 ),
                 incident = null,
             ),
+            PlaybackAction.ApplyPlaybackOutput(state.snapshot.generation, facts),
         )
     }
+
+    private fun videoFrameRateChanged(
+        state: PlaybackMachineState,
+        frameRate: Float,
+    ): PlaybackTransition {
+        if (!state.snapshot.state.acceptsProgress() || !frameRate.isFinite() || frameRate !in 10f..120f) {
+            return unchanged(state)
+        }
+        val previous = state.snapshot.videoOutputFacts
+        if (previous.frameRate == frameRate) return unchanged(state)
+        val facts = previous.copy(
+            revision = nextOutputRevision(previous.revision),
+            frameRate = frameRate,
+        )
+        val updated = state.copy(snapshot = state.snapshot.copy(videoOutputFacts = facts))
+        return if (state.snapshot.progress.renderedVideoFrame) {
+            transition(updated, PlaybackAction.ApplyPlaybackOutput(state.snapshot.generation, facts))
+        } else {
+            transition(updated)
+        }
+    }
+
+    private fun videoSizeChanged(
+        state: PlaybackMachineState,
+        width: Int,
+        height: Int,
+    ): PlaybackTransition {
+        if (!state.snapshot.state.acceptsProgress() || width <= 0 || height <= 0) return unchanged(state)
+        val previous = state.snapshot.videoOutputFacts
+        val dimensions = VideoDimensions(width, height)
+        if (previous.dimensions == dimensions) return unchanged(state)
+        val facts = previous.copy(
+            revision = nextOutputRevision(previous.revision),
+            dimensions = dimensions,
+        )
+        val updated = state.copy(snapshot = state.snapshot.copy(videoOutputFacts = facts))
+        return if (state.snapshot.progress.renderedVideoFrame) {
+            transition(updated, PlaybackAction.ApplyPlaybackOutput(state.snapshot.generation, facts))
+        } else {
+            transition(updated)
+        }
+    }
+
+    private fun playbackOutputApplied(
+        state: PlaybackMachineState,
+        input: PlaybackReducerInput.PlaybackOutputApplied,
+    ): PlaybackTransition {
+        val request = input.request
+        if (
+            request.generation != state.snapshot.generation ||
+            request.facts != state.snapshot.videoOutputFacts ||
+            request.committed != state.snapshot.progress.renderedVideoFrame
+        ) {
+            return unchanged(state)
+        }
+        return transition(
+            state.copy(
+                snapshot = state.snapshot.copy(playbackOutputStatus = input.application.status),
+            ),
+        )
+    }
+
+    private fun nextOutputRevision(current: Long): Long =
+        if (current == Long.MAX_VALUE) Long.MAX_VALUE else current + 1
 
     private fun bufferingStarted(state: PlaybackMachineState): PlaybackTransition {
         if (state.snapshot.state != PlaybackState.PLAYING) return unchanged(state)
@@ -1197,6 +1285,7 @@ object PlaybackStateMachine {
                 isBuffering = false,
                 isReconnecting = false,
                 statusCode = null,
+                playbackOutputStatus = PlaybackOutputStatus.NOT_REQUESTED,
             ),
             afterRelease = AfterRelease.NONE,
             graphBeforeRelease = null,
@@ -1225,6 +1314,7 @@ object PlaybackStateMachine {
                     snapshot = cleared.snapshot.copy(
                         state = PlaybackState.STOPPED,
                         statusCode = PlaybackStatusCode.STOPPED,
+                        playbackOutputStatus = PlaybackOutputStatus.NOT_REQUESTED,
                     ),
                     afterRelease = AfterRelease.NONE,
                     incident = null,
@@ -1301,6 +1391,7 @@ object PlaybackStateMachine {
                         isBuffering = false,
                         isReconnecting = false,
                         statusCode = PlaybackStatusCode.STOPPED,
+                        playbackOutputStatus = PlaybackOutputStatus.NOT_REQUESTED,
                     ),
                     afterRelease = AfterRelease.NONE,
                     lifecycleResumeGraph = state.lifecycleResumeGraph ?: releasedGraph,

@@ -91,7 +91,7 @@ class CleanPlaybackSettingsPresentationTest {
             CleanPlaybackSettingField.SUBTITLE_FIDELITY to "FULL",
             CleanPlaybackSettingField.SUBTITLE_LANGUAGE to "es",
             CleanPlaybackSettingField.SUBTITLE_DELAY_MS to "250",
-            CleanPlaybackSettingField.FRAME_RATE to "ALWAYS",
+            CleanPlaybackSettingField.FRAME_RATE to "ON_RATE_CHANGE",
             CleanPlaybackSettingField.RESOLUTION_MATCHING to "true",
             CleanPlaybackSettingField.BUFFERING to "CUSTOM",
             CleanPlaybackSettingField.CUSTOM_BUFFER to "1000,5000,500,750",
@@ -113,7 +113,7 @@ class CleanPlaybackSettingsPresentationTest {
         assertEquals(VideoDimensions(1920, 1080), requested.playback.video.maximumDimensions)
         assertEquals(BufferingPreference.CUSTOM, requested.playback.buffering)
         assertEquals(5_000, requested.playback.customBuffer?.maximumBufferMs)
-        assertEquals(FrameRatePreference.ALWAYS, requested.playback.display.frameRate)
+        assertEquals(FrameRatePreference.ON_RATE_CHANGE, requested.playback.display.frameRate)
         assertEquals(SubtitleFidelity.FULL, requested.playback.subtitles.fidelity)
         assertEquals(MpvOutputPreference.DIRECT, requested.expert.mpvOutput)
         assertEquals("en", requested.playback.audio.preferredLanguage)

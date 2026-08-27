@@ -329,8 +329,10 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
                 adaptiveDimensionCeiling = adaptiveCeiling,
                 bitrateCeiling = environment.resourceBudget.networkBitrateCeiling.takeIf { adaptive },
                 displayModeSwitchAllowed = !guide &&
-                    preferences.display.resolutionMatching &&
-                    capabilities.display.modeSwitchSupported,
+                    capabilities.display.modeSwitchSupported &&
+                    (preferences.display.frameRate != FrameRatePreference.OFF ||
+                        preferences.display.resolutionMatching),
+                resolutionMatchingEnabled = !guide && preferences.display.resolutionMatching,
                 frameRatePreference = if (guide) FrameRatePreference.OFF else preferences.display.frameRate,
                 hdrPreference = effectiveHdr,
                 decoderPreference = preferences.decoder,
@@ -492,6 +494,7 @@ object PlaybackRequirementsDiffClassifier {
             ) add(RequirementsField.ADAPTIVE_QUALITY)
             if (previous.bitrateCeiling != next.bitrateCeiling) add(RequirementsField.NETWORK_BITRATE)
             if (previous.displayModeSwitchAllowed != next.displayModeSwitchAllowed ||
+                previous.resolutionMatchingEnabled != next.resolutionMatchingEnabled ||
                 previous.frameRatePreference != next.frameRatePreference
             ) add(RequirementsField.DISPLAY_OUTPUT)
             if (previous.hdrPreference != next.hdrPreference) add(RequirementsField.HDR)

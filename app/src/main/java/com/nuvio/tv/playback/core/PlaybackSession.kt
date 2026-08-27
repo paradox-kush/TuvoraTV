@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -73,6 +75,7 @@ class PlaybackSession(
     private var requirements: GenerationValue<PlaybackRequirements>? = null
     private var latestRequirementsChangeId: Long = 0
     private var requirementsApplyJob: Job? = null
+    private val outputMutex = Mutex()
     private var watchdogJob: Job? = null
     private var watchdogArm: WatchdogArm? = null
     private var nextWatchdogToken: Long = 1
@@ -335,6 +338,7 @@ class PlaybackSession(
                 preferenceSnapshot = preferences,
             )
             is PlaybackAction.ApplyRequirementsInPlace -> applyRequirements(action)
+            is PlaybackAction.ApplyPlaybackOutput -> applyPlaybackOutput(action)
             is PlaybackAction.ReleaseActiveWork -> releaseActiveWork(action)
             is PlaybackAction.RecoverInPlace -> recoverOnce(action)
             is PlaybackAction.StartLiveReconnectLoop -> startLiveReconnectLoop(action)
@@ -614,9 +618,13 @@ class PlaybackSession(
         activeGraphGeneration = action.generation
         generationScope(action.generation).launch {
             intentionalReleases -= engine.type
-            val output = safeResult(FailurePhase.ENGINE_START) {
-                outputController.apply(action.generation, effective)
-            }
+            val output = requestPlaybackOutput(
+                generation = action.generation,
+                effective = effective,
+                facts = VideoOutputFacts(),
+                committed = false,
+                phase = FailurePhase.ENGINE_START,
+            )
             if (output is PlaybackResult.Failure) {
                 fail(action.generation, output.failure)
                 return@launch
@@ -735,9 +743,13 @@ class PlaybackSession(
         requirementsApplyJob = generationScope(action.generation).launch {
             previousApply?.cancelAndJoin()
             if (action.changeId != latestRequirementsChangeId) return@launch
-            val output = safeResult(FailurePhase.PLAYBACK) {
-                outputController.apply(action.generation, action.requirements)
-            }
+            val output = requestPlaybackOutput(
+                generation = action.generation,
+                effective = action.requirements,
+                facts = machine.snapshot.videoOutputFacts,
+                committed = machine.snapshot.progress.renderedVideoFrame,
+                phase = FailurePhase.PLAYBACK,
+            )
             if (output is PlaybackResult.Failure) {
                 fail(action.generation, output.failure)
                 return@launch
@@ -763,6 +775,50 @@ class PlaybackSession(
             is PlaybackResult.Success -> requirements = GenerationValue(message.generation, message.requirements)
             is PlaybackResult.Failure -> fail(message.generation, result.failure)
         }
+    }
+
+    private fun applyPlaybackOutput(action: PlaybackAction.ApplyPlaybackOutput) {
+        val effective = requirements.takeIf { it?.generation == action.generation }?.value ?: return
+        generationScope(action.generation).launch {
+            val output = requestPlaybackOutput(
+                generation = action.generation,
+                effective = effective,
+                facts = action.facts,
+                committed = true,
+                phase = FailurePhase.PLAYBACK,
+            )
+            if (output is PlaybackResult.Failure) fail(action.generation, output.failure)
+        }
+    }
+
+    private suspend fun requestPlaybackOutput(
+        generation: Long,
+        effective: PlaybackRequirements,
+        facts: VideoOutputFacts,
+        committed: Boolean,
+        phase: FailurePhase,
+    ): PlaybackResult<PlaybackOutputApplication> {
+        val request = PlaybackOutputRequest(generation, effective, facts, committed)
+        val result = outputMutex.withLock {
+            safeResult(phase) { outputController.apply(request) }
+        }
+        if (result is PlaybackResult.Success) {
+            if (result.value.status in NONFATAL_OUTPUT_STATUSES) {
+                diagnostics.record(
+                    PlaybackDiagnosticEvent(
+                        generation = generation,
+                        code = PlaybackDiagnosticCode.PLAYBACK_OUTPUT_NONFATAL,
+                        outputStatus = result.value.status,
+                    ),
+                )
+            }
+            lane.send(
+                LaneMessage.Reducer(
+                    PlaybackReducerInput.PlaybackOutputApplied(request, result.value),
+                ),
+            )
+        }
+        return result
     }
 
     private fun releaseActiveWork(action: PlaybackAction.ReleaseActiveWork) {
@@ -795,8 +851,10 @@ class PlaybackSession(
                 )
                 return@launch
             }
-            val outputResult = safeResult(FailurePhase.RELEASE) {
-                outputController.reset(action.generation)
+            val outputResult = outputMutex.withLock {
+                safeResult(FailurePhase.RELEASE) {
+                    outputController.reset(releasedGraphGeneration, action.reason)
+                }
             }
             if (outputResult is PlaybackResult.Failure) {
                 diagnostics.record(
@@ -1049,9 +1107,13 @@ class PlaybackSession(
                     attempt++
                     continue
                 }
-                val output = safeResult(FailurePhase.RECOVERY) {
-                    outputController.apply(action.generation, effective)
-                }
+                val output = requestPlaybackOutput(
+                    generation = action.generation,
+                    effective = effective,
+                    facts = VideoOutputFacts(),
+                    committed = false,
+                    phase = FailurePhase.RECOVERY,
+                )
                 if (output is PlaybackResult.Failure) {
                     outcome.cancel()
                     if (output.failure.shouldEscalateLiveReconnect()) {
@@ -1667,5 +1729,11 @@ class PlaybackSession(
     private companion object {
         const val DEFAULT_RELEASE_TIMEOUT_MS = 5_000L
         const val SURFACE_RECHECK_MS = 500L
+        val NONFATAL_OUTPUT_STATUSES = setOf(
+            PlaybackOutputStatus.UNSUPPORTED,
+            PlaybackOutputStatus.NO_COMPATIBLE_MODE,
+            PlaybackOutputStatus.APPLY_NOT_CONFIRMED,
+            PlaybackOutputStatus.APPLY_FAILED,
+        )
     }
 }

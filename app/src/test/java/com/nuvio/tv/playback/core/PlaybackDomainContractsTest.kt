@@ -33,7 +33,7 @@ class PlaybackDomainContractsTest {
         assertTrue(preferences.automaticFallback)
         assertEquals(DecoderPreference.AUTO, preferences.decoder)
         assertEquals(AudioOutputPreference.AUTO, preferences.audio.output)
-        assertEquals(FrameRatePreference.ON_COMMITTED_PLAYBACK, preferences.display.frameRate)
+        assertEquals(FrameRatePreference.ON_START, preferences.display.frameRate)
     }
 
     @Test

@@ -168,15 +168,124 @@ class PlaybackStateMachineTest {
             assertTrue(reduced.actions.isEmpty())
         }
 
-        val passiveFacts = listOf(
-            PlaybackEvent.VideoInputFormatChanged(1, "video/avc"),
-            PlaybackEvent.VideoSizeChanged(1, 1_920, 1_080),
-        )
+        val passiveFacts = listOf(PlaybackEvent.VideoInputFormatChanged(1, "video/avc"))
         passiveFacts.forEach { fact ->
             val reduced = PlaybackStateMachine.reduce(initial, fact)
             assertSame(initial, reduced.state)
             assertTrue(reduced.actions.isEmpty())
         }
+    }
+
+    @Test
+    fun `video output facts wait for the first committed frame before applying`() {
+        val starting = startingState(ContentType.LIVE, SessionProfile.FULLSCREEN)
+        val withRate = PlaybackStateMachine.reduce(
+            starting,
+            PlaybackEvent.VideoFrameRateChanged(1, 23.976f),
+        )
+        assertEquals(23.976f, withRate.state.snapshot.videoOutputFacts.frameRate)
+        assertEquals(1, withRate.state.snapshot.videoOutputFacts.revision)
+        assertTrue(withRate.actions.isEmpty())
+
+        val withSize = PlaybackStateMachine.reduce(
+            withRate.state,
+            PlaybackEvent.VideoSizeChanged(1, 1_920, 1_080),
+        )
+        assertEquals(VideoDimensions(1_920, 1_080), withSize.state.snapshot.videoOutputFacts.dimensions)
+        assertEquals(2, withSize.state.snapshot.videoOutputFacts.revision)
+        assertTrue(withSize.actions.isEmpty())
+
+        val committed = PlaybackStateMachine.reduce(withSize.state, PlaybackEvent.FirstVideoFrame(1))
+        val apply = assertAction<PlaybackAction.ApplyPlaybackOutput>(committed)
+        assertEquals(withSize.state.snapshot.videoOutputFacts, apply.facts)
+        assertTrue(committed.state.snapshot.progress.renderedVideoFrame)
+    }
+
+    @Test
+    fun `engine restart invalidates old output facts without reusing their revision`() {
+        val starting = startingState(ContentType.LIVE, SessionProfile.FULLSCREEN).let { state ->
+            state.copy(
+                snapshot = state.snapshot.copy(
+                    videoOutputFacts = VideoOutputFacts(
+                        revision = 7,
+                        frameRate = 24f,
+                        dimensions = VideoDimensions(1_920, 1_080),
+                    ),
+                    playbackOutputStatus = PlaybackOutputStatus.APPLIED,
+                ),
+            )
+        }
+
+        val restarted = PlaybackStateMachine.reduce(starting, PlaybackEvent.EngineStarting(1))
+
+        assertEquals(VideoOutputFacts(revision = 8), restarted.state.snapshot.videoOutputFacts)
+        assertEquals(PlaybackOutputStatus.NOT_REQUESTED, restarted.state.snapshot.playbackOutputStatus)
+    }
+
+    @Test
+    fun `committed output facts reapply only for distinct valid current facts`() {
+        val playing = playingState(ContentType.LIVE)
+        val changed = PlaybackStateMachine.reduce(
+            playing,
+            PlaybackEvent.VideoFrameRateChanged(1, 50f),
+        )
+        assertAction<PlaybackAction.ApplyPlaybackOutput>(changed)
+
+        val duplicate = PlaybackStateMachine.reduce(
+            changed.state,
+            PlaybackEvent.VideoFrameRateChanged(1, 50f),
+        )
+        assertSame(changed.state, duplicate.state)
+        assertTrue(duplicate.actions.isEmpty())
+
+        listOf(Float.NaN, 0f, 9.99f, 120.01f).forEach { invalidRate ->
+            val invalid = PlaybackStateMachine.reduce(
+                changed.state,
+                PlaybackEvent.VideoFrameRateChanged(1, invalidRate),
+            )
+            assertSame(changed.state, invalid.state)
+            assertTrue(invalid.actions.isEmpty())
+        }
+        val stale = PlaybackStateMachine.reduce(
+            changed.state,
+            PlaybackEvent.VideoFrameRateChanged(2, 60f),
+        )
+        assertSame(changed.state, stale.state)
+    }
+
+    @Test
+    fun `only the output result for current facts and commit state is presented`() {
+        val playing = playingState(ContentType.LIVE).copy(
+            snapshot = playingState(ContentType.LIVE).snapshot.copy(
+                videoOutputFacts = VideoOutputFacts(
+                    frameRate = 25f,
+                    dimensions = VideoDimensions(1_920, 1_080),
+                ),
+            ),
+        )
+        val request = PlaybackOutputRequest(
+            generation = 1,
+            requirements = requirements(SessionProfile.FULLSCREEN),
+            facts = playing.snapshot.videoOutputFacts,
+            committed = true,
+        )
+        val applied = PlaybackStateMachine.reduce(
+            playing,
+            PlaybackReducerInput.PlaybackOutputApplied(
+                request,
+                PlaybackOutputApplication(PlaybackOutputStatus.APPLIED),
+            ),
+        )
+        assertEquals(PlaybackOutputStatus.APPLIED, applied.state.snapshot.playbackOutputStatus)
+
+        val stale = PlaybackStateMachine.reduce(
+            applied.state,
+            PlaybackReducerInput.PlaybackOutputApplied(
+                request.copy(facts = VideoOutputFacts(frameRate = 24f)),
+                PlaybackOutputApplication(PlaybackOutputStatus.WAITING_FOR_FRAME_RATE),
+            ),
+        )
+        assertSame(applied.state, stale.state)
     }
 
     @Test

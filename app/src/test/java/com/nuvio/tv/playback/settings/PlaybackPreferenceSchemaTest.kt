@@ -44,7 +44,7 @@ class PlaybackPreferenceSchemaTest {
                     delayMs = -75,
                 ),
                 display = defaults.playback.display.copy(
-                    frameRate = FrameRatePreference.ALWAYS,
+                    frameRate = FrameRatePreference.ON_RATE_CHANGE,
                     resolutionMatching = true,
                 ),
                 video = defaults.playback.video.copy(
@@ -114,6 +114,44 @@ class PlaybackPreferenceSchemaTest {
         assertEquals(first.preferences, second.preferences)
         assertEquals(first.document, second.document)
         assertEquals(3, first.document.revision)
+    }
+
+    @Test
+    fun `v1 frame-rate names migrate to explicit V2 semantics`() {
+        val onStart = PlaybackPreferenceSchema.decode(
+            PlaybackPreferenceDocument(
+                schemaVersion = 1,
+                revision = 4,
+                values = mapOf("frame_rate" to "ON_COMMITTED_PLAYBACK"),
+            ),
+        )
+        val onChange = PlaybackPreferenceSchema.decode(
+            PlaybackPreferenceDocument(
+                schemaVersion = 1,
+                revision = 8,
+                values = mapOf("frame_rate" to "ALWAYS"),
+            ),
+        )
+
+        assertEquals(FrameRatePreference.ON_START, onStart.preferences.playback.display.frameRate)
+        assertEquals("ON_START", onStart.document.values["frame_rate"])
+        assertEquals(FrameRatePreference.ON_RATE_CHANGE, onChange.preferences.playback.display.frameRate)
+        assertEquals("ON_RATE_CHANGE", onChange.document.values["frame_rate"])
+        assertTrue(PreferenceDecodeWarning.MIGRATED_V1_FRAME_RATE in onStart.warnings)
+        assertTrue(PreferenceDecodeWarning.MIGRATED_V1_FRAME_RATE in onChange.warnings)
+    }
+
+    @Test
+    fun `legacy start and start-stop both import as one committed start switch`() {
+        listOf("START", "START_STOP").forEach { legacyMode ->
+            val mapped = LegacyPlaybackPreferenceImporter.map(
+                LegacyPlayerSettingsSnapshot(
+                    importToken = "legacy-$legacyMode",
+                    values = mapOf("frameRateMatchingMode" to legacyMode),
+                ),
+            )
+            assertEquals(FrameRatePreference.ON_START, mapped.preferences.playback.display.frameRate)
+        }
     }
 
     @Test

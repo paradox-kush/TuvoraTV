@@ -186,6 +186,7 @@ enum class PlaybackDiagnosticCode {
     REQUIREMENTS_CHANGE_REJECTED,
     WATCHDOG_EXPIRED,
     COMPATIBILITY_HISTORY_RECORD_FAILED,
+    PLAYBACK_OUTPUT_NONFATAL,
 }
 
 data class PlaybackDiagnosticEvent(
@@ -194,20 +195,27 @@ data class PlaybackDiagnosticEvent(
     val engine: EngineType? = null,
     val failure: PlaybackFailure? = null,
     val attempt: Int? = null,
+    val outputStatus: PlaybackOutputStatus? = null,
 )
 
 fun interface PlaybackDiagnostics {
     fun record(event: PlaybackDiagnosticEvent)
 }
 
-/** Audio/display changes are applied by Android implementations after requirements are resolved. */
+/**
+ * Audio/display changes are applied by Android implementations after requirements are resolved.
+ * Implementations must reject a lower [VideoOutputFacts.revision] for the same generation so a
+ * late coroutine cannot restore stale display facts. Optional output limitations and operation
+ * faults are successful typed applications; [PlaybackResult.Failure] is reserved for a hard
+ * correctness or security constraint that makes playback unsafe.
+ */
 interface PlaybackOutputController {
-    suspend fun apply(
-        generation: Long,
-        requirements: PlaybackRequirements,
-    ): PlaybackResult<Unit>
+    suspend fun apply(request: PlaybackOutputRequest): PlaybackResult<PlaybackOutputApplication>
 
-    suspend fun reset(generation: Long): PlaybackResult<Unit>
+    suspend fun reset(
+        releasedGeneration: Long?,
+        reason: ActiveWorkReleaseReason,
+    ): PlaybackResult<Unit>
 }
 
 enum class PlaybackLifecycleEvent { ACTIVE, INACTIVE, DESTROYED }

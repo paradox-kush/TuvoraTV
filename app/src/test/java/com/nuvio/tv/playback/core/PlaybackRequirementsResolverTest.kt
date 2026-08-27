@@ -19,7 +19,7 @@ class PlaybackRequirementsResolverTest {
                 preferences = PlaybackPreferences(
                     subtitles = SubtitlePreference(enabled = true, fidelity = SubtitleFidelity.FULL),
                     display = DisplayPreference(
-                        frameRate = FrameRatePreference.ALWAYS,
+                        frameRate = FrameRatePreference.ON_RATE_CHANGE,
                         resolutionMatching = true,
                     ),
                     video = VideoPreference(hdr = HdrPreference.DOLBY_VISION),
@@ -34,6 +34,7 @@ class PlaybackRequirementsResolverTest {
         assertEquals(VideoDimensions(960, 540), resolved.adaptiveDimensionCeiling)
         assertNull(resolved.bitrateCeiling)
         assertFalse(resolved.displayModeSwitchAllowed)
+        assertFalse(resolved.resolutionMatchingEnabled)
         assertEquals(FrameRatePreference.OFF, resolved.frameRatePreference)
         assertEquals(HdrPreference.AUTO, resolved.hdrPreference)
         assertTrue(resolved.subtitlesEnabled)
@@ -85,7 +86,7 @@ class PlaybackRequirementsResolverTest {
         val preferences = PlaybackPreferences(
             audio = AudioPreference(output = AudioOutputPreference.PASSTHROUGH),
             display = DisplayPreference(
-                frameRate = FrameRatePreference.ALWAYS,
+                frameRate = FrameRatePreference.ON_RATE_CHANGE,
                 resolutionMatching = true,
             ),
             video = VideoPreference(hdr = HdrPreference.DOLBY_VISION),
@@ -105,10 +106,31 @@ class PlaybackRequirementsResolverTest {
         assertEquals(SessionPriority.QUALITY_AND_STABILITY, resolved.priority)
         assertEquals(VideoDimensions(3840, 2160), resolved.adaptiveDimensionCeiling)
         assertTrue(resolved.displayModeSwitchAllowed)
-        assertEquals(FrameRatePreference.ALWAYS, resolved.frameRatePreference)
+        assertTrue(resolved.resolutionMatchingEnabled)
+        assertEquals(FrameRatePreference.ON_RATE_CHANGE, resolved.frameRatePreference)
         assertEquals(HdrPreference.AUTO, resolved.hdrPreference)
         assertEquals(AudioOutputPreference.PASSTHROUGH, resolved.audioOutput)
         assertFalse(resolved.pcmProcessingAllowed)
+    }
+
+    @Test
+    fun `fullscreen AFR does not depend on resolution matching`() = runTest {
+        val resolved = resolve(
+            input(
+                profile = SessionProfile.FULLSCREEN,
+                evidence = adaptiveHls,
+                preferences = PlaybackPreferences(
+                    display = DisplayPreference(
+                        frameRate = FrameRatePreference.ON_START,
+                        resolutionMatching = false,
+                    ),
+                ),
+            ),
+        )
+
+        assertTrue(resolved.displayModeSwitchAllowed)
+        assertFalse(resolved.resolutionMatchingEnabled)
+        assertEquals(FrameRatePreference.ON_START, resolved.frameRatePreference)
     }
 
     @Test
@@ -280,6 +302,17 @@ class PlaybackRequirementsResolverTest {
 
         assertEquals(ChangeImpact.REBUILD_CURRENT_GRAPH, diff.impact)
         assertEquals(setOf(RequirementsField.BUFFERING), diff.changedFields)
+    }
+
+    @Test
+    fun `resolution matching change is a display output rebuild`() {
+        val previous = requirements().copy(resolutionMatchingEnabled = false)
+        val next = previous.copy(resolutionMatchingEnabled = true)
+
+        val diff = PlaybackRequirementsDiffClassifier.classify(previous, next)
+
+        assertEquals(ChangeImpact.REBUILD_CURRENT_GRAPH, diff.impact)
+        assertEquals(setOf(RequirementsField.DISPLAY_OUTPUT), diff.changedFields)
     }
 
     @Test
