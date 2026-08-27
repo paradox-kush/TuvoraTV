@@ -1,6 +1,7 @@
 package com.nuvio.tv.arch
 
 import com.lemonappdev.konsist.api.Konsist
+import java.io.File
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,12 +21,23 @@ import org.junit.Test
  */
 class ArchitectureTest {
 
+    private val userDirectory =
+        requireNotNull(System.getProperty("user.dir")) { "JVM user.dir is unavailable" }
+
+    private val projectRoot: File =
+        generateSequence(File(userDirectory).canonicalFile) { it.parentFile }
+            .firstOrNull { File(it, "app/src/main").isDirectory }
+            ?: error("Cannot locate NuvioTV project root from user.dir=$userDirectory")
+
+    private val productionSourceRoot = File(projectRoot, "app/src/main").canonicalFile.toPath()
+
     private val files: List<Pair<String, String>> =
-        Konsist.scopeFromProject().files
-            .map { it.path to it.text }
-            // Nested git worktrees (wt/<lane>/…) carry stale duplicate copies of every source file and
-            // are not part of any gradle sourceSet — exclude them, or a rule sees pre-refactor content.
-            .filter { (p, _) -> "/app/src/main/" in p && "/wt/" !in p }
+        Konsist.scopeFromDirectory("app/src/main").files
+            .map { File(it.path).canonicalFile to it.text }
+            // The scope is the canonical source root for this Gradle invocation. It therefore
+            // includes this checkout when it is under .../wt/<lane>, without scanning sibling or
+            // nested worktrees at all.
+            .map { (file, text) -> file.path to text }
 
     // Fork side = upstream-absent paths, not a directory-naming convention.
     private val forkPaths = listOf(
@@ -53,8 +65,51 @@ class ArchitectureTest {
 
     private fun rel(path: String) = path.substringAfter("/app/src/main/java/")
 
+    // Clean-slate playback is deliberately being built beside the frozen legacy player. Keep these
+    // predicates path-based so every rule is useful before the first clean source file exists and so
+    // a package cannot evade a boundary by choosing a convenient class name.
+    private fun isCleanPlaybackFile(path: String) =
+        rel(path).startsWith("com/nuvio/tv/playback/")
+
+    private fun isCleanPlaybackPackage(path: String, packageName: String) =
+        rel(path).startsWith("com/nuvio/tv/playback/$packageName/")
+
+    private fun isLegacyPlaybackOrchestration(path: String): Boolean {
+        val relative = rel(path)
+        return relative.startsWith("com/nuvio/tv/core/player/") ||
+            relative.startsWith("com/nuvio/tv/player/") ||
+            relative.startsWith("com/nuvio/tv/ui/screens/player/") ||
+            relative.startsWith("com/nuvio/tv/ui/screens/iptv/player/") ||
+            relative.endsWith("/XtreamLiveGuideScreen.kt") ||
+            relative.endsWith("/XtreamLiveGuideViewModel.kt")
+    }
+
+    private fun imports(text: String): List<String> =
+        Regex("""(?m)^\s*import\s+([^\s]+)""")
+            .findAll(stripComments(text))
+            .map { it.groupValues[1] }
+            .toList()
+
+    private fun assertProductionFilesCollected() {
+        assertTrue(
+            "Architecture scan found no production files under $productionSourceRoot; " +
+                "the firewall must fail closed rather than silently pass.",
+            files.isNotEmpty(),
+        )
+    }
+
+    private fun assertCleanPlaybackFilesCollected() {
+        assertProductionFilesCollected()
+        assertTrue(
+            "Architecture scan found no clean playback files under " +
+                "$productionSourceRoot/java/com/nuvio/tv/playback; the clean firewall must fail closed.",
+            files.any { (path, _) -> isCleanPlaybackFile(path) },
+        )
+    }
+
     @Test
     fun `upstream-aligned code never references a fork-only feature directly`() {
+        assertProductionFilesCollected()
         val violations = files
             .filter { (p, _) -> !isForkFile(p) && !isWiringFile(p) }
             .filter { (_, text) -> forkRef.containsMatchIn(stripComments(text)) }
@@ -79,6 +134,7 @@ class ArchitectureTest {
      */
     @Test
     fun `only the mpv engine shell names libmpv`() {
+        assertProductionFilesCollected()
         // The shell (declares the SurfaceView) + the fork-owned engine package (extracted internals:
         // property shadow, and later the ctl queue / lifecycle) are the only places libmpv is named.
         fun isEnginePackage(rel: String) =
@@ -105,6 +161,7 @@ class ArchitectureTest {
      */
     @Test
     fun `only the shell and PlayerScreen name the concrete NuvioMpvSurfaceView`() {
+        assertProductionFilesCollected()
         val allowed = setOf(
             "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt",
             "com/nuvio/tv/ui/screens/player/PlayerScreen.kt",
@@ -117,6 +174,151 @@ class ArchitectureTest {
             .sorted()
         assertTrue(
             "Talk to the mpv engine through MpvSurface, not the concrete NuvioMpvSurfaceView:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    // -- clean-slate playback boundary -------------------------------------------------------------
+
+    /**
+     * The playback core is a pure Kotlin decision engine. Platform facts, persistence, provider
+     * models, telemetry, dependency injection, and UI are all reached through ports defined by the
+     * core; none of their implementation types may leak back into it.
+     */
+    @Test
+    fun `clean playback core has only pure engine-neutral imports`() {
+        assertCleanPlaybackFilesCollected()
+        val forbiddenImport = Regex(
+            """^(?:android(?:x)?\.|org\.jetbrains\.compose\.|com\.posthog\.|dagger\.|""" +
+                """javax\.inject\.|jakarta\.inject\.|com\.nuvio\.tv\.ui\.|""" +
+                """com\.nuvio\.tv\.data\.|com\.nuvio\.tv\.domain\.repository\.|""" +
+                """com\.nuvio\.tv\.core\.(?:analytics|iptv)\.|""" +
+                """com\.nuvio\.tv\.(?:core\.player|player)\.|.*\.(?:provider|storage)\.)""",
+        )
+        val violations = files
+            .filter { (path, _) -> isCleanPlaybackPackage(path, "core") }
+            .mapNotNull { (path, text) ->
+                imports(text).filter(forbiddenImport::containsMatchIn).takeIf(List<String>::isNotEmpty)
+                    ?.let { rel(path) + " -> " + it.joinToString() }
+            }
+            .sorted()
+        assertTrue(
+            "playback.core must stay pure Kotlin and engine-neutral; depend on core ports instead:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    /** Direct SDK use is legal only inside the matching adapter package. */
+    @Test
+    fun `clean playback engine APIs stay inside their adapters`() {
+        assertCleanPlaybackFilesCollected()
+        val media3Ref = Regex("""\bandroidx\.media3\.""")
+        val libmpvRef = Regex("""(?:`is`|is)\.xyz\.mpv\.|\bBaseMPVView\b""")
+        val violations = files
+            .filter { (path, _) -> isCleanPlaybackFile(path) }
+            .flatMap { (path, text) ->
+                val source = stripComments(text)
+                buildList {
+                    if (!isCleanPlaybackPackage(path, "media3") && media3Ref.containsMatchIn(source)) {
+                        add(rel(path) + " -> Media3 API")
+                    }
+                    if (!isCleanPlaybackPackage(path, "mpv") && libmpvRef.containsMatchIn(source)) {
+                        add(rel(path) + " -> libmpv API")
+                    }
+                }
+            }
+            .sorted()
+        assertTrue(
+            "Only playback.media3 may use Media3 APIs and only playback.mpv may use libmpv APIs:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    /**
+     * Parallel construction is isolation, not gradual delegation: the new implementation and the
+     * frozen oracle cannot import one another in either direction.
+     */
+    @Test
+    fun `clean and legacy playback orchestration never depend on each other`() {
+        assertCleanPlaybackFilesCollected()
+        val legacyRef = Regex(
+            """\bcom\.nuvio\.tv\.(?:core\.player|player|ui\.screens\.player|""" +
+                """ui\.screens\.iptv\.player)\.""",
+        )
+        val cleanRef = Regex("""\bcom\.nuvio\.tv\.playback\.""")
+        val violations = files.flatMap { (path, text) ->
+            val source = stripComments(text)
+            buildList {
+                if (isCleanPlaybackFile(path) && legacyRef.containsMatchIn(source)) {
+                    add(rel(path) + " -> legacy playback")
+                }
+                if (isLegacyPlaybackOrchestration(path) && cleanRef.containsMatchIn(source)) {
+                    add(rel(path) + " -> clean playback")
+                }
+            }
+        }.sorted()
+        assertTrue(
+            "Clean playback and frozen legacy playback must remain isolated until atomic cutover:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    /** Device identity may describe a verified quirk; it may never become an inline policy branch. */
+    @Test
+    fun `clean device identity checks live only in Android capability and quirk providers`() {
+        assertCleanPlaybackFilesCollected()
+        val deviceIdentityRef = Regex(
+            """\b(?:android\.os\.)?Build\.(?:MODEL|MANUFACTURER|BRAND|DEVICE|HARDWARE|PRODUCT|""" +
+                """SOC_MODEL|SOC_MANUFACTURER)\b""",
+        )
+        val violations = files
+            .filter { (path, _) ->
+                isCleanPlaybackFile(path) && !isCleanPlaybackPackage(path, "android")
+            }
+            .filter { (_, text) -> deviceIdentityRef.containsMatchIn(stripComments(text)) }
+            .map { (path, _) -> rel(path) }
+            .sorted()
+        assertTrue(
+            "Device model/manufacturer checks belong in playback.android capability/quirk providers:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    /**
+     * Settings persist intent and UI sends session commands. Neither layer may construct an adapter
+     * or invoke an engine-shaped mutable API directly.
+     */
+    @Test
+    fun `clean settings and UI never construct or configure engines`() {
+        assertCleanPlaybackFilesCollected()
+        val adapterRef = Regex("""\bcom\.nuvio\.tv\.playback\.(?:media3|mpv)\.""")
+        val engineConstruction = Regex(
+            """\b(?:ExoPlayer\s*\.\s*Builder|SimpleExoPlayer|Media3Engine|LibmpvEngine|MpvEngine)\s*\(""",
+        )
+        val directEngineCall = Regex(
+            """\b(?:engine|player|exoPlayer|mpv)\s*\.\s*(?:set[A-Z]\w*|prepare|build|""" +
+                """release|stop|play|pause)\s*\(""",
+        )
+        val violations = files
+            .filter { (path, _) ->
+                isCleanPlaybackPackage(path, "settings") || isCleanPlaybackPackage(path, "ui")
+            }
+            .mapNotNull { (path, text) ->
+                val source = stripComments(text)
+                buildList {
+                    if (adapterRef.containsMatchIn(source)) add("adapter dependency")
+                    if (engineConstruction.containsMatchIn(source)) add("engine construction")
+                    if (directEngineCall.containsMatchIn(source)) add("direct engine mutation")
+                }.takeIf(List<String>::isNotEmpty)?.let { rel(path) + " -> " + it.joinToString() }
+            }
+            .sorted()
+        assertTrue(
+            "playback.settings/ui must use preferences and PlaybackSessionController, not engines:\n" +
                 violations.joinToString("\n"),
             violations.isEmpty(),
         )

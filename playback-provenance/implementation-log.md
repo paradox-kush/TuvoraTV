@@ -2,9 +2,34 @@
 
 ## Current Work Package
 
-WP0 — dependency ownership and reproducibility.
+WP1 — pure playback core and single-owner session orchestration.
 
 ## Changes made
+
+### WP1
+
+- Added the five approved production files under `com.nuvio.tv.playback.core`: immutable domain
+  models, ports, graph policy, reducer/state machine, and the sole session actor.
+- Made request-bearing values redacted by construction and kept raw provider URLs, credentials,
+  engine exceptions, Android APIs, Media3, libmpv, UI, persistence, and analytics SDKs outside the
+  pure core.
+- Serialized UI commands, normalized engine events, lifecycle events, and async completions through
+  one actor lane with generation and release-epoch guards.
+- Added a release barrier that cancels and joins all generation work before adapter release. A
+  timeout or explicit release failure retries fail-closed and never opens a second provider
+  connection or advances a zap, recovery, reconnect, or engine handoff.
+- Added phase-aware startup recovery, fresh-request live reconnect, VOD in-place recovery, graph
+  handoff, rapid-zap coalescing, preview-to-fullscreen promotion, and typed terminal semantics.
+- Made lifecycle inactivity connection-owning: it cancels/release-barriers active work and records
+  one resumable continuation; lifecycle activation resumes at most once.
+- Guarded every async completion before it may mutate actor-owned caches, and captured immutable
+  preferences/profile/paused inputs before launching workers.
+- Added structural graph validation so Media3/libmpv output and surface ownership cannot be mixed,
+  and GPU rendering requires an actual eligible `GPU_RENDER` graph.
+- Added fail-closed Konsist architecture tests for core purity, adapter API containment,
+  clean/legacy isolation, Android quirk placement, and settings/UI engine independence.
+
+### WP0
 
 - Froze accepted legacy stabilization at `8d421ebc975c3776b81ead6b5de11b2f7a4c61bd` and tagged it
   `clean-slate-legacy-baseline-2026-08-26` before this isolated branch was created.
@@ -18,6 +43,19 @@ WP0 — dependency ownership and reproducibility.
 
 ## Tests run
 
+- Full WP1 TV gate:
+  `:app:verifyMedia3RuntimeConvergence :app:verifyPlaybackEngineArtifacts
+  :app:testFullDebugUnitTest :app:compileFullDebugKotlin --rerun-tasks` — passed; 41 tasks executed.
+- Consolidated WP1 gate:
+  `:app:testFullDebugUnitTest --tests 'com.nuvio.tv.playback.core.*' --tests
+  'com.nuvio.tv.arch.ArchitectureTest'` — passed.
+- WP1 core tests — 67 passed: 9 domain contract, 14 policy, 5 request safety, 9 session
+  concurrency/integration, and 30 reducer/state-machine tests.
+- Architecture firewalls — 8 passed and assert non-empty production/clean scopes so the rules fail
+  closed instead of passing vacuously.
+- Session coverage includes explicit release failure before zap, VOD recovery, every live reconnect
+  attempt, and cross-engine handoff; lifecycle inactive/resume; stale completion rejection; and the
+  one-provider-connection invariant.
 - `:app:testFullDebugUnitTest :app:compileFullDebugKotlin --rerun-tasks` — passed on the frozen
   baseline (39 tasks executed).
 - Six Media3 release AAR builds — passed; every output hash matched the checked-in artifact.
@@ -43,15 +81,25 @@ WP0 — dependency ownership and reproducibility.
 
 ## Architecture impact
 
-- No playback routing or legacy production implementation has changed.
+- The clean core is additive only; no playback routing or legacy production implementation has
+  changed yet.
+- `PlaybackSession` is the only orchestration owner. Reducer and policy are pure; engine adapters
+  will report facts and execute commands but will not retry, select engines, or own recovery.
+- Five production files remain the package budget. Audit remediation removed dead detach/reconnect
+  action semantics instead of adding coordinators or policy layers.
 - `MPV_DIRECT` is build-time feasible, but runtime and surface eligibility remain adapter/device
   gates rather than assumptions.
 - The Media3 runtime now has one enforceable version instead of a latent 1.8.0/1.11.0 mixture.
 
 ## Open blockers
 
+- `PlaybackEngine.release()` can prove an ordinary release completed, but it cannot yet express an
+  affirmative native hard-abort. Until WP4/WP5 add that adapter contract, a permanently wedged
+  release retries indefinitely and fail-closed; it never advances a continuation or consumes a
+  second provider connection.
 - Runtime DIRECT/RENDER and surface lifecycle proof belongs to WP5 and mandatory device validation.
 
 ## Next action
 
-Begin the five-file pure core and its exhaustive state-machine/policy tests.
+Commit WP1, then begin WP2 versioned playback preferences and WP3 Android capability/quirk
+discovery in isolated parallel lanes.
