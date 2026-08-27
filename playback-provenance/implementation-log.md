@@ -2,9 +2,20 @@
 
 ## Current Work Package
 
-WP3 — session profiles, resource budgets, and effective requirements.
+WP4 — Media3 adapter, affirmative resource barriers, and real-device harness.
 
 ## Changes made
+
+### WP4
+
+- Extended the pinned Media3 fork at `58e82485643fe1f6570dc63ddf2a403693d12812` with
+  result-bearing player release and video-output detach APIs. They preserve the acknowledgements
+  already produced internally; compatibility defaults fail closed rather than manufacturing proof.
+- Rebuilt all six consumed Media3 modules and replaced only `lib-exoplayer-release.aar`; the other
+  five module hashes remained byte-identical. Updated the artifact gate and source provenance.
+- Added a secret-safe, sequential ONN-to-Fire adapter smoke harness. It refuses to begin while
+  either debug process is active, requires nonce-correlated package-scoped release evidence, and
+  verifies process absence before advancing to the next device.
 
 ### WP3
 
@@ -91,6 +102,13 @@ WP3 — session profiles, resource budgets, and effective requirements.
 - Rebuilt all four libmpv ABIs and packaged the wrapper release AAR from the vendored recipe.
 
 ## Tests run
+
+- Media3 fork acknowledgement tests — 8 parameterized cases passed across preload/per-stream
+  combinations for normal release and video-output detach.
+- Six Media3 release AAR builds — passed; only the intentionally changed exoplayer archive hash
+  changed.
+- `:app:verifyPlaybackEngineArtifacts` — passed against the rebuilt fork artifact.
+- Device smoke harness tests — 27 passed; no provider stream was opened.
 
 - Focused WP4 prerequisite core gate — 97 passed; coverage includes evidence/network-intent
   delivery to adapters, bounded graceful-to-hard-abort release, terminal fail-closed barriers,

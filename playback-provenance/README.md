@@ -7,14 +7,16 @@ Gradle verification tasks fail when a checked artifact or stock Media3 runtime v
 
 - Source: `https://github.com/paradox-kush/media`
 - Branch: `nuvio-engine/1.11.0`
-- Revision: `350b29df6d31a698eb382e55ddb0952fe6afea99`
+- Revision: `58e82485643fe1f6570dc63ddf2a403693d12812`
 - Upstream base: AndroidX Media3 tag `1.11.0` at `2bc207851d`
 - NDK: `29.0.14206865`
 - CMake: `3.22.1`
 
 The fork adds Nuvio engine configuration, native allocator/data-path support, Dolby Vision profile-7
-mapping, and the allocator reset fix documented by `NUVIO_ENGINE.md` in the source repository. Do
-not replace these AARs with stock Media3 without separately removing those requirements.
+mapping, the allocator reset fix, and affirmative renderer-release and video-output-detach result
+APIs documented by `NUVIO_ENGINE.md` in the source repository. The clean adapter treats a false
+result as a failed ownership barrier. Do not replace these AARs with stock Media3 without separately
+removing those requirements.
 
 Build the six consumed fork AARs from the pinned source:
 
@@ -99,3 +101,9 @@ the authority for enabling `MPV_DIRECT` or guide `MPV_RENDER`.
   --configuration fullDebugRuntimeClasspath \
   --dependency media3-effect
 ```
+
+## Real-device adapter evidence
+
+Use the [clean-player device smoke harness](device-adapter-smoke-harness.md) for sequential ONN and
+Fire TV adapter runs. It enforces process absence before a device switch and writes only the closed,
+secret-safe renderer/surface/state/error fact schema; it does not deploy or start playback.
