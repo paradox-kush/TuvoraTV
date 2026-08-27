@@ -78,7 +78,9 @@ import com.nuvio.tv.ui.components.ErrorState
 import com.nuvio.tv.ui.components.placeholderCardShimmer
 import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
 import android.util.Log
+import android.view.LayoutInflater
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
@@ -235,6 +237,7 @@ fun LiveGuide(
     }
 
     val context = LocalContext.current
+    val guideSurfaceDecision = remember { LiveGuideSurfacePolicy.currentDevice() }
     val previewSourceFactory = remember(context) { PlayerMediaSourceFactory(context) }
     val previewPlayer = remember(context) {
         ExoPlayer.Builder(context, LivePreviewRenderersFactory(context))
@@ -265,7 +268,9 @@ fun LiveGuide(
                      * since 2026-08-17 (PlayerLiveSamplingPolicy); the guide never got it.
                      */
                     override fun onPlaybackStateChanged(playbackState: Int) {
-                        if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                        if (playbackState == Player.STATE_ENDED) {
+                            viewModel.onPreviewLiveEnded("ended")
+                        } else if (playbackState == Player.STATE_IDLE) {
                             viewModel.onPreviewPlaybackStalled(playbackState)
                         }
                     }
@@ -325,13 +330,18 @@ fun LiveGuide(
         // MUST precede the first setMedia (MpvSurface invariant; step-0: the default 64/32 MiB budget
         // froze the 2 GB Onn — the tier-resolved value is 48/16 there).
         mpvHandle.surface.demuxerBudget = viewModel.demuxerBudget
-        mpvHandle.surface.onPlaybackEndedWithError = { _ ->
-            // Fires on mpv's event thread — hop to main. mpv is the last engine (no ping-pong back
-            // to Exo), so a hard end is surfaced through the same bounded recovery path.
-            mainHandler.post { viewModel.onPreviewPlaybackStalled(GuidePreviewFreezePolicy.STATE_IDLE) }
+        mpvHandle.surface.onPlaybackEnded = { event ->
+            // Fires on mpv's event thread. Only real EOF/error owns recovery; loadfile-replace STOP
+            // is a normal zap and QUIT is lifecycle teardown, so neither may reopen an old channel.
+            when (event.reason) {
+                com.nuvio.tv.player.mpv.MpvEndFileReason.EOF,
+                com.nuvio.tv.player.mpv.MpvEndFileReason.ERROR ->
+                    mainHandler.post { viewModel.onPreviewLiveEnded(event.reason.name.lowercase()) }
+                else -> Unit
+            }
         }
         onDispose {
-            mpvHandle.surface.onPlaybackEndedWithError = null
+            mpvHandle.surface.onPlaybackEnded = null
             mpvHandle.surface.releasePlayer()
         }
     }
@@ -356,6 +366,11 @@ fun LiveGuide(
     LaunchedEffect(uiState.previewChannel?.contentId, previewOnMpv) {
         val channel = uiState.previewChannel ?: return@LaunchedEffect
         val onMpv = previewOnMpv
+        var lastPresentationFaultCount = if (onMpv) {
+            mpvHandle.surface.presentationFaultCountNow()
+        } else {
+            0L
+        }
         fun ticks(): Long =
             if (onMpv) mpvHandle.surface.videoFrameTicksNow()
             else previewPlayer.videoDecoderCounters?.renderedOutputBufferCount?.toLong() ?: 0L
@@ -401,6 +416,16 @@ fun LiveGuide(
         try {
             while (isActive) {
                 delay(500)
+                if (onMpv) {
+                    val presentationFaultCount = mpvHandle.surface.presentationFaultCountNow()
+                    if (presentationFaultCount > lastPresentationFaultCount) {
+                        lastPresentationFaultCount = presentationFaultCount
+                        freezeReporter.onRecoveryAttempt(System.currentTimeMillis())
+                        viewModel.onPreviewVideoStalled()
+                        continue
+                    }
+                    lastPresentationFaultCount = presentationFaultCount
+                }
                 val decision = freezeReporter.onSample(
                     nowMs = System.currentTimeMillis(),
                     positionMs = positionMs(),
@@ -568,12 +593,21 @@ fun LiveGuide(
     // live buffer goes stale, so reload instead of unpause).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
+        viewModel.setPreviewPlaybackActive(
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        )
         val observer = LifecycleEventObserver { _, event ->
             // Read the engine fresh: this observer outlives an escalation (keyed on lifecycleOwner).
             val onMpv = viewModel.uiState.value.previewOnMpv
             when (event) {
-                Lifecycle.Event.ON_STOP -> if (onMpv) mpvHandle.surface.stopPlayback() else previewPlayer.stop()
+                Lifecycle.Event.ON_STOP -> {
+                    viewModel.setPreviewPlaybackActive(false)
+                    if (onMpv) mpvHandle.surface.stopPlayback() else previewPlayer.stop()
+                }
                 Lifecycle.Event.ON_START -> {
+                    // A pending EOF owns its single retry timer; opening the old source here as
+                    // well would briefly spend two provider connections.
+                    if (viewModel.setPreviewPlaybackActive(true)) return@LifecycleEventObserver
                     val prepared = uiState.previewPlayback ?: return@LifecycleEventObserver
                     paused = false
                     if (onMpv) tuneMpvPreview(prepared.url, prepared.headers)
@@ -583,7 +617,10 @@ fun LiveGuide(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            viewModel.setPreviewPlaybackActive(false)
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     Box(
@@ -796,7 +833,15 @@ fun LiveGuide(
             } else {
                 AndroidView(
                     factory = { ctx ->
-                        PlayerView(ctx).apply {
+                        val playerView = if (guideSurfaceDecision.useTextureView) {
+                            LayoutInflater.from(ctx).inflate(
+                                R.layout.iptv_live_guide_texture_player_view,
+                                null,
+                            ) as PlayerView
+                        } else {
+                            PlayerView(ctx)
+                        }
+                        playerView.apply {
                             useController = false
                             keepScreenOn = true
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -816,6 +861,14 @@ fun LiveGuide(
                     epg = overlayChannel?.let { uiState.epg[it.streamId] },
                     paused = paused,
                     tuning = pendingZap != null,
+                )
+            }
+            uiState.previewRetryStatus?.let { status ->
+                LiveRetryStatus(
+                    message = status,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = NuvioTheme.spacing.lg),
                 )
             }
         }
@@ -1319,6 +1372,35 @@ private fun PreviewInfoPane(
             style = MaterialTheme.typography.labelSmall,
             color = NuvioTheme.colors.TextSecondary.copy(alpha = 0.7f),
             maxLines = 1
+        )
+    }
+}
+
+/** Bottom-of-video, non-terminal live reconnect notice. The guide remains navigable while it runs. */
+@Composable
+private fun LiveRetryStatus(
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.82f))
+            .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(18.dp),
+            color = NuvioTheme.colors.Primary,
+            strokeWidth = 2.dp,
+        )
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

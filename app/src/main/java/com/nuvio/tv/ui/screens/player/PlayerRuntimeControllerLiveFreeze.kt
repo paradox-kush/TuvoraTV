@@ -29,6 +29,11 @@ internal fun PlayerRuntimeController.armLiveFreezeReporter() {
     // The rebuilt player has rendered, so the reconnect is done; whether it actually fixed
     // anything is decided by the next few samples, not by getting this far.
     liveRecoveryInFlight = false
+    lastMpvPresentationFaultCount = mpvView?.presentationFaultCountNow() ?: 0L
+    // First frame from a rebuilt live player proves the retry succeeded.
+    if (_uiState.value.liveRetryStatus != null) {
+        _uiState.update { it.copy(liveRetryStatus = null, liveFreezeGaveUp = false) }
+    }
     // Mid-recovery the player is torn down and rebuilt, which lands back here. Re-arming would
     // discard the open freeze and the reconnect count with it.
     if (livePlaybackFreezeReporter.isFreezeOpen) return
@@ -56,6 +61,24 @@ internal fun PlayerRuntimeController.armLiveFreezeReporter() {
     liveEngineSwitchedThisDwell = false
     liveReWedgeTimestampsMs.clear()
     lastLiveBackwardJumpMs = null
+}
+
+/** Immediate typed EOF/error entry point from mpv. Live TV never completes naturally. */
+internal fun PlayerRuntimeController.onLiveStreamEnded(reason: String) {
+    if (!isLiveFeed() || isInBackground || isReleasingPlayer) return
+    _uiState.update {
+        it.copy(
+            liveRetryStatus = "Live stream $reason. Reconnecting…",
+            error = null,
+            liveFreezeGaveUp = false,
+            isBuffering = true,
+            showLoadingOverlay = it.loadingOverlayEnabled,
+        )
+    }
+    if (!livePlaybackFreezeReporter.isFreezeOpen) {
+        armLiveFreezeReporter()
+    }
+    maybeReconnectLiveStream(LivePlaybackFreezePolicy.Kind.ENDED)
 }
 
 /**
@@ -94,6 +117,16 @@ internal fun PlayerRuntimeController.sampleLiveFreeze(positionMs: Long, buffered
         wantsToPlay = !userPausedManually
         videoProgressTicks = view.videoFrameTicksNow()
         hasVideoTrack = view.hasVideoTrackNow()
+        val presentationFaultCount = view.presentationFaultCountNow()
+        val presentationFaultObserved = presentationFaultCount > lastMpvPresentationFaultCount
+        lastMpvPresentationFaultCount = presentationFaultCount
+        if (presentationFaultObserved && wantsToPlay && hasVideoTrack) {
+            // Device-proven onn failure: the decode/filter fps remains healthy while AImageReader
+            // cannot acquire/present a frame. Bypass the decode-derived tick and recover now.
+            recordLiveWedgeIncident(System.currentTimeMillis())
+            maybeReconnectLiveStream(LivePlaybackFreezePolicy.Kind.VIDEO_STALLED)
+            return
+        }
     } else {
         val player = _exoPlayer ?: return
         state = when (player.playbackState) {
@@ -211,6 +244,7 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
                 } else {
                     0
                 },
+                retryIndefinitely = true,
             )
         )
     ) {
@@ -223,6 +257,9 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
             liveRecoveryAttempts += 1
             lastLiveRecoveryAtMs = nowMs
             livePlaybackFreezeReporter.onRecoveryAttempt(nowMs)
+            _uiState.update {
+                it.copy(liveRetryStatus = "Live video froze. Recovering (attempt $liveRecoveryAttempts)…")
+            }
             Log.w(
                 PlayerRuntimeController.TAG,
                 "LIVE_RECONNECT: reloading video track (kind=$kind attempt=$liveRecoveryAttempts)",
@@ -269,6 +306,14 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
             liveRecoveryAttempts += 1
             lastLiveRecoveryAtMs = nowMs
             livePlaybackFreezeReporter.onRecoveryAttempt(nowMs)
+            _uiState.update {
+                it.copy(
+                    liveRetryStatus = "Live stream interrupted. Reconnecting (attempt $liveRecoveryAttempts)…",
+                    error = null,
+                    liveFreezeGaveUp = false,
+                    isBuffering = true,
+                )
+            }
             Log.w(
                 PlayerRuntimeController.TAG,
                 "LIVE_RECONNECT: re-preparing live stream (kind=$kind attempt=$liveRecoveryAttempts)",
@@ -301,6 +346,8 @@ internal fun PlayerRuntimeController.stopLiveFreezeReporter() {
     liveRecoveryAttempts = 0
     lastLiveRecoveryAtMs = 0L
     liveRecoveryGaveUp = false
+    lastMpvPresentationFaultCount = 0L
+    _uiState.update { it.copy(liveRetryStatus = null) }
 }
 
 /**

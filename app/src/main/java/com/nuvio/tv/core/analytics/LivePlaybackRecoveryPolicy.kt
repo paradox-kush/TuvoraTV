@@ -1,17 +1,16 @@
 package com.nuvio.tv.core.analytics
 
 /**
- * When to re-prepare a frozen live channel, and when to stop trying.
+ * When to re-prepare a frozen live channel.
  *
  * Nothing in Media3 re-prepares a live source: a clean upstream close ends the stream for good
  * (`ProgressiveMediaPeriod.onLoadCompleted` marks loading finished), and a dead socket that
  * never errors just stops advancing. Both leave a frozen picture that only a manual channel
  * change clears, which is the reconnect this policy automates.
  *
- * Attempts are capped and backed off because a channel can be genuinely gone — a provider that
- * dropped it, or credentials that expired. Retrying such a channel forever would hammer the
- * provider and hide a real error behind an endless loading spinner, so after
- * [MAX_ATTEMPTS] the failure is surfaced instead.
+ * Callers may choose an indefinitely retrying live-feed lane. It still caps the cadence at the
+ * final backoff and keeps one in-flight connection; only the attempt count is unbounded. Catch-up
+ * and other finite playback keep the terminal budget.
  */
 internal object LivePlaybackRecoveryPolicy {
 
@@ -45,6 +44,8 @@ internal object LivePlaybackRecoveryPolicy {
         val kind: LivePlaybackFreezePolicy.Kind = LivePlaybackFreezePolicy.Kind.STALLED,
         val maxAttempts: Int = MAX_ATTEMPTS,
         val videoResetAttempts: Int = VIDEO_RESET_ATTEMPTS,
+        /** Live linear TV has no legitimate EOF; keep reconnecting at the capped cadence. */
+        val retryIndefinitely: Boolean = false,
     )
 
     sealed class Decision {
@@ -66,7 +67,7 @@ internal object LivePlaybackRecoveryPolicy {
     }
 
     fun evaluate(input: Input): Decision {
-        if (input.attempts >= input.maxAttempts) return Decision.GiveUp
+        if (!input.retryIndefinitely && input.attempts >= input.maxAttempts) return Decision.GiveUp
         val backoffMs = BACKOFF_MS.getOrElse(input.attempts) { BACKOFF_MS.last() }
         if (input.sinceLastAttemptMs < backoffMs) return Decision.Wait
         // A dead pipe (ENDED / STALLED) can only be fixed upstream, so it goes straight to a

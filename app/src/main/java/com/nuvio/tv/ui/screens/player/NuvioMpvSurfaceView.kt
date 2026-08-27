@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.Surface
 import android.view.SurfaceHolder
+import android.view.View
 import com.nuvio.tv.core.analytics.AppExitReporter
 import com.nuvio.tv.core.analytics.MpvVideoOutputSignal
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
@@ -16,6 +17,9 @@ import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
 import com.nuvio.tv.player.mpv.MpvPropertyShadow
+import com.nuvio.tv.player.mpv.MpvEndFileEvent
+import com.nuvio.tv.player.mpv.MpvEndFileReason
+import com.nuvio.tv.player.mpv.MpvPresentationFaultPolicy
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Future
@@ -50,7 +54,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     /** See [MpvSurface.directLiveRenderPath]: live prefers direct mediacodec (effectiveHwdecValue). */
     @Volatile override var directLiveRenderPath: Boolean = false
 
-    @Volatile override var onPlaybackEndedWithError: ((fileError: String?) -> Unit)? = null
+    @Volatile override var onPlaybackEnded: ((MpvEndFileEvent) -> Unit)? = null
 
     // All mpv control calls (property writes, loadfile, seeks, teardown) run here,
     // serialized in submission order. mpv_set_property/mpv_command take the same core
@@ -76,17 +80,37 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     // The mpv property shadow lives in the fork-owned engine package; the surface view reads these
     // lock-free instead of calling mpv_get_property on the main thread (ANR). See MpvPropertyShadow.
-    private val shadow = MpvPropertyShadow(onEndFileError = { error ->
-        // A load that ended in ERROR never played: the watchdog's retry of the SAME URL must not
-        // be swallowed by the request-dedupe (field-traced: dedupe=true on the re-tune of a failed
-        // channel). Cleared on the mpv event thread; worst-case race is a benign extra reload.
-        lastMediaRequestKey = null
-        onPlaybackEndedWithError?.invoke(error)
+    private val shadow = MpvPropertyShadow(onEndFile = { event ->
+        // EOF/error retries may legitimately load the SAME live URL. Do not let request dedupe
+        // swallow them. STOP is a user zap/loadfile-replace and already carries a different key;
+        // QUIT is teardown, so neither should mutate the next request.
+        if (event.reason == MpvEndFileReason.EOF || event.reason == MpvEndFileReason.ERROR) {
+            lastMediaRequestKey = null
+        }
+        onPlaybackEnded?.invoke(event)
     })
+    private val presentationFaultCount = AtomicLong(0L)
+    private val presentationLogObserver = object : MPV.LogObserver {
+        override fun logMessage(prefix: String, level: Int, text: String) {
+            if (MpvPresentationFaultPolicy.isPresentationFault(prefix, text)) {
+                val count = presentationFaultCount.incrementAndGet()
+                Log.w(TAG, "mpv presentation fault count=$count prefix=$prefix")
+            }
+        }
+    }
 
 
     override fun ensureInitialized() {
         if (initialized) return
+        // releasePlayer hides the SurfaceView immediately so a wedged hardware layer cannot cover
+        // the hub. Re-showing it recreates the surface; setMedia safely parks until that callback.
+        // Re-register first: releasePlayer removes the callback, and without this a load parked
+        // while the surface is being recreated would never be consumed.
+        runCatching {
+            holder.removeCallback(this)
+            holder.addCallback(this)
+        }
+        setSurfaceLayerVisible(true)
         // A queued teardown from the previous session (releasePlayer) must finish before
         // re-creating the core on the same MPV instance. Only blocks when re-init races
         // an in-flight destroy — the old code blocked main on every destroy instead.
@@ -381,6 +405,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     /** mpv `vo-delayed-frame-count`: delayed-vsync estimate. See [voDroppedFrameCountNow]. */
     override fun voDelayedFrameCountNow(): Long = shadow.obsVoDelayedFrames
+
+    override fun presentationFaultCountNow(): Long = presentationFaultCount.get()
 
     /**
      * Reinitialises the video track off the demuxer that is already connected, for a channel
@@ -799,6 +825,9 @@ ctl {
     }
 
     override fun releasePlayer() {
+        // The native destroy can block behind a dead demux/VO. Remove the separate SurfaceView
+        // layer from composition first, on Main, so a frozen frame cannot outlive this screen.
+        setSurfaceLayerVisible(false)
         if (!initialized) return
         removeCallbacks(aspectReapplyRunnable)
         runCatching { holder.removeCallback(this) }
@@ -820,6 +849,7 @@ ctl {
                     runCatching { mpv.command("stop") }
                     detachSurfaceInternal()
                     runCatching { mpv.removeObserver(shadow) }
+                    runCatching { mpv.removeLogObserver(presentationLogObserver) }
                     runCatching { mpv.destroy() }
                         .onSuccess { destroyed = true }
                         .onFailure { Log.w(TAG, "Failed to destroy libmpv view cleanly: ${it.message}") }
@@ -952,6 +982,9 @@ ctl {
         // releasePlayer() → ensureInitialized() re-runs this; don't double-register.
         mpv.removeObserver(shadow)
         mpv.addObserver(shadow)
+        presentationFaultCount.set(0L)
+        mpv.removeLogObserver(presentationLogObserver)
+        mpv.addLogObserver(presentationLogObserver)
         val props = mapOf(
             "pause" to MPV.mpvFormat.MPV_FORMAT_FLAG,
             "paused-for-cache" to MPV.mpvFormat.MPV_FORMAT_FLAG,
@@ -975,6 +1008,15 @@ ctl {
             "vo-delayed-frame-count" to MPV.mpvFormat.MPV_FORMAT_INT64,
         )
         props.forEach { (name, format) -> mpv.observeProperty(name, format) }
+    }
+
+    private fun setSurfaceLayerVisible(visible: Boolean) {
+        val target = if (visible) View.VISIBLE else View.INVISIBLE
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            visibility = target
+        } else {
+            post { visibility = target }
+        }
     }
 
     private fun applyHeaders(headers: Map<String, String>) {
@@ -1155,4 +1197,3 @@ fun createGuideMpvSurface(context: android.content.Context): GuideMpvHandle {
     v.directLiveRenderPath = true
     return GuideMpvHandle(view = v, surface = v)
 }
-

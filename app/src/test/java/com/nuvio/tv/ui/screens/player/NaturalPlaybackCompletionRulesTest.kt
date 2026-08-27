@@ -7,6 +7,18 @@ import org.junit.Test
 class NaturalPlaybackCompletionRulesTest {
 
     @Test
+    fun `linear live feed is never treated as natural completion`() {
+        assertFalse(
+            shouldTreatAsNaturalPlaybackCompletion(
+                hasRenderedFirstFrame = true,
+                hasFatalError = false,
+                durationMs = 3_600_000L,
+                isLiveFeed = true,
+            )
+        )
+    }
+
+    @Test
     fun `real episode end is treated as natural completion`() {
         assertTrue(
             shouldTreatAsNaturalPlaybackCompletion(

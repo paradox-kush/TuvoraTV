@@ -99,6 +99,8 @@ data class LiveGuideUiState(
      * viewer can keep zapping. Cleared on channel change, a fresh tune, or the next rendered frame.
      */
     val previewError: String? = null,
+    /** Non-terminal status while a linear live stream that reached EOF is being re-opened. */
+    val previewRetryStatus: String? = null,
     /**
      * Whether the preview plays the focused channel on libmpv instead of ExoPlayer
      * (universal-playback-design §6 step 1). ExoPlayer while browsing (cheap); escalates to mpv in
@@ -157,7 +159,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     val demuxerBudget: com.nuvio.tv.core.contracts.DemuxerBudgetBytes = playerMemoryBudget.demuxerBytes()
 
     /** Whether libmpv is a viable escalation target here (step-0 gate; Onn = confirmed). */
-    private val livePreviewMpvAvailable: Boolean = true
+    private val livePreviewMpvAvailable: Boolean = LiveGuideSurfacePolicy.currentDevice().allowMpvPreview
 
     /** At most one preview engine escalation per channel-dwell (§3.6a rule 5); reset per channel. */
     private var previewEngineSwitchedThisDwell: Boolean = false
@@ -259,6 +261,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         previewFreezeRecoveryAttempts = 0
         previewFreezeRecoveryChannelId = null
         previewRetuneTimestampsMs.clear()
+        resetPreviewEndRetry()
         _uiState.update {
             it.copy(
                 catchUpSupported = catchUp.supports(acc),
@@ -266,6 +269,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 previewChannel = null,
                 previewPlayback = null,
                 previewMimeOverride = null,
+                previewRetryStatus = null,
             )
         }
         // Tune the preview to the LAST OPENED channel of this account (TiViMate-style resume).
@@ -443,6 +447,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         previewFreezeRecoveryAttempts = 0
         previewFreezeRecoveryChannelId = null
         previewRetuneTimestampsMs.clear()
+        resetPreviewEndRetry()
         viewModelScope.launch {
             // Stalker needs a fresh create_link; Xtream/M3U reuse the browse-time URL. Then tunePreview
             // applies the playlist's DNS (resolve → rewrite) before handing the URL to the player.
@@ -476,6 +481,25 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private var previewFreezeRecoveryAttempts: Int = 0
     private var previewFreezeRecoveryChannelId: String? = null
 
+    /** One and only one EOF retry job. It is cancelled while the screen is not STARTED. */
+    private var previewEndRetryJob: Job? = null
+    private var previewEndRetryPending: Boolean = false
+    private var previewEndRetryAttempt: Int = 0
+    private var previewPlaybackActive: Boolean = false
+    /** True after a retry tune until first frame or another end event settles that attempt. */
+    private var previewEndRetryAwaitingResult: Boolean = false
+
+    private fun resetPreviewEndRetry() {
+        previewEndRetryJob?.cancel()
+        previewEndRetryJob = null
+        previewEndRetryPending = false
+        previewEndRetryAttempt = 0
+        previewEndRetryAwaitingResult = false
+        if (_uiState.value.previewRetryStatus != null) {
+            _uiState.update { it.copy(previewRetryStatus = null) }
+        }
+    }
+
     /**
      * When the last recovery re-tune was started, or 0.
      *
@@ -500,6 +524,91 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * attempts are spent (most drops self-heal on the first re-tune).
      */
     fun onPreviewPlaybackStalled(playbackState: Int) = recoverPreview(playbackState, videoStalled = false)
+
+    /**
+     * Linear live TV has no legitimate EOF. Re-open forever, with a capped backoff and one job, so
+     * a one-connection provider never sees overlapping attempts. STOP/QUIT from zapping/teardown
+     * are filtered by the typed mpv callback before reaching here.
+     */
+    fun onPreviewLiveEnded(reason: String) {
+        val channel = _uiState.value.previewChannel ?: return
+        previewEndRetryPending = true
+        previewEndRetryAwaitingResult = false
+        previewPlayingSinceMs = 0L
+        _uiState.update {
+            it.copy(
+                previewError = null,
+                previewRetryStatus = "Live stream $reason. Reconnecting…",
+            )
+        }
+        schedulePreviewEndRetry(channel)
+    }
+
+    /** Returns true when an EOF retry owns resume, so the screen must not also open the old URL. */
+    fun setPreviewPlaybackActive(active: Boolean): Boolean {
+        previewPlaybackActive = active
+        if (!active) {
+            previewEndRetryJob?.cancel()
+            previewEndRetryJob = null
+            // The player is stopped below by the screen; there is no result left to await.
+            previewEndRetryAwaitingResult = false
+        } else if (previewEndRetryPending) {
+            _uiState.value.previewChannel?.let(::schedulePreviewEndRetry)
+        }
+        return previewEndRetryPending
+    }
+
+    private fun schedulePreviewEndRetry(channel: GuideChannel) {
+        if (!previewPlaybackActive || !previewEndRetryPending || previewEndRetryAwaitingResult) return
+        if (previewEndRetryJob?.isActive == true) return
+        previewEndRetryJob = viewModelScope.launch {
+            try {
+                while (previewPlaybackActive && previewEndRetryPending &&
+                    _uiState.value.previewChannel?.contentId == channel.contentId
+                ) {
+                    previewEndRetryAttempt += 1
+                    val attempt = previewEndRetryAttempt
+                    _uiState.update {
+                        it.copy(
+                            previewError = null,
+                            previewRetryStatus = "Live stream ended. Reconnecting (attempt $attempt)…",
+                        )
+                    }
+                    delay(LiveStreamEndRetryPolicy.delayMs(attempt))
+                    if (!previewPlaybackActive || !previewEndRetryPending ||
+                        _uiState.value.previewChannel?.contentId != channel.contentId
+                    ) {
+                        return@launch
+                    }
+                    val acc = account ?: return@launch
+                    // The previous connection has already ended before this job starts. Resolve a
+                    // fresh single-use URL, then replace in the existing player—never open two.
+                    val fresh = clientFactory.clientFor(acc)
+                        .resolveStreamUrl(acc, "live", channel.streamId, forceFresh = true)
+                    if (fresh.isNullOrBlank()) {
+                        _uiState.update {
+                            it.copy(
+                                previewRetryStatus = "Provider did not return a live link. Retrying…",
+                            )
+                        }
+                        continue
+                    }
+                    tunePreview(channel.copy(streamUrl = fresh))
+                    previewEndRetryAwaitingResult = true
+                    // The next event owns the next step: first frame clears the incident; another
+                    // EOF/error schedules the following attempt. Do not stack a second timer here.
+                    return@launch
+                }
+            } finally {
+                previewEndRetryJob = null
+                // Handles the narrow race where END_FILE arrives between tunePreview() and this
+                // finally block: the callback clears awaitingResult while this job is still active.
+                if (previewPlaybackActive && previewEndRetryPending && !previewEndRetryAwaitingResult) {
+                    schedulePreviewEndRetry(channel)
+                }
+            }
+        }
+    }
 
     /**
      * The frame sampler found the picture dead while audio kept playing — a freeze the state
@@ -698,7 +807,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
     fun onPreviewFramePlayed() {
         if (previewPlayingSinceMs == 0L) previewPlayingSinceMs = System.currentTimeMillis()
         // A frame reached the screen, so any prior playback notice is stale — the picture is back.
-        if (_uiState.value.previewError != null) _uiState.update { it.copy(previewError = null) }
+        previewEndRetryPending = false
+        previewEndRetryAttempt = 0
+        previewEndRetryAwaitingResult = false
+        previewEndRetryJob?.cancel()
+        previewEndRetryJob = null
+        if (_uiState.value.previewError != null || _uiState.value.previewRetryStatus != null) {
+            _uiState.update { it.copy(previewError = null, previewRetryStatus = null) }
+        }
         // Video is on screen, so the re-tune has settled — later stalls are genuine again.
         previewRetuneStartedAtMs = 0L
     }

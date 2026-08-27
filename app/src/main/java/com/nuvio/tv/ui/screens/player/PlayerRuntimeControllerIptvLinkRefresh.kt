@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
  * Fork-only: one-shot IPTV expired-link recovery, extracted out of the shared
  * PlayerRuntimeControllerErrorRecovery so that shared file stays takeable from upstream
  * (research/tv-player-mpv-engine-ownership.md, Part B). Same package = the shared callers
- * (Initialization.onPlayerError, Mpv.onMpvPlaybackEndedWithError) still call it unqualified and
+ * (Initialization.onPlayerError, Mpv.onMpvPlaybackEnded) still call it unqualified and
  * never cross the firewall. Uses only ports (livePlayback) + StreamRepository + controller members.
  */
 /**
@@ -172,19 +172,38 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
 }
 
 /**
- * mpv end-file(reason=error) — the mpv-engine sibling of ExoPlayer's onPlayerError. Before this,
- * a failed mpv load just left the core idle behind an endless buffering spinner. mpv can't tell a
- * 401 from any other load failure (the HTTP status only appears in its logs), but for IPTV content
- * a fresh create_link is the right first remedy regardless — expired/consumed tokens are by far
- * the dominant cause. Non-IPTV content falls back to startup engine failover, then the error
- * screen. Fires on mpv's event thread, so hop to the controller scope first.
+ * Handles typed mpv END_FILE events. STOP/QUIT/REDIRECT are expected during zapping, teardown, or
+ * playlist redirects and must never reopen the old channel. A live EOF is not completion: it enters
+ * the same backed-off recovery ladder as a detected dead pipe. Non-live ERROR keeps the existing
+ * fresh-link/failover/error behavior. Fires on mpv's event thread, so hop to the controller scope.
  */
-internal fun PlayerRuntimeController.onMpvPlaybackEndedWithError(fileError: String?) {
+internal fun PlayerRuntimeController.onMpvPlaybackEnded(event: com.nuvio.tv.player.mpv.MpvEndFileEvent) {
     scope.launch {
         if (isReleasingPlayer) return@launch
         // In background the live demux is stopped deliberately; resume reloads the stream and a
         // genuinely dead link will re-error in the foreground where we can recover visibly.
         if (isInBackground) return@launch
+        when (event.reason) {
+            com.nuvio.tv.player.mpv.MpvEndFileReason.STOP,
+            com.nuvio.tv.player.mpv.MpvEndFileReason.QUIT,
+            com.nuvio.tv.player.mpv.MpvEndFileReason.REDIRECT,
+            com.nuvio.tv.player.mpv.MpvEndFileReason.UNKNOWN -> return@launch
+
+            com.nuvio.tv.player.mpv.MpvEndFileReason.EOF -> {
+                if (isLiveFeed()) {
+                    onLiveStreamEnded("eof")
+                }
+                return@launch
+            }
+
+            com.nuvio.tv.player.mpv.MpvEndFileReason.ERROR -> {
+                if (isLiveFeed() && hasRenderedFirstFrame) {
+                    onLiveStreamEnded("error")
+                    return@launch
+                }
+            }
+        }
+        val fileError = event.fileError
         val detailedError = context.getString(com.nuvio.tv.R.string.player_error_mpv_playback_failed) +
             (fileError?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: "")
         if (attemptIptvLinkRefresh(detailedError)) return@launch

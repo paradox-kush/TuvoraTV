@@ -12,6 +12,7 @@ internal fun PlayerRuntimeController.releasePlayer() {
 internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) {
     logScrobbleDiagnostic("release_player", "flushPlaybackState=$flushPlaybackState")
     isReleasingPlayer = true
+    _uiState.update { it.copy(liveRetryStatus = null) }
     // Before the player is torn down: a freeze still open here is one the viewer had to escape.
     stopLiveFreezeReporter()
     Breadcrumbs.playbackStopped()

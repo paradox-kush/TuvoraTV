@@ -160,8 +160,10 @@ internal fun shouldResetPostPlayStateAfterPlaybackEnded(
 internal fun shouldTreatAsNaturalPlaybackCompletion(
     hasRenderedFirstFrame: Boolean,
     hasFatalError: Boolean,
-    durationMs: Long
+    durationMs: Long,
+    isLiveFeed: Boolean = false,
 ): Boolean {
+    if (isLiveFeed) return false
     if (hasFatalError) return false
     if (!hasRenderedFirstFrame) return false
     if (isShortPlaceholderDuration(durationMs)) return false
@@ -226,7 +228,8 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     val naturalEnded = nearEnd && shouldTreatAsNaturalPlaybackCompletion(
                         hasRenderedFirstFrame = firstFrameReady,
                         hasFatalError = !_uiState.value.error.isNullOrBlank(),
-                        durationMs = playerDuration
+                        durationMs = playerDuration,
+                        isLiveFeed = isLiveFeed(),
                     )
                     val wasEnded = _uiState.value.playbackEnded
                     _uiState.update { state ->
@@ -631,13 +634,19 @@ private fun PlayerRuntimeController.isShortPlaceholderStream(): Boolean {
  * watched or trigger auto-play next.
  */
 internal fun PlayerRuntimeController.handleNaturalPlaybackEnded() {
+    if (isLiveFeed()) {
+        _uiState.update { it.copy(playbackEnded = false) }
+        onLiveStreamEnded("ended")
+        return
+    }
     val position = currentPlaybackPositionMs() ?: 0L
     val duration = getEffectiveDuration(position)
     val hasFatalError = !_uiState.value.error.isNullOrBlank()
     if (!shouldTreatAsNaturalPlaybackCompletion(
             hasRenderedFirstFrame = hasRenderedFirstFrame,
             hasFatalError = hasFatalError,
-            durationMs = duration
+            durationMs = duration,
+            isLiveFeed = isLiveFeed(),
         )
     ) {
         Log.i(

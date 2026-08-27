@@ -13,9 +13,9 @@ private const val MPV_RESUME_SEEK_TOLERANCE_MS = 1500L
 
 internal fun PlayerRuntimeController.attachMpvView(view: MpvSurface?) {
     if (mpvView === view) return
-    mpvView?.onPlaybackEndedWithError = null
+    mpvView?.onPlaybackEnded = null
     mpvView = view
-    view?.onPlaybackEndedWithError = { fileError -> onMpvPlaybackEndedWithError(fileError) }
+    view?.onPlaybackEnded = { event -> onMpvPlaybackEnded(event) }
 
     if (view == null) return
     if (!isUsingMpvEngine()) return

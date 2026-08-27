@@ -64,6 +64,30 @@ class LivePlaybackRecoveryPolicyTest {
         )
     }
 
+    @Test
+    fun `linear live mode keeps retrying beyond the finite budget at capped backoff`() {
+        assertEquals(
+            Decision.Wait,
+            LivePlaybackRecoveryPolicy.evaluate(
+                Input(
+                    attempts = LivePlaybackRecoveryPolicy.MAX_ATTEMPTS + 50,
+                    sinceLastAttemptMs = 19_999L,
+                    retryIndefinitely = true,
+                ),
+            ),
+        )
+        assertEquals(
+            Decision.Reconnect,
+            LivePlaybackRecoveryPolicy.evaluate(
+                Input(
+                    attempts = LivePlaybackRecoveryPolicy.MAX_ATTEMPTS + 50,
+                    sinceLastAttemptMs = 20_000L,
+                    retryIndefinitely = true,
+                ),
+            ),
+        )
+    }
+
     // --- the ladder: a live connection is not spent on a fault that is not the connection ----
 
     @Test

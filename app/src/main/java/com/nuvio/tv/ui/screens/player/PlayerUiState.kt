@@ -181,6 +181,8 @@ data class PlayerUiState(
      *  engine escape. Shows the Report Frozen action on the error overlay even when generic playback
      *  issue reporting is off, and routes that report to freeze-specific telemetry. */
     val liveFreezeGaveUp: Boolean = false,
+    /** Non-terminal bottom notice while a linear live feed is reconnecting after EOF/freeze. */
+    val liveRetryStatus: String? = null,
     /** The viewer tapped Report Frozen on the terminal-freeze overlay; flips the button to a thanks. */
     val freezeReported: Boolean = false,
     val playbackIssueReportStatus: PlaybackIssueReportStatus = PlaybackIssueReportStatus.Idle,

@@ -14,11 +14,11 @@ private const val MPV_EVENT_END_FILE = 7
  * (which takes the core lock — a live demuxer holds it for seconds → ANR). See [[nuvio-mpv-anr-fix]].
  *
  * All fields are written only here (on the event thread) and read lock-free by the surface view.
- * [onEndFileError] is invoked on the event thread for an mpv END_FILE with reason "error"; the caller
- * must hop threads before touching UI/player state.
+ * [onEndFile] is invoked on the event thread for every mpv END_FILE; the caller must hop threads
+ * before touching UI/player state and must distinguish natural EOF from a user/lifecycle STOP.
  */
 internal class MpvPropertyShadow(
-    private val onEndFileError: (fileError: String?) -> Unit,
+    private val onEndFile: (MpvEndFileEvent) -> Unit,
 ) : MPV.EventObserver {
 
     @Volatile var obsPaused = true
@@ -137,8 +137,10 @@ internal class MpvPropertyShadow(
         // mpv_event_to_node shape: {"reason": "eof"|"stop"|"quit"|"error"|"redirect",
         //  "file_error": "<mpv error string>" (only when reason == "error")}.
         val map = runCatching { data.asMap() }.getOrNull() ?: return
-        if (runCatching { map["reason"]?.asString() }.getOrNull() != "error") return
+        val reason = MpvEndFileReason.fromWireValue(
+            runCatching { map["reason"]?.asString() }.getOrNull()
+        )
         val fileError = runCatching { map["file_error"]?.asString() }.getOrNull()
-        onEndFileError(fileError)
+        onEndFile(MpvEndFileEvent(reason = reason, fileError = fileError))
     }
 }

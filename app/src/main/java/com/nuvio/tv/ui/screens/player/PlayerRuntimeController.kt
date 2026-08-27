@@ -318,6 +318,8 @@ class PlayerRuntimeController(
     /** True from firing a reconnect until the rebuilt player renders. Suppresses the teardown flush. */
     @Volatile internal var liveRecoveryInFlight: Boolean = false
     internal var liveRecoveryGaveUp: Boolean = false
+    /** Last sampled mpv VO/AImageReader failure count; detects presentation wedges decode fps misses. */
+    internal var lastMpvPresentationFaultCount: Long = 0L
 
     /**
      * Dual-engine escalation state (universal-playback-design §4 rung 4 / §3.6a). A persistent

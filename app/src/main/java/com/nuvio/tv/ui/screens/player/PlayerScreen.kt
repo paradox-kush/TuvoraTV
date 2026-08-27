@@ -850,6 +850,16 @@ fun PlayerScreen(
             torrentBufferingProgress = uiState.torrentBufferingProgress
         )
 
+        uiState.liveRetryStatus?.let { status ->
+            PlayerLiveRetryStatus(
+                message = status,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 46.dp)
+                    .zIndex(2.8f),
+            )
+        }
+
         // Error state
         if (uiState.error != null) {
             ErrorOverlay(
@@ -3183,5 +3193,30 @@ private fun PlayerBufferingIndicator(
         } else {
             LoadingIndicator()
         }
+    }
+}
+
+/** Non-terminal live retry notice; controls and Back remain usable while reconnecting. */
+@Composable
+private fun PlayerLiveRetryStatus(
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.84f))
+            .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+    ) {
+        LoadingIndicator(modifier = Modifier.size(20.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

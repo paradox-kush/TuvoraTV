@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.player
 import com.nuvio.tv.core.contracts.DemuxerBudgetBytes
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
+import com.nuvio.tv.player.mpv.MpvEndFileEvent
 
 /**
  * The contract the player controller talks to the mpv engine through.
@@ -22,7 +23,7 @@ import com.nuvio.tv.data.local.SubtitleStyleSettings
  *    `ensureInitialized` blocks on a pending teardown and hard-fails if a previous native core is still
  *    alive; `releasePlayer` unregisters the surface callback. Re-attach after release depends on the
  *    surface still being available.
- *  - **[onPlaybackEndedWithError] fires on mpv's event thread.** The controller must hop threads before
+ *  - **[onPlaybackEnded] fires on mpv's event thread.** The controller must hop threads before
  *    touching player/UI state.
  *  - **Identity matters.** Callers compare instances with `===`; never make this a value/wrapper type.
  *
@@ -55,6 +56,8 @@ interface MpvSurface {
     fun videoFrameTicksNow(): Long
     fun voDroppedFrameCountNow(): Long
     fun voDelayedFrameCountNow(): Long
+    /** Monotonic count of device-proven VO/AImageReader presentation failures from mpv logs. */
+    fun presentationFaultCountNow(): Long
     fun readVideoSnapshot(): MpvVideoSnapshot
     fun readTrackSnapshot(): MpvTrackSnapshot
 
@@ -88,5 +91,5 @@ interface MpvSurface {
     var directLiveRenderPath: Boolean
 
     // ── Events out (fired on mpv's event thread — see invariants) ──────────────
-    var onPlaybackEndedWithError: ((fileError: String?) -> Unit)?
+    var onPlaybackEnded: ((MpvEndFileEvent) -> Unit)?
 }
