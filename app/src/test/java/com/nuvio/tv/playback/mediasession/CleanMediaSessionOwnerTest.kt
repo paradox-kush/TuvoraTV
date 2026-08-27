@@ -11,6 +11,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -46,4 +47,56 @@ class CleanMediaSessionOwnerTest {
         assertEquals(1, sessionReleaseCount)
         scope.cancel()
     }
+
+    @Test
+    fun `platform facade release failure is nonfatal after controller barrier succeeds`() = runBlocking {
+        var platformReleaseCount = 0
+        var sessionReleaseCount = 0
+        val controller = controller {
+            sessionReleaseCount += 1
+        }
+        val owner = CleanMediaSessionOwner.createForTest(
+            applicationLooper = Looper.getMainLooper(),
+            controller = controller,
+            platformReleaser = {
+                platformReleaseCount += 1
+                error("synthetic platform failure")
+            },
+        )
+
+        owner.release()
+        owner.release()
+
+        assertEquals(1, platformReleaseCount)
+        assertEquals(1, sessionReleaseCount)
+    }
+
+    @Test
+    fun `controller barrier failure remains retryable without repeating platform release`() = runBlocking {
+        var platformReleaseCount = 0
+        var sessionReleaseCount = 0
+        val controller = controller {
+            sessionReleaseCount += 1
+            if (sessionReleaseCount == 1) error("synthetic barrier failure")
+        }
+        val owner = CleanMediaSessionOwner.createForTest(
+            applicationLooper = Looper.getMainLooper(),
+            controller = controller,
+            platformReleaser = { platformReleaseCount += 1 },
+        )
+
+        val firstFailure = runCatching { owner.release() }.exceptionOrNull()
+        owner.release()
+        owner.release()
+
+        assertTrue(firstFailure is IllegalStateException)
+        assertEquals(1, platformReleaseCount)
+        assertEquals(2, sessionReleaseCount)
+    }
+
+    private fun controller(release: suspend () -> Unit) = PlaybackSessionController(
+        snapshot = MutableStateFlow(PlaybackSnapshot()),
+        dispatchCommand = {},
+        releaseSession = release,
+    )
 }

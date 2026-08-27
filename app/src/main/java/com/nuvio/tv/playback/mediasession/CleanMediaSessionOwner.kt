@@ -24,18 +24,21 @@ import kotlinx.coroutines.sync.withLock
 class CleanMediaSessionOwner private constructor(
     private val applicationLooper: Looper,
     private val controller: PlaybackSessionController,
-    private val player: CleanMediaSessionPlayer,
-    private val mediaSession: MediaSession,
+    private val metadataUpdater: (CleanMediaSessionMetadata) -> Unit,
+    private val platformReleaser: () -> Unit,
 ) {
     private val releaseMutex = Mutex()
 
     @Volatile
     private var released = false
 
+    @Volatile
+    private var platformReleaseAttempted = false
+
     /** Updates display metadata only; the facade still contains no media URI or request headers. */
     fun updateMetadata(metadata: CleanMediaSessionMetadata) {
-        check(!released) { "MediaSession owner is released" }
-        player.updateMetadata(metadata)
+        check(!platformReleaseAttempted && !released) { "MediaSession owner is releasing or released" }
+        metadataUpdater(metadata)
     }
 
     /**
@@ -44,18 +47,17 @@ class CleanMediaSessionOwner private constructor(
      */
     suspend fun release() = releaseMutex.withLock {
         if (released) return@withLock
-        try {
-            onApplicationLooper {
-                try {
-                    mediaSession.release()
-                } finally {
-                    player.release()
-                }
+        if (!platformReleaseAttempted) {
+            platformReleaseAttempted = true
+            try {
+                onApplicationLooper(platformReleaser)
+            } catch (_: Exception) {
+                // The system facade is optional. Provider/session release remains authoritative.
             }
-        } finally {
-            controller.release()
-            released = true
         }
+        // A failure leaves `released` false so only the authoritative barrier is retried.
+        controller.release()
+        released = true
     }
 
     private suspend fun onApplicationLooper(block: () -> Unit) {
@@ -106,9 +108,27 @@ class CleanMediaSessionOwner private constructor(
             return CleanMediaSessionOwner(
                 applicationLooper = applicationLooper,
                 controller = controller,
-                player = player,
-                mediaSession = mediaSession,
+                metadataUpdater = player::updateMetadata,
+                platformReleaser = {
+                    try {
+                        mediaSession.release()
+                    } finally {
+                        player.release()
+                    }
+                },
             )
         }
+
+        internal fun createForTest(
+            applicationLooper: Looper,
+            controller: PlaybackSessionController,
+            metadataUpdater: (CleanMediaSessionMetadata) -> Unit = {},
+            platformReleaser: () -> Unit,
+        ): CleanMediaSessionOwner = CleanMediaSessionOwner(
+            applicationLooper = applicationLooper,
+            controller = controller,
+            metadataUpdater = metadataUpdater,
+            platformReleaser = platformReleaser,
+        )
     }
 }
