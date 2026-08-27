@@ -72,6 +72,38 @@ class Media3EngineTest {
     }
 
     @Test
+    fun `backend renderer state and video facts remain truthful generation events`() = runTest {
+        val backend = FakeBackend()
+        val engine = engine(backend, backgroundScope)
+        assertSuccess(engine.attachSurface(12, graph()))
+        assertSuccess(engine.start(start(12)))
+        val events = listOf(
+            Media3BackendEvent.StateObserved(
+                com.nuvio.tv.playback.core.PlaybackEngineState.READY,
+                playWhenReady = false,
+                isLoading = true,
+            ),
+            Media3BackendEvent.VideoDecoderInitialized("c2.vendor.avc.decoder"),
+            Media3BackendEvent.VideoInputFormatChanged("video/avc"),
+            Media3BackendEvent.VideoSizeChanged(1920, 1080),
+        )
+        val received = events.map { backendEvent ->
+            val deferred = async(start = CoroutineStart.UNDISPATCHED) {
+                engine.events.first()
+            }
+            backend.emit(backendEvent)
+            deferred.await()
+        }
+        assertEquals(
+            PlaybackEvent.EngineStateObserved(12, com.nuvio.tv.playback.core.PlaybackEngineState.READY, false, true),
+            received[0],
+        )
+        assertEquals(PlaybackEvent.VideoDecoderInitialized(12, "c2.vendor.avc.decoder"), received[1])
+        assertEquals(PlaybackEvent.VideoInputFormatChanged(12, "video/avc"), received[2])
+        assertEquals(PlaybackEvent.VideoSizeChanged(12, 1920, 1080), received[3])
+    }
+
+    @Test
     fun `second start is rejected while one provider backend is active`() = runTest {
         val backend = FakeBackend()
         val engine = engine(backend, backgroundScope)
@@ -160,6 +192,31 @@ class Media3EngineTest {
         assertTrue(engine.attachSurface(5, graph()) is PlaybackResult.Failure)
     }
 
+    @Test
+    fun `surface recreation reuses the same generation backend and provider request`() = runTest {
+        val backend = FakeBackend()
+        val host = CountingSurfaceHost()
+        var backendCreations = 0
+        val engine = Media3Engine(
+            scope = backgroundScope,
+            surfaceHost = host,
+            backendFactory = Media3BackendFactory {
+                backendCreations++
+                PlaybackResult.Success(backend)
+            },
+        )
+        assertSuccess(engine.attachSurface(14, graph()))
+        assertSuccess(engine.start(start(14)))
+
+        assertSuccess(engine.detachSurface(14))
+        assertSuccess(engine.attachSurface(14, graph()))
+
+        assertEquals(2, host.acquireCalls)
+        assertEquals(2, backend.attachCalls)
+        assertEquals(1, backendCreations)
+        assertEquals(1, backend.startCalls)
+    }
+
     private fun engine(backend: FakeBackend, scope: kotlinx.coroutines.CoroutineScope) = Media3Engine(
         scope = scope,
         surfaceHost = FakeSurfaceHost(),
@@ -219,6 +276,17 @@ class Media3EngineTest {
         ): PlaybackResult<Media3SurfaceLease> = PlaybackResult.Success(FakeLease(mode, secure))
     }
 
+    private class CountingSurfaceHost : Media3SurfaceHost {
+        var acquireCalls = 0
+        override suspend fun acquire(
+            mode: SurfaceMode,
+            secure: Boolean,
+        ): PlaybackResult<Media3SurfaceLease> {
+            acquireCalls++
+            return PlaybackResult.Success(FakeLease(mode, secure))
+        }
+    }
+
     private class FakeLease(
         override val mode: SurfaceMode,
         override val secure: Boolean,
@@ -234,6 +302,7 @@ class Media3EngineTest {
         private val mutableEvents = MutableSharedFlow<Media3BackendEvent>(extraBufferCapacity = 8)
         override val events: Flow<Media3BackendEvent> = mutableEvents
         var startCalls = 0
+        var attachCalls = 0
         var applyCalls = 0
         var retryCalls = 0
         var hardAbortCalls = 0
@@ -245,7 +314,10 @@ class Media3EngineTest {
         var decoderMetrics = Media3DecoderMetrics(0, 0, 0, 0, 0, 0)
 
         fun emit(event: Media3BackendEvent) { mutableEvents.tryEmit(event) }
-        override suspend fun attachSurface(lease: Media3SurfaceLease) = PlaybackResult.Success(Unit)
+        override suspend fun attachSurface(lease: Media3SurfaceLease): PlaybackResult<Unit> {
+            attachCalls++
+            return PlaybackResult.Success(Unit)
+        }
         override suspend fun start(paused: Boolean): PlaybackResult<Unit> {
             startCalls++
             eventOnStart?.let(mutableEvents::tryEmit)

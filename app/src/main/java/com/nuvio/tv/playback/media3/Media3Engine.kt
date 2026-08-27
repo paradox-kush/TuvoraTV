@@ -7,6 +7,7 @@ import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.GraphOutputProfile
 import com.nuvio.tv.playback.core.PlaybackEndReason
 import com.nuvio.tv.playback.core.PlaybackEngine
+import com.nuvio.tv.playback.core.PlaybackEngineState
 import com.nuvio.tv.playback.core.PlaybackEngineMetricsSnapshot
 import com.nuvio.tv.playback.core.PlaybackEngineStart
 import com.nuvio.tv.playback.core.PlaybackEvent
@@ -38,6 +39,14 @@ internal sealed interface Media3BackendEvent {
     data object FirstVideoFrame : Media3BackendEvent
     data object BufferingStarted : Media3BackendEvent
     data object BufferingEnded : Media3BackendEvent
+    data class StateObserved(
+        val state: PlaybackEngineState,
+        val playWhenReady: Boolean,
+        val isLoading: Boolean,
+    ) : Media3BackendEvent
+    data class VideoDecoderInitialized(val decoderName: String) : Media3BackendEvent
+    data class VideoInputFormatChanged(val sampleMimeType: String?) : Media3BackendEvent
+    data class VideoSizeChanged(val width: Int, val height: Int) : Media3BackendEvent
     data object Ended : Media3BackendEvent
     data class Failed(val failure: PlaybackFailure) : Media3BackendEvent
 }
@@ -102,7 +111,11 @@ class Media3Engine internal constructor(
         ) {
             return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
         }
-        if (backend != null || (this.generation != null && this.generation != generation)) {
+        if (this.generation != null && this.generation != generation) {
+            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+        }
+        val currentBackend = backend
+        if (currentBackend != null && activeGraph != graph) {
             return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
         }
         if (lease != null) return@withLock PlaybackResult.Success(Unit)
@@ -112,6 +125,18 @@ class Media3Engine internal constructor(
                     acquired.value.release()
                     failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
                 } else {
+                    if (currentBackend != null) {
+                        when (val attached = currentBackend.attachSurface(acquired.value)) {
+                            is PlaybackResult.Failure -> {
+                                // If a backend failed after taking partial ownership, retain the
+                                // lease unless its release is affirmative. This keeps later release
+                                // and retry decisions fail-closed.
+                                if (!acquired.value.release()) lease = acquired.value
+                                return@withLock attached
+                            }
+                            is PlaybackResult.Success -> Unit
+                        }
+                    }
                     this.generation = generation
                     lease = acquired.value
                     PlaybackResult.Success(Unit)
@@ -307,6 +332,18 @@ class Media3Engine internal constructor(
             Media3BackendEvent.FirstVideoFrame -> PlaybackEvent.FirstVideoFrame(generation)
             Media3BackendEvent.BufferingStarted -> PlaybackEvent.BufferingStarted(generation)
             Media3BackendEvent.BufferingEnded -> PlaybackEvent.BufferingEnded(generation)
+            is Media3BackendEvent.StateObserved -> PlaybackEvent.EngineStateObserved(
+                generation,
+                event.state,
+                event.playWhenReady,
+                event.isLoading,
+            )
+            is Media3BackendEvent.VideoDecoderInitialized ->
+                PlaybackEvent.VideoDecoderInitialized(generation, event.decoderName)
+            is Media3BackendEvent.VideoInputFormatChanged ->
+                PlaybackEvent.VideoInputFormatChanged(generation, event.sampleMimeType)
+            is Media3BackendEvent.VideoSizeChanged ->
+                PlaybackEvent.VideoSizeChanged(generation, event.width, event.height)
             Media3BackendEvent.Ended -> PlaybackEvent.PlaybackEnded(generation, PlaybackEndReason.EOF)
             is Media3BackendEvent.Failed -> PlaybackEvent.Failed(generation, event.failure)
         }

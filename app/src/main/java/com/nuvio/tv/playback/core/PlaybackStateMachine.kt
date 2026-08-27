@@ -705,6 +705,11 @@ object PlaybackStateMachine {
             is PlaybackEvent.FirstVideoFrame -> firstVideoFrame(state)
             is PlaybackEvent.BufferingStarted -> bufferingStarted(state)
             is PlaybackEvent.BufferingEnded -> bufferingEnded(state)
+            is PlaybackEvent.EngineStateObserved,
+            is PlaybackEvent.VideoDecoderInitialized,
+            is PlaybackEvent.VideoInputFormatChanged,
+            is PlaybackEvent.VideoSizeChanged,
+            -> unchanged(state)
             is PlaybackEvent.PlaybackEnded -> playbackEnded(state, event.reason)
             is PlaybackEvent.Failed -> failed(state, event.failure)
             // Engine release alone cannot satisfy the barrier: resolution/recovery/reconnect jobs

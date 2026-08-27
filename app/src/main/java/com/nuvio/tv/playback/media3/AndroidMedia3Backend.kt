@@ -2,12 +2,14 @@ package com.nuvio.tv.playback.media3
 
 import android.content.Context
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -16,6 +18,7 @@ import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioCapabilities
@@ -36,6 +39,7 @@ import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.PlaybackFailure
+import com.nuvio.tv.playback.core.PlaybackEngineState
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.ProxyMode
 import com.nuvio.tv.playback.core.Retryability
@@ -443,8 +447,19 @@ private class AndroidMedia3Backend(
             when (playbackState) {
                 Player.STATE_BUFFERING -> _events.tryEmit(Media3BackendEvent.BufferingStarted)
                 Player.STATE_READY -> _events.tryEmit(Media3BackendEvent.BufferingEnded)
-                Player.STATE_ENDED -> if (!terminalSuppressed) _events.tryEmit(Media3BackendEvent.Ended)
             }
+            reportState()
+            if (playbackState == Player.STATE_ENDED && !terminalSuppressed) {
+                _events.tryEmit(Media3BackendEvent.Ended)
+            }
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            reportState()
+        }
+
+        override fun onIsLoadingChanged(isLoading: Boolean) {
+            reportState()
         }
 
         override fun onTracksChanged(tracks: Tracks) {
@@ -459,10 +474,36 @@ private class AndroidMedia3Backend(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            if (!terminalSuppressed) _events.tryEmit(Media3BackendEvent.Failed(Media3FailureMapper.map(error)))
+            reportState()
+            if (!terminalSuppressed) {
+                _events.tryEmit(Media3BackendEvent.Failed(Media3FailureMapper.map(error)))
+            }
+        }
+
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            if (videoSize.width > 0 && videoSize.height > 0) {
+                _events.tryEmit(Media3BackendEvent.VideoSizeChanged(videoSize.width, videoSize.height))
+            }
         }
     }
     private val analyticsListener = object : AnalyticsListener {
+        override fun onVideoDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            _events.tryEmit(Media3BackendEvent.VideoDecoderInitialized(decoderName))
+        }
+
+        override fun onVideoInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: Format,
+            decoderReuseEvaluation: DecoderReuseEvaluation?,
+        ) {
+            _events.tryEmit(Media3BackendEvent.VideoInputFormatChanged(format.sampleMimeType))
+        }
+
         override fun onAudioPositionAdvancing(
             eventTime: AnalyticsListener.EventTime,
             playoutStartSystemTimeMs: Long,
@@ -483,6 +524,16 @@ private class AndroidMedia3Backend(
         player.addListener(playerListener)
         player.addAnalyticsListener(analyticsListener)
         byteProgress.bind { _events.tryEmit(Media3BackendEvent.BytesReceived) }
+    }
+
+    private fun reportState() {
+        val state = when (player.playbackState) {
+            Player.STATE_BUFFERING -> PlaybackEngineState.BUFFERING
+            Player.STATE_READY -> PlaybackEngineState.READY
+            Player.STATE_ENDED -> PlaybackEngineState.ENDED
+            else -> PlaybackEngineState.IDLE
+        }
+        _events.tryEmit(Media3BackendEvent.StateObserved(state, player.playWhenReady, player.isLoading))
     }
 
     override suspend fun attachSurface(lease: Media3SurfaceLease): PlaybackResult<Unit> = withContext(dispatcher) {

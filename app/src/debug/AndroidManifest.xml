@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug artifact only. It accepts no request/URL extras and is absent from release builds. -->
+        <activity
+            android:name="com.nuvio.tv.playback.lab.CleanMedia3PlaybackLabActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.MyApplication" />
+    </application>
+</manifest>

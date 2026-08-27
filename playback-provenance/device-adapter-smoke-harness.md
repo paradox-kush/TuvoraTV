@@ -1,6 +1,6 @@
 # Clean-player real-device adapter smoke harness
 
-**Status:** ready for WP4/WP5 adapter wiring; it does not deploy, launch, or open a stream.
+**Status:** debug Media3 lab wired; it does not auto-launch or auto-open a stream.
 
 `scripts/playback_device_smoke.py` is the sequential ADB evidence harness for the authorized ONN
 (`192.168.1.236:5555`) and Fire TV (`192.168.1.225:5555`) devices. It protects one-connection IPTV
@@ -14,15 +14,17 @@ fixture/account to ONN and Fire outside this tool; never place that mapping in a
 
 ## Adapter instrumentation contract
 
-The future debug playback lab emits single-line facts at info level under tag
+The debug-only `CleanMedia3PlaybackLabActivity` emits single-line facts at info level under tag
 `CleanPlaybackSmoke`. The line starts with `CP_SMOKE v=1` and uses space-separated `key=value`
 tokens. It must not log raw exceptions or request material. Example:
 
 ```text
 CP_SMOKE v=1 event=STATE engine=MEDIA3 profile=GUIDE generation=3 player_state=READY play_when_ready=true is_loading=false
-CP_SMOKE v=1 event=RENDERER engine=MEDIA3 renderer=MediaCodecVideoRenderer decoder=c2.amlogic.avc.decoder codec=AVC
-CP_SMOKE v=1 event=SURFACE surface_type=SURFACE_VIEW surface_valid=true surface_width=960 surface_height=540 secure=false
-CP_SMOKE v=1 event=VIDEO rendered_first_frame=true video_width=1920 video_height=1080 dropped_frames=0
+CP_SMOKE v=1 event=RENDERER engine=MEDIA3 renderer=MediaCodecVideoRenderer decoder=c2.amlogic.avc.decoder
+CP_SMOKE v=1 event=RENDERER engine=MEDIA3 renderer=MediaCodecVideoRenderer codec=AVC
+CP_SMOKE v=1 event=SURFACE engine=MEDIA3 surface_type=SURFACE_VIEW surface_valid=true surface_width=960 surface_height=540 secure=false
+CP_SMOKE v=1 event=VIDEO engine=MEDIA3 rendered_first_frame=true
+CP_SMOKE v=1 event=VIDEO engine=MEDIA3 video_width=1920 video_height=1080
 CP_SMOKE v=1 event=ERROR error_domain=VIDEO_DECODER error_code=DECODER_INIT phase=STARTUP fatal=true
 CP_SMOKE v=1 event=RELEASE release_outcome=GRACEFUL provider_owned=false surface_owned=false release_nonce=0123456789abcdef
 ```
@@ -76,6 +78,32 @@ Ephemeral state and sanitized JSON reports default to
 `/tmp/nuvio-playback-device-smoke`. A failed `--require-release-proof` still force-stops and confirms
 the process absent, so switching is safe, but it fails the WP4 deterministic-release gate. Do not
 represent process absence alone as adapter release proof.
+
+## Debug-profile boundary and lab operation
+
+The lab is compiled only into `com.tuvora.tv.debug`. Android app-private storage means it cannot
+read or import the production `com.tuvora.tv` profile. Prepare the debug package through its normal
+UI: sign in/sync or add the assigned playlist, select that playlist, play one live channel long
+enough to create a recent, then stop playback. Do this separately for each device/fixture. Never
+copy, export, hard-code, or pass production credentials to ADB.
+
+The lab selects exactly the active debug playlist and its newest live recent. It has no URL,
+credential, account, channel, or playlist Intent extras; missing state, a disabled playlist, and
+Stalker sources fail closed with a non-secret `LAB_*` readiness code. Playback starts only after the
+operator presses **Start selected recent channel**.
+
+After `begin`, launch the Activity on the active device only:
+
+```bash
+adb -s 192.168.1.236:5555 shell am start \
+  -n com.tuvora.tv.debug/com.nuvio.tv.playback.lab.CleanMedia3PlaybackLabActivity
+```
+
+For the Fire pass, use `192.168.1.225:5555` only after ONN `quiesce` succeeds. The **Recreate
+surface** action detaches the selected clean Media3 surface, rebuilds the same graph-selected View,
+and reattaches it to the existing backend on the same generation. It does not resolve the URL again,
+construct a second backend, or restart the provider request. Leaving the lab foreground also starts
+the pause/release barrier; harness `quiesce` remains mandatory before switching devices.
 
 ## Report acceptance
 

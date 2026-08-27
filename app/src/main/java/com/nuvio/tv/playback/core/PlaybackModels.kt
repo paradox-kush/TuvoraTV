@@ -611,6 +611,7 @@ enum class PlaybackState {
 }
 
 enum class PlaybackEndReason { EOF, ERROR, STOPPED, SHUTDOWN }
+enum class PlaybackEngineState { IDLE, BUFFERING, READY, ENDED }
 
 sealed interface PlaybackEvent {
     val generation: Long
@@ -635,6 +636,26 @@ sealed interface PlaybackEvent {
     data class FirstVideoFrame(override val generation: Long) : PlaybackEvent
     data class BufferingStarted(override val generation: Long) : PlaybackEvent
     data class BufferingEnded(override val generation: Long) : PlaybackEvent
+    /** Passive adapter facts for diagnostics; they never drive recovery or policy. */
+    data class EngineStateObserved(
+        override val generation: Long,
+        val state: PlaybackEngineState,
+        val playWhenReady: Boolean,
+        val isLoading: Boolean,
+    ) : PlaybackEvent
+    data class VideoDecoderInitialized(
+        override val generation: Long,
+        val decoderName: String,
+    ) : PlaybackEvent
+    data class VideoInputFormatChanged(
+        override val generation: Long,
+        val sampleMimeType: String?,
+    ) : PlaybackEvent
+    data class VideoSizeChanged(
+        override val generation: Long,
+        val width: Int,
+        val height: Int,
+    ) : PlaybackEvent
     data class PlaybackEnded(
         override val generation: Long,
         val reason: PlaybackEndReason,

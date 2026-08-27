@@ -82,6 +82,23 @@ class PlaybackStateMachineTest {
     }
 
     @Test
+    fun `adapter diagnostic facts never drive policy or recovery`() {
+        val initial = playingState(ContentType.LIVE)
+        val facts = listOf(
+            PlaybackEvent.EngineStateObserved(1, PlaybackEngineState.READY, false, true),
+            PlaybackEvent.VideoDecoderInitialized(1, "c2.vendor.avc.decoder"),
+            PlaybackEvent.VideoInputFormatChanged(1, "video/avc"),
+            PlaybackEvent.VideoSizeChanged(1, 1_920, 1_080),
+        )
+
+        facts.forEach { fact ->
+            val reduced = PlaybackStateMachine.reduce(initial, fact)
+            assertSame(initial, reduced.state)
+            assertTrue(reduced.actions.isEmpty())
+        }
+    }
+
+    @Test
     fun `same URL tune increments generation and stale asynchronous result is ignored`() {
         val first = PlaybackStateMachine.reduce(
             PlaybackMachineState(),
