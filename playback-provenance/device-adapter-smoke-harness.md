@@ -57,8 +57,9 @@ python3 scripts/playback_device_smoke.py begin \
   --device onn --run-id wp4-media3-hls-ts --fixture-id onn-hls-ts-a
 ```
 
-After `begin`, install/open the debug lab manually and press **Start Media3** for ONN's assigned
-fixture. Capture startup, first frame, stable playback, and surface recreation, then quiesce:
+After `begin`, install/open the debug lab manually. Use **Previous** / **Next** to choose the saved
+live recent assigned to this run, verify both stable preflight reason codes, and press **Start
+Media3**. Capture startup, first frame, stable playback, and surface recreation, then quiesce:
 
 ```bash
 python3 scripts/playback_device_smoke.py capture --device onn --suffix first-frame
@@ -67,8 +68,9 @@ python3 scripts/playback_device_smoke.py quiesce --device onn --require-release-
 python3 scripts/playback_device_smoke.py status
 ```
 
-Begin a second ONN run only after that release proof and press **Start libmpv**. The lab uses the
-same GUIDE/PREVIEW semantics with the clean libmpv direct graph; it never starts Media3 concurrently:
+Begin a second ONN run only after that release proof, select the same fingerprint, and press **Start
+libmpv**. The lab uses the exact same in-memory `PlaybackRequest` intent and GUIDE/PREVIEW session
+profile with the clean libmpv direct graph; it never starts Media3 concurrently:
 
 ```bash
 python3 scripts/playback_device_smoke.py begin \
@@ -110,11 +112,20 @@ UI: sign in/sync or add the assigned playlist, select that playlist, play one li
 enough to create a recent, then stop playback. Do this separately for each device/fixture. Never
 copy, export, hard-code, or pass production credentials to ADB.
 
-The lab selects exactly the active debug playlist and its newest live recent. It has no URL,
-credential, account, channel, or playlist Intent extras; missing state, a disabled playlist, and
-Stalker sources fail closed with a non-secret `LAB_*` readiness code. Playback starts only after the
-operator presses **Start Media3** or **Start libmpv**; both actions are disabled while either clean
-engine owns the single active provider request.
+The lab loads saved live recents and their accounts only from the active debug profile. It has no
+URL, credential, account, channel, or playlist Intent extras. Every choice is shown as a sanitized
+channel label plus redacted playlist ordinal and ten-hex-character fingerprint; URL-like,
+query-like, or authentication-like names become `Live channel`. Raw account/provider IDs never
+enter the View or log.
+
+Selecting a recent maps its stored secret URL once and runs graph preflight for both engines before
+either Start action is enabled. The UI shows only stable results such as `ELIGIBLE`,
+`ACCOUNT_DISABLED`, `SOURCE_UNSUPPORTED`, `NO_ELIGIBLE_GRAPH`, or `SYSTEM_DNS_FALLBACK`. V1 libmpv
+uses system DNS when the shared request intent selects application DoH, while Media3 honors DoH;
+that engine-specific execution decision is shown as `SYSTEM_DNS_FALLBACK` and does not mutate the
+shared request. Playback starts only after the operator presses **Start Media3** or **Start libmpv**;
+both actions and fixture selection are disabled while either clean engine owns the single active
+provider request.
 
 After `begin`, launch the Activity on the active device only:
 
@@ -132,7 +143,8 @@ switching engine or device.
 
 ## Report acceptance
 
-For every Media3 and libmpv fixture, the report must contain normalized state plus the selected renderer,
+For every Media3 and libmpv fixture, record the same displayed fingerprint and preflight reason.
+The report must contain normalized state plus the selected renderer,
 decoder, surface type/validity/size, first-frame/video dimensions, and any stable error code/domain.
 The release report must prove `provider_owned=false` and `surface_owned=false`. Fire Media3 guide
 playback must show the exact policy-selected TextureView path; libmpv must show its independently

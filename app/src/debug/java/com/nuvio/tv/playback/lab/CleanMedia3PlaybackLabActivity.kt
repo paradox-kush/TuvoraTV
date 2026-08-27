@@ -22,31 +22,20 @@ import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.util.UnstableApi
-import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.dns.PlaylistDns
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.data.local.XtreamAccountStore
-import com.nuvio.tv.data.local.XtreamHubSelectionStore
 import com.nuvio.tv.data.local.XtreamLiveStore
 import com.nuvio.tv.playback.android.AndroidRuntimeCapabilityCollector
-import com.nuvio.tv.playback.android.AndroidPlaybackQuirkOverride
 import com.nuvio.tv.playback.android.FrameworkAndroidCapabilitySource
-import com.nuvio.tv.playback.core.ContentType
-import com.nuvio.tv.playback.core.DefaultPlaybackRequirementsResolver
 import com.nuvio.tv.playback.core.DnsPolicy
-import com.nuvio.tv.playback.core.EnginePreference
 import com.nuvio.tv.playback.core.EngineType
+import com.nuvio.tv.playback.core.PlaybackEngine
 import com.nuvio.tv.playback.core.PlaybackEngineStart
 import com.nuvio.tv.playback.core.PlaybackEngineState
-import com.nuvio.tv.playback.core.PlaybackEngine
 import com.nuvio.tv.playback.core.PlaybackEvent
 import com.nuvio.tv.playback.core.PlaybackGraph
-import com.nuvio.tv.playback.core.PlaybackFailure
-import com.nuvio.tv.playback.core.PlaybackPolicy
-import com.nuvio.tv.playback.core.PlaybackRequirementsInput
 import com.nuvio.tv.playback.core.PlaybackResult
-import com.nuvio.tv.playback.core.SecretValue
-import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.core.TlsPolicy
 import com.nuvio.tv.playback.core.VideoDimensions
@@ -59,14 +48,6 @@ import com.nuvio.tv.playback.mpv.AndroidMpvBackendFactory
 import com.nuvio.tv.playback.mpv.MpvEngine
 import com.nuvio.tv.playback.mpv.MpvSurfaceHost
 import com.nuvio.tv.playback.mpv.ViewMpvSurfaceHost
-import com.nuvio.tv.playback.settings.CleanPlaybackPreferences
-import com.nuvio.tv.playback.settings.MpvOutputPreference
-import com.nuvio.tv.playback.settings.PlaybackPreferenceResolutionContext
-import com.nuvio.tv.playback.settings.PlaybackPreferenceResolver
-import com.nuvio.tv.playback.wiring.NavigationPlaybackInput
-import com.nuvio.tv.playback.wiring.PlaybackEnvironmentMappingInput
-import com.nuvio.tv.playback.wiring.PlaybackEnvironmentSnapshotMapper
-import com.nuvio.tv.playback.wiring.PlaybackRequestMapper
 import dagger.hilt.android.AndroidEntryPoint
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -88,11 +69,9 @@ import kotlin.coroutines.resume
 
 internal class DebugProfileFixtureRepository @Inject constructor(
     private val accountStore: XtreamAccountStore,
-    private val selectionStore: XtreamHubSelectionStore,
     private val liveStore: XtreamLiveStore,
 ) {
-    suspend fun load(): DebugFixtureSelection = selectDebugFixture(
-        selectedAccountId = selectionStore.read().accountId,
+    suspend fun load(): DebugFixtureCatalog = buildDebugFixtureCatalog(
         accounts = accountStore.accounts.first(),
         recents = liveStore.recents.first(),
     )
@@ -106,17 +85,23 @@ internal class DebugProfileFixtureRepository @Inject constructor(
 @UnstableApi
 class CleanMedia3PlaybackLabActivity : ComponentActivity() {
     @Inject internal lateinit var fixtures: DebugProfileFixtureRepository
-    @Inject internal lateinit var clients: IptvClientFactory
     @Inject internal lateinit var playlistDns: PlaylistDns
 
     private val labScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var surfaceContainer: FrameLayout
     private lateinit var status: TextView
+    private lateinit var selectionLabel: TextView
+    private lateinit var eligibility: TextView
+    private lateinit var previous: Button
+    private lateinit var next: Button
     private lateinit var start: Button
     private lateinit var startMpv: Button
     private lateinit var recreateSurface: Button
     private lateinit var stop: Button
-    private var selectedFixture: SelectedDebugFixture? = null
+    private var fixtureOptions: List<DebugFixtureOption> = emptyList()
+    private var selectedIndex: Int = 0
+    private var preparedSelection: PreparedLabSelection? = null
+    private var selectionJob: Job? = null
     private var runtime: CleanPlaybackLabRuntime? = null
     private var surfaceView: SurfaceView? = null
     private var textureView: TextureView? = null
@@ -149,7 +134,6 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
         runtime = CleanPlaybackLabRuntime(
             context = applicationContext,
             scope = labScope,
-            clients = clients,
             playlistDns = playlistDns,
             media3SurfaceHost = ::showMedia3Surface,
             mpvSurfaceHost = ::showMpvSurface,
@@ -157,12 +141,10 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
         )
         lifecycleScope.launch {
             when (val result = withContext(Dispatchers.IO) { fixtures.load() }) {
-                is DebugFixtureSelection.Blocked -> setStatus(result.code)
-                is DebugFixtureSelection.Ready -> {
-                    selectedFixture = result.fixture
-                    setStatus(LabReadinessCode.READY)
-                    start.isEnabled = true
-                    startMpv.isEnabled = true
+                is DebugFixtureCatalog.Blocked -> setStatus(result.code)
+                is DebugFixtureCatalog.Ready -> {
+                    fixtureOptions = result.options
+                    selectFixture(0)
                 }
             }
         }
@@ -171,6 +153,7 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
     override fun onDestroy() {
         if (receiverRegistered) unregisterReceiver(releaseReceiver)
         receiverRegistered = false
+        selectionJob?.cancel()
         val activeRuntime = runtime
         labScope.launch {
             activeRuntime?.release(null)
@@ -192,8 +175,7 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
             val released = activeRuntime?.release(null) ?: true
             val stillOwned = activeRuntime?.hasActiveSession() == true
             if (!isFinishing && !isDestroyed) {
-                start.isEnabled = released && !stillOwned && selectedFixture != null
-                startMpv.isEnabled = released && !stillOwned && selectedFixture != null
+                updateIdleControls(released && !stillOwned)
                 stop.isEnabled = stillOwned
             }
         }
@@ -204,24 +186,44 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
         surfaceContainer = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         status = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 15f
             gravity = Gravity.CENTER_VERTICAL
             text = "LAB_LOADING"
+        }
+        selectionLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            text = "No live recent selected"
+        }
+        eligibility = TextView(this).apply {
+            setTextColor(Color.LTGRAY)
+            textSize = 13f
+            text = "Media3=PREFLIGHT_PENDING · libmpv=PREFLIGHT_PENDING"
+        }
+        previous = Button(this).apply {
+            text = "Previous"
+            isEnabled = false
+            setOnClickListener { moveSelection(-1) }
+        }
+        next = Button(this).apply {
+            text = "Next"
+            isEnabled = false
+            setOnClickListener { moveSelection(1) }
         }
         start = Button(this).apply {
             text = "Start Media3"
             isEnabled = false
             setOnClickListener {
-                val fixture = selectedFixture ?: return@setOnClickListener
-                startEngine(fixture, EngineType.MEDIA3)
+                val prepared = preparedSelection ?: return@setOnClickListener
+                startEngine(prepared, EngineType.MEDIA3)
             }
         }
         startMpv = Button(this).apply {
             text = "Start libmpv"
             isEnabled = false
             setOnClickListener {
-                val fixture = selectedFixture ?: return@setOnClickListener
-                startEngine(fixture, EngineType.LIBMPV)
+                val prepared = preparedSelection ?: return@setOnClickListener
+                startEngine(prepared, EngineType.LIBMPV)
             }
         }
         recreateSurface = Button(this).apply {
@@ -246,11 +248,25 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
                     val released = runtime?.release(null) == true
                     val stillOwned = runtime?.hasActiveSession() == true
                     recreateSurface.isEnabled = false
-                    start.isEnabled = released && !stillOwned && selectedFixture != null
-                    startMpv.isEnabled = released && !stillOwned && selectedFixture != null
+                    updateIdleControls(released && !stillOwned)
                     stop.isEnabled = stillOwned
                 }
             }
+        }
+        val selector = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(previous, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(
+                LinearLayout(this@CleanMedia3PlaybackLabActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(selectionLabel)
+                    addView(eligibility)
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f),
+            )
+            addView(next, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -266,29 +282,73 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
                 orientation = LinearLayout.VERTICAL
                 setBackgroundColor(Color.BLACK)
                 addView(surfaceContainer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+                addView(selector, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
                 addView(controls, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72)))
             },
         )
     }
 
-    private fun startEngine(fixture: SelectedDebugFixture, engine: EngineType) {
+    private fun moveSelection(delta: Int) {
+        if (fixtureOptions.isEmpty()) return
+        selectFixture((selectedIndex + delta + fixtureOptions.size) % fixtureOptions.size)
+    }
+
+    private fun selectFixture(index: Int) {
+        val option = fixtureOptions.getOrNull(index) ?: return
+        selectionJob?.cancel()
+        selectedIndex = index
+        preparedSelection = null
+        selectionLabel.text = option.displayLabel
+        eligibility.text = "Media3=PREFLIGHT_PENDING · libmpv=PREFLIGHT_PENDING"
+        updateIdleControls(false)
+        selectionJob = labScope.launch {
+            val viewport = currentViewport()
+            val prepared = runCatching { runtime?.preflight(option.fixture, viewport) }.getOrNull()
+            if (fixtureOptions.getOrNull(selectedIndex)?.fingerprint != option.fingerprint) return@launch
+            if (prepared == null) {
+                eligibility.text =
+                    "Media3=${LabEligibilityReason.PREFLIGHT_FAILED} · " +
+                        "libmpv=${LabEligibilityReason.PREFLIGHT_FAILED}"
+                setStatus(LabReadinessCode.PREFLIGHT_FAILED)
+                updateIdleControls(false)
+                return@launch
+            }
+            preparedSelection = prepared
+            eligibility.text =
+                "Media3=${prepared.reason(EngineType.MEDIA3)} · libmpv=${prepared.reason(EngineType.LIBMPV)}"
+            setStatus(LabReadinessCode.READY)
+            updateIdleControls(true)
+        }
+    }
+
+    private fun startEngine(prepared: PreparedLabSelection, engine: EngineType) {
         start.isEnabled = false
         startMpv.isEnabled = false
+        previous.isEnabled = false
+        next.isEnabled = false
         labScope.launch {
-            val viewport = VideoDimensions(
-                surfaceContainer.width.coerceAtLeast(1),
-                surfaceContainer.height.coerceAtLeast(1),
-            )
-            val started = runtime?.start(fixture, viewport, engine) == true
+            val started = runtime?.start(prepared, engine) == true
             val stillOwned = runtime?.hasActiveSession() == true
             stop.isEnabled = started || stillOwned
             recreateSurface.isEnabled = started
             if (!started && !stillOwned) {
-                start.isEnabled = true
-                startMpv.isEnabled = true
+                updateIdleControls(true)
             }
         }
     }
+
+    private fun updateIdleControls(idle: Boolean) {
+        val prepared = preparedSelection
+        previous.isEnabled = idle && fixtureOptions.size > 1
+        next.isEnabled = idle && fixtureOptions.size > 1
+        start.isEnabled = idle && prepared?.isEligible(EngineType.MEDIA3) == true
+        startMpv.isEnabled = idle && prepared?.isEligible(EngineType.LIBMPV) == true
+    }
+
+    private fun currentViewport(): VideoDimensions = VideoDimensions(
+        surfaceContainer.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels.coerceAtLeast(1),
+        surfaceContainer.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels.coerceAtLeast(1),
+    )
 
     private fun showMedia3Surface(mode: SurfaceMode): Media3SurfaceHost {
         check(mode == SurfaceMode.SURFACE_VIEW || mode == SurfaceMode.TEXTURE_VIEW)
@@ -412,11 +472,27 @@ class CleanMedia3PlaybackLabActivity : ComponentActivity() {
     }
 }
 
+internal class PreparedLabSelection(
+    val fixture: SelectedDebugFixture,
+    val intent: LabPlaybackIntent,
+    private val preflights: Map<EngineType, LabEnginePreflight>,
+) {
+    fun preflight(engine: EngineType): LabEnginePreflight =
+        preflights[engine] ?: LabEnginePreflight.Ineligible(LabEligibilityReason.NO_ELIGIBLE_GRAPH)
+
+    fun isEligible(engine: EngineType): Boolean = preflight(engine) is LabEnginePreflight.Eligible
+
+    fun reason(engine: EngineType): String = preflight(engine).reason.name
+
+    override fun toString(): String =
+        "PreparedLabSelection(fixture=${fixture.fingerprint}, profile=${intent.profile}, " +
+            "media3=${reason(EngineType.MEDIA3)}, libmpv=${reason(EngineType.LIBMPV)})"
+}
+
 @UnstableApi
 private class CleanPlaybackLabRuntime(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val clients: IptvClientFactory,
     private val playlistDns: PlaylistDns,
     private val media3SurfaceHost: (SurfaceMode) -> Media3SurfaceHost,
     private val mpvSurfaceHost: suspend (SurfaceMode) -> MpvSurfaceHost,
@@ -444,36 +520,13 @@ private class CleanPlaybackLabRuntime(
     private var lastPlayWhenReady = false
     private var lastLoading = false
 
-    suspend fun start(
+    suspend fun preflight(
         fixture: SelectedDebugFixture,
         viewport: VideoDimensions,
-        engineType: EngineType,
-    ): Boolean = mutex.withLock {
-        if (active != null) return@withLock false
-        val profile = SessionProfile.GUIDE
-        val rawUrl = withContext(Dispatchers.IO) {
-            runCatching {
-                clients.clientFor(fixture.account).resolveStreamUrl(
-                    fixture.account,
-                    kind = "live",
-                    streamId = fixture.streamId,
-                )
-            }.getOrNull()
-        }
-        if (rawUrl.isNullOrBlank()) {
-            status(LabReadinessCode.STREAM_RESOLUTION_FAILED)
-            return@withLock false
-        }
-        val dns = playlistDns.takeIf { it.usesDoh(fixture.account.dnsProvider) }
-            ?.dnsFor(fixture.account.dnsProvider)
-        val mapped = PlaybackRequestMapper().map(
-            NavigationPlaybackInput(
-                url = rawUrl,
-                contentType = ContentType.LIVE,
-                contentKey = SecretValue(fixture.contentId),
-                providerConnectionLimit = 1,
-                dnsPolicy = if (dns == null) DnsPolicy.SYSTEM else DnsPolicy.SHARED_APPLICATION_RESOLVER,
-            ),
+    ): PreparedLabSelection {
+        val usesDoh = fixture.usesDnsProvider(playlistDns::usesDoh)
+        val intent = fixture.playbackIntent(
+            if (usesDoh) DnsPolicy.SHARED_APPLICATION_RESOLVER else DnsPolicy.SYSTEM,
         )
         val android = withContext(Dispatchers.Default) {
             AndroidRuntimeCapabilityCollector(FrameworkAndroidCapabilitySource(context)).refresh(
@@ -481,99 +534,36 @@ private class CleanPlaybackLabRuntime(
                 capturedAtEpochMs = System.currentTimeMillis(),
             )
         }
-        val requested = CleanPlaybackPreferences.recommended().let { defaults ->
-            defaults.copy(
-                playback = defaults.playback.copy(
-                    engine = if (engineType == EngineType.MEDIA3) EnginePreference.MEDIA3 else EnginePreference.LIBMPV,
-                    automaticFallback = false,
-                    // Keep the guide comparison semantically identical. Direct libmpv cannot
-                    // composite subtitles, so neither engine requests them in this adapter lab.
-                    subtitles = defaults.playback.subtitles.copy(enabled = false),
-                ),
-                expert = defaults.expert.copy(
-                    mpvOutput = if (engineType == EngineType.LIBMPV) {
-                        MpvOutputPreference.DIRECT
-                    } else {
-                        defaults.expert.mpvOutput
-                    },
-                ),
-            )
+        val preflights = mutableMapOf<EngineType, LabEnginePreflight>()
+        listOf(EngineType.MEDIA3, EngineType.LIBMPV).forEach { engine ->
+            preflights[engine] = preflightLabEngine(fixture, intent, android, viewport, engine)
         }
-        val resolved = PlaybackPreferenceResolver.resolve(
-            requested,
-            PlaybackPreferenceResolutionContext(
-                request = mapped.request.summary(),
-                evidence = mapped.evidence,
-                capabilities = android.capabilities,
-                eligibleEngines = setOf(engineType),
-            ),
+        return PreparedLabSelection(
+            fixture = fixture,
+            intent = intent,
+            preflights = preflights,
         )
-        val labAndroid = if (engineType == EngineType.LIBMPV) {
-            // The production collector deliberately leaves libmpv surface support unproven. This
-            // debug lab proves only its own SurfaceView host, then acquire() rechecks Surface.valid.
-            android.copy(
-                capabilities = android.capabilities.copy(
-                    surfaces = android.capabilities.surfaces.copy(nativeEmbedSupported = true),
-                ),
-                // The verified Fire override chooses between Media3's SurfaceView/TextureView
-                // guide outputs. It cannot describe libmpv's native-embed output, so the debug
-                // same-profile comparison excludes only that incompatible surface override.
-                appliedQuirks = android.appliedQuirks.filterNot { applied ->
-                    applied.quirk.override is AndroidPlaybackQuirkOverride.ForceEmbeddedSurface
-                },
-            )
-        } else {
-            android
-        }
-        val environment = PlaybackEnvironmentSnapshotMapper.map(
-            PlaybackEnvironmentMappingInput(
-                preferences = resolved,
-                android = labAndroid,
-                profile = profile,
-                previewViewport = viewport,
-                baseEligibleEngines = setOf(engineType),
-                baseAllowedSurfaceModes = if (engineType == EngineType.MEDIA3) {
-                    setOf(SurfaceMode.SURFACE_VIEW, SurfaceMode.TEXTURE_VIEW)
-                } else {
-                    setOf(SurfaceMode.NATIVE_EMBED)
-                },
-                secureOutputRequired = false,
-            ),
-        )
-        val requirements = when (
-            val result = DefaultPlaybackRequirementsResolver().resolve(
-                PlaybackRequirementsInput(
-                    requestSummary = mapped.request.summary(),
-                    evidence = mapped.evidence,
-                    profile = profile,
-                    effectivePreferences = resolved.effective.playback,
-                    environment = environment,
-                ),
-            )
-        ) {
-            is PlaybackResult.Failure -> {
-                smoke(CleanPlaybackSmokeLine.error(result.failure, engineType))
+    }
+
+    suspend fun start(
+        prepared: PreparedLabSelection,
+        engineType: EngineType,
+    ): Boolean = mutex.withLock {
+        if (active != null) return@withLock false
+        val eligible = when (val preflight = prepared.preflight(engineType)) {
+            is LabEnginePreflight.Ineligible -> {
                 status(LabReadinessCode.POLICY_REJECTED)
                 return@withLock false
             }
-            is PlaybackResult.Success -> result.value
+            is LabEnginePreflight.Eligible -> preflight
         }
-        val candidates = if (engineType == EngineType.MEDIA3) {
-            media3LabCandidates(requirements)
+        val graph = eligible.graph
+        val requirements = eligible.requirements
+        val intent = prepared.intent
+        val dns = if (intent.request.dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER) {
+            prepared.fixture.mapDnsProvider(playlistDns::dnsFor)
         } else {
-            mpvLabCandidates(requirements)
-        }
-        val graph = when (
-            val selection = PlaybackPolicy().selectPrimary(
-                PlaybackPolicy.SelectionInput(requirements, candidates),
-            )
-        ) {
-            is PlaybackPolicy.Selection.Rejected -> {
-                smoke(CleanPlaybackSmokeLine.error(selection.failure, engineType))
-                status(LabReadinessCode.POLICY_REJECTED)
-                return@withLock false
-            }
-            is PlaybackPolicy.Selection.Selected -> selection.graph
+            null
         }
 
         val generation = nextGeneration++
@@ -622,8 +612,8 @@ private class CleanPlaybackLabRuntime(
         val started = engine.start(
             PlaybackEngineStart(
                 generation = generation,
-                request = mapped.request,
-                evidence = mapped.evidence,
+                request = intent.requestFor(engineType),
+                evidence = intent.evidence,
                 graph = graph,
                 requirements = requirements,
                 startPaused = false,

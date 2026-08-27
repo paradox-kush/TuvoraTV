@@ -1,8 +1,5 @@
 package com.nuvio.tv.playback.lab
 
-import com.nuvio.tv.core.iptv.XtreamAccount
-import com.nuvio.tv.core.iptv.XtreamItemRegistry
-import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.playback.core.AudioMode
 import com.nuvio.tv.playback.core.AudioOutputPreference
 import com.nuvio.tv.playback.core.DecoderMode
@@ -26,58 +23,11 @@ internal enum class LabReadinessCode {
     NO_RECENT_LIVE_CHANNEL,
     UNSUPPORTED_SOURCE,
     STREAM_RESOLUTION_FAILED,
+    PREFLIGHT_FAILED,
     POLICY_REJECTED,
     START_FAILED,
     SURFACE_RECREATE_FAILED,
     RELEASE_FAILED,
-}
-
-/** Holds secrets in memory but permanently redacts its string representation. */
-internal class SelectedDebugFixture(
-    val account: XtreamAccount,
-    val contentId: String,
-    val streamId: Int,
-) {
-    override fun toString(): String = "SelectedDebugFixture(hasAccount=true, hasContentId=true)"
-}
-
-internal sealed interface DebugFixtureSelection {
-    class Ready(val fixture: SelectedDebugFixture) : DebugFixtureSelection {
-        override fun toString(): String = "DebugFixtureSelection.Ready(fixture=$fixture)"
-    }
-
-    data class Blocked(val code: LabReadinessCode) : DebugFixtureSelection
-}
-
-/** Pure selection over already-loaded debug-profile data. It never falls back to another playlist. */
-internal fun selectDebugFixture(
-    selectedAccountId: String?,
-    accounts: List<XtreamAccount>,
-    recents: List<LiveChannelRef>,
-): DebugFixtureSelection {
-    if (selectedAccountId == null) {
-        return DebugFixtureSelection.Blocked(LabReadinessCode.NO_SELECTED_PLAYLIST)
-    }
-    val account = accounts.firstOrNull { it.id == selectedAccountId }
-        ?: return DebugFixtureSelection.Blocked(LabReadinessCode.SELECTED_PLAYLIST_MISSING)
-    if (!account.enabled) {
-        return DebugFixtureSelection.Blocked(LabReadinessCode.SELECTED_PLAYLIST_DISABLED)
-    }
-    // Stalker URL resolution currently emits provider-identifying diagnostics in its legacy
-    // session. Keep this closed-schema lab fail-closed until that path has a sanitized adapter.
-    if (account.sourceType == XtreamAccount.SOURCE_STALKER) {
-        return DebugFixtureSelection.Blocked(LabReadinessCode.UNSUPPORTED_SOURCE)
-    }
-    val recent = recents.firstOrNull { ref ->
-        XtreamItemRegistry.parseId(ref.id)?.let { parsed ->
-            parsed.accountId == account.id && parsed.kind == "live"
-        } == true
-    } ?: return DebugFixtureSelection.Blocked(LabReadinessCode.NO_RECENT_LIVE_CHANNEL)
-    val parsed = XtreamItemRegistry.parseId(recent.id)
-        ?: return DebugFixtureSelection.Blocked(LabReadinessCode.NO_RECENT_LIVE_CHANNEL)
-    val streamId = parsed.streamId.toIntOrNull()
-        ?: return DebugFixtureSelection.Blocked(LabReadinessCode.NO_RECENT_LIVE_CHANNEL)
-    return DebugFixtureSelection.Ready(SelectedDebugFixture(account, recent.id, streamId))
 }
 
 /** Candidate materialization is mechanical; [com.nuvio.tv.playback.core.PlaybackPolicy] selects. */
