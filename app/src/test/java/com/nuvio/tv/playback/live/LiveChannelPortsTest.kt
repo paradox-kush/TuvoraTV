@@ -52,6 +52,8 @@ class LiveChannelPortsTest {
         val target = target(live, live.contentKey)
         val texts = listOf(
             profile.toString(),
+            LiveInitialRequest(live.contentKey, profile).toString(),
+            LiveInitialResult.Target(target).toString(),
             LiveRelativeRequest(live.contentKey, LiveZapDirection.NEXT, profile).toString(),
             target.toString(),
             LiveRelativeResult.Target(target).toString(),

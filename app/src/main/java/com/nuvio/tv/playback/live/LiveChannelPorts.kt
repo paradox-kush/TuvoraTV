@@ -9,7 +9,29 @@ import java.security.MessageDigest
 
 enum class LiveZapDirection { PREVIOUS, NEXT }
 
+enum class LiveInitialFailure { UNAVAILABLE, PROFILE_CHANGED, INVALID_TARGET }
+
 enum class LiveRelativeFailure { UNAVAILABLE, PROFILE_CHANGED, INVALID_TARGET }
+
+/** Provider-neutral initial live-channel request. Stable identities are never printable. */
+class LiveInitialRequest(
+    val contentId: ProviderSelectionId,
+    val boundProfileId: PlaybackProfileId,
+) {
+    override fun toString(): String = "LiveInitialRequest(profileBound=true)"
+}
+
+sealed interface LiveInitialResult {
+    class Target(val target: LiveChannelTarget) : LiveInitialResult {
+        override fun toString(): String = "LiveInitialResult.Target(target=[REDACTED])"
+    }
+
+    data class Rejected(val reason: LiveInitialFailure) : LiveInitialResult
+}
+
+fun interface LiveChannelSelectionPort {
+    suspend fun select(request: LiveInitialRequest): LiveInitialResult
+}
 
 /** Provider-neutral relative-channel query. Stable identities are deliberately never printable. */
 class LiveRelativeRequest(

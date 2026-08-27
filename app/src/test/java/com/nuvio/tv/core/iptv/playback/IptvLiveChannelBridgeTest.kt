@@ -9,6 +9,9 @@ import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.core.ProviderSourceType
 import com.nuvio.tv.playback.live.LiveChannelTarget
+import com.nuvio.tv.playback.live.LiveInitialFailure
+import com.nuvio.tv.playback.live.LiveInitialRequest
+import com.nuvio.tv.playback.live.LiveInitialResult
 import com.nuvio.tv.playback.live.LiveMediaFingerprint
 import com.nuvio.tv.playback.live.LivePlayedIdentity
 import com.nuvio.tv.playback.live.LiveRelativeFailure
@@ -26,6 +29,116 @@ class IptvLiveChannelBridgeTest {
     private val profile = PlaybackProfileId("2")
     private val currentId = ProviderSelectionId("current-private")
     private val nextId = ProviderSelectionId(XtreamItemRegistry.liveId("account-private", 42))
+
+    @Test
+    fun `initial maps exact profile-bound live selection with display-only presentation`() = runTest {
+        var profileReads = 0
+        val calls = mutableListOf<String>()
+        val subject = bridge(
+            active = {
+                profileReads++
+                2
+            },
+            initial = { contentId, profileId ->
+                calls += "$contentId:$profileId"
+                selected(nextId)
+            },
+            initialPresentation = { contentId ->
+                assertEquals(nextId.value, contentId)
+                presentation(nextId)
+            },
+        )
+
+        val result = subject.select(LiveInitialRequest(nextId, profile)) as LiveInitialResult.Target
+
+        assertEquals(listOf("${nextId.value}:2"), calls)
+        assertEquals(2, profileReads)
+        assertEquals(nextId, result.target.contentId)
+        assertEquals("Next News", result.target.title)
+        assertEquals(null, result.target.playlistVersion)
+        assertEquals(
+            LiveMediaFingerprint.create(result.target.selection, profile),
+            result.target.mediaFingerprint,
+        )
+        assertFalse(result.toString().contains(nextId.value))
+    }
+
+    @Test
+    fun `initial profile fences reject before and after provider reads`() = runTest {
+        var calls = 0
+        val before = bridge(
+            active = { 1 },
+            initial = { _, _ ->
+                calls++
+                selected(nextId)
+            },
+        )
+        assertInitialRejected(
+            before.select(LiveInitialRequest(nextId, profile)),
+            LiveInitialFailure.PROFILE_CHANGED,
+        )
+        assertEquals(0, calls)
+
+        var active = 2
+        val during = bridge(
+            active = { active },
+            initial = { _, _ ->
+                active = 3
+                selected(nextId)
+            },
+        )
+        assertInitialRejected(
+            during.select(LiveInitialRequest(nextId, profile)),
+            LiveInitialFailure.PROFILE_CHANGED,
+        )
+    }
+
+    @Test
+    fun `initial validates profile live identity and exposes only coarse failures`() = runTest {
+        val invalidProfile = PlaybackProfileId("not-a-positive-profile")
+        var calls = 0
+        val subject = bridge(initial = { _, _ ->
+            calls++
+            selected(nextId)
+        })
+        assertInitialRejected(
+            subject.select(LiveInitialRequest(nextId, invalidProfile)),
+            LiveInitialFailure.INVALID_TARGET,
+        )
+        assertEquals(0, calls)
+
+        val wrongId = ProviderSelectionId(XtreamItemRegistry.liveId("account-private", 99))
+        assertInitialRejected(
+            bridge(initial = { _, _ -> selected(wrongId) })
+                .select(LiveInitialRequest(nextId, profile)),
+            LiveInitialFailure.INVALID_TARGET,
+        )
+
+        assertInitialRejected(
+            bridge(initialPresentation = { null })
+                .select(LiveInitialRequest(nextId, profile)),
+            LiveInitialFailure.UNAVAILABLE,
+        )
+
+        assertInitialRejected(
+            bridge(initial = { _, _ -> error("secret provider fault") })
+                .select(LiveInitialRequest(nextId, profile)),
+            LiveInitialFailure.UNAVAILABLE,
+        )
+    }
+
+    @Test
+    fun `initial preserves structured cancellation`() = runTest {
+        val subject = bridge(
+            initial = { _, _ -> throw CancellationException("cancel") },
+        )
+
+        val failure = runCatching {
+            subject.select(LiveInitialRequest(nextId, profile))
+        }.exceptionOrNull()
+
+        assertTrue(failure is CancellationException)
+    }
 
     @Test
     fun `relative maps one exact profile-bound selection and presentation without resolving media`() = runTest {
@@ -179,12 +292,22 @@ class IptvLiveChannelBridgeTest {
 
     private fun bridge(
         active: () -> Int = { 2 },
+        initial: suspend (String, Int) -> IptvIngressSelectionResult = { _, _ ->
+            selected(nextId)
+        },
+        initialPresentation: (String) -> LiveChannelPresentation? = { presentation(nextId) },
         relative: suspend (String, Int, Int) -> IptvIngressSelectionResult = { _, _, _ ->
             selected(nextId)
         },
         history: suspend (Int, String, String, String?) -> Unit = { _, _, _, _ -> },
     ) = IptvLiveChannelBridge(
         activeProfile = ActivePlaybackProfileSource(active),
+        initialSource = InitialLiveSelectionSource(initial),
+        initialPresentation = IptvInitialLivePresentationReader(
+            playlist = InitialLivePlaylistPresentationSource(initialPresentation),
+            registry = InitialLiveRegistryItemSource { null },
+            persisted = ExplicitProfileStoredLiveIdentitySource { _, _ -> null },
+        ),
         relativeSource = RelativeLiveSelectionSource(relative),
         history = ExplicitProfileLiveHistorySink(history),
     )
@@ -228,5 +351,9 @@ class IptvLiveChannelBridgeTest {
 
     private fun assertRejected(result: LiveRelativeResult, expected: LiveRelativeFailure) {
         assertEquals(expected, (result as LiveRelativeResult.Rejected).reason)
+    }
+
+    private fun assertInitialRejected(result: LiveInitialResult, expected: LiveInitialFailure) {
+        assertEquals(expected, (result as LiveInitialResult.Rejected).reason)
     }
 }

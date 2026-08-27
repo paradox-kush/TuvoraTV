@@ -6,6 +6,7 @@ import com.nuvio.tv.core.iptv.dns.PlaylistDns
 import com.nuvio.tv.playback.core.ProviderPlaybackResolverFactory
 import com.nuvio.tv.playback.media3.ApplicationDnsResolver
 import com.nuvio.tv.playback.live.LiveChannelNavigationPort
+import com.nuvio.tv.playback.live.LiveChannelSelectionPort
 import com.nuvio.tv.playback.live.LivePlayedHistoryPort
 import com.nuvio.tv.playback.wiring.ActiveProfileLegacyPlaybackPreferenceSnapshotSource
 import com.nuvio.tv.playback.wiring.LegacyPlaybackPreferenceSnapshotSource
@@ -31,6 +32,12 @@ abstract class CleanPlaybackProviderModule {
     abstract fun bindLiveChannelNavigationPort(
         implementation: IptvLiveChannelBridge,
     ): LiveChannelNavigationPort
+
+    @Binds
+    @Singleton
+    abstract fun bindLiveChannelSelectionPort(
+        implementation: IptvLiveChannelBridge,
+    ): LiveChannelSelectionPort
 
     @Binds
     @Singleton

@@ -4,7 +4,11 @@ import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.XtreamLiveStore
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.live.LiveChannelNavigationPort
+import com.nuvio.tv.playback.live.LiveChannelSelectionPort
 import com.nuvio.tv.playback.live.LiveChannelTarget
+import com.nuvio.tv.playback.live.LiveInitialFailure
+import com.nuvio.tv.playback.live.LiveInitialRequest
+import com.nuvio.tv.playback.live.LiveInitialResult
 import com.nuvio.tv.playback.live.LiveMediaFingerprint
 import com.nuvio.tv.playback.live.LivePlayedHistoryPort
 import com.nuvio.tv.playback.live.LivePlayedIdentity
@@ -18,6 +22,10 @@ import kotlinx.coroutines.CancellationException
 
 internal fun interface ActivePlaybackProfileSource {
     fun currentProfileId(): Int
+}
+
+internal fun interface InitialLiveSelectionSource {
+    suspend fun select(contentId: String, profileId: Int): IptvIngressSelectionResult
 }
 
 internal fun interface RelativeLiveSelectionSource {
@@ -40,28 +48,84 @@ internal fun interface ExplicitProfileLiveHistorySink {
 /**
  * URL-blind TV bridge from provider storage into the clean live-player ports.
  *
- * The profile is fenced before and after a relative lookup. Account reads and history writes use
- * the captured numeric profile directly; neither operation follows the mutable active-profile
- * DataStore. Relative lookup only selects stable identity and therefore performs no link minting,
- * media probe, or provider connection.
+ * The profile is fenced before and after initial and relative lookups. Account reads and history
+ * writes use the captured numeric profile directly; neither operation follows the mutable
+ * active-profile DataStore. Channel lookup only selects stable identity and therefore performs no
+ * link minting, media probe, or provider connection.
  */
 @Singleton
 class IptvLiveChannelBridge internal constructor(
     private val activeProfile: ActivePlaybackProfileSource,
+    private val initialSource: InitialLiveSelectionSource,
+    private val initialPresentation: IptvInitialLivePresentationReader,
     private val relativeSource: RelativeLiveSelectionSource,
     private val history: ExplicitProfileLiveHistorySink,
-) : LiveChannelNavigationPort, LivePlayedHistoryPort {
+) : LiveChannelSelectionPort, LiveChannelNavigationPort, LivePlayedHistoryPort {
 
     @Inject
     constructor(
         profileManager: ProfileManager,
         ingress: IptvIngressSelectionFactory,
+        initialPresentation: IptvInitialLivePresentationReader,
         liveStore: XtreamLiveStore,
     ) : this(
         activeProfile = ActivePlaybackProfileSource { profileManager.activeProfileId.value },
+        initialSource = InitialLiveSelectionSource { contentId, profileId ->
+            ingress.createForProfile(
+                input = IptvIngressSelectionInput(
+                    contentId = contentId,
+                    contentType = ContentType.LIVE,
+                ),
+                profileId = profileId,
+            )
+        },
+        initialPresentation = initialPresentation,
         relativeSource = RelativeLiveSelectionSource(ingress::relativeLiveForProfile),
         history = ExplicitProfileLiveHistorySink(liveStore::recordPlayedIdentityForProfile),
     )
+
+    override suspend fun select(request: LiveInitialRequest): LiveInitialResult = try {
+        selectChecked(request)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        initialRejected(LiveInitialFailure.UNAVAILABLE)
+    }
+
+    private suspend fun selectChecked(request: LiveInitialRequest): LiveInitialResult {
+        val profileId = request.boundProfileId.value.toIntOrNull()?.takeIf { it > 0 }
+            ?: return initialRejected(LiveInitialFailure.INVALID_TARGET)
+        if (activeProfile.currentProfileId() != profileId) {
+            return initialRejected(LiveInitialFailure.PROFILE_CHANGED)
+        }
+
+        val providerResult = initialSource.select(request.contentId.value, profileId)
+        val presentation = initialPresentation.read(profileId, request.contentId.value)
+
+        if (activeProfile.currentProfileId() != profileId) {
+            return initialRejected(LiveInitialFailure.PROFILE_CHANGED)
+        }
+        val selected = providerResult as? IptvIngressSelectionResult.Selected
+            ?: return initialRejected(LiveInitialFailure.UNAVAILABLE)
+        if (
+            selected.selection.contentType != ContentType.LIVE ||
+            selected.selection.contentKey != request.contentId
+        ) {
+            return initialRejected(LiveInitialFailure.INVALID_TARGET)
+        }
+        presentation ?: return initialRejected(LiveInitialFailure.UNAVAILABLE)
+
+        return LiveInitialResult.Target(
+            LiveChannelTarget.sanitized(
+                selection = selected.selection,
+                contentId = request.contentId,
+                title = presentation.title,
+                logo = presentation.logo,
+                playlistVersion = null,
+                boundProfileId = request.boundProfileId,
+            ),
+        )
+    }
 
     override suspend fun relative(request: LiveRelativeRequest): LiveRelativeResult = try {
         relativeChecked(request)
@@ -151,4 +215,7 @@ class IptvLiveChannelBridge internal constructor(
 
     private fun rejected(reason: LiveRelativeFailure): LiveRelativeResult =
         LiveRelativeResult.Rejected(reason)
+
+    private fun initialRejected(reason: LiveInitialFailure): LiveInitialResult =
+        LiveInitialResult.Rejected(reason)
 }
