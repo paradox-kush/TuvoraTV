@@ -223,7 +223,9 @@ class ArchitectureTest {
             .flatMap { (path, text) ->
                 val source = stripComments(text)
                 buildList {
-                    if (!isCleanPlaybackPackage(path, "media3") && media3Ref.containsMatchIn(source)) {
+                    val ownsMedia3Boundary = isCleanPlaybackPackage(path, "media3") ||
+                        isCleanPlaybackPackage(path, "mediasession")
+                    if (!ownsMedia3Boundary && media3Ref.containsMatchIn(source)) {
                         add(rel(path) + " -> Media3 API")
                     }
                     if (!isCleanPlaybackPackage(path, "mpv") && libmpvRef.containsMatchIn(source)) {
@@ -233,7 +235,28 @@ class ArchitectureTest {
             }
             .sorted()
         assertTrue(
-            "Only playback.media3 may use Media3 APIs and only playback.mpv may use libmpv APIs:\n" +
+            "Only playback.media3/mediasession may use Media3 APIs and only playback.mpv may use libmpv APIs:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    /** MediaSession is a system-control projection and must remain independent of both engines. */
+    @Test
+    fun `clean MediaSession boundary never references a playback engine or backend`() {
+        assertCleanPlaybackFilesCollected()
+        val forbidden = Regex(
+            """\b(?:ExoPlayer|AndroidMedia3Backend|Media3Engine|AndroidMpvBackend|MpvEngine|""" +
+                """MpvSurfaceHost|Media3SurfaceHost|PlaybackEngine)\b|""" +
+                """\bcom\.nuvio\.tv\.playback\.(?:media3|mpv)\.""",
+        )
+        val violations = files
+            .filter { (path, _) -> isCleanPlaybackPackage(path, "mediasession") }
+            .filter { (_, text) -> forbidden.containsMatchIn(stripComments(text)) }
+            .map { (path, _) -> rel(path) }
+            .sorted()
+        assertTrue(
+            "playback.mediasession must project PlaybackSessionController only, never an engine/backend:\n" +
                 violations.joinToString("\n"),
             violations.isEmpty(),
         )
