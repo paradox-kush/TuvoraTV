@@ -2,15 +2,16 @@
 
 **Status:** debug Media3/libmpv lab wired; it does not auto-launch or auto-open a stream.
 
-`scripts/playback_device_smoke.py` is the sequential ADB evidence harness for the authorized ONN
-(`192.168.1.236:5555`) and Fire TV (`192.168.1.225:5555`) devices. It protects one-connection IPTV
-accounts by refusing to begin while the debug app or any package-suffixed service process runs on
-either device, refusing an ONN/Fire switch while a run is active, and making every switch pass
-through pause, adapter release, force-stop, and confirmed process absence.
+`scripts/playback_device_smoke.py` is currently scoped only to the authorized ONN device
+(`192.168.1.236:5555`). Fire TV is off, deferred, and untested in this certification pass. The
+harness never queries or addresses it. The harness protects one-connection IPTV accounts by
+refusing a second run while a lease is active, refusing to begin while the debug app or any
+package-suffixed service process runs on ONN, and making every run pass through pause, adapter
+release, force-stop, and confirmed process absence.
 
 The harness never accepts a URL, header, cookie, username, password, playlist identifier, channel
-name, or provider name. `--fixture-id` is a local sanitized alias only. Assign a distinct provider
-fixture/account to ONN and Fire outside this tool; never place that mapping in a report or command.
+name, or provider name. `--fixture-id` is a local sanitized alias only. Assign the provider fixture
+outside this tool; never place that mapping in a report or command.
 
 ## Adapter instrumentation contract
 
@@ -44,12 +45,12 @@ The debug lab must handle the package-scoped broadcast
 session release barrier. It emits `RELEASE` only after both provider and surface ownership are
 affirmatively ended, echoing the broadcast's `smoke_nonce` extra as `release_nonce`. The harness
 accepts only that fresh correlated event, so an earlier successful release cannot satisfy a later
-run. It force-stops afterward even when release succeeds: adapter proof and device-switch safety are
+run. It force-stops afterward even when release succeeds: adapter proof and next-run safety are
 separate requirements.
 
-## Sequential procedure (ONN first, then Fire TV)
+## Sequential ONN procedure
 
-Use separate sanitized fixture aliases for the devices. Do not pass a provider URL to the shell.
+Use a sanitized fixture alias. Do not pass a provider URL to the shell.
 
 ```bash
 python3 scripts/playback_device_smoke.py status
@@ -81,23 +82,10 @@ python3 scripts/playback_device_smoke.py capture --device onn --suffix surface-r
 python3 scripts/playback_device_smoke.py quiesce --device onn --require-release-proof
 ```
 
-Only after both ONN engine runs quiesce successfully and status reports both debug processes absent
-may Fire TV begin. Repeat the same release-separated order, never both engines in one run:
-
-```bash
-python3 scripts/playback_device_smoke.py begin \
-  --device fire --run-id wp4-media3-hls-ts --fixture-id fire-hls-ts-b
-# Press Start Media3 for Fire TV's separately assigned fixture.
-python3 scripts/playback_device_smoke.py capture --device fire --suffix first-frame
-python3 scripts/playback_device_smoke.py capture --device fire --suffix surface-recreated
-python3 scripts/playback_device_smoke.py quiesce --device fire --require-release-proof
-python3 scripts/playback_device_smoke.py begin \
-  --device fire --run-id wp5-libmpv-hls-ts --fixture-id fire-hls-ts-b
-# Press Start libmpv only after the Media3 release proof.
-python3 scripts/playback_device_smoke.py capture --device fire --suffix first-frame
-python3 scripts/playback_device_smoke.py capture --device fire --suffix surface-recreated
-python3 scripts/playback_device_smoke.py quiesce --device fire --require-release-proof
-```
+Begin each later ONN run only after the preceding run has produced release proof and status confirms
+the ONN debug process is absent. The command-line device choice intentionally contains only `onn`;
+Fire TV must be deliberately restored to the certification scope and tests before the harness can
+address it.
 
 Ephemeral state and sanitized JSON reports default to
 `/tmp/nuvio-playback-device-smoke`. A failed `--require-release-proof` still force-stops and confirms
@@ -134,8 +122,7 @@ adb -s 192.168.1.236:5555 shell am start \
   -n com.tuvora.tv.debug/com.nuvio.tv.playback.lab.CleanMedia3PlaybackLabActivity
 ```
 
-For the Fire pass, use `192.168.1.225:5555` only after both ONN runs quiesce. The **Recreate
-surface** action detaches the selected clean Media3 or libmpv surface, rebuilds the same
+The **Recreate surface** action detaches the selected clean Media3 or libmpv surface, rebuilds the same
 graph-selected View, and reattaches it to the existing backend on the same generation. It does not
 resolve the URL again, construct a second backend, or restart the provider request. Leaving the lab
 foreground also starts the pause/release barrier; harness `quiesce` remains mandatory before
@@ -146,9 +133,8 @@ switching engine or device.
 For every Media3 and libmpv fixture, record the same displayed fingerprint and preflight reason.
 The report must contain normalized state plus the selected renderer,
 decoder, surface type/validity/size, first-frame/video dimensions, and any stable error code/domain.
-The release report must prove `provider_owned=false` and `surface_owned=false`. Fire Media3 guide
-playback must show the exact policy-selected TextureView path; libmpv must show its independently
-selected `MPV_DIRECT` path, and ONN must show each engine's independently selected path.
+The release report must prove `provider_owned=false` and `surface_owned=false`. ONN must show each
+engine's independently selected surface path.
 No report may contain a network location, request value, account/provider/channel identity, raw
 exception, or device address.
 

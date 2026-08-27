@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sequential, secret-safe ADB harness for clean-player adapter smoke runs.
+"""Sequential, secret-safe ONN ADB harness for clean-player adapter smoke runs.
 
 This tool deliberately cannot start playback or accept a stream URL. An operator opens a named
 fixture in the debug playback lab only after ``begin`` has established exclusive device ownership.
@@ -44,7 +44,6 @@ class Device:
 
 DEVICES = {
     "onn": Device("onn", "192.168.1.236:5555"),
-    "fire": Device("fire", "192.168.1.225:5555"),
 }
 
 
@@ -234,11 +233,16 @@ class Harness:
         temporary.replace(path)
 
     def _require_connected_devices(self) -> None:
+        # DEVICES is the explicit certification scope, not a discovery list. Keep every ADB check
+        # inside it so an offline/deferred television cannot block or be touched by an ONN run.
         missing = [device.alias for device in DEVICES.values() if not self.adb.connected(device)]
         if missing:
             raise HarnessError(f"required device not connected: {', '.join(missing)}")
 
     def _assert_all_processes_absent(self) -> None:
+        # The one-provider invariant applies to every device in the selected certification scope.
+        # Today that scope is ONN only; a second device must be deliberately added back to DEVICES
+        # (and its tests) before this harness can address it.
         running = [device.alias for device in DEVICES.values() if self.adb.pid(device) is not None]
         if running:
             raise HarnessError(

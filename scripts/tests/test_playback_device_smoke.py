@@ -20,7 +20,6 @@ class FakeAdbCommand:
     def __init__(self) -> None:
         self.running: dict[str, dict[str, int]] = {
             "192.168.1.236:5555": {},
-            "192.168.1.225:5555": {},
         }
         self.logs = {serial: "" for serial in self.running}
         self.release_after_broadcast = {serial: False for serial in self.running}
@@ -122,20 +121,28 @@ class HarnessTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_begin_refuses_when_either_device_has_debug_process(self) -> None:
-        self.fake.running[DEVICES["fire"].serial] = {"com.tuvora.tv.debug": 42}
-        with self.assertRaisesRegex(HarnessError, "fire"):
+    def test_begin_and_status_address_only_onn(self) -> None:
+        self.harness.begin("onn", "wp4-media3", "hls-ts-a")
+        self.harness.status()
+
+        addressed_serials = {command[2] for command in self.fake.commands}
+        self.assertEqual(addressed_serials, {DEVICES["onn"].serial})
+        self.assertEqual(set(self.harness.status()["devices"]), {"onn"})
+
+    def test_begin_refuses_when_onn_has_debug_process(self) -> None:
+        self.fake.running[DEVICES["onn"].serial] = {"com.tuvora.tv.debug": 42}
+        with self.assertRaisesRegex(HarnessError, "onn"):
             self.harness.begin("onn", "wp4-media3", "hls-ts-a")
 
     def test_begin_refuses_package_suffixed_service_process(self) -> None:
-        self.fake.running[DEVICES["fire"].serial] = {"com.tuvora.tv.debug:playback": 43}
-        with self.assertRaisesRegex(HarnessError, "fire"):
+        self.fake.running[DEVICES["onn"].serial] = {"com.tuvora.tv.debug:playback": 43}
+        with self.assertRaisesRegex(HarnessError, "onn"):
             self.harness.begin("onn", "wp4-media3", "hls-ts-a")
 
-    def test_active_run_blocks_device_switch(self) -> None:
+    def test_active_run_blocks_a_second_onn_lease(self) -> None:
         self.harness.begin("onn", "wp4-media3", "hls-ts-a")
         with self.assertRaisesRegex(HarnessError, "quiesce"):
-            self.harness.begin("fire", "wp4-media3", "hls-ts-b")
+            self.harness.begin("onn", "wp4-libmpv", "hls-ts-b")
 
     def test_capture_persists_only_sanitized_facts(self) -> None:
         self.harness.begin("onn", "wp4-media3", "hls-ts-a")
@@ -153,7 +160,7 @@ class HarnessTests(unittest.TestCase):
         self.assertNotIn("provider-secret-layer", serialized)
         self.assertNotIn(DEVICES["onn"].serial, serialized)
 
-    def test_quiesce_uses_package_scoped_release_force_stops_and_allows_next_device(self) -> None:
+    def test_quiesce_uses_package_scoped_release_force_stops_and_allows_next_onn_run(self) -> None:
         self.harness.begin("onn", "wp4-media3", "hls-ts-a")
         self.fake.running[DEVICES["onn"].serial] = {"com.tuvora.tv.debug": 12}
         self.fake.release_after_broadcast[DEVICES["onn"].serial] = True
@@ -165,7 +172,7 @@ class HarnessTests(unittest.TestCase):
         self.assertIn(["shell", "am", "force-stop", "com.tuvora.tv.debug"], flattened)
         release_report = json.loads(Path(result["release_report"]).read_text())
         self.assertTrue(release_report["release_proven"])
-        self.harness.begin("fire", "wp4-media3", "hls-ts-b")
+        self.harness.begin("onn", "wp4-libmpv", "hls-ts-b")
 
     def test_quiesce_does_not_accept_a_stale_release_event(self) -> None:
         self.harness.begin("onn", "wp4-media3", "hls-ts-a")
