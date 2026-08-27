@@ -3,7 +3,6 @@ package com.nuvio.tv.playback.host
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.os.Looper
-import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackLifecyclePort
 import com.nuvio.tv.playback.core.PlaybackOutputController
@@ -49,7 +48,6 @@ internal fun interface CleanMediaSessionOwnerFactory {
  * One TV live-player host: one child scope, one controller, one surface coordinator, and one
  * release authority. It is intentionally not referenced by production navigation yet.
  */
-@OptIn(UnstableApi::class)
 internal class CleanLivePlaybackHost private constructor(
     private val hostJob: Job,
     private val controller: PlaybackSessionController,

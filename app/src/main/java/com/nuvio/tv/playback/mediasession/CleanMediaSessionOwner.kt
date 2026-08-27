@@ -20,7 +20,6 @@ import kotlinx.coroutines.sync.withLock
  * V1 is a live play/pause/stop foundation. It deliberately advertises no seeking, queue editing,
  * playback speed, volume, video Surface, VOD, or catch-up transport contract.
  */
-@UnstableApi
 class CleanMediaSessionOwner private constructor(
     private val applicationLooper: Looper,
     private val controller: PlaybackSessionController,
@@ -81,6 +80,7 @@ class CleanMediaSessionOwner private constructor(
         private val nextSessionId = AtomicLong(1)
 
         /** Must be called on [applicationLooper], matching Media3's single-application-thread API. */
+        @OptIn(UnstableApi::class)
         fun create(
             context: Context,
             applicationLooper: Looper,
