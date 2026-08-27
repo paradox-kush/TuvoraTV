@@ -11,12 +11,11 @@ import com.nuvio.tv.playback.core.ContainerType
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.DeliveryType
 import com.nuvio.tv.playback.core.EngineType
-import com.nuvio.tv.playback.core.FailureCode
-import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.GraphOutputProfile
 import com.nuvio.tv.playback.core.PlaybackClock
 import com.nuvio.tv.playback.core.PlaybackCompatibilityHistory
 import com.nuvio.tv.playback.core.VideoCodec
+import com.nuvio.tv.playback.core.isLearnableCompatibilityFailure
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Base64
@@ -114,7 +113,8 @@ class PersistentPlaybackCompatibilityHistory(
         if (record.outcome == CompatibilityOutcome.SUCCESS) {
             return record.failureDomain == null && record.failureCode == null
         }
-        return record.deterministicFailure() && record.hasLearnableFailureClassification()
+        return record.deterministicFailure() &&
+            isLearnableCompatibilityFailure(record.failureDomain, record.failureCode)
     }
 
     private fun matchesCurrentRuntime(record: CompatibilityRecord): Boolean =
@@ -124,35 +124,6 @@ class PersistentPlaybackCompatibilityHistory(
 
     private fun CompatibilityRecord.deterministicFailure(): Boolean =
         outcome == CompatibilityOutcome.DETERMINISTIC_FATAL && failureDomain != null && failureCode != null
-
-    /**
-     * V1 learns only exact engine/parser/decoder/render compatibility failures. A blacklist is not
-     * sufficient here: new transport, account, DRM, resource, or unknown codes must stay inert by
-     * default until they are deliberately classified.
-     */
-    private fun CompatibilityRecord.hasLearnableFailureClassification(): Boolean = when (failureDomain) {
-        FailureDomain.MANIFEST -> failureCode == FailureCode.MANIFEST_INVALID
-        FailureDomain.DEMUX -> failureCode == FailureCode.DEMUX_FAILED
-        FailureDomain.VIDEO_DECODER -> failureCode in setOf(
-            FailureCode.VIDEO_DECODER_UNAVAILABLE,
-            FailureCode.VIDEO_DECODER_FAILED,
-        )
-        FailureDomain.VIDEO_RENDERER_SURFACE -> failureCode in setOf(
-            FailureCode.VIDEO_RENDERER_FAILED,
-            FailureCode.SURFACE_LOST,
-        )
-        // The stable compatibility runtime intentionally excludes the dynamic audio route. Keep
-        // audio-output failures inert until the history key can identify the exact routed device.
-        FailureDomain.AUDIO,
-        FailureDomain.NETWORK,
-        FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
-        FailureDomain.TLS,
-        FailureDomain.DRM,
-        FailureDomain.DEVICE_RESOURCE,
-        FailureDomain.UNKNOWN,
-        null,
-        -> false
-    }
 
     private fun encode(records: List<StoredRecord>): String = buildString {
         appendLine(FORMAT_VERSION)

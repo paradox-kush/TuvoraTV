@@ -6,6 +6,23 @@ WP6/WP7 — deferred provider integration, phase recovery, settings, and sequent
 
 ## Changes made
 
+### Compatibility outcome recording
+
+- Added an optional session-owned recording environment and hashed scope seam. Scope keys are
+  created by application/provider wiring; `PlaybackSession` never hashes or persists raw request,
+  account, provider, or content secrets.
+- Records one success per generation and exact graph only after a rendered video frame, or after
+  `TracksAvailable` proves audio-only and `FirstAudio` has rendered. Decoder stable identity is
+  included only when the adapter reported it for the current attempt.
+- Records a later deterministic manifest/demux/decoder/render fatal for the exact graph so the
+  persistent store can replace prior success. One closed allowlist is shared by session and store;
+  network, DNS, authorization/provider-limit, TLS, DRM, resource, audio-route, and unknown outcomes
+  remain inert. The libmpv `SYSTEM_DNS_FALLBACK` preflight reason is not a playback compatibility
+  outcome and never enters this recorder.
+- Stale generations, released lifecycle state, missing hashed scope, missing recording environment,
+  and unknown engine versions are no-ops. Storage exceptions emit only a secret-safe diagnostic and
+  never change playback state or recovery.
+
 ### WP4
 
 - Extended the pinned Media3 fork at `891107e9f20eadef302920409830419659edb9b8` with

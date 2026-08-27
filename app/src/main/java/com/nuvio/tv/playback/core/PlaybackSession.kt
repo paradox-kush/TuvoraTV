@@ -39,6 +39,7 @@ class PlaybackSession(
     private val diagnostics: PlaybackDiagnostics,
     private val lifecycle: PlaybackLifecyclePort? = null,
     private val providerPlaybackResolver: ProviderPlaybackResolver? = null,
+    private val compatibilityRecording: CompatibilityRecordingEnvironment? = null,
     private val policy: PlaybackPolicy = PlaybackPolicy(),
     private val releaseTimeoutMs: Long = DEFAULT_RELEASE_TIMEOUT_MS,
 ) {
@@ -78,6 +79,8 @@ class PlaybackSession(
     private var engineAttempt: Long = 0
     private var engineAttemptGeneration: Long? = null
     private var runtimeMetricsUnavailableAttempt: Long? = null
+    private val decoderStableIds = mutableMapOf<Pair<Long, EngineType>, String>()
+    private val recordedCompatibilityOutcomes = mutableSetOf<CompatibilityRecordingKey>()
 
     private val actorJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         for (message in lane) process(message)
@@ -181,7 +184,9 @@ class PlaybackSession(
                 PlaybackState.RECOVERING_IN_PLACE,
                 PlaybackState.LIVE_RECONNECTING,
             )
-        val transition = PlaybackStateMachine.reduce(machine, input)
+        val before = machine
+        observeCompatibilityFact(before, input)
+        val transition = PlaybackStateMachine.reduce(before, input)
         if (engineStartAccepted) {
             check(engineAttempt < Long.MAX_VALUE) { "Playback engine attempt exhausted" }
             engineAttempt++
@@ -192,7 +197,116 @@ class PlaybackSession(
         _snapshot.value = transition.state.snapshot
         _surfaceAvailable.value = transition.state.surfaceAvailable
         reconcileWatchdog()
+        recordCompatibilityOutcome(before, transition.state, input)
         transition.actions.forEach { execute(it) }
+    }
+
+    private fun observeCompatibilityFact(
+        before: PlaybackMachineState,
+        input: PlaybackReducerInput,
+    ) {
+        val event = (input as? PlaybackReducerInput.Event)?.value ?: return
+        if (event.generation != before.snapshot.generation) return
+        val graph = before.snapshot.graph ?: return
+        val key = event.generation to graph.engine
+        when (event) {
+            is PlaybackEvent.EngineStarting -> decoderStableIds.remove(key)
+            is PlaybackEvent.VideoDecoderInitialized -> decoderStableIds[key] = event.decoderName
+            else -> Unit
+        }
+    }
+
+    private suspend fun recordCompatibilityOutcome(
+        before: PlaybackMachineState,
+        after: PlaybackMachineState,
+        input: PlaybackReducerInput,
+    ) {
+        val environment = compatibilityRecording ?: return
+        val event = (input as? PlaybackReducerInput.Event)?.value ?: return
+        val generation = event.generation
+        if (generation != before.snapshot.generation || generation != after.snapshot.generation) return
+        val resolvedRequest = resolved.takeIf { it?.generation == generation }?.value ?: return
+        val scopeKey = resolvedRequest.compatibilityScopeKey ?: return
+        val graph = before.snapshot.graph ?: return
+        val outcome = compatibilityOutcome(before, after, event) ?: return
+        val failure = (event as? PlaybackEvent.Failed)?.failure
+        val graphFingerprint = CompatibilityGraphFingerprint(
+            engine = graph.engine,
+            outputProfile = graph.outputProfile,
+            decoderMode = graph.decoderMode,
+            audioMode = graph.audioMode,
+            surfaceMode = graph.surfaceMode,
+            secureOutput = graph.secureOutput,
+            decoderStableId = decoderStableIds[generation to graph.engine],
+        )
+        val engineVersion = environment.engineVersions[graph.engine] ?: return
+        val key = CompatibilityRecordingKey(generation, graphFingerprint, outcome)
+        if (!recordedCompatibilityOutcomes.add(key)) return
+        val now = clock.nowEpochMs()
+        if (now < 0 || now == Long.MAX_VALUE) return
+        val ttl = when (outcome) {
+            CompatibilityOutcome.SUCCESS -> environment.successTtlMs
+            CompatibilityOutcome.DETERMINISTIC_FATAL -> environment.fatalTtlMs
+        }
+        val expiresAt = if (ttl > Long.MAX_VALUE - now) Long.MAX_VALUE else now + ttl
+        if (expiresAt <= now) return
+        try {
+            environment.history.record(
+                CompatibilityRecord(
+                    scopeKey = scopeKey,
+                    graph = graphFingerprint,
+                    runtime = environment.runtime,
+                    outcome = outcome,
+                    failureDomain = failure?.domain,
+                    failureCode = failure?.code,
+                    appVersion = environment.appVersion,
+                    engineVersion = engineVersion,
+                    recordedAtEpochMs = now,
+                    expiresAtEpochMs = expiresAt,
+                ),
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            diagnostics.record(
+                PlaybackDiagnosticEvent(
+                    generation,
+                    PlaybackDiagnosticCode.COMPATIBILITY_HISTORY_RECORD_FAILED,
+                    engine = graph.engine,
+                ),
+            )
+        }
+    }
+
+    private fun compatibilityOutcome(
+        before: PlaybackMachineState,
+        after: PlaybackMachineState,
+        event: PlaybackEvent,
+    ): CompatibilityOutcome? {
+        val provenVideo = event is PlaybackEvent.FirstVideoFrame &&
+            !before.snapshot.progress.renderedVideoFrame &&
+            after.snapshot.progress.renderedVideoFrame
+        val provenAudioOnly = event is PlaybackEvent.FirstAudio || event is PlaybackEvent.TracksAvailable
+        val acceptedAudioOnly = provenAudioOnly &&
+            before.snapshot.state != PlaybackState.PLAYING &&
+            after.snapshot.state == PlaybackState.PLAYING &&
+            after.snapshot.progress.discoveredTracks &&
+            after.snapshot.progress.renderedAudio &&
+            !after.snapshot.tracks.hasVideoTrack &&
+            after.snapshot.tracks.audioTrackCount > 0
+        if (provenVideo || acceptedAudioOnly) return CompatibilityOutcome.SUCCESS
+
+        val failure = (event as? PlaybackEvent.Failed)?.failure ?: return null
+        val acceptedFailure = before.snapshot.state in setOf(
+            PlaybackState.ATTACHING_SURFACE,
+            PlaybackState.STARTING_PRIMARY,
+            PlaybackState.PLAYING,
+            PlaybackState.DEGRADED,
+        ) && after.snapshot.failure == failure
+        return CompatibilityOutcome.DETERMINISTIC_FATAL.takeIf {
+            acceptedFailure && failure.deterministic &&
+                isLearnableCompatibilityFailure(failure.domain, failure.code)
+        }
     }
 
     private suspend fun execute(action: PlaybackAction) {
@@ -1323,6 +1437,7 @@ class PlaybackSession(
                 request = request,
                 summary = request.summary(),
                 evidence = evidence,
+                compatibilityScopeKey = resolvedRequest.compatibilityScopeKey,
             ),
         )
     }
@@ -1465,6 +1580,12 @@ class PlaybackSession(
         val generation: Long,
         val attempt: Long,
         val phase: PlaybackPolicy.WatchdogPhase,
+    )
+
+    private data class CompatibilityRecordingKey(
+        val generation: Long,
+        val graph: CompatibilityGraphFingerprint,
+        val outcome: CompatibilityOutcome,
     )
 
     private sealed interface LaneMessage {

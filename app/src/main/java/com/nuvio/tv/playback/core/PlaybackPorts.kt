@@ -12,6 +12,8 @@ data class ResolvedPlaybackRequest(
     val request: PlaybackRequest,
     val summary: RequestSummary,
     val evidence: StreamEvidence,
+    /** Hashed by application/provider wiring; core never derives it from request secrets. */
+    val compatibilityScopeKey: CompatibilityScopeKey? = null,
 )
 
 fun interface PlaybackRequestResolver {
@@ -138,6 +140,25 @@ interface PlaybackCompatibilityHistory {
     suspend fun record(value: CompatibilityRecord)
 }
 
+/** Stable recording inputs owned by application composition, not an engine or playback screen. */
+data class CompatibilityRecordingEnvironment(
+    val history: PlaybackCompatibilityHistory,
+    val runtime: CompatibilityRuntimeFingerprint,
+    val appVersion: String,
+    val engineVersions: Map<EngineType, String>,
+    val successTtlMs: Long,
+    val fatalTtlMs: Long,
+) {
+    init {
+        require(appVersion.isNotBlank()) { "Compatibility app version must not be blank" }
+        require(engineVersions.values.all(String::isNotBlank)) {
+            "Compatibility engine versions must not be blank"
+        }
+        require(successTtlMs > 0) { "Compatibility success TTL must be positive" }
+        require(fatalTtlMs > 0) { "Compatibility fatal TTL must be positive" }
+    }
+}
+
 interface PlaybackClock {
     fun nowEpochMs(): Long
     suspend fun delayMs(durationMs: Long)
@@ -154,6 +175,7 @@ enum class PlaybackDiagnosticCode {
     LIVE_RECONNECT_SUCCEEDED,
     REQUIREMENTS_CHANGE_REJECTED,
     WATCHDOG_EXPIRED,
+    COMPATIBILITY_HISTORY_RECORD_FAILED,
 }
 
 data class PlaybackDiagnosticEvent(

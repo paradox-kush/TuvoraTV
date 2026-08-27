@@ -940,3 +940,27 @@ data class CompatibilityRecord(
 }
 
 enum class CompatibilityOutcome { SUCCESS, DETERMINISTIC_FATAL }
+
+/** Closed compatibility-learning allowlist shared by the session hook and persistent store. */
+fun isLearnableCompatibilityFailure(domain: FailureDomain?, code: FailureCode?): Boolean =
+    when (domain) {
+        FailureDomain.MANIFEST -> code == FailureCode.MANIFEST_INVALID
+        FailureDomain.DEMUX -> code == FailureCode.DEMUX_FAILED
+        FailureDomain.VIDEO_DECODER -> code in setOf(
+            FailureCode.VIDEO_DECODER_UNAVAILABLE,
+            FailureCode.VIDEO_DECODER_FAILED,
+        )
+        FailureDomain.VIDEO_RENDERER_SURFACE -> code in setOf(
+            FailureCode.VIDEO_RENDERER_FAILED,
+            FailureCode.SURFACE_LOST,
+        )
+        FailureDomain.AUDIO,
+        FailureDomain.NETWORK,
+        FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
+        FailureDomain.TLS,
+        FailureDomain.DRM,
+        FailureDomain.DEVICE_RESOURCE,
+        FailureDomain.UNKNOWN,
+        null,
+        -> false
+    }

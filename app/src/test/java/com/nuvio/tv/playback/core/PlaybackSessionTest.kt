@@ -19,6 +19,249 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackSessionTest {
+
+    @Test
+    fun `video success records exact graph once with decoder identity and explicit expiry`() = runTest {
+        val history = FakeCompatibilityHistory()
+        val engine = FakeEngine()
+        val scope = CompatibilityScopeKey("hashed-scope")
+        val session = session(
+            engine = engine,
+            requestResolver = scopedResolver(scope),
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.VideoDecoderInitialized(1, "c2.android.avc.decoder"))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        val record = history.values.single()
+        assertEquals(scope, record.scopeKey)
+        assertEquals(CompatibilityOutcome.SUCCESS, record.outcome)
+        assertEquals("c2.android.avc.decoder", record.graph.decoderStableId)
+        assertEquals(10_000L, record.expiresAtEpochMs)
+        close(session)
+    }
+
+    @Test
+    fun `audio success waits for tracks to prove audio-only`() = runTest {
+        val history = FakeCompatibilityHistory()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = scopedResolver(CompatibilityScopeKey("audio-only")),
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.FirstAudio(1))
+        advanceUntilIdle()
+        assertTrue(history.values.isEmpty())
+
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = false, audioTrackCount = 1, subtitleTrackCount = 0))
+        advanceUntilIdle()
+        assertEquals(listOf(CompatibilityOutcome.SUCCESS), history.values.map { it.outcome })
+        close(session)
+    }
+
+    @Test
+    fun `audio callback on a video stream never records success`() = runTest {
+        val history = FakeCompatibilityHistory()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = scopedResolver(CompatibilityScopeKey("video-with-audio")),
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, audioTrackCount = 1, subtitleTrackCount = 0))
+        engine.emit(PlaybackEvent.FirstAudio(1))
+        advanceUntilIdle()
+
+        assertTrue(history.values.isEmpty())
+        close(session)
+    }
+
+    @Test
+    fun `later learnable deterministic fatal is recorded after success for the same graph`() = runTest {
+        val history = FakeCompatibilityHistory()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = scopedResolver(CompatibilityScopeKey("success-then-fatal")),
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        engine.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.VIDEO_DECODER_FAILED,
+                    FailureDomain.VIDEO_DECODER,
+                    FailurePhase.PLAYBACK,
+                    Retryability.FATAL,
+                    deterministic = true,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(CompatibilityOutcome.SUCCESS, CompatibilityOutcome.DETERMINISTIC_FATAL),
+            history.values.map { it.outcome },
+        )
+        close(session)
+    }
+
+    @Test
+    fun `stale generation and released lifecycle events cannot record compatibility`() = runTest {
+        val history = FakeCompatibilityHistory()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = PlaybackRequestResolver { request ->
+                PlaybackResult.Success(
+                    request.resolved(CompatibilityScopeKey("scope-${request.url}")),
+                )
+            },
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        engine.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.VIDEO_DECODER_FAILED,
+                    FailureDomain.VIDEO_DECODER,
+                    FailurePhase.PLAYBACK,
+                    Retryability.FATAL,
+                    deterministic = true,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+        assertTrue(history.values.isEmpty())
+
+        session.dispatch(PlaybackCommand.Stop)
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(2))
+        advanceUntilIdle()
+        assertTrue(history.values.isEmpty())
+        close(session)
+    }
+
+    @Test
+    fun `history storage failure is diagnostic only and playback continues`() = runTest {
+        val history = FakeCompatibilityHistory(failWrites = true)
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = scopedResolver(CompatibilityScopeKey("storage-failure")),
+            compatibilityRecording = compatibilityRecording(history),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        assertTrue(diagnostics.any { it.code == PlaybackDiagnosticCode.COMPATIBILITY_HISTORY_RECORD_FAILED })
+        close(session)
+    }
+
+    @Test
+    fun `missing scope or engine version makes recording a no-op`() = runTest {
+        val missingScopeHistory = FakeCompatibilityHistory()
+        val missingScopeEngine = FakeEngine()
+        val missingScopeSession = session(
+            engine = missingScopeEngine,
+            compatibilityRecording = compatibilityRecording(missingScopeHistory),
+        )
+        missingScopeSession.dispatch(PlaybackCommand.SurfaceAvailable)
+        missingScopeSession.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        missingScopeEngine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        assertTrue(missingScopeHistory.values.isEmpty())
+        close(missingScopeSession)
+
+        val missingVersionHistory = FakeCompatibilityHistory()
+        val missingVersionEngine = FakeEngine()
+        val environment = compatibilityRecording(missingVersionHistory).copy(engineVersions = emptyMap())
+        val missingVersionSession = session(
+            engine = missingVersionEngine,
+            requestResolver = scopedResolver(CompatibilityScopeKey("missing-version")),
+            compatibilityRecording = environment,
+        )
+        missingVersionSession.dispatch(PlaybackCommand.SurfaceAvailable)
+        missingVersionSession.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        missingVersionEngine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        assertTrue(missingVersionHistory.values.isEmpty())
+        close(missingVersionSession)
+    }
+
+    @Test
+    fun `network authorization tls drm resource and unknown failures never record history`() = runTest {
+        val excluded = listOf(
+            FailureDomain.NETWORK to FailureCode.NETWORK_TIMEOUT,
+            FailureDomain.AUTHORIZATION_PROVIDER_LIMIT to FailureCode.PROVIDER_CONNECTION_LIMIT,
+            FailureDomain.TLS to FailureCode.TLS_HANDSHAKE_FAILED,
+            FailureDomain.DRM to FailureCode.DRM_LICENSE_FAILED,
+            FailureDomain.DEVICE_RESOURCE to FailureCode.RESOURCE_BUDGET_EXCEEDED,
+            FailureDomain.AUDIO to FailureCode.AUDIO_OUTPUT_FAILED,
+            FailureDomain.UNKNOWN to FailureCode.UNKNOWN,
+        )
+        excluded.forEachIndexed { index, (domain, code) ->
+            val history = FakeCompatibilityHistory()
+            val engine = FakeEngine()
+            val session = session(
+                engine = engine,
+                requestResolver = scopedResolver(CompatibilityScopeKey("excluded-$index")),
+                compatibilityRecording = compatibilityRecording(history),
+            )
+            session.dispatch(PlaybackCommand.SurfaceAvailable)
+            session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+            advanceUntilIdle()
+            engine.emit(
+                PlaybackEvent.Failed(
+                    1,
+                    PlaybackFailure(
+                        code,
+                        domain,
+                        FailurePhase.PLAYBACK,
+                        Retryability.FATAL,
+                        deterministic = true,
+                    ),
+                ),
+            )
+            advanceUntilIdle()
+            assertTrue("$domain/$code", history.values.isEmpty())
+            close(session)
+        }
+    }
     @Test
     fun `one actor drives request selection surface engine and immutable snapshot`() = runTest {
         val engine = FakeEngine()
@@ -1269,6 +1512,7 @@ class PlaybackSessionTest {
         },
         lifecycle: PlaybackLifecyclePort? = null,
         providerPlaybackResolver: ProviderPlaybackResolver? = null,
+        compatibilityRecording: CompatibilityRecordingEnvironment? = null,
         releaseTimeoutMs: Long = 5_000L,
         policy: PlaybackPolicy = PlaybackPolicy(
             PlaybackPolicy.WatchdogConfiguration(enabled = false),
@@ -1296,6 +1540,7 @@ class PlaybackSessionTest {
         diagnostics = diagnostics,
         lifecycle = lifecycle,
         providerPlaybackResolver = providerPlaybackResolver,
+        compatibilityRecording = compatibilityRecording,
         policy = policy,
         releaseTimeoutMs = releaseTimeoutMs,
     )
@@ -1432,7 +1677,44 @@ class PlaybackSessionTest {
         }
     }
 
-    private fun PlaybackRequest.resolved() = ResolvedPlaybackRequest(this, summary(), StreamEvidence())
+    private class FakeCompatibilityHistory(
+        private val failWrites: Boolean = false,
+    ) : PlaybackCompatibilityHistory {
+        val values = mutableListOf<CompatibilityRecord>()
+
+        override suspend fun records(scopeKey: CompatibilityScopeKey): List<CompatibilityRecord> =
+            values.filter { it.scopeKey == scopeKey }
+
+        override suspend fun record(value: CompatibilityRecord) {
+            if (failWrites) error("storage unavailable")
+            values += value
+        }
+    }
+
+    private fun compatibilityRecording(history: PlaybackCompatibilityHistory) =
+        CompatibilityRecordingEnvironment(
+            history = history,
+            runtime = CompatibilityRuntimeFingerprint("device", "firmware", "capabilities"),
+            appVersion = "test-app",
+            engineVersions = mapOf(
+                EngineType.MEDIA3 to "media3-test",
+                EngineType.LIBMPV to "mpv-test",
+            ),
+            successTtlMs = 10_000,
+            fatalTtlMs = 5_000,
+        )
+
+    private fun scopedResolver(scope: CompatibilityScopeKey) = PlaybackRequestResolver { request ->
+        PlaybackResult.Success(request.resolved(scope))
+    }
+
+    private fun PlaybackRequest.resolved(scope: CompatibilityScopeKey? = null) =
+        ResolvedPlaybackRequest(
+            this,
+            summary(),
+            StreamEvidence(),
+            compatibilityScopeKey = scope,
+        )
 
     private fun providerSelection(suffix: String) = ProviderPlaybackSelection(
         sourceType = ProviderSourceType.STALKER,

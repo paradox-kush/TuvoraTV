@@ -176,6 +176,29 @@ class PlaybackDomainContractsTest {
         assertTrue(record.isExpired(2_000))
     }
 
+    @Test
+    fun `compatibility failure classifier is closed and exhaustive`() {
+        val accepted = setOf(
+            FailureDomain.MANIFEST to FailureCode.MANIFEST_INVALID,
+            FailureDomain.DEMUX to FailureCode.DEMUX_FAILED,
+            FailureDomain.VIDEO_DECODER to FailureCode.VIDEO_DECODER_UNAVAILABLE,
+            FailureDomain.VIDEO_DECODER to FailureCode.VIDEO_DECODER_FAILED,
+            FailureDomain.VIDEO_RENDERER_SURFACE to FailureCode.VIDEO_RENDERER_FAILED,
+            FailureDomain.VIDEO_RENDERER_SURFACE to FailureCode.SURFACE_LOST,
+        )
+
+        FailureDomain.entries.forEach { domain ->
+            FailureCode.entries.forEach { code ->
+                assertEquals(
+                    "$domain/$code",
+                    domain to code in accepted,
+                    isLearnableCompatibilityFailure(domain, code),
+                )
+            }
+        }
+        assertFalse(isLearnableCompatibilityFailure(null, null))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `deterministic fatal compatibility requires a failure domain`() {
         CompatibilityRecord(
