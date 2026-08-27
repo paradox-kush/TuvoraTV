@@ -2,9 +2,35 @@
 
 ## Current Work Package
 
-WP1 — pure playback core and single-owner session orchestration.
+WP2 — request, preferences, capabilities, compatibility history, and diagnostics.
 
 ## Changes made
+
+### WP2
+
+- Added one secret-safe navigation/provider request mapper with URL user-info extraction, explicit
+  authorization precedence, strict header/cookie sanitization, redirect/TLS/DNS/DRM/provider-limit
+  parity, provenance-ranked passive evidence, and RTSP/RTP/UDP/HLS/DASH/file inference without a
+  network probe.
+- Added an isolated versioned playback preference document, strict serializer, production
+  SharedPreferences store, persisted migrate-on-read, unknown-safe decoding, per-group reset, and
+  an idempotent typed migration bridge covering all 70 legacy `PlayerSettings` fields without
+  mutating legacy storage.
+- Added requested/effective preference resolution for every persisted field with typed authority,
+  availability, reason, conflicts, and runtime impact. Resolution remains conservative when secure
+  output or an HDR-compatible fallback layer is not proven.
+- Added refreshable Android codec/display/audio/resource/surface facts. Size/rate support remains
+  coupled evidence, decoder concurrency is conservative, audio routing is unknown without active
+  engine evidence, and GPU/secure surface claims remain unproven until adapter probes exist.
+- Added one exact, versioned, expiring Android quirk registry. Only Amazon `AFTKM` matches the
+  verified guide TextureView override; ONN and other MediaTek/Amazon family devices do not match by
+  heuristic.
+- Added graph-exact, runtime-exact, expiry- and size-bounded compatibility history. Network,
+  authorization, provider-limit, and TLS failures cannot establish engine incompatibility.
+- Routed the closed diagnostic allowlist through the central PostHog privacy sanitizer, including
+  `$geoip_disable`; no provider/request/account/channel/DRM secret can enter the sink contract.
+- Enabled the AndroidX instrumentation runner and repaired four stale callback signatures in an
+  existing instrumentation test so real-device probes compile.
 
 ### WP1
 
@@ -43,6 +69,17 @@ WP1 — pure playback core and single-owner session orchestration.
 
 ## Tests run
 
+- Consolidated audited WP2 gate — 71 passed across settings, Android capabilities/quirks,
+  request/history/diagnostics wiring, core compatibility contracts, and architecture firewalls.
+- Sequential AndroidX device smoke probes — passed on ONN API 34 first, then Fire TV AFTKM API 30;
+  each debug process was stopped/confirmed absent before switching devices.
+- ONN facts: 19 decoder entries, 3840x2160 display, HDR10 + HLG, unknown active audio route, no
+  applied quirk.
+- Fire TV facts: 30 decoder entries, 1920x1080 display, unknown active audio route, and the exact
+  `amazon-aftkm-embedded-surface-texture-v1` quirk positively applied.
+- Full WP2 TV gate:
+  `:app:verifyMedia3RuntimeConvergence :app:verifyPlaybackEngineArtifacts
+  :app:testFullDebugUnitTest :app:compileFullDebugKotlin --rerun-tasks` — passed; 41 tasks executed.
 - Full WP1 TV gate:
   `:app:verifyMedia3RuntimeConvergence :app:verifyPlaybackEngineArtifacts
   :app:testFullDebugUnitTest :app:compileFullDebugKotlin --rerun-tasks` — passed; 41 tasks executed.
@@ -81,6 +118,12 @@ WP1 — pure playback core and single-owner session orchestration.
 
 ## Architecture impact
 
+- WP2 completes policy inputs without constructing Media3, libmpv, or the legacy player. Legacy
+  production settings/UI behavior remains untouched; only a typed one-way cutover mapper reads it.
+- Observation sequence/timestamp is separate from the stable capability/device/firmware fingerprint
+  used by compatibility history, so a route or memory refresh does not erase learned evidence.
+- Device checks exist only in `playback.android`; settings and UI still cannot construct or directly
+  configure an engine.
 - The clean core is additive only; no playback routing or legacy production implementation has
   changed yet.
 - `PlaybackSession` is the only orchestration owner. Reducer and policy are pure; engine adapters
@@ -93,6 +136,10 @@ WP1 — pure playback core and single-owner session orchestration.
 
 ## Open blockers
 
+- Real-device WP2 runs are fact/API smoke tests, not decode, EGL, active-audio-route, secure-output,
+  or surface-lifecycle proof. Those require the WP4/WP5 adapter fixture gates.
+- `PlaybackRequirementsInput` still needs WP3 integration of runtime capabilities, compatibility
+  history, resource budget, and typed quirk surface constraints.
 - `PlaybackEngine.release()` can prove an ordinary release completed, but it cannot yet express an
   affirmative native hard-abort. Until WP4/WP5 add that adapter contract, a permanently wedged
   release retries indefinitely and fail-closed; it never advances a continuation or consumes a
@@ -101,5 +148,5 @@ WP1 — pure playback core and single-owner session orchestration.
 
 ## Next action
 
-Commit WP1, then begin WP2 versioned playback preferences and WP3 Android capability/quirk
-discovery in isolated parallel lanes.
+Commit WP2, then implement WP3 guide/fullscreen profiles, resource budgets, and effective
+requirements without duplicating the core `PlaybackRequirements` contract.

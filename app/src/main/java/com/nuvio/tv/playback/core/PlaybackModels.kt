@@ -588,19 +588,51 @@ class CompatibilityScopeKey(val value: String) {
     override fun toString(): String = "CompatibilityScopeKey([REDACTED])"
 }
 
-data class CompatibilityRecord(
-    val scopeKey: CompatibilityScopeKey,
+data class CompatibilityGraphFingerprint(
     val engine: EngineType,
     val outputProfile: GraphOutputProfile,
+    val decoderMode: DecoderMode,
+    val audioMode: AudioMode,
+    val surfaceMode: SurfaceMode,
+    val secureOutput: Boolean,
+    val decoderStableId: String? = null,
+) {
+    init {
+        require(decoderStableId == null || decoderStableId.isNotBlank()) {
+            "Decoder stable ID must be null or non-blank"
+        }
+    }
+}
+
+data class CompatibilityRuntimeFingerprint(
+    val deviceVersion: String,
+    val firmwareVersion: String,
+    /** Stable capability/quirk schema fingerprint, never a refresh observation sequence. */
+    val capabilityFingerprint: String,
+) {
+    init {
+        require(deviceVersion.isNotBlank()) { "Device version must not be blank" }
+        require(firmwareVersion.isNotBlank()) { "Firmware version must not be blank" }
+        require(capabilityFingerprint.isNotBlank()) { "Capability fingerprint must not be blank" }
+    }
+}
+
+data class CompatibilityRecord(
+    val scopeKey: CompatibilityScopeKey,
+    val graph: CompatibilityGraphFingerprint,
+    val runtime: CompatibilityRuntimeFingerprint,
     val outcome: CompatibilityOutcome,
     val failureDomain: FailureDomain? = null,
     val failureCode: FailureCode? = null,
     val appVersion: String,
     val engineVersion: String,
-    val capabilitySnapshotVersion: Int,
     val recordedAtEpochMs: Long,
     val expiresAtEpochMs: Long,
 ) {
+    /** Temporary source-compatible accessors while policy call sites move to [graph]. */
+    val engine: EngineType get() = graph.engine
+    val outputProfile: GraphOutputProfile get() = graph.outputProfile
+
     init {
         require(expiresAtEpochMs > recordedAtEpochMs) { "Compatibility record must expire after it is recorded" }
         require(outcome != CompatibilityOutcome.DETERMINISTIC_FATAL || failureDomain != null) {

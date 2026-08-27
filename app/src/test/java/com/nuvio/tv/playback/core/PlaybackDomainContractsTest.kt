@@ -114,14 +114,13 @@ class PlaybackDomainContractsTest {
         val key = CompatibilityScopeKey("provider-and-capability-scope")
         val record = CompatibilityRecord(
             scopeKey = key,
-            engine = EngineType.MEDIA3,
-            outputProfile = GraphOutputProfile.MEDIA3_STANDARD,
+            graph = compatibilityGraph(EngineType.MEDIA3, GraphOutputProfile.MEDIA3_STANDARD),
+            runtime = compatibilityRuntime(),
             outcome = CompatibilityOutcome.DETERMINISTIC_FATAL,
             failureDomain = FailureDomain.VIDEO_DECODER,
             failureCode = FailureCode.VIDEO_DECODER_FAILED,
             appVersion = "1.0",
             engineVersion = "1.11.0",
-            capabilitySnapshotVersion = 4,
             recordedAtEpochMs = 1_000,
             expiresAtEpochMs = 2_000,
         )
@@ -135,14 +134,31 @@ class PlaybackDomainContractsTest {
     fun `deterministic fatal compatibility requires a failure domain`() {
         CompatibilityRecord(
             scopeKey = CompatibilityScopeKey("scope"),
-            engine = EngineType.LIBMPV,
-            outputProfile = GraphOutputProfile.MPV_DIRECT,
+            graph = compatibilityGraph(EngineType.LIBMPV, GraphOutputProfile.MPV_DIRECT),
+            runtime = compatibilityRuntime(),
             outcome = CompatibilityOutcome.DETERMINISTIC_FATAL,
             appVersion = "1.0",
             engineVersion = "0.41",
-            capabilitySnapshotVersion = 1,
             recordedAtEpochMs = 1,
             expiresAtEpochMs = 2,
         )
     }
+
+    private fun compatibilityGraph(
+        engine: EngineType,
+        output: GraphOutputProfile,
+    ) = CompatibilityGraphFingerprint(
+        engine = engine,
+        outputProfile = output,
+        decoderMode = DecoderMode.HARDWARE,
+        audioMode = AudioMode.DECODE,
+        surfaceMode = if (engine == EngineType.MEDIA3) SurfaceMode.SURFACE_VIEW else SurfaceMode.NATIVE_EMBED,
+        secureOutput = false,
+    )
+
+    private fun compatibilityRuntime() = CompatibilityRuntimeFingerprint(
+        deviceVersion = "device-v1",
+        firmwareVersion = "firmware-v1",
+        capabilityFingerprint = "capabilities-v1",
+    )
 }

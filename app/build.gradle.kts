@@ -134,6 +134,7 @@ android {
         applicationId = "com.tuvora.tv"
         minSdk = 24
         targetSdk = 36
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull() ?: 1050
         versionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() } ?: "0.8.9-beta"
 
