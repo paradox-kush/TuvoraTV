@@ -7,11 +7,20 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelStore
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackProgressEvidence
 import com.nuvio.tv.playback.core.PlaybackState
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.core.ProviderSourceType
 import com.nuvio.tv.playback.core.SessionProfile
+import com.nuvio.tv.playback.live.LiveChannelNavigationPort
+import com.nuvio.tv.playback.live.LiveChannelTarget
+import com.nuvio.tv.playback.live.LivePlayedHistoryPort
+import com.nuvio.tv.playback.live.LivePlayedIdentity
+import com.nuvio.tv.playback.live.LiveRelativeFailure
+import com.nuvio.tv.playback.live.LiveRelativeRequest
+import com.nuvio.tv.playback.live.LiveRelativeResult
+import com.nuvio.tv.playback.live.LiveZapDirection
 import com.nuvio.tv.playback.mediasession.CleanMediaSessionMetadata
 import com.nuvio.tv.ui.navigation.CleanLiveLaunchConsumeFailure
 import com.nuvio.tv.ui.navigation.CleanLiveLaunchConsumeResult
@@ -76,7 +85,10 @@ class CleanLivePlayerViewModelTest {
         assertEquals(SessionProfile.FULLSCREEN, fixture.host.tunedProfile)
         assertSame(fixture.entry.selection, fixture.host.tunedSelection)
         assertEquals("Live News", fixture.host.tunedMetadata?.title)
-        assertEquals("clean-${"ab".repeat(16)}", fixture.host.tunedMetadata?.safeMediaId)
+        assertEquals(
+            "clean-${fixture.entry.mediaFingerprint.take(32)}",
+            fixture.host.tunedMetadata?.safeMediaId,
+        )
         assertTrue(fixture.viewModel.routeState.value is CleanLivePlayerRouteState.Ready)
 
         fixture.viewModel.pause()
@@ -128,6 +140,321 @@ class CleanLivePlayerViewModelTest {
         assertTrue(ready.presentation.isPlaying)
         fixture.viewModel.releaseBeforeExit()
     }
+
+    @Test
+    fun `played history requires the exact accepted generation first video frame and records once`() =
+        runTest {
+            val fixture = fixture()
+            fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+            val acceptedGeneration = fixture.host.snapshotFlow.value.generation
+
+            fixture.host.snapshotFlow.value = fixture.host.snapshotFlow.value.copy(
+                state = PlaybackState.PLAYING,
+                isPlaying = true,
+            )
+            advanceUntilIdle()
+            assertTrue(fixture.played.isEmpty())
+
+            fixture.host.snapshotFlow.value = fixture.host.snapshotFlow.value.copy(
+                progress = PlaybackProgressEvidence(renderedVideoFrame = true),
+            )
+            advanceUntilIdle()
+
+            assertEquals(1, fixture.played.size)
+            assertSame(fixture.entry.target, fixture.played.single().target)
+            assertEquals(acceptedGeneration, fixture.played.single().generation)
+
+            fixture.host.snapshotFlow.value = fixture.host.snapshotFlow.value.copy(isBuffering = true)
+            advanceUntilIdle()
+            assertEquals(1, fixture.played.size)
+            fixture.viewModel.releaseBeforeExit()
+        }
+
+    @Test
+    fun `first video frame already present at tune acknowledgement is not missed`() = runTest {
+        val fixture = fixture(renderVideoFrameOnTune = true)
+
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+        advanceUntilIdle()
+
+        assertEquals(1, fixture.played.size)
+        assertEquals(fixture.host.snapshotFlow.value.generation, fixture.played.single().generation)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `rendered frame from a superseding unacknowledged generation is never attributed`() =
+        runTest {
+            val fixture = fixture()
+            fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+            fixture.host.snapshotFlow.value = fixture.host.snapshotFlow.value.copy(
+                generation = fixture.host.snapshotFlow.value.generation + 1,
+                state = PlaybackState.PLAYING,
+                progress = PlaybackProgressEvidence(renderedVideoFrame = true),
+            )
+            advanceUntilIdle()
+
+            assertTrue(fixture.played.isEmpty())
+            fixture.viewModel.releaseBeforeExit()
+        }
+
+    @Test
+    fun `played history persistence failure never changes healthy playback state`() = runTest {
+        val fixture = fixture(history = { error("synthetic history failure") })
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+        fixture.host.snapshotFlow.value = fixture.host.snapshotFlow.value.copy(
+            state = PlaybackState.PLAYING,
+            isPlaying = true,
+            progress = PlaybackProgressEvidence(renderedVideoFrame = true),
+        )
+        advanceUntilIdle()
+
+        val ready = fixture.viewModel.routeState.value as CleanLivePlayerRouteState.Ready
+        assertEquals(PlaybackState.PLAYING, ready.snapshot.state)
+        assertEquals(1, fixture.played.size)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `played history writes remain in rendered-frame detection order`() = runTest {
+        val firstWriteStarted = CompletableDeferred<Unit>()
+        val releaseFirstWrite = CompletableDeferred<Unit>()
+        var writes = 0
+        val next = liveTarget(
+            selection = liveSelection("next", "43"),
+            title = "Next News",
+        )
+        val fixture = fixture(
+            relative = { LiveRelativeResult.Target(next) },
+            history = {
+                writes += 1
+                if (writes == 1) {
+                    firstWriteStarted.complete(Unit)
+                    releaseFirstWrite.await()
+                }
+            },
+        )
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+        fixture.host.snapshotFlow.value = fixture.host.snapshotFlow.value.copy(
+            state = PlaybackState.PLAYING,
+            progress = PlaybackProgressEvidence(renderedVideoFrame = true),
+        )
+        firstWriteStarted.await()
+
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+        fixture.host.snapshotFlow.value = fixture.host.snapshotFlow.value.copy(
+            state = PlaybackState.PLAYING,
+            progress = PlaybackProgressEvidence(renderedVideoFrame = true),
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, fixture.played.size)
+        releaseFirstWrite.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(fixture.entry.target, next), fixture.played.map { it.target })
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `zap commits target metadata and history only for its accepted generation`() = runTest {
+        val nextSelection = ProviderPlaybackSelection(
+            sourceType = ProviderSourceType.XTREAM,
+            accountId = ProviderSelectionId("account-next"),
+            itemId = ProviderSelectionId("43"),
+            contentKey = ProviderSelectionId("channel-next"),
+            contentType = ContentType.LIVE,
+        )
+        val next = liveTarget(
+            selection = nextSelection,
+            title = "Next News",
+            logo = "logo.png",
+            playlistVersion = 2,
+        )
+        val fixture = fixture(relative = { LiveRelativeResult.Target(next) })
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+
+        assertEquals(fixture.entry.target.contentId, fixture.relativeRequests.single().currentContentId)
+        assertEquals(listOf(nextSelection), fixture.host.zappedSelections)
+        assertEquals("Next News", fixture.host.zappedMetadata.single().title)
+        val ready = fixture.viewModel.routeState.value as CleanLivePlayerRouteState.Ready
+        assertEquals("Next News", ready.metadata.title)
+        assertTrue(fixture.played.isEmpty())
+
+        fixture.host.snapshotFlow.value = fixture.host.snapshotFlow.value.copy(
+            state = PlaybackState.PLAYING,
+            progress = PlaybackProgressEvidence(renderedVideoFrame = true),
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, fixture.played.size)
+        assertSame(next, fixture.played.single().target)
+        assertEquals(fixture.host.snapshotFlow.value.generation, fixture.played.single().generation)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `rapid zap requests keep one lookup in flight and only the latest pending direction`() =
+        runTest {
+            val firstStarted = CompletableDeferred<Unit>()
+            val releaseFirst = CompletableDeferred<Unit>()
+            val secondTarget = liveTarget(
+                selection = liveSelection("second", "43"),
+                title = "Second",
+            )
+            val thirdTarget = liveTarget(
+                selection = liveSelection("third", "44"),
+                title = "Third",
+            )
+            var lookup = 0
+            val fixture = fixture(
+                relative = {
+                    lookup += 1
+                    if (lookup == 1) {
+                        firstStarted.complete(Unit)
+                        releaseFirst.await()
+                        LiveRelativeResult.Target(secondTarget)
+                    } else {
+                        LiveRelativeResult.Target(thirdTarget)
+                    }
+                },
+            )
+            fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+            fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+            firstStarted.await()
+            fixture.viewModel.requestZap(LiveZapDirection.PREVIOUS)
+            fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+            releaseFirst.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(2, fixture.relativeRequests.size)
+            assertEquals(LiveZapDirection.NEXT, fixture.relativeRequests[1].direction)
+            assertEquals(secondTarget.contentId, fixture.relativeRequests[1].currentContentId)
+            assertEquals(listOf(secondTarget.selection, thirdTarget.selection), fixture.host.zappedSelections)
+            fixture.viewModel.releaseBeforeExit()
+        }
+
+    @Test
+    fun `release during relative lookup cancels stale work without issuing zap`() = runTest {
+        val lookupStarted = CompletableDeferred<Unit>()
+        val fixture = fixture(
+            relative = {
+                lookupStarted.complete(Unit)
+                CompletableDeferred<LiveRelativeResult>().await()
+            },
+        )
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        lookupStarted.await()
+
+        fixture.viewModel.releaseBeforeExit()
+        advanceUntilIdle()
+
+        assertTrue(fixture.host.zappedSelections.isEmpty())
+        assertEquals(1, fixture.host.releaseCalls)
+    }
+
+    @Test
+    fun `relative profile rejection releases and never zaps or records history`() = runTest {
+        val fixture = fixture(
+            relative = { LiveRelativeResult.Rejected(LiveRelativeFailure.PROFILE_CHANGED) },
+        )
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+
+        assertTrue(fixture.host.zappedSelections.isEmpty())
+        assertTrue(fixture.played.isEmpty())
+        assertEquals(1, fixture.host.releaseCalls)
+        assertEquals(
+            CleanLivePlayerRouteState.Rejected(CleanLivePlayerRejection.PROFILE_MISMATCH),
+            fixture.viewModel.routeState.value,
+        )
+    }
+
+    @Test
+    fun `unavailable relative target leaves the current channel and host intact`() = runTest {
+        val fixture = fixture()
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+
+        assertTrue(fixture.host.zappedSelections.isEmpty())
+        assertEquals(0, fixture.host.releaseCalls)
+        val ready = fixture.viewModel.routeState.value as CleanLivePlayerRouteState.Ready
+        assertEquals("Live News", ready.metadata.title)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `profile change after accepted zap releases before publishing target or history`() = runTest {
+        var profileId = 1
+        val next = liveTarget(
+            selection = liveSelection("next", "43"),
+            title = "Next News",
+        )
+        val fixture = fixture(
+            profileSource = CleanLiveDestinationProfileSource { profileId },
+            relative = { LiveRelativeResult.Target(next) },
+            zapCompleted = { profileId = 2 },
+        )
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+
+        assertEquals(1, fixture.host.zappedSelections.size)
+        assertTrue(fixture.played.isEmpty())
+        assertEquals(1, fixture.host.releaseCalls)
+        assertEquals(
+            CleanLivePlayerRouteState.Rejected(CleanLivePlayerRejection.PROFILE_MISMATCH),
+            fixture.viewModel.routeState.value,
+        )
+    }
+
+    @Test
+    fun `surface recreation after zap retunes the accepted target and rearms frame evidence`() =
+        runTest {
+            val next = liveTarget(
+                selection = liveSelection("next", "43"),
+                title = "Next News",
+            )
+            val fixture = fixture(relative = { LiveRelativeResult.Target(next) })
+            fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+            fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+            advanceUntilIdle()
+
+            fixture.viewModel.initialize(
+                "consumed-route",
+                fixture.activity,
+                fixture.lifecycle,
+                FrameLayout(fixture.owner.context),
+            )
+            advanceUntilIdle()
+
+            assertSame(next.selection, fixture.recreatedHost.tunedSelection)
+            assertTrue(fixture.played.isEmpty())
+            fixture.recreatedHost.snapshotFlow.value = fixture.recreatedHost.snapshotFlow.value.copy(
+                state = PlaybackState.PLAYING,
+                progress = PlaybackProgressEvidence(renderedVideoFrame = true),
+            )
+            advanceUntilIdle()
+            assertEquals(1, fixture.played.size)
+            assertSame(next, fixture.played.single().target)
+            assertEquals(
+                fixture.recreatedHost.snapshotFlow.value.generation,
+                fixture.played.single().generation,
+            )
+            fixture.viewModel.releaseBeforeExit()
+        }
 
     @Test
     fun `different surface owner releases before recreating without consuming token again`() = runTest {
@@ -376,10 +703,16 @@ class CleanLivePlayerViewModelTest {
         hostCreationFailure: Exception? = null,
         tuneFailure: Exception? = null,
         tuneCompleted: () -> Unit = {},
+        zapCompleted: () -> Unit = {},
         releaseFailure: Exception? = null,
         transientReleaseFailures: Int = 0,
         releaseBarrier: CompletableDeferred<Unit>? = null,
         releaseRetryWait: CleanLiveReleaseRetryWait = CleanLiveReleaseRetryWait {},
+        renderVideoFrameOnTune: Boolean = false,
+        relative: suspend (LiveRelativeRequest) -> LiveRelativeResult = {
+            LiveRelativeResult.Rejected(LiveRelativeFailure.UNAVAILABLE)
+        },
+        history: suspend (LivePlayedIdentity) -> Unit = {},
     ): Fixture {
         val context = RuntimeEnvironment.getApplication() as Context
         val operations = mutableListOf<String>()
@@ -392,6 +725,8 @@ class CleanLivePlayerViewModelTest {
             releaseFailure,
             transientReleaseFailures,
             releaseBarrier,
+            renderVideoFrameOnTune,
+            zapCompleted,
         )
         val recreatedHost = FakeHost(
             operations,
@@ -400,6 +735,8 @@ class CleanLivePlayerViewModelTest {
             releaseFailure,
             0,
             releaseBarrier,
+            renderVideoFrameOnTune,
+            zapCompleted,
         )
         val factory = FakeHostFactory(
             operations,
@@ -407,11 +744,21 @@ class CleanLivePlayerViewModelTest {
             hostCreationFailure,
             factoryCreated,
         )
+        val relativeRequests = mutableListOf<LiveRelativeRequest>()
+        val played = mutableListOf<LivePlayedIdentity>()
         val viewModel = CleanLivePlayerViewModel(
             context = context,
             launchConsumer = consumer,
             profileSource = profileSource ?: CleanLiveDestinationProfileSource { profileId },
             hostFactory = factory,
+            liveNavigation = LiveChannelNavigationPort { request ->
+                relativeRequests += request
+                relative(request)
+            },
+            playedHistory = LivePlayedHistoryPort { identity ->
+                played += identity
+                history(identity)
+            },
             ownerDispatcher = Dispatchers.Unconfined,
             releaseRetryWait = releaseRetryWait,
         )
@@ -423,6 +770,8 @@ class CleanLivePlayerViewModelTest {
             recreatedHost = recreatedHost,
             entry = entry,
             operations = operations,
+            relativeRequests = relativeRequests,
+            played = played,
             activity = mockk(relaxed = true),
             lifecycle = mockk(relaxed = true),
             owner = FrameLayout(context),
@@ -430,17 +779,49 @@ class CleanLivePlayerViewModelTest {
     }
 
     private fun entry(profileId: Int): CleanLiveLaunchEntry = CleanLiveLaunchEntry(
-        selection = ProviderPlaybackSelection(
+        target = liveTarget(
+            selection = ProviderPlaybackSelection(
+                sourceType = ProviderSourceType.XTREAM,
+                accountId = ProviderSelectionId("https://provider-secret.test|customer-secret"),
+                itemId = ProviderSelectionId("42"),
+                contentKey = ProviderSelectionId("xtream:provider-secret:live:42"),
+                contentType = ContentType.LIVE,
+            ),
+            profileId = profileId,
+            title = "Live News",
+        ),
+        activeProfileId = profileId,
+        metadata = CleanLiveLaunchMetadata.sanitized("Live News", "Now", "Station"),
+        origin = CleanLiveLaunchOrigin.SEARCH,
+    )
+
+    private fun liveTarget(
+        selection: ProviderPlaybackSelection = ProviderPlaybackSelection(
             sourceType = ProviderSourceType.XTREAM,
             accountId = ProviderSelectionId("https://provider-secret.test|customer-secret"),
             itemId = ProviderSelectionId("42"),
             contentKey = ProviderSelectionId("xtream:provider-secret:live:42"),
             contentType = ContentType.LIVE,
         ),
-        activeProfileId = profileId,
-        metadata = CleanLiveLaunchMetadata.sanitized("Live News", "Now", "Station"),
-        origin = CleanLiveLaunchOrigin.SEARCH,
-        mediaFingerprint = "ab".repeat(32),
+        profileId: Int = 1,
+        title: String = "Live News",
+        logo: String? = null,
+        playlistVersion: Long? = null,
+    ): LiveChannelTarget = LiveChannelTarget.sanitized(
+        selection = selection,
+        contentId = selection.contentKey,
+        title = title,
+        logo = logo,
+        playlistVersion = playlistVersion,
+        boundProfileId = com.nuvio.tv.playback.core.PlaybackProfileId(profileId.toString()),
+    )
+
+    private fun liveSelection(name: String, itemId: String) = ProviderPlaybackSelection(
+        sourceType = ProviderSourceType.XTREAM,
+        accountId = ProviderSelectionId("account-$name"),
+        itemId = ProviderSelectionId(itemId),
+        contentKey = ProviderSelectionId("channel-$name"),
+        contentType = ContentType.LIVE,
     )
 
     private data class Fixture(
@@ -451,6 +832,8 @@ class CleanLivePlayerViewModelTest {
         val recreatedHost: FakeHost,
         val entry: CleanLiveLaunchEntry,
         val operations: List<String>,
+        val relativeRequests: List<LiveRelativeRequest>,
+        val played: List<LivePlayedIdentity>,
         val activity: Activity,
         val lifecycle: Lifecycle,
         val owner: FrameLayout,
@@ -495,12 +878,16 @@ class CleanLivePlayerViewModelTest {
         private val releaseFailure: Exception?,
         private val transientReleaseFailures: Int,
         private val releaseBarrier: CompletableDeferred<Unit>?,
+        private val renderVideoFrameOnTune: Boolean,
+        private val zapCompleted: () -> Unit,
     ) : CleanLiveDestinationHost {
         val snapshotFlow = MutableStateFlow(PlaybackSnapshot())
         override val snapshot: StateFlow<PlaybackSnapshot> = snapshotFlow
         var tunedSelection: ProviderPlaybackSelection? = null
         var tunedProfile: SessionProfile? = null
         var tunedMetadata: CleanMediaSessionMetadata? = null
+        val zappedSelections = mutableListOf<ProviderPlaybackSelection>()
+        val zappedMetadata = mutableListOf<CleanMediaSessionMetadata>()
         var releaseCalls: Int = 0
 
         override suspend fun tune(
@@ -515,7 +902,14 @@ class CleanLivePlayerViewModelTest {
             tuneFailure?.let { throw it }
             tuneCompleted()
             val acceptedGeneration = snapshotFlow.value.generation + 1
-            snapshotFlow.value = snapshotFlow.value.copy(generation = acceptedGeneration)
+            snapshotFlow.value = snapshotFlow.value.copy(
+                generation = acceptedGeneration,
+                progress = if (renderVideoFrameOnTune) {
+                    PlaybackProgressEvidence(renderedVideoFrame = true)
+                } else {
+                    PlaybackProgressEvidence()
+                },
+            )
             return acceptedGeneration
         }
 
@@ -525,11 +919,17 @@ class CleanLivePlayerViewModelTest {
             metadata: CleanMediaSessionMetadata,
         ): Long {
             operations += "zap"
+            zappedSelections += selection
+            zappedMetadata += metadata
             tunedSelection = selection
             tunedProfile = profile
             tunedMetadata = metadata
             val acceptedGeneration = snapshotFlow.value.generation + 1
-            snapshotFlow.value = snapshotFlow.value.copy(generation = acceptedGeneration)
+            snapshotFlow.value = snapshotFlow.value.copy(
+                generation = acceptedGeneration,
+                progress = PlaybackProgressEvidence(),
+            )
+            zapCompleted()
             return acceptedGeneration
         }
 

@@ -15,6 +15,14 @@ import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.host.CleanLivePlaybackHost
 import com.nuvio.tv.playback.host.CleanLiveSurfaceCoordinator
+import com.nuvio.tv.playback.live.LiveChannelNavigationPort
+import com.nuvio.tv.playback.live.LiveMediaFingerprint
+import com.nuvio.tv.playback.live.LivePlayedHistoryPort
+import com.nuvio.tv.playback.live.LivePlayedIdentity
+import com.nuvio.tv.playback.live.LiveRelativeFailure
+import com.nuvio.tv.playback.live.LiveRelativeRequest
+import com.nuvio.tv.playback.live.LiveRelativeResult
+import com.nuvio.tv.playback.live.LiveZapDirection
 import com.nuvio.tv.playback.mediasession.CleanMediaSessionMetadata
 import com.nuvio.tv.playback.ui.LivePlaybackUiPresenter
 import com.nuvio.tv.playback.ui.LivePlaybackUiState
@@ -36,6 +44,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -134,6 +143,8 @@ internal class CleanLivePlayerViewModel private constructor(
     private val launchConsumer: CleanLiveDestinationLaunchConsumer,
     private val profileSource: CleanLiveDestinationProfileSource,
     private val hostFactory: CleanLiveDestinationHostFactory,
+    private val liveNavigation: LiveChannelNavigationPort,
+    private val playedHistory: LivePlayedHistoryPort,
     ownerDispatcher: CoroutineDispatcher,
     private val releaseRetryWait: CleanLiveReleaseRetryWait,
 ) : ViewModel() {
@@ -143,11 +154,15 @@ internal class CleanLivePlayerViewModel private constructor(
         launchStore: CleanLiveLaunchStore,
         profileManager: ProfileManager,
         sessionFactory: ProductionPlaybackSessionFactory,
+        liveNavigation: LiveChannelNavigationPort,
+        playedHistory: LivePlayedHistoryPort,
     ) : this(
         appContext = context.applicationContext,
         launchConsumer = CleanLiveDestinationLaunchConsumer(launchStore::consume),
         profileSource = CleanLiveDestinationProfileSource { profileManager.activeProfileId.value },
         hostFactory = AndroidCleanLiveDestinationHostFactory(sessionFactory),
+        liveNavigation = liveNavigation,
+        playedHistory = playedHistory,
         ownerDispatcher = Dispatchers.Main.immediate,
         releaseRetryWait = CleanLiveReleaseRetryWait { delay(it) },
     )
@@ -157,6 +172,10 @@ internal class CleanLivePlayerViewModel private constructor(
         launchConsumer: CleanLiveDestinationLaunchConsumer,
         profileSource: CleanLiveDestinationProfileSource,
         hostFactory: CleanLiveDestinationHostFactory,
+        liveNavigation: LiveChannelNavigationPort = LiveChannelNavigationPort {
+            LiveRelativeResult.Rejected(LiveRelativeFailure.UNAVAILABLE)
+        },
+        playedHistory: LivePlayedHistoryPort = LivePlayedHistoryPort {},
         ownerDispatcher: CoroutineDispatcher,
         releaseRetryWait: CleanLiveReleaseRetryWait = CleanLiveReleaseRetryWait {},
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
@@ -165,6 +184,8 @@ internal class CleanLivePlayerViewModel private constructor(
         launchConsumer = launchConsumer,
         profileSource = profileSource,
         hostFactory = hostFactory,
+        liveNavigation = liveNavigation,
+        playedHistory = playedHistory,
         ownerDispatcher = ownerDispatcher,
         releaseRetryWait = releaseRetryWait,
     )
@@ -172,6 +193,7 @@ internal class CleanLivePlayerViewModel private constructor(
     private val ownerJob = SupervisorJob()
     private val ownerScope = CoroutineScope(ownerJob + ownerDispatcher)
     private val ownershipMutex = Mutex()
+    private val zapRequests = Channel<LiveZapDirection>(Channel.CONFLATED)
     private val mutableRouteState =
         MutableStateFlow<CleanLivePlayerRouteState>(CleanLivePlayerRouteState.Initializing)
 
@@ -184,7 +206,13 @@ internal class CleanLivePlayerViewModel private constructor(
     private var activeMetadata: CleanMediaSessionMetadata? = null
     private var attachedSurfaceOwner: FrameLayout? = null
     private var presentationJob: Job? = null
+    private var historyRecordTail: Job? = null
+    private var pendingPlayed: LivePlayedIdentity? = null
     private var clearedReleaseLoopStarted = false
+
+    private val zapWorker = ownerScope.launch {
+        for (direction in zapRequests) performZap(direction)
+    }
 
     /**
      * Enqueues destination attachment on the ViewModel-owned scope. Compose disposal must never
@@ -236,12 +264,7 @@ internal class CleanLivePlayerViewModel private constructor(
                 return@withLock
             }
         }
-        val metadata = CleanMediaSessionMetadata.fromIngress(
-            redactedContentFingerprint = launch.mediaFingerprint,
-            title = launch.metadata.title,
-            subtitle = launch.metadata.subtitle,
-            station = launch.metadata.station,
-        )
+        val metadata = mediaSessionMetadata(launch)
         activeLaunch = launch
         activeMetadata = metadata
         createAndTune(launch, metadata, activity, lifecycle, surfaceOwner)
@@ -282,7 +305,7 @@ internal class CleanLivePlayerViewModel private constructor(
             return
         }
 
-        try {
+        val acceptedGeneration = try {
             created.tune(launch.selection, SessionProfile.FULLSCREEN, metadata)
         } catch (cancelled: CancellationException) {
             releaseCreatedHost(created)
@@ -296,12 +319,122 @@ internal class CleanLivePlayerViewModel private constructor(
             return
         }
 
+        pendingPlayed = LivePlayedIdentity(
+            target = launch.target,
+            boundProfileId = launch.playbackProfileId(),
+            generation = acceptedGeneration,
+        )
         publishReady(created, launch.metadata, launch.origin)
     }
 
     suspend fun pause() = command { it.pause() }
     suspend fun resume() = command { it.resume() }
     suspend fun retry() = command { it.retry() }
+
+    /**
+     * Remote repeats are conflated behind one ViewModel-owned worker. At most one provider-neutral
+     * relative lookup and one latest pending direction survive; Compose lifetime never owns an
+     * accepted channel command.
+     */
+    fun requestZap(direction: LiveZapDirection) {
+        if (!releaseCompleted && !clearedReleaseLoopStarted) zapRequests.trySend(direction)
+    }
+
+    private suspend fun performZap(direction: LiveZapDirection) {
+        val basis = ownershipMutex.withLock {
+            if (releaseCompleted) return
+            val currentHost = host ?: return
+            val currentLaunch = activeLaunch ?: return
+            if (profileSource.activeProfileId() != currentLaunch.activeProfileId) {
+                rejectAfterRelease(currentHost, CleanLivePlayerRejection.PROFILE_MISMATCH)
+                return
+            }
+            ZapBasis(currentHost, currentLaunch)
+        }
+
+        val relative = try {
+            liveNavigation.relative(
+                LiveRelativeRequest(
+                    currentContentId = basis.launch.target.contentId,
+                    direction = direction,
+                    boundProfileId = basis.launch.playbackProfileId(),
+                ),
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return
+        }
+
+        ownershipMutex.withLock {
+            if (
+                releaseCompleted ||
+                host !== basis.host ||
+                activeLaunch !== basis.launch
+            ) {
+                return@withLock
+            }
+            val currentHost = basis.host
+            val target = when (relative) {
+                is LiveRelativeResult.Target -> relative.target
+                is LiveRelativeResult.Rejected -> {
+                    if (relative.reason == LiveRelativeFailure.PROFILE_CHANGED) {
+                        rejectAfterRelease(currentHost, CleanLivePlayerRejection.PROFILE_MISMATCH)
+                    }
+                    return@withLock
+                }
+            }
+            if (profileSource.activeProfileId() != basis.launch.activeProfileId) {
+                rejectAfterRelease(currentHost, CleanLivePlayerRejection.PROFILE_MISMATCH)
+                return@withLock
+            }
+            if (
+                target.mediaFingerprint != LiveMediaFingerprint.create(
+                    target.selection,
+                    basis.launch.playbackProfileId(),
+                )
+            ) {
+                return@withLock
+            }
+
+            presentationJob?.cancelAndJoin()
+            presentationJob = null
+            val nextDisplay = CleanLiveLaunchMetadata.sanitized(target.title)
+            val nextLaunch = CleanLiveLaunchEntry(
+                target = target,
+                activeProfileId = basis.launch.activeProfileId,
+                metadata = nextDisplay,
+                origin = basis.launch.origin,
+            )
+            val nextMediaMetadata = mediaSessionMetadata(nextLaunch)
+            val acceptedGeneration = try {
+                currentHost.zap(
+                    selection = target.selection,
+                    profile = SessionProfile.FULLSCREEN,
+                    metadata = nextMediaMetadata,
+                )
+            } catch (cancelled: CancellationException) {
+                publishReady(currentHost, basis.launch.metadata, basis.launch.origin)
+                throw cancelled
+            } catch (_: Exception) {
+                publishReady(currentHost, basis.launch.metadata, basis.launch.origin)
+                return@withLock
+            }
+            if (profileSource.activeProfileId() != basis.launch.activeProfileId) {
+                rejectAfterRelease(currentHost, CleanLivePlayerRejection.PROFILE_MISMATCH)
+                return@withLock
+            }
+
+            activeLaunch = nextLaunch
+            activeMetadata = nextMediaMetadata
+            pendingPlayed = LivePlayedIdentity(
+                target = target,
+                boundProfileId = nextLaunch.playbackProfileId(),
+                generation = acceptedGeneration,
+            )
+            publishReady(currentHost, nextDisplay, nextLaunch.origin)
+        }
+    }
 
     /** Returns only after the host's affirmative provider/engine release barrier completes. */
     suspend fun releaseBeforeExit() = withContext(NonCancellable) {
@@ -349,14 +482,45 @@ internal class CleanLivePlayerViewModel private constructor(
         metadata: CleanLiveLaunchMetadata,
         origin: CleanLiveLaunchOrigin,
     ) {
-        fun ready(snapshot: PlaybackSnapshot, presentation: LivePlaybackUiState) =
-            CleanLivePlayerRouteState.Ready(metadata, origin, snapshot, presentation)
+        fun publish(snapshot: PlaybackSnapshot) {
+            mutableRouteState.value = CleanLivePlayerRouteState.Ready(
+                metadata = metadata,
+                origin = origin,
+                snapshot = snapshot,
+                presentation = LivePlaybackUiPresenter.present(snapshot),
+            )
+            acceptRenderedVideoEvidence(snapshot)
+        }
 
         val initialSnapshot = current.snapshot.value
-        mutableRouteState.value = ready(initialSnapshot, LivePlaybackUiPresenter.present(initialSnapshot))
+        publish(initialSnapshot)
         presentationJob = ownerScope.launch {
-            current.snapshot.collect { snapshot ->
-                mutableRouteState.value = ready(snapshot, LivePlaybackUiPresenter.present(snapshot))
+            current.snapshot.collect { snapshot -> publish(snapshot) }
+        }
+    }
+
+    private fun acceptRenderedVideoEvidence(snapshot: PlaybackSnapshot) {
+        val pending = pendingPlayed ?: return
+        when {
+            snapshot.generation == pending.generation && snapshot.progress.renderedVideoFrame -> {
+                // Clear before launching persistence: duplicate adapter facts can never enqueue twice.
+                pendingPlayed = null
+                val predecessor = historyRecordTail
+                historyRecordTail = ownerScope.launch {
+                    predecessor?.join()
+                    try {
+                        playedHistory.record(pending)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        // Recent-channel persistence is best effort and never fails playback.
+                    }
+                }
+            }
+            snapshot.generation > pending.generation -> {
+                // Retry currently has no accepted-generation acknowledgement. Never infer that a
+                // later generation still belongs to this identity.
+                pendingPlayed = null
             }
         }
     }
@@ -365,6 +529,7 @@ internal class CleanLivePlayerViewModel private constructor(
         val current = host ?: return true
         presentationJob?.cancelAndJoin()
         presentationJob = null
+        pendingPlayed = null
         mutableRouteState.value = CleanLivePlayerRouteState.Initializing
         return try {
             withContext(NonCancellable) { current.release() }
@@ -400,14 +565,34 @@ internal class CleanLivePlayerViewModel private constructor(
 
     private fun completeRelease() {
         releaseCompleted = true
+        zapRequests.close()
+        zapWorker.cancel()
+        pendingPlayed = null
         presentationJob?.cancel()
         presentationJob = null
+        historyRecordTail = null
         host = null
         activeLaunch = null
         activeMetadata = null
         attachedSurfaceOwner = null
         ownerJob.cancel()
     }
+
+    private fun mediaSessionMetadata(launch: CleanLiveLaunchEntry): CleanMediaSessionMetadata =
+        CleanMediaSessionMetadata.fromIngress(
+            redactedContentFingerprint = launch.mediaFingerprint,
+            title = launch.metadata.title,
+            subtitle = launch.metadata.subtitle,
+            station = launch.metadata.station,
+        )
+
+    private fun CleanLiveLaunchEntry.playbackProfileId(): PlaybackProfileId =
+        PlaybackProfileId(activeProfileId.toString())
+
+    private data class ZapBasis(
+        val host: CleanLiveDestinationHost,
+        val launch: CleanLiveLaunchEntry,
+    )
 
     private fun CleanLiveLaunchConsumeFailure.toRouteReason(): CleanLivePlayerRejection = when (this) {
         CleanLiveLaunchConsumeFailure.MISSING -> CleanLivePlayerRejection.MISSING

@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.navigation
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
+import com.nuvio.tv.playback.live.LiveChannelTarget
 import com.nuvio.tv.playback.live.LiveMediaFingerprint
 import java.security.SecureRandom
 import javax.inject.Inject
@@ -71,12 +72,27 @@ class CleanLiveLaunchToken internal constructor(
 
 /** URL-free in-memory launch material consumed by exactly one clean fullscreen destination. */
 class CleanLiveLaunchEntry internal constructor(
-    val selection: ProviderPlaybackSelection,
+    val target: LiveChannelTarget,
     val activeProfileId: Int,
     val metadata: CleanLiveLaunchMetadata,
     val origin: CleanLiveLaunchOrigin,
-    val mediaFingerprint: String,
 ) {
+    init {
+        require(activeProfileId > 0) { "Active profile id must be positive" }
+        require(
+            target.mediaFingerprint == LiveMediaFingerprint.create(
+                target.selection,
+                PlaybackProfileId(activeProfileId.toString()),
+            ),
+        ) { "Live target fingerprint must match its bound profile" }
+        require(metadata.title == target.title) {
+            "Launch display title must match its live target"
+        }
+    }
+
+    val selection: ProviderPlaybackSelection get() = target.selection
+    val mediaFingerprint: String get() = target.mediaFingerprint
+
     override fun toString(): String =
         "CleanLiveLaunchEntry(origin=$origin, profileBound=true, " +
             "hasSubtitle=${metadata.subtitle != null}, hasStation=${metadata.station != null})"
@@ -139,21 +155,28 @@ class CleanLiveLaunchStore internal constructor(
         title: String,
         subtitle: String? = null,
         station: String? = null,
+        logo: String? = null,
+        playlistVersion: Long? = null,
     ): CleanLiveLaunchToken {
         require(selection.contentType == ContentType.LIVE) {
             "The Search/Library clean-live destination accepts live selections only"
         }
         require(activeProfileId > 0) { "Active profile id must be positive" }
         val now = clock.nowMs()
-        val entry = CleanLiveLaunchEntry(
+        val boundProfileId = PlaybackProfileId(activeProfileId.toString())
+        val target = LiveChannelTarget.sanitized(
             selection = selection,
+            contentId = selection.contentKey,
+            title = title,
+            logo = logo,
+            playlistVersion = playlistVersion,
+            boundProfileId = boundProfileId,
+        )
+        val entry = CleanLiveLaunchEntry(
+            target = target,
             activeProfileId = activeProfileId,
-            metadata = CleanLiveLaunchMetadata.sanitized(title, subtitle, station),
+            metadata = CleanLiveLaunchMetadata.sanitized(target.title, subtitle, station),
             origin = origin,
-            mediaFingerprint = LiveMediaFingerprint.create(
-                selection,
-                PlaybackProfileId(activeProfileId.toString()),
-            ),
         )
         return synchronized(lock) {
             pruneExpired(now)

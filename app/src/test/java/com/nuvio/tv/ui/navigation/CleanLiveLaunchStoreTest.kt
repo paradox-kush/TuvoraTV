@@ -29,6 +29,8 @@ class CleanLiveLaunchStoreTest {
             title = "Live News",
             subtitle = "Morning",
             station = "Station",
+            logo = "https://images.test/news.png",
+            playlistVersion = 7,
         )
         val consumed = store.consume(token.routeValue, currentProfileId = 4).ready()
 
@@ -39,6 +41,11 @@ class CleanLiveLaunchStoreTest {
         assertEquals("Live News", consumed.metadata.title)
         assertEquals("Morning", consumed.metadata.subtitle)
         assertEquals("Station", consumed.metadata.station)
+        assertSame(selection, consumed.target.selection)
+        assertEquals(selection.contentKey, consumed.target.contentId)
+        assertEquals("https://images.test/news.png", consumed.target.logo)
+        assertEquals(7L, consumed.target.playlistVersion)
+        assertEquals(consumed.target.mediaFingerprint, consumed.mediaFingerprint)
         assertTrue(consumed.mediaFingerprint.matches(Regex("[a-f0-9]{64}")))
         assertRejected(
             store.consume(token.routeValue, currentProfileId = 4),
@@ -183,6 +190,29 @@ class CleanLiveLaunchStoreTest {
         assertNull(metadata.station)
         assertEquals("Tuvora", CleanLiveLaunchMetadata.sanitized("https://host/path").title)
         assertEquals(256, CleanLiveLaunchMetadata.sanitized("x".repeat(300)).title.length)
+    }
+
+    @Test
+    fun `launch target is the single sanitized selection display and fingerprint authority`() {
+        val store = store()
+        val selection = selection()
+        val token = store.put(
+            selection = selection,
+            activeProfileId = 1,
+            origin = CleanLiveLaunchOrigin.SEARCH,
+            title = "https://provider.test/live?token=secret",
+            logo = "https://user:password@provider.test/logo.png",
+            playlistVersion = 3,
+        )
+
+        val entry = store.consume(token.routeValue, 1).ready()
+
+        assertSame(selection, entry.selection)
+        assertEquals("Live TV", entry.target.title)
+        assertEquals("Live TV", entry.metadata.title)
+        assertNull(entry.target.logo)
+        assertEquals(3L, entry.target.playlistVersion)
+        assertEquals(entry.target.mediaFingerprint, entry.mediaFingerprint)
     }
 
     @Test

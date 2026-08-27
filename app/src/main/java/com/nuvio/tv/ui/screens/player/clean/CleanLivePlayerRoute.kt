@@ -13,6 +13,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.PreviewAvailability
 import com.nuvio.tv.playback.core.StreamAvailability
+import com.nuvio.tv.playback.live.LiveZapDirection
 import com.nuvio.tv.playback.ui.LivePlaybackUiErrorCode
 import com.nuvio.tv.playback.ui.LivePlaybackUiState
 import com.nuvio.tv.playback.ui.LivePlaybackUiStatusCode
@@ -99,10 +100,12 @@ internal fun CleanLivePlayerRoute(
                 !exitGate.isStarted() -> scope.launch { viewModel.retry() }
             }
         },
-        // The destination is registered before live callers are switched. Zap is wired with the
-        // relative identity resolver in the same atomic ingress cutover, before this route is used.
-        onZapPrevious = {},
-        onZapNext = {},
+        onZapPrevious = {
+            if (!exitGate.isStarted()) viewModel.requestZap(LiveZapDirection.PREVIOUS)
+        },
+        onZapNext = {
+            if (!exitGate.isStarted()) viewModel.requestZap(LiveZapDirection.NEXT)
+        },
         onExitRequested = ::requestReleaseAndExit,
     )
 }

@@ -51,6 +51,10 @@ class CleanLivePlayerArchitectureTest {
         assertFalse(routeSource.contains(".removeView("))
         assertFalse(routeSource.contains("viewModel.initialize("))
         assertTrue(routeSource.contains("viewModel.attachDestination("))
+        assertTrue(routeSource.contains("viewModel.requestZap(LiveZapDirection.PREVIOUS)"))
+        assertTrue(routeSource.contains("viewModel.requestZap(LiveZapDirection.NEXT)"))
+        assertFalse(routeSource.contains("onZapPrevious = {}"))
+        assertFalse(routeSource.contains("onZapNext = {}"))
     }
 
     @Test
