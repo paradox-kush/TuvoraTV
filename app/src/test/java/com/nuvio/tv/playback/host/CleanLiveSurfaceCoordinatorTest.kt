@@ -151,7 +151,8 @@ class CleanLiveSurfaceCoordinatorTest {
 
     @Test
     fun `Media3 detach requires affirmative renderer release proof`() = runTest {
-        val coordinator = coordinator(modes = setOf(SurfaceMode.SURFACE_VIEW))
+        val owner = owner()
+        val coordinator = coordinator(owner, setOf(SurfaceMode.SURFACE_VIEW))
         start(coordinator)
         val lease = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
         val player = mockk<ExoPlayer>(relaxed = true)
@@ -160,15 +161,18 @@ class CleanLiveSurfaceCoordinatorTest {
         lease.attach(player)
         assertFalse(lease.detach(player))
         assertFalse(lease.release())
+        assertEquals(1, owner.childCount)
         verify(exactly = 1) { player.clearVideoSurfaceWithResult() }
 
         lease.confirmPlayerReleased()
         assertTrue(lease.release())
+        assertEquals(0, owner.childCount)
     }
 
     @Test
     fun `affirmative Media3 detach permits surface release`() = runTest {
-        val coordinator = coordinator(modes = setOf(SurfaceMode.SURFACE_VIEW))
+        val owner = owner()
+        val coordinator = coordinator(owner, setOf(SurfaceMode.SURFACE_VIEW))
         start(coordinator)
         val lease = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
         val player = mockk<ExoPlayer>(relaxed = true)
@@ -177,6 +181,7 @@ class CleanLiveSurfaceCoordinatorTest {
         lease.attach(player)
         assertTrue(lease.detach(player))
         assertTrue(lease.release())
+        assertEquals(0, owner.childCount)
     }
 
     @Test

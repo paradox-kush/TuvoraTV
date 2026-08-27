@@ -2,6 +2,7 @@ package com.nuvio.tv.playback.media3
 
 import android.view.SurfaceView
 import android.view.TextureView
+import android.view.View
 import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
@@ -42,15 +43,20 @@ class ViewMedia3SurfaceHost(
     private val surfaceView: () -> SurfaceView?,
     private val textureView: () -> TextureView?,
     private val viewDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val onReleasedView: (View) -> Unit = {},
 ) : Media3SurfaceHost {
     override suspend fun acquire(
         mode: SurfaceMode,
         secure: Boolean,
     ): PlaybackResult<Media3SurfaceLease> = withContext(viewDispatcher) {
         val lease = when (mode) {
-            SurfaceMode.SURFACE_VIEW -> surfaceView()?.let { view -> SurfaceViewLease(view, secure) }
+            SurfaceMode.SURFACE_VIEW -> surfaceView()?.let { view ->
+                SurfaceViewLease(view, secure, onReleasedView)
+            }
             SurfaceMode.TEXTURE_VIEW -> {
-                if (secure) null else textureView()?.let(::TextureViewLease)
+                if (secure) null else textureView()?.let { view ->
+                    TextureViewLease(view, onReleasedView)
+                }
             }
             SurfaceMode.NATIVE_EMBED,
             SurfaceMode.GPU_RENDER,
@@ -63,11 +69,14 @@ class ViewMedia3SurfaceHost(
     private class SurfaceViewLease(
         private val view: SurfaceView,
         override val secure: Boolean,
+        private val onReleasedView: (View) -> Unit,
     ) : Media3SurfaceLease {
         override val mode: SurfaceMode = SurfaceMode.SURFACE_VIEW
         private var attached = false
+        private var released = false
 
         override fun attach(player: ExoPlayer) {
+            check(!released) { "Released surface lease cannot be attached" }
             view.setSecure(secure)
             player.setVideoSurfaceView(view)
             attached = true
@@ -83,17 +92,29 @@ class ViewMedia3SurfaceHost(
             attached = false
         }
 
-        override suspend fun release(): Boolean = !attached
+        override suspend fun release(): Boolean {
+            val notify = synchronized(this) {
+                if (attached) return false
+                if (released) return true
+                released = true
+                true
+            }
+            if (notify) onReleasedView(view)
+            return true
+        }
     }
 
     private class TextureViewLease(
         private val view: TextureView,
+        private val onReleasedView: (View) -> Unit,
     ) : Media3SurfaceLease {
         override val mode: SurfaceMode = SurfaceMode.TEXTURE_VIEW
         override val secure: Boolean = false
         private var attached = false
+        private var released = false
 
         override fun attach(player: ExoPlayer) {
+            check(!released) { "Released surface lease cannot be attached" }
             player.setVideoTextureView(view)
             attached = true
         }
@@ -108,7 +129,16 @@ class ViewMedia3SurfaceHost(
             attached = false
         }
 
-        override suspend fun release(): Boolean = !attached
+        override suspend fun release(): Boolean {
+            val notify = synchronized(this) {
+                if (attached) return false
+                if (released) return true
+                released = true
+                true
+            }
+            if (notify) onReleasedView(view)
+            return true
+        }
     }
 }
 

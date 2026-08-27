@@ -8,7 +8,6 @@ import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
@@ -18,7 +17,7 @@ import com.nuvio.tv.playback.core.Retryability
 import com.nuvio.tv.playback.core.SurfaceCapabilities
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.media3.Media3SurfaceHost
-import com.nuvio.tv.playback.media3.Media3SurfaceLease
+import com.nuvio.tv.playback.media3.ViewMedia3SurfaceHost
 import com.nuvio.tv.playback.mpv.MpvSurfaceHost
 import com.nuvio.tv.playback.mpv.MpvSurfaceLease
 import com.nuvio.tv.playback.ui.PlaybackSessionController
@@ -138,7 +137,7 @@ internal class CleanLiveSurfaceCoordinator(
     private suspend fun acquireMedia3(
         mode: SurfaceMode,
         secure: Boolean,
-    ): PlaybackResult<Media3SurfaceLease> = withContext(mainDispatcher) {
+    ) = withContext(mainDispatcher) {
         ownershipMutex.withLock {
             if (!canAcquire(mode) || mode !in MEDIA3_MODES) return@withLock failure()
             if (secure && (mode != SurfaceMode.SURFACE_VIEW || !capabilities.secureSurfaceSupported)) {
@@ -156,7 +155,19 @@ internal class CleanLiveSurfaceCoordinator(
                 removeControlled(slot)
                 return@withLock failure()
             }
-            PlaybackResult.Success(CoordinatorMedia3Lease(slot))
+            val result = ViewMedia3SurfaceHost(
+                surfaceView = { slot.view as? SurfaceView },
+                textureView = { slot.view as? TextureView },
+                viewDispatcher = mainDispatcher,
+                onReleasedView = { releasedView ->
+                    if (releasedView === slot.view) markMedia3Released(slot)
+                },
+            ).acquire(mode, secure)
+            if (result is PlaybackResult.Failure) {
+                slot.released = true
+                removeControlled(slot)
+            }
+            result
         }
     }
 
@@ -200,7 +211,7 @@ internal class CleanLiveSurfaceCoordinator(
             setSecure(secure)
             holder.addCallback(surfaceCallback(token))
         }
-        return install(SurfaceSlot(token, mode, view, secure = secure))
+        return install(SurfaceSlot(token, mode, view))
     }
 
     private fun createTextureViewSlot(mode: SurfaceMode): SurfaceSlot {
@@ -208,7 +219,7 @@ internal class CleanLiveSurfaceCoordinator(
         val view = TextureView(owner.context).apply {
             surfaceTextureListener = textureListener(token)
         }
-        return install(SurfaceSlot(token, mode, view, secure = false))
+        return install(SurfaceSlot(token, mode, view))
     }
 
     private fun install(slot: SurfaceSlot): SurfaceSlot {
@@ -243,16 +254,11 @@ internal class CleanLiveSurfaceCoordinator(
         controlledRemovalToken = null
     }
 
-    private suspend fun releaseMedia3(slot: SurfaceSlot): Boolean = withContext(mainDispatcher) {
-        ownershipMutex.withLock {
-            if (current !== slot || slot.attached) return@withLock current !== slot
-            slot.released = true
-            removeControlled(slot)
-            true
-        }
-    }
+    private fun markMedia3Released(slot: SurfaceSlot) = markReleased(slot)
 
-    private fun markMpvReleased(slot: SurfaceSlot) {
+    private fun markMpvReleased(slot: SurfaceSlot) = markReleased(slot)
+
+    private fun markReleased(slot: SurfaceSlot) {
         slot.released = true
         callbackScope.launch(mainDispatcher) {
             ownershipMutex.withLock {
@@ -301,34 +307,6 @@ internal class CleanLiveSurfaceCoordinator(
         return nextToken++
     }
 
-    private inner class CoordinatorMedia3Lease(
-        private val slot: SurfaceSlot,
-    ) : Media3SurfaceLease {
-        override val mode: SurfaceMode = slot.mode
-        override val secure: Boolean = slot.secure
-
-        override fun attach(player: ExoPlayer) {
-            check(!slot.attached && !slot.released)
-            when (val view = slot.view) {
-                is SurfaceView -> player.setVideoSurfaceView(view)
-                is TextureView -> player.setVideoTextureView(view)
-            }
-            slot.attached = true
-        }
-
-        override fun detach(player: ExoPlayer): Boolean {
-            val acknowledged = player.clearVideoSurfaceWithResult()
-            if (acknowledged) slot.attached = false
-            return acknowledged
-        }
-
-        override fun confirmPlayerReleased() {
-            slot.attached = false
-        }
-
-        override suspend fun release(): Boolean = releaseMedia3(slot)
-    }
-
     private inner class CoordinatorMpvLease(
         private val slot: SurfaceSlot,
         override val surface: Surface,
@@ -368,7 +346,6 @@ internal class CleanLiveSurfaceCoordinator(
         val token: Long,
         val mode: SurfaceMode,
         val view: View,
-        val secure: Boolean,
         @Volatile var attached: Boolean = false,
         @Volatile var released: Boolean = false,
         var ownedSurface: Surface? = null,

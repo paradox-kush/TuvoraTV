@@ -42,11 +42,14 @@ secure libmpv and secure `TextureView` requests fail closed.
 
 ## Release proof
 
-Media3 detach uses the pinned fork's affirmative `ExoPlayer.clearVideoSurfaceWithResult()` result.
-A failed clear leaves the lease attached and blocks child release until terminal player release is
-affirmatively confirmed. libmpv release similarly blocks while attached until detach or core-destroy
-confirmation. Consequently a graph replacement cannot create a second raw surface while an engine
-still owns the first.
+The coordinator delegates its created Android view to `ViewMedia3SurfaceHost`, the Media3 adapter
+leaf that owns the pinned fork's affirmative `ExoPlayer.clearVideoSurfaceWithResult()` call. The
+leaf invokes an exactly-once released-view callback only after detach or terminal player-release
+proof and successful lease release; that callback lets the coordinator remove its child without the
+host package importing or implementing any ExoPlayer-facing lease. A failed clear leaves the lease
+attached and blocks the callback. libmpv release similarly blocks while attached until detach or
+core-destroy confirmation. Consequently a graph replacement cannot create a second raw surface
+while an engine still owns the first.
 
 ## Verification and platform audit
 
