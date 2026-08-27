@@ -6,6 +6,7 @@ import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.playback.settings.PlaybackPreferenceDocument
 import com.nuvio.tv.playback.settings.PlaybackPreferenceDocumentStore
 import com.nuvio.tv.playback.settings.PlaybackPreferenceRepository
+import com.nuvio.tv.playback.core.PlaybackCommand
 import java.lang.reflect.Modifier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -77,6 +78,37 @@ class LegacyPlaybackMigrationWiringTest {
         assertFalse(second.imported)
         assertEquals(1, store.writeCount)
         assertEquals("player-settings-v1", second.snapshot.legacyImportToken)
+    }
+
+    @Test
+    fun `production bootstrap is profile scoped lazy and propagates the exact imported preference`() = runTest {
+        val store = InMemoryStore()
+        val repository = PlaybackPreferenceRepository(store)
+        val requestedProfiles = mutableListOf<String>()
+        val bootstrap = ProductionPlaybackPreferenceBootstrap(
+            repository = repository,
+            legacySource = { profileId ->
+                requestedProfiles += profileId
+                LegacyPlayerSettingsSnapshotMapper.map(
+                    PlayerSettings(internalPlayerEngine = InternalPlayerEngine.MVP_PLAYER),
+                    "player-settings-v1",
+                )
+            },
+        )
+
+        val profileTwo = bootstrap.load("2")
+        val profileTwoAgain = bootstrap.load("2")
+        val profileThree = bootstrap.load("3")
+
+        assertEquals(listOf("2", "3"), requestedProfiles)
+        assertTrue(profileTwo.importedLegacy)
+        assertFalse(profileTwoAgain.importedLegacy)
+        assertTrue(profileThree.importedLegacy)
+        assertEquals(profileTwo.preferences, profileTwoAgain.preferences)
+        assertEquals(
+            PlaybackCommand.PreferencesChanged(profileTwo.preferences.playback),
+            profileTwo.initialCommand(),
+        )
     }
 
     private class InMemoryStore : PlaybackPreferenceDocumentStore {

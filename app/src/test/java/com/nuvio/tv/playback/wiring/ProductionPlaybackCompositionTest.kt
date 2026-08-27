@@ -1,7 +1,6 @@
 package com.nuvio.tv.playback.wiring
 
 import android.app.Application
-import com.nuvio.tv.core.iptv.dns.PlaylistDns
 import com.nuvio.tv.playback.core.AudioOutputPreference
 import com.nuvio.tv.playback.core.BufferingPreference
 import com.nuvio.tv.playback.core.DecoderPreference
@@ -22,8 +21,10 @@ import com.nuvio.tv.playback.core.SurfaceCapabilities
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.core.VideoQualityIntent
 import com.nuvio.tv.playback.media3.Media3SurfaceHost
+import com.nuvio.tv.playback.media3.ApplicationDnsResolver
 import com.nuvio.tv.playback.mpv.MpvSurfaceHost
 import com.nuvio.tv.playback.mpv.MpvSurfaceLease
+import com.nuvio.tv.playback.settings.LegacyPlayerSettingsSnapshot
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
@@ -47,7 +48,8 @@ class ProductionPlaybackCompositionTest {
         val factory = ProductionPlaybackSessionFactory(
             context = context,
             providerResolver = { _, _ -> error("No provider resolution during construction") },
-            playlistDns = PlaylistDns(),
+            applicationDnsResolver = ApplicationDnsResolver { null },
+            legacyPreferenceSource = { LegacyPlayerSettingsSnapshot("test-v1", emptyMap()) },
         )
         val host = ProductionPlaybackHost(
             parentScope = this,

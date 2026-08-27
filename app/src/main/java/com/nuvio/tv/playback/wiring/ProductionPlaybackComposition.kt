@@ -3,7 +3,6 @@ package com.nuvio.tv.playback.wiring
 import android.content.Context
 import android.media.AudioDeviceInfo
 import com.nuvio.tv.BuildConfig
-import com.nuvio.tv.core.iptv.dns.PlaylistDns
 import com.nuvio.tv.playback.android.AndroidRuntimeCapabilityCollector
 import com.nuvio.tv.playback.android.AndroidRuntimeCapabilitySnapshot
 import com.nuvio.tv.playback.android.FrameworkAndroidCapabilitySource
@@ -17,6 +16,7 @@ import com.nuvio.tv.playback.core.DefaultPlaybackRequirementsResolver
 import com.nuvio.tv.playback.core.EngineType
 import com.nuvio.tv.playback.core.GraphOutputProfile
 import com.nuvio.tv.playback.core.PlaybackClock
+import com.nuvio.tv.playback.core.PlaybackCommand
 import com.nuvio.tv.playback.core.PlaybackEngine
 import com.nuvio.tv.playback.core.PlaybackEngineRegistry
 import com.nuvio.tv.playback.core.PlaybackEnvironmentInput
@@ -41,6 +41,7 @@ import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.core.TlsPolicy
 import com.nuvio.tv.playback.core.VideoDimensions
 import com.nuvio.tv.playback.media3.AndroidMedia3BackendFactory
+import com.nuvio.tv.playback.media3.ApplicationDnsResolver
 import com.nuvio.tv.playback.media3.Media3Engine
 import com.nuvio.tv.playback.media3.Media3SurfaceHost
 import com.nuvio.tv.playback.mpv.AndroidMpvBackendFactory
@@ -117,12 +118,17 @@ internal data class ProductionPlaybackHost(
 internal class ProductionPlaybackSessionFactory @Inject constructor(
     @ApplicationContext context: Context,
     private val providerResolver: ProviderPlaybackResolver,
-    private val playlistDns: PlaylistDns,
+    private val applicationDnsResolver: ApplicationDnsResolver,
+    legacyPreferenceSource: LegacyPlaybackPreferenceSnapshotSource,
 ) {
     private val appContext = context.applicationContext
     private val strictPlaybackHttpClient = OkHttpClient.Builder().build()
     private val preferenceRepository = PlaybackPreferenceRepository(
         SharedPreferencesPlaybackPreferenceDocumentStore(appContext),
+    )
+    private val preferenceBootstrap = ProductionPlaybackPreferenceBootstrap(
+        repository = preferenceRepository,
+        legacySource = legacyPreferenceSource,
     )
     private val compatibilityStorage = SharedPreferencesPlaybackCompatibilityStorage(
         appContext.getSharedPreferences(COMPATIBILITY_PREFERENCES, Context.MODE_PRIVATE),
@@ -136,7 +142,8 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
         host: ProductionPlaybackHost,
     ): PlaybackSessionController {
         require(preferenceProfileId.isNotBlank()) { "Playback preference profile id must not be blank" }
-        val requested = preferenceRepository.load(preferenceProfileId).preferences
+        val bootstrap = preferenceBootstrap.load(preferenceProfileId)
+        val requested = bootstrap.preferences
         val collector = AndroidRuntimeCapabilityCollector(
             FrameworkAndroidCapabilitySource(appContext, host.routedAudioDevice),
         )
@@ -186,7 +193,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             policy = PlaybackPolicy(),
         )
         // The actor lane preserves this command before any Tune/Zap sent through the returned owner.
-        session.dispatch(com.nuvio.tv.playback.core.PlaybackCommand.PreferencesChanged(requested.playback))
+        session.dispatch(bootstrap.initialCommand())
         return PlaybackSessionController(session)
     }
 
@@ -197,9 +204,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             backendFactory = AndroidMedia3BackendFactory(
                 context = appContext,
                 sharedHttpClient = strictPlaybackHttpClient,
-                applicationDnsResolver = { key ->
-                    key.value.takeIf(playlistDns::usesDoh)?.let(playlistDns::dnsFor)
-                },
+                applicationDnsResolver = applicationDnsResolver,
                 sharedClientTlsPolicy = TlsPolicy.STRICT,
             ),
         ),
@@ -224,6 +229,32 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
                 ),
             )
         }
+    }
+}
+
+internal data class BootstrappedPlaybackPreferences(
+    val profileId: String,
+    val preferences: CleanPlaybackPreferences,
+    val importedLegacy: Boolean,
+) {
+    fun initialCommand(): PlaybackCommand.PreferencesChanged =
+        PlaybackCommand.PreferencesChanged(preferences.playback)
+}
+
+internal class ProductionPlaybackPreferenceBootstrap(
+    private val repository: PlaybackPreferenceRepository,
+    private val legacySource: LegacyPlaybackPreferenceSnapshotSource,
+) {
+    suspend fun load(profileId: String): BootstrappedPlaybackPreferences {
+        require(profileId.isNotBlank()) { "Playback preference profile id must not be blank" }
+        val result = repository.loadOrImportLegacyIfAbsent(profileId) {
+            legacySource.snapshot(profileId)
+        }
+        return BootstrappedPlaybackPreferences(
+            profileId = profileId,
+            preferences = result.snapshot.preferences,
+            importedLegacy = result.imported,
+        )
     }
 }
 

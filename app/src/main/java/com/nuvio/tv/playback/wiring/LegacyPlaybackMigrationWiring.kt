@@ -1,9 +1,14 @@
 package com.nuvio.tv.playback.wiring
 
 import com.nuvio.tv.data.local.PlayerSettings
+import com.nuvio.tv.data.local.PlayerSettingsDataStore
+import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.playback.settings.LegacyPreferenceImportResult
 import com.nuvio.tv.playback.settings.LegacyPlayerSettingsSnapshot
 import com.nuvio.tv.playback.settings.PlaybackPreferenceRepository
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
 
 /**
  * The only production bridge from the frozen legacy settings model into the detached clean import
@@ -183,3 +188,32 @@ suspend fun PlaybackPreferenceRepository.importTypedLegacyIfAbsent(
     profileId = profileId,
     legacy = LegacyPlayerSettingsSnapshotMapper.map(settings, importToken),
 )
+
+/** Profile-explicit bridge used only while bootstrapping the detached clean repository. */
+internal fun interface LegacyPlaybackPreferenceSnapshotSource {
+    suspend fun snapshot(profileId: String): LegacyPlayerSettingsSnapshot
+}
+
+@Singleton
+internal class ActiveProfileLegacyPlaybackPreferenceSnapshotSource @Inject constructor(
+    private val profileManager: ProfileManager,
+    private val legacyStore: PlayerSettingsDataStore,
+) : LegacyPlaybackPreferenceSnapshotSource {
+    override suspend fun snapshot(profileId: String): LegacyPlayerSettingsSnapshot {
+        val numericProfileId = profileId.toIntOrNull()?.takeIf { it > 0 }
+            ?: error("Playback preference profile id is invalid")
+        profileManager.activeProfileReady.first { it }
+        check(profileManager.activeProfileId.value == numericProfileId) {
+            "Playback preference bootstrap profile is not active"
+        }
+        val settings = legacyStore.playerSettings.first()
+        check(profileManager.activeProfileId.value == numericProfileId) {
+            "Playback preference profile changed during bootstrap"
+        }
+        return LegacyPlayerSettingsSnapshotMapper.map(settings, LEGACY_PLAYBACK_IMPORT_TOKEN)
+    }
+
+    private companion object {
+        const val LEGACY_PLAYBACK_IMPORT_TOKEN = "player-settings-v1"
+    }
+}

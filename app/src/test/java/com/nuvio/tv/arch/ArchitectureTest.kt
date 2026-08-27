@@ -349,6 +349,25 @@ class ArchitectureTest {
         )
     }
 
+    @Test
+    fun `clean settings view model only owns preference presentation`() {
+        assertCleanPlaybackFilesCollected()
+        val target = "com/nuvio/tv/ui/screens/settings/CleanPlaybackSettingsViewModel.kt"
+        val forbidden = Regex(
+            """\b(?:PlaybackSessionController|PlaybackSession|PlaybackEngine|PlayerSettingsDataStore)\b|""" +
+                """\bcom\.nuvio\.tv\.playback\.(?:media3|mpv)\.""",
+        )
+        val violations = files
+            .filter { (path, _) -> rel(path) == target }
+            .filter { (_, text) -> forbidden.containsMatchIn(stripComments(text)) }
+            .map { (path, _) -> rel(path) }
+        assertTrue(
+            "Clean settings ViewModel persists/resolves intent and never owns a player or engine:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
     /** The live presentation projection is a pure view of snapshots, never a new decision owner. */
     @Test
     fun `clean live presentation never depends on platform engine or provider implementations`() {

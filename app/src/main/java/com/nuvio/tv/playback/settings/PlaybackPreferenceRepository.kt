@@ -71,15 +71,22 @@ class PlaybackPreferenceRepository(
     suspend fun importLegacyIfAbsent(
         profileId: String,
         legacy: LegacyPlayerSettingsSnapshot,
+    ): LegacyPreferenceImportResult = loadOrImportLegacyIfAbsent(profileId) { legacy }
+
+    /** Reads an existing clean document without consulting legacy storage, or imports once. */
+    suspend fun loadOrImportLegacyIfAbsent(
+        profileId: String,
+        legacy: suspend () -> LegacyPlayerSettingsSnapshot,
     ): LegacyPreferenceImportResult = mutex.withLock {
         val existing = store.read(profileId)
         if (existing != null) {
             return@withLock LegacyPreferenceImportResult(imported = false, snapshot = decode(existing))
         }
-        val mapped = LegacyPlaybackPreferenceImporter.map(legacy)
+        val legacySnapshot = legacy()
+        val mapped = LegacyPlaybackPreferenceImporter.map(legacySnapshot)
         val document = PlaybackPreferenceSchema.newDocument(mapped.preferences).copy(
             revision = 1,
-            legacyImportToken = legacy.importToken,
+            legacyImportToken = legacySnapshot.importToken,
         )
         store.write(profileId, document)
         LegacyPreferenceImportResult(
