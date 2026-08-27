@@ -348,4 +348,24 @@ class ArchitectureTest {
             violations.isEmpty(),
         )
     }
+
+    /** The live presentation projection is a pure view of snapshots, never a new decision owner. */
+    @Test
+    fun `clean live presentation never depends on platform engine or provider implementations`() {
+        assertCleanPlaybackFilesCollected()
+        val target = "com/nuvio/tv/playback/ui/LivePlaybackUiPresentation.kt"
+        val forbidden = Regex(
+            """^(?:android\.|androidx\.|com\.nuvio\.tv\.playback\.(?:media3|mpv|provider)\.|""" +
+                """com\.nuvio\.tv\.core\.iptv\.|com\.nuvio\.tv\.ui\.)""",
+        )
+        val violations = files
+            .filter { (path, _) -> rel(path) == target }
+            .flatMap { (_, text) -> imports(text).filter(forbidden::containsMatchIn) }
+            .sorted()
+        assertTrue(
+            "Live playback presentation may import only engine-neutral clean contracts:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
 }
