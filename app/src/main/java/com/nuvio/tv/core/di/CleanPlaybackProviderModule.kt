@@ -1,8 +1,8 @@
 package com.nuvio.tv.core.di
 
-import com.nuvio.tv.core.iptv.playback.IptvProviderPlaybackResolver
+import com.nuvio.tv.core.iptv.playback.IptvProviderPlaybackResolverFactory
 import com.nuvio.tv.core.iptv.dns.PlaylistDns
-import com.nuvio.tv.playback.core.ProviderPlaybackResolver
+import com.nuvio.tv.playback.core.ProviderPlaybackResolverFactory
 import com.nuvio.tv.playback.media3.ApplicationDnsResolver
 import com.nuvio.tv.playback.wiring.ActiveProfileLegacyPlaybackPreferenceSnapshotSource
 import com.nuvio.tv.playback.wiring.LegacyPlaybackPreferenceSnapshotSource
@@ -19,9 +19,9 @@ import javax.inject.Singleton
 abstract class CleanPlaybackProviderModule {
     @Binds
     @Singleton
-    abstract fun bindProviderPlaybackResolver(
-        implementation: IptvProviderPlaybackResolver,
-    ): ProviderPlaybackResolver
+    abstract fun bindProviderPlaybackResolverFactory(
+        implementation: IptvProviderPlaybackResolverFactory,
+    ): ProviderPlaybackResolverFactory
 
     @Binds
     @Singleton

@@ -9,6 +9,7 @@ import com.nuvio.tv.playback.core.PlaybackCommand
 import com.nuvio.tv.playback.core.PlaybackLifecyclePort
 import com.nuvio.tv.playback.core.PlaybackOutputApplication
 import com.nuvio.tv.playback.core.PlaybackOutputController
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackOutputRequest
 import com.nuvio.tv.playback.core.PlaybackOutputStatus
 import com.nuvio.tv.playback.core.PlaybackResult
@@ -238,7 +239,7 @@ class CleanLivePlaybackHostTest {
 
         suspend fun create(): CleanLivePlaybackHost = CleanLivePlaybackHost.create(
             context = RuntimeEnvironment.getApplication(),
-            preferenceProfileId = "profile",
+            preferenceProfileId = PlaybackProfileId("profile"),
             parentScope = parentScope,
             sessionFactory = sessionFactory,
             surfaces = surfaces,

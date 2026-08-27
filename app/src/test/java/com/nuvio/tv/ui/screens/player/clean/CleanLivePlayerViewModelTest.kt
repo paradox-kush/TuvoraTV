@@ -71,7 +71,7 @@ class CleanLivePlayerViewModelTest {
 
         assertEquals(1, fixture.consumer.calls)
         assertEquals(listOf("create", "tune"), fixture.operations)
-        assertEquals("7", fixture.factory.input?.preferenceProfileId)
+        assertEquals("7", fixture.factory.input?.preferenceProfileId?.value)
         assertSame(fixture.owner, fixture.factory.input?.surfaceOwner)
         assertEquals(SessionProfile.FULLSCREEN, fixture.host.tunedProfile)
         assertSame(fixture.entry.selection, fixture.host.tunedSelection)

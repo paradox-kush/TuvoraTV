@@ -6,6 +6,7 @@ import android.os.Looper
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackLifecyclePort
 import com.nuvio.tv.playback.core.PlaybackOutputController
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ResourceBudget
@@ -175,7 +176,7 @@ internal class CleanLivePlaybackHost private constructor(
 
         suspend fun create(
             context: Context,
-            preferenceProfileId: String,
+            preferenceProfileId: PlaybackProfileId,
             parentScope: CoroutineScope,
             sessionFactory: ProductionPlaybackSessionFactory,
             surfaces: CleanLiveSurfaceCoordinator,

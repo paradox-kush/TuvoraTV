@@ -10,6 +10,7 @@ import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.profile.ProfileManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -33,6 +34,16 @@ class XtreamAccountStore @Inject constructor(
 
     val accounts: Flow<List<XtreamAccount>> = profileManager.activeProfileId.flatMapLatest { pid ->
         factory.get(pid, FEATURE).data.map { prefs -> parse(prefs[accountsKey]) }
+    }
+
+    /** One explicit-profile read for playback owners that must never follow the active-profile flow. */
+    internal suspend fun findForProfile(profileId: Int, accountId: String): XtreamAccount? {
+        require(profileId > 0) { "Profile id must be positive" }
+        require(accountId.isNotBlank()) { "Account id must not be blank" }
+        return factory.get(profileId, FEATURE).data
+            .map { prefs -> parse(prefs[accountsKey]) }
+            .first()
+            .firstOrNull { it.id == accountId }
     }
 
     /** Insert or replace by id (id = baseUrl|username). */

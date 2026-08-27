@@ -19,7 +19,9 @@ separate implementation phase.
 
 ## Contract decisions preserved
 
-- Preferences are loaded by the active profile id. Environment policy returns the complete
+- Preferences and the provider resolver are bound to the same explicit, redacted
+  `PlaybackProfileId` captured by the playback owner. Neither follows mutable active-profile state.
+  Environment policy returns the complete
   effective `PlaybackPreferences`; `PlaybackSession` passes that exact object to the requirements
   resolver. There is no second preference resolver and no hidden latest-request bridge.
 - Compatibility history is read using the explicit hashed `CompatibilityScopeKey` carried by the

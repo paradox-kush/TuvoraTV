@@ -13,9 +13,12 @@ import com.nuvio.tv.playback.core.PlaybackOutputController
 import com.nuvio.tv.playback.core.PlaybackOutputApplication
 import com.nuvio.tv.playback.core.PlaybackOutputRequest
 import com.nuvio.tv.playback.core.PlaybackOutputStatus
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackRequirements
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.PlaybackState
+import com.nuvio.tv.playback.core.ProviderPlaybackResolver
+import com.nuvio.tv.playback.core.ProviderPlaybackResolverFactory
 import com.nuvio.tv.playback.core.ResourceBudget
 import com.nuvio.tv.playback.core.SessionPriority
 import com.nuvio.tv.playback.core.SessionProfile
@@ -49,9 +52,13 @@ class ProductionPlaybackCompositionTest {
     @Test
     fun `factory constructs one idle controller and its release reaches stopped`() = runTest {
         val context = RuntimeEnvironment.getApplication()
+        val requestedProfiles = mutableListOf<PlaybackProfileId>()
         val factory = ProductionPlaybackSessionFactory(
             context = context,
-            providerResolver = { _, _ -> error("No provider resolution during construction") },
+            providerResolverFactory = ProviderPlaybackResolverFactory { profileId ->
+                requestedProfiles += profileId
+                ProviderPlaybackResolver { _, _ -> error("No provider resolution during construction") }
+            },
             applicationDnsResolver = ApplicationDnsResolver { null },
             legacyPreferenceSource = { LegacyPlayerSettingsSnapshot("test-v1", emptyMap()) },
         )
@@ -68,8 +75,11 @@ class ProductionPlaybackCompositionTest {
             lifecycle = PlaybackLifecyclePort { emptyFlow() },
         )
 
-        val controller = factory.create("composition-test-profile", host)
+        val profileId = PlaybackProfileId("composition-test-profile")
+        val controller = factory.create(profileId, host)
 
+        assertEquals(listOf(profileId), requestedProfiles)
+        assertFalse(profileId.toString().contains(profileId.value))
         assertEquals(PlaybackState.IDLE, controller.snapshot.value.state)
         controller.release()
         assertEquals(PlaybackState.STOPPED, controller.snapshot.value.state)

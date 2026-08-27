@@ -28,11 +28,12 @@ import com.nuvio.tv.playback.core.PlaybackGraphProvider
 import com.nuvio.tv.playback.core.PlaybackLifecyclePort
 import com.nuvio.tv.playback.core.PlaybackOutputController
 import com.nuvio.tv.playback.core.PlaybackPolicy
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackRequestResolver
 import com.nuvio.tv.playback.core.PlaybackRequirementsInput
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.PlaybackSession
-import com.nuvio.tv.playback.core.ProviderPlaybackResolver
+import com.nuvio.tv.playback.core.ProviderPlaybackResolverFactory
 import com.nuvio.tv.playback.core.ResolvedPlaybackRequest
 import com.nuvio.tv.playback.core.ResourceBudget
 import com.nuvio.tv.playback.core.StreamEvidence
@@ -117,7 +118,7 @@ internal data class ProductionPlaybackHost(
 @Singleton
 internal class ProductionPlaybackSessionFactory @Inject constructor(
     @ApplicationContext context: Context,
-    private val providerResolver: ProviderPlaybackResolver,
+    private val providerResolverFactory: ProviderPlaybackResolverFactory,
     private val applicationDnsResolver: ApplicationDnsResolver,
     legacyPreferenceSource: LegacyPlaybackPreferenceSnapshotSource,
 ) {
@@ -138,11 +139,10 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
     private val diagnostics = FormattingPlaybackDiagnostics(PostHogPlaybackDiagnosticSink)
 
     suspend fun create(
-        preferenceProfileId: String,
+        preferenceProfileId: PlaybackProfileId,
         host: ProductionPlaybackHost,
     ): PlaybackSessionController {
-        require(preferenceProfileId.isNotBlank()) { "Playback preference profile id must not be blank" }
-        val bootstrap = preferenceBootstrap.load(preferenceProfileId)
+        val bootstrap = preferenceBootstrap.load(preferenceProfileId.value)
         val requested = bootstrap.preferences
         val collector = AndroidRuntimeCapabilityCollector(
             FrameworkAndroidCapabilitySource(appContext, host.routedAudioDevice),
@@ -173,7 +173,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
         val session = PlaybackSession(
             parentScope = host.parentScope,
             requestResolver = concreteRequestResolver,
-            providerPlaybackResolver = providerResolver,
+            providerPlaybackResolver = providerResolverFactory.create(preferenceProfileId),
             environmentProvider = environmentProvider,
             requirementsResolver = DefaultPlaybackRequirementsResolver(),
             graphProvider = graphProvider,

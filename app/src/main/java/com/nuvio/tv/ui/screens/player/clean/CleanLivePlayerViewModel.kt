@@ -9,6 +9,7 @@ import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.playback.android.AndroidPlaybackLifecyclePort
 import com.nuvio.tv.playback.android.output.AndroidPlaybackOutputController
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.SurfaceMode
@@ -99,7 +100,7 @@ internal interface CleanLiveDestinationHost {
 
 internal class CleanLiveDestinationHostInput(
     val context: Context,
-    val preferenceProfileId: String,
+    val preferenceProfileId: PlaybackProfileId,
     val parentScope: CoroutineScope,
     val activity: Activity,
     val lifecycle: Lifecycle,
@@ -251,7 +252,7 @@ internal class CleanLivePlayerViewModel private constructor(
             hostFactory.create(
                 CleanLiveDestinationHostInput(
                     context = appContext,
-                    preferenceProfileId = launch.activeProfileId.toString(),
+                    preferenceProfileId = PlaybackProfileId(launch.activeProfileId.toString()),
                     parentScope = ownerScope,
                     activity = activity,
                     lifecycle = lifecycle,

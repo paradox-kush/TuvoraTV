@@ -89,6 +89,17 @@ class ProviderSelectionId(val value: String) {
     override fun toString(): String = "[REDACTED]"
 }
 
+/** Exact profile scope captured when a playback owner is created; never printable in diagnostics. */
+class PlaybackProfileId(val value: String) {
+    init {
+        require(value.isNotBlank()) { "Playback profile id must not be blank" }
+    }
+
+    override fun equals(other: Any?): Boolean = other is PlaybackProfileId && value == other.value
+    override fun hashCode(): Int = value.hashCode()
+    override fun toString(): String = "[REDACTED]"
+}
+
 enum class ProviderSourceType { XTREAM, M3U, STALKER }
 
 /** Programme bounds needed to resolve a finite provider catch-up stream after the release barrier. */

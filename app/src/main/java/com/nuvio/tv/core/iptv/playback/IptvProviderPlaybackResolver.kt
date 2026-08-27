@@ -18,9 +18,11 @@ import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.PlaybackFailure
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.ProviderDialectAdvanceEligibility
 import com.nuvio.tv.playback.core.ProviderPlaybackResolver
+import com.nuvio.tv.playback.core.ProviderPlaybackResolverFactory
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ProviderResolutionContext
 import com.nuvio.tv.playback.core.ProviderResolutionTrigger
@@ -37,12 +39,15 @@ import com.nuvio.tv.playback.wiring.PlaybackRequestMapper
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 internal fun interface ProviderAccountLookup {
     suspend fun find(accountId: String): XtreamAccount?
+}
+
+internal fun interface ProviderAccountLookupFactory {
+    fun create(profileId: PlaybackProfileId): ProviderAccountLookup
 }
 
 internal fun interface ProviderLinkSource {
@@ -64,19 +69,13 @@ internal sealed interface ProviderLinkResult {
 
 internal enum class ProviderLinkFailureReason { SESSION_LIMIT, LINK_FAULT, UNKNOWN }
 
-/**
- * Production bridge from an opaque clean-player selection to the existing IPTV source APIs.
- *
- * It performs no media probe. The owning [com.nuvio.tv.playback.core.PlaybackSession] invokes this
- * port only after its release barrier, so Stalker create_link and catch-up dialect URLs cannot be
- * minted while the previous channel still owns the provider connection.
- */
+/** Production resolver factory whose returned owner can read only its captured profile's accounts. */
 @Singleton
-class IptvProviderPlaybackResolver internal constructor(
-    private val accounts: ProviderAccountLookup,
+class IptvProviderPlaybackResolverFactory internal constructor(
+    private val accountLookups: ProviderAccountLookupFactory,
     private val links: ProviderLinkSource,
-    winnerMemory: CatchUpDialectWalk.WinnerMemory,
-) : ProviderPlaybackResolver {
+    private val winnerMemory: CatchUpDialectWalk.WinnerMemory,
+) : ProviderPlaybackResolverFactory {
 
     @Inject
     constructor(
@@ -84,8 +83,11 @@ class IptvProviderPlaybackResolver internal constructor(
         clientFactory: IptvClientFactory,
         winnerStore: CatchUpWinnerStore,
     ) : this(
-        accounts = ProviderAccountLookup { accountId ->
-            accountStore.accounts.first().firstOrNull { it.id == accountId }
+        accountLookups = ProviderAccountLookupFactory { profileId ->
+            val persistedProfileId = profileId.value.toIntOrNull()?.takeIf { it > 0 }
+            ProviderAccountLookup { accountId ->
+                persistedProfileId?.let { accountStore.findForProfile(it, accountId) }
+            }
         },
         links = ProviderLinkSource { account, kind, streamId, forceFresh ->
             val client = clientFactory.clientFor(account)
@@ -103,6 +105,27 @@ class IptvProviderPlaybackResolver internal constructor(
         },
         winnerMemory = winnerStore,
     )
+
+    override fun create(profileId: PlaybackProfileId): ProviderPlaybackResolver =
+        IptvProviderPlaybackResolver(
+            accounts = accountLookups.create(profileId),
+            links = links,
+            winnerMemory = winnerMemory,
+        )
+}
+
+/**
+ * Production bridge from an opaque clean-player selection to the existing IPTV source APIs.
+ *
+ * It performs no media probe. The owning [com.nuvio.tv.playback.core.PlaybackSession] invokes this
+ * port only after its release barrier, so Stalker create_link and catch-up dialect URLs cannot be
+ * minted while the previous channel still owns the provider connection.
+ */
+class IptvProviderPlaybackResolver internal constructor(
+    private val accounts: ProviderAccountLookup,
+    private val links: ProviderLinkSource,
+    winnerMemory: CatchUpDialectWalk.WinnerMemory,
+) : ProviderPlaybackResolver {
 
     private val mapper = PlaybackRequestMapper()
     private val catchUpWalk = CatchUpDialectWalk(winnerMemory)

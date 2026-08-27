@@ -4,14 +4,20 @@ Date: 2026-08-27
 
 ## Scope
 
-`IptvProviderPlaybackResolver` is the production, Hilt-bound implementation of the clean core's
-`ProviderPlaybackResolver` port. It is deliberately not connected to a screen or production player
-route yet. `PlaybackSession` remains the only caller that may invoke the port, after its release
-barrier has ended ownership of the previous request.
+`IptvProviderPlaybackResolverFactory` is the production, Hilt-bound implementation of the clean
+core's `ProviderPlaybackResolverFactory` port. Every returned `IptvProviderPlaybackResolver` is
+per-session and permanently bound to the exact `PlaybackProfileId` captured when the production
+session is created. It is deliberately not connected to a legacy screen or player route.
+`PlaybackSession` remains the only caller that may invoke the resolver, after its release barrier
+has ended ownership of the previous request.
 
 The resolver performs no health probe and does not fetch account connection limits. It looks up the
-active-profile account, validates the opaque account/item/content identity and source type, then
+bound-profile account, validates the opaque account/item/content identity and source type, then
 uses the repository's existing `IptvClientFactory` play API.
+
+The lookup uses `XtreamAccountStore.findForProfile(profileId, accountId)`. It never collects or
+reads `ProfileManager.activeProfileId`, so a profile switch while release/tune work is in flight
+cannot redirect provider credential resolution into another profile.
 
 ## Supported behavior
 

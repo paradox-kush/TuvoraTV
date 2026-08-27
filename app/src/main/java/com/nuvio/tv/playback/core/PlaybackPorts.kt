@@ -32,6 +32,11 @@ fun interface ProviderPlaybackResolver {
     ): PlaybackResult<ResolvedPlaybackRequest>
 }
 
+/** Creates a resolver permanently bound to the playback owner's captured profile scope. */
+fun interface ProviderPlaybackResolverFactory {
+    fun create(profileId: PlaybackProfileId): ProviderPlaybackResolver
+}
+
 data class PlaybackEnvironmentSnapshot(
     val runtimeCapabilities: RuntimeCapabilities,
     val resourceBudget: ResourceBudget = ResourceBudget(),

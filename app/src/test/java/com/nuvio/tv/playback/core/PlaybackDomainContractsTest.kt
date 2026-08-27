@@ -9,6 +9,17 @@ import org.junit.Test
 
 class PlaybackDomainContractsTest {
     @Test
+    fun `playback profile identity is exact nonblank and redacted`() {
+        val profile = PlaybackProfileId("profile-17")
+
+        assertEquals(profile, PlaybackProfileId("profile-17"))
+        assertNotEquals(profile, PlaybackProfileId("profile-18"))
+        assertFalse(profile.toString().contains(profile.value))
+        val rejected = runCatching { PlaybackProfileId("  ") }
+        assertTrue(rejected.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    @Test
     fun `evidence preserves independent provenance without aggregate score`() {
         val evidence = StreamEvidence(
             delivery = EvidenceFact(DeliveryType.HLS, EvidenceProvenance.MANIFEST_CONFIRMED),

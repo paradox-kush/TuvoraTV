@@ -11,6 +11,7 @@ import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.PlaybackResult
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderCatchUpWindow
 import com.nuvio.tv.playback.core.ProviderDialectAdvanceEligibility
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
@@ -29,6 +30,33 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IptvProviderPlaybackResolverTest {
+
+    @Test
+    fun `factory captures the exact playback profile before any provider resolution`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_XTREAM)
+        val capturedProfiles = mutableListOf<PlaybackProfileId>()
+        val factory = IptvProviderPlaybackResolverFactory(
+            accountLookups = ProviderAccountLookupFactory { profileId ->
+                capturedProfiles += profileId
+                ProviderAccountLookup { id -> account.takeIf { it.id == id } }
+            },
+            links = ProviderLinkSource { _, _, streamId, _ ->
+                ProviderLinkResult.Resolved("https://media.invalid/live/$streamId.ts")
+            },
+            winnerMemory = Memory(),
+        )
+        val captured = PlaybackProfileId("17")
+        val resolver = factory.create(captured)
+
+        val resolved = resolver.resolve(
+            selection(account, ProviderSourceType.XTREAM, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        )
+
+        assertTrue(resolved is PlaybackResult.Success)
+        assertEquals(listOf(captured), capturedProfiles)
+        assertFalse(captured.toString().contains(captured.value))
+    }
 
     @Test
     fun `Xtream live maps stable TS transport identity DNS and fresh trigger`() = runTest {
