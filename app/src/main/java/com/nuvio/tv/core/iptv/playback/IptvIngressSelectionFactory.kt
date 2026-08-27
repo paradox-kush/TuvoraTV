@@ -26,6 +26,10 @@ internal fun interface IngressAccountSource {
     suspend fun currentProfileAccounts(): List<XtreamAccount>
 }
 
+internal fun interface IngressProfileAccountSource {
+    suspend fun accountsForProfile(profileId: Int): List<XtreamAccount>
+}
+
 internal fun interface RelativeLivePresentationSource {
     fun relativePresentation(contentId: String, delta: Int): LiveChannelPresentation?
 }
@@ -79,6 +83,7 @@ class IptvIngressSelectionFactory internal constructor(
     private val registry: XtreamItemRegistry,
     private val accounts: IngressAccountSource,
     private val relativeLive: RelativeLivePresentationSource,
+    private val profileAccounts: IngressProfileAccountSource,
 ) {
     @Inject
     constructor(
@@ -91,10 +96,24 @@ class IptvIngressSelectionFactory internal constructor(
         relativeLive = RelativeLivePresentationSource { contentId, delta ->
             livePlaylist.relativePresentation(contentId, delta)
         },
+        profileAccounts = IngressProfileAccountSource(accountStore::accountsForProfile),
     )
 
     suspend fun create(input: IptvIngressSelectionInput): IptvIngressSelectionResult = try {
-        createChecked(input)
+        createChecked(input) { accounts.currentProfileAccounts() }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        rejected(IptvIngressSelectionFailure.ACCOUNT_STORE_UNAVAILABLE)
+    }
+
+    /** Profile-explicit ingress for a playback owner already bound to one profile. */
+    internal suspend fun createForProfile(
+        input: IptvIngressSelectionInput,
+        profileId: Int,
+    ): IptvIngressSelectionResult = try {
+        require(profileId > 0) { "Profile id must be positive" }
+        createChecked(input) { profileAccounts.accountsForProfile(profileId) }
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Exception) {
@@ -104,24 +123,46 @@ class IptvIngressSelectionFactory internal constructor(
     suspend fun relativeLive(
         contentId: String,
         delta: Int,
+    ): IptvIngressSelectionResult = relativeLiveChecked(contentId, delta) { input -> create(input) }
+
+    /** Profile-explicit relative lookup for the clean live playback owner. */
+    internal suspend fun relativeLiveForProfile(
+        contentId: String,
+        delta: Int,
+        profileId: Int,
+    ): IptvIngressSelectionResult = relativeLiveChecked(contentId, delta) { input ->
+        createForProfile(input, profileId)
+    }
+
+    private suspend fun relativeLiveChecked(
+        contentId: String,
+        delta: Int,
+        createSelection: suspend (IptvIngressSelectionInput) -> IptvIngressSelectionResult,
     ): IptvIngressSelectionResult {
         if (delta == 0) return rejected(IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE)
         val presentation = relativeLive.relativePresentation(contentId, delta)
             ?: return rejected(IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE)
-        val result = create(
+        val result = createSelection(
             IptvIngressSelectionInput(
                 presentation.contentId.value,
                 contentType = ContentType.LIVE,
             ),
         )
         return if (result is IptvIngressSelectionResult.Selected) {
-            IptvIngressSelectionResult.Selected(result.selection, presentation)
+            if (result.selection.contentKey == presentation.contentId) {
+                IptvIngressSelectionResult.Selected(result.selection, presentation)
+            } else {
+                rejected(IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE)
+            }
         } else {
             result
         }
     }
 
-    private suspend fun createChecked(input: IptvIngressSelectionInput): IptvIngressSelectionResult {
+    private suspend fun createChecked(
+        input: IptvIngressSelectionInput,
+        availableAccounts: suspend () -> List<XtreamAccount>,
+    ): IptvIngressSelectionResult {
         val contentId = input.contentId
         if (contentId.isBlank() || contentId.length > MAX_CONTENT_ID_LENGTH) {
             return rejected(IptvIngressSelectionFailure.MALFORMED_CONTENT_ID)
@@ -153,7 +194,7 @@ class IptvIngressSelectionFactory internal constructor(
         if (registered != null && !registered.matches(parsed.accountId, parsed.kind, streamId)) {
             return rejected(IptvIngressSelectionFailure.ACCOUNT_MISMATCH)
         }
-        val account = accounts.currentProfileAccounts().firstOrNull { it.id == parsed.accountId }
+        val account = availableAccounts().firstOrNull { it.id == parsed.accountId }
             ?: return rejected(IptvIngressSelectionFailure.ACCOUNT_MISSING)
         if (!account.enabled) return rejected(IptvIngressSelectionFailure.ACCOUNT_DISABLED)
         val sourceType = account.providerSourceType()

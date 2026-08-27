@@ -97,6 +97,16 @@ class XtreamLiveStoreTest {
         assertNull(subject.urlFor("clean"))
     }
 
+    @Test
+    fun `explicit profile identity write never follows active profile`() = runTest {
+        activeProfileId.value = 1
+        subject.recordPlayedIdentityForProfile(2, "profile-two", "Two", null)
+
+        assertEquals(emptyList<LiveChannelRef>(), subject.recents.first())
+        activeProfileId.value = 2
+        assertEquals("profile-two", subject.recents.first { it.isNotEmpty() }.single().id)
+    }
+
     private suspend fun awaitMirror(vararg ids: String) {
         withContext(Dispatchers.Default) {
             withTimeout(2_000) {

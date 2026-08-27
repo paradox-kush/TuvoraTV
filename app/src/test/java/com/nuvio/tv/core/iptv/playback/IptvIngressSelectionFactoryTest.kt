@@ -222,6 +222,7 @@ class IptvIngressSelectionFactoryTest {
             registry = XtreamItemRegistry(),
             accounts = IngressAccountSource { error("private provider failure") },
             relativeLive = RelativeLivePresentationSource { _, _ -> null },
+            profileAccounts = IngressProfileAccountSource { error("private provider failure") },
         )
         assertRejected(
             factory.create(
@@ -247,6 +248,7 @@ class IptvIngressSelectionFactoryTest {
                     playlistVersion = 7,
                 )
             },
+            profileAccounts = IngressProfileAccountSource { listOf(account) },
         )
 
         val result = factory.relativeLive(current, 1) as IptvIngressSelectionResult.Selected
@@ -268,6 +270,40 @@ class IptvIngressSelectionFactoryTest {
             factory.relativeLive(current, 0),
             IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE,
         )
+    }
+
+    @Test
+    fun `profile explicit relative lookup never reads active profile accounts`() = runTest {
+        val account = account("profile-two")
+        val current = XtreamItemRegistry.liveId(account.id, 1)
+        val next = XtreamItemRegistry.liveId(account.id, 2)
+        var activeReads = 0
+        val explicitProfiles = mutableListOf<Int>()
+        val factory = IptvIngressSelectionFactory(
+            registry = XtreamItemRegistry(),
+            accounts = IngressAccountSource {
+                activeReads++
+                emptyList()
+            },
+            relativeLive = RelativeLivePresentationSource { _, _ ->
+                LiveChannelPresentation.from(
+                    LiveChannelRef(next, "Next", null, "https://must-not-cross.invalid/live"),
+                    playlistVersion = 11,
+                )
+            },
+            profileAccounts = IngressProfileAccountSource { profileId ->
+                explicitProfiles += profileId
+                listOf(account)
+            },
+        )
+
+        val result = factory.relativeLiveForProfile(current, 1, profileId = 2)
+            as IptvIngressSelectionResult.Selected
+
+        assertEquals(0, activeReads)
+        assertEquals(listOf(2), explicitProfiles)
+        assertEquals(next, result.selection.contentKey.value)
+        assertEquals(result.selection.contentKey, result.presentation?.contentId)
     }
 
     @Test
@@ -293,6 +329,7 @@ class IptvIngressSelectionFactoryTest {
         registry = registry,
         accounts = IngressAccountSource { accounts },
         relativeLive = RelativeLivePresentationSource { _, _ -> null },
+        profileAccounts = IngressProfileAccountSource { accounts },
     )
 
     private fun account(

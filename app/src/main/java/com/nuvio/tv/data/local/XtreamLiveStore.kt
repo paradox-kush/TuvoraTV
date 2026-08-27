@@ -1,5 +1,7 @@
 package com.nuvio.tv.data.local
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.gson.Gson
@@ -92,6 +94,26 @@ class XtreamLiveStore @Inject constructor(
     }
 
     /**
+     * Profile-explicit clean playback history. This never follows the active-profile flow, even
+     * when the viewer switches profiles while the write is suspended in DataStore.
+     */
+    internal suspend fun recordPlayedIdentityForProfile(
+        profileId: Int,
+        contentId: String,
+        title: String,
+        logo: String?,
+    ) {
+        require(profileId > 0) { "Profile id must be positive" }
+        require(contentId.isNotBlank()) { "Live content id must not be blank" }
+        upsertForProfile(
+            profileId = profileId,
+            ref = LiveChannelRef(contentId, title, logo, streamUrl = ""),
+            markPlayed = true,
+            preserveExistingTransport = true,
+        )
+    }
+
+    /**
      * IPTV playlist edit: applies [transform] to every ref under the old account's id prefix
      * (rewrite id + rebuild streamUrl against the new server); a null transform drops them
      * instead (different playlist). The in-memory mirror refreshes via the flow collector.
@@ -115,8 +137,22 @@ class XtreamLiveStore @Inject constructor(
         ref: LiveChannelRef,
         markPlayed: Boolean,
         preserveExistingTransport: Boolean = false,
+    ) = upsertInto(store(), ref, markPlayed, preserveExistingTransport)
+
+    private suspend fun upsertForProfile(
+        profileId: Int,
+        ref: LiveChannelRef,
+        markPlayed: Boolean,
+        preserveExistingTransport: Boolean,
+    ) = upsertInto(store(profileId), ref, markPlayed, preserveExistingTransport)
+
+    private suspend fun upsertInto(
+        targetStore: DataStore<Preferences>,
+        ref: LiveChannelRef,
+        markPlayed: Boolean,
+        preserveExistingTransport: Boolean,
     ) {
-        store().edit { prefs ->
+        targetStore.edit { prefs ->
             val current = parse(prefs[key]).toMutableList()
             val existing = current.firstOrNull { it.id == ref.id }
             val playedAt = when {

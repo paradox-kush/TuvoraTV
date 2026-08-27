@@ -38,12 +38,17 @@ class XtreamAccountStore @Inject constructor(
 
     /** One explicit-profile read for playback owners that must never follow the active-profile flow. */
     internal suspend fun findForProfile(profileId: Int, accountId: String): XtreamAccount? {
-        require(profileId > 0) { "Profile id must be positive" }
         require(accountId.isNotBlank()) { "Account id must not be blank" }
+        return accountsForProfile(profileId)
+            .firstOrNull { it.id == accountId }
+    }
+
+    /** Explicit-profile snapshot for playback ingress that must not observe an active-profile race. */
+    internal suspend fun accountsForProfile(profileId: Int): List<XtreamAccount> {
+        require(profileId > 0) { "Profile id must be positive" }
         return factory.get(profileId, FEATURE).data
             .map { prefs -> parse(prefs[accountsKey]) }
             .first()
-            .firstOrNull { it.id == accountId }
     }
 
     /** Insert or replace by id (id = baseUrl|username). */

@@ -70,6 +70,7 @@ class XtreamAccountStoreProfileTest {
         activeProfileId.value = 1
 
         assertEquals(profileTwoAccount, subject.findForProfile(2, profileTwoAccount.id))
+        assertEquals(listOf(profileTwoAccount), subject.accountsForProfile(2))
         assertNull(subject.findForProfile(1, profileTwoAccount.id))
     }
 }
