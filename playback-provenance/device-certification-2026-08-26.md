@@ -84,14 +84,14 @@ selection of a playlist distinct from the one used on Onn.
 | Measured active window | about 67 seconds | about 45 seconds |
 | Final dropped-frame sample | 0 | 0 |
 | Release | `RELEASED` | READY -> IDLE -> `RELEASED` |
-| Result | PASS: fallback admission, open, decode, render facts, stability window, release | PASS: comparison open, decode, render facts, stability window, release |
+| Result | PASS: fallback admission, open, decode, render facts, stability window, release | PASS: comparison open, decode, smooth operator-visible video, stability window, release |
 
 ### Interpretation limits
 
 - ADB screenshots showed a black video rectangle for both engines because both runs used separately
-  composed hardware video surfaces. This comparison therefore proves network/open/decode/render
-  events and lifecycle behavior, but adds no new operator-visible-video proof beyond the earlier
-  Media3 run recorded above.
+  composed hardware video surfaces. After the run, the operator confirmed the last (Media3) video
+  was playing smoothly; the libmpv row retains event-based render evidence but does not claim a new
+  operator-visible confirmation.
 - This is evidence that the approved libmpv system-DNS fallback can open the selected DoH-profile
   live request on Onn. It is not evidence of DoH parity in libmpv; the adapter and lab explicitly
   report the downgrade.
