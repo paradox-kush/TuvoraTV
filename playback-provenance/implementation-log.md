@@ -154,8 +154,9 @@ WP6/WP7 — deferred provider integration, phase recovery, settings, and sequent
 - Signed `packageFullDebug` completed after constraining the packaging worker to one thread and
   raising only that invocation's Gradle heap to 8 GiB. The initial 4 GiB packaging attempts failed
   inside Android's APK compressor with `OutOfMemoryError`; compilation, tests, signing validation,
-  and playback code were not the cause. ONN certification uses the generated arm64 APK with SHA-256
-  `d36fe83d0ac09c8b345091b7286a434998d7396f425901c443b3764cf80f3f3d`.
+  and playback code were not the cause. ONN reports a 32-bit primary ABI, so certification uses the
+  generated `armeabi-v7a` APK with SHA-256
+  `e12167f01595f73402d688259dc009c5993d137806c04b8757da07a091454e8a`.
 
 - Focused WP5 libmpv adapter gate — 11 plan/engine tests passed; production and test Kotlin
   compilation passed against the first fork artifact. Final fork verification/compile rerun follows

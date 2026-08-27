@@ -57,3 +57,45 @@ exact candidate named below; it is not a substitute for the complete WP8 or post
 
 The Fire TV run remains pending the dual-engine debug APK, debug-profile sign-in, and explicit
 selection of a playlist distinct from the one used on Onn.
+
+## 2026-08-27 candidate — explicit libmpv system-DNS fallback
+
+- Git commit: `b6378bf1c`
+- Debug APK: `app-full-armeabi-v7a-debug.apk`
+- Debug APK SHA-256: `e12167f01595f73402d688259dc009c5993d137806c04b8757da07a091454e8a`
+- Source selection: one request object from the active TV profile's device-local live recents; the
+  lab displayed only a safe ordinal, title, and one-way fingerprint
+- Engine order: libmpv first, affirmative release, then Media3 on the exact same request object
+- Provider safety: the app was force-stopped before install and again after both runs; only Onn was
+  used, and no Fire TV request was opened
+
+### Onn dual-engine guide-profile comparison
+
+| Fact | libmpv | Media3 |
+| --- | --- | --- |
+| Preflight | `SYSTEM_DNS_FALLBACK` | `ELIGIBLE` |
+| DNS materialization | System resolver; no claim that app DoH was applied | Application resolver |
+| Surface | `MPV_DIRECT`, 1920x808 | SurfaceView, 1920x808 |
+| Video | HEVC, 3840x2160 | HEVC, 3840x2160 |
+| Decoder | MediaCodec through libmpv | `c2.amlogic.hevc.decoder` |
+| Session to READY | 3,558 ms | 3,215 ms |
+| Session to first video frame | 3,709 ms | 3,120 ms |
+| First audio | Yes | Yes |
+| Measured active window | about 67 seconds | about 45 seconds |
+| Final dropped-frame sample | 0 | 0 |
+| Release | `RELEASED` | READY -> IDLE -> `RELEASED` |
+| Result | PASS: fallback admission, open, decode, render facts, stability window, release | PASS: comparison open, decode, render facts, stability window, release |
+
+### Interpretation limits
+
+- ADB screenshots showed a black video rectangle for both engines because both runs used separately
+  composed hardware video surfaces. This comparison therefore proves network/open/decode/render
+  events and lifecycle behavior, but adds no new operator-visible-video proof beyond the earlier
+  Media3 run recorded above.
+- This is evidence that the approved libmpv system-DNS fallback can open the selected DoH-profile
+  live request on Onn. It is not evidence of DoH parity in libmpv; the adapter and lab explicitly
+  report the downgrade.
+- No DNS, TLS, authentication, or other network result from this fallback is eligible to teach an
+  engine, decoder, surface, or device compatibility preference.
+- Fire TV, surface recreation for libmpv, reconnect/failover, rapid zap, and long-soak certification
+  remain open.
