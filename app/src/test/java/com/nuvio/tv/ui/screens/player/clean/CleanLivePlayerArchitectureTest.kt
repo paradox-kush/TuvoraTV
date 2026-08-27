@@ -8,6 +8,7 @@ import org.junit.Test
 
 class CleanLivePlayerArchitectureTest {
     private val source = sourceFile().readText()
+    private val routeSource = sourceFile("CleanLivePlayerRoute.kt").readText()
 
     @Test
     fun `screen imports no engine provider request or legacy playback authority`() {
@@ -27,6 +28,29 @@ class CleanLivePlayerArchitectureTest {
             "Forbidden clean-screen imports: ${imports.filter(forbidden::containsMatchIn)}",
             imports.none(forbidden::containsMatchIn),
         )
+    }
+
+    @Test
+    fun `route wrapper imports no engine provider network or legacy playback authority`() {
+        val imports = Regex("""(?m)^import\s+([^\s]+)""")
+            .findAll(routeSource)
+            .map { it.groupValues[1] }
+            .toList()
+        val forbidden = Regex(
+            """(?:androidx\.media3|(?:`is`|is)\.xyz\.mpv|okhttp|java\.net|""" +
+                """com\.nuvio\.tv\.(?:player|core\.iptv)|""" +
+                """com\.nuvio\.tv\.playback\.(?:media3|mpv|provider)|""" +
+                """PlayerView|NuvioMpvSurfaceView|PlayerRuntimeController|PlayerViewModel)""",
+        )
+
+        assertTrue(
+            "Forbidden clean-route imports: ${imports.filter(forbidden::containsMatchIn)}",
+            imports.none(forbidden::containsMatchIn),
+        )
+        assertFalse(routeSource.contains(".addView("))
+        assertFalse(routeSource.contains(".removeView("))
+        assertFalse(routeSource.contains("viewModel.initialize("))
+        assertTrue(routeSource.contains("viewModel.attachDestination("))
     }
 
     @Test
@@ -61,14 +85,14 @@ class CleanLivePlayerArchitectureTest {
         assertFalse(signature.contains("request: PlaybackRequest"))
     }
 
-    private fun sourceFile(): File {
+    private fun sourceFile(fileName: String = "CleanLivePlayerScreen.kt"): File {
         val userDirectory = requireNotNull(System.getProperty("user.dir"))
         val projectRoot = generateSequence(File(userDirectory).canonicalFile) { it.parentFile }
             .firstOrNull { File(it, "app/src/main").isDirectory }
             ?: error("Cannot locate NuvioTV project root")
         return File(
             projectRoot,
-            "app/src/main/java/com/nuvio/tv/ui/screens/player/clean/CleanLivePlayerScreen.kt",
+            "app/src/main/java/com/nuvio/tv/ui/screens/player/clean/$fileName",
         ).also { check(it.isFile) { "Clean live player screen source is missing" } }
     }
 }

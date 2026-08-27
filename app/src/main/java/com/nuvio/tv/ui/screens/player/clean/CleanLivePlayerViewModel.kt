@@ -118,8 +118,8 @@ internal fun interface CleanLiveReleaseRetryWait {
 }
 
 /**
- * Destination-scoped clean Live TV owner. It is intentionally detached from Compose/navigation
- * until the atomic Search/Library route switch.
+ * Destination-scoped clean Live TV owner. Its route is registered in isolation while production
+ * live ingresses remain detached until their atomic switch.
  */
 @HiltViewModel
 internal class CleanLivePlayerViewModel private constructor(
@@ -179,7 +179,23 @@ internal class CleanLivePlayerViewModel private constructor(
     private var presentationJob: Job? = null
     private var clearedReleaseLoopStarted = false
 
-    suspend fun initialize(
+    /**
+     * Enqueues destination attachment on the ViewModel-owned scope. Compose disposal must never
+     * cancel initial tune or turn a configuration change into a terminal released destination.
+     */
+    fun attachDestination(
+        routeToken: String,
+        activity: Activity,
+        lifecycle: Lifecycle,
+        surfaceOwner: FrameLayout,
+    ) {
+        if (clearedReleaseLoopStarted || releaseCompleted) return
+        ownerScope.launch {
+            initialize(routeToken, activity, lifecycle, surfaceOwner)
+        }
+    }
+
+    internal suspend fun initialize(
         routeToken: String,
         activity: Activity,
         lifecycle: Lifecycle,

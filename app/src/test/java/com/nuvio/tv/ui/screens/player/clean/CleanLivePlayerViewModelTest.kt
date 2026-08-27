@@ -44,6 +44,24 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], application = android.app.Application::class)
 class CleanLivePlayerViewModelTest {
     @Test
+    fun `destination attachment is owned by the independent ViewModel scope`() = runTest {
+        val fixture = fixture()
+
+        fixture.viewModel.attachDestination(
+            "route",
+            fixture.activity,
+            fixture.lifecycle,
+            fixture.owner,
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf("create", "tune"), fixture.operations)
+        assertTrue(fixture.factory.ownerJob()!!.isActive)
+        assertTrue(fixture.viewModel.routeState.value is CleanLivePlayerRouteState.Ready)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
     fun `initialize consumes creates and tunes exactly once in fullscreen`() = runTest {
         val fixture = fixture(profileId = 7)
 

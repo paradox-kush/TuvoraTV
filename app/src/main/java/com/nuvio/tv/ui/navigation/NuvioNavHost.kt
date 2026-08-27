@@ -29,6 +29,8 @@ import com.nuvio.tv.ui.screens.addon.CatalogOrderScreen
 import com.nuvio.tv.ui.screens.library.LibraryScreen
 import com.nuvio.tv.ui.screens.player.PlayerExitReason
 import com.nuvio.tv.ui.screens.player.PlayerScreen
+import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerRoute
+import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerViewModel
 import com.nuvio.tv.ui.screens.plugin.PluginScreen
 import com.nuvio.tv.ui.screens.search.DiscoverScreen
 import com.nuvio.tv.ui.screens.search.SearchScreen
@@ -604,6 +606,28 @@ fun NuvioNavHost(
                         }
                     }
                 }
+            )
+        }
+
+        composable(
+            route = Screen.CleanLivePlayer.route,
+            arguments = listOf(
+                navArgument(Screen.CleanLivePlayer.LAUNCH_TOKEN_ARGUMENT) {
+                    type = NavType.StringType
+                },
+            ),
+        ) { backStackEntry ->
+            CleanLivePlayerRoute(
+                routeToken = backStackEntry.arguments
+                    ?.getString(Screen.CleanLivePlayer.LAUNCH_TOKEN_ARGUMENT),
+                onReleasedExit = {
+                    if (navController.currentBackStackEntry == backStackEntry) {
+                        navController.popBackStack()
+                    }
+                },
+                viewModel = androidx.hilt.navigation.compose.hiltViewModel<CleanLivePlayerViewModel>(
+                    backStackEntry,
+                ),
             )
         }
 
