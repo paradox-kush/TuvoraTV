@@ -630,7 +630,9 @@ class PlaybackSession(
         val effective = requirements.takeIf { it?.generation == action.generation }?.value ?: return
         val startPaused = machine.paused
         generationScope(action.generation).launch {
-            if (releaseAdapterUntilComplete(action.generation, engine) is PlaybackResult.Failure) {
+            val release = releaseAdapterUntilComplete(action.generation, engine)
+            if (release is PlaybackResult.Failure) {
+                recoveryFailed(action.generation, release.failure)
                 return@launch
             }
             val resolvedRequest = if (action.freshRequestRequired) {
@@ -716,7 +718,9 @@ class PlaybackSession(
                         attempt = attempt,
                     ),
                 )
-                if (releaseAdapterUntilComplete(action.generation, engine) is PlaybackResult.Failure) {
+                val release = releaseAdapterUntilComplete(action.generation, engine)
+                if (release is PlaybackResult.Failure) {
+                    liveReconnectEscalated(action.generation, release.failure)
                     return@launch
                 }
                 if (!isCurrentReconnect(action.generation)) return@launch
@@ -853,7 +857,18 @@ class PlaybackSession(
             safeResult(FailurePhase.RELEASE) { engine.hardAbort(generation) }
         }
         if (abort is PlaybackResult.Success) return abort
-        return abort ?: PlaybackResult.Failure(releaseFailure())
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = generation,
+                code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                engine = engine.type,
+                failure = abort?.failureOrNull() ?: releaseFailure(),
+            ),
+        )
+        // The adapter-specific cause is diagnostic evidence. At the session boundary, the only
+        // safe semantic is that resource ownership could not be proven ended. It is fatal and can
+        // never authorize a handoff, reconnect, or second provider request.
+        return PlaybackResult.Failure(releaseFailure())
     }
 
     private fun generationScope(forGeneration: Long): CoroutineScope {

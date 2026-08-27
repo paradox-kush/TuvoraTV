@@ -7,16 +7,18 @@ Gradle verification tasks fail when a checked artifact or stock Media3 runtime v
 
 - Source: `https://github.com/paradox-kush/media`
 - Branch: `nuvio-engine/1.11.0`
-- Revision: `58e82485643fe1f6570dc63ddf2a403693d12812`
+- Revision: `891107e9f20eadef302920409830419659edb9b8`
 - Upstream base: AndroidX Media3 tag `1.11.0` at `2bc207851d`
 - NDK: `29.0.14206865`
 - CMake: `3.22.1`
 
 The fork adds Nuvio engine configuration, native allocator/data-path support, Dolby Vision profile-7
 mapping, the allocator reset fix, and affirmative renderer-release and video-output-detach result
-APIs documented by `NUVIO_ENGINE.md` in the source repository. The clean adapter treats a false
-result as a failed ownership barrier. Do not replace these AARs with stock Media3 without separately
-removing those requirements.
+APIs documented by `NUVIO_ENGINE.md` in the source repository. A separate await API retains the
+original release condition after timeout, so hard abort never repeats facade teardown or treats an
+"already released" flag as renderer proof. The clean adapter treats a false result as a failed
+ownership barrier. Do not replace these AARs with stock Media3 without separately removing those
+requirements.
 
 Build the six consumed fork AARs from the pinned source:
 

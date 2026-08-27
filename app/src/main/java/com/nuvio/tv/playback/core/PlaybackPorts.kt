@@ -73,6 +73,20 @@ data class PlaybackEngineStart(
 )
 
 /**
+ * Generation-bound engine facts for the common playback watchdog. A null counter means the
+ * engine cannot expose that fact; rendered video frames remain the shared progress authority.
+ */
+data class PlaybackEngineMetricsSnapshot(
+    val generation: Long,
+    val videoFramesRendered: Long?,
+    val videoFramesSkipped: Long?,
+    val videoFramesDropped: Long?,
+    val audioBuffersRendered: Long?,
+    val audioBuffersSkipped: Long?,
+    val audioBuffersDropped: Long?,
+)
+
+/**
  * One adapter instance owns one engine, its surface attachment, listeners, and event translation.
  * It reports facts and executes commands; it never retries, refreshes links, or switches engines.
  */
@@ -88,6 +102,9 @@ interface PlaybackEngine {
         generation: Long,
         requirements: PlaybackRequirements,
     ): PlaybackResult<Unit>
+
+    /** Reads continuing decoder progress without changing playback or owning watchdog policy. */
+    suspend fun snapshotMetrics(generation: Long): PlaybackResult<PlaybackEngineMetricsSnapshot>
 
     /** Returns only after the adapter has stopped using its provider connection and surface. */
     suspend fun release(generation: Long): PlaybackResult<Unit>

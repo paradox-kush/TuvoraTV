@@ -8,14 +8,31 @@ WP4 — Media3 adapter, affirmative resource barriers, and real-device harness.
 
 ### WP4
 
-- Extended the pinned Media3 fork at `58e82485643fe1f6570dc63ddf2a403693d12812` with
+- Extended the pinned Media3 fork at `891107e9f20eadef302920409830419659edb9b8` with
   result-bearing player release and video-output detach APIs. They preserve the acknowledgements
   already produced internally; compatibility defaults fail closed rather than manufacturing proof.
+- Retained the original internal release condition after a timeout and exposed a distinct await
+  operation, so hard abort can cancel this player's network calls and await real teardown without
+  invoking the public release facade twice.
 - Rebuilt all six consumed Media3 modules and replaced only `lib-exoplayer-release.aar`; the other
   five module hashes remained byte-identical. Updated the artifact gate and source provenance.
 - Added a secret-safe, sequential ONN-to-Fire adapter smoke harness. It refuses to begin while
   either debug process is active, requires nonce-correlated package-scoped release evidence, and
   verifies process absence before advancing to the next device.
+- Added the clean Media3 adapter behind the engine-neutral port: evidence-selected HLS/DASH/raw-TS
+  sources, adaptive guide constraints, explicit decoder/extension ordering, audio/output mapping,
+  DRM, shared network policy, contextual failures, generation-bound callbacks, and main-looper
+  surface/player ownership.
+- Isolated stream authentication from DRM-license authentication while retaining the same configured
+  and tracked OkHttp transport. Cross-origin child loads follow the request's authorization policy;
+  license requests carry only DRM headers.
+- Added first and rate-limited continuing byte facts for endless raw live loads plus engine-neutral
+  video-frame/audio-buffer metrics for the WP6 watchdog. Adapter facts never schedule retry.
+- Split audio runtime impact honestly: skip-silence is in-place; normalization/downmix require a
+  rebuilt audio pipeline. Unsupported normalization/downmix/delay paths fail explicitly rather
+  than silently ignoring effective user intent.
+- Closed recovery-barrier gaps: failed graceful release plus failed hard abort becomes fatal
+  `RESOURCE_RELEASE_FAILED` in live and VOD recovery before any fresh resolve or provider reopen.
 
 ### WP3
 
@@ -103,12 +120,17 @@ WP4 — Media3 adapter, affirmative resource barriers, and real-device harness.
 
 ## Tests run
 
-- Media3 fork acknowledgement tests — 8 parameterized cases passed across preload/per-stream
-  combinations for normal release and video-output detach.
+- Media3 fork acknowledgement tests — 12 parameterized cases passed across preload/per-stream
+  combinations for normal release, retained release acknowledgement, and video-output detach.
 - Six Media3 release AAR builds — passed; only the intentionally changed exoplayer archive hash
   changed.
 - `:app:verifyPlaybackEngineArtifacts` — passed against the rebuilt fork artifact.
 - Device smoke harness tests — 27 passed; no provider stream was opened.
+- Focused WP4 adapter gate — 19 Media3 tests and 8 architecture tests passed; TV production and test
+  Kotlin compilation passed.
+- Full WP4 TV gate:
+  `:app:verifyMedia3RuntimeConvergence :app:verifyPlaybackEngineArtifacts
+  :app:testFullDebugUnitTest :app:compileFullDebugKotlin --rerun-tasks` — passed; 41 tasks executed.
 
 - Focused WP4 prerequisite core gate — 97 passed; coverage includes evidence/network-intent
   delivery to adapters, bounded graceful-to-hard-abort release, terminal fail-closed barriers,
@@ -182,8 +204,8 @@ WP4 — Media3 adapter, affirmative resource barriers, and real-device harness.
   configure an engine.
 - The clean core is additive only; no playback routing or legacy production implementation has
   changed yet.
-- `PlaybackSession` is the only orchestration owner. Reducer and policy are pure; engine adapters
-  will report facts and execute commands but will not retry, select engines, or own recovery.
+- `PlaybackSession` is the only orchestration owner. Reducer and policy are pure; the Media3 adapter
+  reports facts and executes commands but cannot retry, select engines, or own recovery.
 - `PlaybackEngineStart` now carries resolved stream evidence and the exact secret-bearing request;
   the request has a secret-safe engine-neutral proxy/timeout/retry contract.
 - Graceful release and idempotent hard abort are separate engine operations. The session makes one
@@ -191,24 +213,25 @@ WP4 — Media3 adapter, affirmative resource barriers, and real-device harness.
   neither affirmatively ends ownership.
 - Audio progress is no longer accepted as video success: only confirmed audio-only tracks may play
   or reconnect on `FirstAudio`; video sources require `FirstVideoFrame`.
-- Five production files remain the package budget. Audit remediation removed dead detach/reconnect
-  action semantics instead of adding coordinators or policy layers.
+- Audit remediation extended the existing contracts and adapter ownership boundaries instead of
+  adding recovery coordinators or a second settings/policy system.
 - `MPV_DIRECT` is build-time feasible, but runtime and surface eligibility remain adapter/device
   gates rather than assumptions.
 - The Media3 runtime now has one enforceable version instead of a latent 1.8.0/1.11.0 mixture.
-- `NuvioMobile`, `NuvioDesktop`, `nuvio-backend`, and `nuvio-web` were searched for the WP3
-  requirements/environment symbols and contain no corresponding playback path; WP3 is genuinely
-  TV-only.
+- `NuvioMobile`, `NuvioDesktop`, `nuvio-backend`, and `nuvio-web` were searched for the WP4 adapter
+  and engine-metrics symbols and contain no corresponding playback path; this work is genuinely
+  TV-only as scoped.
 
 ## Open blockers
 
 - Real-device WP2 runs are fact/API smoke tests, not decode, EGL, active-audio-route, secure-output,
   or surface-lifecycle proof. Those require the WP4/WP5 adapter fixture gates.
-- Media3 and libmpv must each implement affirmative adapter-specific hard abort; the core contract
-  and fail-closed barrier are now present, but device proof belongs to WP4/WP5.
+- Media3 hard abort is implemented and host-tested, but real-device renderer/surface/provider release
+  proof still requires the isolated debug playback entry point and sequential device run.
+- libmpv must implement the same affirmative adapter-specific hard abort in WP5.
 - Runtime DIRECT/RENDER and surface lifecycle proof belongs to WP5 and mandatory device validation.
 
 ## Next action
 
-Finish the audited Media3 adapter, run its focused and full TV gates, then certify it sequentially
-on ONN and Fire TV with the device smoke harness.
+Build the isolated debug playback entry point and smoke instrumentation, then certify Media3 on ONN
+and Fire TV sequentially with separate saved IPTV profiles and the device harness.

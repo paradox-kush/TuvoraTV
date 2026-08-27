@@ -433,6 +433,78 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `failed hard abort during live reconnect becomes terminal without reopening provider`() = runTest {
+        val engine = FakeEngine()
+        var resolutions = 0
+        val session = session(
+            engine,
+            requestResolver = PlaybackRequestResolver { request ->
+                resolutions++
+                PlaybackResult.Success(request.resolved())
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        engine.releaseFailuresRemaining = 10
+        engine.hardAbortFailuresRemaining = 10
+
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.RESOURCE_RELEASE_FAILED, session.snapshot.value.failure?.code)
+        assertEquals(1, resolutions)
+        assertEquals(1, engine.startCalls)
+        assertEquals(1, engine.maxActiveConnections)
+        assertEquals(1, engine.activeConnections)
+        close(session)
+    }
+
+    @Test
+    fun `failed hard abort during fresh VOD recovery never resolves or reopens provider`() = runTest {
+        val engine = FakeEngine()
+        var resolutions = 0
+        val session = session(
+            engine,
+            requestResolver = PlaybackRequestResolver { request ->
+                resolutions++
+                PlaybackResult.Success(request.resolved())
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(vodRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        engine.releaseFailuresRemaining = 10
+        engine.hardAbortFailuresRemaining = 10
+
+        engine.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.NETWORK_TIMEOUT,
+                    FailureDomain.NETWORK,
+                    FailurePhase.PLAYBACK,
+                    Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.RESOURCE_RELEASE_FAILED, session.snapshot.value.failure?.code)
+        assertEquals(1, resolutions)
+        assertEquals(1, engine.startCalls)
+        assertEquals(1, engine.maxActiveConnections)
+        assertEquals(1, engine.activeConnections)
+        close(session)
+    }
+
+    @Test
     fun `video reconnect does not succeed from audio without a rendered frame`() = runTest {
         val engine = FakeEngine { start, input, events ->
             if (start == 2) {
@@ -634,7 +706,7 @@ class PlaybackSessionTest {
         advanceUntilIdle()
 
         assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
-        assertEquals(FailureCode.UNKNOWN, session.snapshot.value.failure?.code)
+        assertEquals(FailureCode.RESOURCE_RELEASE_FAILED, session.snapshot.value.failure?.code)
         assertEquals(1, engine.startCalls)
         assertEquals(1, engine.activeConnections)
         assertEquals(1, engine.releaseCalls)
@@ -734,6 +806,20 @@ class PlaybackSessionTest {
             lastAppliedRequirements = requirements
             return PlaybackResult.Success(Unit)
         }
+
+        override suspend fun snapshotMetrics(
+            generation: Long,
+        ): PlaybackResult<PlaybackEngineMetricsSnapshot> = PlaybackResult.Success(
+            PlaybackEngineMetricsSnapshot(
+                generation = generation,
+                videoFramesRendered = null,
+                videoFramesSkipped = null,
+                videoFramesDropped = null,
+                audioBuffersRendered = null,
+                audioBuffersSkipped = null,
+                audioBuffersDropped = null,
+            ),
+        )
 
         override suspend fun release(generation: Long): PlaybackResult<Unit> {
             releaseCalls++

@@ -433,7 +433,7 @@ val forkedMedia3Hashes = mapOf(
     "lib-common-release.aar" to "210854ff01a54a9913784d46f4e88f43acd8abd0901d3c9f35c1edf9bd469f08",
     "lib-datasource-release.aar" to "45584164bbafdb96810fdd5cde5f35e3a2c50c0a7ac621b4dac3c86f80ac7e29",
     "lib-datasource-okhttp-release.aar" to "0c99d6850bb3c4d829c0586084d9056a68514b7fee6b1a2a7bfcf42a6a9b2d06",
-    "lib-exoplayer-release.aar" to "ff0530327a28e10844924d0ce22fec0a023a28446a5d8847b05cc7147d59142e",
+    "lib-exoplayer-release.aar" to "846df9ff9906e656a02fa1b621deb0388f7bd2a0c1559791eecda716079cab7e",
     "lib-exoplayer-hls-release.aar" to "c8683e22cbc44355a0c6c0400c02516d5f906732f370d0a64e362f0af10c5a04",
     "lib-extractor-release.aar" to "a4f9513a30e6e54c1bda6a1e31bb5b9fcfab5285885baa971a7958193d35f30a",
 )

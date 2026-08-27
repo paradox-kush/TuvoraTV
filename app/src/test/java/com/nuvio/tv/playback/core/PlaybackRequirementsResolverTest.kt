@@ -318,7 +318,7 @@ class PlaybackRequirementsResolverTest {
     }
 
     @Test
-    fun `track selection and PCM processing apply in place while custom buffer rebuilds`() {
+    fun `track selection and skip silence apply in place while audio pipeline and buffer rebuild`() {
         val previous = requirements()
         val trackSelection = previous.copy(
             subtitlesEnabled = true,
@@ -327,7 +327,8 @@ class PlaybackRequirementsResolverTest {
             preferredAudioLanguage = "spa",
             audioDelayMs = -100,
         )
-        val processing = previous.copy(audioNormalization = true)
+        val runtimeProcessing = previous.copy(audioSkipSilence = true)
+        val audioPipeline = previous.copy(audioNormalization = true)
         val buffer = previous.copy(
             buffering = BufferingPreference.CUSTOM,
             customBuffer = CustomBufferPreference(1_000, 20_000, 500, 1_000),
@@ -339,7 +340,11 @@ class PlaybackRequirementsResolverTest {
         )
         assertEquals(
             ChangeImpact.APPLY_IN_PLACE,
-            PlaybackRequirementsDiffClassifier.classify(previous, processing).impact,
+            PlaybackRequirementsDiffClassifier.classify(previous, runtimeProcessing).impact,
+        )
+        assertEquals(
+            ChangeImpact.REBUILD_CURRENT_GRAPH,
+            PlaybackRequirementsDiffClassifier.classify(previous, audioPipeline).impact,
         )
         assertEquals(
             ChangeImpact.REBUILD_CURRENT_GRAPH,

@@ -390,9 +390,11 @@ object PlaybackRequirementsDiffClassifier {
                 previous.pcmProcessingAllowed != next.pcmProcessingAllowed
             ) add(RequirementsField.AUDIO_OUTPUT)
             if (previous.audioDownmixToStereo != next.audioDownmixToStereo ||
-                previous.audioNormalization != next.audioNormalization ||
-                previous.audioSkipSilence != next.audioSkipSilence
-            ) add(RequirementsField.AUDIO_PROCESSING)
+                previous.audioNormalization != next.audioNormalization
+            ) add(RequirementsField.AUDIO_PIPELINE)
+            if (previous.audioSkipSilence != next.audioSkipSilence) {
+                add(RequirementsField.AUDIO_RUNTIME_PROCESSING)
+            }
             if (previous.preferredAudioLanguage != next.preferredAudioLanguage ||
                 previous.audioDelayMs != next.audioDelayMs
             ) add(RequirementsField.AUDIO_SELECTION)
@@ -428,5 +430,6 @@ object PlaybackRequirementsDiffClassifier {
         RequirementsField.DISPLAY_OUTPUT,
         RequirementsField.HDR,
         RequirementsField.BUFFERING,
+        RequirementsField.AUDIO_PIPELINE,
     )
 }
