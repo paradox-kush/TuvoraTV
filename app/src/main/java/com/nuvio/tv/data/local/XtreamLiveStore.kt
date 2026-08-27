@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -27,6 +28,16 @@ data class LiveChannelRef(
     val streamUrl: String,
     val playedAt: Long? = null
 )
+
+/** URL-free persisted identity returned only by an explicit-profile read. */
+internal data class StoredLiveChannelIdentity(
+    val contentId: String,
+    val title: String,
+    val logo: String?,
+) {
+    override fun toString(): String =
+        "StoredLiveChannelIdentity(hasLogo=${logo != null})"
+}
 
 /**
  * Profile-scoped persistence for live channels that need to outlive a browse session:
@@ -69,6 +80,26 @@ class XtreamLiveStore @Inject constructor(
     /** Synchronous resolution for replaying a favorited/recent channel by id. */
     fun urlFor(id: String): String? = mirror[id]?.streamUrl?.takeIf(String::isNotBlank)
     fun refFor(id: String): LiveChannelRef? = mirror[id]
+
+    /**
+     * Clean URL-free lookup bound to exactly [profileId]. It never consults the active-profile
+     * mirror and deliberately projects the stored row before it leaves this persistence owner.
+     */
+    internal suspend fun identityForProfile(
+        profileId: Int,
+        contentId: String,
+    ): StoredLiveChannelIdentity? {
+        require(profileId > 0) { "Profile id must be positive" }
+        require(contentId.isNotBlank()) { "Live content id must not be blank" }
+        val ref = parse(store(profileId).data.first()[key])
+            .firstOrNull { it.id == contentId }
+            ?: return null
+        return StoredLiveChannelIdentity(
+            contentId = ref.id,
+            title = ref.name,
+            logo = ref.logo,
+        )
+    }
 
     /** Persist a channel so it can be replayed later (favorite path). Preserves recency. */
     suspend fun remember(ref: LiveChannelRef) = upsert(ref, markPlayed = false)

@@ -21,6 +21,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Rule
@@ -105,6 +106,26 @@ class XtreamLiveStoreTest {
         assertEquals(emptyList<LiveChannelRef>(), subject.recents.first())
         activeProfileId.value = 2
         assertEquals("profile-two", subject.recents.first { it.isNotEmpty() }.single().id)
+    }
+
+    @Test
+    fun `explicit profile identity read never follows active profile or exposes transport`() = runTest {
+        activeProfileId.value = 1
+        subject.recordPlayedIdentityForProfile(2, "profile-two", "Two", "logo.png")
+
+        assertNull(subject.identityForProfile(1, "profile-two"))
+        val identity = subject.identityForProfile(2, "profile-two")
+        assertEquals("profile-two", identity?.contentId)
+        assertEquals("Two", identity?.title)
+        assertEquals("logo.png", identity?.logo)
+        assertFalse(
+            StoredLiveChannelIdentity::class.java.declaredFields.any {
+                it.name.contains("url", ignoreCase = true) ||
+                    it.name.contains("stream", ignoreCase = true)
+            },
+        )
+        assertFalse(identity.toString().contains("profile-two"))
+        assertFalse(identity.toString().contains("Two"))
     }
 
     private suspend fun awaitMirror(vararg ids: String) {
