@@ -4,6 +4,8 @@ import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamKind
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
+import com.nuvio.tv.core.iptv.LiveChannelPresentation
+import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.domain.model.ContentType as CatalogContentType
 import com.nuvio.tv.playback.core.ContainerType
 import com.nuvio.tv.playback.core.ContentType
@@ -219,7 +221,7 @@ class IptvIngressSelectionFactoryTest {
         val factory = IptvIngressSelectionFactory(
             registry = XtreamItemRegistry(),
             accounts = IngressAccountSource { error("private provider failure") },
-            relativeLive = RelativeLiveContentSource { _, _ -> null },
+            relativeLive = RelativeLivePresentationSource { _, _ -> null },
         )
         assertRejected(
             factory.create(
@@ -238,17 +240,29 @@ class IptvIngressSelectionFactoryTest {
         val factory = IptvIngressSelectionFactory(
             registry = XtreamItemRegistry(),
             accounts = IngressAccountSource { listOf(account) },
-            relativeLive = RelativeLiveContentSource { contentId, delta ->
+            relativeLive = RelativeLivePresentationSource { contentId, delta ->
                 lookupInput = "$contentId:$delta"
-                next
+                LiveChannelPresentation.from(
+                    LiveChannelRef(next, "Next", "logo.png", "https://secret.invalid/live"),
+                    playlistVersion = 7,
+                )
             },
         )
 
-        val selected = factory.relativeLive(current, 1).selected()
+        val result = factory.relativeLive(current, 1) as IptvIngressSelectionResult.Selected
+        val selected = result.selection
         assertEquals("$current:1", lookupInput)
         assertEquals(next, selected.contentKey.value)
         assertEquals("2", selected.itemId.value)
+        assertEquals(next, result.presentation?.contentId?.value)
+        assertEquals("Next", result.presentation?.title)
+        assertEquals(7L, result.presentation?.playlistVersion)
         assertNoUrlField(selected)
+
+        val rendered = result.toString()
+        assertFalse(rendered.contains(next))
+        assertFalse(rendered.contains("Next"))
+        assertFalse(rendered.contains("secret.invalid"))
 
         assertRejected(
             factory.relativeLive(current, 0),
@@ -278,7 +292,7 @@ class IptvIngressSelectionFactoryTest {
     ) = IptvIngressSelectionFactory(
         registry = registry,
         accounts = IngressAccountSource { accounts },
-        relativeLive = RelativeLiveContentSource { _, _ -> null },
+        relativeLive = RelativeLivePresentationSource { _, _ -> null },
     )
 
     private fun account(

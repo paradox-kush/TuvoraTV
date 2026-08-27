@@ -65,7 +65,7 @@ class XtreamLiveStore @Inject constructor(
     }
 
     /** Synchronous resolution for replaying a favorited/recent channel by id. */
-    fun urlFor(id: String): String? = mirror[id]?.streamUrl
+    fun urlFor(id: String): String? = mirror[id]?.streamUrl?.takeIf(String::isNotBlank)
     fun refFor(id: String): LiveChannelRef? = mirror[id]
 
     /** Persist a channel so it can be replayed later (favorite path). Preserves recency. */
@@ -73,6 +73,23 @@ class XtreamLiveStore @Inject constructor(
 
     /** Record a channel as just-watched (recents + replayable). */
     suspend fun recordPlayed(ref: LiveChannelRef) = upsert(ref, markPlayed = true)
+
+    /**
+     * Clean URL-free history entrance. Existing legacy transport is retained for that exact row;
+     * a new identity-only row deliberately stores a blank transport value.
+     */
+    suspend fun recordPlayedIdentity(
+        contentId: String,
+        title: String,
+        logo: String?,
+    ) {
+        require(contentId.isNotBlank()) { "Live content id must not be blank" }
+        upsert(
+            ref = LiveChannelRef(contentId, title, logo, streamUrl = ""),
+            markPlayed = true,
+            preserveExistingTransport = true,
+        )
+    }
 
     /**
      * IPTV playlist edit: applies [transform] to every ref under the old account's id prefix
@@ -94,7 +111,11 @@ class XtreamLiveStore @Inject constructor(
         }
     }
 
-    private suspend fun upsert(ref: LiveChannelRef, markPlayed: Boolean) {
+    private suspend fun upsert(
+        ref: LiveChannelRef,
+        markPlayed: Boolean,
+        preserveExistingTransport: Boolean = false,
+    ) {
         store().edit { prefs ->
             val current = parse(prefs[key]).toMutableList()
             val existing = current.firstOrNull { it.id == ref.id }
@@ -103,7 +124,12 @@ class XtreamLiveStore @Inject constructor(
                 else -> existing?.playedAt
             }
             current.removeAll { it.id == ref.id }
-            current.add(0, ref.copy(playedAt = playedAt))
+            val storedRef = if (preserveExistingTransport) {
+                ref.copy(streamUrl = existing?.streamUrl.orEmpty())
+            } else {
+                ref
+            }
+            current.add(0, storedRef.copy(playedAt = playedAt))
             // LRU trim: keep the most recently touched (front = newest).
             val trimmed = current.take(MAX_CHANNELS)
             prefs[key] = gson.toJson(trimmed)

@@ -3,6 +3,7 @@ package com.nuvio.tv.core.iptv.playback
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamKind
+import com.nuvio.tv.core.iptv.LiveChannelPresentation
 import com.nuvio.tv.core.iptv.XtreamLivePlaylist
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
 import com.nuvio.tv.data.local.XtreamAccountStore
@@ -25,8 +26,8 @@ internal fun interface IngressAccountSource {
     suspend fun currentProfileAccounts(): List<XtreamAccount>
 }
 
-internal fun interface RelativeLiveContentSource {
-    fun relativeContentId(contentId: String, delta: Int): String?
+internal fun interface RelativeLivePresentationSource {
+    fun relativePresentation(contentId: String, delta: Int): LiveChannelPresentation?
 }
 
 /** Secret-bearing input whose string form deliberately exposes only request shape. */
@@ -42,8 +43,12 @@ class IptvIngressSelectionInput(
 }
 
 sealed interface IptvIngressSelectionResult {
-    class Selected(val selection: ProviderPlaybackSelection) : IptvIngressSelectionResult {
-        override fun toString(): String = "IptvIngressSelectionResult.Selected($selection)"
+    class Selected(
+        val selection: ProviderPlaybackSelection,
+        val presentation: LiveChannelPresentation? = null,
+    ) : IptvIngressSelectionResult {
+        override fun toString(): String =
+            "IptvIngressSelectionResult.Selected($selection, hasPresentation=${presentation != null})"
     }
 
     data class Rejected(val reason: IptvIngressSelectionFailure) : IptvIngressSelectionResult
@@ -73,7 +78,7 @@ enum class IptvIngressSelectionFailure {
 class IptvIngressSelectionFactory internal constructor(
     private val registry: XtreamItemRegistry,
     private val accounts: IngressAccountSource,
-    private val relativeLive: RelativeLiveContentSource,
+    private val relativeLive: RelativeLivePresentationSource,
 ) {
     @Inject
     constructor(
@@ -83,8 +88,8 @@ class IptvIngressSelectionFactory internal constructor(
     ) : this(
         registry = registry,
         accounts = IngressAccountSource { accountStore.accounts.first() },
-        relativeLive = RelativeLiveContentSource { contentId, delta ->
-            livePlaylist.relativeTo(contentId, delta)?.id
+        relativeLive = RelativeLivePresentationSource { contentId, delta ->
+            livePlaylist.relativePresentation(contentId, delta)
         },
     )
 
@@ -101,9 +106,19 @@ class IptvIngressSelectionFactory internal constructor(
         delta: Int,
     ): IptvIngressSelectionResult {
         if (delta == 0) return rejected(IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE)
-        val relativeId = relativeLive.relativeContentId(contentId, delta)
+        val presentation = relativeLive.relativePresentation(contentId, delta)
             ?: return rejected(IptvIngressSelectionFailure.RELATIVE_CHANNEL_UNAVAILABLE)
-        return create(IptvIngressSelectionInput(relativeId, contentType = ContentType.LIVE))
+        val result = create(
+            IptvIngressSelectionInput(
+                presentation.contentId.value,
+                contentType = ContentType.LIVE,
+            ),
+        )
+        return if (result is IptvIngressSelectionResult.Selected) {
+            IptvIngressSelectionResult.Selected(result.selection, presentation)
+        } else {
+            result
+        }
     }
 
     private suspend fun createChecked(input: IptvIngressSelectionInput): IptvIngressSelectionResult {

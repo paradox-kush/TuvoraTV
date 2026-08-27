@@ -4,6 +4,8 @@ import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.ui.screens.iptv.LiveChannelZapPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** JUnit here, so the argument order is (message, expected, actual). */
@@ -51,6 +53,59 @@ class XtreamLivePlaylistTest {
     @Test
     fun `an empty playlist has no neighbour`() {
         assertNull("nothing published yet", playlist().relativeTo("a", 1))
+    }
+
+    @Test
+    fun `current and relative presentation share an immutable snapshot version without transport`() {
+        val list = XtreamLivePlaylist().apply {
+            set(
+                listOf(
+                    LiveChannelRef("a", "Channel A", "https://images.invalid/a.png", "https://secret.invalid/a"),
+                    LiveChannelRef("b", "Channel B", null, "https://secret.invalid/b"),
+                ),
+            )
+        }
+
+        val current = requireNotNull(list.presentationFor("a"))
+        val relative = requireNotNull(list.relativePresentation("a", 1))
+
+        assertEquals(current.playlistVersion, relative.playlistVersion)
+        assertEquals("a", current.contentId.value)
+        assertEquals("b", relative.contentId.value)
+        assertEquals("Channel B", relative.title)
+        val rendered = listOf(current, relative).joinToString()
+        assertFalse(rendered.contains("secret.invalid"))
+        assertFalse(rendered.contains("Channel A"))
+        assertFalse(rendered.contains("Channel B"))
+        assertFalse(
+            LiveChannelPresentation::class.java.declaredFields.any {
+                it.name.contains("stream", ignoreCase = true)
+            },
+        )
+    }
+
+    @Test
+    fun `presentation sanitizes transport shaped title logo secrets and increments snapshot version`() {
+        val list = XtreamLivePlaylist()
+        list.set(
+            listOf(
+                LiveChannelRef(
+                    "a",
+                    "https://provider.invalid/live?token=secret",
+                    "https://images.invalid/logo?token=secret",
+                    "https://provider.invalid/live",
+                ),
+            ),
+        )
+        val first = requireNotNull(list.presentationFor("a"))
+        list.set(listOf(LiveChannelRef("a", "News\u0000  HD", "logo.png", "")))
+        val second = requireNotNull(list.presentationFor("a"))
+
+        assertEquals("Live TV", first.title)
+        assertNull(first.logo)
+        assertEquals("News HD", second.title)
+        assertEquals("logo.png", second.logo)
+        assertTrue(second.playlistVersion > first.playlistVersion)
     }
 
     /**
