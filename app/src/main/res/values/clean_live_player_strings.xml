@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="clean_live_action_previous_channel">Previous channel</string>
+    <string name="clean_live_action_play">Play live TV</string>
+    <string name="clean_live_action_pause">Pause live TV</string>
+    <string name="clean_live_action_retry">Retry playback</string>
+    <string name="clean_live_action_next_channel">Next channel</string>
+    <string name="clean_live_action_exit">Exit live TV</string>
+
+    <string name="clean_live_status_resolving">Opening channel…</string>
+    <string name="clean_live_status_starting">Starting playback…</string>
+    <string name="clean_live_status_buffering">Buffering…</string>
+    <string name="clean_live_status_recovering">Recovering playback…</string>
+    <string name="clean_live_status_handing_off">Trying another playback path…</string>
+    <string name="clean_live_status_reconnecting">Reconnecting…</string>
+    <string name="clean_live_status_paused">Paused</string>
+    <string name="clean_live_status_releasing">Closing playback…</string>
+    <string name="clean_live_status_stopped">Playback stopped</string>
+
+    <string name="clean_live_error_preview_resource">Preview is unavailable within the TV resource limit.</string>
+    <string name="clean_live_error_preview_surface">Preview is unavailable on this display surface.</string>
+    <string name="clean_live_error_preview_path">This channel cannot use the guide preview path.</string>
+    <string name="clean_live_error_preview_exhausted">No compatible guide preview path is available.</string>
+    <string name="clean_live_error_stream_authorization">The provider did not authorize this channel.</string>
+    <string name="clean_live_error_stream_expired">This channel is no longer available.</string>
+    <string name="clean_live_error_stream_provider">The provider reports that this channel is unavailable.</string>
+    <string name="clean_live_error_stream_no_graph">This channel has no compatible playback path.</string>
+    <string name="clean_live_error_network">The channel could not be reached over the network.</string>
+    <string name="clean_live_error_access">The provider refused or limited this playback connection.</string>
+    <string name="clean_live_error_secure_connection">A secure connection to the channel could not be established.</string>
+    <string name="clean_live_error_stream_format">The channel uses an unreadable stream format.</string>
+    <string name="clean_live_error_video">The device could not decode or display this channel.</string>
+    <string name="clean_live_error_surface">The video surface was lost.</string>
+    <string name="clean_live_error_audio">The device could not open the audio output.</string>
+    <string name="clean_live_error_drm">The channel\'s content protection could not be opened.</string>
+    <string name="clean_live_error_resources">The device does not have enough playback resources.</string>
+    <string name="clean_live_error_release">The previous playback session did not release cleanly.</string>
+    <string name="clean_live_error_no_graph">No compatible playback engine is available.</string>
+    <string name="clean_live_error_no_progress">Playback stopped making progress.</string>
+    <string name="clean_live_error_unknown">Live TV playback failed.</string>
+</resources>

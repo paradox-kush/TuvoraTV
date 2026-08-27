@@ -2,6 +2,7 @@ package com.nuvio.tv.arch
 
 import com.lemonappdev.konsist.api.Konsist
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -74,7 +75,11 @@ class ArchitectureTest {
     private fun isCleanPlaybackPackage(path: String, packageName: String) =
         rel(path).startsWith("com/nuvio/tv/playback/$packageName/")
 
+    private fun isCleanPlaybackUiFile(path: String) =
+        rel(path).startsWith("com/nuvio/tv/ui/screens/player/clean/")
+
     private fun isLegacyPlaybackOrchestration(path: String): Boolean {
+        if (isCleanPlaybackUiFile(path)) return false
         val relative = rel(path)
         return relative.startsWith("com/nuvio/tv/core/player/") ||
             relative.startsWith("com/nuvio/tv/player/") ||
@@ -280,6 +285,14 @@ class ArchitectureTest {
                 if (isCleanPlaybackFile(path) && legacyRef.containsMatchIn(source)) {
                     add(rel(path) + " -> legacy playback")
                 }
+                if (
+                    isCleanPlaybackUiFile(path) &&
+                    imports(text)
+                        .filterNot { it.startsWith("com.nuvio.tv.ui.screens.player.clean.") }
+                        .any(legacyRef::containsMatchIn)
+                ) {
+                    add(rel(path) + " -> legacy playback")
+                }
                 if (isLegacyPlaybackOrchestration(path) && cleanRef.containsMatchIn(source)) {
                     add(rel(path) + " -> clean playback")
                 }
@@ -290,6 +303,17 @@ class ArchitectureTest {
                 violations.joinToString("\n"),
             violations.isEmpty(),
         )
+    }
+
+    @Test
+    fun `clean player UI is distinct from frozen legacy player paths`() {
+        val cleanUi = "/repo/app/src/main/java/com/nuvio/tv/ui/screens/player/clean/CleanLivePlayerScreen.kt"
+        val legacyUi = "/repo/app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerScreen.kt"
+
+        assertTrue(isCleanPlaybackUiFile(cleanUi))
+        assertFalse(isLegacyPlaybackOrchestration(cleanUi))
+        assertFalse(isCleanPlaybackUiFile(legacyUi))
+        assertTrue(isLegacyPlaybackOrchestration(legacyUi))
     }
 
     /** Device identity may describe a verified quirk; it may never become an inline policy branch. */
