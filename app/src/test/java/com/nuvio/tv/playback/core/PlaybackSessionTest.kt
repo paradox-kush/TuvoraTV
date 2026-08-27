@@ -7,6 +7,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -34,6 +35,42 @@ class PlaybackSessionTest {
 
         assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
         assertTrue(session.snapshot.value.isPlaying)
+        close(session)
+    }
+
+    @Test
+    fun `engine start receives the resolved stream evidence and exact network intent`() = runTest {
+        val evidence = StreamEvidence(
+            delivery = EvidenceFact(
+                DeliveryType.RAW_TRANSPORT_STREAM,
+                EvidenceProvenance.PROVIDER_DECLARED,
+            ),
+            container = EvidenceFact(ContainerType.MPEG_TS, EvidenceProvenance.PROVIDER_DECLARED),
+        )
+        val request = PlaybackRequest(
+            url = "https://example.invalid/raw-live",
+            contentType = ContentType.LIVE,
+            network = PlaybackNetworkRequest(
+                proxyMode = ProxyMode.DIRECT,
+                connectTimeoutMs = 8_000,
+                readTimeoutMs = 90_000,
+                transientLoadRetryPolicy = TransientLoadRetryPolicy.SESSION_ONLY,
+            ),
+        )
+        val engine = FakeEngine()
+        val session = session(
+            engine,
+            requestResolver = PlaybackRequestResolver {
+                PlaybackResult.Success(ResolvedPlaybackRequest(it, it.summary(), evidence))
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(evidence, engine.lastStartInput?.evidence)
+        assertTrue(engine.lastStartInput?.request === request)
+        assertEquals(ProxyMode.DIRECT, engine.lastStartInput?.request?.network?.proxyMode)
         close(session)
     }
 
@@ -302,7 +339,8 @@ class PlaybackSessionTest {
         assertFalse(resolutionWhileConnected)
         assertEquals(2, engine.startCalls)
         assertEquals(1, engine.maxActiveConnections)
-        assertTrue(engine.releaseCalls >= 2)
+        assertEquals(1, engine.releaseCalls)
+        assertEquals(1, engine.hardAbortCalls)
         close(session)
     }
 
@@ -388,7 +426,46 @@ class PlaybackSessionTest {
 
         assertEquals(4, engine.startCalls)
         assertEquals(4, resolutions)
-        assertTrue(engine.releaseCalls >= 4)
+        assertTrue(engine.releaseCalls >= 3)
+        assertEquals(1, engine.hardAbortCalls)
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        close(session)
+    }
+
+    @Test
+    fun `video reconnect does not succeed from audio without a rendered frame`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            if (start == 2) {
+                events.emit(
+                    PlaybackEvent.TracksAvailable(
+                        input.generation,
+                        hasVideo = true,
+                        audioTrackCount = 1,
+                        subtitleTrackCount = 0,
+                    ),
+                )
+                events.emit(PlaybackEvent.FirstAudio(input.generation))
+            }
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        runCurrent()
+        advanceTimeBy(1)
+        runCurrent()
+
+        assertEquals(2, engine.startCalls)
+        assertEquals(PlaybackState.LIVE_RECONNECTING, session.snapshot.value.state)
+        assertTrue(session.snapshot.value.progress.renderedAudio)
+
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
         assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
         close(session)
     }
@@ -429,7 +506,8 @@ class PlaybackSessionTest {
         assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
         assertEquals(fatalRecovery, session.snapshot.value.failure)
         assertEquals(0, engine.activeConnections)
-        assertTrue(engine.releaseCalls >= 3)
+        assertTrue(engine.releaseCalls >= 2)
+        assertEquals(1, engine.hardAbortCalls)
         close(session)
     }
 
@@ -468,7 +546,8 @@ class PlaybackSessionTest {
         )
         advanceUntilIdle()
 
-        assertEquals(2, media3.releaseCalls)
+        assertEquals(1, media3.releaseCalls)
+        assertEquals(1, media3.hardAbortCalls)
         assertEquals(1, mpv.startCalls)
         assertFalse(fallbackStartedWhilePrimaryConnected)
         close(session)
@@ -534,9 +613,34 @@ class PlaybackSessionTest {
         advanceUntilIdle()
         close.join()
 
-        assertEquals(2, engine.releaseCalls)
+        assertEquals(1, engine.releaseCalls)
+        assertEquals(1, engine.hardAbortCalls)
         assertEquals(1, engine.maxActiveConnections)
         assertEquals(PlaybackState.STOPPED, session.snapshot.value.state)
+    }
+
+    @Test
+    fun `failed hard abort fails closed without opening the next provider request`() = runTest {
+        val engine = FakeEngine().apply {
+            releaseFailuresRemaining = 1
+            hardAbortFailuresRemaining = 1
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.UNKNOWN, session.snapshot.value.failure?.code)
+        assertEquals(1, engine.startCalls)
+        assertEquals(1, engine.activeConnections)
+        assertEquals(1, engine.releaseCalls)
+        assertEquals(1, engine.hardAbortCalls)
+
+        close(session)
     }
 
     private fun TestScope.session(
@@ -590,13 +694,16 @@ class PlaybackSessionTest {
         private val eventFlow = MutableSharedFlow<PlaybackEvent>(extraBufferCapacity = 64)
         override val events: Flow<PlaybackEvent> = eventFlow
         var startCalls = 0
+        var lastStartInput: PlaybackEngineStart? = null
         var applyRequirementsCalls = 0
         var lastAppliedRequirements: PlaybackRequirements? = null
         var releaseCalls = 0
+        var hardAbortCalls = 0
         var activeConnections = 0
         var maxActiveConnections = 0
         var releaseTimeoutsRemaining = 0
         var releaseFailuresRemaining = 0
+        var hardAbortFailuresRemaining = 0
 
         override suspend fun attachSurface(
             generation: Long,
@@ -608,6 +715,7 @@ class PlaybackSessionTest {
 
         override suspend fun start(input: PlaybackEngineStart): PlaybackResult<Unit> {
             startCalls++
+            lastStartInput = input
             activeConnections++
             maxActiveConnections = maxOf(maxActiveConnections, activeConnections)
             onStart(startCalls, input, eventFlow)
@@ -635,6 +743,23 @@ class PlaybackSessionTest {
             }
             if (releaseFailuresRemaining > 0) {
                 releaseFailuresRemaining--
+                return PlaybackResult.Failure(
+                    PlaybackFailure(
+                        FailureCode.UNKNOWN,
+                        FailureDomain.UNKNOWN,
+                        FailurePhase.RELEASE,
+                        Retryability.FATAL,
+                    ),
+                )
+            }
+            activeConnections = 0
+            return PlaybackResult.Success(Unit)
+        }
+
+        override suspend fun hardAbort(generation: Long): PlaybackResult<Unit> {
+            hardAbortCalls++
+            if (hardAbortFailuresRemaining > 0) {
+                hardAbortFailuresRemaining--
                 return PlaybackResult.Failure(
                     PlaybackFailure(
                         FailureCode.UNKNOWN,

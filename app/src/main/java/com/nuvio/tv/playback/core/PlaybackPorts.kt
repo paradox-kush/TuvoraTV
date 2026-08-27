@@ -66,6 +66,7 @@ fun interface PlaybackGraphProvider {
 data class PlaybackEngineStart(
     val generation: Long,
     val request: PlaybackRequest,
+    val evidence: StreamEvidence,
     val graph: PlaybackGraph,
     val requirements: PlaybackRequirements,
     val startPaused: Boolean,
@@ -90,6 +91,13 @@ interface PlaybackEngine {
 
     /** Returns only after the adapter has stopped using its provider connection and surface. */
     suspend fun release(generation: Long): PlaybackResult<Unit>
+
+    /**
+     * Forcefully terminates adapter-owned network, renderer, listener, and surface resources.
+     * Success is affirmative proof that provider and surface ownership have ended; a timeout is
+     * never translated to success. Implementations must be idempotent.
+     */
+    suspend fun hardAbort(generation: Long): PlaybackResult<Unit>
 }
 
 fun interface PlaybackEngineRegistry {

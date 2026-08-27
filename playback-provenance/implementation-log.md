@@ -92,6 +92,9 @@ WP3 — session profiles, resource budgets, and effective requirements.
 
 ## Tests run
 
+- Focused WP4 prerequisite core gate — 97 passed; coverage includes evidence/network-intent
+  delivery to adapters, bounded graceful-to-hard-abort release, terminal fail-closed barriers,
+  one-provider-connection preservation, and video reconnect refusing audio-only progress.
 - Full WP3 TV gate:
   `:app:verifyMedia3RuntimeConvergence :app:verifyPlaybackEngineArtifacts
   :app:testFullDebugUnitTest :app:compileFullDebugKotlin --rerun-tasks` — passed; 41 tasks executed.
@@ -163,6 +166,13 @@ WP3 — session profiles, resource budgets, and effective requirements.
   changed yet.
 - `PlaybackSession` is the only orchestration owner. Reducer and policy are pure; engine adapters
   will report facts and execute commands but will not retry, select engines, or own recovery.
+- `PlaybackEngineStart` now carries resolved stream evidence and the exact secret-bearing request;
+  the request has a secret-safe engine-neutral proxy/timeout/retry contract.
+- Graceful release and idempotent hard abort are separate engine operations. The session makes one
+  bounded attempt at each and enters a terminal failed state without advancing its continuation if
+  neither affirmatively ends ownership.
+- Audio progress is no longer accepted as video success: only confirmed audio-only tracks may play
+  or reconnect on `FirstAudio`; video sources require `FirstVideoFrame`.
 - Five production files remain the package budget. Audit remediation removed dead detach/reconnect
   action semantics instead of adding coordinators or policy layers.
 - `MPV_DIRECT` is build-time feasible, but runtime and surface eligibility remain adapter/device
@@ -176,12 +186,11 @@ WP3 — session profiles, resource budgets, and effective requirements.
 
 - Real-device WP2 runs are fact/API smoke tests, not decode, EGL, active-audio-route, secure-output,
   or surface-lifecycle proof. Those require the WP4/WP5 adapter fixture gates.
-- `PlaybackEngine.release()` can prove an ordinary release completed, but it cannot yet express an
-  affirmative native hard-abort. Until WP4/WP5 add that adapter contract, a permanently wedged
-  release retries indefinitely and fail-closed; it never advances a continuation or consumes a
-  second provider connection.
+- Media3 and libmpv must each implement affirmative adapter-specific hard abort; the core contract
+  and fail-closed barrier are now present, but device proof belongs to WP4/WP5.
 - Runtime DIRECT/RENDER and surface lifecycle proof belongs to WP5 and mandatory device validation.
 
 ## Next action
 
-Run the full TV gate, commit WP3, then implement the complete Media3 adapter in WP4.
+Finish the audited Media3 adapter, run its focused and full TV gates, then certify it sequentially
+on ONN and Fire TV with the device smoke harness.

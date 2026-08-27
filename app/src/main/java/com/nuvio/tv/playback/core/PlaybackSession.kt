@@ -142,7 +142,7 @@ class PlaybackSession(
 
     suspend fun release() {
         dispatch(PlaybackCommand.Release)
-        snapshot.filter { it.state == PlaybackState.STOPPED }.first()
+        snapshot.filter { it.state == PlaybackState.STOPPED || it.state == PlaybackState.FAILED }.first()
         sessionJob.cancelAndJoin()
         lane.close()
     }
@@ -402,6 +402,7 @@ class PlaybackSession(
                     PlaybackEngineStart(
                         generation = action.generation,
                         request = resolvedRequest.request,
+                        evidence = resolvedRequest.evidence,
                         graph = action.graph,
                         requirements = effective,
                         startPaused = action.startPaused,
@@ -553,15 +554,33 @@ class PlaybackSession(
                 engine = engine,
                 engineGeneration = releasedGraphGeneration,
             )
-            if (releaseResult is PlaybackResult.Failure) return@launch
+            if (releaseResult is PlaybackResult.Failure) {
+                lane.send(
+                    LaneMessage.BarrierFinished(
+                        action.releaseEpoch,
+                        action.reason,
+                        releaseResult.failure,
+                    ),
+                )
+                return@launch
+            }
             val outputResult = safeResult(FailurePhase.RELEASE) {
                 outputController.reset(action.generation)
+            }
+            if (outputResult is PlaybackResult.Failure) {
+                diagnostics.record(
+                    PlaybackDiagnosticEvent(
+                        generation = action.generation,
+                        code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                        failure = outputResult.failure,
+                    ),
+                )
             }
             lane.send(
                 LaneMessage.BarrierFinished(
                     action.releaseEpoch,
                     action.reason,
-                    releaseResult.failureOrNull() ?: outputResult.failureOrNull(),
+                    failure = null,
                 ),
             )
         }
@@ -569,6 +588,19 @@ class PlaybackSession(
 
     private suspend fun barrierFinished(message: LaneMessage.BarrierFinished) {
         if (machine.activeReleaseEpoch != message.releaseEpoch) return
+        if (message.failure != null) {
+            diagnostics.record(
+                PlaybackDiagnosticEvent(
+                    generation = machine.snapshot.generation,
+                    code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                    failure = message.failure,
+                ),
+            )
+            applyReducer(
+                PlaybackReducerInput.BarrierFailed(message.releaseEpoch, message.failure),
+            )
+            return
+        }
         activeGraph = null
         activeGraphGeneration = null
         if (message.reason in setOf(
@@ -580,15 +612,6 @@ class PlaybackSession(
         ) {
             resolved = null
             requirements = null
-        }
-        message.failure?.let {
-            diagnostics.record(
-                PlaybackDiagnosticEvent(
-                    generation = machine.snapshot.generation,
-                    code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
-                    failure = it,
-                ),
-            )
         }
         diagnostics.record(
             PlaybackDiagnosticEvent(
@@ -622,7 +645,7 @@ class PlaybackSession(
                 cachedResolved ?: return@launch
             }
             val outcome = async(start = CoroutineStart.UNDISPATCHED) {
-                engineEvents.first { it.generation == action.generation && it.isReconnectOutcome() }
+                awaitReconnectOutcome(action.generation)
             }
             val attached = safeResult(FailurePhase.RECOVERY) {
                 engine.attachSurface(action.generation, graph)
@@ -641,10 +664,11 @@ class PlaybackSession(
             val started = safeResult(FailurePhase.RECOVERY) {
                 engine.start(
                     PlaybackEngineStart(
-                        action.generation,
-                        resolvedRequest.request,
-                        graph,
-                        effective,
+                        generation = action.generation,
+                        request = resolvedRequest.request,
+                        evidence = resolvedRequest.evidence,
+                        graph = graph,
+                        requirements = effective,
                         startPaused = startPaused,
                     ),
                 )
@@ -730,7 +754,7 @@ class PlaybackSession(
                     }
                 }
                 val outcome = async(start = CoroutineStart.UNDISPATCHED) {
-                    engineEvents.first { it.generation == action.generation && it.isReconnectOutcome() }
+                    awaitReconnectOutcome(action.generation)
                 }
                 intentionalReleases -= engine.type
                 val attached = safeResult(FailurePhase.RECOVERY) {
@@ -760,10 +784,11 @@ class PlaybackSession(
                 val started = safeResult(FailurePhase.RECOVERY) {
                     engine.start(
                         PlaybackEngineStart(
-                            action.generation,
-                            resolvedRequest.request,
-                            graph,
-                            effective,
+                            generation = action.generation,
+                            request = resolvedRequest.request,
+                            evidence = resolvedRequest.evidence,
+                            graph = graph,
+                            requirements = effective,
                             startPaused = false,
                         ),
                     )
@@ -810,23 +835,25 @@ class PlaybackSession(
         engineGeneration: Long? = activeGraphGeneration,
     ): PlaybackResult<Unit> {
         if (engine == null) return PlaybackResult.Success(Unit)
-        while (currentCoroutineContext().isActive) {
-            intentionalReleases[engine.type] = setOfNotNull(generation, engineGeneration)
-            val result = withTimeoutOrNull(releaseTimeoutMs) {
-                safeResult(FailurePhase.RELEASE) { engine.release(generation) }
-            }
-            if (result is PlaybackResult.Success) return result
-            diagnostics.record(
-                PlaybackDiagnosticEvent(
-                    generation = generation,
-                    code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
-                    engine = engine.type,
-                    failure = result?.failureOrNull() ?: internalFailure(FailurePhase.RELEASE),
-                ),
-            )
-            clock.delayMs(RELEASE_RETRY_MS)
+        intentionalReleases[engine.type] = setOfNotNull(generation, engineGeneration)
+        val graceful = withTimeoutOrNull(releaseTimeoutMs) {
+            safeResult(FailurePhase.RELEASE) { engine.release(generation) }
         }
-        return PlaybackResult.Failure(internalFailure(FailurePhase.RELEASE))
+        if (graceful is PlaybackResult.Success) return graceful
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = generation,
+                code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                engine = engine.type,
+                failure = graceful?.failureOrNull() ?: releaseFailure(),
+            ),
+        )
+
+        val abort = withTimeoutOrNull(releaseTimeoutMs) {
+            safeResult(FailurePhase.RELEASE) { engine.hardAbort(generation) }
+        }
+        if (abort is PlaybackResult.Success) return abort
+        return abort ?: PlaybackResult.Failure(releaseFailure())
     }
 
     private fun generationScope(forGeneration: Long): CoroutineScope {
@@ -895,6 +922,14 @@ class PlaybackSession(
         retryability = Retryability.FATAL,
     )
 
+    private fun releaseFailure() = PlaybackFailure(
+        code = FailureCode.RESOURCE_RELEASE_FAILED,
+        domain = FailureDomain.DEVICE_RESOURCE,
+        phase = FailurePhase.RELEASE,
+        retryability = Retryability.FATAL,
+        deterministic = true,
+    )
+
     private fun isCurrentReconnect(forGeneration: Long): Boolean =
         snapshot.value.generation == forGeneration &&
             snapshot.value.state == PlaybackState.LIVE_RECONNECTING
@@ -907,13 +942,25 @@ class PlaybackSession(
             event is PlaybackEvent.PlaybackEnded &&
             event.reason in setOf(PlaybackEndReason.STOPPED, PlaybackEndReason.SHUTDOWN)
 
-    private fun PlaybackEvent.isReconnectOutcome(): Boolean = when (this) {
-        is PlaybackEvent.FirstAudio,
-        is PlaybackEvent.FirstVideoFrame,
-        is PlaybackEvent.Failed,
-        is PlaybackEvent.PlaybackEnded,
-        -> true
-        else -> false
+    private suspend fun awaitReconnectOutcome(generation: Long): PlaybackEvent {
+        var videoExpected: Boolean? = machine.snapshot.tracks
+            .takeIf { machine.snapshot.progress.discoveredTracks }
+            ?.hasVideoTrack
+        return engineEvents.first { event ->
+            if (event.generation != generation) return@first false
+            when (event) {
+                is PlaybackEvent.TracksAvailable -> {
+                    videoExpected = event.hasVideo
+                    false
+                }
+                is PlaybackEvent.FirstAudio -> videoExpected == false
+                is PlaybackEvent.FirstVideoFrame,
+                is PlaybackEvent.Failed,
+                is PlaybackEvent.PlaybackEnded,
+                -> true
+                else -> false
+            }
+        }
     }
 
     private fun PlaybackFailure.shouldEscalateLiveReconnect(): Boolean =
@@ -965,7 +1012,6 @@ class PlaybackSession(
 
     private companion object {
         const val DEFAULT_RELEASE_TIMEOUT_MS = 5_000L
-        const val RELEASE_RETRY_MS = 500L
         const val SURFACE_RECHECK_MS = 500L
     }
 }

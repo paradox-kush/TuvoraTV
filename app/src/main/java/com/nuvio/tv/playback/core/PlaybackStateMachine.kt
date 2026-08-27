@@ -192,6 +192,12 @@ sealed interface PlaybackReducerInput {
 
     /** Completion of the generation-wide release barrier, keyed independently from generation. */
     data class BarrierCompleted(val releaseEpoch: Long) : PlaybackReducerInput
+
+    /** The adapter could not affirm that provider and surface ownership ended. */
+    data class BarrierFailed(
+        val releaseEpoch: Long,
+        val failure: PlaybackFailure,
+    ) : PlaybackReducerInput
 }
 
 data class PlaybackTransition(
@@ -268,6 +274,7 @@ object PlaybackStateMachine {
         }
         is PlaybackReducerInput.LifecycleChanged -> lifecycleChanged(state, input.active)
         is PlaybackReducerInput.BarrierCompleted -> barrierCompleted(state, input.releaseEpoch)
+        is PlaybackReducerInput.BarrierFailed -> barrierFailed(state, input.releaseEpoch, input.failure)
     }
 
     private fun reduceCommand(
@@ -797,20 +804,34 @@ object PlaybackStateMachine {
         event: PlaybackEvent.TracksAvailable,
     ): PlaybackTransition {
         if (!state.snapshot.state.acceptsProgress()) return unchanged(state)
-        return transition(
-            state.copy(
-                snapshot = state.snapshot.copy(
-                    tracks = TrackSummary(event.audioTrackCount, event.subtitleTrackCount, event.hasVideo),
-                    progress = state.snapshot.progress.copy(discoveredTracks = true),
-                    streamAvailability = StreamAvailability.Available,
-                ),
+        val updated = state.copy(
+            snapshot = state.snapshot.copy(
+                tracks = TrackSummary(event.audioTrackCount, event.subtitleTrackCount, event.hasVideo),
+                progress = state.snapshot.progress.copy(discoveredTracks = true),
+                streamAvailability = StreamAvailability.Available,
             ),
         )
+        return if (!event.hasVideo && updated.snapshot.progress.renderedAudio) {
+            firstAudio(updated)
+        } else {
+            transition(updated)
+        }
     }
 
     private fun firstAudio(state: PlaybackMachineState): PlaybackTransition {
         if (!state.snapshot.state.acceptsProgress()) return unchanged(state)
-        val hasVideo = state.snapshot.tracks.hasVideoTrack
+        val audioOnlyConfirmed = state.snapshot.progress.discoveredTracks &&
+            !state.snapshot.tracks.hasVideoTrack
+        if (!audioOnlyConfirmed) {
+            return transition(
+                state.copy(
+                    snapshot = state.snapshot.copy(
+                        progress = state.snapshot.progress.copy(renderedAudio = true),
+                        streamAvailability = StreamAvailability.Available,
+                    ),
+                ),
+            )
+        }
         return transition(
             state.copy(
                 snapshot = state.snapshot.copy(
@@ -823,7 +844,7 @@ object PlaybackStateMachine {
                     statusCode = null,
                     streamAvailability = StreamAvailability.Available,
                 ),
-                incident = if (hasVideo) state.incident else null,
+                incident = null,
             ),
         )
     }
@@ -1177,6 +1198,30 @@ object PlaybackStateMachine {
                 if (suspended.lifecycleActive) resumeLifecycle(suspended) else transition(suspended)
             }
         }
+    }
+
+    private fun barrierFailed(
+        state: PlaybackMachineState,
+        releaseEpoch: Long,
+        failure: PlaybackFailure,
+    ): PlaybackTransition {
+        if (state.activeReleaseEpoch != releaseEpoch) return unchanged(state)
+        return transition(
+            state.copy(
+                snapshot = state.snapshot.copy(
+                    state = PlaybackState.FAILED,
+                    isPlaying = false,
+                    isBuffering = false,
+                    isReconnecting = false,
+                    failure = failure,
+                    statusCode = null,
+                ),
+                afterRelease = AfterRelease.NONE,
+                activeReleaseEpoch = null,
+                lifecycleResume = LifecycleResume.NONE,
+                lifecycleResumeGraph = null,
+            ),
+        )
     }
 
     private fun beginBarrier(

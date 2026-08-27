@@ -39,6 +39,37 @@ class PlaybackStateMachineTest {
     }
 
     @Test
+    fun `first audio never claims video playback success before a rendered frame`() {
+        val starting = startingState(ContentType.LIVE, SessionProfile.FULLSCREEN)
+        val withVideo = PlaybackStateMachine.reduce(
+            starting,
+            PlaybackEvent.TracksAvailable(1, hasVideo = true, audioTrackCount = 1, subtitleTrackCount = 0),
+        ).state
+
+        val audio = PlaybackStateMachine.reduce(withVideo, PlaybackEvent.FirstAudio(1))
+
+        assertEquals(PlaybackState.STARTING_PRIMARY, audio.state.snapshot.state)
+        assertFalse(audio.state.snapshot.isPlaying)
+        assertTrue(audio.state.snapshot.progress.renderedAudio)
+        assertFalse(audio.state.snapshot.progress.renderedVideoFrame)
+    }
+
+    @Test
+    fun `audio-only playback requires affirmative track evidence`() {
+        val starting = startingState(ContentType.LIVE, SessionProfile.FULLSCREEN)
+        val earlyAudio = PlaybackStateMachine.reduce(starting, PlaybackEvent.FirstAudio(1)).state
+        assertEquals(PlaybackState.STARTING_PRIMARY, earlyAudio.snapshot.state)
+        assertFalse(earlyAudio.snapshot.isPlaying)
+
+        val confirmedAudioOnly = PlaybackStateMachine.reduce(
+            earlyAudio,
+            PlaybackEvent.TracksAvailable(1, hasVideo = false, audioTrackCount = 1, subtitleTrackCount = 0),
+        )
+        assertEquals(PlaybackState.PLAYING, confirmedAudioOnly.state.snapshot.state)
+        assertTrue(confirmedAudioOnly.state.snapshot.isPlaying)
+    }
+
+    @Test
     fun `invalid transition is a strict no-op`() {
         val initial = PlaybackMachineState()
         val invalid = PlaybackStateMachine.reduce(
@@ -108,6 +139,35 @@ class PlaybackStateMachineTest {
         val resolve = assertAction<PlaybackAction.ResolveRequest>(completed)
         assertEquals(3, resolve.generation)
         assertSame(requestThree, resolve.request)
+    }
+
+    @Test
+    fun `failed release barrier never advances its queued continuation`() {
+        val zap = PlaybackStateMachine.reduce(
+            playingState(ContentType.LIVE),
+            PlaybackCommand.Zap(
+                PlaybackRequest("https://example.invalid/next", contentType = ContentType.LIVE),
+                SessionProfile.FULLSCREEN,
+            ),
+        )
+        val barrier = assertAction<PlaybackAction.ReleaseActiveWork>(zap)
+        val releaseFailure = PlaybackFailure(
+            code = FailureCode.RESOURCE_RELEASE_FAILED,
+            domain = FailureDomain.DEVICE_RESOURCE,
+            phase = FailurePhase.RELEASE,
+            retryability = Retryability.FATAL,
+            deterministic = true,
+        )
+
+        val failed = PlaybackStateMachine.reduce(
+            zap.state,
+            PlaybackReducerInput.BarrierFailed(barrier.releaseEpoch, releaseFailure),
+        )
+
+        assertEquals(PlaybackState.FAILED, failed.state.snapshot.state)
+        assertEquals(releaseFailure, failed.state.snapshot.failure)
+        assertTrue(failed.actions.isEmpty())
+        assertEquals(AfterRelease.NONE, failed.state.afterRelease)
     }
 
     @Test

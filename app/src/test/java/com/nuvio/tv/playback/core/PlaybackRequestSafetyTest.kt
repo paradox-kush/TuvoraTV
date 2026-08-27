@@ -20,6 +20,9 @@ class PlaybackRequestSafetyTest {
             "license.example",
             "drm-token",
             "playlist-account-key",
+            "private-proxy.example",
+            "proxy-user",
+            "proxy-password",
         )
         val drm = DrmRequest(
             scheme = DrmScheme.WIDEVINE,
@@ -33,18 +36,38 @@ class PlaybackRequestSafetyTest {
             userAgent = "private-agent",
             referer = "https://secret-referrer/path",
             origin = "https://secret-origin",
+            network = PlaybackNetworkRequest(
+                proxyMode = ProxyMode.HTTP,
+                httpProxy = HttpProxyRequest(
+                    host = "private-proxy.example",
+                    port = 8_080,
+                    username = SecretValue("proxy-user"),
+                    password = SecretValue("proxy-password"),
+                ),
+                connectTimeoutMs = 12_000,
+                readTimeoutMs = 45_000,
+                transientLoadRetryPolicy = TransientLoadRetryPolicy.SESSION_ONLY,
+            ),
             drm = drm,
             contentType = ContentType.LIVE,
             contentKey = SecretValue("playlist-account-key"),
             providerConnectionLimit = 1,
         )
 
-        val printable = listOf(request.toString(), drm.toString(), request.contentKey.toString())
+        val printable = listOf(
+            request.toString(),
+            drm.toString(),
+            request.contentKey.toString(),
+            request.network.toString(),
+            request.network.httpProxy.toString(),
+        )
             .joinToString(" ")
 
         secrets.forEach { secret -> assertFalse("Leaked $secret", printable.contains(secret)) }
         assertTrue(printable.contains("hasDrm=true"))
         assertTrue(printable.contains("scheme=WIDEVINE"))
+        assertEquals(ProxyMode.HTTP, request.summary().proxyMode)
+        assertTrue(request.summary().hasCustomNetworkPolicy)
     }
 
     @Test

@@ -12,6 +12,7 @@ class PlaybackRequest(
     val crossHostAuthorization: CrossHostAuthorization = CrossHostAuthorization.STRIP,
     val tlsPolicy: TlsPolicy = TlsPolicy.PLATFORM_DEFAULT,
     val dnsPolicy: DnsPolicy = DnsPolicy.SYSTEM,
+    val network: PlaybackNetworkRequest = PlaybackNetworkRequest(),
     val drm: DrmRequest? = null,
     val contentType: ContentType,
     val contentKey: SecretValue? = null,
@@ -45,6 +46,9 @@ class PlaybackRequest(
         crossHostAuthorization = crossHostAuthorization,
         tlsPolicy = tlsPolicy,
         dnsPolicy = dnsPolicy,
+        proxyMode = network.proxyMode,
+        hasCustomNetworkPolicy = network != PlaybackNetworkRequest(),
+        transientLoadRetryPolicy = network.transientLoadRetryPolicy,
         providerConnectionConstrained = providerConnectionLimit != null,
     )
 
@@ -86,6 +90,9 @@ data class RequestSummary(
     val crossHostAuthorization: CrossHostAuthorization,
     val tlsPolicy: TlsPolicy,
     val dnsPolicy: DnsPolicy,
+    val proxyMode: ProxyMode = ProxyMode.SYSTEM,
+    val hasCustomNetworkPolicy: Boolean = false,
+    val transientLoadRetryPolicy: TransientLoadRetryPolicy = TransientLoadRetryPolicy.ENGINE_DEFAULT,
     val providerConnectionConstrained: Boolean,
 )
 
@@ -95,6 +102,67 @@ enum class CrossHostAuthorization { STRIP, PRESERVE }
 enum class TlsPolicy { PLATFORM_DEFAULT, STRICT }
 enum class DnsPolicy { SYSTEM, SHARED_APPLICATION_RESOLVER }
 enum class DrmScheme { WIDEVINE, PLAYREADY, CLEARKEY, UNKNOWN }
+
+enum class ProxyMode { SYSTEM, DIRECT, HTTP }
+
+/** Secret-safe HTTP proxy material. Credentials never appear in string output. */
+class HttpProxyRequest(
+    val host: String,
+    val port: Int,
+    val username: SecretValue? = null,
+    val password: SecretValue? = null,
+) {
+    init {
+        require(host.isNotBlank()) { "Proxy host must not be blank" }
+        require(port in 1..65_535) { "Proxy port must be valid" }
+        require((username == null) == (password == null)) {
+            "Proxy username and password must either both be present or both be absent"
+        }
+    }
+
+    override fun equals(other: Any?): Boolean = other is HttpProxyRequest &&
+        host == other.host && port == other.port && username == other.username && password == other.password
+
+    override fun hashCode(): Int = arrayOf(host, port, username, password).contentHashCode()
+
+    override fun toString(): String =
+        "HttpProxyRequest(hasHost=true, port=$port, hasCredentials=${username != null})"
+}
+
+enum class TransientLoadRetryPolicy {
+    /** The media stack may perform its bounded, in-request transient load recovery. */
+    ENGINE_DEFAULT,
+
+    /** The adapter reports the failure without reopening; only [PlaybackSession] may retry. */
+    SESSION_ONLY,
+}
+
+/** Engine-neutral network intent materialized equivalently by every adapter. */
+data class PlaybackNetworkRequest(
+    val proxyMode: ProxyMode = ProxyMode.SYSTEM,
+    val httpProxy: HttpProxyRequest? = null,
+    val connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
+    val readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
+    val callTimeoutMs: Int? = null,
+    val retryConnectionFailures: Boolean = true,
+    val transientLoadRetryPolicy: TransientLoadRetryPolicy = TransientLoadRetryPolicy.ENGINE_DEFAULT,
+) {
+    init {
+        require(connectTimeoutMs > 0) { "Connect timeout must be positive" }
+        require(readTimeoutMs > 0) { "Read timeout must be positive" }
+        require(callTimeoutMs == null || callTimeoutMs > 0) {
+            "Call timeout must be positive when present"
+        }
+        require((proxyMode == ProxyMode.HTTP) == (httpProxy != null)) {
+            "An HTTP proxy is required only for HTTP proxy mode"
+        }
+    }
+
+    companion object {
+        const val DEFAULT_CONNECT_TIMEOUT_MS: Int = 15_000
+        const val DEFAULT_READ_TIMEOUT_MS: Int = 60_000
+    }
+}
 
 data class EvidenceFact<T>(
     val value: T,
@@ -467,6 +535,7 @@ enum class FailureCode {
     DRM_UNSUPPORTED,
     DRM_LICENSE_FAILED,
     RESOURCE_BUDGET_EXCEEDED,
+    RESOURCE_RELEASE_FAILED,
     NO_ELIGIBLE_GRAPH,
     NO_PROGRESS,
     UNKNOWN,
