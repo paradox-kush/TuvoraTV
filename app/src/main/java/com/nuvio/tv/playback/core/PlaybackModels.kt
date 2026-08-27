@@ -12,6 +12,7 @@ class PlaybackRequest(
     val crossHostAuthorization: CrossHostAuthorization = CrossHostAuthorization.STRIP,
     val tlsPolicy: TlsPolicy = TlsPolicy.PLATFORM_DEFAULT,
     val dnsPolicy: DnsPolicy = DnsPolicy.SYSTEM,
+    val applicationDnsKey: ApplicationDnsKey? = null,
     val network: PlaybackNetworkRequest = PlaybackNetworkRequest(),
     val drm: DrmRequest? = null,
     val contentType: ContentType,
@@ -22,6 +23,9 @@ class PlaybackRequest(
         require(url.isNotBlank()) { "Playback URL must not be blank" }
         require(providerConnectionLimit == null || providerConnectionLimit > 0) {
             "Provider connection limit must be positive"
+        }
+        require(applicationDnsKey == null || dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER) {
+            "An application DNS key requires the shared application resolver policy"
         }
     }
 
@@ -50,6 +54,7 @@ class PlaybackRequest(
         hasCustomNetworkPolicy = network != PlaybackNetworkRequest(),
         transientLoadRetryPolicy = network.transientLoadRetryPolicy,
         providerConnectionConstrained = providerConnectionLimit != null,
+        secureOutputRequired = drm?.secureOutputRequired == true,
     )
 
     override fun toString(): String = "PlaybackRequest(summary=${summary()})"
@@ -58,6 +63,17 @@ class PlaybackRequest(
 /** Opaque secret value with value equality but permanently redacted string output. */
 class SecretValue(val value: String) {
     override fun equals(other: Any?): Boolean = other is SecretValue && value == other.value
+    override fun hashCode(): Int = value.hashCode()
+    override fun toString(): String = "[REDACTED]"
+}
+
+/** Opaque application-resolver selector; provider configuration never appears in string output. */
+class ApplicationDnsKey(val value: String) {
+    init {
+        require(value.isNotBlank()) { "Application DNS key must not be blank" }
+    }
+
+    override fun equals(other: Any?): Boolean = other is ApplicationDnsKey && value == other.value
     override fun hashCode(): Int = value.hashCode()
     override fun toString(): String = "[REDACTED]"
 }
@@ -169,13 +185,16 @@ class DrmRequest(
     val licenseUrl: String,
     val requestHeaders: Map<String, String> = emptyMap(),
     val multiSession: Boolean = false,
+    /** True only when the content/license contract explicitly requires a protected video surface. */
+    val secureOutputRequired: Boolean = false,
 ) {
     init {
         require(licenseUrl.isNotBlank()) { "DRM license URL must not be blank" }
     }
 
     override fun toString(): String =
-        "DrmRequest(scheme=$scheme, hasLicenseUrl=true, hasRequestHeaders=${requestHeaders.isNotEmpty()}, multiSession=$multiSession)"
+        "DrmRequest(scheme=$scheme, hasLicenseUrl=true, hasRequestHeaders=${requestHeaders.isNotEmpty()}, " +
+            "multiSession=$multiSession, secureOutputRequired=$secureOutputRequired)"
 }
 
 data class RequestSummary(
@@ -196,6 +215,7 @@ data class RequestSummary(
     val hasCustomNetworkPolicy: Boolean = false,
     val transientLoadRetryPolicy: TransientLoadRetryPolicy = TransientLoadRetryPolicy.ENGINE_DEFAULT,
     val providerConnectionConstrained: Boolean,
+    val secureOutputRequired: Boolean = false,
 )
 
 enum class ContentType { LIVE, CATCH_UP, VOD }

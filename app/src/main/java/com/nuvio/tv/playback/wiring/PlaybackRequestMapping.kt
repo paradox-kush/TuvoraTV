@@ -1,6 +1,7 @@
 package com.nuvio.tv.playback.wiring
 
 import com.nuvio.tv.playback.core.AudioCodec
+import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.ContainerType
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.CrossHostAuthorization
@@ -35,6 +36,7 @@ class NavigationPlaybackInput(
     val crossHostAuthorization: CrossHostAuthorization = CrossHostAuthorization.STRIP,
     val tlsPolicy: TlsPolicy = TlsPolicy.PLATFORM_DEFAULT,
     val dnsPolicy: DnsPolicy = DnsPolicy.SYSTEM,
+    val applicationDnsKey: ApplicationDnsKey? = null,
     val drm: DrmRequest? = null,
     val contentType: ContentType,
     val contentKey: SecretValue? = null,
@@ -87,6 +89,7 @@ class PlaybackRequestMapper {
             crossHostAuthorization = input.crossHostAuthorization,
             tlsPolicy = input.tlsPolicy,
             dnsPolicy = input.dnsPolicy,
+            applicationDnsKey = input.applicationDnsKey,
             drm = input.drm?.sanitized(),
             contentType = input.contentType,
             contentKey = input.contentKey,
@@ -172,6 +175,7 @@ class PlaybackRequestMapper {
             licenseUrl = urlAuth.url,
             requestHeaders = headers,
             multiSession = multiSession,
+            secureOutputRequired = secureOutputRequired,
         )
     }
 

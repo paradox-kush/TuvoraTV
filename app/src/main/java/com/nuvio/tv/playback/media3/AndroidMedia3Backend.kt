@@ -33,6 +33,7 @@ import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
 import com.nuvio.tv.playback.core.AudioMode
+import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.DecoderMode
 import com.nuvio.tv.playback.core.DnsPolicy
 import com.nuvio.tv.playback.core.FailureCode
@@ -72,12 +73,38 @@ import okio.BufferedSource
 import okio.ForwardingSource
 import okio.buffer
 
+/** Maps an opaque request selector to the application-owned resolver for that exact playlist. */
+internal fun interface ApplicationDnsResolver {
+    fun resolve(key: ApplicationDnsKey): Dns?
+}
+
+internal fun resolveApplicationDns(
+    request: Media3NetworkPlan,
+    resolver: ApplicationDnsResolver,
+): PlaybackResult<Dns?> {
+    if (request.dnsPolicy == DnsPolicy.SYSTEM) return PlaybackResult.Success(null)
+    val key = request.applicationDnsKey ?: return applicationDnsFailure()
+    val dns = try {
+        resolver.resolve(key)
+    } catch (_: Exception) {
+        null
+    }
+    return dns?.let { PlaybackResult.Success(it) } ?: applicationDnsFailure()
+}
+
+private fun applicationDnsFailure(): PlaybackResult.Failure = failure(
+    FailureCode.NETWORK_UNREACHABLE,
+    FailureDomain.NETWORK,
+    FailurePhase.ENGINE_START,
+    Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+)
+
 /** Builds Media3 backends from the application OkHttp stack without importing legacy playback. */
 @UnstableApi
 internal class AndroidMedia3BackendFactory(
     context: Context,
     private val sharedHttpClient: OkHttpClient,
-    private val sharedApplicationDns: Dns? = null,
+    private val applicationDnsResolver: ApplicationDnsResolver = ApplicationDnsResolver { null },
     /** Declared trust semantics of [sharedHttpClient]; STRICT forbids trust-all/provider exceptions. */
     private val sharedClientTlsPolicy: TlsPolicy = TlsPolicy.STRICT,
     private val playerDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
@@ -96,13 +123,9 @@ internal class AndroidMedia3BackendFactory(
                     deterministic = true,
                 )
             }
-            if (plan.request.dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER && sharedApplicationDns == null) {
-                return@withContext failure(
-                    FailureCode.NETWORK_UNREACHABLE,
-                    FailureDomain.NETWORK,
-                    FailurePhase.ENGINE_START,
-                    Retryability.RETRYABLE_WITH_FRESH_REQUEST,
-                )
+            val applicationDns = when (val result = resolveApplicationDns(plan.request, applicationDnsResolver)) {
+                is PlaybackResult.Success -> result.value
+                is PlaybackResult.Failure -> return@withContext result
             }
             if (plan.request.tlsPolicy == TlsPolicy.STRICT && sharedClientTlsPolicy != TlsPolicy.STRICT) {
                 return@withContext failure(
@@ -125,7 +148,7 @@ internal class AndroidMedia3BackendFactory(
                 )
             }
 
-            runCatching { build(plan) }.fold(
+            runCatching { build(plan, applicationDns) }.fold(
                 onSuccess = { PlaybackResult.Success(it) },
                 onFailure = {
                     failure(
@@ -138,7 +161,7 @@ internal class AndroidMedia3BackendFactory(
             )
         }
 
-    private fun build(plan: Media3AdapterPlan): Media3Backend {
+    private fun build(plan: Media3AdapterPlan, applicationDns: Dns?): Media3Backend {
         val clientBuilder = sharedHttpClient.newBuilder()
             .followRedirects(plan.request.followRedirects)
             .followSslRedirects(plan.request.followRedirects)
@@ -169,7 +192,7 @@ internal class AndroidMedia3BackendFactory(
             }
         }
         if (plan.request.dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER) {
-            clientBuilder.dns(requireNotNull(sharedApplicationDns))
+            clientBuilder.dns(requireNotNull(applicationDns))
         }
         val configuredClient = clientBuilder.build()
         val mediaClientBuilder = configuredClient.newBuilder()

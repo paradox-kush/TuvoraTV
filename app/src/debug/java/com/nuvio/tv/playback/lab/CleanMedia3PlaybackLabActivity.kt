@@ -560,12 +560,6 @@ private class CleanPlaybackLabRuntime(
         val graph = eligible.graph
         val requirements = eligible.requirements
         val intent = prepared.intent
-        val dns = if (intent.request.dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER) {
-            prepared.fixture.mapDnsProvider(playlistDns::dnsFor)
-        } else {
-            null
-        }
-
         val generation = nextGeneration++
         lastPlayWhenReady = false
         lastLoading = false
@@ -587,7 +581,9 @@ private class CleanPlaybackLabRuntime(
                 backendFactory = AndroidMedia3BackendFactory(
                     context = context,
                     sharedHttpClient = http,
-                    sharedApplicationDns = dns,
+                    applicationDnsResolver = { key ->
+                        key.value.takeIf(playlistDns::usesDoh)?.let(playlistDns::dnsFor)
+                    },
                     sharedClientTlsPolicy = TlsPolicy.STRICT,
                 ),
             )

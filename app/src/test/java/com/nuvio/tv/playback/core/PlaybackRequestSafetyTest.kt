@@ -79,6 +79,29 @@ class PlaybackRequestSafetyTest {
     }
 
     @Test
+    fun `DRM presence and explicit secure output remain distinct facts`() {
+        val ordinaryWidevine = PlaybackRequest(
+            url = "https://media.invalid/manifest.mpd",
+            drm = DrmRequest(DrmScheme.WIDEVINE, "https://license.invalid"),
+            contentType = ContentType.LIVE,
+        )
+        val secureWidevine = PlaybackRequest(
+            url = "https://media.invalid/secure.mpd",
+            drm = DrmRequest(
+                DrmScheme.WIDEVINE,
+                "https://license.invalid",
+                secureOutputRequired = true,
+            ),
+            contentType = ContentType.LIVE,
+        )
+
+        assertTrue(ordinaryWidevine.summary().hasDrm)
+        assertFalse(ordinaryWidevine.summary().secureOutputRequired)
+        assertTrue(secureWidevine.summary().hasDrm)
+        assertTrue(secureWidevine.summary().secureOutputRequired)
+    }
+
+    @Test
     fun `summary contains flags and scheme but no endpoint identity`() {
         val request = PlaybackRequest(
             url = "https://user:pass@provider.example/live/42?token=secret",

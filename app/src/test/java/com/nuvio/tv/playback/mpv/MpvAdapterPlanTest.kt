@@ -1,6 +1,7 @@
 package com.nuvio.tv.playback.mpv
 
 import com.nuvio.tv.playback.core.AudioMode
+import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.AudioOutputPreference
 import com.nuvio.tv.playback.core.BufferingPreference
 import com.nuvio.tv.playback.core.ContentType
@@ -105,6 +106,7 @@ class MpvAdapterPlanTest {
                 request = PlaybackRequest(
                     "https://example.test/live",
                     dnsPolicy = DnsPolicy.SHARED_APPLICATION_RESOLVER,
+                    applicationDnsKey = ApplicationDnsKey("provider-dns-a"),
                     contentType = ContentType.LIVE,
                 ),
             ),

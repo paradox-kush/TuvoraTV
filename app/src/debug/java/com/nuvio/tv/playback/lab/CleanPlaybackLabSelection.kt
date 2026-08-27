@@ -4,6 +4,7 @@ import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.playback.core.ContentType
+import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.DnsPolicy
 import com.nuvio.tv.playback.core.EngineType
 import com.nuvio.tv.playback.core.PlaybackRequest
@@ -49,6 +50,9 @@ internal class SelectedDebugFixture(
                 contentKey = contentId,
                 providerConnectionLimit = 1,
                 dnsPolicy = dnsPolicy,
+                applicationDnsKey = dnsProvider.value
+                    .takeIf { dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER }
+                    ?.let(::ApplicationDnsKey),
             ),
         )
         return LabPlaybackIntent(mapped.request, mapped.evidence, SessionProfile.GUIDE)

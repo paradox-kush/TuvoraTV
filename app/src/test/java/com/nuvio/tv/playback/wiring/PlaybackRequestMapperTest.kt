@@ -1,6 +1,7 @@
 package com.nuvio.tv.playback.wiring
 
 import com.nuvio.tv.playback.core.ContainerType
+import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.CrossHostAuthorization
 import com.nuvio.tv.playback.core.DeliveryType
@@ -34,6 +35,7 @@ class PlaybackRequestMapperTest {
                 "Authorization" to "drm-secret",
                 "X-Injected" to "bad\r\nHeader: value",
             ),
+            secureOutputRequired = true,
         )
         val mapped = mapper.map(
             NavigationPlaybackInput(
@@ -52,6 +54,7 @@ class PlaybackRequestMapperTest {
                 crossHostAuthorization = CrossHostAuthorization.PRESERVE,
                 tlsPolicy = TlsPolicy.STRICT,
                 dnsPolicy = DnsPolicy.SHARED_APPLICATION_RESOLVER,
+                applicationDnsKey = ApplicationDnsKey("provider-dns"),
                 drm = drm,
                 contentType = ContentType.LIVE,
                 contentKey = SecretValue("playlist-account-key"),
@@ -80,10 +83,13 @@ class PlaybackRequestMapperTest {
         assertEquals(CrossHostAuthorization.PRESERVE, request.crossHostAuthorization)
         assertEquals(TlsPolicy.STRICT, request.tlsPolicy)
         assertEquals(DnsPolicy.SHARED_APPLICATION_RESOLVER, request.dnsPolicy)
+        assertEquals(ApplicationDnsKey("provider-dns"), request.applicationDnsKey)
         assertEquals(1, request.providerConnectionLimit)
         assertEquals("https://license.invalid/wv?secret=license-token", request.drm?.licenseUrl)
         assertEquals("drm-secret", request.drm?.requestHeaders?.get("Authorization"))
         assertFalse(request.drm?.requestHeaders?.keys.orEmpty().contains("X-Injected"))
+        assertTrue(request.drm?.secureOutputRequired == true)
+        assertTrue(request.summary().secureOutputRequired)
         assertEquals(DrmScheme.WIDEVINE, mapped.evidence.drmScheme?.value)
     }
 

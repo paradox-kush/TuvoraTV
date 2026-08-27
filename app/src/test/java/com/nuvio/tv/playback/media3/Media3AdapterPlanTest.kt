@@ -4,6 +4,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import com.nuvio.tv.playback.core.AudioMode
+import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.AudioOutputPreference
 import com.nuvio.tv.playback.core.BufferingPreference
 import com.nuvio.tv.playback.core.ContentType
@@ -91,6 +92,7 @@ class Media3AdapterPlanTest {
             origin = "https://origin.test",
             crossHostAuthorization = CrossHostAuthorization.PRESERVE,
             dnsPolicy = DnsPolicy.SHARED_APPLICATION_RESOLVER,
+            applicationDnsKey = ApplicationDnsKey("provider-dns"),
             network = PlaybackNetworkRequest(
                 proxyMode = ProxyMode.HTTP,
                 httpProxy = proxy,
@@ -110,6 +112,7 @@ class Media3AdapterPlanTest {
         assertEquals("https://origin.test", result.request.headers["Origin"])
         assertTrue(result.request.preserveAuthorizationAcrossHosts)
         assertEquals(DnsPolicy.SHARED_APPLICATION_RESOLVER, result.request.dnsPolicy)
+        assertEquals(ApplicationDnsKey("provider-dns"), result.request.applicationDnsKey)
         assertEquals(ProxyMode.HTTP, result.request.proxyMode)
         assertEquals(proxy, result.request.httpProxy)
         assertEquals(4_000, result.request.connectTimeoutMs)

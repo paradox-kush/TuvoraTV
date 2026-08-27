@@ -9,6 +9,7 @@ import com.nuvio.tv.core.iptv.dns.DnsProviderEndpoint
 import com.nuvio.tv.core.iptv.stalker.StalkerClient
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.playback.core.ContainerType
+import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.CrossHostAuthorization
 import com.nuvio.tv.playback.core.DeliveryType
@@ -215,6 +216,7 @@ class IptvProviderPlaybackResolver internal constructor(
     ): PlaybackResult<ResolvedPlaybackRequest> {
         if (url.isBlank()) return unavailable(deterministic = true)
         val declared = declaredTransport(selection, dialect)
+        val dnsPolicy = account.cleanDnsPolicy()
         val mapped = mapper.map(
             NavigationPlaybackInput(
                 url = url,
@@ -222,7 +224,10 @@ class IptvProviderPlaybackResolver internal constructor(
                 redirectPolicy = RedirectPolicy.FOLLOW,
                 crossHostAuthorization = CrossHostAuthorization.STRIP,
                 tlsPolicy = TlsPolicy.PLATFORM_DEFAULT,
-                dnsPolicy = account.cleanDnsPolicy(),
+                dnsPolicy = dnsPolicy,
+                applicationDnsKey = account.dnsProvider
+                    .takeIf { dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER }
+                    ?.let(::ApplicationDnsKey),
                 contentType = selection.contentType,
                 contentKey = SecretValue(selection.contentKey.value),
                 providerConnectionLimit = selection.providerConnectionLimit,

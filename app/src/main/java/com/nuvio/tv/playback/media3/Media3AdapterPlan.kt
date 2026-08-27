@@ -6,6 +6,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlaybackException
 import com.nuvio.tv.playback.core.AudioOutputPreference
+import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.AudioMode
 import com.nuvio.tv.playback.core.BufferingPreference
 import com.nuvio.tv.playback.core.CrossHostAuthorization
@@ -68,6 +69,7 @@ internal data class Media3NetworkPlan(
     val followRedirects: Boolean,
     val preserveAuthorizationAcrossHosts: Boolean,
     val dnsPolicy: DnsPolicy,
+    val applicationDnsKey: ApplicationDnsKey?,
     val tlsPolicy: TlsPolicy,
     val proxyMode: ProxyMode,
     val httpProxy: com.nuvio.tv.playback.core.HttpProxyRequest?,
@@ -171,6 +173,7 @@ internal object Media3AdapterPlanFactory {
                 preserveAuthorizationAcrossHosts =
                     request.crossHostAuthorization == CrossHostAuthorization.PRESERVE,
                 dnsPolicy = request.dnsPolicy,
+                applicationDnsKey = request.applicationDnsKey,
                 tlsPolicy = request.tlsPolicy,
                 proxyMode = request.network.proxyMode,
                 httpProxy = request.network.httpProxy,
