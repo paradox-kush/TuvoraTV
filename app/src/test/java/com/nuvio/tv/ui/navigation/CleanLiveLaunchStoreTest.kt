@@ -1,9 +1,11 @@
 package com.nuvio.tv.ui.navigation
 
 import com.nuvio.tv.playback.core.ContentType
+import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.core.ProviderSourceType
+import com.nuvio.tv.playback.live.LiveChannelTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -16,6 +18,30 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 
 class CleanLiveLaunchStoreTest {
+    @Test
+    fun `direct target put preserves the exact atomic selection target`() {
+        val store = store()
+        val selection = selection()
+        val target = LiveChannelTarget.sanitized(
+            selection = selection,
+            contentId = selection.contentKey,
+            title = "News",
+            logo = "https://images.test/news.png",
+            playlistVersion = 9,
+            boundProfileId = PlaybackProfileId("4"),
+        )
+
+        val token = store.put(target, 4, CleanLiveLaunchOrigin.SPORTS)
+        val consumed = store.consume(token.routeValue, 4).ready()
+
+        assertSame(target, consumed.target)
+        assertEquals(CleanLiveLaunchOrigin.SPORTS, consumed.origin)
+        assertEquals("News", consumed.metadata.title)
+        assertThrows {
+            store.put(target, 5, CleanLiveLaunchOrigin.CATALOG_SEE_ALL)
+        }
+    }
+
     @Test
     fun `put returns a random shaped token and consume returns the URL-free selection once`() {
         val clock = FakeClock(100)

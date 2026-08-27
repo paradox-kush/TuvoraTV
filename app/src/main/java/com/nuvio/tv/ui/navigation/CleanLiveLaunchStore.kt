@@ -9,7 +9,13 @@ import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
 
-enum class CleanLiveLaunchOrigin { SEARCH, LIBRARY }
+enum class CleanLiveLaunchOrigin {
+    SEARCH,
+    LIBRARY,
+    SPORTS,
+    FOLDER,
+    CATALOG_SEE_ALL,
+}
 
 /** Display-only launch metadata. Transport-shaped labels are discarded before storage. */
 class CleanLiveLaunchMetadata private constructor(
@@ -159,10 +165,9 @@ class CleanLiveLaunchStore internal constructor(
         playlistVersion: Long? = null,
     ): CleanLiveLaunchToken {
         require(selection.contentType == ContentType.LIVE) {
-            "The Search/Library clean-live destination accepts live selections only"
+            "The clean-live destination accepts live selections only"
         }
         require(activeProfileId > 0) { "Active profile id must be positive" }
-        val now = clock.nowMs()
         val boundProfileId = PlaybackProfileId(activeProfileId.toString())
         val target = LiveChannelTarget.sanitized(
             selection = selection,
@@ -172,6 +177,28 @@ class CleanLiveLaunchStore internal constructor(
             playlistVersion = playlistVersion,
             boundProfileId = boundProfileId,
         )
+        return put(
+            target = target,
+            activeProfileId = activeProfileId,
+            origin = origin,
+            subtitle = subtitle,
+            station = station,
+        )
+    }
+
+    /** Stores the exact atomic target selected by the live ingress port without rebuilding it. */
+    fun put(
+        target: LiveChannelTarget,
+        activeProfileId: Int,
+        origin: CleanLiveLaunchOrigin,
+        subtitle: String? = null,
+        station: String? = null,
+    ): CleanLiveLaunchToken {
+        require(target.selection.contentType == ContentType.LIVE) {
+            "The clean-live destination accepts live selections only"
+        }
+        require(activeProfileId > 0) { "Active profile id must be positive" }
+        val now = clock.nowMs()
         val entry = CleanLiveLaunchEntry(
             target = target,
             activeProfileId = activeProfileId,
