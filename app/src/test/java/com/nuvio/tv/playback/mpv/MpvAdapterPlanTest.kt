@@ -78,7 +78,6 @@ class MpvAdapterPlanTest {
     fun `unsupported network guarantees fail closed instead of being approximated`() {
         val requests = listOf(
             PlaybackRequest("https://example.test/live", redirectPolicy = RedirectPolicy.REJECT, contentType = ContentType.LIVE),
-            PlaybackRequest("https://example.test/live", dnsPolicy = DnsPolicy.SHARED_APPLICATION_RESOLVER, contentType = ContentType.LIVE),
             PlaybackRequest(
                 "https://example.test/live",
                 network = PlaybackNetworkRequest(callTimeoutMs = 20_000),
@@ -97,6 +96,30 @@ class MpvAdapterPlanTest {
             ),
         )
         requests.forEach { assertTrue(MpvAdapterPlanFactory.create(start(request = it)) is PlaybackResult.Failure) }
+    }
+
+    @Test
+    fun `application DNS request is admitted with an explicit system fallback`() {
+        val plan = plan(
+            start(
+                request = PlaybackRequest(
+                    "https://example.test/live",
+                    dnsPolicy = DnsPolicy.SHARED_APPLICATION_RESOLVER,
+                    contentType = ContentType.LIVE,
+                ),
+            ),
+        )
+
+        assertEquals(MpvDnsMode.SYSTEM_FALLBACK_FOR_APPLICATION_DNS, plan.dnsMode)
+        assertTrue(plan.toString().contains("dnsMode=SYSTEM_FALLBACK_FOR_APPLICATION_DNS"))
+        assertFalse(plan.preInitOptions.containsKey("http-proxy"))
+    }
+
+    @Test
+    fun `system DNS request remains system DNS`() {
+        val plan = plan(start())
+
+        assertEquals(MpvDnsMode.SYSTEM, plan.dnsMode)
     }
 
     @Test

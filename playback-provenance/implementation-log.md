@@ -2,7 +2,7 @@
 
 ## Current Work Package
 
-WP4 — Media3 adapter, affirmative resource barriers, and real-device harness.
+WP6/WP7 — deferred provider integration, phase recovery, settings, and sequential device proof.
 
 ## Changes made
 
@@ -138,8 +138,24 @@ WP4 — Media3 adapter, affirmative resource barriers, and real-device harness.
   the checked local fork AAR (`44747a57bef59979d32ab2b28d9b582cb05e91684d53f1bdf5f120183b380a8b`).
 - Corrected the upstream `getPropertyLong` JNI bridge, which previously truncated INT64 properties
   through Java `Integer`; watchdog frame counters now remain truthful across their full lifetime.
+- Applied the approved V1 DNS materialization rule: libmpv remains on system DNS when the logical
+  request selects the app's DoH resolver. The immutable adapter plan exposes
+  `SYSTEM_FALLBACK_FOR_APPLICATION_DNS`; it does not claim to have applied DoH, and any resulting
+  DNS/network outcome remains in a non-learnable network domain.
 
 ## Tests run
+
+- Unified post-deferred-selection/DNS-fallback TV gate:
+  `:app:verifyMedia3RuntimeConvergence :app:verifyPlaybackEngineArtifacts
+  :app:testFullDebugUnitTest :app:compileFullDebugKotlin --rerun-tasks` — passed; 41 tasks executed,
+  2,126 tests run, 0 failures, 0 errors, and 3 skipped. A preceding incremental run exposed one
+  stale Kotlin constructor ABI in `PlaybackRequestSafetyTest`; a forced-fresh focused rerun passed
+  before the complete forced-fresh gate.
+- Signed `packageFullDebug` completed after constraining the packaging worker to one thread and
+  raising only that invocation's Gradle heap to 8 GiB. The initial 4 GiB packaging attempts failed
+  inside Android's APK compressor with `OutOfMemoryError`; compilation, tests, signing validation,
+  and playback code were not the cause. ONN certification uses the generated arm64 APK with SHA-256
+  `d36fe83d0ac09c8b345091b7286a434998d7396f425901c443b3764cf80f3f3d`.
 
 - Focused WP5 libmpv adapter gate — 11 plan/engine tests passed; production and test Kotlin
   compilation passed against the first fork artifact. Final fork verification/compile rerun follows

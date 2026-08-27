@@ -27,12 +27,24 @@ internal data class MpvAdapterPlan(
     val runtimeProperties: Map<String, String>,
     val surfaceMode: SurfaceMode,
     val startPaused: Boolean,
+    val dnsMode: MpvDnsMode,
 ) {
     override fun toString(): String =
         "MpvAdapterPlan(scheme=${url.substringBefore(':', "unknown")}, " +
             "hasHeaders=${headers.isNotEmpty()}, optionNames=${preInitOptions.keys.sorted()}, " +
             "propertyNames=${runtimeProperties.keys.sorted()}, surfaceMode=$surfaceMode, " +
-            "startPaused=$startPaused)"
+            "startPaused=$startPaused, dnsMode=$dnsMode)"
+}
+
+/**
+ * libmpv/FFmpeg cannot consume Android's request-scoped OkHttp [DnsPolicy] implementation.
+ * V1 deliberately keeps libmpv on its system resolver instead of pretending that it applied the
+ * playlist's application resolver. Network outcomes from this fallback remain network facts and
+ * are never eligible to teach decoder or renderer compatibility history.
+ */
+internal enum class MpvDnsMode {
+    SYSTEM,
+    SYSTEM_FALLBACK_FOR_APPLICATION_DNS,
 }
 
 internal object MpvAdapterPlanFactory {
@@ -51,7 +63,6 @@ internal object MpvAdapterPlanFactory {
             return unsupported(FailureCode.NO_ELIGIBLE_GRAPH)
         }
         if (request.redirectPolicy == RedirectPolicy.REJECT ||
-            request.dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER ||
             request.network.callTimeoutMs != null
         ) {
             return unsupported(FailureCode.NO_ELIGIBLE_GRAPH)
@@ -159,6 +170,11 @@ internal object MpvAdapterPlanFactory {
                 runtimeProperties = properties.toMap(),
                 surfaceMode = graph.surfaceMode,
                 startPaused = input.startPaused,
+                dnsMode = when (request.dnsPolicy) {
+                    DnsPolicy.SYSTEM -> MpvDnsMode.SYSTEM
+                    DnsPolicy.SHARED_APPLICATION_RESOLVER ->
+                        MpvDnsMode.SYSTEM_FALLBACK_FOR_APPLICATION_DNS
+                },
             ),
         )
     }

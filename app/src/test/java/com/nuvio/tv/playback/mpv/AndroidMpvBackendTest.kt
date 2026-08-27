@@ -143,6 +143,7 @@ class AndroidMpvBackendTest {
                 runtimeProperties = emptyMap(),
                 surfaceMode = SurfaceMode.GPU_RENDER,
                 startPaused = false,
+                dnsMode = MpvDnsMode.SYSTEM,
             ),
             StandardTestDispatcher(testScheduler),
             core,

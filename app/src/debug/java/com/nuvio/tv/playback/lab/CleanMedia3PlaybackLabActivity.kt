@@ -762,6 +762,8 @@ private class CleanPlaybackLabRuntime(
             is PlaybackEvent.BufferingEnded,
             is PlaybackEvent.TracksAvailable,
             is PlaybackEvent.RequestResolved,
+            is PlaybackEvent.RequestRefreshed,
+            is PlaybackEvent.HandoffRequestResolved,
             is PlaybackEvent.GraphSelected,
             is PlaybackEvent.SurfaceAttached,
             is PlaybackEvent.EngineStarting,
