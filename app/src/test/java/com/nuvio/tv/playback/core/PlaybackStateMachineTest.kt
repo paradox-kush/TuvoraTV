@@ -574,11 +574,20 @@ class PlaybackStateMachineTest {
         assertEquals(PlaybackState.FAILED, failed.snapshot.state)
         assertEquals(StreamAvailability.Unknown, failed.snapshot.streamAvailability)
 
-        val fullscreen = PlaybackStateMachine.reduce(
+        val requested = PlaybackStateMachine.reduce(
             failed,
-            PlaybackCommand.SessionProfileChanged(
-                SessionProfile.FULLSCREEN,
-                ChangeImpact.RESELECT_GRAPH,
+            PlaybackCommand.SessionProfileChanged(SessionProfile.FULLSCREEN),
+        )
+        val resolve = assertAction<PlaybackAction.ResolveProfileChange>(requested)
+        val fullscreen = PlaybackStateMachine.reduce(
+            requested.state,
+            PlaybackReducerInput.RequirementsChangeResolved(
+                changeId = 1,
+                generation = 1,
+                previousProfile = resolve.previousProfile,
+                targetProfile = SessionProfile.FULLSCREEN,
+                requirements = requirements(SessionProfile.FULLSCREEN),
+                impact = ChangeImpact.RESELECT_GRAPH,
             ),
         )
         assertEquals(PlaybackState.SELECTING_GRAPH, fullscreen.state.snapshot.state)
@@ -589,22 +598,67 @@ class PlaybackStateMachineTest {
     @Test
     fun `profile change applies in place without graph restart`() {
         val playing = playingState(ContentType.LIVE)
-        val changed = PlaybackStateMachine.reduce(
+        val requested = PlaybackStateMachine.reduce(
             playing,
-            PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE, ChangeImpact.APPLY_IN_PLACE),
+            PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE),
+        )
+        val resolve = assertAction<PlaybackAction.ResolveProfileChange>(requested)
+        val changed = PlaybackStateMachine.reduce(
+            requested.state,
+            PlaybackReducerInput.RequirementsChangeResolved(
+                changeId = 1,
+                generation = 1,
+                previousProfile = resolve.previousProfile,
+                targetProfile = SessionProfile.GUIDE,
+                requirements = requirements(SessionProfile.GUIDE),
+                impact = ChangeImpact.APPLY_IN_PLACE,
+            ),
         )
 
         assertEquals(PlaybackState.PLAYING, changed.state.snapshot.state)
         assertEquals(SessionProfile.GUIDE, changed.state.snapshot.profile)
-        assertAction<PlaybackAction.ApplyProfileInPlace>(changed)
+        assertAction<PlaybackAction.ApplyRequirementsInPlace>(changed)
+    }
+
+    @Test
+    fun `rejected profile requirements restore prior profile without stopping playback`() {
+        val playing = playingState(ContentType.LIVE)
+        val requested = PlaybackStateMachine.reduce(
+            playing,
+            PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE),
+        )
+
+        val rejected = PlaybackStateMachine.reduce(
+            requested.state,
+            PlaybackReducerInput.RequirementsChangeRejected(
+                generation = 1,
+                previousProfile = SessionProfile.FULLSCREEN,
+            ),
+        )
+
+        assertEquals(PlaybackState.PLAYING, rejected.state.snapshot.state)
+        assertEquals(SessionProfile.FULLSCREEN, rejected.state.snapshot.profile)
+        assertTrue(rejected.actions.isEmpty())
     }
 
     @Test
     fun `profile rebuild waits for release then rebuilds the same graph`() {
         val playing = playingState(ContentType.LIVE)
-        val changed = PlaybackStateMachine.reduce(
+        val requested = PlaybackStateMachine.reduce(
             playing,
-            PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE, ChangeImpact.REBUILD_CURRENT_GRAPH),
+            PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE),
+        )
+        val resolve = assertAction<PlaybackAction.ResolveProfileChange>(requested)
+        val changed = PlaybackStateMachine.reduce(
+            requested.state,
+            PlaybackReducerInput.RequirementsChangeResolved(
+                changeId = 1,
+                generation = 1,
+                previousProfile = resolve.previousProfile,
+                targetProfile = SessionProfile.GUIDE,
+                requirements = requirements(SessionProfile.GUIDE),
+                impact = ChangeImpact.REBUILD_CURRENT_GRAPH,
+            ),
         )
         assertEquals(PlaybackState.RELEASING, changed.state.snapshot.state)
         assertAction<PlaybackAction.ReleaseActiveWork>(changed)
@@ -618,9 +672,21 @@ class PlaybackStateMachineTest {
     @Test
     fun `profile reselect waits for release then runs policy selection`() {
         val playing = playingState(ContentType.LIVE)
-        val changed = PlaybackStateMachine.reduce(
+        val requested = PlaybackStateMachine.reduce(
             playing,
-            PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE, ChangeImpact.RESELECT_GRAPH),
+            PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE),
+        )
+        val resolve = assertAction<PlaybackAction.ResolveProfileChange>(requested)
+        val changed = PlaybackStateMachine.reduce(
+            requested.state,
+            PlaybackReducerInput.RequirementsChangeResolved(
+                changeId = 1,
+                generation = 1,
+                previousProfile = resolve.previousProfile,
+                targetProfile = SessionProfile.GUIDE,
+                requirements = requirements(SessionProfile.GUIDE),
+                impact = ChangeImpact.RESELECT_GRAPH,
+            ),
         )
         assertEquals(PlaybackState.RELEASING, changed.state.snapshot.state)
 
@@ -742,6 +808,34 @@ class PlaybackStateMachineTest {
             decoderMode = DecoderMode.HARDWARE,
             audioMode = AudioMode.DECODE,
             surfaceMode = SurfaceMode.GPU_RENDER,
+        )
+
+        fun requirements(profile: SessionProfile) = PlaybackRequirements(
+            profile = profile,
+            priority = if (profile == SessionProfile.GUIDE) {
+                SessionPriority.STARTUP_SPEED
+            } else {
+                SessionPriority.QUALITY_AND_STABILITY
+            },
+            qualityIntent = if (profile == SessionProfile.GUIDE) {
+                VideoQualityIntent.PREVIEW
+            } else {
+                VideoQualityIntent.FULL
+            },
+            displayModeSwitchAllowed = profile == SessionProfile.FULLSCREEN,
+            frameRatePreference = FrameRatePreference.OFF,
+            hdrPreference = HdrPreference.AUTO,
+            decoderPreference = DecoderPreference.AUTO,
+            softwareDecodeFallbackAllowed = false,
+            subtitleFidelity = SubtitleFidelity.COMPATIBLE,
+            subtitlesEnabled = false,
+            audioOutput = AudioOutputPreference.AUTO,
+            pcmProcessingAllowed = true,
+            buffering = BufferingPreference.RECOMMENDED,
+            gpuRenderingAllowed = false,
+            eligibleEngines = setOf(EngineType.MEDIA3),
+            secureOutputRequired = false,
+            resourceBudget = ResourceBudget(),
         )
     }
 }

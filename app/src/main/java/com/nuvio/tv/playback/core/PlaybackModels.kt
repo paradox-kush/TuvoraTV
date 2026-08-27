@@ -191,7 +191,9 @@ enum class ThermalState { NOMINAL, FAIR, SERIOUS, CRITICAL, UNKNOWN }
 data class SurfaceCapabilities(
     val surfaceViewSupported: Boolean = true,
     val textureViewSupported: Boolean = true,
+    val nativeEmbedSupported: Boolean = false,
     val secureSurfaceSupported: Boolean = false,
+    val secureNativeEmbedSupported: Boolean = false,
     val gpuRenderingSupported: Boolean = false,
     val secureGpuRenderingSupported: Boolean = false,
 )
@@ -324,7 +326,13 @@ data class ResourceBudget(
     val memoryCost: ResourceAllowance = ResourceAllowance.NORMAL,
     val gpuCost: ResourceAllowance = ResourceAllowance.NORMAL,
     val surfaceCost: ResourceAllowance = ResourceAllowance.NORMAL,
-)
+) {
+    init {
+        require(networkBitrateCeiling == null || networkBitrateCeiling > 0) {
+            "Network bitrate ceiling must be positive when present"
+        }
+    }
+}
 
 enum class ResourceAllowance { MINIMAL, NORMAL, HIGH, DISALLOWED }
 
@@ -345,14 +353,30 @@ data class PlaybackRequirements(
     val audioOutput: AudioOutputPreference,
     val pcmProcessingAllowed: Boolean,
     val buffering: BufferingPreference,
+    val customBuffer: CustomBufferPreference? = null,
+    val audioDownmixToStereo: Boolean = false,
+    val audioNormalization: Boolean = false,
+    val audioSkipSilence: Boolean = false,
+    val preferredAudioLanguage: String? = null,
+    val audioDelayMs: Long = 0,
+    val preferredSubtitleLanguage: String? = null,
+    val subtitleDelayMs: Long = 0,
     val gpuRenderingAllowed: Boolean,
     val eligibleEngines: Set<EngineType>,
     val preferredEngineOrder: List<EngineType> = emptyList(),
+    val allowedSurfaceModes: Set<SurfaceMode> = SurfaceMode.entries.toSet(),
     val secureOutputRequired: Boolean,
     val resourceBudget: ResourceBudget,
 ) {
     init {
         require(eligibleEngines.isNotEmpty()) { "At least one playback engine must be eligible" }
+        require(allowedSurfaceModes.isNotEmpty()) { "At least one output surface must be eligible" }
+        require(
+            preferredAdaptiveDimensions == null ||
+                adaptiveDimensionCeiling == null ||
+                preferredAdaptiveDimensions.width <= adaptiveDimensionCeiling.width &&
+                preferredAdaptiveDimensions.height <= adaptiveDimensionCeiling.height
+        ) { "Preferred adaptive dimensions cannot exceed the adaptive ceiling" }
         require(preferredEngineOrder.distinct().size == preferredEngineOrder.size) {
             "Preferred engine order must not contain duplicates"
         }
@@ -361,6 +385,32 @@ data class PlaybackRequirements(
         }
     }
 }
+
+enum class RequirementsField {
+    PROFILE,
+    ADAPTIVE_QUALITY,
+    NETWORK_BITRATE,
+    DISPLAY_OUTPUT,
+    HDR,
+    DECODER,
+    SUBTITLE_SELECTION,
+    SUBTITLE_RENDERER,
+    AUDIO_OUTPUT,
+    AUDIO_PROCESSING,
+    AUDIO_SELECTION,
+    BUFFERING,
+    GPU_RENDERING,
+    ENGINE_ELIGIBILITY,
+    ENGINE_ORDER,
+    SURFACE_ELIGIBILITY,
+    SECURE_OUTPUT,
+    RESOURCE_BUDGET,
+}
+
+data class PlaybackRequirementsDiff(
+    val impact: ChangeImpact,
+    val changedFields: Set<RequirementsField>,
+)
 
 enum class EngineType { MEDIA3, LIBMPV }
 enum class GraphOutputProfile { MEDIA3_STANDARD, MPV_DIRECT, MPV_RENDER }
@@ -529,14 +579,8 @@ sealed interface PlaybackCommand {
     data object Pause : PlaybackCommand
     data object Resume : PlaybackCommand
     data object Retry : PlaybackCommand
-    data class PreferencesChanged(
-        val preferences: PlaybackPreferences,
-        val impact: ChangeImpact,
-    ) : PlaybackCommand
-    data class SessionProfileChanged(
-        val profile: SessionProfile,
-        val impact: ChangeImpact,
-    ) : PlaybackCommand
+    data class PreferencesChanged(val preferences: PlaybackPreferences) : PlaybackCommand
+    data class SessionProfileChanged(val profile: SessionProfile) : PlaybackCommand
     data object SurfaceAvailable : PlaybackCommand
     data object SurfaceUnavailable : PlaybackCommand
     data object Stop : PlaybackCommand

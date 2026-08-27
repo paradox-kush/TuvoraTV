@@ -96,10 +96,22 @@ class PlaybackRequestSafetyTest {
         val transition = PlaybackTransition(machine, listOf(action))
         val resolved = ResolvedPlaybackRequest(request, request.summary(), StreamEvidence())
         val requirementsInput = PlaybackRequirementsInput(
-            request,
-            StreamEvidence(),
-            SessionProfile.FULLSCREEN,
-            PlaybackPreferences.recommended(),
+            requestSummary = request.summary(),
+            evidence = StreamEvidence(),
+            profile = SessionProfile.FULLSCREEN,
+            effectivePreferences = PlaybackPreferences.recommended(),
+            environment = PlaybackEnvironmentSnapshot(
+                runtimeCapabilities = RuntimeCapabilities(
+                    snapshotVersion = 1,
+                    capturedAtEpochMs = 1,
+                    apiLevel = 36,
+                    display = DisplayCapabilities(VideoDimensions(1920, 1080)),
+                    audioRoute = AudioRouteCapabilities(AudioRoute.TV_SPEAKERS),
+                    resources = ResourceCapabilities(1_000_000, lowMemory = false),
+                    surfaces = SurfaceCapabilities(),
+                ),
+                secureOutputRequired = false,
+            ),
         )
 
         listOf(action, machine, transition, resolved, requirementsInput).forEach { wrapper ->

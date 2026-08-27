@@ -38,6 +38,249 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `session owns profile impact and applies same graph quality promotion in place`() = runTest {
+        val engine = FakeEngine()
+        val capturedProfiles = mutableListOf<SessionProfile>()
+        val adaptiveEvidence = StreamEvidence(
+            delivery = EvidenceFact(DeliveryType.HLS, EvidenceProvenance.MANIFEST_CONFIRMED),
+            adaptive = EvidenceFact(true, EvidenceProvenance.MANIFEST_CONFIRMED),
+        )
+        val session = session(
+            engine = engine,
+            requestResolver = PlaybackRequestResolver { request ->
+                PlaybackResult.Success(ResolvedPlaybackRequest(request, request.summary(), adaptiveEvidence))
+            },
+            environmentProvider = PlaybackEnvironmentProvider { _, _, profile, _ ->
+                capturedProfiles += profile
+                PlaybackResult.Success(
+                    environment().copy(
+                        previewViewport = VideoDimensions(640, 360),
+                        eligibleEngines = setOf(EngineType.MEDIA3),
+                        preferredEngineOrder = listOf(EngineType.MEDIA3),
+                        allowedSurfaceModes = setOf(SurfaceMode.SURFACE_VIEW),
+                    ),
+                )
+            },
+            requirementsResolver = DefaultPlaybackRequirementsResolver(),
+        )
+        val stablePreferences = PlaybackPreferences(
+            buffering = BufferingPreference.LOW_LATENCY_LIVE,
+            display = DisplayPreference(frameRate = FrameRatePreference.OFF),
+        )
+        session.dispatch(PlaybackCommand.PreferencesChanged(stablePreferences))
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.SessionProfileChanged(SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(listOf(SessionProfile.GUIDE, SessionProfile.FULLSCREEN), capturedProfiles)
+        assertEquals(SessionProfile.FULLSCREEN, session.snapshot.value.profile)
+        assertEquals(1, engine.startCalls)
+        assertEquals(0, engine.releaseCalls)
+        assertEquals(1, engine.applyRequirementsCalls)
+        assertEquals(SessionProfile.FULLSCREEN, engine.lastAppliedRequirements?.profile)
+        close(session)
+    }
+
+    @Test
+    fun `profile requirements that change graph release before reselecting engine`() = runTest {
+        val media3 = FakeEngine(type = EngineType.MEDIA3)
+        var fallbackStartedWhilePrimaryConnected = false
+        val mpv = FakeEngine(type = EngineType.LIBMPV) { _, _, _ ->
+            fallbackStartedWhilePrimaryConnected = media3.activeConnections > 0
+        }
+        val session = session(
+            engine = media3,
+            otherEngine = mpv,
+            environmentProvider = PlaybackEnvironmentProvider { _, _, profile, _ ->
+                PlaybackResult.Success(
+                    environment().copy(
+                        eligibleEngines = if (profile == SessionProfile.GUIDE) {
+                            setOf(EngineType.MEDIA3)
+                        } else {
+                            setOf(EngineType.LIBMPV)
+                        },
+                        allowedSurfaceModes = if (profile == SessionProfile.GUIDE) {
+                            setOf(SurfaceMode.SURFACE_VIEW)
+                        } else {
+                            setOf(SurfaceMode.GPU_RENDER)
+                        },
+                    ),
+                )
+            },
+            requirementsResolver = PlaybackRequirementsResolver { input ->
+                val eligible = input.environment.eligibleEngines
+                PlaybackResult.Success(
+                    requirements(eligible, input.profile).copy(
+                        preferredEngineOrder = eligible.toList(),
+                        allowedSurfaceModes = input.environment.allowedSurfaceModes,
+                        gpuRenderingAllowed = input.profile == SessionProfile.FULLSCREEN,
+                    ),
+                )
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        advanceUntilIdle()
+        media3.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.SessionProfileChanged(SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(1, media3.releaseCalls)
+        assertEquals(1, mpv.startCalls)
+        assertFalse(fallbackStartedWhilePrimaryConnected)
+        assertEquals(SessionProfile.FULLSCREEN, session.snapshot.value.profile)
+        close(session)
+    }
+
+    @Test
+    fun `newer profile command discards stale environment resolution`() = runTest {
+        val engine = FakeEngine()
+        val fullscreenEntered = CompletableDeferred<Unit>()
+        val releaseFullscreen = CompletableDeferred<Unit>()
+        val session = session(
+            engine = engine,
+            environmentProvider = PlaybackEnvironmentProvider { _, _, profile, _ ->
+                if (profile == SessionProfile.FULLSCREEN) {
+                    fullscreenEntered.complete(Unit)
+                    releaseFullscreen.await()
+                }
+                PlaybackResult.Success(environment())
+            },
+            requirementsResolver = PlaybackRequirementsResolver { input ->
+                PlaybackResult.Success(requirements(profile = input.profile))
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.SessionProfileChanged(SessionProfile.FULLSCREEN))
+        runCurrent()
+        fullscreenEntered.await()
+        session.dispatch(PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE))
+        runCurrent()
+        releaseFullscreen.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(SessionProfile.GUIDE, session.snapshot.value.profile)
+        assertEquals(1, engine.startCalls)
+        assertEquals(0, engine.releaseCalls)
+        assertEquals(0, engine.applyRequirementsCalls)
+        close(session)
+    }
+
+    @Test
+    fun `rejected reversal restores last committed profile not discarded optimistic target`() = runTest {
+        val engine = FakeEngine()
+        val fullscreenEntered = CompletableDeferred<Unit>()
+        val releaseFullscreen = CompletableDeferred<Unit>()
+        var guideSnapshots = 0
+        val rejected = PlaybackFailure(
+            FailureCode.NO_ELIGIBLE_GRAPH,
+            FailureDomain.DEVICE_RESOURCE,
+            FailurePhase.PLAYBACK,
+            Retryability.FATAL,
+            deterministic = true,
+        )
+        val session = session(
+            engine = engine,
+            environmentProvider = PlaybackEnvironmentProvider { _, _, profile, _ ->
+                when (profile) {
+                    SessionProfile.FULLSCREEN -> {
+                        fullscreenEntered.complete(Unit)
+                        releaseFullscreen.await()
+                        PlaybackResult.Success(environment())
+                    }
+                    SessionProfile.GUIDE -> {
+                        guideSnapshots++
+                        if (guideSnapshots == 1) PlaybackResult.Success(environment())
+                        else PlaybackResult.Failure(rejected)
+                    }
+                }
+            },
+            requirementsResolver = PlaybackRequirementsResolver { input ->
+                PlaybackResult.Success(requirements(profile = input.profile))
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.SessionProfileChanged(SessionProfile.FULLSCREEN))
+        runCurrent()
+        fullscreenEntered.await()
+        session.dispatch(PlaybackCommand.SessionProfileChanged(SessionProfile.GUIDE))
+        runCurrent()
+        releaseFullscreen.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        assertEquals(SessionProfile.GUIDE, session.snapshot.value.profile)
+        assertEquals(0, engine.releaseCalls)
+        close(session)
+    }
+
+    @Test
+    fun `newer preference apply cancels and joins older apply before committing`() = runTest {
+        val firstApplyEntered = CompletableDeferred<Unit>()
+        val engine = FakeEngine(
+            onApply = { effective ->
+                if (effective.audioDelayMs == 100L) {
+                    firstApplyEntered.complete(Unit)
+                    awaitCancellation()
+                }
+            },
+        )
+        val session = session(
+            engine = engine,
+            requirementsResolver = PlaybackRequirementsResolver { input ->
+                PlaybackResult.Success(
+                    requirements(profile = input.profile).copy(
+                        preferredAudioLanguage = input.effectivePreferences.audio.preferredLanguage,
+                        audioDelayMs = input.effectivePreferences.audio.delayMs,
+                    ),
+                )
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        session.dispatch(
+            PlaybackCommand.PreferencesChanged(
+                PlaybackPreferences(audio = AudioPreference(preferredLanguage = "eng", delayMs = 100)),
+            ),
+        )
+        runCurrent()
+        firstApplyEntered.await()
+        session.dispatch(
+            PlaybackCommand.PreferencesChanged(
+                PlaybackPreferences(audio = AudioPreference(preferredLanguage = "spa", delayMs = 200)),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(2, engine.applyRequirementsCalls)
+        assertEquals("spa", engine.lastAppliedRequirements?.preferredAudioLanguage)
+        assertEquals(200L, engine.lastAppliedRequirements?.audioDelayMs)
+        assertEquals(0, engine.releaseCalls)
+        close(session)
+    }
+
+    @Test
     fun `zap releases the provider connection before resolving the next request`() = runTest {
         val engine = FakeEngine()
         var resolutionWhileConnected = false
@@ -302,6 +545,9 @@ class PlaybackSessionTest {
         requestResolver: PlaybackRequestResolver = PlaybackRequestResolver { request ->
             PlaybackResult.Success(request.resolved())
         },
+        environmentProvider: PlaybackEnvironmentProvider = PlaybackEnvironmentProvider { _, _, _, _ ->
+            PlaybackResult.Success(environment())
+        },
         requirementsResolver: PlaybackRequirementsResolver = PlaybackRequirementsResolver {
             PlaybackResult.Success(requirements())
         },
@@ -310,6 +556,7 @@ class PlaybackSessionTest {
     ) = PlaybackSession(
         parentScope = this,
         requestResolver = requestResolver,
+        environmentProvider = environmentProvider,
         requirementsResolver = requirementsResolver,
         graphProvider = PlaybackGraphProvider {
             PlaybackResult.Success(
@@ -336,12 +583,15 @@ class PlaybackSessionTest {
 
     private class FakeEngine(
         override val type: EngineType = EngineType.MEDIA3,
+        private val onApply: suspend (PlaybackRequirements) -> Unit = { },
         private val onStart: suspend (Int, PlaybackEngineStart, MutableSharedFlow<PlaybackEvent>) -> Unit =
             { _, _, _ -> },
     ) : PlaybackEngine {
         private val eventFlow = MutableSharedFlow<PlaybackEvent>(extraBufferCapacity = 64)
         override val events: Flow<PlaybackEvent> = eventFlow
         var startCalls = 0
+        var applyRequirementsCalls = 0
+        var lastAppliedRequirements: PlaybackRequirements? = null
         var releaseCalls = 0
         var activeConnections = 0
         var maxActiveConnections = 0
@@ -370,7 +620,12 @@ class PlaybackSessionTest {
         override suspend fun applyRequirements(
             generation: Long,
             requirements: PlaybackRequirements,
-        ): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
+        ): PlaybackResult<Unit> {
+            applyRequirementsCalls++
+            onApply(requirements)
+            lastAppliedRequirements = requirements
+            return PlaybackResult.Success(Unit)
+        }
 
         override suspend fun release(generation: Long): PlaybackResult<Unit> {
             releaseCalls++
@@ -440,10 +695,19 @@ class PlaybackSessionTest {
 
         fun requirements(
             eligibleEngines: Set<EngineType> = setOf(EngineType.MEDIA3),
+            profile: SessionProfile = SessionProfile.FULLSCREEN,
         ) = PlaybackRequirements(
-            profile = SessionProfile.FULLSCREEN,
-            priority = SessionPriority.QUALITY_AND_STABILITY,
-            qualityIntent = VideoQualityIntent.FULL,
+            profile = profile,
+            priority = if (profile == SessionProfile.GUIDE) {
+                SessionPriority.STARTUP_SPEED
+            } else {
+                SessionPriority.QUALITY_AND_STABILITY
+            },
+            qualityIntent = if (profile == SessionProfile.GUIDE) {
+                VideoQualityIntent.PREVIEW
+            } else {
+                VideoQualityIntent.FULL
+            },
             displayModeSwitchAllowed = true,
             frameRatePreference = FrameRatePreference.OFF,
             hdrPreference = HdrPreference.AUTO,
@@ -458,6 +722,19 @@ class PlaybackSessionTest {
             eligibleEngines = eligibleEngines,
             secureOutputRequired = false,
             resourceBudget = ResourceBudget(),
+        )
+
+        fun environment() = PlaybackEnvironmentSnapshot(
+            runtimeCapabilities = RuntimeCapabilities(
+                snapshotVersion = 1,
+                capturedAtEpochMs = 1,
+                apiLevel = 36,
+                display = DisplayCapabilities(VideoDimensions(1920, 1080)),
+                audioRoute = AudioRouteCapabilities(AudioRoute.TV_SPEAKERS),
+                resources = ResourceCapabilities(1_000_000_000, lowMemory = false),
+                surfaces = SurfaceCapabilities(),
+            ),
+            secureOutputRequired = false,
         )
     }
 }

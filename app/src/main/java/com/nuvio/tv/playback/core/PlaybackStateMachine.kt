@@ -103,14 +103,21 @@ sealed interface PlaybackAction {
         val paused: Boolean,
     ) : PlaybackAction
 
-    data class ApplyPreferencesInPlace(
+    data class ResolvePreferencesChange(
         override val generation: Long,
         val preferences: PlaybackPreferences,
     ) : PlaybackAction
 
-    data class ApplyProfileInPlace(
+    data class ResolveProfileChange(
         override val generation: Long,
+        val previousProfile: SessionProfile,
         val profile: SessionProfile,
+    ) : PlaybackAction
+
+    data class ApplyRequirementsInPlace(
+        override val generation: Long,
+        val changeId: Long,
+        val requirements: PlaybackRequirements,
     ) : PlaybackAction
 
     /**
@@ -164,6 +171,21 @@ sealed interface PlaybackReducerInput {
     data class LiveReconnectEscalated(
         val generation: Long,
         val failure: PlaybackFailure,
+    ) : PlaybackReducerInput
+
+    /** Session-owned result after resolving and comparing effective requirements. */
+    data class RequirementsChangeResolved(
+        val changeId: Long,
+        val generation: Long,
+        val previousProfile: SessionProfile?,
+        val targetProfile: SessionProfile?,
+        val requirements: PlaybackRequirements,
+        val impact: ChangeImpact,
+    ) : PlaybackReducerInput
+
+    data class RequirementsChangeRejected(
+        val generation: Long,
+        val previousProfile: SessionProfile?,
     ) : PlaybackReducerInput
 
     data class LifecycleChanged(val active: Boolean) : PlaybackReducerInput
@@ -233,6 +255,17 @@ object PlaybackStateMachine {
                 )
             }
         }
+        is PlaybackReducerInput.RequirementsChangeResolved -> {
+            if (input.generation != state.snapshot.generation) unchanged(state)
+            else requirementsChangeResolved(state, input)
+        }
+        is PlaybackReducerInput.RequirementsChangeRejected -> {
+            if (input.generation != state.snapshot.generation || input.previousProfile == null) {
+                unchanged(state)
+            } else {
+                transition(state.copy(snapshot = state.snapshot.copy(profile = input.previousProfile)))
+            }
+        }
         is PlaybackReducerInput.LifecycleChanged -> lifecycleChanged(state, input.active)
         is PlaybackReducerInput.BarrierCompleted -> barrierCompleted(state, input.releaseEpoch)
     }
@@ -246,8 +279,8 @@ object PlaybackStateMachine {
         PlaybackCommand.Pause -> pause(state)
         PlaybackCommand.Resume -> resume(state)
         PlaybackCommand.Retry -> retry(state)
-        is PlaybackCommand.PreferencesChanged -> preferencesChanged(state, command)
-        is PlaybackCommand.SessionProfileChanged -> profileChanged(state, command)
+        is PlaybackCommand.PreferencesChanged -> requestPreferencesChange(state, command)
+        is PlaybackCommand.SessionProfileChanged -> requestProfileChange(state, command)
         PlaybackCommand.SurfaceAvailable -> surfaceAvailable(state)
         PlaybackCommand.SurfaceUnavailable -> surfaceUnavailable(state)
         PlaybackCommand.Stop,
@@ -485,47 +518,58 @@ object PlaybackStateMachine {
         return startRequest(state, request, state.snapshot.profile)
     }
 
-    private fun preferencesChanged(
+    private fun requestPreferencesChange(
         state: PlaybackMachineState,
         command: PlaybackCommand.PreferencesChanged,
-    ): PlaybackTransition = when (command.impact) {
-        ChangeImpact.APPLY_IN_PLACE -> {
-            if (state.snapshot.graph == null) unchanged(state)
-            else transition(
-                state,
-                PlaybackAction.ApplyPreferencesInPlace(state.snapshot.generation, command.preferences),
-            )
-        }
-        ChangeImpact.REBUILD_CURRENT_GRAPH -> beginGraphReplacement(
+    ): PlaybackTransition {
+        if (state.evidence == null || state.request == null) return unchanged(state)
+        return transition(
             state,
-            AfterRelease.REBUILD_CURRENT_GRAPH,
-            ActiveWorkReleaseReason.REBUILD,
+            PlaybackAction.ResolvePreferencesChange(state.snapshot.generation, command.preferences),
         )
-        ChangeImpact.RESELECT_GRAPH -> beginGraphReplacement(
-            state,
-            AfterRelease.RESELECT_GRAPH,
-            ActiveWorkReleaseReason.RESELECT,
-        )
-        ChangeImpact.NEXT_SESSION_ONLY -> unchanged(state)
     }
 
-    private fun profileChanged(
+    private fun requestProfileChange(
         state: PlaybackMachineState,
         command: PlaybackCommand.SessionProfileChanged,
     ): PlaybackTransition {
-        val failedGuidePromotion =
-            state.snapshot.profile == SessionProfile.GUIDE &&
-                command.profile == SessionProfile.FULLSCREEN &&
-                command.impact == ChangeImpact.RESELECT_GRAPH &&
-                state.snapshot.streamAvailability !is StreamAvailability.TerminallyUnavailable
-        if (command.profile == state.snapshot.profile && !failedGuidePromotion) return unchanged(state)
+        if (command.profile == state.snapshot.profile) return unchanged(state)
+        val previousProfile = state.snapshot.profile
         val profiled = state.copy(snapshot = state.snapshot.copy(profile = command.profile))
-        return when (command.impact) {
+        if (state.evidence == null || state.request == null) {
+            return transition(profiled)
+        }
+        return transition(
+            profiled,
+            PlaybackAction.ResolveProfileChange(
+                state.snapshot.generation,
+                previousProfile,
+                command.profile,
+            ),
+        )
+    }
+
+    private fun requirementsChangeResolved(
+        state: PlaybackMachineState,
+        change: PlaybackReducerInput.RequirementsChangeResolved,
+    ): PlaybackTransition {
+        val targetProfile = change.targetProfile ?: state.snapshot.profile
+        val failedGuidePromotion =
+            change.previousProfile == SessionProfile.GUIDE &&
+                targetProfile == SessionProfile.FULLSCREEN &&
+                change.impact == ChangeImpact.RESELECT_GRAPH &&
+                state.snapshot.streamAvailability !is StreamAvailability.TerminallyUnavailable
+        val profiled = state
+        return when (change.impact) {
             ChangeImpact.APPLY_IN_PLACE -> {
                 if (profiled.snapshot.graph == null) transition(profiled)
                 else transition(
                     profiled,
-                    PlaybackAction.ApplyProfileInPlace(profiled.snapshot.generation, command.profile),
+                    PlaybackAction.ApplyRequirementsInPlace(
+                        profiled.snapshot.generation,
+                        change.changeId,
+                        change.requirements,
+                    ),
                 )
             }
             ChangeImpact.REBUILD_CURRENT_GRAPH -> beginGraphReplacement(

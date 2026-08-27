@@ -141,6 +141,18 @@ class PlaybackPolicyTest {
     }
 
     @Test
+    fun `graph selection enforces effective allowed surface modes`() {
+        val selection = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(
+                requirements(allowedSurfaceModes = setOf(SurfaceMode.SURFACE_VIEW)),
+                listOf(mpvDirect, media3),
+            ),
+        )
+
+        assertEquals(media3, selection.selectedGraph())
+    }
+
+    @Test
     fun `software graph is not silently selected when software fallback is disabled`() {
         val software = media3.copy(id = "media3-software", decoderMode = DecoderMode.SOFTWARE)
 
@@ -190,6 +202,7 @@ class PlaybackPolicyTest {
         gpuRenderingAllowed: Boolean = true,
         secureOutputRequired: Boolean = false,
         audioOutput: AudioOutputPreference = AudioOutputPreference.AUTO,
+        allowedSurfaceModes: Set<SurfaceMode> = SurfaceMode.entries.toSet(),
     ) = PlaybackRequirements(
         profile = profile,
         priority = if (profile == SessionProfile.GUIDE) {
@@ -215,6 +228,7 @@ class PlaybackPolicyTest {
         gpuRenderingAllowed = gpuRenderingAllowed,
         eligibleEngines = eligibleEngines,
         preferredEngineOrder = preferredEngineOrder,
+        allowedSurfaceModes = allowedSurfaceModes,
         secureOutputRequired = secureOutputRequired,
         resourceBudget = ResourceBudget(),
     )

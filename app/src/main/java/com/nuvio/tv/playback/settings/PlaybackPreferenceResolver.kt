@@ -382,10 +382,17 @@ object PlaybackPreferenceResolver {
                 context.capabilities.resources.availableMemoryBytes < MIN_SAFE_SOFTWARE_4K_MEMORY_BYTES)
         if (!unsafeSoftware) return resolved(value, DecoderPreference.AUTO, ChangeImpact.RESELECT_GRAPH)
         val hardwareAvailable = context.capabilities.videoDecoders.any { decoder ->
-            decoder.codec == VideoCodec.AV1 && decoder.hardwareAccelerated &&
-                decoder.maxDimensions?.let {
-                    it.width >= dimensions!!.width && it.height >= dimensions.height
-                } != false
+            val requiredFrameRate = context.evidence.frameRate?.value
+            val maximumDimensions = decoder.maxDimensions
+            val maximumFrameRate = decoder.maxFrameRate
+            decoder.codec == VideoCodec.AV1 &&
+                decoder.hardwareAccelerated &&
+                maximumDimensions != null &&
+                maximumDimensions.width >= dimensions!!.width &&
+                maximumDimensions.height >= dimensions.height &&
+                requiredFrameRate != null &&
+                maximumFrameRate != null &&
+                maximumFrameRate >= requiredFrameRate
         }
         return PreferenceResolution(
             requested = value,

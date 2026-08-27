@@ -18,11 +18,36 @@ fun interface PlaybackRequestResolver {
     suspend fun resolve(request: PlaybackRequest): PlaybackResult<ResolvedPlaybackRequest>
 }
 
+data class PlaybackEnvironmentSnapshot(
+    val runtimeCapabilities: RuntimeCapabilities,
+    val resourceBudget: ResourceBudget = ResourceBudget(),
+    val previewViewport: VideoDimensions? = null,
+    val eligibleEngines: Set<EngineType> = EngineType.entries.toSet(),
+    val preferredEngineOrder: List<EngineType> = emptyList(),
+    val allowedSurfaceModes: Set<SurfaceMode> = SurfaceMode.entries.toSet(),
+    val secureOutputRequired: Boolean,
+) {
+    init {
+        require(preferredEngineOrder.distinct().size == preferredEngineOrder.size)
+        require(preferredEngineOrder.all(eligibleEngines::contains))
+    }
+}
+
+fun interface PlaybackEnvironmentProvider {
+    suspend fun snapshot(
+        requestSummary: RequestSummary,
+        evidence: StreamEvidence,
+        profile: SessionProfile,
+        effectivePreferences: PlaybackPreferences,
+    ): PlaybackResult<PlaybackEnvironmentSnapshot>
+}
+
 data class PlaybackRequirementsInput(
-    val request: PlaybackRequest,
+    val requestSummary: RequestSummary,
     val evidence: StreamEvidence,
     val profile: SessionProfile,
-    val preferences: PlaybackPreferences,
+    val effectivePreferences: PlaybackPreferences,
+    val environment: PlaybackEnvironmentSnapshot,
 )
 
 fun interface PlaybackRequirementsResolver {
@@ -90,6 +115,7 @@ enum class PlaybackDiagnosticCode {
     RELEASE_BARRIER_COMPLETED,
     LIVE_RECONNECT_ATTEMPT,
     LIVE_RECONNECT_SUCCEEDED,
+    REQUIREMENTS_CHANGE_REJECTED,
 }
 
 data class PlaybackDiagnosticEvent(

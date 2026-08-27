@@ -29,6 +29,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class PlaybackSession(
     parentScope: CoroutineScope,
     private val requestResolver: PlaybackRequestResolver,
+    private val environmentProvider: PlaybackEnvironmentProvider,
     private val requirementsResolver: PlaybackRequirementsResolver,
     private val graphProvider: PlaybackGraphProvider,
     private val engineRegistry: PlaybackEngineRegistry,
@@ -67,6 +68,8 @@ class PlaybackSession(
     private var activeGraphGeneration: Long? = null
     private var resolved: GenerationValue<ResolvedPlaybackRequest>? = null
     private var requirements: GenerationValue<PlaybackRequirements>? = null
+    private var latestRequirementsChangeId: Long = 0
+    private var requirementsApplyJob: Job? = null
 
     private val actorJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         for (message in lane) process(message)
@@ -149,6 +152,7 @@ class PlaybackSession(
             is LaneMessage.Reducer -> applyReducer(message.input)
             is LaneMessage.ResolutionFinished -> resolutionFinished(message)
             is LaneMessage.SelectionFinished -> selectionFinished(message)
+            is LaneMessage.RequirementsChangeFinished -> requirementsChangeFinished(message)
             is LaneMessage.RequirementsApplied -> requirementsApplied(message)
             is LaneMessage.BarrierFinished -> barrierFinished(message)
         }
@@ -173,8 +177,18 @@ class PlaybackSession(
             is PlaybackAction.AttachSurface -> attachSurface(action)
             is PlaybackAction.StartGraph -> startGraph(action)
             is PlaybackAction.SetPaused -> setPaused(action)
-            is PlaybackAction.ApplyPreferencesInPlace -> applyRequirements(action.generation)
-            is PlaybackAction.ApplyProfileInPlace -> applyRequirements(action.generation)
+            is PlaybackAction.ResolvePreferencesChange -> resolveRequirementsChange(
+                generation = action.generation,
+                targetProfile = null,
+                preferenceSnapshot = action.preferences,
+            )
+            is PlaybackAction.ResolveProfileChange -> resolveRequirementsChange(
+                generation = action.generation,
+                previousProfile = action.previousProfile,
+                targetProfile = action.profile,
+                preferenceSnapshot = preferences,
+            )
+            is PlaybackAction.ApplyRequirementsInPlace -> applyRequirements(action)
             is PlaybackAction.ReleaseActiveWork -> releaseActiveWork(action)
             is PlaybackAction.RecoverInPlace -> recoverOnce(action)
             is PlaybackAction.StartLiveReconnectLoop -> startLiveReconnectLoop(action)
@@ -229,18 +243,20 @@ class PlaybackSession(
             is PlaybackAction.SelectPrimaryGraph -> action.profile
             else -> machine.snapshot.profile
         }
-        val request = resolved.takeIf { it?.generation == generation }?.value?.request ?: machine.request
-        if (request == null) {
+        val resolvedRequest = resolved.takeIf { it?.generation == generation }?.value
+        if (resolvedRequest == null) {
             tryFail(generation, internalFailure(FailurePhase.GRAPH_SELECTION))
             return
         }
         val preferenceSnapshot = preferences
         generationScope(generation).launch {
-            val requirementResult = safeResult(FailurePhase.GRAPH_SELECTION) {
-                requirementsResolver.resolve(
-                    PlaybackRequirementsInput(request, evidence, profile, preferenceSnapshot),
-                )
-            }
+            val requirementResult = resolveRequirements(
+                summary = resolvedRequest.summary,
+                evidence = evidence,
+                profile = profile,
+                preferenceSnapshot = preferenceSnapshot,
+                phase = FailurePhase.GRAPH_SELECTION,
+            )
             val selectionResult = when (requirementResult) {
                 is PlaybackResult.Success -> {
                     val candidates = safeResult(FailurePhase.GRAPH_SELECTION) {
@@ -255,6 +271,31 @@ class PlaybackSession(
             }
             lane.send(
                 LaneMessage.SelectionFinished(generation, failedGraph, profile, selectionResult),
+            )
+        }
+    }
+
+    private suspend fun resolveRequirements(
+        summary: RequestSummary,
+        evidence: StreamEvidence,
+        profile: SessionProfile,
+        preferenceSnapshot: PlaybackPreferences,
+        phase: FailurePhase,
+    ): PlaybackResult<PlaybackRequirements> {
+        val environment = safeResult(phase) {
+            environmentProvider.snapshot(summary, evidence, profile, preferenceSnapshot)
+        }
+        if (environment is PlaybackResult.Failure) return environment
+        environment as PlaybackResult.Success
+        return safeResult(phase) {
+            requirementsResolver.resolve(
+                PlaybackRequirementsInput(
+                    requestSummary = summary,
+                    evidence = evidence,
+                    profile = profile,
+                    effectivePreferences = preferenceSnapshot,
+                    environment = environment.value,
+                ),
             )
         }
     }
@@ -381,40 +422,112 @@ class PlaybackSession(
         }
     }
 
-    private fun applyRequirements(generation: Long) {
-        val request = resolved.takeIf { it?.generation == generation }?.value?.request ?: return
+    private fun resolveRequirementsChange(
+        generation: Long,
+        previousProfile: SessionProfile? = null,
+        targetProfile: SessionProfile?,
+        preferenceSnapshot: PlaybackPreferences,
+    ) {
+        val resolvedRequest = resolved.takeIf { it?.generation == generation }?.value ?: return
         val evidence = machine.evidence ?: return
-        val graph = activeGraph ?: return
-        val engine = engineRegistry.engine(graph.engine) ?: return
-        val profileSnapshot = machine.snapshot.profile
-        val preferenceSnapshot = preferences
+        val previous = requirements.takeIf { it?.generation == generation }?.value
+        val profile = targetProfile ?: machine.snapshot.profile
+        val changeId = ++latestRequirementsChangeId
         generationScope(generation).launch {
-            val resolvedRequirements = safeResult(FailurePhase.PLAYBACK) {
-                requirementsResolver.resolve(
-                    PlaybackRequirementsInput(request, evidence, profileSnapshot, preferenceSnapshot),
+            val result = resolveRequirements(
+                summary = resolvedRequest.summary,
+                evidence = evidence,
+                profile = profile,
+                preferenceSnapshot = preferenceSnapshot,
+                phase = FailurePhase.PLAYBACK,
+            )
+            lane.send(
+                LaneMessage.RequirementsChangeFinished(
+                    changeId = changeId,
+                    generation = generation,
+                    previousProfile = previousProfile,
+                    targetProfile = targetProfile,
+                    previous = previous,
+                    result = result,
+                ),
+            )
+        }
+    }
+
+    private suspend fun requirementsChangeFinished(message: LaneMessage.RequirementsChangeFinished) {
+        if (message.changeId != latestRequirementsChangeId || !isCurrentGeneration(message.generation)) return
+        when (val result = message.result) {
+            is PlaybackResult.Failure -> {
+                diagnostics.record(
+                    PlaybackDiagnosticEvent(
+                        generation = message.generation,
+                        code = PlaybackDiagnosticCode.REQUIREMENTS_CHANGE_REJECTED,
+                        failure = result.failure,
+                    ),
+                )
+                applyReducer(
+                    PlaybackReducerInput.RequirementsChangeRejected(
+                        generation = message.generation,
+                        previousProfile = message.previous?.profile ?: message.previousProfile,
+                    ),
                 )
             }
-            if (resolvedRequirements is PlaybackResult.Failure) {
-                fail(generation, resolvedRequirements.failure)
-                return@launch
+            is PlaybackResult.Success -> {
+                if (message.previous == result.value) {
+                    requirements = GenerationValue(message.generation, result.value)
+                    return
+                }
+                val impact = message.previous?.let {
+                    PlaybackRequirementsDiffClassifier.classify(it, result.value).impact
+                } ?: ChangeImpact.RESELECT_GRAPH
+                // Rebuild uses this exact coherent snapshot after its release barrier. Reselection
+                // will refresh it as part of selecting the new graph.
+                requirements = GenerationValue(message.generation, result.value)
+                applyReducer(
+                    PlaybackReducerInput.RequirementsChangeResolved(
+                        changeId = message.changeId,
+                        generation = message.generation,
+                        previousProfile = message.previousProfile,
+                        targetProfile = message.targetProfile,
+                        requirements = result.value,
+                        impact = impact,
+                    ),
+                )
             }
-            resolvedRequirements as PlaybackResult.Success
+        }
+    }
+
+    private fun applyRequirements(action: PlaybackAction.ApplyRequirementsInPlace) {
+        val graph = activeGraph ?: return
+        val engine = engineRegistry.engine(graph.engine) ?: return
+        val previousApply = requirementsApplyJob
+        requirementsApplyJob = generationScope(action.generation).launch {
+            previousApply?.cancelAndJoin()
+            if (action.changeId != latestRequirementsChangeId) return@launch
             val output = safeResult(FailurePhase.PLAYBACK) {
-                outputController.apply(generation, resolvedRequirements.value)
+                outputController.apply(action.generation, action.requirements)
             }
             if (output is PlaybackResult.Failure) {
-                fail(generation, output.failure)
+                fail(action.generation, output.failure)
                 return@launch
             }
+            if (action.changeId != latestRequirementsChangeId) return@launch
             val engineResult = safeResult(FailurePhase.PLAYBACK) {
-                engine.applyRequirements(generation, resolvedRequirements.value)
+                engine.applyRequirements(action.generation, action.requirements)
             }
-            lane.send(LaneMessage.RequirementsApplied(generation, resolvedRequirements.value, engineResult))
+            lane.send(
+                LaneMessage.RequirementsApplied(
+                    action.generation,
+                    action.changeId,
+                    action.requirements,
+                    engineResult,
+                ),
+            )
         }
     }
 
     private suspend fun requirementsApplied(message: LaneMessage.RequirementsApplied) {
-        if (!isCurrentGeneration(message.generation)) return
+        if (!isCurrentGeneration(message.generation) || message.changeId != latestRequirementsChangeId) return
         when (val result = message.result) {
             is PlaybackResult.Success -> requirements = GenerationValue(message.generation, message.requirements)
             is PlaybackResult.Failure -> fail(message.generation, result.failure)
@@ -426,6 +539,7 @@ class PlaybackSession(
         workToCancel?.cancel()
         generationJob = null
         reconnectJob = null
+        requirementsApplyJob = null
         diagnostics.record(
             PlaybackDiagnosticEvent(action.generation, PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED),
         )
@@ -598,16 +712,13 @@ class PlaybackSession(
                         continue
                     }
                 }
-                val effective = when (val result = safeResult(FailurePhase.RECOVERY) {
-                    requirementsResolver.resolve(
-                        PlaybackRequirementsInput(
-                            resolvedRequest.request,
-                            resolvedRequest.evidence,
-                            profileSnapshot,
-                            preferenceSnapshot,
-                        ),
-                    )
-                }) {
+                val effective = when (val result = resolveRequirements(
+                    summary = resolvedRequest.summary,
+                    evidence = resolvedRequest.evidence,
+                    profile = profileSnapshot,
+                    preferenceSnapshot = preferenceSnapshot,
+                    phase = FailurePhase.RECOVERY,
+                )) {
                     is PlaybackResult.Success -> result.value
                     is PlaybackResult.Failure -> {
                         if (result.failure.shouldEscalateLiveReconnect()) {
@@ -831,8 +942,17 @@ class PlaybackSession(
             val profile: SessionProfile,
             val result: SelectionResult,
         ) : LaneMessage
+        data class RequirementsChangeFinished(
+            val changeId: Long,
+            val generation: Long,
+            val previousProfile: SessionProfile?,
+            val targetProfile: SessionProfile?,
+            val previous: PlaybackRequirements?,
+            val result: PlaybackResult<PlaybackRequirements>,
+        ) : LaneMessage
         data class RequirementsApplied(
             val generation: Long,
+            val changeId: Long,
             val requirements: PlaybackRequirements,
             val result: PlaybackResult<Unit>,
         ) : LaneMessage

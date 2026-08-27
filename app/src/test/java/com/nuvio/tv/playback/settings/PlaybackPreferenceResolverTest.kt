@@ -321,6 +321,7 @@ class PlaybackPreferenceResolverTest {
         val evidence = StreamEvidence(
             videoCodec = EvidenceFact(VideoCodec.AV1, EvidenceProvenance.EXTRACTOR_CONFIRMED),
             dimensions = EvidenceFact(VideoDimensions(3_840, 2_160), EvidenceProvenance.EXTRACTOR_CONFIRMED),
+            frameRate = EvidenceFact(60.0, EvidenceProvenance.EXTRACTOR_CONFIRMED),
         )
 
         val result = PlaybackPreferenceResolver.resolve(
@@ -345,6 +346,7 @@ class PlaybackPreferenceResolverTest {
         val evidence = StreamEvidence(
             videoCodec = EvidenceFact(VideoCodec.AV1, EvidenceProvenance.EXTRACTOR_CONFIRMED),
             dimensions = EvidenceFact(VideoDimensions(3_840, 2_160), EvidenceProvenance.EXTRACTOR_CONFIRMED),
+            frameRate = EvidenceFact(60.0, EvidenceProvenance.EXTRACTOR_CONFIRMED),
         )
         val hardware = VideoDecoderCapability(
             stableId = "decoder.av1.hardware",
@@ -354,6 +356,7 @@ class PlaybackPreferenceResolverTest {
             vendorProvided = true,
             securePlayback = false,
             maxDimensions = VideoDimensions(3_840, 2_160),
+            maxFrameRate = 60.0,
         )
 
         val result = PlaybackPreferenceResolver.resolve(
@@ -370,6 +373,89 @@ class PlaybackPreferenceResolverTest {
 
         assertEquals(DecoderPreference.HARDWARE_ONLY, result.decoder.effective)
         assertEquals(ResolutionAuthority.HARD_CONSTRAINT, result.decoder.authority)
+    }
+
+    @Test
+    fun `unknown decoder dimensions frame rate or stream frame rate never establish hardware fallback`() {
+        val defaults = CleanPlaybackPreferences.recommended()
+        val requested = defaults.copy(
+            playback = defaults.playback.copy(decoder = DecoderPreference.SOFTWARE_ONLY),
+        )
+        val baseEvidence = StreamEvidence(
+            videoCodec = EvidenceFact(VideoCodec.AV1, EvidenceProvenance.EXTRACTOR_CONFIRMED),
+            dimensions = EvidenceFact(VideoDimensions(3_840, 2_160), EvidenceProvenance.EXTRACTOR_CONFIRMED),
+            frameRate = EvidenceFact(60.0, EvidenceProvenance.EXTRACTOR_CONFIRMED),
+        )
+        val decoder = VideoDecoderCapability(
+            stableId = "decoder.av1.hardware",
+            codec = VideoCodec.AV1,
+            hardwareAccelerated = true,
+            softwareOnly = false,
+            vendorProvided = true,
+            securePlayback = false,
+            maxDimensions = VideoDimensions(3_840, 2_160),
+            maxFrameRate = 60.0,
+        )
+        val unknownCases = listOf(
+            baseEvidence to decoder.copy(maxDimensions = null),
+            baseEvidence to decoder.copy(maxFrameRate = null),
+            baseEvidence.copy(frameRate = null) to decoder,
+        )
+
+        unknownCases.forEach { (evidence, candidate) ->
+            val result = PlaybackPreferenceResolver.resolve(
+                requested,
+                context(
+                    evidence = evidence,
+                    capabilities = capabilities(
+                        availableMemoryBytes = 400_000_000,
+                        lowMemory = true,
+                        videoDecoders = listOf(candidate),
+                    ),
+                ),
+            )
+
+            assertNull(result.decoder.effective)
+            assertEquals(PreferenceAvailability.UNAVAILABLE, result.decoder.availability)
+        }
+    }
+
+    @Test
+    fun `known decoder below required frame rate never establishes hardware fallback`() {
+        val defaults = CleanPlaybackPreferences.recommended()
+        val requested = defaults.copy(
+            playback = defaults.playback.copy(decoder = DecoderPreference.SOFTWARE_ONLY),
+        )
+        val evidence = StreamEvidence(
+            videoCodec = EvidenceFact(VideoCodec.AV1, EvidenceProvenance.EXTRACTOR_CONFIRMED),
+            dimensions = EvidenceFact(VideoDimensions(3_840, 2_160), EvidenceProvenance.EXTRACTOR_CONFIRMED),
+            frameRate = EvidenceFact(60.0, EvidenceProvenance.EXTRACTOR_CONFIRMED),
+        )
+        val insufficient = VideoDecoderCapability(
+            stableId = "decoder.av1.hardware",
+            codec = VideoCodec.AV1,
+            hardwareAccelerated = true,
+            softwareOnly = false,
+            vendorProvided = true,
+            securePlayback = false,
+            maxDimensions = VideoDimensions(3_840, 2_160),
+            maxFrameRate = 30.0,
+        )
+
+        val result = PlaybackPreferenceResolver.resolve(
+            requested,
+            context(
+                evidence = evidence,
+                capabilities = capabilities(
+                    availableMemoryBytes = 400_000_000,
+                    lowMemory = true,
+                    videoDecoders = listOf(insufficient),
+                ),
+            ),
+        )
+
+        assertNull(result.decoder.effective)
+        assertEquals(PreferenceAvailability.UNAVAILABLE, result.decoder.availability)
     }
 
     @Test

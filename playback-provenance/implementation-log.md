@@ -2,9 +2,32 @@
 
 ## Current Work Package
 
-WP2 — request, preferences, capabilities, compatibility history, and diagnostics.
+WP3 — session profiles, resource budgets, and effective requirements.
 
 ## Changes made
+
+### WP3
+
+- Kept `PlaybackRequirements` as the single engine-neutral effective contract; no parallel
+  effective-profile model or engine-specific profile flags were added.
+- Added a strict secret-safe environment snapshot/port and pure resolver for profile, effective
+  preferences, passive stream evidence, runtime capabilities, resource budget, viewport, engine
+  order, surface constraints, and explicit secure-output evidence.
+- Made guide preview semantic rather than fixed-resolution: adaptive streams use measured viewport
+  with 1.5x headroom capped by display/user/budget evidence, while raw or single-rendition streams
+  retain their original decode with no invented transcode/downscale graph.
+- Disabled guide display switching/AFR/GPU escalation, preserved explicit subtitle accessibility,
+  kept bitrate unlimited without measured budget evidence, and restored eligible fullscreen policy.
+- Separated DRM engine eligibility from secure-output evidence: DRM restricts V1 to Media3, but it
+  does not invent a secure-surface requirement.
+- Added surface-aware graph admission and a typed requirements diff. Decoder, subtitle, audio,
+  engine, surface, GPU, and secure-output changes reselect; display/HDR/buffer changes rebuild;
+  adaptive quality/bitrate-only changes apply in place.
+- Moved profile/preference impact authority into `PlaybackSession`. Each selection, reconnect, and
+  runtime change captures one coherent environment snapshot; stale profile resolutions are dropped,
+  no-op resolutions do not touch an engine, and rejected changes preserve current playback.
+- Corrected the WP2 decoder resolver so missing size/rate evidence can never affirm a hardware
+  fallback for unsafe forced-software 4K AV1.
 
 ### WP2
 
@@ -69,6 +92,14 @@ WP2 — request, preferences, capabilities, compatibility history, and diagnosti
 
 ## Tests run
 
+- Full WP3 TV gate:
+  `:app:verifyMedia3RuntimeConvergence :app:verifyPlaybackEngineArtifacts
+  :app:testFullDebugUnitTest :app:compileFullDebugKotlin --rerun-tasks` — passed; 41 tasks executed.
+- Focused WP3 core/settings/environment-mapper/architecture gate — 134 passed after production and
+  test compilation;
+  coverage includes pure guide/fullscreen resolution, raw TS behavior, DRM/secure separation,
+  surface admission, typed diff classification, in-place promotion, release-barrier reselection,
+  and stale profile-resolution rejection.
 - Consolidated audited WP2 gate — 71 passed across settings, Android capabilities/quirks,
   request/history/diagnostics wiring, core compatibility contracts, and architecture firewalls.
 - Sequential AndroidX device smoke probes — passed on ONN API 34 first, then Fire TV AFTKM API 30;
@@ -118,6 +149,10 @@ WP2 — request, preferences, capabilities, compatibility history, and diagnosti
 
 ## Architecture impact
 
+- WP3 resolves both guide and fullscreen without constructing an engine. UI emits only requested
+  profile/preferences; the serialized session owns environment refresh, comparison, and impact.
+- Compatibility/surface constraints remain typed inputs to one requirements contract. DRM and
+  device history cannot silently manufacture secure-output or platform capability evidence.
 - WP2 completes policy inputs without constructing Media3, libmpv, or the legacy player. Legacy
   production settings/UI behavior remains untouched; only a typed one-way cutover mapper reads it.
 - Observation sequence/timestamp is separate from the stable capability/device/firmware fingerprint
@@ -133,13 +168,14 @@ WP2 — request, preferences, capabilities, compatibility history, and diagnosti
 - `MPV_DIRECT` is build-time feasible, but runtime and surface eligibility remain adapter/device
   gates rather than assumptions.
 - The Media3 runtime now has one enforceable version instead of a latent 1.8.0/1.11.0 mixture.
+- `NuvioMobile`, `NuvioDesktop`, `nuvio-backend`, and `nuvio-web` were searched for the WP3
+  requirements/environment symbols and contain no corresponding playback path; WP3 is genuinely
+  TV-only.
 
 ## Open blockers
 
 - Real-device WP2 runs are fact/API smoke tests, not decode, EGL, active-audio-route, secure-output,
   or surface-lifecycle proof. Those require the WP4/WP5 adapter fixture gates.
-- `PlaybackRequirementsInput` still needs WP3 integration of runtime capabilities, compatibility
-  history, resource budget, and typed quirk surface constraints.
 - `PlaybackEngine.release()` can prove an ordinary release completed, but it cannot yet express an
   affirmative native hard-abort. Until WP4/WP5 add that adapter contract, a permanently wedged
   release retries indefinitely and fail-closed; it never advances a continuation or consumes a
@@ -148,5 +184,4 @@ WP2 — request, preferences, capabilities, compatibility history, and diagnosti
 
 ## Next action
 
-Commit WP2, then implement WP3 guide/fullscreen profiles, resource budgets, and effective
-requirements without duplicating the core `PlaybackRequirements` contract.
+Run the full TV gate, commit WP3, then implement the complete Media3 adapter in WP4.
