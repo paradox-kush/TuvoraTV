@@ -19,11 +19,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -95,7 +99,14 @@ private fun CleanPlaybackSettingsContent(
 ) {
     val presentation = state.presentation
     val listState = rememberLazyListState()
+    val initialFocusRequester = remember { FocusRequester() }
     var editing by remember { mutableStateOf<CleanPlaybackSettingFieldUi?>(null) }
+    LaunchedEffect(presentation.profileId, presentation.readOnly, state.operationInProgress) {
+        if (!state.operationInProgress) {
+            withFrameNanos { }
+            runCatching { initialFocusRequester.requestFocus() }
+        }
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -143,12 +154,16 @@ private fun CleanPlaybackSettingsContent(
                     subtitle = "Changes: ${group.fields.maxImpactLabel()}",
                 ) {
                     group.fields.forEach { field ->
+                        val initialFocus = field.key == CleanPlaybackSettingField.ENGINE
                         SettingsActionRow(
                             title = field.title,
                             subtitle = field.explanation(),
                             value = field.requestedValue.ifBlank { "Default" },
-                            onClick = { editing = field },
-                            enabled = !presentation.readOnly && !state.operationInProgress && field.editable,
+                            onClick = { if (!presentation.readOnly) editing = field },
+                            // Future-schema documents stay immutable but their rows remain focusable
+                            // so every effective value and reason is reachable with a TV remote.
+                            enabled = !state.operationInProgress && (presentation.readOnly || field.editable),
+                            modifier = if (initialFocus) Modifier.focusRequester(initialFocusRequester) else Modifier,
                         )
                     }
                     SettingsActionRow(

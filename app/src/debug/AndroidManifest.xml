@@ -9,5 +9,11 @@
             android:launchMode="singleTask"
             android:screenOrientation="landscape"
             android:theme="@style/Theme.MyApplication" />
+        <activity
+            android:name="com.nuvio.tv.playback.settings.debug.CleanPlaybackSettingsActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.MyApplication" />
     </application>
 </manifest>

@@ -2,8 +2,8 @@
 
 package com.nuvio.tv.ui.screens.settings
 
-import com.nuvio.tv.ui.theme.NuvioTheme
-
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
@@ -42,15 +43,18 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Switch
 import androidx.tv.material3.SwitchDefaults
 import androidx.tv.material3.Text
+import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.screens.account.InputField
+import com.nuvio.tv.ui.theme.NuvioTheme
 
 @Composable
 fun DebugSettingsContent(
     viewModel: DebugSettingsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showErrorDialog by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -78,6 +82,16 @@ fun DebugSettingsContent(
             contentPadding = PaddingValues(top = NuvioTheme.spacing.md, bottom = NuvioTheme.spacing.xxl),
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
         ) {
+            if (CleanPlaybackSettingsDebugRoute.isVisible(BuildConfig.BUILD_TYPE)) {
+                item(key = "debug_clean_playback_settings") {
+                    DebugActionCard(
+                        title = "Clean playback settings",
+                        subtitle = "Inspect and edit requested versus device-effective clean-player preferences",
+                        onClick = { CleanPlaybackSettingsDebugRoute.launch(context) },
+                    )
+                }
+            }
+
             // ── Popup / Dialog Testing ──
             item(key = "debug_popup_header") {
                 Text(
@@ -238,6 +252,22 @@ fun DebugSettingsContent(
             )
         }
     }
+}
+
+/** Release builds fail closed: the destination class and manifest declaration exist only in debug. */
+internal object CleanPlaybackSettingsDebugRoute {
+    const val DESTINATION_CLASS_NAME = "com.nuvio.tv.playback.settings.debug.CleanPlaybackSettingsActivity"
+
+    fun isVisible(buildType: String): Boolean = buildType == DEBUG_BUILD_TYPE
+
+    fun launch(context: Context) {
+        check(isVisible(BuildConfig.BUILD_TYPE)) { "Clean playback settings are debug-only" }
+        context.startActivity(
+            Intent().setClassName(context.packageName, DESTINATION_CLASS_NAME),
+        )
+    }
+
+    private const val DEBUG_BUILD_TYPE = "debug"
 }
 
 @Composable
