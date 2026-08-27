@@ -6,15 +6,13 @@ import android.widget.FrameLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import com.nuvio.tv.core.profile.ProfileManager
-import com.nuvio.tv.playback.android.AndroidPlaybackLifecyclePort
-import com.nuvio.tv.playback.android.output.AndroidPlaybackOutputController
 import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.PlaybackProfileId
-import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.SessionProfile
-import com.nuvio.tv.playback.core.SurfaceMode
-import com.nuvio.tv.playback.host.CleanLivePlaybackHost
-import com.nuvio.tv.playback.host.CleanLiveSurfaceCoordinator
+import com.nuvio.tv.playback.host.AndroidCleanLiveHostFactory
+import com.nuvio.tv.playback.host.AndroidCleanLiveHostInput
+import com.nuvio.tv.playback.host.CleanLiveHost
+import com.nuvio.tv.playback.host.CleanLiveHostFactory
 import com.nuvio.tv.playback.live.LiveChannelNavigationPort
 import com.nuvio.tv.playback.live.LiveMediaFingerprint
 import com.nuvio.tv.playback.live.LivePlayedHistoryPort
@@ -26,7 +24,6 @@ import com.nuvio.tv.playback.live.LiveZapDirection
 import com.nuvio.tv.playback.mediasession.CleanMediaSessionMetadata
 import com.nuvio.tv.playback.ui.LivePlaybackUiPresenter
 import com.nuvio.tv.playback.ui.LivePlaybackUiState
-import com.nuvio.tv.playback.wiring.ProductionPlaybackSessionFactory
 import com.nuvio.tv.ui.navigation.CleanLiveLaunchConsumeFailure
 import com.nuvio.tv.ui.navigation.CleanLiveLaunchConsumeResult
 import com.nuvio.tv.ui.navigation.CleanLiveLaunchEntry
@@ -92,43 +89,6 @@ internal fun interface CleanLiveDestinationProfileSource {
     fun activeProfileId(): Int
 }
 
-internal interface CleanLiveDestinationHost {
-    val snapshot: StateFlow<PlaybackSnapshot>
-
-    suspend fun tune(
-        selection: ProviderPlaybackSelection,
-        profile: SessionProfile,
-        metadata: CleanMediaSessionMetadata,
-    ): Long
-
-    suspend fun zap(
-        selection: ProviderPlaybackSelection,
-        profile: SessionProfile,
-        metadata: CleanMediaSessionMetadata,
-    ): Long
-
-    suspend fun pause()
-    suspend fun resume()
-    suspend fun retry()
-    suspend fun release()
-}
-
-internal class CleanLiveDestinationHostInput(
-    val context: Context,
-    val preferenceProfileId: PlaybackProfileId,
-    val parentScope: CoroutineScope,
-    val activity: Activity,
-    val lifecycle: Lifecycle,
-    val surfaceOwner: FrameLayout,
-) {
-    override fun toString(): String =
-        "CleanLiveDestinationHostInput(profileBound=true, surfaceOwnerBound=true)"
-}
-
-internal fun interface CleanLiveDestinationHostFactory {
-    suspend fun create(input: CleanLiveDestinationHostInput): CleanLiveDestinationHost
-}
-
 internal fun interface CleanLiveReleaseRetryWait {
     suspend fun await(delayMs: Long)
 }
@@ -142,7 +102,7 @@ internal class CleanLivePlayerViewModel private constructor(
     private val appContext: Context,
     private val launchConsumer: CleanLiveDestinationLaunchConsumer,
     private val profileSource: CleanLiveDestinationProfileSource,
-    private val hostFactory: CleanLiveDestinationHostFactory,
+    private val hostFactory: CleanLiveHostFactory,
     private val liveNavigation: LiveChannelNavigationPort,
     private val playedHistory: LivePlayedHistoryPort,
     ownerDispatcher: CoroutineDispatcher,
@@ -153,14 +113,14 @@ internal class CleanLivePlayerViewModel private constructor(
         @ApplicationContext context: Context,
         launchStore: CleanLiveLaunchStore,
         profileManager: ProfileManager,
-        sessionFactory: ProductionPlaybackSessionFactory,
+        hostFactory: AndroidCleanLiveHostFactory,
         liveNavigation: LiveChannelNavigationPort,
         playedHistory: LivePlayedHistoryPort,
     ) : this(
         appContext = context.applicationContext,
         launchConsumer = CleanLiveDestinationLaunchConsumer(launchStore::consume),
         profileSource = CleanLiveDestinationProfileSource { profileManager.activeProfileId.value },
-        hostFactory = AndroidCleanLiveDestinationHostFactory(sessionFactory),
+        hostFactory = hostFactory,
         liveNavigation = liveNavigation,
         playedHistory = playedHistory,
         ownerDispatcher = Dispatchers.Main.immediate,
@@ -171,7 +131,7 @@ internal class CleanLivePlayerViewModel private constructor(
         context: Context,
         launchConsumer: CleanLiveDestinationLaunchConsumer,
         profileSource: CleanLiveDestinationProfileSource,
-        hostFactory: CleanLiveDestinationHostFactory,
+        hostFactory: CleanLiveHostFactory,
         liveNavigation: LiveChannelNavigationPort = LiveChannelNavigationPort {
             LiveRelativeResult.Rejected(LiveRelativeFailure.UNAVAILABLE)
         },
@@ -201,7 +161,7 @@ internal class CleanLivePlayerViewModel private constructor(
 
     private var initialized = false
     private var releaseCompleted = false
-    private var host: CleanLiveDestinationHost? = null
+    private var host: CleanLiveHost? = null
     private var activeLaunch: CleanLiveLaunchEntry? = null
     private var activeMetadata: CleanMediaSessionMetadata? = null
     private var attachedSurfaceOwner: FrameLayout? = null
@@ -279,7 +239,7 @@ internal class CleanLivePlayerViewModel private constructor(
     ) {
         val created = try {
             hostFactory.create(
-                CleanLiveDestinationHostInput(
+                AndroidCleanLiveHostInput(
                     context = appContext,
                     preferenceProfileId = PlaybackProfileId(launch.activeProfileId.toString()),
                     parentScope = ownerScope,
@@ -472,13 +432,13 @@ internal class CleanLivePlayerViewModel private constructor(
         }
     }
 
-    private suspend fun command(action: suspend (CleanLiveDestinationHost) -> Unit) =
+    private suspend fun command(action: suspend (CleanLiveHost) -> Unit) =
         ownershipMutex.withLock {
             if (!releaseCompleted) host?.let { action(it) }
         }
 
     private fun publishReady(
-        current: CleanLiveDestinationHost,
+        current: CleanLiveHost,
         metadata: CleanLiveLaunchMetadata,
         origin: CleanLiveLaunchOrigin,
     ) {
@@ -544,7 +504,7 @@ internal class CleanLivePlayerViewModel private constructor(
     }
 
     private suspend fun rejectAfterRelease(
-        created: CleanLiveDestinationHost,
+        created: CleanLiveHost,
         reason: CleanLivePlayerRejection,
     ) {
         try {
@@ -556,7 +516,7 @@ internal class CleanLivePlayerViewModel private constructor(
         }
     }
 
-    private suspend fun releaseCreatedHost(created: CleanLiveDestinationHost) {
+    private suspend fun releaseCreatedHost(created: CleanLiveHost) {
         withContext(NonCancellable) { created.release() }
         if (host === created) host = null
         attachedSurfaceOwner = null
@@ -590,7 +550,7 @@ internal class CleanLivePlayerViewModel private constructor(
         PlaybackProfileId(activeProfileId.toString())
 
     private data class ZapBasis(
-        val host: CleanLiveDestinationHost,
+        val host: CleanLiveHost,
         val launch: CleanLiveLaunchEntry,
     )
 
@@ -604,63 +564,4 @@ internal class CleanLivePlayerViewModel private constructor(
         const val INITIAL_CLEAR_RELEASE_BACKOFF_MS = 100L
         const val MAX_CLEAR_RELEASE_BACKOFF_MS = 5_000L
     }
-}
-
-private class AndroidCleanLiveDestinationHostFactory(
-    private val sessionFactory: ProductionPlaybackSessionFactory,
-) : CleanLiveDestinationHostFactory {
-    override suspend fun create(
-        input: CleanLiveDestinationHostInput,
-    ): CleanLiveDestinationHost {
-        val surfaces = withContext(Dispatchers.Main.immediate) {
-            CleanLiveSurfaceCoordinator(
-                owner = input.surfaceOwner,
-                callbackScope = input.parentScope,
-                constructibleModes = PRODUCTION_CONSTRUCTIBLE_SURFACE_MODES,
-                secureMedia3SurfaceViewSupported = true,
-            )
-        }
-        val host = CleanLivePlaybackHost.create(
-            context = input.context,
-            preferenceProfileId = input.preferenceProfileId,
-            parentScope = input.parentScope,
-            sessionFactory = sessionFactory,
-            surfaces = surfaces,
-            outputController = AndroidPlaybackOutputController(input.activity),
-            lifecycle = AndroidPlaybackLifecyclePort(input.lifecycle),
-        )
-        return AndroidCleanLiveDestinationHost(host)
-    }
-
-    private companion object {
-        val PRODUCTION_CONSTRUCTIBLE_SURFACE_MODES = setOf(
-            SurfaceMode.SURFACE_VIEW,
-            SurfaceMode.TEXTURE_VIEW,
-            SurfaceMode.NATIVE_EMBED,
-            SurfaceMode.GPU_RENDER,
-        )
-    }
-}
-
-private class AndroidCleanLiveDestinationHost(
-    private val host: CleanLivePlaybackHost,
-) : CleanLiveDestinationHost {
-    override val snapshot: StateFlow<PlaybackSnapshot> = host.snapshot
-
-    override suspend fun tune(
-        selection: ProviderPlaybackSelection,
-        profile: SessionProfile,
-        metadata: CleanMediaSessionMetadata,
-    ): Long = host.tune(selection, profile, metadata)
-
-    override suspend fun zap(
-        selection: ProviderPlaybackSelection,
-        profile: SessionProfile,
-        metadata: CleanMediaSessionMetadata,
-    ): Long = host.zap(selection, profile, metadata)
-
-    override suspend fun pause() = host.pause()
-    override suspend fun resume() = host.resume()
-    override suspend fun retry() = host.retry()
-    override suspend fun release() = host.release()
 }

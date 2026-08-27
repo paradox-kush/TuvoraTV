@@ -13,6 +13,9 @@ import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.core.ProviderSourceType
 import com.nuvio.tv.playback.core.SessionProfile
+import com.nuvio.tv.playback.host.AndroidCleanLiveHostInput
+import com.nuvio.tv.playback.host.CleanLiveHost
+import com.nuvio.tv.playback.host.CleanLiveHostFactory
 import com.nuvio.tv.playback.live.LiveChannelNavigationPort
 import com.nuvio.tv.playback.live.LiveChannelTarget
 import com.nuvio.tv.playback.live.LivePlayedHistoryPort
@@ -852,14 +855,14 @@ class CleanLivePlayerViewModelTest {
 
     private class FakeHostFactory(
         private val operations: MutableList<String>,
-        private val hosts: List<CleanLiveDestinationHost>,
+        private val hosts: List<CleanLiveHost>,
         private val failure: Exception?,
         private val created: (Int) -> Unit,
-    ) : CleanLiveDestinationHostFactory {
+    ) : CleanLiveHostFactory {
         var calls: Int = 0
-        var input: CleanLiveDestinationHostInput? = null
+        var input: AndroidCleanLiveHostInput? = null
 
-        override suspend fun create(input: CleanLiveDestinationHostInput): CleanLiveDestinationHost {
+        override suspend fun create(input: AndroidCleanLiveHostInput): CleanLiveHost {
             calls += 1
             this.input = input
             operations += "create"
@@ -880,7 +883,7 @@ class CleanLivePlayerViewModelTest {
         private val releaseBarrier: CompletableDeferred<Unit>?,
         private val renderVideoFrameOnTune: Boolean,
         private val zapCompleted: () -> Unit,
-    ) : CleanLiveDestinationHost {
+    ) : CleanLiveHost {
         val snapshotFlow = MutableStateFlow(PlaybackSnapshot())
         override val snapshot: StateFlow<PlaybackSnapshot> = snapshotFlow
         var tunedSelection: ProviderPlaybackSelection? = null
@@ -943,6 +946,14 @@ class CleanLivePlayerViewModelTest {
 
         override suspend fun retry() {
             operations += "retry"
+        }
+
+        override suspend fun changeProfile(profile: SessionProfile) {
+            operations += "changeProfile"
+        }
+
+        override suspend fun stop() {
+            operations += "stop"
         }
 
         override suspend fun release() {
