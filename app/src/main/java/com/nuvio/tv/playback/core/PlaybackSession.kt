@@ -474,6 +474,7 @@ class PlaybackSession(
                 evidence = evidence,
                 profile = profile,
                 preferenceSnapshot = preferenceSnapshot,
+                compatibilityScopeKey = resolvedRequest.compatibilityScopeKey,
                 phase = FailurePhase.GRAPH_SELECTION,
             )
             val selectionResult = when (requirementResult) {
@@ -499,10 +500,19 @@ class PlaybackSession(
         evidence: StreamEvidence,
         profile: SessionProfile,
         preferenceSnapshot: PlaybackPreferences,
+        compatibilityScopeKey: CompatibilityScopeKey?,
         phase: FailurePhase,
     ): PlaybackResult<PlaybackRequirements> {
         val environment = safeResult(phase) {
-            environmentProvider.snapshot(summary, evidence, profile, preferenceSnapshot)
+            environmentProvider.snapshot(
+                PlaybackEnvironmentInput(
+                    requestSummary = summary,
+                    evidence = evidence,
+                    profile = profile,
+                    effectivePreferences = preferenceSnapshot,
+                    compatibilityScopeKey = compatibilityScopeKey,
+                ),
+            )
         }
         if (environment is PlaybackResult.Failure) return environment
         environment as PlaybackResult.Success
@@ -659,6 +669,7 @@ class PlaybackSession(
                 evidence = evidence,
                 profile = profile,
                 preferenceSnapshot = preferenceSnapshot,
+                compatibilityScopeKey = resolvedRequest.compatibilityScopeKey,
                 phase = FailurePhase.PLAYBACK,
             )
             lane.send(
@@ -886,6 +897,7 @@ class PlaybackSession(
                     resolvedRequest.evidence,
                     profileSnapshot,
                     preferenceSnapshot,
+                    resolvedRequest.compatibilityScopeKey,
                     FailurePhase.RECOVERY,
                 )) {
                     is PlaybackResult.Success -> result.value
@@ -1005,6 +1017,7 @@ class PlaybackSession(
                     evidence = resolvedRequest.evidence,
                     profile = profileSnapshot,
                     preferenceSnapshot = preferenceSnapshot,
+                    compatibilityScopeKey = resolvedRequest.compatibilityScopeKey,
                     phase = FailurePhase.RECOVERY,
                 )) {
                     is PlaybackResult.Success -> result.value

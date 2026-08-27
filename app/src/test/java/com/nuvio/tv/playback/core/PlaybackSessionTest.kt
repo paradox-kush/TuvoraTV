@@ -25,9 +25,14 @@ class PlaybackSessionTest {
         val history = FakeCompatibilityHistory()
         val engine = FakeEngine()
         val scope = CompatibilityScopeKey("hashed-scope")
+        val environmentScopes = mutableListOf<CompatibilityScopeKey?>()
         val session = session(
             engine = engine,
             requestResolver = scopedResolver(scope),
+            environmentProvider = PlaybackEnvironmentProvider { input ->
+                environmentScopes += input.compatibilityScopeKey
+                PlaybackResult.Success(environment())
+            },
             compatibilityRecording = compatibilityRecording(history),
         )
         session.dispatch(PlaybackCommand.SurfaceAvailable)
@@ -41,6 +46,7 @@ class PlaybackSessionTest {
 
         val record = history.values.single()
         assertEquals(scope, record.scopeKey)
+        assertEquals(listOf(scope), environmentScopes)
         assertEquals(CompatibilityOutcome.SUCCESS, record.outcome)
         assertEquals("c2.android.avc.decoder", record.graph.decoderStableId)
         assertEquals(10_000L, record.expiresAtEpochMs)
@@ -667,7 +673,8 @@ class PlaybackSessionTest {
             requestResolver = PlaybackRequestResolver { request ->
                 PlaybackResult.Success(ResolvedPlaybackRequest(request, request.summary(), adaptiveEvidence))
             },
-            environmentProvider = PlaybackEnvironmentProvider { _, _, profile, _ ->
+            environmentProvider = PlaybackEnvironmentProvider { input ->
+                val profile = input.profile
                 capturedProfiles += profile
                 PlaybackResult.Success(
                     environment().copy(
@@ -713,7 +720,8 @@ class PlaybackSessionTest {
         val session = session(
             engine = media3,
             otherEngine = mpv,
-            environmentProvider = PlaybackEnvironmentProvider { _, _, profile, _ ->
+            environmentProvider = PlaybackEnvironmentProvider { input ->
+                val profile = input.profile
                 PlaybackResult.Success(
                     environment().copy(
                         eligibleEngines = if (profile == SessionProfile.GUIDE) {
@@ -763,7 +771,8 @@ class PlaybackSessionTest {
         val releaseFullscreen = CompletableDeferred<Unit>()
         val session = session(
             engine = engine,
-            environmentProvider = PlaybackEnvironmentProvider { _, _, profile, _ ->
+            environmentProvider = PlaybackEnvironmentProvider { input ->
+                val profile = input.profile
                 if (profile == SessionProfile.FULLSCREEN) {
                     fullscreenEntered.complete(Unit)
                     releaseFullscreen.await()
@@ -810,7 +819,8 @@ class PlaybackSessionTest {
         )
         val session = session(
             engine = engine,
-            environmentProvider = PlaybackEnvironmentProvider { _, _, profile, _ ->
+            environmentProvider = PlaybackEnvironmentProvider { input ->
+                val profile = input.profile
                 when (profile) {
                     SessionProfile.FULLSCREEN -> {
                         fullscreenEntered.complete(Unit)
@@ -1546,7 +1556,7 @@ class PlaybackSessionTest {
         requestResolver: PlaybackRequestResolver = PlaybackRequestResolver { request ->
             PlaybackResult.Success(request.resolved())
         },
-        environmentProvider: PlaybackEnvironmentProvider = PlaybackEnvironmentProvider { _, _, _, _ ->
+        environmentProvider: PlaybackEnvironmentProvider = PlaybackEnvironmentProvider {
             PlaybackResult.Success(environment())
         },
         requirementsResolver: PlaybackRequirementsResolver = PlaybackRequirementsResolver {

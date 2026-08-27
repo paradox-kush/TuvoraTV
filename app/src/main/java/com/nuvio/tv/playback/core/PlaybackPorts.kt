@@ -47,13 +47,17 @@ data class PlaybackEnvironmentSnapshot(
     }
 }
 
+data class PlaybackEnvironmentInput(
+    val requestSummary: RequestSummary,
+    val evidence: StreamEvidence,
+    val profile: SessionProfile,
+    val effectivePreferences: PlaybackPreferences,
+    /** Exact provider/application hash; null only for concrete migration requests without a scope. */
+    val compatibilityScopeKey: CompatibilityScopeKey?,
+)
+
 fun interface PlaybackEnvironmentProvider {
-    suspend fun snapshot(
-        requestSummary: RequestSummary,
-        evidence: StreamEvidence,
-        profile: SessionProfile,
-        effectivePreferences: PlaybackPreferences,
-    ): PlaybackResult<PlaybackEnvironmentSnapshot>
+    suspend fun snapshot(input: PlaybackEnvironmentInput): PlaybackResult<PlaybackEnvironmentSnapshot>
 }
 
 data class PlaybackRequirementsInput(
