@@ -522,8 +522,8 @@ class PlaybackSession(
                     requestSummary = summary,
                     evidence = evidence,
                     profile = profile,
-                    effectivePreferences = preferenceSnapshot,
-                    environment = environment.value,
+                    effectivePreferences = environment.value.effectivePreferences,
+                    environment = environment.value.snapshot,
                 ),
             )
         }

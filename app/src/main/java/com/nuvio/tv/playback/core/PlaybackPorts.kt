@@ -56,8 +56,14 @@ data class PlaybackEnvironmentInput(
     val compatibilityScopeKey: CompatibilityScopeKey?,
 )
 
+data class PlaybackEnvironmentResolution(
+    val snapshot: PlaybackEnvironmentSnapshot,
+    /** The complete effective set resolved from this same request/runtime/history snapshot. */
+    val effectivePreferences: PlaybackPreferences,
+)
+
 fun interface PlaybackEnvironmentProvider {
-    suspend fun snapshot(input: PlaybackEnvironmentInput): PlaybackResult<PlaybackEnvironmentSnapshot>
+    suspend fun snapshot(input: PlaybackEnvironmentInput): PlaybackResult<PlaybackEnvironmentResolution>
 }
 
 data class PlaybackRequirementsInput(

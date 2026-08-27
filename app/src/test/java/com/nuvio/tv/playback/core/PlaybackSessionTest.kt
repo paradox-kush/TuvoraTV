@@ -21,6 +21,41 @@ import org.junit.Test
 class PlaybackSessionTest {
 
     @Test
+    fun `requirements receive the complete effective preferences from environment policy`() = runTest {
+        val engine = FakeEngine()
+        val effective = PlaybackPreferences(
+            engine = EnginePreference.MEDIA3,
+            buffering = BufferingPreference.CUSTOM,
+            customBuffer = CustomBufferPreference(1_000, 12_000, 500, 1_000),
+            audio = AudioPreference(
+                output = AudioOutputPreference.PCM,
+                downmixToStereo = true,
+                normalization = true,
+            ),
+            subtitles = SubtitlePreference(fidelity = SubtitleFidelity.FULL),
+            video = VideoPreference(hdr = HdrPreference.SDR),
+        )
+        var requirementsInput: PlaybackPreferences? = null
+        val session = session(
+            engine = engine,
+            environmentProvider = PlaybackEnvironmentProvider { input ->
+                PlaybackResult.Success(PlaybackEnvironmentResolution(environment(), effective))
+            },
+            requirementsResolver = PlaybackRequirementsResolver { input ->
+                requirementsInput = input.effectivePreferences
+                PlaybackResult.Success(requirements())
+            },
+        )
+
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(effective, requirementsInput)
+        close(session)
+    }
+
+    @Test
     fun `video success records exact graph once with decoder identity and explicit expiry`() = runTest {
         val history = FakeCompatibilityHistory()
         val engine = FakeEngine()
@@ -31,7 +66,7 @@ class PlaybackSessionTest {
             requestResolver = scopedResolver(scope),
             environmentProvider = PlaybackEnvironmentProvider { input ->
                 environmentScopes += input.compatibilityScopeKey
-                PlaybackResult.Success(environment())
+                environmentResult(input)
             },
             compatibilityRecording = compatibilityRecording(history),
         )
@@ -676,7 +711,8 @@ class PlaybackSessionTest {
             environmentProvider = PlaybackEnvironmentProvider { input ->
                 val profile = input.profile
                 capturedProfiles += profile
-                PlaybackResult.Success(
+                environmentResult(
+                    input,
                     environment().copy(
                         previewViewport = VideoDimensions(640, 360),
                         eligibleEngines = setOf(EngineType.MEDIA3),
@@ -722,7 +758,8 @@ class PlaybackSessionTest {
             otherEngine = mpv,
             environmentProvider = PlaybackEnvironmentProvider { input ->
                 val profile = input.profile
-                PlaybackResult.Success(
+                environmentResult(
+                    input,
                     environment().copy(
                         eligibleEngines = if (profile == SessionProfile.GUIDE) {
                             setOf(EngineType.MEDIA3)
@@ -777,7 +814,7 @@ class PlaybackSessionTest {
                     fullscreenEntered.complete(Unit)
                     releaseFullscreen.await()
                 }
-                PlaybackResult.Success(environment())
+                environmentResult(input)
             },
             requirementsResolver = PlaybackRequirementsResolver { input ->
                 PlaybackResult.Success(requirements(profile = input.profile))
@@ -825,11 +862,11 @@ class PlaybackSessionTest {
                     SessionProfile.FULLSCREEN -> {
                         fullscreenEntered.complete(Unit)
                         releaseFullscreen.await()
-                        PlaybackResult.Success(environment())
+                        environmentResult(input)
                     }
                     SessionProfile.GUIDE -> {
                         guideSnapshots++
-                        if (guideSnapshots == 1) PlaybackResult.Success(environment())
+                        if (guideSnapshots == 1) environmentResult(input)
                         else PlaybackResult.Failure(rejected)
                     }
                 }
@@ -1556,8 +1593,8 @@ class PlaybackSessionTest {
         requestResolver: PlaybackRequestResolver = PlaybackRequestResolver { request ->
             PlaybackResult.Success(request.resolved())
         },
-        environmentProvider: PlaybackEnvironmentProvider = PlaybackEnvironmentProvider {
-            PlaybackResult.Success(environment())
+        environmentProvider: PlaybackEnvironmentProvider = PlaybackEnvironmentProvider { input ->
+            environmentResult(input)
         },
         requirementsResolver: PlaybackRequirementsResolver = PlaybackRequirementsResolver {
             PlaybackResult.Success(requirements())
@@ -1853,6 +1890,13 @@ class PlaybackSessionTest {
                 surfaces = SurfaceCapabilities(),
             ),
             secureOutputRequired = false,
+        )
+
+        fun environmentResult(
+            input: PlaybackEnvironmentInput,
+            snapshot: PlaybackEnvironmentSnapshot = environment(),
+        ): PlaybackResult.Success<PlaybackEnvironmentResolution> = PlaybackResult.Success(
+            PlaybackEnvironmentResolution(snapshot, input.effectivePreferences),
         )
     }
 }
