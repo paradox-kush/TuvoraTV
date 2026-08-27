@@ -20,6 +20,7 @@ object PlaybackDiagnosticFormatter {
         )
         event.engine?.let { properties["engine"] = it.name }
         event.attempt?.let { properties["attempt"] = it }
+        event.outputStatus?.let { properties["output_status"] = it.name }
         event.failure?.let { failure ->
             properties["failure_code"] = failure.code.name
             properties["failure_domain"] = failure.domain.name

@@ -7,6 +7,7 @@ import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.PlaybackDiagnosticCode
 import com.nuvio.tv.playback.core.PlaybackDiagnosticEvent
 import com.nuvio.tv.playback.core.PlaybackFailure
+import com.nuvio.tv.playback.core.PlaybackOutputStatus
 import com.nuvio.tv.playback.core.Retryability
 import com.nuvio.tv.core.analytics.PostHogPrivacy
 import org.junit.Assert.assertEquals
@@ -85,5 +86,22 @@ class PlaybackDiagnosticsAdapterTest {
         assertNotNull(captured)
         assertEquals(9L, captured?.properties?.get("generation"))
         assertEquals("LIVE_RECONNECT_ATTEMPT", captured?.properties?.get("diagnostic_code"))
+    }
+
+    @Test
+    fun `nonfatal output diagnostic exposes only its stable status code`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 10,
+                code = PlaybackDiagnosticCode.PLAYBACK_OUTPUT_NONFATAL,
+                outputStatus = PlaybackOutputStatus.APPLY_NOT_CONFIRMED,
+            ),
+        )
+
+        assertEquals("APPLY_NOT_CONFIRMED", formatted.properties["output_status"])
+        assertFalse(formatted.properties.keys.any { key ->
+            listOf("mode_id", "display", "device", "model", "rate", "width", "height")
+                .any { forbidden -> key.contains(forbidden, ignoreCase = true) }
+        })
     }
 }
