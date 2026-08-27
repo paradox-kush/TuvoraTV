@@ -70,6 +70,12 @@ class PlaybackSession(
     private var requirements: GenerationValue<PlaybackRequirements>? = null
     private var latestRequirementsChangeId: Long = 0
     private var requirementsApplyJob: Job? = null
+    private var watchdogJob: Job? = null
+    private var watchdogArm: WatchdogArm? = null
+    private var nextWatchdogToken: Long = 1
+    private var engineAttempt: Long = 0
+    private var engineAttemptGeneration: Long? = null
+    private var runtimeMetricsUnavailableAttempt: Long? = null
 
     private val actorJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         for (message in lane) process(message)
@@ -155,6 +161,8 @@ class PlaybackSession(
             is LaneMessage.RequirementsChangeFinished -> requirementsChangeFinished(message)
             is LaneMessage.RequirementsApplied -> requirementsApplied(message)
             is LaneMessage.BarrierFinished -> barrierFinished(message)
+            is LaneMessage.WatchdogExpired -> watchdogExpired(message)
+            is LaneMessage.RuntimeWindowFinished -> runtimeWindowFinished(message)
         }
     }
 
@@ -162,10 +170,24 @@ class PlaybackSession(
         if (input is PlaybackReducerInput.Command && input.value is PlaybackCommand.PreferencesChanged) {
             preferences = input.value.preferences
         }
+        val engineStarting = (input as? PlaybackReducerInput.Event)?.value as? PlaybackEvent.EngineStarting
+        val engineStartAccepted = engineStarting?.generation == machine.snapshot.generation &&
+            machine.snapshot.state in setOf(
+                PlaybackState.STARTING_PRIMARY,
+                PlaybackState.RECOVERING_IN_PLACE,
+                PlaybackState.LIVE_RECONNECTING,
+            )
         val transition = PlaybackStateMachine.reduce(machine, input)
+        if (engineStartAccepted) {
+            check(engineAttempt < Long.MAX_VALUE) { "Playback engine attempt exhausted" }
+            engineAttempt++
+            engineAttemptGeneration = engineStarting?.generation
+            runtimeMetricsUnavailableAttempt = null
+        }
         machine = transition.state
         _snapshot.value = transition.state.snapshot
         _surfaceAvailable.value = transition.state.surfaceAvailable
+        reconcileWatchdog()
         transition.actions.forEach { execute(it) }
     }
 
@@ -385,11 +407,6 @@ class PlaybackSession(
         activeGraphGeneration = action.generation
         generationScope(action.generation).launch {
             intentionalReleases -= engine.type
-            lane.send(
-                LaneMessage.Reducer(
-                    PlaybackReducerInput.Event(PlaybackEvent.EngineStarting(action.generation)),
-                ),
-            )
             val output = safeResult(FailurePhase.ENGINE_START) {
                 outputController.apply(action.generation, effective)
             }
@@ -397,6 +414,11 @@ class PlaybackSession(
                 fail(action.generation, output.failure)
                 return@launch
             }
+            lane.send(
+                LaneMessage.Reducer(
+                    PlaybackReducerInput.Event(PlaybackEvent.EngineStarting(action.generation)),
+                ),
+            )
             val result = safeResult(FailurePhase.ENGINE_START) {
                 engine.start(
                     PlaybackEngineStart(
@@ -536,6 +558,7 @@ class PlaybackSession(
     }
 
     private fun releaseActiveWork(action: PlaybackAction.ReleaseActiveWork) {
+        cancelWatchdog()
         val workToCancel = generationJob
         workToCancel?.cancel()
         generationJob = null
@@ -871,6 +894,208 @@ class PlaybackSession(
         return PlaybackResult.Failure(releaseFailure())
     }
 
+    /**
+     * Reconciles one generation/attempt-bound watchdog from immutable facts after every reducer
+     * input. Timer and metric completions return through [lane] before they can cause an action.
+     */
+    private fun reconcileWatchdog() {
+        if (!policy.watchdogEnabled()) {
+            cancelWatchdog()
+            return
+        }
+        val desired = desiredWatchdogPhase() ?: run {
+            cancelWatchdog()
+            return
+        }
+        val current = watchdogArm
+        if (
+            current?.generation == machine.snapshot.generation &&
+            current.attempt == engineAttempt &&
+            current.phase == desired
+        ) {
+            return
+        }
+        cancelWatchdog()
+        check(nextWatchdogToken < Long.MAX_VALUE) { "Playback watchdog token exhausted" }
+        val arm = WatchdogArm(
+            token = nextWatchdogToken++,
+            generation = machine.snapshot.generation,
+            attempt = engineAttempt,
+            phase = desired,
+        )
+        watchdogArm = arm
+        watchdogJob = if (desired == PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS) {
+            startRuntimeWindow(arm)
+        } else {
+            generationScope(arm.generation).launch {
+                val request = resolved.takeIf { it?.generation == arm.generation }?.value?.request
+                    ?: return@launch
+                clock.delayMs(policy.watchdogDelayMs(desired, request.contentType, request.network))
+                lane.send(
+                    LaneMessage.WatchdogExpired(
+                        token = arm.token,
+                        generation = arm.generation,
+                        attempt = arm.attempt,
+                        phase = arm.phase,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun desiredWatchdogPhase(): PlaybackPolicy.WatchdogPhase? {
+        val snapshot = machine.snapshot
+        if (
+            engineAttemptGeneration != snapshot.generation ||
+            !machine.sessionActive ||
+            !machine.lifecycleActive ||
+            activeGraphGeneration != snapshot.generation
+        ) {
+            return null
+        }
+        return when (snapshot.state) {
+            PlaybackState.STARTING_PRIMARY -> when {
+                !snapshot.progress.receivedBytes -> PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE
+                !snapshot.progress.discoveredTracks -> PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS
+                snapshot.tracks.hasVideoTrack &&
+                    !(snapshot.progress.decoderReady || snapshot.progress.rendererReady) -> {
+                    PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY
+                }
+                snapshot.tracks.hasVideoTrack &&
+                    !machine.paused &&
+                    !snapshot.progress.renderedVideoFrame &&
+                    (snapshot.progress.decoderReady || snapshot.progress.rendererReady) -> {
+                    PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME
+                }
+                else -> null
+            }
+            PlaybackState.PLAYING -> if (
+                !machine.paused &&
+                !snapshot.isBuffering &&
+                snapshot.progress.discoveredTracks &&
+                snapshot.tracks.hasVideoTrack &&
+                snapshot.progress.renderedVideoFrame &&
+                runtimeMetricsUnavailableAttempt != engineAttempt
+            ) {
+                PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS
+            } else {
+                null
+            }
+            else -> null
+        }
+    }
+
+    private fun startRuntimeWindow(arm: WatchdogArm): Job {
+        val engine = activeGraph?.let { engineRegistry.engine(it.engine) }
+        return generationScope(arm.generation).launch {
+            val before = engine?.let { metricsSnapshot(it, arm.generation) }
+            val request = resolved.takeIf { it?.generation == arm.generation }?.value?.request
+                ?: return@launch
+            clock.delayMs(
+                policy.watchdogDelayMs(
+                    PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS,
+                    request.contentType,
+                    request.network,
+                ),
+            )
+            val after = engine?.let { metricsSnapshot(it, arm.generation) }
+            lane.send(
+                LaneMessage.RuntimeWindowFinished(
+                    token = arm.token,
+                    generation = arm.generation,
+                    attempt = arm.attempt,
+                    before = before,
+                    after = after,
+                ),
+            )
+        }
+    }
+
+    private suspend fun metricsSnapshot(
+        engine: PlaybackEngine,
+        generation: Long,
+    ): PlaybackEngineMetricsSnapshot? = try {
+        when (val result = engine.snapshotMetrics(generation)) {
+            is PlaybackResult.Success -> result.value.takeIf { it.generation == generation }
+            is PlaybackResult.Failure -> null
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+
+    private suspend fun watchdogExpired(message: LaneMessage.WatchdogExpired) {
+        val arm = watchdogArm
+        if (
+            arm?.token != message.token ||
+            arm.generation != message.generation ||
+            arm.attempt != message.attempt ||
+            arm.phase != message.phase ||
+            desiredWatchdogPhase() != message.phase
+        ) {
+            return
+        }
+        watchdogArm = null
+        watchdogJob = null
+        emitWatchdogFailure(message.generation, message.phase)
+    }
+
+    private suspend fun runtimeWindowFinished(message: LaneMessage.RuntimeWindowFinished) {
+        val arm = watchdogArm
+        if (
+            arm?.token != message.token ||
+            arm.generation != message.generation ||
+            arm.attempt != message.attempt ||
+            arm.phase != PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS ||
+            desiredWatchdogPhase() != PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS
+        ) {
+            return
+        }
+        watchdogArm = null
+        watchdogJob = null
+        when {
+            message.before == null || message.after == null -> {
+                runtimeMetricsUnavailableAttempt = message.attempt
+                reconcileWatchdog()
+            }
+            policy.renderedVideoAdvanced(message.before, message.after) == true -> reconcileWatchdog()
+            policy.renderedVideoAdvanced(message.before, message.after) == null -> {
+                runtimeMetricsUnavailableAttempt = message.attempt
+                reconcileWatchdog()
+            }
+            else -> emitWatchdogFailure(
+                message.generation,
+                PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS,
+            )
+        }
+    }
+
+    private suspend fun emitWatchdogFailure(
+        generation: Long,
+        phase: PlaybackPolicy.WatchdogPhase,
+    ) {
+        val evidence = machine.evidence ?: return
+        val failure = policy.watchdogFailure(phase, evidence)
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = generation,
+                code = PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+                engine = activeGraph?.engine,
+                failure = failure,
+            ),
+        )
+        val event = PlaybackEvent.Failed(generation, failure)
+        engineEvents.emit(event)
+        applyReducer(PlaybackReducerInput.Event(event))
+    }
+
+    private fun cancelWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = null
+        watchdogArm = null
+    }
+
     private fun generationScope(forGeneration: Long): CoroutineScope {
         if (generation != forGeneration || generationJob == null) {
             generationJob?.cancel()
@@ -992,6 +1217,13 @@ class PlaybackSession(
         val candidates: PlaybackResult<List<PlaybackGraph>>,
     )
 
+    private data class WatchdogArm(
+        val token: Long,
+        val generation: Long,
+        val attempt: Long,
+        val phase: PlaybackPolicy.WatchdogPhase,
+    )
+
     private sealed interface LaneMessage {
         data class Reducer(val input: PlaybackReducerInput) : LaneMessage
         data class ResolutionFinished(
@@ -1022,6 +1254,19 @@ class PlaybackSession(
             val releaseEpoch: Long,
             val reason: ActiveWorkReleaseReason,
             val failure: PlaybackFailure?,
+        ) : LaneMessage
+        data class WatchdogExpired(
+            val token: Long,
+            val generation: Long,
+            val attempt: Long,
+            val phase: PlaybackPolicy.WatchdogPhase,
+        ) : LaneMessage
+        data class RuntimeWindowFinished(
+            val token: Long,
+            val generation: Long,
+            val attempt: Long,
+            val before: PlaybackEngineMetricsSnapshot?,
+            val after: PlaybackEngineMetricsSnapshot?,
         ) : LaneMessage
     }
 

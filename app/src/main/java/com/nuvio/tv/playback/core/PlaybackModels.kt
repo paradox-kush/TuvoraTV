@@ -681,6 +681,8 @@ sealed interface PlaybackCommand {
 data class PlaybackProgressEvidence(
     val receivedBytes: Boolean = false,
     val discoveredTracks: Boolean = false,
+    val decoderReady: Boolean = false,
+    val rendererReady: Boolean = false,
     val renderedAudio: Boolean = false,
     val renderedVideoFrame: Boolean = false,
 )

@@ -1,7 +1,126 @@
 package com.nuvio.tv.playback.core
 
 /** The single deterministic policy consumes already-resolved requirements, never raw platform state. */
-class PlaybackPolicy {
+class PlaybackPolicy(
+    private val watchdogConfiguration: WatchdogConfiguration = WatchdogConfiguration(),
+) {
+    /** Bootstrap values from the approved adaptive architecture; telemetry may tune them later. */
+    data class WatchdogConfiguration(
+        val enabled: Boolean = true,
+        val liveBytesToTracksMs: Long = 1_500L,
+        val vodBytesToTracksMs: Long = 3_000L,
+        // The reference table starts its next budget at renderer-ready. A silent codec-init wedge
+        // has no such callback, so v1 conservatively uses the same live/VOD bound for that gap.
+        val liveTracksToReadyMs: Long = 1_000L,
+        val vodTracksToReadyMs: Long = 2_000L,
+        val liveReadyToFirstFrameMs: Long = 1_000L,
+        val vodReadyToFirstFrameMs: Long = 2_000L,
+        val runtimeVideoProgressWindowMs: Long = 5_000L,
+    ) {
+        init {
+            if (enabled) {
+                require(liveBytesToTracksMs > 0)
+                require(vodBytesToTracksMs > 0)
+                require(liveTracksToReadyMs > 0)
+                require(vodTracksToReadyMs > 0)
+                require(liveReadyToFirstFrameMs > 0)
+                require(vodReadyToFirstFrameMs > 0)
+                require(runtimeVideoProgressWindowMs > 0)
+            }
+        }
+    }
+
+    enum class WatchdogPhase {
+        FIRST_MEDIA_BYTE,
+        BYTES_TO_TRACKS,
+        VIDEO_TRACKS_TO_READY,
+        READY_TO_FIRST_VIDEO_FRAME,
+        RUNTIME_VIDEO_PROGRESS,
+    }
+
+    fun watchdogEnabled(): Boolean = watchdogConfiguration.enabled
+
+    fun watchdogDelayMs(
+        phase: WatchdogPhase,
+        contentType: ContentType,
+        network: PlaybackNetworkRequest,
+    ): Long = when (phase) {
+        WatchdogPhase.FIRST_MEDIA_BYTE -> minOf(
+            network.readTimeoutMs.toLong(),
+            network.callTimeoutMs?.toLong() ?: Long.MAX_VALUE,
+        )
+        WatchdogPhase.BYTES_TO_TRACKS -> if (contentType == ContentType.LIVE) {
+            watchdogConfiguration.liveBytesToTracksMs
+        } else {
+            watchdogConfiguration.vodBytesToTracksMs
+        }
+        WatchdogPhase.VIDEO_TRACKS_TO_READY -> if (contentType == ContentType.LIVE) {
+            watchdogConfiguration.liveTracksToReadyMs
+        } else {
+            watchdogConfiguration.vodTracksToReadyMs
+        }
+        WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME -> if (contentType == ContentType.LIVE) {
+            watchdogConfiguration.liveReadyToFirstFrameMs
+        } else {
+            watchdogConfiguration.vodReadyToFirstFrameMs
+        }
+        WatchdogPhase.RUNTIME_VIDEO_PROGRESS -> watchdogConfiguration.runtimeVideoProgressWindowMs
+    }
+
+    /**
+     * A timeout is classified from the last proven phase, never from a URL suffix or playhead.
+     * Network/no-byte failures are intentionally kept out of engine compatibility domains.
+     */
+    fun watchdogFailure(
+        phase: WatchdogPhase,
+        evidence: StreamEvidence,
+    ): PlaybackFailure = when (phase) {
+        WatchdogPhase.FIRST_MEDIA_BYTE -> PlaybackFailure(
+            code = FailureCode.NETWORK_TIMEOUT,
+            domain = FailureDomain.NETWORK,
+            phase = FailurePhase.ENGINE_START,
+            retryability = Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+        )
+        WatchdogPhase.BYTES_TO_TRACKS -> {
+            val manifestDelivery = evidence.delivery?.value in setOf(DeliveryType.HLS, DeliveryType.DASH)
+            PlaybackFailure(
+                code = if (manifestDelivery) FailureCode.MANIFEST_INVALID else FailureCode.DEMUX_FAILED,
+                domain = if (manifestDelivery) FailureDomain.MANIFEST else FailureDomain.DEMUX,
+                phase = FailurePhase.ENGINE_START,
+                retryability = Retryability.HANDOFF_ELIGIBLE,
+            )
+        }
+        WatchdogPhase.VIDEO_TRACKS_TO_READY -> PlaybackFailure(
+            code = FailureCode.VIDEO_DECODER_FAILED,
+            domain = FailureDomain.VIDEO_DECODER,
+            phase = FailurePhase.ENGINE_START,
+            retryability = Retryability.HANDOFF_ELIGIBLE,
+        )
+        WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME -> PlaybackFailure(
+            code = FailureCode.VIDEO_RENDERER_FAILED,
+            domain = FailureDomain.VIDEO_RENDERER_SURFACE,
+            phase = FailurePhase.ENGINE_START,
+            retryability = Retryability.HANDOFF_ELIGIBLE,
+        )
+        WatchdogPhase.RUNTIME_VIDEO_PROGRESS -> PlaybackFailure(
+            code = FailureCode.NO_PROGRESS,
+            domain = FailureDomain.VIDEO_RENDERER_SURFACE,
+            phase = FailurePhase.PLAYBACK,
+            retryability = Retryability.HANDOFF_ELIGIBLE,
+        )
+    }
+
+    /** Null means the engine cannot expose the common rendered-frame fact. */
+    fun renderedVideoAdvanced(
+        before: PlaybackEngineMetricsSnapshot,
+        after: PlaybackEngineMetricsSnapshot,
+    ): Boolean? {
+        if (before.generation != after.generation) return null
+        val beforeFrames = before.videoFramesRendered ?: return null
+        val afterFrames = after.videoFramesRendered ?: return null
+        return afterFrames > beforeFrames
+    }
+
     data class SelectionInput(
         val requirements: PlaybackRequirements,
         val candidates: List<PlaybackGraph>,

@@ -82,16 +82,26 @@ class PlaybackStateMachineTest {
     }
 
     @Test
-    fun `adapter diagnostic facts never drive policy or recovery`() {
+    fun `adapter readiness facts update evidence without directly driving recovery`() {
         val initial = playingState(ContentType.LIVE)
-        val facts = listOf(
-            PlaybackEvent.EngineStateObserved(1, PlaybackEngineState.READY, false, true),
-            PlaybackEvent.VideoDecoderInitialized(1, "c2.vendor.avc.decoder"),
+        val readinessFacts = listOf(
+            PlaybackEvent.EngineStateObserved(1, PlaybackEngineState.READY, false, true) to
+                initial.snapshot.progress.copy(rendererReady = true),
+            PlaybackEvent.VideoDecoderInitialized(1, "c2.vendor.avc.decoder") to
+                initial.snapshot.progress.copy(decoderReady = true),
+        )
+        readinessFacts.forEach { (fact, expected) ->
+            val reduced = PlaybackStateMachine.reduce(initial, fact)
+            assertEquals(expected, reduced.state.snapshot.progress)
+            assertEquals(initial.snapshot.state, reduced.state.snapshot.state)
+            assertTrue(reduced.actions.isEmpty())
+        }
+
+        val passiveFacts = listOf(
             PlaybackEvent.VideoInputFormatChanged(1, "video/avc"),
             PlaybackEvent.VideoSizeChanged(1, 1_920, 1_080),
         )
-
-        facts.forEach { fact ->
+        passiveFacts.forEach { fact ->
             val reduced = PlaybackStateMachine.reduce(initial, fact)
             assertSame(initial, reduced.state)
             assertTrue(reduced.actions.isEmpty())

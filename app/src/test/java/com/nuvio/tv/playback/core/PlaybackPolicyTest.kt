@@ -8,6 +8,118 @@ class PlaybackPolicyTest {
     private val policy = PlaybackPolicy()
 
     @Test
+    fun `watchdog budgets follow live and VOD bootstrap architecture`() {
+        val network = PlaybackNetworkRequest(readTimeoutMs = 60_000, callTimeoutMs = 12_000)
+
+        assertEquals(
+            12_000L,
+            policy.watchdogDelayMs(
+                PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE,
+                ContentType.LIVE,
+                network,
+            ),
+        )
+        assertEquals(
+            1_500L,
+            policy.watchdogDelayMs(
+                PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS,
+                ContentType.LIVE,
+                network,
+            ),
+        )
+        assertEquals(
+            3_000L,
+            policy.watchdogDelayMs(
+                PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS,
+                ContentType.VOD,
+                network,
+            ),
+        )
+        assertEquals(
+            1_000L,
+            policy.watchdogDelayMs(
+                PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
+                ContentType.LIVE,
+                network,
+            ),
+        )
+        assertEquals(
+            1_000L,
+            policy.watchdogDelayMs(
+                PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
+                ContentType.LIVE,
+                network,
+            ),
+        )
+        assertEquals(
+            2_000L,
+            policy.watchdogDelayMs(
+                PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
+                ContentType.CATCH_UP,
+                network,
+            ),
+        )
+    }
+
+    @Test
+    fun `watchdog failures stay in their proven failure domains`() {
+        val hls = StreamEvidence(
+            delivery = EvidenceFact(DeliveryType.HLS, EvidenceProvenance.MANIFEST_CONFIRMED),
+        )
+        val raw = StreamEvidence(
+            delivery = EvidenceFact(
+                DeliveryType.RAW_TRANSPORT_STREAM,
+                EvidenceProvenance.EXTRACTOR_CONFIRMED,
+            ),
+        )
+
+        val noBytes = policy.watchdogFailure(PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE, hls)
+        assertEquals(FailureDomain.NETWORK, noBytes.domain)
+        assertEquals(Retryability.RETRYABLE_WITH_FRESH_REQUEST, noBytes.retryability)
+
+        val noManifestTracks = policy.watchdogFailure(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, hls)
+        assertEquals(FailureCode.MANIFEST_INVALID, noManifestTracks.code)
+        assertEquals(FailureDomain.MANIFEST, noManifestTracks.domain)
+
+        val noDemuxTracks = policy.watchdogFailure(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, raw)
+        assertEquals(FailureCode.DEMUX_FAILED, noDemuxTracks.code)
+        assertEquals(FailureDomain.DEMUX, noDemuxTracks.domain)
+
+        val noFrame = policy.watchdogFailure(
+            PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
+            raw,
+        )
+        assertEquals(FailureDomain.VIDEO_RENDERER_SURFACE, noFrame.domain)
+        assertEquals(Retryability.HANDOFF_ELIGIBLE, noFrame.retryability)
+
+        val noDecoder = policy.watchdogFailure(
+            PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
+            raw,
+        )
+        assertEquals(FailureCode.VIDEO_DECODER_FAILED, noDecoder.code)
+        assertEquals(FailureDomain.VIDEO_DECODER, noDecoder.domain)
+        assertEquals(false, noDecoder.deterministic)
+    }
+
+    @Test
+    fun `runtime video truth is only an advancing same-generation rendered frame counter`() {
+        fun metrics(generation: Long, frames: Long?) = PlaybackEngineMetricsSnapshot(
+            generation = generation,
+            videoFramesRendered = frames,
+            videoFramesSkipped = null,
+            videoFramesDropped = null,
+            audioBuffersRendered = 99,
+            audioBuffersSkipped = null,
+            audioBuffersDropped = null,
+        )
+
+        assertEquals(true, policy.renderedVideoAdvanced(metrics(7, 10), metrics(7, 11)))
+        assertEquals(false, policy.renderedVideoAdvanced(metrics(7, 10), metrics(7, 10)))
+        assertEquals(null, policy.renderedVideoAdvanced(metrics(7, null), metrics(7, null)))
+        assertEquals(null, policy.renderedVideoAdvanced(metrics(7, 10), metrics(8, 11)))
+    }
+
+    @Test
     fun `Media3 is the deterministic default primary graph`() {
         val selection = policy.selectPrimary(
             PlaybackPolicy.SelectionInput(requirements(), listOf(mpvRender, media3)),

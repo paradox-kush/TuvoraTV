@@ -705,8 +705,10 @@ object PlaybackStateMachine {
             is PlaybackEvent.FirstVideoFrame -> firstVideoFrame(state)
             is PlaybackEvent.BufferingStarted -> bufferingStarted(state)
             is PlaybackEvent.BufferingEnded -> bufferingEnded(state)
-            is PlaybackEvent.EngineStateObserved,
-            is PlaybackEvent.VideoDecoderInitialized,
+            is PlaybackEvent.EngineStateObserved -> engineStateObserved(state, event)
+            is PlaybackEvent.VideoDecoderInitialized -> progressFact(state) {
+                it.copy(decoderReady = true)
+            }
             is PlaybackEvent.VideoInputFormatChanged,
             is PlaybackEvent.VideoSizeChanged,
             -> unchanged(state)
@@ -716,6 +718,25 @@ object PlaybackStateMachine {
             // may still be active. Only BarrierCompleted is authoritative.
             is PlaybackEvent.EngineReleased -> unchanged(state)
         }
+    }
+
+    private fun engineStateObserved(
+        state: PlaybackMachineState,
+        event: PlaybackEvent.EngineStateObserved,
+    ): PlaybackTransition = if (event.state == PlaybackEngineState.READY) {
+        progressFact(state) { it.copy(rendererReady = true) }
+    } else {
+        unchanged(state)
+    }
+
+    private inline fun progressFact(
+        state: PlaybackMachineState,
+        update: (PlaybackProgressEvidence) -> PlaybackProgressEvidence,
+    ): PlaybackTransition {
+        if (!state.snapshot.state.acceptsProgress()) return unchanged(state)
+        return transition(
+            state.copy(snapshot = state.snapshot.copy(progress = update(state.snapshot.progress))),
+        )
     }
 
     private fun requestResolved(
@@ -784,6 +805,8 @@ object PlaybackStateMachine {
                     state = PlaybackState.STARTING_PRIMARY,
                     isReconnecting = state.snapshot.isReconnecting,
                     statusCode = PlaybackStatusCode.STARTING,
+                    tracks = TrackSummary(),
+                    progress = PlaybackProgressEvidence(),
                 ),
             ),
         )
@@ -812,7 +835,12 @@ object PlaybackStateMachine {
         val updated = state.copy(
             snapshot = state.snapshot.copy(
                 tracks = TrackSummary(event.audioTrackCount, event.subtitleTrackCount, event.hasVideo),
-                progress = state.snapshot.progress.copy(discoveredTracks = true),
+                // Track discovery is downstream proof that media bytes were received even if an
+                // adapter's first-byte callback and track callback raced on different threads.
+                progress = state.snapshot.progress.copy(
+                    receivedBytes = true,
+                    discoveredTracks = true,
+                ),
                 streamAvailability = StreamAvailability.Available,
             ),
         )

@@ -141,6 +141,7 @@ enum class PlaybackDiagnosticCode {
     LIVE_RECONNECT_ATTEMPT,
     LIVE_RECONNECT_SUCCEEDED,
     REQUIREMENTS_CHANGE_REJECTED,
+    WATCHDOG_EXPIRED,
 }
 
 data class PlaybackDiagnosticEvent(

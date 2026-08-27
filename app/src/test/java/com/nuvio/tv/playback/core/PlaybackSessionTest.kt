@@ -673,6 +673,251 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `no media bytes expires through network policy without blaming an engine`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(vodRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+
+        advanceTimeBy(PlaybackNetworkRequest.DEFAULT_READ_TIMEOUT_MS.toLong())
+        runCurrent()
+
+        val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(FailureCode.NETWORK_TIMEOUT, expired.failure?.code)
+        assertEquals(FailureDomain.NETWORK, expired.failure?.domain)
+        assertEquals(1, engine.releaseCalls)
+        assertEquals(2, engine.startCalls)
+        close(session)
+    }
+
+    @Test
+    fun `bytes without HLS tracks classify manifest phase and issue one incident action`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val hlsEvidence = StreamEvidence(
+            delivery = EvidenceFact(DeliveryType.HLS, EvidenceProvenance.MANIFEST_CONFIRMED),
+        )
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = PlaybackRequestResolver { request ->
+                PlaybackResult.Success(ResolvedPlaybackRequest(request, request.summary(), hlsEvidence))
+            },
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.BytesReceived(1))
+        runCurrent()
+
+        advanceTimeBy(1_499)
+        runCurrent()
+        assertEquals(0, engine.releaseCalls)
+        advanceTimeBy(1)
+        runCurrent()
+
+        val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(FailureCode.MANIFEST_INVALID, expired.failure?.code)
+        assertEquals(FailureDomain.MANIFEST, expired.failure?.domain)
+        assertEquals(1, engine.releaseCalls)
+        close(session)
+    }
+
+    @Test
+    fun `decoder ready without first video frame classifies renderer output`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        engine.emit(PlaybackEvent.VideoDecoderInitialized(1, "decoder"))
+        runCurrent()
+
+        advanceTimeBy(999)
+        runCurrent()
+        assertEquals(0, engine.releaseCalls)
+        advanceTimeBy(1)
+        runCurrent()
+
+        val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(FailureCode.VIDEO_RENDERER_FAILED, expired.failure?.code)
+        assertEquals(FailureDomain.VIDEO_RENDERER_SURFACE, expired.failure?.domain)
+        assertEquals(1, engine.releaseCalls)
+        close(session)
+    }
+
+    @Test
+    fun `video tracks without decoder callback cannot wedge startup indefinitely`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        runCurrent()
+
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(FailureCode.VIDEO_DECODER_FAILED, expired.failure?.code)
+        assertEquals(FailureDomain.VIDEO_DECODER, expired.failure?.domain)
+        assertEquals(false, expired.failure?.deterministic)
+        assertEquals(1, engine.releaseCalls)
+        close(session)
+    }
+
+    @Test
+    fun `runtime freeze uses continuing rendered frames rather than audio or playhead`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine().apply { videoFramesRendered = 10 }
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(FailureCode.NO_PROGRESS, expired.failure?.code)
+        assertEquals(FailureDomain.VIDEO_RENDERER_SURFACE, expired.failure?.domain)
+        assertEquals(2, engine.snapshotMetricsCalls)
+        assertEquals(1, engine.releaseCalls)
+        close(session)
+    }
+
+    @Test
+    fun `advancing rendered frames rearm runtime observation without recovery`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine().apply { videoFramesRendered = 10 }
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+
+        engine.videoFramesRendered = 11
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        assertEquals(0, engine.releaseCalls)
+        close(session)
+    }
+
+    @Test
+    fun `confirmed audio-only playback never arms a video watchdog`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine().apply { videoFramesRendered = 0 }
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.FirstAudio(1))
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = false, 1, 0))
+        runCurrent()
+
+        advanceTimeBy(60_000)
+        runCurrent()
+
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        assertEquals(0, engine.snapshotMetricsCalls)
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        close(session)
+    }
+
+    @Test
+    fun `inactive lifecycle cancels the armed startup watchdog`() = runTest {
+        val lifecycleEvents = MutableSharedFlow<PlaybackLifecycleEvent>(extraBufferCapacity = 2)
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            lifecycle = PlaybackLifecyclePort { lifecycleEvents },
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        runCurrent()
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        lifecycleEvents.emit(PlaybackLifecycleEvent.INACTIVE)
+        runCurrent()
+
+        advanceTimeBy(60_000)
+        runCurrent()
+
+        assertEquals(PlaybackState.STOPPED, session.snapshot.value.state)
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        close(session)
+    }
+
+    @Test
+    fun `superseded generation watchdog cannot fail the replacement request`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.TracksAvailable(2, hasVideo = false, 1, 0))
+        engine.emit(PlaybackEvent.FirstAudio(2))
+        runCurrent()
+
+        advanceTimeBy(60_000)
+        runCurrent()
+
+        assertEquals(2, session.snapshot.value.generation)
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        close(session)
+    }
+
+    @Test
     fun `release timeout never opens another connection and retries the barrier`() = runTest {
         val engine = FakeEngine()
         engine.releaseTimeoutsRemaining = 1
@@ -729,6 +974,10 @@ class PlaybackSessionTest {
         },
         lifecycle: PlaybackLifecyclePort? = null,
         releaseTimeoutMs: Long = 5_000L,
+        policy: PlaybackPolicy = PlaybackPolicy(
+            PlaybackPolicy.WatchdogConfiguration(enabled = false),
+        ),
+        diagnostics: PlaybackDiagnostics = PlaybackDiagnostics { },
     ) = PlaybackSession(
         parentScope = this,
         requestResolver = requestResolver,
@@ -748,8 +997,9 @@ class PlaybackSessionTest {
         },
         outputController = FakeOutputController,
         clock = TestClock,
-        diagnostics = PlaybackDiagnostics { },
+        diagnostics = diagnostics,
         lifecycle = lifecycle,
+        policy = policy,
         releaseTimeoutMs = releaseTimeoutMs,
     )
 
@@ -776,6 +1026,8 @@ class PlaybackSessionTest {
         var releaseTimeoutsRemaining = 0
         var releaseFailuresRemaining = 0
         var hardAbortFailuresRemaining = 0
+        var snapshotMetricsCalls = 0
+        var videoFramesRendered: Long? = null
 
         override suspend fun attachSurface(
             generation: Long,
@@ -809,17 +1061,20 @@ class PlaybackSessionTest {
 
         override suspend fun snapshotMetrics(
             generation: Long,
-        ): PlaybackResult<PlaybackEngineMetricsSnapshot> = PlaybackResult.Success(
-            PlaybackEngineMetricsSnapshot(
+        ): PlaybackResult<PlaybackEngineMetricsSnapshot> {
+            snapshotMetricsCalls++
+            return PlaybackResult.Success(
+                PlaybackEngineMetricsSnapshot(
                 generation = generation,
-                videoFramesRendered = null,
+                videoFramesRendered = videoFramesRendered,
                 videoFramesSkipped = null,
                 videoFramesDropped = null,
                 audioBuffersRendered = null,
                 audioBuffersSkipped = null,
                 audioBuffersDropped = null,
-            ),
-        )
+                ),
+            )
+        }
 
         override suspend fun release(generation: Long): PlaybackResult<Unit> {
             releaseCalls++
