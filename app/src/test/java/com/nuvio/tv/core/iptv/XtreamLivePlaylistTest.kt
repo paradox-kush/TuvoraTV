@@ -1,7 +1,6 @@
 package com.nuvio.tv.core.iptv
 
 import com.nuvio.tv.playback.core.PlaybackProfileId
-import com.nuvio.tv.ui.screens.iptv.LiveChannelZapPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
@@ -173,21 +172,18 @@ class XtreamLivePlaylistTest {
         assertEquals("a", list.presentationFor(profile, "a")?.contentId?.value)
     }
 
-    /**
-     * The guide's fullscreen zap and the full player's UP/DOWN are two implementations of one
-     * promise: a channel key means the same thing wherever the viewer pressed it. This is the test
-     * that fails if only one of them is ever changed.
-     */
     @Test
-    fun `the guide policy and the player playlist agree on wrapping`() {
+    fun `relative selection wraps symmetrically for large positive and negative deltas`() {
         val ids = listOf("a", "b", "c", "d")
         val list = playlist(*ids.toTypedArray())
 
         for (id in ids) {
             for (delta in listOf(-5, -3, -1, 1, 3, 5)) {
+                val index = ids.indexOf(id)
+                val targetIndex = ((index + delta) % ids.size + ids.size) % ids.size
                 assertEquals(
                     "from $id by $delta",
-                    LiveChannelZapPolicyBridge.relativeTo(ids, id, delta),
+                    ids[targetIndex],
                     list.relativeTo(profile, id, delta)?.contentId?.value,
                 )
             }
@@ -201,20 +197,4 @@ class XtreamLivePlaylistTest {
     ): XtreamLiveChannelIdentity = requireNotNull(
         XtreamLiveChannelIdentity.from(id, title, logo),
     )
-}
-
-/**
- * The guide's index-based zap policy restated in the playlist's vocabulary (ids), so the two can be
- * compared directly. It delegates and must never grow a wrapping rule of its own — the moment it
- * does, the test above stops proving anything.
- */
-private object LiveChannelZapPolicyBridge {
-    fun relativeTo(ids: List<String>, id: String, delta: Int): String? {
-        val index = ids.indexOf(id)
-        // The playlist answers null for a channel it does not carry; the policy's "enter from the
-        // end you are heading for" rule is for the guide, which always has a list on screen.
-        if (index < 0) return null
-        val target = LiveChannelZapPolicy.targetIndex(index, delta, ids.size) ?: return null
-        return ids.getOrNull(target)
-    }
 }

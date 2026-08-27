@@ -66,9 +66,8 @@ class ArchitectureTest {
 
     private fun rel(path: String) = path.substringAfter("/app/src/main/java/")
 
-    // Clean-slate playback is deliberately being built beside the frozen legacy player. Keep these
-    // predicates path-based so every rule is useful before the first clean source file exists and so
-    // a package cannot evade a boundary by choosing a convenient class name.
+    // Clean playback is isolated from the finite/VOD legacy player. Keep these predicates
+    // path-based so a package cannot evade a boundary by choosing a convenient class name.
     private fun isCleanPlaybackFile(path: String) =
         rel(path).startsWith("com/nuvio/tv/playback/")
 
@@ -84,9 +83,7 @@ class ArchitectureTest {
         return relative.startsWith("com/nuvio/tv/core/player/") ||
             relative.startsWith("com/nuvio/tv/player/") ||
             relative.startsWith("com/nuvio/tv/ui/screens/player/") ||
-            relative.startsWith("com/nuvio/tv/ui/screens/iptv/player/") ||
-            relative.endsWith("/XtreamLiveGuideScreen.kt") ||
-            relative.endsWith("/XtreamLiveGuideViewModel.kt")
+            relative.startsWith("com/nuvio/tv/ui/screens/iptv/player/")
     }
 
     private fun imports(text: String): List<String> =
@@ -290,8 +287,8 @@ class ArchitectureTest {
     }
 
     /**
-     * Parallel construction is isolation, not gradual delegation: the new implementation and the
-     * frozen oracle cannot import one another in either direction.
+     * The production clean implementation and the finite/VOD legacy player cannot import one
+     * another in either direction. Product ingress owners may depend on clean playback contracts.
      */
     @Test
     fun `clean and legacy playback orchestration never depend on each other`() {
@@ -321,7 +318,7 @@ class ArchitectureTest {
             }
         }.sorted()
         assertTrue(
-            "Clean playback and frozen legacy playback must remain isolated until atomic cutover:\n" +
+            "Clean playback and finite/VOD legacy playback must remain isolated:\n" +
                 violations.joinToString("\n"),
             violations.isEmpty(),
         )

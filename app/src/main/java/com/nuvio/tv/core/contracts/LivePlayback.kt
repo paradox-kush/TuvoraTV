@@ -15,9 +15,6 @@ import okhttp3.Dns
 /** DoH-prepared live stream: the (possibly host-rewritten) URL + headers to hand the player. */
 data class PreparedLive(val url: String, val headers: Map<String, String>)
 
-/** A live channel to switch to (D-pad zap target). */
-data class LiveChannelTarget(val id: String, val name: String, val streamUrl: String)
-
 /** The next catch-up URL shape to try after a failed replay attempt. */
 data class CatchUpDialectRetry(val channelName: String, val url: String)
 
@@ -48,15 +45,9 @@ interface CatchUpPlaybackPort {
     fun onFailed(contentId: String?, errorCode: Int): CatchUpDialectRetry?
 }
 
-/** Resolves the next/previous live channel for in-place zapping. */
-interface LiveChannelNavigator {
-    fun relativeChannel(contentId: String, delta: Int): LiveChannelTarget?
-}
-
-/** One injected facade bundling the live/IPTV ports the player needs. */
+/** One injected facade bundling the IPTV ports still used by finite catch-up playback. */
 interface LivePlayback {
     val classifier: IptvContentClassifier
     val dns: PlaybackDnsPort
     val catchUp: CatchUpPlaybackPort
-    val channels: LiveChannelNavigator
 }

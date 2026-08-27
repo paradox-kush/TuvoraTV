@@ -4,9 +4,9 @@ package com.nuvio.tv.ui.screens.player
  * Catch-up is a recording, not a live feed — and the player disagrees by default.
  *
  * `isLiveContentId()` matches any id containing `:live:`, and a replay id keeps that segment, so a
- * recording inherits every live-only behaviour: up/down zaps to another channel mid-programme,
- * backgrounding resumes at the live edge instead of where you were, and the freeze reporter arms
- * against something that cannot freeze. The fix is a flag BESIDE the content type rather than a new
+ * recording inherits live-only behaviour: backgrounding resumes at the live edge instead of where
+ * you were, and the freeze reporter arms against something that cannot freeze. The fix is a flag
+ * BESIDE the content type rather than a new
  * content type — a new type would have to be taught to every one of the dozen places that already
  * key on "live", and would silently break the ones we missed.
  */
@@ -27,10 +27,6 @@ object CatchUpPlaybackPolicy {
         /** A progressive stream with no duration: a flat bar and an honest caption, not a dead handle. */
         NO_SCRUB,
     }
-
-    /** Up/down must not change channel in the middle of a recording. */
-    fun allowsChannelZap(isLive: Boolean, isCatchUpPlayback: Boolean): Boolean =
-        isLive && !isCatchUpPlayback
 
     /** Coming back from the background resumes where the viewer was, not at the live edge. */
     fun allowsLiveEdgeResume(isLive: Boolean, isCatchUpPlayback: Boolean): Boolean =

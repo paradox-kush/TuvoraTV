@@ -622,17 +622,9 @@ fun PlayerScreen(
                     when (keyEvent.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                             if (!uiState.showControls) {
-                                val isLive = CatchUpPlaybackPolicy.allowsChannelZap(
-                                    isLive = uiState.contentType.equals("live", ignoreCase = true),
-                                    isCatchUpPlayback = uiState.isCatchUpPlayback,
-                                )
-                                // On live, UP/DOWN are the channel keys and OK opens the controls —
-                                // the standard live-TV remote split. Pausing a live stream from a
-                                // stray OK press is rarely what was meant. VOD and catch-up (which
-                                // are seekable recordings) keep OK as play/pause.
-                                viewModel.onEvent(
-                                    if (isLive) PlayerEvent.OnToggleControls else PlayerEvent.OnPlayPause
-                                )
+                                // This legacy destination now serves finite/VOD playback only.
+                                // Production linear Live TV owns its remote model in the clean host.
+                                viewModel.onEvent(PlayerEvent.OnPlayPause)
                                 true
                             } else {
                                 // Let the focused button handle it
@@ -656,16 +648,7 @@ fun PlayerScreen(
                             }
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
-                                // Catch-up excluded: up/down must not change channel in the
-                                // middle of a recording (CatchUpPlaybackPolicy.allowsChannelZap).
-                                val isLive = CatchUpPlaybackPolicy.allowsChannelZap(
-                                    isLive = uiState.contentType.equals("live", ignoreCase = true),
-                                    isCatchUpPlayback = uiState.isCatchUpPlayback,
-                                )
-                                if (!uiState.showControls && isLive) {
-                                    // TiViMate-style zap: up = previous channel (in place, same surface).
-                                    viewModel.zapLive(-1)
-                                } else if (!uiState.showControls) {
+                                if (!uiState.showControls) {
                                     viewModel.onEvent(PlayerEvent.OnToggleControls)
                                 } else {
                                     try {
@@ -690,15 +673,7 @@ fun PlayerScreen(
                                 true
                             }
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            val isLive = CatchUpPlaybackPolicy.allowsChannelZap(
-                                isLive = uiState.contentType.equals("live", ignoreCase = true),
-                                isCatchUpPlayback = uiState.isCatchUpPlayback,
-                            )
-                            if (!uiState.showControls && isLive) {
-                                // TiViMate-style zap: down = next channel (in place, same surface).
-                                viewModel.zapLive(1)
-                                true
-                            } else if (!uiState.showControls) {
+                            if (!uiState.showControls) {
                                 viewModel.onEvent(PlayerEvent.OnToggleControls)
                                 true
                             } else {

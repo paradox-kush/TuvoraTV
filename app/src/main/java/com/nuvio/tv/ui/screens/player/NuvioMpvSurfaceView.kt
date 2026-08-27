@@ -1163,8 +1163,8 @@ data class MpvTrack(
 
 /**
  * What the stream info panel needs about the video being decoded, read off the
- * observed-property shadow. ExoPlayer hands the same facts over via `Format`; under
- * libmpv — which every live IPTV stream is forced onto — nothing else reports them.
+ * observed-property shadow. Media3 hands the same facts over via `Format`; under
+ * libmpv nothing else reports them.
  */
 data class MpvVideoSnapshot(
     val width: Int? = null,
@@ -1174,26 +1174,3 @@ data class MpvVideoSnapshot(
     val bitrate: Int? = null,
     val audioBitrate: Int? = null
 )
-
-/**
- * A mounted mpv engine for a feature that is NOT allowed to name the concrete [NuvioMpvSurfaceView]
- * (ArchitectureTest Rule B — only this shell file and PlayerScreen may). Carries the same instance
- * as both the Android [android.view.View] to put in an `AndroidView` and the [MpvSurface] contract
- * to drive it. Built by [createGuideMpvSurface]; `view === surface` so identity comparisons hold.
- *
- * WHY (research/tv-player-mpv-engine-ownership.md): the live-guide feature (`ui/screens/iptv`) needs
- * to run its preview on libmpv for the escalation-only dual-engine path, but the firewall keeps it
- * from reaching into the engine internals — it goes through this seam and the [MpvSurface] contract.
- */
-class GuideMpvHandle internal constructor(
-    val view: android.view.View,
-    val surface: MpvSurface,
-)
-
-/** Rule-B seam: mount + drive the mpv engine from a feature that may not name the concrete view. */
-fun createGuideMpvSurface(context: android.content.Context): GuideMpvHandle {
-    val v = NuvioMpvSurfaceView(context)
-    // The guide preview only ever plays live channels — always take the direct live render path.
-    v.directLiveRenderPath = true
-    return GuideMpvHandle(view = v, surface = v)
-}

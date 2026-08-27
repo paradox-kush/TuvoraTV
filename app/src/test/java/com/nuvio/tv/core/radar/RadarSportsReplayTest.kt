@@ -57,7 +57,7 @@ class RadarSportsReplayTest {
     }
 
     @Test
-    fun `zapping is inert during a sports replay`() = runTest {
+    fun `live recovery is inert during a sports replay`() = runTest {
         val coordinator = coordinator()
         val matcher = matcher(xtreamAccount(), XtreamItemRegistry(), coordinator)
         val session = matcher.beginReplay(matcher.replayFor(match(hasArchive = true), STARTED_FIXTURE)!!)!!
@@ -65,10 +65,6 @@ class RadarSportsReplayTest {
         // Exactly how the player derives the flag for a launched content id.
         val isCatchUpPlayback = coordinator.sessionFor(session.contentId) != null
 
-        assertFalse(
-            "up/down must not change channel during a sports replay",
-            CatchUpPlaybackPolicy.allowsChannelZap(isLive = true, isCatchUpPlayback = isCatchUpPlayback),
-        )
         assertFalse(
             "backgrounding must not resume a sports replay at the live edge",
             CatchUpPlaybackPolicy.allowsLiveEdgeResume(isLive = true, isCatchUpPlayback = isCatchUpPlayback),
@@ -100,10 +96,6 @@ class RadarSportsReplayTest {
         assertNull(
             "a live tune must never create a catch-up session",
             coordinator.sessionFor(liveMatch.channel.contentId),
-        )
-        assertTrue(
-            "zapping must stay available on a live sports tune",
-            CatchUpPlaybackPolicy.allowsChannelZap(isLive = true, isCatchUpPlayback = false),
         )
     }
 

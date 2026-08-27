@@ -72,9 +72,6 @@ class PlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    // Tracks which live channel is on-screen so up/down can resolve the next/previous one.
-    private var currentLiveContentId: String? = savedStateHandle.get<String>("contentId")
-
     init {
         // Release trailer player codec resources so the full-screen player can
         // claim hardware decoders without contention (prevents black screen).
@@ -180,34 +177,6 @@ class PlayerViewModel @Inject constructor(
 
     fun startInitialPlaybackIfNeeded() {
         controller.startInitialPlaybackIfNeeded()
-    }
-
-    /** Zap to the next (delta +1) or previous (delta -1) live channel, in place. */
-    fun zapLive(delta: Int) {
-        val cur = currentLiveContentId ?: return
-        val next = livePlayback.channels.relativeChannel(cur, delta) ?: return
-        currentLiveContentId = next.id
-        viewModelScope.launch {
-            // Resolve FRESH at zap time: Stalker refs carry a blank browse-time URL (create_link
-            // is single-use), and any stored tokenized URL may already be consumed/expired.
-            // Xtream/M3U resolve locally (formula/DB), so this costs nothing for them.
-            val playable = controller.streamRepository.refreshIptvStreamUrl(next.id)
-                ?: next.streamUrl.takeIf { it.isNotBlank() }
-            if (playable.isNullOrBlank()) {
-                android.util.Log.w("PlayerViewModel", "zapLive: no playable URL for ${next.id}")
-                return@launch
-            }
-            // Prepare the DoH-rewritten URL/headers off-main (no-op for system-DNS playlists), then swap.
-            val prepared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                livePlayback.dns.prepareLive(next.id, playable)
-            }
-            controller.switchToLiveChannel(
-                name = next.name,
-                url = prepared.url,
-                extraHeaders = prepared.headers,
-                videoId = next.id
-            )
-        }
     }
 
     fun onEvent(event: PlayerEvent) {

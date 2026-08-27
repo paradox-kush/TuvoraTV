@@ -8,30 +8,13 @@ import org.junit.Test
 
 /**
  * Catch-up is a recording, not a live feed, and the player currently disagrees: the replay id keeps
- * the `:live:` segment, so every live-only behaviour fires on it. These pin the flag that turns
- * each of them off — and, just as importantly, that ordinary live keeps them.
+ * the `:live:` segment, so live-only behaviour fires on it. These pin the flag that turns the
+ * remaining shared-player behaviours off.
  */
 class CatchUpPlaybackPolicyTest {
 
     private val hour = 60 * 60_000L
     private val now = 1_710_000_000_000L
-
-    /** Up/down must not zap to another channel in the middle of a recording. */
-    @Test
-    fun `channel zapping is off during catch-up and on for live`() {
-        assertFalse(
-            "replay must not zap",
-            CatchUpPlaybackPolicy.allowsChannelZap(isLive = true, isCatchUpPlayback = true),
-        )
-        assertTrue(
-            "live still zaps",
-            CatchUpPlaybackPolicy.allowsChannelZap(isLive = true, isCatchUpPlayback = false),
-        )
-        assertFalse(
-            "a movie never zapped",
-            CatchUpPlaybackPolicy.allowsChannelZap(isLive = false, isCatchUpPlayback = false),
-        )
-    }
 
     /** Backgrounding a recording and coming back must resume where you were, not at the live edge. */
     @Test
