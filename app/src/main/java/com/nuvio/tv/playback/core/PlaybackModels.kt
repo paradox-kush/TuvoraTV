@@ -858,6 +858,8 @@ data class PlaybackSnapshot(
     val profile: SessionProfile = SessionProfile.FULLSCREEN,
     val requestSummary: RequestSummary? = null,
     val graph: PlaybackGraph? = null,
+    /** User/session play intent; remains true while intended playback buffers or recovers. */
+    val playWhenReady: Boolean = false,
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
     val isReconnecting: Boolean = false,

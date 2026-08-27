@@ -1468,7 +1468,36 @@ object PlaybackStateMachine {
     private fun transition(
         state: PlaybackMachineState,
         vararg actions: PlaybackAction,
-    ): PlaybackTransition = PlaybackTransition(state, actions.toList())
+    ): PlaybackTransition = PlaybackTransition(state.withDerivedPlayIntent(), actions.toList())
+
+    private fun PlaybackMachineState.withDerivedPlayIntent(): PlaybackMachineState {
+        val stateCarriesIntent = when (snapshot.state) {
+            PlaybackState.RESOLVING,
+            PlaybackState.SELECTING_GRAPH,
+            PlaybackState.ATTACHING_SURFACE,
+            PlaybackState.STARTING_PRIMARY,
+            PlaybackState.PLAYING,
+            PlaybackState.DEGRADED,
+            PlaybackState.RECOVERING_IN_PLACE,
+            PlaybackState.HANDING_OFF_ONCE,
+            PlaybackState.LIVE_RECONNECTING,
+            -> true
+            PlaybackState.RELEASING -> afterRelease in setOf(
+                AfterRelease.START_NEW_REQUEST,
+                AfterRelease.REBUILD_CURRENT_GRAPH,
+                AfterRelease.RESELECT_GRAPH,
+                AfterRelease.HANDOFF,
+            )
+            PlaybackState.IDLE,
+            PlaybackState.STOPPED,
+            PlaybackState.FAILED,
+            -> false
+        }
+        val derived = sessionActive && lifecycleActive && !paused && stateCarriesIntent
+        return if (snapshot.playWhenReady == derived) this else {
+            copy(snapshot = snapshot.copy(playWhenReady = derived))
+        }
+    }
 
     private fun unchanged(state: PlaybackMachineState): PlaybackTransition = PlaybackTransition(state)
 }

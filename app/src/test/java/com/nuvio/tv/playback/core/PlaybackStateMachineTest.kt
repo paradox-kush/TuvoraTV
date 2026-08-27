@@ -39,6 +39,77 @@ class PlaybackStateMachineTest {
     }
 
     @Test
+    fun `play intent is derived across startup pause buffering reconnect lifecycle and stop`() {
+        val tune = PlaybackStateMachine.reduce(
+            PlaybackMachineState(),
+            PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN),
+        )
+        assertTrue(tune.state.snapshot.playWhenReady)
+
+        val playing = playingState(ContentType.LIVE)
+        val buffering = PlaybackStateMachine.reduce(
+            playing,
+            PlaybackEvent.BufferingStarted(playing.snapshot.generation),
+        )
+        assertTrue(buffering.state.snapshot.playWhenReady)
+        assertTrue(buffering.state.snapshot.isBuffering)
+
+        val paused = PlaybackStateMachine.reduce(buffering.state, PlaybackCommand.Pause)
+        assertFalse(paused.state.snapshot.playWhenReady)
+        val resumed = PlaybackStateMachine.reduce(paused.state, PlaybackCommand.Resume)
+        assertTrue(resumed.state.snapshot.playWhenReady)
+
+        val reconnecting = PlaybackStateMachine.reduce(
+            playing,
+            PlaybackEvent.PlaybackEnded(playing.snapshot.generation, PlaybackEndReason.EOF),
+        )
+        assertEquals(PlaybackState.LIVE_RECONNECTING, reconnecting.state.snapshot.state)
+        assertTrue(reconnecting.state.snapshot.playWhenReady)
+
+        val handoff = PlaybackStateMachine.reduce(
+            playing,
+            PlaybackEvent.Failed(
+                playing.snapshot.generation,
+                PlaybackFailure(
+                    FailureCode.VIDEO_DECODER_FAILED,
+                    FailureDomain.VIDEO_DECODER,
+                    FailurePhase.PLAYBACK,
+                    Retryability.HANDOFF_ELIGIBLE,
+                    deterministic = true,
+                ),
+            ),
+        )
+        assertEquals(PlaybackState.HANDING_OFF_ONCE, handoff.state.snapshot.state)
+        assertTrue(handoff.state.snapshot.playWhenReady)
+
+        val inactive = PlaybackStateMachine.reduce(
+            playing,
+            PlaybackReducerInput.LifecycleChanged(active = false),
+        )
+        assertFalse(inactive.state.snapshot.playWhenReady)
+        val release = assertAction<PlaybackAction.ReleaseActiveWork>(inactive)
+        val suspended = PlaybackStateMachine.reduce(
+            inactive.state,
+            PlaybackReducerInput.BarrierCompleted(release.releaseEpoch),
+        )
+        assertFalse(suspended.state.snapshot.playWhenReady)
+        val active = PlaybackStateMachine.reduce(
+            suspended.state,
+            PlaybackReducerInput.LifecycleChanged(active = true),
+        )
+        assertTrue(active.state.snapshot.playWhenReady)
+
+        assertFalse(
+            PlaybackStateMachine.reduce(playing, PlaybackCommand.Stop)
+                .state.snapshot.playWhenReady,
+        )
+        assertFalse(
+            PlaybackStateMachine.reduce(playing, PlaybackCommand.Release)
+                .state.snapshot.playWhenReady,
+        )
+    }
+
+    @Test
     fun `first audio never claims video playback success before a rendered frame`() {
         val starting = startingState(ContentType.LIVE, SessionProfile.FULLSCREEN)
         val withVideo = PlaybackStateMachine.reduce(
