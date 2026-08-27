@@ -82,5 +82,9 @@ if [ ! -d mpv ]; then
 	git clone https://github.com/mpv-player/mpv
 	git -C mpv checkout --detach "$v_mpv"
 fi
+mpv_present_patch="$(pwd)/../patches/mpv-presented-video-frame-count.patch"
+if ! git -C mpv apply --reverse --check "$mpv_present_patch" 2>/dev/null; then
+	git -C mpv apply "$mpv_present_patch"
+fi
 
 cd ..

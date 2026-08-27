@@ -438,26 +438,29 @@ val forkedMedia3Hashes = mapOf(
     "lib-extractor-release.aar" to "a4f9513a30e6e54c1bda6a1e31bb5b9fcfab5285885baa971a7958193d35f30a",
 )
 
-val mpvReferenceArtifact = configurations.detachedConfiguration(
-    dependencies.create("io.github.abdallahmehiz:mpv-android-lib:0.1.12")
-).apply {
-    isTransitive = false
-}
+val forkedMpvHashes = mapOf(
+    "lib-mpv-release.aar" to "44747a57bef59979d32ab2b28d9b582cb05e91684d53f1bdf5f120183b380a8b",
+)
 
 val verifyPlaybackEngineArtifacts by tasks.registering {
     group = "verification"
-    description = "Verifies the pinned Media3 fork and libmpv reference artifacts."
-    inputs.files(forkedMedia3Hashes.keys.map { layout.projectDirectory.file("libs/$it") })
+    description = "Verifies the pinned Media3 and libmpv fork artifacts."
+    inputs.files(
+        (forkedMedia3Hashes.keys + forkedMpvHashes.keys)
+            .map { layout.projectDirectory.file("libs/$it") },
+    )
     doLast {
         forkedMedia3Hashes.forEach { (name, expected) ->
             val artifact = layout.projectDirectory.file("libs/$name").asFile
             check(artifact.isFile) { "Missing forked Media3 artifact: ${artifact.path}" }
             check(artifact.sha256() == expected) { "Unexpected SHA-256 for $name" }
         }
-
-        val mpvArtifact = mpvReferenceArtifact.singleFile
-        check(mpvArtifact.sha256() == "bb1a007c545cc7ac3304293ae79866b5361a48449ee7648c4030d5355869effc") {
-            "Unexpected SHA-256 for mpv-android-lib:0.1.12"
+        forkedMpvHashes.forEach { (name, expected) ->
+            val artifact = layout.projectDirectory.file("libs/$name").asFile
+            check(artifact.isFile) { "Missing forked libmpv artifact: ${artifact.path}" }
+            check(artifact.sha256() == expected) {
+                "Unexpected SHA-256 for $name"
+            }
         }
     }
 }
@@ -633,7 +636,7 @@ dependencies {
     implementation("androidx.media3:media3-effect:$approvedMedia3Version")
     // Local nextlib-mediainfo fork (static FFmpeg; no libav*.so in final AAR)
     implementation(files("libs/nextlib-mediainfo-local.aar"))
-    implementation("io.github.abdallahmehiz:mpv-android-lib:0.1.12")
+    implementation(files("libs/lib-mpv-release.aar"))
     implementation("dev.chrisbanes.haze:haze-android:0.7.3") {
         exclude(group = "org.jetbrains.compose.ui")
         exclude(group = "org.jetbrains.compose.foundation")

@@ -126,20 +126,22 @@ class ArchitectureTest {
     // ── mpv-engine seam (research/tv-player-mpv-engine-ownership.md, Part A, D5) ──────────────────
 
     /**
-     * Rule A — libmpv containment. Only the mpv engine shell may name the `is.xyz.mpv` bindings /
-     * BaseMPVView, so libmpv calls can never be sprayed into controller files (by us or a merge).
+     * Rule A — libmpv containment. Only the frozen legacy mpv engine shell/package and the clean
+     * playback.mpv adapter may name the `is.xyz.mpv` bindings / BaseMPVView, so libmpv calls can
+     * never be sprayed into controllers, UI, or the engine-neutral clean core.
      * Matches the backtick-quoted `is` package reference — the plain string `"is.xyz.mpv.MPVActivity.result"`
      * (an Intent action for the *external* mpv-android app in ExternalPlayerResultContract) is not a
      * binding use and is correctly ignored.
      */
     @Test
-    fun `only the mpv engine shell names libmpv`() {
+    fun `only mpv adapter boundaries name libmpv`() {
         assertProductionFilesCollected()
         // The shell (declares the SurfaceView) + the fork-owned engine package (extracted internals:
         // property shadow, and later the ctl queue / lifecycle) are the only places libmpv is named.
         fun isEnginePackage(rel: String) =
             rel == "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt" ||
-                rel.startsWith("com/nuvio/tv/player/mpv/")
+                rel.startsWith("com/nuvio/tv/player/mpv/") ||
+                rel.startsWith("com/nuvio/tv/playback/mpv/")
         val libmpvRef = Regex("`is`\\.xyz\\.mpv|\\bBaseMPVView\\b")
         val violations = files
             .filter { (p, _) -> !isEnginePackage(rel(p)) }
@@ -147,8 +149,8 @@ class ArchitectureTest {
             .map { (p, _) -> rel(p) }
             .sorted()
         assertTrue(
-            "Only the mpv engine shell (NuvioMpvSurfaceView.kt) may name libmpv (`is.xyz.mpv` / " +
-                "BaseMPVView). Route through MpvSurface instead:\n" + violations.joinToString("\n"),
+            "Only the legacy mpv shell/package and clean playback.mpv adapter may name libmpv " +
+                "(`is.xyz.mpv` / BaseMPVView):\n" + violations.joinToString("\n"),
             violations.isEmpty(),
         )
     }

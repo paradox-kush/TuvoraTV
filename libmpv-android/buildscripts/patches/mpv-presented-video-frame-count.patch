@@ -1,0 +1,87 @@
+diff --git a/player/command.c b/player/command.c
+index 5e09ac3d78..b9a8a1077f 100644
+--- a/player/command.c
++++ b/player/command.c
+@@ -773,6 +773,18 @@ static int mp_property_frame_drop_vo(void *ctx, struct m_property *prop,
+     return m_property_int_ro(action, arg, vo_get_drop_count(mpctx->video_out));
+ }
+ 
++static int mp_property_presented_video_frame_count(void *ctx,
++                                                    struct m_property *prop,
++                                                    int action, void *arg)
++{
++    MPContext *mpctx = ctx;
++    if (!mpctx->vo_chain)
++        return M_PROPERTY_UNAVAILABLE;
++
++    return m_property_int_ro(action, arg,
++                             vo_get_presented_frame_count(mpctx->video_out));
++}
++
+ static int mp_property_vo_delayed_frame_count(void *ctx, struct m_property *prop,
+                                               int action, void *arg)
+ {
+@@ -4404,6 +4416,7 @@ static const struct m_property mp_properties_base[] = {
+     {"display-height", mp_property_display_resolution},
+     {"decoder-frame-drop-count", mp_property_frame_drop_dec},
+     {"frame-drop-count", mp_property_frame_drop_vo},
++    {"presented-video-frame-count", mp_property_presented_video_frame_count},
+     {"vo-delayed-frame-count", mp_property_vo_delayed_frame_count},
+     {"percent-pos", mp_property_percent_pos},
+     {"time-start", mp_property_time_start},
+@@ -4624,6 +4637,7 @@ static const char *const *const mp_event_property_change[] = {
+       "vsync-ratio", "estimated-display-fps", "vsync-jitter", "sub-text",
+       "secondary-sub-text", "audio-bitrate", "video-bitrate", "sub-bitrate",
+       "decoder-frame-drop-count", "frame-drop-count", "video-frame-info",
++      "presented-video-frame-count",
+       "vf-metadata", "af-metadata", "sub-start", "sub-end", "secondary-sub-start",
+       "secondary-sub-end", "video-out-params", "video-dec-params", "video-params",
+       "deinterlace-active", "video-target-params"),
+diff --git a/video/out/vo.c b/video/out/vo.c
+index 9455bb0710..fefb7eb26e 100644
+--- a/video/out/vo.c
++++ b/video/out/vo.c
+@@ -162,6 +162,7 @@ struct vo_internal {
+ 
+     int64_t delayed_count;
+     int64_t drop_count;
++    int64_t presented_frame_count;
+     bool dropped_frame;             // the previous frame was dropped
+ 
+     struct vo_frame *current_frame; // last frame queued to the VO
+@@ -1042,6 +1043,8 @@ static bool render_frame(struct vo *vo)
+         mp_mutex_lock(&in->lock);
+         in->dropped_frame = prev_drop_count < vo->in->drop_count;
+         in->rendering = false;
++        if (!in->dropped_frame && !frame->repeat)
++            in->presented_frame_count += 1;
+ 
+         update_vsync_timing_after_swap(vo, &vsync);
+     }
+@@ -1256,6 +1259,14 @@ int64_t vo_get_drop_count(struct vo *vo)
+     return r;
+ }
+ 
++int64_t vo_get_presented_frame_count(struct vo *vo)
++{
++    mp_mutex_lock(&vo->in->lock);
++    int64_t r = vo->in->presented_frame_count;
++    mp_mutex_unlock(&vo->in->lock);
++    return r;
++}
++
+ void vo_increment_drop_count(struct vo *vo, int64_t n)
+ {
+     mp_mutex_lock(&vo->in->lock);
+diff --git a/video/out/vo.h b/video/out/vo.h
+index a98b0f9496..24352cdccd 100644
+--- a/video/out/vo.h
++++ b/video/out/vo.h
+@@ -543,6 +543,7 @@ void vo_seek_reset(struct vo *vo);
+ void vo_destroy(struct vo *vo);
+ void vo_set_paused(struct vo *vo, bool paused);
+ int64_t vo_get_drop_count(struct vo *vo);
++int64_t vo_get_presented_frame_count(struct vo *vo);
+ void vo_increment_drop_count(struct vo *vo, int64_t n);
+ int64_t vo_get_delayed_count(struct vo *vo);
+ void vo_query_formats(struct vo *vo, uint8_t *list);

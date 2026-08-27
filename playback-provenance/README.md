@@ -42,15 +42,25 @@ because `io.github.peerless2012:ass-media:0.4.0` declares `media3-effect:1.8.0` 
 
 ## libmpv wrapper and native engine
 
-- Published artifact: `io.github.abdallahmehiz:mpv-android-lib:0.1.12`
+- Upstream base artifact: `io.github.abdallahmehiz:mpv-android-lib:0.1.12`
 - Wrapper source: `https://github.com/abdallahmehiz/mpv-android`
 - Wrapper tag/revision: `v0.1.12` / `96c3507c5fc8eedbf5fff458101cad794392eca7`
 - Vendored source: `libmpv-android/`
-- Reference AAR SHA-256: `bb1a007c545cc7ac3304293ae79866b5361a48449ee7648c4030d5355869effc`
+- Consumed fork AAR: `app/libs/lib-mpv-release.aar`
+- Consumed fork AAR SHA-256: `44747a57bef59979d32ab2b28d9b582cb05e91684d53f1bdf5f120183b380a8b`
 
 The former `libmpv-android` entry was an orphaned gitlink with no `.gitmodules` mapping and did not
-provide source ownership. It has been replaced by the exact wrapper source snapshot. Moving native
-dependencies in the upstream release recipe are pinned in `buildscripts/include/depinfo.sh`:
+provide source ownership. It has been replaced by the exact wrapper source snapshot and a minimal
+Nuvio-owned fork. The fork adds affirmative surface attach/detach and native-core destroy results,
+keeps destroy idempotent before or after native initialization, releases the retained Java Surface
+reference only after detach/core termination is proven, and exposes a monotonic
+`presented-video-frame-count` only after a non-dropped, non-repeat VO `flip_page` completes. The mpv
+core addition is reproducibly carried by
+`buildscripts/patches/mpv-presented-video-frame-count.patch`; it is not inferred from decoder
+output, reconfiguration, restart, or estimated frame rate. The wrapper also fixes its upstream
+`getPropertyLong` bridge to return an actual Java/JNI 64-bit value rather than truncating through
+`Integer`. Moving native dependencies in the
+upstream release recipe are pinned in `buildscripts/include/depinfo.sh`:
 
 | Native input | Revision embedded in the reference AAR |
 | --- | --- |
@@ -78,21 +88,22 @@ The final command builds armv7 plus the wrapper AAR at
 
 The vendored `write_versions.sh` uses the Android NDK's `llvm-strings` and host-neutral Perl
 replacement instead of Linux-only `readelf` column parsing and `sed -i` behavior. A complete macOS
-build with NDK `29.0.14206865` and Java 17 succeeded on 2026-08-26. Its release AAR SHA-256 was
-`4a5b666982e77820bdb6e2a0dded42f5fab733bd0ab4a70d7f4ffdf2ee6f9561`.
+build of the fork for all four ABIs with NDK `29.0.14206865` and Java 17 succeeded on 2026-08-26.
+The checked-in release AAR is now the consumed and Gradle-verified artifact; the upstream Maven AAR
+is no longer on the runtime classpath because it cannot provide the required release/surface/frame
+proof APIs.
 
-That locally rebuilt AAR is source-equivalent but intentionally not recorded as byte-identical to
-the published artifact. Both archives contain the same 56 paths and all four ABIs expose the same
-mpv revision, `mediacodec_embed`, and GPU/GPU-next paths. The published archive embeds its original
-per-ABI February 2026 compile times and unstripped NDK `libc++_shared.so` debug sections; the local
-Android Gradle release build embeds its own compile times and strips those debug sections. These
-non-runtime differences change whole-file hashes. Release consumption therefore remains pinned to
-the published AAR hash above, while the vendored recipe proves source ownership and feature parity.
-
-Static inspection of the published AAR proves that every shipped ABI (`arm64-v8a`, `armeabi-v7a`,
+Static inspection of the fork AAR proves that every shipped ABI (`arm64-v8a`, `armeabi-v7a`,
 `x86`, `x86_64`) contains both `vo_mediacodec_embed` and `vo=gpu` support. This proves build-time
 DIRECT capability, not device/runtime eligibility; the clean adapter and Fire TV/Onn tests remain
 the authority for enabling `MPV_DIRECT` or guide `MPV_RENDER`.
+
+The clean libmpv adapter admits ordinary `SYSTEM`/`FOLLOW` requests with the exact default network
+contract. It fails closed for redirect rejection, application-owned DNS, auth-bearing requests that
+require cross-host stripping, non-null total-call timeout, and independent custom connect/read
+timeouts because libmpv/FFmpeg cannot enforce those contracts exactly. An explicit `PRESERVE`
+authorization request is admitted. Raw mpv/FFmpeg logging is disabled because native messages may
+contain provider URLs; only normalized adapter facts cross the clean diagnostic boundary.
 
 ## Verification commands
 

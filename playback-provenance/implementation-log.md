@@ -118,7 +118,35 @@ WP4 — Media3 adapter, affirmative resource barriers, and real-device harness.
 - Made the wrapper metadata generator portable across Linux and macOS hosts.
 - Rebuilt all four libmpv ABIs and packaged the wrapper release AAR from the vendored recipe.
 
+### WP5 — clean libmpv adapter (outside production routes)
+
+- Forked the pinned 0.1.12 wrapper with affirmative surface attach/detach and core-destroy results.
+  Destroy joins the event thread only when initialization actually started it, deletes retained
+  Surface/global Java references, and returns success only after `mpv_terminate_destroy` completes.
+- Added the reproducible mpv-core `presented-video-frame-count` patch. The counter advances only
+  after a successful VO flip for a non-dropped, non-repeat frame and is the adapter's first-frame
+  and continuing rendered-frame authority.
+- Added a serialized, generation-bound, facts-only `playback.mpv` adapter with typed END_FILE
+  mapping, track/byte/cache/decoder facts, DIRECT and RENDER graph spelling, secret-safe plans,
+  TLS verification, release-proof surface leases, and initiate-once release/hard-abort awaiting.
+- Kept recovery, retry, link refresh, compatibility history, settings, and engine handoff out of
+  the adapter. Production routes remain on the frozen legacy player.
+- Fails closed for libmpv request guarantees it cannot exactly enforce: redirect rejection,
+  application DNS, cross-host auth stripping, total call timeout, and independent custom
+  connect/read timeouts. Explicit auth preservation remains eligible.
+- Rebuilt all four native ABIs and switched runtime consumption from the upstream Maven artifact to
+  the checked local fork AAR (`44747a57bef59979d32ab2b28d9b582cb05e91684d53f1bdf5f120183b380a8b`).
+- Corrected the upstream `getPropertyLong` JNI bridge, which previously truncated INT64 properties
+  through Java `Integer`; watchdog frame counters now remain truthful across their full lifetime.
+
 ## Tests run
+
+- Focused WP5 libmpv adapter gate — 11 plan/engine tests passed; production and test Kotlin
+  compilation passed against the first fork artifact. Final fork verification/compile rerun follows
+  the lifecycle-proof rebuild below.
+- Vendored WP5 libmpv native rebuild — mpv core rebuilt for armv7, arm64, x86, and x86_64; wrapper
+  JNI/AAR `assembleDebug` and `assembleRelease` passed after the final attach/detach/destroy proof
+  changes.
 
 - Media3 fork acknowledgement tests — 12 parameterized cases passed across preload/per-stream
   combinations for normal release, retained release acknowledgement, and video-output detach.

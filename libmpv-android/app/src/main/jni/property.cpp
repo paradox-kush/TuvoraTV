@@ -13,6 +13,7 @@ extern "C" {
     jni_func(jint, setOptionString, jstring option, jstring value);
 
     jni_func(jobject, getPropertyInt, jstring property);
+    jni_func(jobject, getPropertyLong, jstring property);
     jni_func(void, setPropertyInt, jstring property, jint value);
     jni_func(jobject, getPropertyDouble, jstring property);
     jni_func(void, setPropertyDouble, jstring property, jdouble value);
@@ -75,6 +76,14 @@ jni_func(jobject, getPropertyInt, jstring jproperty) {
     if (common_get_property(env, ctx, jproperty, MPV_FORMAT_INT64, &value) < 0)
         return NULL;
     return env->NewObject(java_Integer, java_Integer_init, (jint)value);
+}
+
+jni_func(jobject, getPropertyLong, jstring jproperty) {
+    MpvContext *ctx = get_context(env, obj);
+    int64_t value = 0;
+    if (common_get_property(env, ctx, jproperty, MPV_FORMAT_INT64, &value) < 0)
+        return NULL;
+    return env->NewObject(java_Long, java_Long_init, (jlong)value);
 }
 
 jni_func(jobject, getPropertyDouble, jstring jproperty) {

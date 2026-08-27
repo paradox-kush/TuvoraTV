@@ -37,6 +37,7 @@ class MPV {
     external fun nativeCreate(appctx: Context)
     external fun nativeInit()
     external fun nativeDestroy()
+    external fun nativeDestroyWithResult(): Boolean
 
     fun create(appctx: Context) {
         nativeCreate(appctx)
@@ -52,8 +53,18 @@ class MPV {
         nativeDestroy()
     }
 
+    /** True only after the event thread and native mpv core have terminated. */
+    fun destroyWithResult(): Boolean {
+        destroySession()
+        return nativeDestroyWithResult()
+    }
+
     external fun attachSurface(surface: Surface)
+    /** True only when native mpv accepted and retained the supplied output surface. */
+    external fun attachSurfaceWithResult(surface: Surface): Boolean
     external fun detachSurface()
+    /** True only after video output is deconfigured and native surface ownership is cleared. */
+    external fun detachSurfaceWithResult(): Boolean
 
     external fun command(vararg cmd: String)
     external fun commandNode(vararg cmd: String): MPVNode?
@@ -63,6 +74,7 @@ class MPV {
     external fun grabThumbnail(dimension: Int): Bitmap?
 
     external fun getPropertyInt(property: String): Int?
+    external fun getPropertyLong(property: String): Long?
     external fun setPropertyInt(property: String, value: Int)
     external fun getPropertyDouble(property: String): Double?
     external fun setPropertyDouble(property: String, value: Double)
@@ -77,7 +89,6 @@ class MPV {
     fun setPropertyFloat(property: String, value: Float) =
         setPropertyDouble(property, value.toDouble())
 
-    fun getPropertyLong(property: String) = getPropertyInt(property)?.toLong()
     fun setPropertyLong(property: String, value: Long) = setPropertyInt(property, value.toInt())
 
     external fun observeProperty(property: String, format: Int)
@@ -441,4 +452,3 @@ class MPV {
         const val MPV_LOG_LEVEL_TRACE: Int = 70
     }
 }
-

@@ -25,6 +25,7 @@ extern "C" {
     jni_func(void, nativeCreate, jobject appctx);
     jni_func(void, nativeInit);
     jni_func(void, nativeDestroy);
+    jni_func(jboolean, nativeDestroyWithResult);
 
     jni_func(void, command, jobjectArray jarray);
     jni_func(jobject, commandNode, jobjectArray jarray);
@@ -87,22 +88,32 @@ jni_func(void, nativeInit) {
     ctx->event_thread_request_exit = false;
     if (pthread_create(&ctx->event_thread_id, NULL, event_thread, ctx) != 0)
         die("thread create failed");
+    ctx->event_thread_started = true;
     pthread_setname_np(ctx->event_thread_id, "event_thread");
 }
 
-jni_func(void, nativeDestroy) {
+static bool destroy_native_context(JNIEnv *env, jobject obj) {
     MpvContext *ctx = get_context(env, obj);
     if (!ctx || !ctx->mpv) {
         ALOGV("mpv destroy called but it's already destroyed");
-        return;
+        return true;
     }
 
     // poke event thread and wait for it to exit
-    ctx->event_thread_request_exit = true;
-    mpv_wakeup(ctx->mpv);
-    pthread_join(ctx->event_thread_id, NULL);
+    if (ctx->event_thread_started) {
+        ctx->event_thread_request_exit = true;
+        mpv_wakeup(ctx->mpv);
+        pthread_join(ctx->event_thread_id, NULL);
+        ctx->event_thread_started = false;
+    }
 
     mpv_terminate_destroy(ctx->mpv);
+
+    // Surface ownership is proven ended by core termination even when an earlier detach failed.
+    if (ctx->surface) {
+        env->DeleteGlobalRef(ctx->surface);
+        ctx->surface = NULL;
+    }
 
     // Delete global reference to Java instance
     if (ctx->java_instance) {
@@ -111,6 +122,15 @@ jni_func(void, nativeDestroy) {
 
     delete ctx;
     set_context(env, obj, nullptr);
+    return true;
+}
+
+jni_func(void, nativeDestroy) {
+    destroy_native_context(env, obj);
+}
+
+jni_func(jboolean, nativeDestroyWithResult) {
+    return destroy_native_context(env, obj) ? JNI_TRUE : JNI_FALSE;
 }
 
 jni_func(void, command, jobjectArray jarray) {
