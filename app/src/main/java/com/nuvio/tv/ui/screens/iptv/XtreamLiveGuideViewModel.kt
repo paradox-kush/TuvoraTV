@@ -102,6 +102,38 @@ data class LiveGuideUiState(
     val focusedChannel: GuideChannel? get() = channels.firstOrNull { it.contentId == focusedChannelId }
 }
 
+/** Immutable authority carried by account-scoped guide work across suspension points. */
+internal data class LiveGuideAccountCommitToken(
+    val accountId: String,
+    val generation: Long,
+)
+
+/**
+ * Latest-account-wins fence. Cancellation keeps provider switches cheap; this token is the
+ * correctness boundary when an HTTP or storage implementation returns after cancellation.
+ */
+internal class LiveGuideAccountCommitFence {
+    private var accountId: String? = null
+    private var generation = 0L
+
+    fun activate(nextAccountId: String): LiveGuideAccountCommitToken {
+        require(nextAccountId.isNotBlank()) { "Guide account id must not be blank" }
+        if (accountId != nextAccountId) {
+            check(generation < Long.MAX_VALUE) { "Guide account generation exhausted" }
+            generation += 1
+            accountId = nextAccountId
+        }
+        return LiveGuideAccountCommitToken(nextAccountId, generation)
+    }
+
+    fun capture(expectedAccountId: String): LiveGuideAccountCommitToken? =
+        expectedAccountId.takeIf { it == accountId }
+            ?.let { LiveGuideAccountCommitToken(it, generation) }
+
+    fun accepts(token: LiveGuideAccountCommitToken): Boolean =
+        token.accountId == accountId && token.generation == generation
+}
+
 /**
  * Drives the TiViMate-style Live TV guide: category column -> channel list with now/next EPG
  * -> clean live playback selected by stable channel identity. Channels register in the registry;
@@ -166,6 +198,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     private var account: XtreamAccount? = null
+    private val accountCommitFence = LiveGuideAccountCommitFence()
+    private var categoriesJob: Job? = null
     private var channelsJob: Job? = null
     private var epgFocusJob: Job? = null
     private val epgRequested = mutableSetOf<Int>()
@@ -187,6 +221,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
     fun setAccount(acc: XtreamAccount) {
         if (acc == account) return
         val sameAccount = acc.id == account?.id
+        val accountToken = accountCommitFence.activate(acc.id)
+        if (!sameAccount) {
+            // Provider work is allowed to ignore coroutine cancellation at an HTTP/storage
+            // boundary. Cancel eagerly for the cheap path, then fence every later commit with the
+            // captured account generation so an old provider can never repaint or republish the
+            // new provider's guide.
+            categoriesJob?.cancel()
+            categoriesJob = null
+            channelsJob?.cancel()
+            channelsJob = null
+            epgFocusJob?.cancel()
+            epgFocusJob = null
+        }
         account = acc
         // Warm this account's OWN whole guide (xmltv.php), so the store rung has something to serve
         // and the per-channel asks stop. On the ingest's own scope — never this ViewModel's, which
@@ -206,10 +253,16 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 val selectedId = _uiState.value.selectedCategoryId
                 if (visible.none { it.id == selectedId }) {
                     // The selected category just got deselected: fall back to "All channels".
-                    selectCategory(visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id ?: visible.firstOrNull()?.id)
+                    selectCategoryFor(
+                        acc = acc,
+                        categoryId = visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
+                            ?: visible.firstOrNull()?.id,
+                        force = false,
+                        token = accountToken,
+                    )
                 } else if (selectedId == ALL_ID) {
                     // Still on "All channels": refresh the displayed list under the new selections.
-                    selectCategory(selectedId, force = true)
+                    selectCategoryFor(acc, selectedId, force = true, token = accountToken)
                 }
             }
             return
@@ -235,11 +288,18 @@ class XtreamLiveGuideViewModel @Inject constructor(
         categoriesCache[acc.id]?.let { full ->
             val visible = filteredCategories(acc, full)
             _uiState.update { it.copy(categories = visible) }
-            selectCategory(visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id ?: visible.firstOrNull()?.id)
+            selectCategoryFor(
+                acc = acc,
+                categoryId = visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
+                    ?: visible.firstOrNull()?.id,
+                force = false,
+                token = accountToken,
+            )
             return
         }
-        viewModelScope.launch {
+        categoriesJob = viewModelScope.launch {
             val cats = clientFactory.clientFor(acc).liveCategories(acc).getOrDefault(emptyList())
+            if (!isCurrentAccount(accountToken)) return@launch
             val full = buildList {
                 add(GuideCategory("__fav", "Favorites", GuideSpecial.FAVORITES))
                 add(GuideCategory("__recent", "Recent", GuideSpecial.RECENT))
@@ -250,7 +310,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
             val visible = filteredCategories(acc, full)
             _uiState.update { it.copy(categories = visible) }
             // Default to "All channels" so the guide isn't empty for a fresh account.
-            selectCategory(visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id ?: visible.firstOrNull()?.id)
+            selectCategoryFor(
+                acc = acc,
+                categoryId = visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
+                    ?: visible.firstOrNull()?.id,
+                force = false,
+                token = accountToken,
+            )
         }
     }
 
@@ -261,6 +327,17 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     fun selectCategory(categoryId: String?, force: Boolean = false) {
         val acc = account ?: return
+        val token = accountCommitFence.capture(acc.id) ?: return
+        selectCategoryFor(acc, categoryId, force, token)
+    }
+
+    private fun selectCategoryFor(
+        acc: XtreamAccount,
+        categoryId: String?,
+        force: Boolean,
+        token: LiveGuideAccountCommitToken,
+    ) {
+        if (!isCurrentAccount(token)) return
         val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
         if (!force && categoryId == _uiState.value.selectedCategoryId && _uiState.value.channels.isNotEmpty()) return
         // force=true is only ever user-driven (the error row's Retry, a category-selection edit):
@@ -272,9 +349,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // + loadingChannels spinner flash on revisit. (FAVORITES/RECENT stay dynamic — not cached here.)
         if (category.special == null || category.special == GuideSpecial.ALL) {
             channelsCache["${acc.id}|${categoryId}"]?.let { cached ->
-                publishPlaybackLineup(cached)
+                if (!publishPlaybackLineup(acc.id, token, cached)) return
                 _uiState.update { it.copy(selectedCategoryId = categoryId, channels = cached, loadingChannels = false, error = null, focusedChannelId = cached.firstOrNull()?.contentId) }
-                primeEpgFor(cached)
+                if (isCurrentAccount(token)) primeEpgFor(cached)
                 return
             }
         }
@@ -297,6 +374,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     ?.take(ALL_CAP)
                 null -> retryOnce { fetchChannels(acc, category.id) }
             }
+            if (!isCurrentAccount(token)) return@launch
             if (channels == null) {
                 _uiState.update {
                     it.copy(loadingChannels = false, error = "Provider error loading \"${category.name}\" — re-select to retry")
@@ -308,22 +386,35 @@ class XtreamLiveGuideViewModel @Inject constructor(
             if ((category.special == null || category.special == GuideSpecial.ALL) && channels.isNotEmpty()) {
                 channelsCache["${acc.id}|${category.id}"] = channels
             }
-            publishPlaybackLineup(channels)
+            if (!publishPlaybackLineup(acc.id, token, channels)) return@launch
             _uiState.update { it.copy(channels = channels, loadingChannels = false, focusedChannelId = channels.firstOrNull()?.contentId) }
-            primeEpgFor(channels)
+            if (isCurrentAccount(token)) primeEpgFor(channels)
         }
     }
 
     /** Publishes a profile-fenced URL-free lineup before the clean guide can select or zap. */
-    private fun publishPlaybackLineup(channels: List<GuideChannel>) {
-        val profileId = profileManager.activeProfileId.value.takeIf { it > 0 } ?: return
+    private fun publishPlaybackLineup(
+        accountId: String,
+        token: LiveGuideAccountCommitToken,
+        channels: List<GuideChannel>,
+    ): Boolean {
+        if (!isCurrentAccount(token) || token.accountId != accountId) return false
+        val accountPrefix = XtreamItemRegistry.accountPrefix(accountId)
+        if (channels.any { !it.contentId.startsWith(accountPrefix) }) return false
+        val profileId = profileManager.activeProfileId.value.takeIf { it > 0 } ?: return false
         livePlaylist.set(
             profileId = PlaybackProfileId(profileId.toString()),
             channels = channels.mapNotNull { channel ->
                 XtreamLiveChannelIdentity.from(channel.contentId, channel.name, channel.logo)
             },
         )
+        return true
     }
+
+    private fun isCurrentAccount(token: LiveGuideAccountCommitToken): Boolean =
+        accountCommitFence.accepts(token) &&
+            account?.id == token.accountId &&
+            _uiState.value.accountId == token.accountId
 
     /**
      * Prime now/next for a category that has just been shown. The first channel is marked focused

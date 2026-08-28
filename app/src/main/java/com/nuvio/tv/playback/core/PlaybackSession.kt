@@ -10,6 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -17,7 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -154,9 +155,21 @@ class PlaybackSession(
         )
     }
 
-    suspend fun release() {
+    suspend fun release() = coroutineScope {
+        val alreadyStopped = snapshot.value.state == PlaybackState.STOPPED
+        val releaseCompletion = if (alreadyStopped) {
+            null
+        } else {
+            // Subscribe before dispatch and ignore the current snapshot. A pre-existing FAILED
+            // snapshot is not proof that this Release command completed its adapter barrier.
+            async(start = CoroutineStart.UNDISPATCHED) {
+                snapshot.drop(1).first {
+                    it.state == PlaybackState.STOPPED || it.state == PlaybackState.FAILED
+                }
+            }
+        }
         dispatch(PlaybackCommand.Release)
-        snapshot.filter { it.state == PlaybackState.STOPPED || it.state == PlaybackState.FAILED }.first()
+        releaseCompletion?.await()
         sessionJob.cancelAndJoin()
         lane.close()
     }
@@ -193,7 +206,7 @@ class PlaybackSession(
         if (engineStartAccepted) {
             check(engineAttempt < Long.MAX_VALUE) { "Playback engine attempt exhausted" }
             engineAttempt++
-            engineAttemptGeneration = engineStarting?.generation
+            engineAttemptGeneration = engineStarting.generation
             runtimeMetricsUnavailableAttempt = null
         }
         machine = transition.state
@@ -326,6 +339,12 @@ class PlaybackSession(
             is PlaybackAction.AttachSurface -> attachSurface(action)
             is PlaybackAction.StartGraph -> startGraph(action)
             is PlaybackAction.SetPaused -> setPaused(action)
+            is PlaybackAction.SeekTo -> seekTo(action)
+            is PlaybackAction.SetPlaybackRate -> setPlaybackRate(action)
+            is PlaybackAction.SelectAudioTrack -> selectAudioTrack(action)
+            is PlaybackAction.SelectSubtitleTrack -> selectSubtitleTrack(action)
+            is PlaybackAction.SetSubtitlesEnabled -> setSubtitlesEnabled(action)
+            is PlaybackAction.AttachExternalSubtitle -> attachExternalSubtitle(action)
             is PlaybackAction.ResolvePreferencesChange -> resolveRequirementsChange(
                 generation = action.generation,
                 targetProfile = null,
@@ -643,6 +662,13 @@ class PlaybackSession(
                         graph = action.graph,
                         requirements = effective,
                         startPaused = action.startPaused,
+                        startPositionMs = machine.snapshot.positionMs,
+                        playbackRate = machine.snapshot.playbackRate,
+                        restorationCheckpoint = if (resolvedRequest.request.contentType == ContentType.VOD) {
+                            machine.snapshot.vodCheckpoint(effective.subtitleDelayMs)
+                        } else {
+                            null
+                        },
                     ),
                 )
             }
@@ -657,6 +683,60 @@ class PlaybackSession(
                 engine.setPaused(action.generation, action.paused)
             }
             if (result is PlaybackResult.Failure) fail(action.generation, result.failure)
+        }
+    }
+
+    private fun seekTo(action: PlaybackAction.SeekTo) = engineControl(action.generation) { engine ->
+        engine.seekTo(action.generation, action.positionMs)
+    }
+
+    private fun setPlaybackRate(action: PlaybackAction.SetPlaybackRate) =
+        engineControl(action.generation) { engine ->
+            engine.setPlaybackRate(action.generation, action.rate)
+        }
+
+    private fun selectAudioTrack(action: PlaybackAction.SelectAudioTrack) =
+        engineControl(action.generation) { engine ->
+            engine.selectAudioTrack(action.generation, action.trackId)
+        }
+
+    private fun selectSubtitleTrack(action: PlaybackAction.SelectSubtitleTrack) =
+        engineControl(action.generation) { engine ->
+            engine.selectSubtitleTrack(action.generation, action.trackId)
+        }
+
+    private fun setSubtitlesEnabled(action: PlaybackAction.SetSubtitlesEnabled) =
+        engineControl(action.generation) { engine ->
+            engine.setSubtitlesEnabled(action.generation, action.enabled)
+        }
+
+    private fun attachExternalSubtitle(action: PlaybackAction.AttachExternalSubtitle) =
+        engineControl(action.generation) { engine ->
+            engine.attachExternalSubtitle(action.generation, action.subtitleId)
+        }
+
+    private fun engineControl(
+        generation: Long,
+        operation: suspend (PlaybackEngine) -> PlaybackResult<Unit>,
+    ) {
+        val engine = activeGraph?.let { engineRegistry.engine(it.engine) } ?: return
+        generationScope(generation).launch {
+            val result = safeResult(FailurePhase.PLAYBACK) { operation(engine) }
+            val input = when (result) {
+                is PlaybackResult.Success -> PlaybackReducerInput.ControlApplied(generation)
+                is PlaybackResult.Failure -> {
+                    diagnostics.record(
+                        PlaybackDiagnosticEvent(
+                            generation = generation,
+                            code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                            engine = engine.type,
+                            failure = result.failure,
+                        ),
+                    )
+                    PlaybackReducerInput.ControlRejected(generation, result.failure)
+                }
+            }
+            lane.send(LaneMessage.Reducer(input))
         }
     }
 
@@ -996,6 +1076,13 @@ class PlaybackSession(
                         graph = graph,
                         requirements = effective,
                         startPaused = startPaused,
+                        startPositionMs = machine.snapshot.positionMs,
+                        playbackRate = machine.snapshot.playbackRate,
+                        restorationCheckpoint = if (resolvedRequest.request.contentType == ContentType.VOD) {
+                            machine.snapshot.vodCheckpoint(effective.subtitleDelayMs)
+                        } else {
+                            null
+                        },
                     ),
                 )
             }
@@ -1177,9 +1264,14 @@ class PlaybackSession(
         engineGeneration: Long? = activeGraphGeneration,
     ): PlaybackResult<Unit> {
         if (engine == null) return PlaybackResult.Success(Unit)
+        // A replacement action already owns the next session generation, while the adapter still
+        // owns the graph generation being torn down. Adapter generation checks must receive that
+        // old owner; using the replacement generation makes both graceful release and hard abort
+        // reject as stale and leaves the decoder/surface wedged.
+        val adapterGeneration = engineGeneration ?: generation
         intentionalReleases[engine.type] = setOfNotNull(generation, engineGeneration)
         val graceful = withTimeoutOrNull(releaseTimeoutMs) {
-            safeResult(FailurePhase.RELEASE) { engine.release(generation) }
+            safeResult(FailurePhase.RELEASE) { engine.release(adapterGeneration) }
         }
         if (graceful is PlaybackResult.Success) return graceful
         diagnostics.record(
@@ -1192,7 +1284,7 @@ class PlaybackSession(
         )
 
         val abort = withTimeoutOrNull(releaseTimeoutMs) {
-            safeResult(FailurePhase.RELEASE) { engine.hardAbort(generation) }
+            safeResult(FailurePhase.RELEASE) { engine.hardAbort(adapterGeneration) }
         }
         if (abort is PlaybackResult.Success) return abort
         diagnostics.record(

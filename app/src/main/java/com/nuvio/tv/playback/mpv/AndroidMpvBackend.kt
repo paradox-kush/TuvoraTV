@@ -9,6 +9,14 @@ import com.nuvio.tv.playback.core.PlaybackEndReason
 import com.nuvio.tv.playback.core.PlaybackEngineState
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackResult
+import com.nuvio.tv.playback.core.PlaybackTimelineFacts
+import com.nuvio.tv.playback.core.PlaybackTrackCatalog
+import com.nuvio.tv.playback.core.PlaybackTrackDescriptor
+import com.nuvio.tv.playback.core.PlaybackTrackId
+import com.nuvio.tv.playback.core.PlaybackTrackType
+import com.nuvio.tv.playback.core.ExternalSubtitleId
+import com.nuvio.tv.playback.core.ExternalSubtitleResolver
+import com.nuvio.tv.playback.core.RestorableTrackSelection
 import com.nuvio.tv.playback.core.Retryability
 import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
@@ -37,6 +45,9 @@ internal sealed interface MpvBackendEvent {
         val audioTrackCount: Int,
         val subtitleTrackCount: Int,
     ) : MpvBackendEvent
+    data class TimelineUpdated(val facts: PlaybackTimelineFacts) : MpvBackendEvent
+    data class TrackCatalogUpdated(val catalog: PlaybackTrackCatalog) : MpvBackendEvent
+    data class PlaybackRateChanged(val rate: Float) : MpvBackendEvent
     data object FirstAudio : MpvBackendEvent
     data object FirstVideoFrame : MpvBackendEvent
     data object BufferingStarted : MpvBackendEvent
@@ -65,12 +76,29 @@ internal interface MpvBackend {
     suspend fun attachSurface(lease: MpvSurfaceLease): PlaybackResult<Unit>
     suspend fun start(): PlaybackResult<Unit>
     suspend fun setPaused(paused: Boolean): PlaybackResult<Unit>
+    suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = unsupportedMpvControl()
+    suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = unsupportedMpvControl()
+    suspend fun selectAudioTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMpvControl()
+    suspend fun selectSubtitleTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMpvControl()
+    suspend fun setSubtitlesEnabled(enabled: Boolean): PlaybackResult<Unit> = unsupportedMpvControl()
+    suspend fun attachExternalSubtitle(subtitleId: ExternalSubtitleId): PlaybackResult<Unit> =
+        unsupportedMpvControl()
     suspend fun apply(plan: MpvAdapterPlan): PlaybackResult<Unit>
     suspend fun detachSurface(): PlaybackResult<Unit>
     suspend fun metrics(): PlaybackResult<MpvMetrics>
     suspend fun release(): PlaybackResult<Unit>
     suspend fun hardAbort(): PlaybackResult<Unit>
 }
+
+private fun unsupportedMpvControl(): PlaybackResult.Failure = PlaybackResult.Failure(
+    PlaybackFailure(
+        code = FailureCode.NO_ELIGIBLE_GRAPH,
+        domain = FailureDomain.DEVICE_RESOURCE,
+        phase = FailurePhase.PLAYBACK,
+        retryability = Retryability.FATAL,
+        deterministic = true,
+    ),
+)
 
 internal fun interface MpvBackendFactory {
     suspend fun create(plan: MpvAdapterPlan): PlaybackResult<MpvBackend>
@@ -108,6 +136,7 @@ internal interface MpvNativeObserver {
 
 internal class AndroidMpvBackendFactory(
     context: Context,
+    private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1),
     private val coreFactory: () -> MpvNativeCore = { AndroidMpvNativeCore(MPV()) },
 ) : MpvBackendFactory {
@@ -115,7 +144,7 @@ internal class AndroidMpvBackendFactory(
 
     override suspend fun create(plan: MpvAdapterPlan): PlaybackResult<MpvBackend> =
         PlaybackResult.Success(
-            AndroidMpvBackend(appContext, plan, dispatcher, coreFactory()),
+            AndroidMpvBackend(appContext, plan, dispatcher, coreFactory(), externalSubtitleResolver),
         )
 }
 
@@ -124,6 +153,7 @@ internal class AndroidMpvBackend(
     private var plan: MpvAdapterPlan,
     private val dispatcher: CoroutineDispatcher,
     private val core: MpvNativeCore,
+    private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
 ) : MpvBackend, MpvNativeObserver {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val _events = MutableSharedFlow<MpvBackendEvent>(extraBufferCapacity = 64)
@@ -140,6 +170,13 @@ internal class AndroidMpvBackend(
     private var videoHeight = 0
     private var lastVideoFrameRate: Float? = null
     private var paused = plan.startPaused
+    private var positionMs = plan.startPositionMs
+    private var durationMs: Long? = null
+    private var bufferedDurationMs = 0L
+    private var seekable = false
+    private var trackRevision = 0L
+    private var trackReferences: Map<PlaybackTrackId, MpvTrackReference> = emptyMap()
+    private var restorationApplied = false
     private var releaseTask: kotlinx.coroutines.Deferred<PlaybackResult<Unit>>? = null
 
     override suspend fun attachSurface(lease: MpvSurfaceLease): PlaybackResult<Unit> =
@@ -180,9 +217,20 @@ internal class AndroidMpvBackend(
         try {
             applyRuntime(plan)
             core.setBoolean("pause", plan.startPaused)
+            core.setString("speed", plan.playbackRate.toString())
             paused = plan.startPaused
             lifecycle = MpvBackendLifecycle.LOADING
-            core.command("loadfile", plan.url, "replace")
+            if (plan.startPositionMs > 0) {
+                core.command(
+                    "loadfile",
+                    plan.url,
+                    "replace",
+                    "start=${plan.startPositionMs / 1_000.0}",
+                )
+            } else {
+                core.command("loadfile", plan.url, "replace")
+            }
+            _events.tryEmit(MpvBackendEvent.PlaybackRateChanged(plan.playbackRate))
             PlaybackResult.Success(Unit)
         } catch (_: Throwable) {
             stateFailure(FailurePhase.ENGINE_START)
@@ -198,6 +246,76 @@ internal class AndroidMpvBackend(
         } catch (_: Throwable) {
             stateFailure(FailurePhase.PLAYBACK)
         }
+    }
+
+    override suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = withContext(dispatcher) {
+        if (lifecycle !in activeStates || positionMs < 0) return@withContext stateFailure(FailurePhase.PLAYBACK)
+        runCatching {
+            core.command("seek", (positionMs / 1_000.0).toString(), "absolute+exact")
+            this@AndroidMpvBackend.positionMs = positionMs
+            emitTimelineFacts()
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { stateFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    override suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = withContext(dispatcher) {
+        if (lifecycle !in activeStates || !rate.isFinite() || rate !in 0.25f..4f) {
+            return@withContext stateFailure(FailurePhase.PLAYBACK)
+        }
+        runCatching {
+            core.setString("speed", rate.toString())
+            _events.tryEmit(MpvBackendEvent.PlaybackRateChanged(rate))
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { stateFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    override suspend fun selectAudioTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> =
+        selectTrack(trackId, PlaybackTrackType.AUDIO, "aid")
+
+    override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> =
+        selectTrack(trackId, PlaybackTrackType.SUBTITLE, "sid")
+
+    private suspend fun selectTrack(
+        trackId: PlaybackTrackId,
+        type: PlaybackTrackType,
+        property: String,
+    ): PlaybackResult<Unit> = withContext(dispatcher) {
+        val reference = trackReferences[trackId]
+            ?.takeIf { it.type == type }
+            ?: return@withContext stateFailure(FailurePhase.PLAYBACK)
+        runCatching { core.setString(property, reference.nativeId) }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { stateFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    override suspend fun setSubtitlesEnabled(enabled: Boolean): PlaybackResult<Unit> =
+        withContext(dispatcher) {
+            runCatching { core.setString("sid", if (enabled) "auto" else "no") }.fold(
+                onSuccess = { PlaybackResult.Success(Unit) },
+                onFailure = { stateFailure(FailurePhase.PLAYBACK) },
+            )
+        }
+
+    override suspend fun attachExternalSubtitle(
+        subtitleId: ExternalSubtitleId,
+    ): PlaybackResult<Unit> = withContext(dispatcher) {
+        if (lifecycle !in activeStates) return@withContext stateFailure(FailurePhase.PLAYBACK)
+        val registration = externalSubtitleResolver.resolve(subtitleId)
+            ?: return@withContext stateFailure(FailurePhase.PLAYBACK)
+        runCatching {
+            val command = mutableListOf("sub-add", registration.uri, "select")
+            registration.label?.let(command::add)
+            if (registration.label != null) registration.language?.let(command::add)
+            core.command(*command.toTypedArray())
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { stateFailure(FailurePhase.PLAYBACK) },
+        )
     }
 
     override suspend fun apply(plan: MpvAdapterPlan): PlaybackResult<Unit> = withContext(dispatcher) {
@@ -286,6 +404,10 @@ internal class AndroidMpvBackend(
             if (name == "paused-for-cache") {
                 _events.tryEmit(if (value) MpvBackendEvent.BufferingStarted else MpvBackendEvent.BufferingEnded)
             }
+            if (name == "seekable") {
+                seekable = value
+                emitTimelineFacts()
+            }
         }
     }
 
@@ -295,6 +417,23 @@ internal class AndroidMpvBackend(
             if (name == "audio-pts" && value.isFinite() && !firstAudioSent) {
                 firstAudioSent = true
                 _events.tryEmit(MpvBackendEvent.FirstAudio)
+            }
+            when (name) {
+                "time-pos" -> {
+                    positionMs = (value * 1_000).toLong().coerceAtLeast(0)
+                    emitTimelineFacts()
+                }
+                "duration" -> {
+                    durationMs = (value * 1_000).toLong().takeIf { it >= 0 }
+                    emitTimelineFacts()
+                }
+                "demuxer-cache-duration" -> {
+                    bufferedDurationMs = (value * 1_000).toLong().coerceAtLeast(0)
+                    emitTimelineFacts()
+                }
+                "speed" -> if (value.isFinite() && value.toFloat() in 0.25f..4f) {
+                    _events.tryEmit(MpvBackendEvent.PlaybackRateChanged(value.toFloat()))
+                }
             }
         }
     }
@@ -363,7 +502,12 @@ internal class AndroidMpvBackend(
         core.observeLong("video-params/w")
         core.observeLong("video-params/h")
         core.observeDouble("audio-pts")
+        core.observeDouble("time-pos")
+        core.observeDouble("duration")
+        core.observeDouble("demuxer-cache-duration")
+        core.observeDouble("speed")
         core.observeBoolean("paused-for-cache")
+        core.observeBoolean("seekable")
         core.observeString("hwdec-current")
         core.observeString("video-codec")
         core.observeNode("track-list")
@@ -380,6 +524,21 @@ internal class AndroidMpvBackend(
         includeFrameRate: Boolean = true,
     ) {
         _events.tryEmit(MpvBackendEvent.TracksAvailable(tracks.hasVideo, tracks.audio, tracks.subtitles))
+        trackReferences = tracks.references.associateBy { it.id }
+        trackRevision = if (trackRevision == Long.MAX_VALUE) Long.MAX_VALUE else trackRevision + 1
+        _events.tryEmit(
+            MpvBackendEvent.TrackCatalogUpdated(
+                PlaybackTrackCatalog(
+                    revision = trackRevision,
+                    audio = tracks.audioTracks,
+                    subtitles = tracks.subtitleTracks,
+                    selectedAudioTrackId = tracks.selectedAudioTrackId,
+                    selectedSubtitleTrackId = tracks.selectedSubtitleTrackId,
+                    subtitlesEnabled = tracks.selectedSubtitleTrackId != null,
+                ),
+            ),
+        )
+        restoreTrackSelectionIfReady()
         if (!includeFrameRate) return
         tracks.selectedVideoFrameRate
             ?.takeIf { it != lastVideoFrameRate }
@@ -388,6 +547,55 @@ internal class AndroidMpvBackend(
                 _events.tryEmit(MpvBackendEvent.VideoFrameRateChanged(frameRate))
             }
     }
+
+    private fun emitTimelineFacts() {
+        _events.tryEmit(
+            MpvBackendEvent.TimelineUpdated(
+                PlaybackTimelineFacts(
+                    positionMs = positionMs,
+                    durationMs = durationMs,
+                    bufferedPositionMs = (positionMs + bufferedDurationMs).coerceAtLeast(positionMs),
+                    seekable = seekable,
+                ),
+            ),
+        )
+    }
+
+    private fun restoreTrackSelectionIfReady() {
+        val checkpoint = plan.restorationCheckpoint ?: return
+        if (restorationApplied || trackReferences.isEmpty()) return
+        restorationApplied = true
+        findTrackReference(checkpoint.selectedAudio)?.let { core.setString("aid", it.nativeId) }
+        if (!checkpoint.subtitlesEnabled) {
+            core.setString("sid", "no")
+        } else {
+            findTrackReference(checkpoint.selectedSubtitle)?.let { core.setString("sid", it.nativeId) }
+        }
+    }
+
+    private fun findTrackReference(selection: RestorableTrackSelection?): MpvTrackReference? {
+        selection ?: return null
+        trackReferences[selection.originalId]?.let { exact ->
+            if (exact.type == selection.type) return exact
+        }
+        return trackReferences.values
+            .asSequence()
+            .filter { it.type == selection.type }
+            .map { it to selectionScore(it.descriptor, selection) }
+            .filter { (_, score) -> score > 0 }
+            .maxByOrNull { (_, score) -> score }
+            ?.first
+    }
+
+    private fun selectionScore(
+        candidate: PlaybackTrackDescriptor,
+        selection: RestorableTrackSelection,
+    ): Int =
+        (if (candidate.language == selection.language && selection.language != null) 16 else 0) +
+            (if (candidate.label == selection.label && selection.label != null) 8 else 0) +
+            (if (candidate.mimeType == selection.mimeType && selection.mimeType != null) 4 else 0) +
+            (if (candidate.codec == selection.codec && selection.codec != null) 2 else 0) +
+            (if (candidate.channelCount == selection.channelCount && selection.channelCount != null) 1 else 0)
 
     private fun String.toVideoMimeType(): String? = when (lowercase()) {
         "h264", "avc", "avc1" -> "video/avc"
@@ -513,6 +721,18 @@ internal data class ParsedMpvTracks(
     val audio: Int,
     val subtitles: Int,
     val selectedVideoFrameRate: Float?,
+    val audioTracks: List<PlaybackTrackDescriptor>,
+    val subtitleTracks: List<PlaybackTrackDescriptor>,
+    val selectedAudioTrackId: PlaybackTrackId?,
+    val selectedSubtitleTrackId: PlaybackTrackId?,
+    val references: List<MpvTrackReference>,
+)
+
+internal data class MpvTrackReference(
+    val id: PlaybackTrackId,
+    val nativeId: String,
+    val type: PlaybackTrackType,
+    val descriptor: PlaybackTrackDescriptor,
 )
 
 /** Uses the selected track's demux header; estimated-vf-fps is runtime cadence, not content rate. */
@@ -524,11 +744,44 @@ internal fun parseMpvTracks(node: MPVNode): ParsedMpvTracks {
     }?.get("demux-fps")?.asDouble()?.toFloat()?.takeIf { frameRate ->
         frameRate.isFinite() && frameRate in MIN_CONTENT_FRAME_RATE..MAX_CONTENT_FRAME_RATE
     }
+    val references = mutableListOf<MpvTrackReference>()
+    val audioTracks = mutableListOf<PlaybackTrackDescriptor>()
+    val subtitleTracks = mutableListOf<PlaybackTrackDescriptor>()
+    var selectedAudio: PlaybackTrackId? = null
+    var selectedSubtitle: PlaybackTrackId? = null
+    tracks.forEachIndexed { index, track ->
+        val type = when (track["type"]?.asString()) {
+            "audio" -> PlaybackTrackType.AUDIO
+            "sub" -> PlaybackTrackType.SUBTITLE
+            else -> return@forEachIndexed
+        }
+        val nativeId = track["id"]?.asInt()?.toString() ?: index.toString()
+        val id = PlaybackTrackId("mpv:${type.name.lowercase()}:$nativeId")
+        val descriptor = PlaybackTrackDescriptor(
+            id = id,
+            type = type,
+            label = track["title"]?.asString(),
+            language = track["lang"]?.asString(),
+            codec = track["codec"]?.asString(),
+            forced = track["forced"]?.asBoolean() == true,
+            default = track["default"]?.asBoolean() == true,
+        )
+        references += MpvTrackReference(id, nativeId, type, descriptor)
+        if (type == PlaybackTrackType.AUDIO) audioTracks += descriptor else subtitleTracks += descriptor
+        if (track["selected"]?.asBoolean() == true) {
+            if (type == PlaybackTrackType.AUDIO) selectedAudio = id else selectedSubtitle = id
+        }
+    }
     return ParsedMpvTracks(
         hasVideo = types.any { it == "video" },
         audio = types.count { it == "audio" },
         subtitles = types.count { it == "sub" },
         selectedVideoFrameRate = selectedVideoFrameRate,
+        audioTracks = audioTracks,
+        subtitleTracks = subtitleTracks,
+        selectedAudioTrackId = selectedAudio,
+        selectedSubtitleTrackId = selectedSubtitle,
+        references = references,
     )
 }
 

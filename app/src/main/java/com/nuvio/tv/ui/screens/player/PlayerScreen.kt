@@ -145,6 +145,7 @@ fun PlayerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
+    val activity = context as? android.app.Activity
     // Budget boxes: skip decorative full-res bitmaps around playback (memory pressure).
     val lowRamDevice = remember(context) { com.nuvio.tv.core.util.DeviceClass.isLowRam(context) }
     val containerFocusRequester = remember { FocusRequester() }
@@ -332,7 +333,7 @@ fun PlayerScreen(
     }
 
     // Handle lifecycle events
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, activity) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
@@ -343,6 +344,18 @@ fun PlayerScreen(
                     // VOD stays paused (let the user press play); live channels rejoin the
                     // live edge and resume — a paused live buffer is stale and would stall.
                     viewModel.resumeForLifecycle()
+                }
+                Lifecycle.Event.ON_DESTROY -> {
+                    // Root navigation may save this destination's ViewModel after destroying its
+                    // entry, so onCleared is not a reliable terminal playback boundary.
+                    if (
+                        LegacyPlayerDestinationLifecyclePolicy.shouldRelease(
+                            event = event,
+                            activityIsChangingConfigurations = activity?.isChangingConfigurations == true,
+                        )
+                    ) {
+                        viewModel.stopAndRelease()
+                    }
                 }
                 else -> {}
             }
@@ -378,7 +391,6 @@ fun PlayerScreen(
     }
 
     // Frame rate matching lifecycle.
-    val activity = LocalContext.current as? android.app.Activity
     LaunchedEffect(activity) {
         viewModel.attachHostActivity(activity)
         viewModel.startInitialPlaybackIfNeeded()

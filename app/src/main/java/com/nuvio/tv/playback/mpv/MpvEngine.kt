@@ -12,6 +12,8 @@ import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackGraph
 import com.nuvio.tv.playback.core.PlaybackRequirements
 import com.nuvio.tv.playback.core.PlaybackResult
+import com.nuvio.tv.playback.core.PlaybackTrackId
+import com.nuvio.tv.playback.core.ExternalSubtitleId
 import com.nuvio.tv.playback.core.Retryability
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -141,6 +143,48 @@ class MpvEngine internal constructor(
         backend?.setPaused(paused) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
     }
 
+    override suspend fun seekTo(generation: Long, positionMs: Long): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.seekTo(positionMs) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun setPlaybackRate(generation: Long, rate: Float): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setPlaybackRate(rate) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun selectAudioTrack(
+        generation: Long,
+        trackId: PlaybackTrackId,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.selectAudioTrack(trackId) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun selectSubtitleTrack(
+        generation: Long,
+        trackId: PlaybackTrackId,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.selectSubtitleTrack(trackId) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun setSubtitlesEnabled(
+        generation: Long,
+        enabled: Boolean,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setSubtitlesEnabled(enabled) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun attachExternalSubtitle(
+        generation: Long,
+        subtitleId: ExternalSubtitleId,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.attachExternalSubtitle(subtitleId) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
     override suspend fun applyRequirements(
         generation: Long,
         requirements: PlaybackRequirements,
@@ -213,6 +257,9 @@ class MpvEngine internal constructor(
             is MpvBackendEvent.TracksAvailable -> PlaybackEvent.TracksAvailable(
                 generation, event.hasVideo, event.audioTrackCount, event.subtitleTrackCount,
             )
+            is MpvBackendEvent.TimelineUpdated -> PlaybackEvent.TimelineUpdated(generation, event.facts)
+            is MpvBackendEvent.TrackCatalogUpdated -> PlaybackEvent.TrackCatalogUpdated(generation, event.catalog)
+            is MpvBackendEvent.PlaybackRateChanged -> PlaybackEvent.PlaybackRateChanged(generation, event.rate)
             MpvBackendEvent.FirstAudio -> PlaybackEvent.FirstAudio(generation)
             MpvBackendEvent.FirstVideoFrame -> PlaybackEvent.FirstVideoFrame(generation)
             MpvBackendEvent.BufferingStarted -> PlaybackEvent.BufferingStarted(generation)

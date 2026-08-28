@@ -1,10 +1,12 @@
 package com.nuvio.tv.ui.screens.player
 
 import android.util.Log
+import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.ExoPlaybackException
 import com.nuvio.tv.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
@@ -74,6 +76,8 @@ internal fun PlayerRuntimeController.attemptStartupRecovery(
  * Decoder-init and DRM errors are considered fatal.
  */
 internal fun isRetryablePlaybackError(error: PlaybackException): Boolean {
+    if (error.isDeterministicVideoCapabilityFailure()) return false
+
     return when (error.errorCode) {
         // --- Source / IO errors (the 2xxx range) ---
         PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
@@ -112,6 +116,18 @@ internal fun isRetryablePlaybackError(error: PlaybackException): Boolean {
 
         else -> false
     }
+}
+
+/** A codec capability rejection cannot recover by rebuilding the same graph. */
+internal fun PlaybackException.isDeterministicVideoCapabilityFailure(): Boolean {
+    val exoError = this as? ExoPlaybackException ?: return false
+    val failingMimeType = exoError.rendererFormat?.sampleMimeType
+    if (exoError.type != ExoPlaybackException.TYPE_RENDERER || failingMimeType?.startsWith("video/") != true) {
+        return false
+    }
+    return exoError.rendererFormatSupport == C.FORMAT_EXCEEDS_CAPABILITIES ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
 }
 
 /**

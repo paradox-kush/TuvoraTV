@@ -1,6 +1,9 @@
 package com.nuvio.tv.ui.screens.player
 
+import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.PlaybackException
+import androidx.media3.exoplayer.ExoPlaybackException
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -70,5 +73,21 @@ class AudioTrackFailureClassificationTest {
         assertFalse(
             isAudioTrackFailure(PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, "")
         )
+    }
+
+    @Test
+    fun `video format exceeding decoder capabilities is deterministic and not retryable`() {
+        val error = ExoPlaybackException.createForRenderer(
+            IllegalStateException("decoder rejected profile and level"),
+            "MediaCodecVideoRenderer",
+            0,
+            Format.Builder().setSampleMimeType("video/hevc").build(),
+            C.FORMAT_EXCEEDS_CAPABILITIES,
+            false,
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+        )
+
+        assertTrue(error.isDeterministicVideoCapabilityFailure())
+        assertFalse(isRetryablePlaybackError(error))
     }
 }

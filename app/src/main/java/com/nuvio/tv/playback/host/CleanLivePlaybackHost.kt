@@ -7,6 +7,10 @@ import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackLifecyclePort
 import com.nuvio.tv.playback.core.PlaybackOutputController
 import com.nuvio.tv.playback.core.PlaybackProfileId
+import com.nuvio.tv.playback.core.PlaybackRequest
+import com.nuvio.tv.playback.core.PlaybackTrackId
+import com.nuvio.tv.playback.core.ExternalSubtitleId
+import com.nuvio.tv.playback.core.ExternalSubtitleResolver
 import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ResourceBudget
@@ -47,8 +51,8 @@ internal fun interface CleanMediaSessionOwnerFactory {
 }
 
 /**
- * One TV live-player host: one child scope, one controller, one surface coordinator, and one
- * release authority. It is intentionally not referenced by production navigation yet.
+ * Content-neutral TV playback host internals: one child scope, one controller, one surface
+ * coordinator, and one release authority. Live and VOD wrappers enforce their own ingress rules.
  */
 internal class CleanLivePlaybackHost private constructor(
     private val hostJob: Job,
@@ -90,9 +94,33 @@ internal class CleanLivePlaybackHost private constructor(
         controller.zap(selection, profile)
     }
 
+    suspend fun tuneVod(
+        request: PlaybackRequest,
+        profile: SessionProfile,
+        startPositionMs: Long,
+        metadata: CleanMediaSessionMetadata,
+    ): Long = acceptCommand(metadata) {
+        require(request.contentType == ContentType.VOD) {
+            "Clean VOD playback host accepts VOD requests only"
+        }
+        controller.tune(request, profile, startPositionMs)
+    }
+
     suspend fun pause() = withActiveHost(controller::pause)
     suspend fun resume() = withActiveHost(controller::resume)
     suspend fun retry() = withActiveHost(controller::retry)
+    suspend fun seekTo(positionMs: Long) = withActiveHost { controller.seekTo(positionMs) }
+    suspend fun setPlaybackRate(rate: Float) = withActiveHost { controller.setPlaybackRate(rate) }
+    suspend fun selectAudioTrack(trackId: PlaybackTrackId) = withActiveHost {
+        controller.selectAudioTrack(trackId)
+    }
+    suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) = withActiveHost {
+        controller.selectSubtitleTrack(trackId)
+    }
+    suspend fun disableSubtitles() = withActiveHost(controller::disableSubtitles)
+    suspend fun attachExternalSubtitle(subtitleId: ExternalSubtitleId) = withActiveHost {
+        controller.attachExternalSubtitle(subtitleId)
+    }
     suspend fun changeProfile(profile: SessionProfile) = withActiveHost {
         controller.changeProfile(profile)
     }
@@ -130,8 +158,15 @@ internal class CleanLivePlaybackHost private constructor(
         selection: ProviderPlaybackSelection,
         metadata: CleanMediaSessionMetadata,
         dispatch: suspend () -> Unit,
-    ): Long = withActiveHost {
+    ): Long {
         requireLive(selection)
+        return acceptCommand(metadata, dispatch)
+    }
+
+    private suspend fun acceptCommand(
+        metadata: CleanMediaSessionMetadata,
+        dispatch: suspend () -> Unit,
+    ): Long = withActiveHost {
         val priorGeneration = snapshot.value.generation
         withContext(NonCancellable) {
             dispatch()
@@ -202,6 +237,7 @@ internal class CleanLivePlaybackHost private constructor(
             previewViewport: VideoDimensions? = null,
             resourceBudget: ResourceBudget = ResourceBudget(),
             routedAudioDevice: () -> AudioDeviceInfo? = { null },
+            externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
             applicationLooper: Looper = Looper.getMainLooper(),
             applicationDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
             mediaSessionFactory: CleanMediaSessionOwnerFactory = productionMediaSessionFactory,
@@ -219,6 +255,7 @@ internal class CleanLivePlaybackHost private constructor(
                 previewViewport = previewViewport,
                 resourceBudget = resourceBudget,
                 routedAudioDevice = routedAudioDevice,
+                externalSubtitleResolver = externalSubtitleResolver,
             )
             val controller = try {
                 sessionFactory.create(preferenceProfileId, productionHost)

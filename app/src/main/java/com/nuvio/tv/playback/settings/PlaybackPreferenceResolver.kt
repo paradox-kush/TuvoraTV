@@ -649,6 +649,7 @@ object PlaybackPreferenceResolver {
             // The stable compatibility runtime intentionally excludes the dynamic audio route.
             // Audio failures cannot become engine preference until a route-exact key exists.
             FailureDomain.AUDIO,
+            FailureDomain.SUBTITLE,
             FailureDomain.NETWORK,
             FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
             FailureDomain.TLS,

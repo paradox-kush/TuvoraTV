@@ -1,5 +1,7 @@
 package com.nuvio.tv.playback.wiring
 
+import android.util.Log
+import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.playback.core.PlaybackDiagnosticEvent
 import com.nuvio.tv.playback.core.PlaybackDiagnostics
 import com.nuvio.tv.core.analytics.PostHogPrivacy
@@ -43,7 +45,20 @@ class FormattingPlaybackDiagnostics(
     private val sink: PlaybackDiagnosticSink,
 ) : PlaybackDiagnostics {
     override fun record(event: PlaybackDiagnosticEvent) {
-        sink.capture(PlaybackDiagnosticFormatter.format(event))
+        val formatted = PlaybackDiagnosticFormatter.format(event)
+        // TV's debug flavor is intentionally non-debuggable, so BuildConfig.DEBUG is false.
+        // IS_DEBUG_BUILD tracks the build flavor and keeps secret-safe playback diagnostics
+        // available in simulator/device validation builds only.
+        if (BuildConfig.IS_DEBUG_BUILD) {
+            // The formatter has a closed, secret-free schema: no URL, host, account, provider,
+            // channel, request header, cookie, or DRM value can cross this debug boundary.
+            Log.d(DEBUG_LOG_TAG, "${formatted.eventName} ${formatted.properties}")
+        }
+        sink.capture(formatted)
+    }
+
+    private companion object {
+        const val DEBUG_LOG_TAG = "CleanPlaybackDiag"
     }
 }
 

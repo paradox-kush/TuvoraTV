@@ -47,7 +47,7 @@ class CleanLiveGuideCutoverArchitectureTest {
 
     @Test
     fun `catalog publishes the profile-bound URL-free lineup before exposing channels`() {
-        val networkCommit = catalog.indexOf("publishPlaybackLineup(channels)")
+        val networkCommit = catalog.indexOf("publishPlaybackLineup(acc.id, token, channels)")
         val stateCommit = catalog.indexOf(
             "_uiState.update { it.copy(channels = channels, loadingChannels = false",
             startIndex = networkCommit,
@@ -59,6 +59,41 @@ class CleanLiveGuideCutoverArchitectureTest {
         assertFalse(catalog.contains("fun playPreview("))
         assertFalse(catalog.contains("fun tunePreview("))
         assertFalse(catalog.contains("fun stopPreview("))
+    }
+
+    @Test
+    fun `provider switch cancels account work and fences every asynchronous catalog commit`() {
+        val switch = catalog.indexOf("fun setAccount(acc: XtreamAccount)")
+        val cancelCategories = catalog.indexOf("categoriesJob?.cancel()", startIndex = switch)
+        val cancelChannels = catalog.indexOf("channelsJob?.cancel()", startIndex = switch)
+        val categoryFence = catalog.indexOf(
+            "if (!isCurrentAccount(accountToken)) return@launch",
+            startIndex = cancelChannels,
+        )
+        val channelFence = catalog.indexOf(
+            "if (!isCurrentAccount(token)) return@launch",
+            startIndex = categoryFence,
+        )
+        val publish = catalog.indexOf(
+            "if (!publishPlaybackLineup(acc.id, token, channels)) return@launch",
+            startIndex = channelFence,
+        )
+        val expose = catalog.indexOf(
+            "_uiState.update { it.copy(channels = channels, loadingChannels = false",
+            startIndex = publish,
+        )
+        val epg = catalog.indexOf("primeEpgFor(channels)", startIndex = expose)
+
+        assertTrue(cancelCategories > switch)
+        assertTrue(cancelChannels > cancelCategories)
+        assertTrue(categoryFence > cancelChannels)
+        assertTrue(channelFence > categoryFence)
+        assertTrue(publish > channelFence)
+        assertTrue(expose > publish)
+        assertTrue(epg > expose)
+        assertTrue(catalog.contains("private fun selectCategoryFor("))
+        assertTrue(catalog.contains("account?.id == token.accountId"))
+        assertTrue(catalog.contains("_uiState.value.accountId == token.accountId"))
     }
 
     @Test

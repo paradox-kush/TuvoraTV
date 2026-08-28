@@ -680,6 +680,7 @@ enum class FailureCode {
     VIDEO_RENDERER_FAILED,
     SURFACE_LOST,
     AUDIO_OUTPUT_FAILED,
+    SUBTITLE_OUTPUT_UNSUPPORTED,
     DRM_UNSUPPORTED,
     DRM_LICENSE_FAILED,
     RESOURCE_BUDGET_EXCEEDED,
@@ -698,6 +699,7 @@ enum class FailureDomain {
     VIDEO_DECODER,
     VIDEO_RENDERER_SURFACE,
     AUDIO,
+    SUBTITLE,
     DRM,
     DEVICE_RESOURCE,
     UNKNOWN,
@@ -799,6 +801,18 @@ sealed interface PlaybackEvent {
         val audioTrackCount: Int,
         val subtitleTrackCount: Int,
     ) : PlaybackEvent
+    data class TimelineUpdated(
+        override val generation: Long,
+        val facts: PlaybackTimelineFacts,
+    ) : PlaybackEvent
+    data class TrackCatalogUpdated(
+        override val generation: Long,
+        val catalog: PlaybackTrackCatalog,
+    ) : PlaybackEvent
+    data class PlaybackRateChanged(
+        override val generation: Long,
+        val rate: Float,
+    ) : PlaybackEvent
     data class FirstAudio(override val generation: Long) : PlaybackEvent
     data class FirstVideoFrame(override val generation: Long) : PlaybackEvent
     data class BufferingStarted(override val generation: Long) : PlaybackEvent
@@ -841,6 +855,7 @@ sealed interface PlaybackCommand {
         val request: PlaybackRequest?,
         val profile: SessionProfile,
         val providerSelection: ProviderPlaybackSelection? = null,
+        val startPositionMs: Long = 0,
     ) : PlaybackCommand {
         constructor(selection: ProviderPlaybackSelection, profile: SessionProfile) :
             this(request = null, profile = profile, providerSelection = selection)
@@ -849,6 +864,7 @@ sealed interface PlaybackCommand {
             require((request == null) != (providerSelection == null)) {
                 "Tune requires exactly one concrete request or deferred provider selection"
             }
+            require(startPositionMs >= 0) { "Start position must not be negative" }
         }
 
         val launch: PlaybackLaunch
@@ -861,6 +877,7 @@ sealed interface PlaybackCommand {
         val request: PlaybackRequest?,
         val profile: SessionProfile,
         val providerSelection: ProviderPlaybackSelection? = null,
+        val startPositionMs: Long = 0,
     ) : PlaybackCommand {
         constructor(selection: ProviderPlaybackSelection, profile: SessionProfile) :
             this(request = null, profile = profile, providerSelection = selection)
@@ -869,6 +886,7 @@ sealed interface PlaybackCommand {
             require((request == null) != (providerSelection == null)) {
                 "Zap requires exactly one concrete request or deferred provider selection"
             }
+            require(startPositionMs >= 0) { "Start position must not be negative" }
         }
 
         val launch: PlaybackLaunch
@@ -878,6 +896,20 @@ sealed interface PlaybackCommand {
     data object Pause : PlaybackCommand
     data object Resume : PlaybackCommand
     data object Retry : PlaybackCommand
+    data class SeekTo(val positionMs: Long) : PlaybackCommand {
+        init {
+            require(positionMs >= 0) { "Seek position must not be negative" }
+        }
+    }
+    data class SetPlaybackRate(val rate: Float) : PlaybackCommand {
+        init {
+            require(rate.isFinite() && rate in 0.25f..4f) { "Playback rate must be between 0.25 and 4" }
+        }
+    }
+    data class SelectAudioTrack(val trackId: PlaybackTrackId) : PlaybackCommand
+    data class SelectSubtitleTrack(val trackId: PlaybackTrackId) : PlaybackCommand
+    data object DisableSubtitles : PlaybackCommand
+    data class AttachExternalSubtitle(val subtitleId: ExternalSubtitleId) : PlaybackCommand
     data class PreferencesChanged(val preferences: PlaybackPreferences) : PlaybackCommand
     data class SessionProfileChanged(val profile: SessionProfile) : PlaybackCommand
     data object SurfaceAvailable : PlaybackCommand
@@ -952,11 +984,18 @@ data class PlaybackSnapshot(
     val isReconnecting: Boolean = false,
     val positionMs: Long = 0,
     val durationMs: Long? = null,
+    val bufferedPositionMs: Long = 0,
+    val seekable: Boolean = false,
+    val playbackRate: Float = 1f,
+    val trackCatalog: PlaybackTrackCatalog = PlaybackTrackCatalog(),
+    val completionReason: PlaybackCompletionReason? = null,
     val tracks: TrackSummary = TrackSummary(),
     val progress: PlaybackProgressEvidence = PlaybackProgressEvidence(),
     val videoOutputFacts: VideoOutputFacts = VideoOutputFacts(),
     val playbackOutputStatus: PlaybackOutputStatus = PlaybackOutputStatus.NOT_REQUESTED,
     val failure: PlaybackFailure? = null,
+    /** Non-terminal rejection of a user control; playback remains on the current graph. */
+    val controlFailure: PlaybackFailure? = null,
     val statusCode: PlaybackStatusCode? = null,
     val previewAvailability: PreviewAvailability = PreviewAvailability.Unknown,
     val streamAvailability: StreamAvailability = StreamAvailability.Unknown,
@@ -1046,6 +1085,7 @@ fun isLearnableCompatibilityFailure(domain: FailureDomain?, code: FailureCode?):
             FailureCode.SURFACE_LOST,
         )
         FailureDomain.AUDIO,
+        FailureDomain.SUBTITLE,
         FailureDomain.NETWORK,
         FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
         FailureDomain.TLS,

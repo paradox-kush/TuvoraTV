@@ -14,6 +14,11 @@ import com.nuvio.tv.playback.core.PlaybackEvent
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackRequirements
 import com.nuvio.tv.playback.core.PlaybackResult
+import com.nuvio.tv.playback.core.PlaybackTimelineFacts
+import com.nuvio.tv.playback.core.PlaybackTrackCatalog
+import com.nuvio.tv.playback.core.PlaybackTrackId
+import com.nuvio.tv.playback.core.ExternalSubtitleId
+import com.nuvio.tv.playback.core.VodRestorationCheckpoint
 import com.nuvio.tv.playback.core.Retryability
 import com.nuvio.tv.playback.core.SurfaceMode
 import kotlinx.coroutines.CoroutineScope
@@ -35,6 +40,9 @@ internal sealed interface Media3BackendEvent {
         val audioTrackCount: Int,
         val subtitleTrackCount: Int,
     ) : Media3BackendEvent
+    data class TimelineUpdated(val facts: PlaybackTimelineFacts) : Media3BackendEvent
+    data class TrackCatalogUpdated(val catalog: PlaybackTrackCatalog) : Media3BackendEvent
+    data class PlaybackRateChanged(val rate: Float) : Media3BackendEvent
     data object FirstAudio : Media3BackendEvent
     data object FirstVideoFrame : Media3BackendEvent
     data object BufferingStarted : Media3BackendEvent
@@ -55,8 +63,20 @@ internal sealed interface Media3BackendEvent {
 internal interface Media3Backend {
     val events: Flow<Media3BackendEvent>
     suspend fun attachSurface(lease: Media3SurfaceLease): PlaybackResult<Unit>
-    suspend fun start(paused: Boolean): PlaybackResult<Unit>
+    suspend fun start(
+        paused: Boolean,
+        startPositionMs: Long,
+        playbackRate: Float,
+        restorationCheckpoint: VodRestorationCheckpoint?,
+    ): PlaybackResult<Unit>
     suspend fun setPaused(paused: Boolean): PlaybackResult<Unit>
+    suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = unsupportedMedia3Control()
+    suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = unsupportedMedia3Control()
+    suspend fun selectAudioTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMedia3Control()
+    suspend fun selectSubtitleTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMedia3Control()
+    suspend fun setSubtitlesEnabled(enabled: Boolean): PlaybackResult<Unit> = unsupportedMedia3Control()
+    suspend fun attachExternalSubtitle(subtitleId: ExternalSubtitleId): PlaybackResult<Unit> =
+        unsupportedMedia3Control()
     suspend fun apply(plan: Media3AdapterPlan): PlaybackResult<Unit>
     suspend fun detachSurface(): PlaybackResult<Unit>
 
@@ -65,6 +85,16 @@ internal interface Media3Backend {
     suspend fun hardAbort(): PlaybackResult<Unit>
     suspend fun metrics(): PlaybackResult<Media3DecoderMetrics>
 }
+
+private fun unsupportedMedia3Control(): PlaybackResult.Failure = PlaybackResult.Failure(
+    PlaybackFailure(
+        code = FailureCode.NO_ELIGIBLE_GRAPH,
+        domain = FailureDomain.DEVICE_RESOURCE,
+        phase = FailurePhase.PLAYBACK,
+        retryability = Retryability.FATAL,
+        deterministic = true,
+    ),
+)
 
 internal data class Media3DecoderMetrics(
     val videoRendered: Int,
@@ -191,7 +221,14 @@ class Media3Engine internal constructor(
                 eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     candidate.events.collect { event -> publish(input.generation, event) }
                 }
-                when (val started = candidate.start(input.startPaused)) {
+                when (
+                    val started = candidate.start(
+                        input.startPaused,
+                        input.startPositionMs,
+                        input.playbackRate,
+                        input.restorationCheckpoint,
+                    )
+                ) {
                     is PlaybackResult.Success -> started
                     is PlaybackResult.Failure -> {
                         eventJob?.cancelAndJoin()
@@ -215,6 +252,48 @@ class Media3Engine internal constructor(
     override suspend fun setPaused(generation: Long, paused: Boolean): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
         backend?.setPaused(paused) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun seekTo(generation: Long, positionMs: Long): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.seekTo(positionMs) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun setPlaybackRate(generation: Long, rate: Float): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setPlaybackRate(rate) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun selectAudioTrack(
+        generation: Long,
+        trackId: PlaybackTrackId,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.selectAudioTrack(trackId) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun selectSubtitleTrack(
+        generation: Long,
+        trackId: PlaybackTrackId,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.selectSubtitleTrack(trackId) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun setSubtitlesEnabled(
+        generation: Long,
+        enabled: Boolean,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setSubtitlesEnabled(enabled) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun attachExternalSubtitle(
+        generation: Long,
+        subtitleId: ExternalSubtitleId,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.attachExternalSubtitle(subtitleId) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
     }
 
     override suspend fun applyRequirements(
@@ -329,6 +408,9 @@ class Media3Engine internal constructor(
                 event.audioTrackCount,
                 event.subtitleTrackCount,
             )
+            is Media3BackendEvent.TimelineUpdated -> PlaybackEvent.TimelineUpdated(generation, event.facts)
+            is Media3BackendEvent.TrackCatalogUpdated -> PlaybackEvent.TrackCatalogUpdated(generation, event.catalog)
+            is Media3BackendEvent.PlaybackRateChanged -> PlaybackEvent.PlaybackRateChanged(generation, event.rate)
             Media3BackendEvent.FirstAudio -> PlaybackEvent.FirstAudio(generation)
             Media3BackendEvent.FirstVideoFrame -> PlaybackEvent.FirstVideoFrame(generation)
             Media3BackendEvent.BufferingStarted -> PlaybackEvent.BufferingStarted(generation)

@@ -18,6 +18,7 @@ import com.nuvio.tv.playback.core.RedirectPolicy
 import com.nuvio.tv.playback.core.Retryability
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.core.TransientLoadRetryPolicy
+import com.nuvio.tv.playback.core.VodRestorationCheckpoint
 
 /** Immutable, policy-free spelling of a resolved core graph for libmpv. */
 internal data class MpvAdapterPlan(
@@ -28,6 +29,9 @@ internal data class MpvAdapterPlan(
     val surfaceMode: SurfaceMode,
     val startPaused: Boolean,
     val dnsMode: MpvDnsMode,
+    val startPositionMs: Long = 0,
+    val playbackRate: Float = 1f,
+    val restorationCheckpoint: VodRestorationCheckpoint? = null,
 ) {
     override fun toString(): String =
         "MpvAdapterPlan(scheme=${url.substringBefore(':', "unknown")}, " +
@@ -175,6 +179,9 @@ internal object MpvAdapterPlanFactory {
                     DnsPolicy.SHARED_APPLICATION_RESOLVER ->
                         MpvDnsMode.SYSTEM_FALLBACK_FOR_APPLICATION_DNS
                 },
+                startPositionMs = input.startPositionMs,
+                playbackRate = input.playbackRate,
+                restorationCheckpoint = input.restorationCheckpoint,
             ),
         )
     }

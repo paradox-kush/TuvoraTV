@@ -320,7 +320,12 @@ class Media3EngineTest {
             attachCalls++
             return PlaybackResult.Success(Unit)
         }
-        override suspend fun start(paused: Boolean): PlaybackResult<Unit> {
+        override suspend fun start(
+            paused: Boolean,
+            startPositionMs: Long,
+            playbackRate: Float,
+            restorationCheckpoint: com.nuvio.tv.playback.core.VodRestorationCheckpoint?,
+        ): PlaybackResult<Unit> {
             startCalls++
             eventOnStart?.let(mutableEvents::tryEmit)
             return PlaybackResult.Success(Unit)

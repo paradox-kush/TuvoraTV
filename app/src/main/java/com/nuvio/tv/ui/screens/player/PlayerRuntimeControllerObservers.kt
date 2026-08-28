@@ -464,7 +464,7 @@ internal fun PlayerRuntimeController.loadSavedProgressFor(season: Int?, episode:
 
         progress?.let { saved ->
 
-            if (saved.isInProgress()) {
+            if (shouldRestoreSavedProgress(saved)) {
                 pendingResumeProgress = saved
                 if (isUsingMpvEngine()) {
                     _uiState.update { it.copy(pendingSeekPosition = null) }
@@ -503,7 +503,7 @@ internal suspend fun PlayerRuntimeController.loadSavedProgressSuspend(season: In
     }
 
     progress?.let { saved ->
-        if (saved.isInProgress()) {
+        if (shouldRestoreSavedProgress(saved)) {
             pendingResumeProgress = saved
             Log.d(
                 PlayerRuntimeController.TAG,
@@ -514,6 +514,15 @@ internal suspend fun PlayerRuntimeController.loadSavedProgressSuspend(season: In
         }
     }
 }
+
+/**
+ * Continue Watching intentionally surfaces any real local checkpoint, including one below the
+ * 2% catalog threshold. The player must honor the same contract when the user chooses Resume.
+ */
+internal fun shouldRestoreSavedProgress(saved: com.nuvio.tv.domain.model.WatchProgress): Boolean =
+    !saved.isCompleted() && (
+        saved.position > 0L || saved.progressPercent?.let { it > 0f } == true
+    )
 
 internal fun PlayerRuntimeController.fetchSkipIntervals(id: String?, season: Int?, episode: Int?) {
     if (!skipIntroEnabled) return

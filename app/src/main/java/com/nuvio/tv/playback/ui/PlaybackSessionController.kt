@@ -5,6 +5,8 @@ import com.nuvio.tv.playback.core.PlaybackPreferences
 import com.nuvio.tv.playback.core.PlaybackRequest
 import com.nuvio.tv.playback.core.PlaybackSession
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackTrackId
+import com.nuvio.tv.playback.core.ExternalSubtitleId
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.SessionProfile
 import kotlinx.coroutines.flow.StateFlow
@@ -32,8 +34,18 @@ class PlaybackSessionController internal constructor(
     }
 
     /** Migration-only concrete entry; provider-backed UI should use the deferred overload. */
-    suspend fun tune(request: PlaybackRequest, profile: SessionProfile) {
-        dispatchCommand(PlaybackCommand.Tune(request, profile))
+    suspend fun tune(
+        request: PlaybackRequest,
+        profile: SessionProfile,
+        startPositionMs: Long = 0,
+    ) {
+        dispatchCommand(
+            PlaybackCommand.Tune(
+                request = request,
+                profile = profile,
+                startPositionMs = startPositionMs,
+            ),
+        )
     }
 
     suspend fun zap(selection: ProviderPlaybackSelection, profile: SessionProfile) {
@@ -48,6 +60,16 @@ class PlaybackSessionController internal constructor(
     suspend fun pause() = dispatchCommand(PlaybackCommand.Pause)
     suspend fun resume() = dispatchCommand(PlaybackCommand.Resume)
     suspend fun retry() = dispatchCommand(PlaybackCommand.Retry)
+    suspend fun seekTo(positionMs: Long) = dispatchCommand(PlaybackCommand.SeekTo(positionMs))
+    suspend fun setPlaybackRate(rate: Float) =
+        dispatchCommand(PlaybackCommand.SetPlaybackRate(rate))
+    suspend fun selectAudioTrack(trackId: PlaybackTrackId) =
+        dispatchCommand(PlaybackCommand.SelectAudioTrack(trackId))
+    suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) =
+        dispatchCommand(PlaybackCommand.SelectSubtitleTrack(trackId))
+    suspend fun disableSubtitles() = dispatchCommand(PlaybackCommand.DisableSubtitles)
+    suspend fun attachExternalSubtitle(subtitleId: ExternalSubtitleId) =
+        dispatchCommand(PlaybackCommand.AttachExternalSubtitle(subtitleId))
 
     suspend fun changePreferences(preferences: PlaybackPreferences) {
         dispatchCommand(PlaybackCommand.PreferencesChanged(preferences))

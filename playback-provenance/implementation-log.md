@@ -6,6 +6,18 @@ WP6/WP7 — deferred provider integration, phase recovery, settings, and sequent
 
 ## Changes made
 
+### ONN playlist/channel replacement incident
+
+- Stopped v1.5.9 before tagging after ONN reproduced a frozen guide frame with
+  `GUIDE_RESOURCE_RESTRICTION` during playlist/channel replacement.
+- Corrected the release barrier to address the adapter's still-active graph generation rather than
+  the replacement request's new generation. This applies equally to strict Media3 and libmpv
+  generation ownership.
+- Made terminal session release wait for the result of its own release command, and fenced slow
+  guide catalog/lineup commits by account generation.
+- Added focused regression coverage and the complete evidence/remaining-certification record in
+  `onn-playlist-switch-release-generation-rca-2026-08-27.md`.
+
 ### Compatibility outcome recording
 
 - Added an optional session-owned recording environment and hashed scope seam. Scope keys are
@@ -297,3 +309,94 @@ WP6/WP7 — deferred provider integration, phase recovery, settings, and sequent
 
 Build the isolated debug playback entry point and smoke instrumentation, then certify Media3 on ONN
 and Fire TV sequentially with separate saved IPTV profiles and the device harness.
+## 2026-08-27 — simulator VOD decoder/retry loop found during Live Guide validation
+
+- The API 36 Android TV simulator rejected a 3840x1604 10-bit HEVC VOD track as
+  `NO_EXCEEDS_CAPABILITIES`; `c2.goldfish.hevc.decoder` failed with codec error `0xe`.
+- Subtitle fetching was not the failure. It repeated because every player rebuild fetched subtitle
+  candidates again before failing the same decoder.
+- The legacy VOD handler incorrectly routed a video-renderer failure into an audio fallback ladder,
+  then reset the PCM-attempt flag during initialization, making the ladder unbounded. This ladder
+  will not be expanded: VOD playback ownership is approved to move under the shared clean session.
+- Drawer navigation retained the VOD ViewModel after leaving the player, allowing the queued retry
+  to continue behind the Sports screen.
+- Full RCA: `simulator-vod-retry-loop-rca-2026-08-27.md`.
+- The destination-destroy release is the only temporary legacy containment fix. The existing
+  `PlayerScreen` UX remains, while decoder/retry/engine/source/surface ownership moves completely to
+  `PlaybackSession` through a thin presentation bridge.
+- Release remains stopped pending clean VOD cutover planning, implementation, and simulator
+  revalidation.
+- Grounded the approved boundary in three implementation inputs:
+  `vod-clean-session-responsibility-map-2026-08-27.md`,
+  `vod-clean-session-design-plan-2026-08-27.md`, and
+  `vod-clean-session-implementation-plan-2026-08-27.md`.
+- The plans preserve the existing PlayerScreen experience while making the shared PlaybackSession
+  the sole VOD engine/decoder/recovery/source/surface/lifecycle authority. The production VOD route
+  stays disabled until the missing controls and feature boundaries are implemented and tested below
+  the UI.
+
+## 2026-08-27 — clean VOD foundation implemented below the production route
+
+- Added engine-neutral VOD start/resume position, seek, timeline/buffer/seekability facts,
+  playback-rate commands/facts, stable audio/subtitle catalogs and selection commands, VOD EOF
+  completion, and cross-engine restoration checkpoints.
+- `PlaybackSession` remains the only control/recovery owner. It forwards generation-bound controls,
+  preserves VOD state through graph rebuild/handoff, and records unsupported control failures as
+  non-terminal facts instead of tearing down healthy playback.
+- Media3 and libmpv adapters now expose the same seek/rate/track/timeline command/fact surface.
+- Added a destination-scoped external-subtitle registry. Presentation and snapshots carry only an
+  opaque ID; transport is private, redacted in string output, and cleared after the host release
+  barrier. libmpv uses `sub-add`; Media3 rebuilds its `MediaItem` once at the current position while
+  preserving play intent, because side-loaded subtitle configuration belongs to the media item.
+- Added a VOD host wrapper around the content-neutral clean host internals and an engine-free
+  presentation bridge mapping the existing UI's index-based choices to stable clean track IDs.
+- Focused VOD/core/Media3/libmpv/host/bridge tests passed and TV production/test Kotlin compilation
+  passed. No production VOD route was enabled, so there is no dual playback authority.
+- Platform audit: Mobile/Desktop use separate KMP player runtimes and backend/web have no decoder or
+  surface pipeline; the new clean VOD symbols have no cross-platform twins. This phase is TV-only.
+- Still release-blocking: feature coordinators; subtitle delay/style/autosync capability semantics;
+  generic PlayerScreen output binding; the atomic route cutover and legacy VOD owner removal; full
+  simulator VOD matrix and later ONN/Fire TV certification. VOD is not yet declared migrated.
+
+## 2026-08-27 — VOD current-route regression pass and two startup fixes
+
+- Installed the packaged arm64 debug build on the API 36 Android TV simulator and replayed the IPTV
+  profile's progressive H.264 MP4 with the ONN device/player processes stopped.
+- Confirmed real video output at 1920x800 and preserved the existing full-screen VOD controls.
+- Removed the MediaSession metadata-only placeholder `MediaItem`. It had no URI, caused a caught
+  `DefaultMediaSourceFactory.createMediaSource` NPE during every VOD startup, and let metadata
+  presentation mutate playback ownership. Metadata now rides the real source; post-fix startup has
+  no metadata NPE.
+- Aligned player resume eligibility with Continue Watching. Any positive non-complete checkpoint is
+  now restored, including entries below 2%; final trace restored `439738ms` and advanced from
+  `439s`.
+- Split unsupported Media3 subtitle-delay processing from the audio domain as
+  `SUBTITLE_OUTPUT_UNSUPPORTED/SUBTITLE`; focused taxonomy coverage proves it cannot enter an audio
+  fallback path.
+- Focused VOD resume, Media3 taxonomy, architecture, and compile checks passed. APK packaging passed
+  with one worker and a temporary 6 GiB heap after the default 4 GiB package invocation exhausted
+  Zipflinger heap; code compilation and tests were not the cause.
+- Complete `:app:testFullDebugUnitTest :app:compileFullDebugKotlin` gate passed after the fixes
+  (39 tasks, build successful). `git diff --check` is clean.
+- Cross-platform twin audit found none of the changed TV MediaSession, resume-eligibility, or clean
+  subtitle-failure symbols in Mobile, Desktop, backend, or web. Those platforms use different
+  player/runtime boundaries, so no applicable port exists for this explicitly TV-only work.
+- Simulator playback was force-stopped after proof to release the one-connection provider slot.
+- Release remains stopped: this validates and repairs the current route but does not replace the
+  legacy VOD ownership. Atomic clean-session cutover, feature-coordinator parity, surface binding,
+  and the unsupported 4K HEVC recovery matrix remain open.
+
+## 2026-08-27 — unsupported 4K VOD loop made terminal
+
+- Reproduced the failure on the API 36 TV simulator with a 3840x2160 HEVC Matroska VOD. Media3
+  reported `NO_EXCEEDS_CAPABILITIES`; `c2.goldfish.hevc.decoder` failed with codec error `0xe`.
+- Deleted the legacy generic decoding-error branch that routed a video-renderer failure through
+  audio fallback. Explicit audio-track failures retain their bounded audio fallback behavior.
+- Added deterministic video capability classification for renderer formats that are unsupported
+  or exceed device capability and excluded those failures from same-graph retry.
+- Added unit coverage proving a video renderer `FORMAT_EXCEEDS_CAPABILITIES` failure is terminal.
+- Simulator validation after the correction recorded one subtitle fetch, one player
+  initialization, and one decoder failure followed by a stable playback-error screen; there was no
+  repeated `Starting stream` / `Fetching subtitles` cycle.
+- This is a narrow deletion of invalid cross-domain recovery, not a new legacy recovery ladder.
+  Release remains stopped pending the approved clean VOD session cutover and its certification.

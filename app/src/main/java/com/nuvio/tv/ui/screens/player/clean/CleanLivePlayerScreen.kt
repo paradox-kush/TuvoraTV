@@ -468,6 +468,7 @@ internal object CleanLivePlayerUiPolicy {
         -> R.string.clean_live_error_video
         FailureCode.SURFACE_LOST -> R.string.clean_live_error_surface
         FailureCode.AUDIO_OUTPUT_FAILED -> R.string.clean_live_error_audio
+        FailureCode.SUBTITLE_OUTPUT_UNSUPPORTED -> R.string.clean_live_error_stream_format
         FailureCode.DRM_UNSUPPORTED,
         FailureCode.DRM_LICENSE_FAILED,
         -> R.string.clean_live_error_drm

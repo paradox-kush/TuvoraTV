@@ -5,6 +5,9 @@ import android.content.res.AssetManager
 import android.view.Surface
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.SurfaceMode
+import com.nuvio.tv.playback.core.ExternalSubtitleId
+import com.nuvio.tv.playback.core.ExternalSubtitleRegistration
+import com.nuvio.tv.playback.core.ExternalSubtitleResolver
 import `is`.xyz.mpv.MPVNode
 import io.mockk.every
 import io.mockk.mockk
@@ -105,6 +108,32 @@ class AndroidMpvBackendTest {
     }
 
     @Test
+    fun `opaque external subtitle resolves privately and attaches once`() = runTest {
+        val core = FakeCore()
+        val id = ExternalSubtitleId("subtitle-1")
+        val registration = ExternalSubtitleRegistration(
+            uri = "https://subtitle.example/private.srt?token=secret",
+            mimeType = "application/x-subrip",
+            language = "en",
+            label = "English",
+        )
+        val backend = backend(core, ExternalSubtitleResolver { requested ->
+            registration.takeIf { requested == id }
+        })
+        assertSuccess(backend.attachSurface(FakeLease()))
+        assertSuccess(backend.start())
+
+        assertSuccess(backend.attachExternalSubtitle(id))
+
+        assertEquals(
+            listOf("sub-add", registration.uri, "select", "English", "en"),
+            core.commands.single { it.firstOrNull() == "sub-add" },
+        )
+        assertTrue(!id.toString().contains("subtitle-1"))
+        assertTrue(!registration.toString().contains("token=secret"))
+    }
+
+    @Test
     fun `audio presentation and video codec properties publish factual events`() = runTest {
         val core = FakeCore()
         val backend = backend(core)
@@ -162,7 +191,10 @@ class AndroidMpvBackendTest {
         )
     }
 
-    private fun TestScope.backend(core: FakeCore): AndroidMpvBackend {
+    private fun TestScope.backend(
+        core: FakeCore,
+        externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
+    ): AndroidMpvBackend {
         val files = File(System.getProperty("java.io.tmpdir"), "mpv-backend-${System.nanoTime()}").apply { mkdirs() }
         File(files, "cacert.pem").writeText("test-ca")
         val assetManager = mockk<AssetManager> {
@@ -185,6 +217,7 @@ class AndroidMpvBackendTest {
             ),
             StandardTestDispatcher(testScheduler),
             core,
+            externalSubtitleResolver,
         )
     }
 
@@ -234,6 +267,7 @@ class AndroidMpvBackendTest {
         var initializeCalls = 0
         var attachCalls = 0
         var loadFileCalls = 0
+        val commands = mutableListOf<List<String>>()
         override fun create(context: Context) { createCalls++ }
         override fun setOption(name: String, value: String) = true
         override fun initialize() { initializeCalls++ }
@@ -250,6 +284,7 @@ class AndroidMpvBackendTest {
         }
         override fun detachSurfaceWithResult() = detachResult
         override fun command(vararg values: String) {
+            commands += values.toList()
             if (values.firstOrNull() == "loadfile") loadFileCalls++
         }
         override fun setString(name: String, value: String) = Unit

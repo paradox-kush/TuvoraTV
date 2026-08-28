@@ -99,6 +99,10 @@ data class PlaybackEngineStart(
     val graph: PlaybackGraph,
     val requirements: PlaybackRequirements,
     val startPaused: Boolean,
+    /** Applied before playback starts so VOD rebuilds never flash from position zero. */
+    val startPositionMs: Long = 0,
+    val playbackRate: Float = 1f,
+    val restorationCheckpoint: VodRestorationCheckpoint? = null,
 )
 
 /**
@@ -127,6 +131,20 @@ interface PlaybackEngine {
     suspend fun detachSurface(generation: Long): PlaybackResult<Unit>
     suspend fun start(input: PlaybackEngineStart): PlaybackResult<Unit>
     suspend fun setPaused(generation: Long, paused: Boolean): PlaybackResult<Unit>
+    suspend fun seekTo(generation: Long, positionMs: Long): PlaybackResult<Unit> =
+        unsupportedPlaybackControl()
+    suspend fun setPlaybackRate(generation: Long, rate: Float): PlaybackResult<Unit> =
+        unsupportedPlaybackControl()
+    suspend fun selectAudioTrack(generation: Long, trackId: PlaybackTrackId): PlaybackResult<Unit> =
+        unsupportedPlaybackControl()
+    suspend fun selectSubtitleTrack(generation: Long, trackId: PlaybackTrackId): PlaybackResult<Unit> =
+        unsupportedPlaybackControl()
+    suspend fun setSubtitlesEnabled(generation: Long, enabled: Boolean): PlaybackResult<Unit> =
+        unsupportedPlaybackControl()
+    suspend fun attachExternalSubtitle(
+        generation: Long,
+        subtitleId: ExternalSubtitleId,
+    ): PlaybackResult<Unit> = unsupportedPlaybackControl()
     suspend fun applyRequirements(
         generation: Long,
         requirements: PlaybackRequirements,
@@ -145,6 +163,16 @@ interface PlaybackEngine {
      */
     suspend fun hardAbort(generation: Long): PlaybackResult<Unit>
 }
+
+private fun unsupportedPlaybackControl(): PlaybackResult.Failure = PlaybackResult.Failure(
+    PlaybackFailure(
+        code = FailureCode.NO_ELIGIBLE_GRAPH,
+        domain = FailureDomain.DEVICE_RESOURCE,
+        phase = FailurePhase.PLAYBACK,
+        retryability = Retryability.FATAL,
+        deterministic = true,
+    ),
+)
 
 fun interface PlaybackEngineRegistry {
     fun engine(type: EngineType): PlaybackEngine?

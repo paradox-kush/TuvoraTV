@@ -20,6 +20,7 @@ import com.nuvio.tv.playback.core.EvidenceFact
 import com.nuvio.tv.playback.core.EvidenceProvenance
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
+import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.FrameRatePreference
 import com.nuvio.tv.playback.core.GraphOutputProfile
 import com.nuvio.tv.playback.core.HdrPreference
@@ -236,6 +237,24 @@ class Media3AdapterPlanTest {
         val drm = Media3FailureMapper.map(PlaybackException.ERROR_CODE_DRM_SCHEME_UNSUPPORTED)
         assertEquals(FailureCode.DRM_UNSUPPORTED, drm.code)
         assertTrue(drm.deterministic)
+    }
+
+    @Test
+    fun `unsupported subtitle delay never enters the audio failure domain`() {
+        val subtitle = media3UnsupportedProcessingFailure(
+            plan(requirements = requirements().copy(subtitleDelayMs = 250)),
+            FailurePhase.ENGINE_START,
+        )
+        assertEquals(FailureCode.SUBTITLE_OUTPUT_UNSUPPORTED, subtitle?.failure?.code)
+        assertEquals(FailureDomain.SUBTITLE, subtitle?.failure?.domain)
+        assertTrue(subtitle?.failure?.deterministic == true)
+
+        val audio = media3UnsupportedProcessingFailure(
+            plan(requirements = requirements().copy(audioDelayMs = 250)),
+            FailurePhase.ENGINE_START,
+        )
+        assertEquals(FailureCode.AUDIO_OUTPUT_FAILED, audio?.failure?.code)
+        assertEquals(FailureDomain.AUDIO, audio?.failure?.domain)
     }
 
     private fun plan(

@@ -1,12 +1,15 @@
 package com.nuvio.tv.playback.media3
 
 import android.content.Context
+import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
@@ -42,6 +45,15 @@ import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackEngineState
 import com.nuvio.tv.playback.core.PlaybackResult
+import com.nuvio.tv.playback.core.PlaybackTimelineFacts
+import com.nuvio.tv.playback.core.PlaybackTrackCatalog
+import com.nuvio.tv.playback.core.PlaybackTrackDescriptor
+import com.nuvio.tv.playback.core.PlaybackTrackId
+import com.nuvio.tv.playback.core.PlaybackTrackType
+import com.nuvio.tv.playback.core.ExternalSubtitleId
+import com.nuvio.tv.playback.core.ExternalSubtitleResolver
+import com.nuvio.tv.playback.core.RestorableTrackSelection
+import com.nuvio.tv.playback.core.VodRestorationCheckpoint
 import com.nuvio.tv.playback.core.ProxyMode
 import com.nuvio.tv.playback.core.Retryability
 import com.nuvio.tv.playback.core.TransientLoadRetryPolicy
@@ -53,7 +65,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -109,6 +128,7 @@ internal class AndroidMedia3BackendFactory(
     private val sharedClientTlsPolicy: TlsPolicy = TlsPolicy.STRICT,
     private val playerDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val releaseController: Media3ReleaseController = ForkMedia3ReleaseController,
+    private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
 ) : Media3BackendFactory {
     private val applicationContext = context.applicationContext
 
@@ -138,14 +158,8 @@ internal class AndroidMedia3BackendFactory(
             }
             // The common contract asks for these effects, but Media3 exposes no reliable generic
             // in-place implementation. Refuse them instead of silently ignoring user intent.
-            if (plan.downmixToStereo || plan.normalization || plan.audioDelayMs != 0L || plan.subtitleDelayMs != 0L) {
-                return@withContext failure(
-                    FailureCode.AUDIO_OUTPUT_FAILED,
-                    FailureDomain.AUDIO,
-                    FailurePhase.ENGINE_START,
-                    Retryability.HANDOFF_ELIGIBLE,
-                    deterministic = true,
-                )
+            media3UnsupportedProcessingFailure(plan, FailurePhase.ENGINE_START)?.let {
+                return@withContext it
             }
 
             runCatching { build(plan, applicationDns) }.fold(
@@ -307,6 +321,7 @@ internal class AndroidMedia3BackendFactory(
             playerDispatcher,
             releaseController,
             plan,
+            externalSubtitleResolver,
         )
     }
 
@@ -458,12 +473,13 @@ private class ContractRenderersFactory(
 @UnstableApi
 private class AndroidMedia3Backend(
     private val player: ExoPlayer,
-    private val mediaItem: MediaItem,
+    private var mediaItem: MediaItem,
     private val calls: TrackingCallRegistry,
     private val byteProgress: Media3ByteProgressSignal,
     private val dispatcher: CoroutineDispatcher,
     private val releaseController: Media3ReleaseController,
     private var plan: Media3AdapterPlan,
+    private val externalSubtitleResolver: ExternalSubtitleResolver,
 ) : Media3Backend {
     private val _events = MutableSharedFlow<Media3BackendEvent>(extraBufferCapacity = 64)
     override val events: Flow<Media3BackendEvent> = _events.asSharedFlow()
@@ -473,6 +489,12 @@ private class AndroidMedia3Backend(
     private var terminalSuppressed = false
     private var released = false
     private var playerReleased = false
+    private val factScope = CoroutineScope(SupervisorJob() + dispatcher)
+    private var timelineJob: Job? = null
+    private var trackRevision = 0L
+    private var trackReferences: Map<PlaybackTrackId, Media3TrackReference> = emptyMap()
+    private var currentTrackCatalog = PlaybackTrackCatalog()
+    private var pendingRestoration: VodRestorationCheckpoint? = null
     private val releaseGate = Media3ReleaseProofGate(
         initiateRelease = { releaseController.releaseWithProof(player) },
         awaitRelease = { releaseController.awaitReleaseWithProof(player) },
@@ -507,6 +529,8 @@ private class AndroidMedia3Backend(
                     subtitleTrackCount = groups.filter { it.type == C.TRACK_TYPE_TEXT }.sumOf { it.length },
                 ),
             )
+            publishTrackCatalog(tracks)
+            restoreTrackSelectionIfReady()
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -580,13 +604,23 @@ private class AndroidMedia3Backend(
         )
     }
 
-    override suspend fun start(paused: Boolean): PlaybackResult<Unit> = withContext(dispatcher) {
+    override suspend fun start(
+        paused: Boolean,
+        startPositionMs: Long,
+        playbackRate: Float,
+        restorationCheckpoint: VodRestorationCheckpoint?,
+    ): PlaybackResult<Unit> = withContext(dispatcher) {
         if (released || surface == null) return@withContext backendFailure(FailurePhase.ENGINE_START)
         runCatching {
             terminalSuppressed = false
+            pendingRestoration = restorationCheckpoint
             player.setMediaItem(mediaItem)
+            if (startPositionMs > 0) player.seekTo(startPositionMs)
+            player.playbackParameters = PlaybackParameters(playbackRate)
             player.prepare()
             player.playWhenReady = !paused
+            _events.tryEmit(Media3BackendEvent.PlaybackRateChanged(playbackRate))
+            startTimelineFacts()
         }.fold(
             onSuccess = { PlaybackResult.Success(Unit) },
             onFailure = { backendFailure(FailurePhase.ENGINE_START) },
@@ -600,10 +634,108 @@ private class AndroidMedia3Backend(
         )
     }
 
+    override suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = withContext(dispatcher) {
+        if (released || positionMs < 0) return@withContext backendFailure(FailurePhase.PLAYBACK)
+        runCatching {
+            player.seekTo(positionMs)
+            publishTimelineFacts()
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { backendFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    override suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = withContext(dispatcher) {
+        if (released || !rate.isFinite() || rate !in 0.25f..4f) {
+            return@withContext backendFailure(FailurePhase.PLAYBACK)
+        }
+        runCatching {
+            player.playbackParameters = PlaybackParameters(rate)
+            _events.tryEmit(Media3BackendEvent.PlaybackRateChanged(rate))
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { backendFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    override suspend fun selectAudioTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> =
+        selectTrack(trackId, PlaybackTrackType.AUDIO)
+
+    override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> =
+        selectTrack(trackId, PlaybackTrackType.SUBTITLE)
+
+    private suspend fun selectTrack(
+        trackId: PlaybackTrackId,
+        type: PlaybackTrackType,
+    ): PlaybackResult<Unit> = withContext(dispatcher) {
+        val reference = trackReferences[trackId]
+            ?.takeIf { it.type == type }
+            ?: return@withContext backendFailure(FailurePhase.PLAYBACK)
+        runCatching {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(reference.trackType, false)
+                .setOverrideForType(
+                    TrackSelectionOverride(reference.group.mediaTrackGroup, reference.trackIndex),
+                )
+                .build()
+            publishTrackCatalog(player.currentTracks)
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { backendFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    override suspend fun setSubtitlesEnabled(enabled: Boolean): PlaybackResult<Unit> =
+        withContext(dispatcher) {
+            runCatching {
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !enabled)
+                    .build()
+                publishTrackCatalog(player.currentTracks)
+            }.fold(
+                onSuccess = { PlaybackResult.Success(Unit) },
+                onFailure = { backendFailure(FailurePhase.PLAYBACK) },
+            )
+        }
+
+    override suspend fun attachExternalSubtitle(
+        subtitleId: ExternalSubtitleId,
+    ): PlaybackResult<Unit> = withContext(dispatcher) {
+        if (released) return@withContext backendFailure(FailurePhase.PLAYBACK)
+        val registration = externalSubtitleResolver.resolve(subtitleId)
+            ?: return@withContext backendFailure(
+                FailurePhase.PLAYBACK,
+                FailureCode.NO_ELIGIBLE_GRAPH,
+            )
+        runCatching {
+            val subtitle = MediaItem.SubtitleConfiguration.Builder(Uri.parse(registration.uri))
+                .setMimeType(registration.mimeType)
+                .apply { registration.language?.let(::setLanguage) }
+                .apply { registration.label?.let(::setLabel) }
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                .build()
+            val existing = mediaItem.localConfiguration?.subtitleConfigurations.orEmpty()
+            mediaItem = mediaItem.buildUpon()
+                .setSubtitleConfigurations(existing + subtitle)
+                .build()
+
+            // Media3 represents side-loaded subtitles on MediaItem. Rebuild that source once while
+            // preserving VOD state; this is not a retry and does not select another graph.
+            val positionMs = player.currentPosition.coerceAtLeast(0)
+            val playWhenReady = player.playWhenReady
+            player.setMediaItem(mediaItem, positionMs)
+            player.prepare()
+            player.playWhenReady = playWhenReady
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { backendFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
     override suspend fun apply(plan: Media3AdapterPlan): PlaybackResult<Unit> = withContext(dispatcher) {
         if (released) return@withContext backendFailure(FailurePhase.PLAYBACK)
-        if (plan.downmixToStereo || plan.normalization || plan.audioDelayMs != 0L || plan.subtitleDelayMs != 0L) {
-            return@withContext backendFailure(FailurePhase.PLAYBACK, FailureCode.AUDIO_OUTPUT_FAILED)
+        media3UnsupportedProcessingFailure(plan, FailurePhase.PLAYBACK)?.let {
+            return@withContext it
         }
         runCatching {
             val tracks = plan.tracks
@@ -645,17 +777,22 @@ private class AndroidMedia3Backend(
     override suspend fun release(): PlaybackResult<Unit> {
         if (released) return PlaybackResult.Success(Unit)
         terminalSuppressed = true
+        timelineJob?.cancel()
+        timelineJob = null
         if (!releasePlayer()) return backendFailure(FailurePhase.RELEASE)
         if (!calls.awaitIdle(NETWORK_RELEASE_TIMEOUT_MS)) {
             return backendFailure(FailurePhase.RELEASE, FailureCode.NETWORK_TIMEOUT)
         }
         released = true
+        factScope.cancel()
         return PlaybackResult.Success(Unit)
     }
 
     override suspend fun hardAbort(): PlaybackResult<Unit> {
         if (released) return PlaybackResult.Success(Unit)
         terminalSuppressed = true
+        timelineJob?.cancel()
+        timelineJob = null
         calls.cancelAll()
         val releasedPlayer = releasePlayer(awaitExistingRelease = true)
         val networkReleased = calls.awaitIdle(NETWORK_HARD_ABORT_TIMEOUT_MS)
@@ -666,8 +803,133 @@ private class AndroidMedia3Backend(
             )
         }
         released = true
+        factScope.cancel()
         return PlaybackResult.Success(Unit)
     }
+
+    private fun startTimelineFacts() {
+        timelineJob?.cancel()
+        timelineJob = factScope.launch {
+            while (isActive && !released) {
+                publishTimelineFacts()
+                delay(TIMELINE_FACT_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun publishTimelineFacts() {
+        if (released) return
+        val duration = player.duration.takeIf { it != C.TIME_UNSET && it >= 0 }
+        _events.tryEmit(
+            Media3BackendEvent.TimelineUpdated(
+                PlaybackTimelineFacts(
+                    positionMs = player.currentPosition.coerceAtLeast(0),
+                    durationMs = duration,
+                    bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0),
+                    seekable = player.isCurrentMediaItemSeekable,
+                ),
+            ),
+        )
+    }
+
+    private fun publishTrackCatalog(tracks: Tracks) {
+        val references = linkedMapOf<PlaybackTrackId, Media3TrackReference>()
+        val audio = mutableListOf<PlaybackTrackDescriptor>()
+        val subtitles = mutableListOf<PlaybackTrackDescriptor>()
+        var selectedAudio: PlaybackTrackId? = null
+        var selectedSubtitle: PlaybackTrackId? = null
+        tracks.groups.forEachIndexed { groupIndex, group ->
+            val type = when (group.type) {
+                C.TRACK_TYPE_AUDIO -> PlaybackTrackType.AUDIO
+                C.TRACK_TYPE_TEXT -> PlaybackTrackType.SUBTITLE
+                else -> return@forEachIndexed
+            }
+            repeat(group.length) { trackIndex ->
+                val format = group.getTrackFormat(trackIndex)
+                val id = PlaybackTrackId("m3:$groupIndex:$trackIndex:${format.id.orEmpty()}")
+                val descriptor = PlaybackTrackDescriptor(
+                    id = id,
+                    type = type,
+                    label = format.label,
+                    language = format.language,
+                    mimeType = format.sampleMimeType,
+                    codec = format.codecs,
+                    channelCount = format.channelCount.takeIf { it > 0 },
+                    sampleRate = format.sampleRate.takeIf { it > 0 },
+                    forced = format.selectionFlags and C.SELECTION_FLAG_FORCED != 0,
+                    default = format.selectionFlags and C.SELECTION_FLAG_DEFAULT != 0,
+                )
+                references[id] = Media3TrackReference(group, trackIndex, group.type, type, descriptor)
+                if (type == PlaybackTrackType.AUDIO) audio += descriptor else subtitles += descriptor
+                if (group.isTrackSelected(trackIndex)) {
+                    if (type == PlaybackTrackType.AUDIO) selectedAudio = id else selectedSubtitle = id
+                }
+            }
+        }
+        trackReferences = references
+        trackRevision = if (trackRevision == Long.MAX_VALUE) Long.MAX_VALUE else trackRevision + 1
+        currentTrackCatalog = PlaybackTrackCatalog(
+            revision = trackRevision,
+            audio = audio,
+            subtitles = subtitles,
+            selectedAudioTrackId = selectedAudio,
+            selectedSubtitleTrackId = selectedSubtitle,
+            subtitlesEnabled = selectedSubtitle != null ||
+                C.TRACK_TYPE_TEXT !in player.trackSelectionParameters.disabledTrackTypes,
+        )
+        _events.tryEmit(Media3BackendEvent.TrackCatalogUpdated(currentTrackCatalog))
+    }
+
+    private fun restoreTrackSelectionIfReady() {
+        val checkpoint = pendingRestoration ?: return
+        if (currentTrackCatalog.audio.isEmpty() && currentTrackCatalog.subtitles.isEmpty()) return
+        pendingRestoration = null
+        val audio = checkpoint.selectedAudio?.let(::findTrackReference)
+        val subtitle = checkpoint.selectedSubtitle?.let(::findTrackReference)
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
+            audio?.let {
+                setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                setOverrideForType(TrackSelectionOverride(it.group.mediaTrackGroup, it.trackIndex))
+            }
+            setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !checkpoint.subtitlesEnabled)
+            if (checkpoint.subtitlesEnabled) {
+                subtitle?.let {
+                    setOverrideForType(TrackSelectionOverride(it.group.mediaTrackGroup, it.trackIndex))
+                }
+            }
+        }.build()
+    }
+
+    private fun findTrackReference(selection: RestorableTrackSelection): Media3TrackReference? {
+        trackReferences[selection.originalId]?.let { exact ->
+            if (exact.type == selection.type) return exact
+        }
+        return trackReferences.values
+            .asSequence()
+            .filter { it.type == selection.type }
+            .map { it to selectionScore(it.descriptor, selection) }
+            .filter { (_, score) -> score > 0 }
+            .maxByOrNull { (_, score) -> score }
+            ?.first
+    }
+
+    private fun selectionScore(
+        candidate: PlaybackTrackDescriptor,
+        selection: RestorableTrackSelection,
+    ): Int =
+        (if (candidate.language == selection.language && selection.language != null) 16 else 0) +
+            (if (candidate.label == selection.label && selection.label != null) 8 else 0) +
+            (if (candidate.mimeType == selection.mimeType && selection.mimeType != null) 4 else 0) +
+            (if (candidate.codec == selection.codec && selection.codec != null) 2 else 0) +
+            (if (candidate.channelCount == selection.channelCount && selection.channelCount != null) 1 else 0)
+
+    private data class Media3TrackReference(
+        val group: Tracks.Group,
+        val trackIndex: Int,
+        val trackType: Int,
+        val type: PlaybackTrackType,
+        val descriptor: PlaybackTrackDescriptor,
+    )
 
     override suspend fun metrics(): PlaybackResult<Media3DecoderMetrics> = withContext(dispatcher) {
         if (released) return@withContext backendFailure(FailurePhase.PLAYBACK)
@@ -719,6 +981,7 @@ private class AndroidMedia3Backend(
     }
 
     private companion object {
+        const val TIMELINE_FACT_INTERVAL_MS = 500L
         const val NETWORK_RELEASE_TIMEOUT_MS = 250L
         const val NETWORK_HARD_ABORT_TIMEOUT_MS = 750L
         // Four 1 s fork await windows plus network cancellation stay inside the session's 5 s
@@ -885,6 +1148,32 @@ private fun failure(
     deterministic: Boolean = false,
 ) = PlaybackResult.Failure(PlaybackFailure(code, domain, phase, retryability, deterministic))
 
+/**
+ * Media3 cannot truthfully apply these generic processing requirements with the stock TV path.
+ * Keep subtitle and audio failures in separate domains so session policy never runs a subtitle
+ * request through an audio fallback ladder.
+ */
+internal fun media3UnsupportedProcessingFailure(
+    plan: Media3AdapterPlan,
+    phase: FailurePhase,
+): PlaybackResult.Failure? = when {
+    plan.subtitleDelayMs != 0L -> failure(
+        FailureCode.SUBTITLE_OUTPUT_UNSUPPORTED,
+        FailureDomain.SUBTITLE,
+        phase,
+        Retryability.HANDOFF_ELIGIBLE,
+        deterministic = true,
+    )
+    plan.downmixToStereo || plan.normalization || plan.audioDelayMs != 0L -> failure(
+        FailureCode.AUDIO_OUTPUT_FAILED,
+        FailureDomain.AUDIO,
+        phase,
+        Retryability.HANDOFF_ELIGIBLE,
+        deterministic = true,
+    )
+    else -> null
+}
+
 private fun backendFailure(
     phase: FailurePhase,
     code: FailureCode = FailureCode.UNKNOWN,
@@ -893,6 +1182,7 @@ private fun backendFailure(
     domain = when (code) {
         FailureCode.SURFACE_LOST -> FailureDomain.VIDEO_RENDERER_SURFACE
         FailureCode.AUDIO_OUTPUT_FAILED -> FailureDomain.AUDIO
+        FailureCode.SUBTITLE_OUTPUT_UNSUPPORTED -> FailureDomain.SUBTITLE
         FailureCode.NETWORK_TIMEOUT -> FailureDomain.NETWORK
         else -> FailureDomain.UNKNOWN
     },

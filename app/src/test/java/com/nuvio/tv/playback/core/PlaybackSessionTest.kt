@@ -365,6 +365,23 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `replacement barrier releases the adapter generation before starting the next generation`() = runTest {
+        val engine = FakeEngine()
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.GUIDE))
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), engine.releaseGenerations)
+        assertEquals(listOf(1L, 2L), engine.startGenerations)
+        assertEquals(1, engine.maxActiveConnections)
+        close(session)
+    }
+
+    @Test
     fun `engine start receives the resolved stream evidence and exact network intent`() = runTest {
         val evidence = StreamEvidence(
             delivery = EvidenceFact(
@@ -1564,7 +1581,7 @@ class PlaybackSessionTest {
     }
 
     @Test
-    fun `failed hard abort fails closed without opening the next provider request`() = runTest {
+    fun `release from failed state completes a fresh barrier without opening the next provider request`() = runTest {
         val engine = FakeEngine().apply {
             releaseFailuresRemaining = 1
             hardAbortFailuresRemaining = 1
@@ -1584,7 +1601,14 @@ class PlaybackSessionTest {
         assertEquals(1, engine.releaseCalls)
         assertEquals(1, engine.hardAbortCalls)
 
-        close(session)
+        val close = launch { session.release() }
+        advanceUntilIdle()
+        close.join()
+
+        assertEquals(2, engine.releaseCalls)
+        assertEquals(1, engine.hardAbortCalls)
+        assertEquals(0, engine.activeConnections)
+        assertEquals(PlaybackState.STOPPED, session.snapshot.value.state)
     }
 
     @Test
@@ -1721,11 +1745,14 @@ class PlaybackSessionTest {
         private val eventFlow = MutableSharedFlow<PlaybackEvent>(extraBufferCapacity = 64)
         override val events: Flow<PlaybackEvent> = eventFlow
         var startCalls = 0
+        val startGenerations = mutableListOf<Long>()
         var lastStartInput: PlaybackEngineStart? = null
         var applyRequirementsCalls = 0
         var lastAppliedRequirements: PlaybackRequirements? = null
         var releaseCalls = 0
+        val releaseGenerations = mutableListOf<Long>()
         var hardAbortCalls = 0
+        val hardAbortGenerations = mutableListOf<Long>()
         var activeConnections = 0
         var maxActiveConnections = 0
         var releaseTimeoutsRemaining = 0
@@ -1744,6 +1771,7 @@ class PlaybackSessionTest {
 
         override suspend fun start(input: PlaybackEngineStart): PlaybackResult<Unit> {
             startCalls++
+            startGenerations += input.generation
             lastStartInput = input
             activeConnections++
             maxActiveConnections = maxOf(maxActiveConnections, activeConnections)
@@ -1783,6 +1811,7 @@ class PlaybackSessionTest {
 
         override suspend fun release(generation: Long): PlaybackResult<Unit> {
             releaseCalls++
+            releaseGenerations += generation
             if (releaseTimeoutsRemaining > 0) {
                 releaseTimeoutsRemaining--
                 awaitCancellation()
@@ -1804,6 +1833,7 @@ class PlaybackSessionTest {
 
         override suspend fun hardAbort(generation: Long): PlaybackResult<Unit> {
             hardAbortCalls++
+            hardAbortGenerations += generation
             if (hardAbortFailuresRemaining > 0) {
                 hardAbortFailuresRemaining--
                 return PlaybackResult.Failure(

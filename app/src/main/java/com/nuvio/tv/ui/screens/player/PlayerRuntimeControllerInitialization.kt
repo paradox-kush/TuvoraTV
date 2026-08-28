@@ -1465,26 +1465,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                             return
                         }
 
-                        if ((error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
-                             error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK) &&
-                            !autoSwitchInternalPlayerOnErrorEnabled) {
-                            if (!isSafeAudioModeActiveForCurrentPlayback) {
-                                safeAudioForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!hasTriedAudioPcmFallback) {
-                                hasTriedAudioPcmFallback = true
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!isAudioDisabledForCurrentPlayback) {
-                                audioDisabledForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithAudioDisabled(currentPosition)
-                                return
-                            }
-                        }
-
                         // AudioTrack init (5001) or write (5002, e.g. ERROR_DEAD_OBJECT on an
                         // E-AC-3/AC-3 passthrough or offload track) failure: re-select audio with
                         // passthrough/tunneling off and the channel count constrained to the

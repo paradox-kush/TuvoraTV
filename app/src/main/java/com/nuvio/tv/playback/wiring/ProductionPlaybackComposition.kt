@@ -14,6 +14,7 @@ import com.nuvio.tv.playback.core.DecoderMode
 import com.nuvio.tv.playback.core.DecoderPreference
 import com.nuvio.tv.playback.core.DefaultPlaybackRequirementsResolver
 import com.nuvio.tv.playback.core.EngineType
+import com.nuvio.tv.playback.core.ExternalSubtitleResolver
 import com.nuvio.tv.playback.core.GraphOutputProfile
 import com.nuvio.tv.playback.core.PlaybackClock
 import com.nuvio.tv.playback.core.PlaybackCommand
@@ -100,6 +101,7 @@ internal data class ProductionPlaybackHost(
     val previewViewport: VideoDimensions? = null,
     val resourceBudget: ResourceBudget = ResourceBudget(),
     val routedAudioDevice: () -> AudioDeviceInfo? = { null },
+    val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
 ) {
     init {
         require(!surfaceCapabilities.secureNativeEmbedSupported) {
@@ -206,12 +208,16 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
                 sharedHttpClient = strictPlaybackHttpClient,
                 applicationDnsResolver = applicationDnsResolver,
                 sharedClientTlsPolicy = TlsPolicy.STRICT,
+                externalSubtitleResolver = host.externalSubtitleResolver,
             ),
         ),
         EngineType.LIBMPV to MpvEngine(
             scope = host.parentScope,
             surfaceHost = host.mpvSurfaceHost,
-            backendFactory = AndroidMpvBackendFactory(appContext),
+            backendFactory = AndroidMpvBackendFactory(
+                context = appContext,
+                externalSubtitleResolver = host.externalSubtitleResolver,
+            ),
         ),
     )
 

@@ -119,6 +119,36 @@ sealed interface PlaybackAction {
         val paused: Boolean,
     ) : PlaybackAction
 
+    data class SeekTo(
+        override val generation: Long,
+        val positionMs: Long,
+    ) : PlaybackAction
+
+    data class SetPlaybackRate(
+        override val generation: Long,
+        val rate: Float,
+    ) : PlaybackAction
+
+    data class SelectAudioTrack(
+        override val generation: Long,
+        val trackId: PlaybackTrackId,
+    ) : PlaybackAction
+
+    data class SelectSubtitleTrack(
+        override val generation: Long,
+        val trackId: PlaybackTrackId,
+    ) : PlaybackAction
+
+    data class SetSubtitlesEnabled(
+        override val generation: Long,
+        val enabled: Boolean,
+    ) : PlaybackAction
+
+    data class AttachExternalSubtitle(
+        override val generation: Long,
+        val subtitleId: ExternalSubtitleId,
+    ) : PlaybackAction
+
     data class ResolvePreferencesChange(
         override val generation: Long,
         val preferences: PlaybackPreferences,
@@ -216,6 +246,12 @@ sealed interface PlaybackReducerInput {
         val application: PlaybackOutputApplication,
     ) : PlaybackReducerInput
 
+    data class ControlApplied(val generation: Long) : PlaybackReducerInput
+    data class ControlRejected(
+        val generation: Long,
+        val failure: PlaybackFailure,
+    ) : PlaybackReducerInput
+
     data class LifecycleChanged(val active: Boolean) : PlaybackReducerInput
 
     /** Completion of the generation-wide release barrier, keyed independently from generation. */
@@ -301,6 +337,14 @@ object PlaybackStateMachine {
             }
         }
         is PlaybackReducerInput.PlaybackOutputApplied -> playbackOutputApplied(state, input)
+        is PlaybackReducerInput.ControlApplied -> {
+            if (input.generation != state.snapshot.generation) unchanged(state)
+            else transition(state.copy(snapshot = state.snapshot.copy(controlFailure = null)))
+        }
+        is PlaybackReducerInput.ControlRejected -> {
+            if (input.generation != state.snapshot.generation) unchanged(state)
+            else transition(state.copy(snapshot = state.snapshot.copy(controlFailure = input.failure)))
+        }
         is PlaybackReducerInput.LifecycleChanged -> lifecycleChanged(state, input.active)
         is PlaybackReducerInput.BarrierCompleted -> barrierCompleted(state, input.releaseEpoch)
         is PlaybackReducerInput.BarrierFailed -> barrierFailed(state, input.releaseEpoch, input.failure)
@@ -310,11 +354,39 @@ object PlaybackStateMachine {
         state: PlaybackMachineState,
         command: PlaybackCommand,
     ): PlaybackTransition = when (command) {
-        is PlaybackCommand.Tune -> startRequest(state, command.launch, command.profile)
-        is PlaybackCommand.Zap -> startRequest(state, command.launch, command.profile)
+        is PlaybackCommand.Tune -> startRequest(
+            state,
+            command.launch,
+            command.profile,
+            command.startPositionMs,
+        )
+        is PlaybackCommand.Zap -> startRequest(
+            state,
+            command.launch,
+            command.profile,
+            command.startPositionMs,
+        )
         PlaybackCommand.Pause -> pause(state)
         PlaybackCommand.Resume -> resume(state)
         PlaybackCommand.Retry -> retry(state)
+        is PlaybackCommand.SeekTo -> playbackControl(state) {
+            PlaybackAction.SeekTo(state.snapshot.generation, command.positionMs)
+        }
+        is PlaybackCommand.SetPlaybackRate -> playbackControl(state) {
+            PlaybackAction.SetPlaybackRate(state.snapshot.generation, command.rate)
+        }
+        is PlaybackCommand.SelectAudioTrack -> playbackControl(state) {
+            PlaybackAction.SelectAudioTrack(state.snapshot.generation, command.trackId)
+        }
+        is PlaybackCommand.SelectSubtitleTrack -> playbackControl(state) {
+            PlaybackAction.SelectSubtitleTrack(state.snapshot.generation, command.trackId)
+        }
+        PlaybackCommand.DisableSubtitles -> playbackControl(state) {
+            PlaybackAction.SetSubtitlesEnabled(state.snapshot.generation, enabled = false)
+        }
+        is PlaybackCommand.AttachExternalSubtitle -> playbackControl(state) {
+            PlaybackAction.AttachExternalSubtitle(state.snapshot.generation, command.subtitleId)
+        }
         is PlaybackCommand.PreferencesChanged -> requestPreferencesChange(state, command)
         is PlaybackCommand.SessionProfileChanged -> requestProfileChange(state, command)
         PlaybackCommand.SurfaceAvailable -> surfaceAvailable(state)
@@ -328,6 +400,7 @@ object PlaybackStateMachine {
         state: PlaybackMachineState,
         launch: PlaybackLaunch,
         profile: SessionProfile,
+        startPositionMs: Long,
     ): PlaybackTransition {
         val generation = nextGeneration(state.snapshot.generation)
         val base = state.copy(
@@ -335,6 +408,7 @@ object PlaybackStateMachine {
                 generation = generation,
                 state = PlaybackState.RESOLVING,
                 profile = profile,
+                positionMs = startPositionMs,
                 statusCode = PlaybackStatusCode.RESOLVING,
             ),
             launch = launch,
@@ -395,6 +469,14 @@ object PlaybackStateMachine {
         } else {
             transition(base, PlaybackAction.ResolveRequest(generation, launch))
         }
+    }
+
+    private inline fun playbackControl(
+        state: PlaybackMachineState,
+        action: () -> PlaybackAction,
+    ): PlaybackTransition {
+        if (!state.sessionActive || !state.snapshot.state.isPlaybackActive()) return unchanged(state)
+        return transition(state, action())
     }
 
     private fun pause(state: PlaybackMachineState): PlaybackTransition {
@@ -552,7 +634,7 @@ object PlaybackStateMachine {
         if (state.snapshot.state != PlaybackState.FAILED && state.snapshot.state != PlaybackState.STOPPED) {
             return unchanged(state)
         }
-        return startRequest(state, launch, state.snapshot.profile)
+        return startRequest(state, launch, state.snapshot.profile, state.snapshot.positionMs)
     }
 
     private fun requestPreferencesChange(
@@ -733,6 +815,9 @@ object PlaybackStateMachine {
             is PlaybackEvent.EngineStarting -> engineStarting(state)
             is PlaybackEvent.BytesReceived -> progress(state) { it.copy(receivedBytes = true) }
             is PlaybackEvent.TracksAvailable -> tracksAvailable(state, event)
+            is PlaybackEvent.TimelineUpdated -> timelineUpdated(state, event.facts)
+            is PlaybackEvent.TrackCatalogUpdated -> trackCatalogUpdated(state, event.catalog)
+            is PlaybackEvent.PlaybackRateChanged -> playbackRateChanged(state, event.rate)
             is PlaybackEvent.FirstAudio -> firstAudio(state)
             is PlaybackEvent.FirstVideoFrame -> firstVideoFrame(state)
             is PlaybackEvent.BufferingStarted -> bufferingStarted(state)
@@ -750,6 +835,41 @@ object PlaybackStateMachine {
             // may still be active. Only BarrierCompleted is authoritative.
             is PlaybackEvent.EngineReleased -> unchanged(state)
         }
+    }
+
+    private fun timelineUpdated(
+        state: PlaybackMachineState,
+        facts: PlaybackTimelineFacts,
+    ): PlaybackTransition {
+        if (!state.snapshot.state.acceptsProgress()) return unchanged(state)
+        return transition(
+            state.copy(
+                snapshot = state.snapshot.copy(
+                    positionMs = facts.positionMs,
+                    durationMs = facts.durationMs,
+                    bufferedPositionMs = facts.bufferedPositionMs,
+                    seekable = facts.seekable,
+                ),
+            ),
+        )
+    }
+
+    private fun trackCatalogUpdated(
+        state: PlaybackMachineState,
+        catalog: PlaybackTrackCatalog,
+    ): PlaybackTransition {
+        if (!state.snapshot.state.acceptsProgress()) return unchanged(state)
+        return transition(state.copy(snapshot = state.snapshot.copy(trackCatalog = catalog)))
+    }
+
+    private fun playbackRateChanged(
+        state: PlaybackMachineState,
+        rate: Float,
+    ): PlaybackTransition {
+        if (!state.snapshot.state.acceptsProgress() || !rate.isFinite() || rate !in 0.25f..4f) {
+            return unchanged(state)
+        }
+        return transition(state.copy(snapshot = state.snapshot.copy(playbackRate = rate)))
     }
 
     private fun engineStateObserved(
@@ -1121,7 +1241,10 @@ object PlaybackStateMachine {
 
         if (reason == PlaybackEndReason.EOF && !live) {
             return beginBarrier(
-                state.copy(sessionActive = false),
+                state.copy(
+                    sessionActive = false,
+                    snapshot = state.snapshot.copy(completionReason = PlaybackCompletionReason.EOF),
+                ),
                 AfterRelease.STOP,
                 ActiveWorkReleaseReason.COMPLETED,
             )
