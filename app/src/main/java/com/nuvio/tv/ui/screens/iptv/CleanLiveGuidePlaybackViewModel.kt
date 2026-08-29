@@ -17,6 +17,7 @@ import com.nuvio.tv.playback.host.AndroidCleanLiveHostInput
 import com.nuvio.tv.playback.host.CleanLiveHost
 import com.nuvio.tv.playback.host.CleanLiveHostFactory
 import com.nuvio.tv.playback.live.LiveChannelNavigationPort
+import com.nuvio.tv.playback.live.LiveZapSettlePolicy
 import com.nuvio.tv.playback.live.LiveChannelSelectionPort
 import com.nuvio.tv.playback.live.LiveChannelTarget
 import com.nuvio.tv.playback.live.LiveInitialFailure
@@ -180,7 +181,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private val settledTuneWorker = ownerScope.launch {
         for (initial in settledTuneRequests) {
             var destination = initial
-            delay(RAPID_ZAP_SETTLE_MS)
+            delay(LiveZapSettlePolicy.SETTLE_MS)
             while (true) {
                 destination = settledTuneRequests.tryReceive().getOrNull() ?: break
             }
@@ -876,7 +877,6 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
     private companion object {
         const val LOG_TAG = "CleanLiveGuide"
-        const val RAPID_ZAP_SETTLE_MS = 450L
         const val INITIAL_CLEAR_RELEASE_BACKOFF_MS = 100L
         const val MAX_CLEAR_RELEASE_BACKOFF_MS = 5_000L
     }

@@ -454,3 +454,19 @@ and Fire TV sequentially with separate saved IPTV profiles and the device harnes
   soak stable; zero crashes in the crash buffer.
 - The `isDebuggable=true` diagnostic flip used for the jdb thread dump has been reverted; the
   builds installed on the emulator and ONN during this session carry it and must not be released.
+
+## 2026-08-28 — fullscreen settled zap (closes the review's remaining zap facet)
+
+- The fullscreen player's zap twin still used a CONFLATED queue of relative directions: rapid
+  presses dropped intermediate steps (4 presses landed 2 channels away) and each drained command
+  paid a full release barrier + fresh provider link. Replaced with the guide's settled design:
+  presses accumulate as signed steps, one shared settle window (`LiveZapSettlePolicy.SETTLE_MS`,
+  the 1.5.8-proven 450ms, now centralized and consumed by guide and fullscreen), then ONE
+  committed tune resolved by walking the provider-neutral ring exactly N steps from the playing
+  channel. Opposing presses net out; a net-zero hold commits nothing and opens no connection.
+- Settle wait is injectable (`CleanLiveZapSettleWait`) mirroring the release-retry pattern so the
+  ViewModel tests drive the window deterministically; tests cover exact +10 landing on one tune,
+  net-out, and net-zero. Emulator verification: six sub-settle presses produced exactly one
+  release barrier + one resolution + one LIBMPV tune; presses spaced beyond the window commit
+  individually as intended. TV-only (no CleanLivePlayerViewModel/LiveZapSettlePolicy twins in
+  Mobile/Desktop).

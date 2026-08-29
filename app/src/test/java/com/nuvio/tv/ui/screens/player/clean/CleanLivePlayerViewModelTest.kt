@@ -301,47 +301,84 @@ class CleanLivePlayerViewModelTest {
         fixture.viewModel.releaseBeforeExit()
     }
 
+    // The fullscreen twin of the guide's settled zap: held-remote presses accumulate through the
+    // shared settle window into ONE committed tune landing exactly N channels away ("walking ten
+    // channels must cost one connection, not ten"). The old conflated relative queue dropped
+    // intermediate steps (4 presses landed 2 away) and paid a provider handshake per drain.
     @Test
-    fun `rapid zap requests keep one lookup in flight and only the latest pending direction`() =
-        runTest {
-            val firstStarted = CompletableDeferred<Unit>()
-            val releaseFirst = CompletableDeferred<Unit>()
-            val secondTarget = liveTarget(
-                selection = liveSelection("second", "43"),
-                title = "Second",
-            )
-            val thirdTarget = liveTarget(
-                selection = liveSelection("third", "44"),
-                title = "Third",
-            )
-            var lookup = 0
-            val fixture = fixture(
-                relative = {
-                    lookup += 1
-                    if (lookup == 1) {
-                        firstStarted.complete(Unit)
-                        releaseFirst.await()
-                        LiveRelativeResult.Target(secondTarget)
-                    } else {
-                        LiveRelativeResult.Target(thirdTarget)
-                    }
-                },
-            )
-            fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
-
-            fixture.viewModel.requestZap(LiveZapDirection.NEXT)
-            firstStarted.await()
-            fixture.viewModel.requestZap(LiveZapDirection.PREVIOUS)
-            fixture.viewModel.requestZap(LiveZapDirection.NEXT)
-            releaseFirst.complete(Unit)
-            advanceUntilIdle()
-
-            assertEquals(2, fixture.relativeRequests.size)
-            assertEquals(LiveZapDirection.NEXT, fixture.relativeRequests[1].direction)
-            assertEquals(secondTarget.contentId, fixture.relativeRequests[1].currentContentId)
-            assertEquals(listOf(secondTarget.selection, thirdTarget.selection), fixture.host.zappedSelections)
-            fixture.viewModel.releaseBeforeExit()
+    fun `ten rapid next presses settle to one provider tune landing exactly plus ten`() = runTest {
+        val settleGate = CompletableDeferred<Unit>()
+        var lookup = 0
+        val targets = (43..52).map { id ->
+            liveTarget(selection = liveSelection("chain$id", id.toString()), title = "Ch $id")
         }
+        val fixture = fixture(
+            relative = {
+                val target = targets[lookup]
+                lookup += 1
+                LiveRelativeResult.Target(target)
+            },
+            zapSettleWait = { settleGate.await() },
+        )
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+        repeat(10) { fixture.viewModel.requestZap(LiveZapDirection.NEXT) }
+        settleGate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(10, fixture.relativeRequests.size)
+        // The lookup chain walks from the playing channel through each intermediate target.
+        assertEquals(targets[0].contentId, fixture.relativeRequests[1].currentContentId)
+        assertEquals(targets[8].contentId, fixture.relativeRequests[9].currentContentId)
+        assertEquals(listOf(targets[9].selection), fixture.host.zappedSelections)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `opposing presses net out before the settled tune commits`() = runTest {
+        val settleGate = CompletableDeferred<Unit>()
+        var lookup = 0
+        val targets = (43..44).map { id ->
+            liveTarget(selection = liveSelection("net$id", id.toString()), title = "Ch $id")
+        }
+        val fixture = fixture(
+            relative = {
+                val target = targets[lookup]
+                lookup += 1
+                LiveRelativeResult.Target(target)
+            },
+            zapSettleWait = { settleGate.await() },
+        )
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        fixture.viewModel.requestZap(LiveZapDirection.PREVIOUS)
+        settleGate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(2, fixture.relativeRequests.size)
+        assertTrue(fixture.relativeRequests.all { it.direction == LiveZapDirection.NEXT })
+        assertEquals(listOf(targets[1].selection), fixture.host.zappedSelections)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `fully cancelled presses commit no tune and open no provider request`() = runTest {
+        val settleGate = CompletableDeferred<Unit>()
+        val fixture = fixture(zapSettleWait = { settleGate.await() })
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        fixture.viewModel.requestZap(LiveZapDirection.PREVIOUS)
+        settleGate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(0, fixture.relativeRequests.size)
+        assertTrue(fixture.host.zappedSelections.isEmpty())
+        fixture.viewModel.releaseBeforeExit()
+    }
 
     @Test
     fun `release during relative lookup cancels stale work without issuing zap`() = runTest {
@@ -711,6 +748,7 @@ class CleanLivePlayerViewModelTest {
         transientReleaseFailures: Int = 0,
         releaseBarrier: CompletableDeferred<Unit>? = null,
         releaseRetryWait: CleanLiveReleaseRetryWait = CleanLiveReleaseRetryWait {},
+        zapSettleWait: CleanLiveZapSettleWait = CleanLiveZapSettleWait {},
         renderVideoFrameOnTune: Boolean = false,
         relative: suspend (LiveRelativeRequest) -> LiveRelativeResult = {
             LiveRelativeResult.Rejected(LiveRelativeFailure.UNAVAILABLE)
@@ -764,6 +802,7 @@ class CleanLivePlayerViewModelTest {
             },
             ownerDispatcher = Dispatchers.Unconfined,
             releaseRetryWait = releaseRetryWait,
+            zapSettleWait = zapSettleWait,
         )
         return Fixture(
             viewModel = viewModel,

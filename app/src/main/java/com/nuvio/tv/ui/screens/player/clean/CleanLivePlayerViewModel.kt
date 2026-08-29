@@ -14,6 +14,8 @@ import com.nuvio.tv.playback.host.AndroidCleanLiveHostInput
 import com.nuvio.tv.playback.host.CleanLiveHost
 import com.nuvio.tv.playback.host.CleanLiveHostFactory
 import com.nuvio.tv.playback.live.LiveChannelNavigationPort
+import com.nuvio.tv.playback.live.LiveChannelTarget
+import com.nuvio.tv.playback.live.LiveZapSettlePolicy
 import com.nuvio.tv.playback.live.LiveMediaFingerprint
 import com.nuvio.tv.playback.live.LivePlayedHistoryPort
 import com.nuvio.tv.playback.live.LivePlayedIdentity
@@ -93,6 +95,11 @@ internal fun interface CleanLiveReleaseRetryWait {
     suspend fun await(delayMs: Long)
 }
 
+/** Injectable settle wait so tests drive the window; production uses [LiveZapSettlePolicy]. */
+internal fun interface CleanLiveZapSettleWait {
+    suspend fun awaitSettle()
+}
+
 /**
  * Destination-scoped clean Live TV owner. Its route is registered in isolation while production
  * live ingresses remain detached until their atomic switch.
@@ -107,6 +114,7 @@ internal class CleanLivePlayerViewModel private constructor(
     private val playedHistory: LivePlayedHistoryPort,
     ownerDispatcher: CoroutineDispatcher,
     private val releaseRetryWait: CleanLiveReleaseRetryWait,
+    private val zapSettleWait: CleanLiveZapSettleWait,
 ) : ViewModel() {
     @Inject
     internal constructor(
@@ -125,6 +133,7 @@ internal class CleanLivePlayerViewModel private constructor(
         playedHistory = playedHistory,
         ownerDispatcher = Dispatchers.Main.immediate,
         releaseRetryWait = CleanLiveReleaseRetryWait { delay(it) },
+        zapSettleWait = CleanLiveZapSettleWait { delay(LiveZapSettlePolicy.SETTLE_MS) },
     )
 
     internal constructor(
@@ -138,6 +147,7 @@ internal class CleanLivePlayerViewModel private constructor(
         playedHistory: LivePlayedHistoryPort = LivePlayedHistoryPort {},
         ownerDispatcher: CoroutineDispatcher,
         releaseRetryWait: CleanLiveReleaseRetryWait = CleanLiveReleaseRetryWait {},
+        zapSettleWait: CleanLiveZapSettleWait = CleanLiveZapSettleWait {},
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
     ) : this(
         appContext = context.applicationContext,
@@ -148,12 +158,14 @@ internal class CleanLivePlayerViewModel private constructor(
         playedHistory = playedHistory,
         ownerDispatcher = ownerDispatcher,
         releaseRetryWait = releaseRetryWait,
+        zapSettleWait = zapSettleWait,
     )
 
     private val ownerJob = SupervisorJob()
     private val ownerScope = CoroutineScope(ownerJob + ownerDispatcher)
     private val ownershipMutex = Mutex()
-    private val zapRequests = Channel<LiveZapDirection>(Channel.CONFLATED)
+    private val zapSignal = Channel<Unit>(Channel.CONFLATED)
+    private val pendingZapSteps = java.util.concurrent.atomic.AtomicInteger(0)
     private val mutableRouteState =
         MutableStateFlow<CleanLivePlayerRouteState>(CleanLivePlayerRouteState.Initializing)
 
@@ -171,7 +183,15 @@ internal class CleanLivePlayerViewModel private constructor(
     private var clearedReleaseLoopStarted = false
 
     private val zapWorker = ownerScope.launch {
-        for (direction in zapRequests) performZap(direction)
+        // Held-remote presses accumulate into signed steps; after the shared settle window
+        // (LiveZapSettlePolicy) exactly ONE tune commits, landing precisely N channels away —
+        // walking N channels costs one provider connection, not N. Presses that arrive during
+        // an in-flight commit re-signal and settle into the next single tune.
+        for (signal in zapSignal) {
+            zapSettleWait.awaitSettle()
+            val steps = pendingZapSteps.getAndSet(0)
+            if (steps != 0) performZap(steps)
+        }
     }
 
     /**
@@ -292,15 +312,17 @@ internal class CleanLivePlayerViewModel private constructor(
     suspend fun retry() = command { it.retry() }
 
     /**
-     * Remote repeats are conflated behind one ViewModel-owned worker. At most one provider-neutral
-     * relative lookup and one latest pending direction survive; Compose lifetime never owns an
+     * Remote presses accumulate as signed steps behind one ViewModel-owned settled worker; the
+     * committed tune lands exactly where the presses aimed. Compose lifetime never owns an
      * accepted channel command.
      */
     fun requestZap(direction: LiveZapDirection) {
-        if (!releaseCompleted && !clearedReleaseLoopStarted) zapRequests.trySend(direction)
+        if (releaseCompleted || clearedReleaseLoopStarted) return
+        pendingZapSteps.addAndGet(if (direction == LiveZapDirection.NEXT) 1 else -1)
+        zapSignal.trySend(Unit)
     }
 
-    private suspend fun performZap(direction: LiveZapDirection) {
+    private suspend fun performZap(steps: Int) {
         val basis = ownershipMutex.withLock {
             if (releaseCompleted) return
             val currentHost = host ?: return
@@ -312,18 +334,40 @@ internal class CleanLivePlayerViewModel private constructor(
             ZapBasis(currentHost, currentLaunch)
         }
 
-        val relative = try {
-            liveNavigation.relative(
-                LiveRelativeRequest(
-                    currentContentId = basis.launch.target.contentId,
-                    direction = direction,
-                    boundProfileId = basis.launch.playbackProfileId(),
-                ),
-            )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            return
+        // The accumulated steps walk the provider-neutral ring from the playing channel to the
+        // exact aimed channel; lookups are local, only the final target costs a connection.
+        val direction = if (steps > 0) LiveZapDirection.NEXT else LiveZapDirection.PREVIOUS
+        var profileChanged = false
+        var resolvedTarget: LiveChannelTarget? = null
+        var currentContentId = basis.launch.target.contentId
+        run {
+            repeat(kotlin.math.abs(steps)) {
+                val relative = try {
+                    liveNavigation.relative(
+                        LiveRelativeRequest(
+                            currentContentId = currentContentId,
+                            direction = direction,
+                            boundProfileId = basis.launch.playbackProfileId(),
+                        ),
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    return@run
+                }
+                when (relative) {
+                    is LiveRelativeResult.Target -> {
+                        resolvedTarget = relative.target
+                        currentContentId = relative.target.contentId
+                    }
+                    is LiveRelativeResult.Rejected -> {
+                        if (relative.reason == LiveRelativeFailure.PROFILE_CHANGED) {
+                            profileChanged = true
+                        }
+                        return@run
+                    }
+                }
+            }
         }
 
         ownershipMutex.withLock {
@@ -335,15 +379,11 @@ internal class CleanLivePlayerViewModel private constructor(
                 return@withLock
             }
             val currentHost = basis.host
-            val target = when (relative) {
-                is LiveRelativeResult.Target -> relative.target
-                is LiveRelativeResult.Rejected -> {
-                    if (relative.reason == LiveRelativeFailure.PROFILE_CHANGED) {
-                        rejectAfterRelease(currentHost, CleanLivePlayerRejection.PROFILE_MISMATCH)
-                    }
-                    return@withLock
-                }
+            if (profileChanged) {
+                rejectAfterRelease(currentHost, CleanLivePlayerRejection.PROFILE_MISMATCH)
+                return@withLock
             }
+            val target = resolvedTarget ?: return@withLock
             if (profileSource.activeProfileId() != basis.launch.activeProfileId) {
                 rejectAfterRelease(currentHost, CleanLivePlayerRejection.PROFILE_MISMATCH)
                 return@withLock
@@ -525,7 +565,7 @@ internal class CleanLivePlayerViewModel private constructor(
 
     private fun completeRelease() {
         releaseCompleted = true
-        zapRequests.close()
+        zapSignal.close()
         zapWorker.cancel()
         pendingPlayed = null
         presentationJob?.cancel()
