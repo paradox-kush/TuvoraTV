@@ -12,6 +12,7 @@ import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.ExternalSubtitleId
 import com.nuvio.tv.playback.core.ExternalSubtitleResolver
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackState
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ResourceBudget
 import com.nuvio.tv.playback.core.SessionProfile
@@ -108,7 +109,23 @@ internal class CleanLivePlaybackHost private constructor(
 
     suspend fun pause() = withActiveHost(controller::pause)
     suspend fun resume() = withActiveHost(controller::resume)
-    suspend fun retry() = withActiveHost(controller::retry)
+    suspend fun retry() {
+        withActiveHost {
+            val prior = snapshot.value
+            val restarts = prior.state == PlaybackState.FAILED || prior.state == PlaybackState.STOPPED
+            withContext(NonCancellable) {
+                controller.retry()
+                if (restarts) {
+                    // Retry restarts the request and bumps the generation. Awaiting that bump
+                    // under the same command mutex means acceptCommand's `first { generation >
+                    // prior }` can only ever observe its own command's bump — a queued retry can
+                    // no longer donate its generation to the tune/zap dispatched after it. The
+                    // reducer restarts only from FAILED/STOPPED, so this wait matches its gate.
+                    snapshot.first { it.generation > prior.generation }
+                }
+            }
+        }
+    }
     suspend fun seekTo(positionMs: Long) = withActiveHost { controller.seekTo(positionMs) }
     suspend fun setPlaybackRate(rate: Float) = withActiveHost { controller.setPlaybackRate(rate) }
     suspend fun selectAudioTrack(trackId: PlaybackTrackId) = withActiveHost {

@@ -64,21 +64,37 @@ internal class VodPlaybackPresentationBridge(
     }
 
     fun dispatch(intent: VodPlaybackIntent) {
+        // Index intents resolve to stable track IDs NOW, against the catalog the UI rendered —
+        // resolving at coroutine execution time selected whatever occupied the index after a
+        // mid-flight catalog refresh (the classic wrong-language TOCTOU).
+        val audioTrackId = (intent as? VodPlaybackIntent.SelectAudioIndex)
+            ?.let { state.value.audioTracks.getOrNull(it.index)?.id }
+        val subtitleTrackId = (intent as? VodPlaybackIntent.SelectSubtitleIndex)
+            ?.let { state.value.subtitleTracks.getOrNull(it.index)?.id }
         scope.launch {
-            when (intent) {
-                VodPlaybackIntent.PlayPause -> {
-                    if (host.snapshot.value.playWhenReady) host.pause() else host.resume()
+            // The legacy UI is not a validated caller: a rewind past zero or a control racing
+            // screen exit must degrade to a no-op, never throw into the UI scope.
+            try {
+                when (intent) {
+                    VodPlaybackIntent.PlayPause -> {
+                        if (host.snapshot.value.playWhenReady) host.pause() else host.resume()
+                    }
+                    is VodPlaybackIntent.SeekTo ->
+                        host.seekTo(intent.positionMs.coerceAtLeast(0L))
+                    is VodPlaybackIntent.SetPlaybackRate -> host.setPlaybackRate(intent.rate)
+                    is VodPlaybackIntent.SelectAudioIndex ->
+                        audioTrackId?.let { host.selectAudioTrack(it) }
+                    is VodPlaybackIntent.SelectSubtitleIndex ->
+                        subtitleTrackId?.let { host.selectSubtitleTrack(it) }
+                    VodPlaybackIntent.DisableSubtitles -> host.disableSubtitles()
+                    VodPlaybackIntent.Retry -> host.retry()
                 }
-                is VodPlaybackIntent.SeekTo -> host.seekTo(intent.positionMs)
-                is VodPlaybackIntent.SetPlaybackRate -> host.setPlaybackRate(intent.rate)
-                is VodPlaybackIntent.SelectAudioIndex -> {
-                    state.value.audioTracks.getOrNull(intent.index)?.let { host.selectAudioTrack(it.id) }
-                }
-                is VodPlaybackIntent.SelectSubtitleIndex -> {
-                    state.value.subtitleTracks.getOrNull(intent.index)?.let { host.selectSubtitleTrack(it.id) }
-                }
-                VodPlaybackIntent.DisableSubtitles -> host.disableSubtitles()
-                VodPlaybackIntent.Retry -> host.retry()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: IllegalStateException) {
+                // Host releasing/released: the control is meaningless, not exceptional.
+            } catch (_: IllegalArgumentException) {
+                // A command precondition rejected the value; the UI keeps its current state.
             }
         }
     }

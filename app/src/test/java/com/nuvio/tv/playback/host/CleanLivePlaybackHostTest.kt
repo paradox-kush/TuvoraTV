@@ -140,6 +140,40 @@ class CleanLivePlaybackHostTest {
         fixture.parentJob.cancel()
     }
 
+    // Review follow-up: retry() dispatched fire-and-forget, so a zap enqueued right after it
+    // captured the pre-retry generation and acceptCommand attributed the RETRY's bump to the
+    // zap — downstream generation-fenced calls then silently no-oped. Retry must acknowledge
+    // its own bump under the command mutex before the next command can run.
+    @Test
+    fun `retry acknowledges its own generation so a following zap cannot inherit it`() = runTest {
+        val fixture = fixture(autoAdvanceAcceptedGeneration = false)
+        val host = fixture.create()
+        val metadata = CleanMediaSessionMetadata.fromIngress(
+            redactedContentFingerprint = "ab12ab12ab12ab12",
+            title = "Live News",
+        )
+        fixture.snapshot.value =
+            fixture.snapshot.value.copy(generation = 1, state = PlaybackState.FAILED)
+
+        val retry = async { host.retry() }
+        runCurrent()
+        assertTrue(fixture.commands.last() is PlaybackCommand.Retry)
+
+        val zap = async { host.zap(liveSelection("two"), SessionProfile.FULLSCREEN, metadata) }
+        runCurrent()
+        assertFalse(fixture.commands.any { it is PlaybackCommand.Zap })
+
+        fixture.snapshot.value = fixture.snapshot.value.copy(generation = 2)
+        runCurrent()
+        retry.await()
+        assertTrue(fixture.commands.any { it is PlaybackCommand.Zap })
+
+        fixture.snapshot.value = fixture.snapshot.value.copy(generation = 3)
+        assertEquals(3L, zap.await())
+        host.release()
+        fixture.parentJob.cancel()
+    }
+
     @Test
     fun `media session is the only release authority and concurrent release is idempotent`() = runTest {
         val fixture = fixture()

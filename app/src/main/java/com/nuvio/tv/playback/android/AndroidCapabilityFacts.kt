@@ -125,6 +125,8 @@ internal class AndroidRuntimeCapabilityCollector(
     private val source: AndroidCapabilitySource,
     private val quirkRegistry: AndroidPlaybackQuirkRegistry = AndroidPlaybackQuirkRegistry,
 ) {
+    private val staleQuirksLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun refresh(
         observationSequence: Long,
         capturedAtEpochMs: Long,
@@ -132,12 +134,22 @@ internal class AndroidRuntimeCapabilityCollector(
         require(observationSequence > 0) { "Capability observation sequence must be positive" }
         require(capturedAtEpochMs >= 0) { "Capability capture time must not be negative" }
         val facts = source.read()
+        val codecStableIds = facts.codecs.mapTo(linkedSetOf(), AndroidVideoDecoderFacts::stableId)
         val appliedQuirks = quirkRegistry.resolve(
             device = facts.device,
-            codecStableIds = facts.codecs.mapTo(linkedSetOf(), AndroidVideoDecoderFacts::stableId),
+            codecStableIds = codecStableIds,
             nowEpochMs = capturedAtEpochMs,
             apiLevel = facts.apiLevel,
         )
+        if (staleQuirksLogged.compareAndSet(false, true)) {
+            // A quirk expiring must be loud, never a silent shipped-fleet behavior revert.
+            quirkRegistry.revalidationFindings(
+                device = facts.device,
+                codecStableIds = codecStableIds,
+                nowEpochMs = capturedAtEpochMs,
+                apiLevel = facts.apiLevel,
+            ).forEach { finding -> android.util.Log.w("PlaybackQuirks", finding) }
+        }
         val stableFingerprint = stableFingerprint(facts, appliedQuirks)
         val capabilities = RuntimeCapabilities(
             // Legacy core field remains observation-scoped until core exposes capabilityFingerprint.

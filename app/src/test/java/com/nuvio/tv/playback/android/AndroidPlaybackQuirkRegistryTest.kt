@@ -73,6 +73,32 @@ class AndroidPlaybackQuirkRegistryTest {
             apiLevel = 35,
         )
 
+    // Review follow-up: a quirk expiring silently reverted device behavior with no signal
+    // (AFTKM's 2027-08-26 expiry). Stale quirks must surface loud findings.
+    @Test
+    fun `stale quirks surface loud findings instead of silently reverting`() {
+        assertTrue(
+            AndroidPlaybackQuirkRegistry.revalidationFindings(
+                fireDevice, emptySet(), 1_800_000_000_000L, 35,
+            ).isEmpty(),
+        )
+
+        val due = AndroidPlaybackQuirkRegistry.revalidationFindings(
+            fireDevice, emptySet(), 1_803_600_000_000L, 35,
+        ).single()
+        assertTrue(due.contains("amazon-aftkm"))
+        assertTrue(due.contains("revalidation due"))
+
+        val expired = AndroidPlaybackQuirkRegistry.revalidationFindings(
+            fireDevice, emptySet(), 1_819_238_400_000L, 35,
+        ).single()
+        assertTrue(expired.contains("EXPIRED"))
+        assertTrue(
+            AndroidPlaybackQuirkRegistry.resolve(fireDevice, emptySet(), 1_819_238_400_000L, 35)
+                .isEmpty(),
+        )
+    }
+
     // The emulator family is identified by exact qemu hardware ("ranchu") across its many AVD
     // model strings; goldfish decoder teardown deadlocks make hardware decode unusable there.
     @Test

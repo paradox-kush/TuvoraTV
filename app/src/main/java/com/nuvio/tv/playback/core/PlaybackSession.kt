@@ -76,6 +76,7 @@ class PlaybackSession(
     private var resolved: GenerationValue<ResolvedPlaybackRequest>? = null
     private var requirements: GenerationValue<PlaybackRequirements>? = null
     private var latestRequirementsChangeId: Long = 0
+    private val released = java.util.concurrent.atomic.AtomicBoolean(false)
     private var requirementsApplyJob: Job? = null
     private val outputMutex = Mutex()
     private var watchdogJob: Job? = null
@@ -137,7 +138,13 @@ class PlaybackSession(
     }
 
     suspend fun dispatch(command: PlaybackCommand) {
-        lane.send(LaneMessage.Reducer(PlaybackReducerInput.Command(command)))
+        // A dispatch racing terminal release (e.g. a late surfaceDestroyed callback landing
+        // after the lane closed) is meaningless, not exceptional — the session is gone.
+        try {
+            lane.send(LaneMessage.Reducer(PlaybackReducerInput.Command(command)))
+        } catch (_: kotlinx.coroutines.channels.ClosedSendChannelException) {
+            // Terminal; nothing to do.
+        }
     }
 
     fun tryDispatch(command: PlaybackCommand): Boolean =
@@ -174,6 +181,12 @@ class PlaybackSession(
     }
 
     suspend fun release() = coroutineScope {
+        // Idempotent: a second call after the lane closed must not throw
+        // ClosedSendChannelException into a caller's release-retry loop.
+        if (released.getAndSet(true)) {
+            sessionJob.cancelAndJoin()
+            return@coroutineScope
+        }
         val alreadyStopped = snapshot.value.state == PlaybackState.STOPPED
         val releaseCompletion = if (alreadyStopped) {
             null
@@ -538,6 +551,7 @@ class PlaybackSession(
             return
         }
         val preferenceSnapshot = preferences
+        val changeIdAtStart = latestRequirementsChangeId
         generationScope(generation).launch {
             val requirementResult = resolveRequirements(
                 summary = resolvedRequest.summary,
@@ -560,7 +574,13 @@ class PlaybackSession(
                 )
             }
             lane.send(
-                LaneMessage.SelectionFinished(generation, failedGraph, profile, selectionResult),
+                LaneMessage.SelectionFinished(
+                    generation,
+                    failedGraph,
+                    profile,
+                    selectionResult,
+                    changeIdAtStart,
+                ),
             )
         }
     }
@@ -629,6 +649,16 @@ class PlaybackSession(
                         PlaybackEvent.GraphSelected(message.generation, selection.graph),
                     ),
                 )
+                if (message.changeIdAtStart != latestRequirementsChangeId) {
+                    // A preferences change finished while this selection was in flight; its
+                    // reducer outcome was a no-op because no graph existed yet. Re-resolve it
+                    // against the just-selected graph so the change is never silently lost.
+                    resolveRequirementsChange(
+                        generation = message.generation,
+                        targetProfile = null,
+                        preferenceSnapshot = preferences,
+                    )
+                }
             }
             is PlaybackPolicy.Selection.Rejected -> {
                 fail(message.generation, selection.failure)
@@ -1307,7 +1337,9 @@ class PlaybackSession(
                             evidence = resolvedRequest.evidence,
                             graph = graph,
                             requirements = effective,
-                            startPaused = false,
+                            // A pause issued while reconnecting must survive the reconnect —
+                            // recoverOnce honors machine.paused the same way.
+                            startPaused = machine.paused,
                         ),
                     )
                 }
@@ -1964,6 +1996,10 @@ class PlaybackSession(
             val failedGraph: PlaybackGraph?,
             val profile: SessionProfile,
             val result: SelectionResult,
+            /** [latestRequirementsChangeId] when this selection launched; a moved id means a
+             * preferences change resolved mid-selection and must be re-applied after the graph
+             * exists, or it is silently lost. */
+            val changeIdAtStart: Long,
         ) : LaneMessage
         data class RequirementsChangeFinished(
             val changeId: Long,

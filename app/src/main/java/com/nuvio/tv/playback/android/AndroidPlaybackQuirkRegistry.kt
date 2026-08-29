@@ -120,4 +120,27 @@ internal object AndroidPlaybackQuirkRegistry {
         .filter { it.match.matches(device, codecStableIds, apiLevel) }
         .map { AppliedAndroidPlaybackQuirk(it, revalidationDue = nowEpochMs >= it.revalidateAfterEpochMs) }
         .toList()
+
+    /**
+     * Human-readable findings for quirks whose evidence has gone stale on THIS device: expired
+     * entries silently stop applying (reverting device behavior with no code change), and
+     * revalidation-due entries are running on old evidence. Callers must surface these — a quirk
+     * expiry must never again be a silent shipped-fleet time bomb (AFTKM, 2027-08-26).
+     */
+    fun revalidationFindings(
+        device: AndroidDeviceFacts,
+        codecStableIds: Set<String>,
+        nowEpochMs: Long,
+        apiLevel: Int,
+    ): List<String> = records
+        .filter { it.match.matches(device, codecStableIds, apiLevel) }
+        .mapNotNull {
+            when {
+                nowEpochMs >= it.expiresAtEpochMs ->
+                    "${it.id} EXPIRED — its override no longer applies on this device"
+                nowEpochMs >= it.revalidateAfterEpochMs ->
+                    "${it.id} revalidation due — evidence ${it.evidenceReference} is stale"
+                else -> null
+            }
+        }
 }

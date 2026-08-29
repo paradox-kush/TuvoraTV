@@ -1077,6 +1077,90 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    // Review follow-up: a preferences change resolved while primary graph selection was still in
+    // flight was a reducer no-op (no graph existed yet), and the in-flight SelectionFinished then
+    // stored requirements from the OLD preferences snapshot — the user's change was silently lost
+    // for the whole session even though the changeId machinery exists to prevent exactly this.
+    @Test
+    fun `preferences change during graph selection is never lost`() = runTest {
+        val engine = FakeEngine()
+        val selectionGate = CompletableDeferred<Unit>()
+        var environmentCalls = 0
+        val session = session(
+            engine = engine,
+            environmentProvider = PlaybackEnvironmentProvider { input ->
+                environmentCalls += 1
+                if (environmentCalls == 1) selectionGate.await()
+                environmentResult(input)
+            },
+            requirementsResolver = PlaybackRequirementsResolver { input ->
+                PlaybackResult.Success(
+                    requirements().copy(
+                        subtitleDelayMs = input.effectivePreferences.subtitles.delayMs,
+                    ),
+                )
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+
+        session.dispatch(
+            PlaybackCommand.PreferencesChanged(
+                PlaybackPreferences(subtitles = SubtitlePreference(delayMs = 250)),
+            ),
+        )
+        advanceUntilIdle()
+        selectionGate.complete(Unit)
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        val effectiveDelay = engine.lastAppliedRequirements?.subtitleDelayMs
+            ?: engine.lastStartInput?.requirements?.subtitleDelayMs
+        assertEquals(250L, effectiveDelay)
+        close(session)
+    }
+
+    // Review follow-up: the reconnect loop hardcoded startPaused=false while recoverOnce honored
+    // machine.paused — a pause issued during LIVE_RECONNECTING played audio out loud on reconnect
+    // while the snapshot claimed paused.
+    @Test
+    fun `pause during live reconnect is honored by the next reconnect start`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            when (start) {
+                2 -> events.emit(
+                    PlaybackEvent.Failed(
+                        input.generation,
+                        PlaybackFailure(
+                            FailureCode.NETWORK_TIMEOUT,
+                            FailureDomain.NETWORK,
+                            FailurePhase.RECOVERY,
+                            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                        ),
+                    ),
+                )
+                3 -> events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+            }
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        runCurrent()
+        session.dispatch(PlaybackCommand.Pause)
+        advanceUntilIdle()
+
+        assertEquals(3, engine.startCalls)
+        assertTrue(requireNotNull(engine.lastStartInput).startPaused)
+        assertFalse(session.snapshot.value.isPlaying)
+        close(session)
+    }
+
     @Test
     fun `rapid frame death incidents exhaust rolling reconnect pressure`() = runTest {
         val engine = FakeEngine { start, input, events ->

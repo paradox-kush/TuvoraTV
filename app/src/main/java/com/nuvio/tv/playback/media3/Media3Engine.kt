@@ -352,16 +352,17 @@ class Media3Engine internal constructor(
     private suspend fun Media3Backend.applyRequirementsOnly(
         requirements: PlaybackRequirements,
     ): PlaybackResult<Unit> {
+        // A backend can be retained without active state when a failed start's release also
+        // failed; an apply in that window is a typed failure, never a raw throw into the actor.
+        val request = activeRequest
+            ?: return failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+        val evidence = activeEvidence
+            ?: return failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+        val graph = activeGraph
+            ?: return failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
         // The backend applies only fields classified in-place by the core. Network/source values are
         // deliberately retained from its immutable construction plan.
-        return apply(
-            Media3AdapterPlanFactory.create(
-                requireNotNull(activeRequest),
-                requireNotNull(activeEvidence),
-                requireNotNull(activeGraph),
-                requirements,
-            ),
-        )
+        return apply(Media3AdapterPlanFactory.create(request, evidence, graph, requirements))
     }
 
     private var activeRequest: com.nuvio.tv.playback.core.PlaybackRequest? = null

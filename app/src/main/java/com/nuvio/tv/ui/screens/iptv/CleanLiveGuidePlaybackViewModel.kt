@@ -740,6 +740,11 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             attachedSurfaceOwner = null
             pendingPlayed = null
             sessionProfile = SessionProfile.GUIDE
+            // The attach input retains an Activity/view tree/lifecycle; keeping it across a
+            // detach leaks a destroyed Activity through configuration changes and lets a late
+            // tune rebuild against a dead lifecycle. A detached guide waits for the next real
+            // attach instead of restarting from stale inputs.
+            lastAttachInput = null
             mutableState.value = CleanLiveGuidePlaybackState.Detached
         }
     }

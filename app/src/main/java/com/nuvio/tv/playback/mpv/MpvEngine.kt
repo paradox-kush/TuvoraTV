@@ -139,8 +139,15 @@ class MpvEngine internal constructor(
             is PlaybackResult.Failure -> created
             is PlaybackResult.Success -> {
                 val candidate = created.value
+                // Subscribe BEFORE attachSurface: attach creates and initializes the native core,
+                // and the backend's replay-0 flow drops anything emitted with no subscriber — an
+                // early terminal fact lost here left the session spinning until a watchdog fired.
+                val candidateEvents = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    candidate.events.collect { publish(input.generation, it) }
+                }
                 val attached = candidate.attachSurface(currentLease)
                 if (attached is PlaybackResult.Failure) {
+                    candidateEvents.cancelAndJoin()
                     return@withLock when (val released = candidate.release()) {
                         is PlaybackResult.Success -> attached
                         is PlaybackResult.Failure -> {
@@ -152,9 +159,7 @@ class MpvEngine internal constructor(
                 backend = candidate
                 activeStart = input
                 sourceReleased = false
-                eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                    candidate.events.collect { publish(input.generation, it) }
-                }
+                eventJob = candidateEvents
                 when (val started = candidate.start()) {
                     is PlaybackResult.Success -> started
                     is PlaybackResult.Failure -> {
