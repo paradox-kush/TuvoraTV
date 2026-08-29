@@ -90,4 +90,66 @@ class AudioTrackFailureClassificationTest {
         assertTrue(error.isDeterministicVideoCapabilityFailure())
         assertFalse(isRetryablePlaybackError(error))
     }
+
+    // Regression: the legacy generic decoding-failure ladder was deleted with the clean-pipeline
+    // hardening, which left a deterministic AUDIO-codec decode failure (e.g. DTS/E-AC-3 on a box
+    // without the codec — shape 4003 on the audio renderer, NOT AudioTrack 5001/5002) retrying
+    // the identical config until the budget was spent and then showing the fatal error screen.
+    // isAudioDecoderFailure routes it back into the safe-audio → PCM → audio-disabled ladder.
+    @Test
+    fun `audio renderer decode failure is an audio decoder failure`() {
+        val error = ExoPlaybackException.createForRenderer(
+            IllegalStateException("Decoder failed: c2.android.dts.decoder"),
+            "MediaCodecAudioRenderer",
+            0,
+            Format.Builder().setSampleMimeType("audio/vnd.dts").build(),
+            C.FORMAT_HANDLED,
+            false,
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+        )
+
+        assertTrue(error.isAudioDecoderFailure())
+    }
+
+    @Test
+    fun `audio renderer runtime check failure is an audio decoder failure`() {
+        val error = ExoPlaybackException.createForRenderer(
+            IllegalStateException("runtime check failed"),
+            "MediaCodecAudioRenderer",
+            0,
+            Format.Builder().setSampleMimeType("audio/eac3").build(),
+            C.FORMAT_HANDLED,
+            false,
+            PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK,
+        )
+
+        assertTrue(error.isAudioDecoderFailure())
+    }
+
+    // The cross-domain routing bug the old generic branch had: a VIDEO decode failure must never
+    // enter the audio recovery ladder.
+    @Test
+    fun `video renderer decode failure is not an audio decoder failure`() {
+        val error = ExoPlaybackException.createForRenderer(
+            IllegalStateException("decoder rejected profile and level"),
+            "MediaCodecVideoRenderer",
+            0,
+            Format.Builder().setSampleMimeType("video/hevc").build(),
+            C.FORMAT_EXCEEDS_CAPABILITIES,
+            false,
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+        )
+
+        assertFalse(error.isAudioDecoderFailure())
+    }
+
+    @Test
+    fun `non-renderer source error is not an audio decoder failure`() {
+        val error = ExoPlaybackException.createForSource(
+            java.io.IOException("read failed"),
+            PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+        )
+
+        assertFalse(error.isAudioDecoderFailure())
+    }
 }

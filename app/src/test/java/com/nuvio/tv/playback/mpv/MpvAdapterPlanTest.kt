@@ -125,7 +125,7 @@ class MpvAdapterPlanTest {
     }
 
     @Test
-    fun `direct rejects subtitles and software decode`() {
+    fun `direct rejects full-fidelity subtitles and software decode`() {
         assertTrue(
             MpvAdapterPlanFactory.create(
                 start(graph = graph(GraphOutputProfile.MPV_DIRECT, DecoderMode.HARDWARE)),
@@ -139,6 +139,25 @@ class MpvAdapterPlanTest {
                 ),
             ) is PlaybackResult.Failure,
         )
+    }
+
+    // Regression: the plan vetoed MPV_DIRECT whenever subtitles were enabled AT ALL, while graph
+    // selection (PlaybackPolicy) only excludes it for FULL fidelity — so with the default
+    // preferences (subtitles enabled, COMPATIBLE fidelity) every guide live tune selected
+    // MPV_DIRECT, was instantly rejected at engine start, and silently landed on Media3,
+    // neutralizing the live libmpv default on every device. The plan must mirror the policy:
+    // COMPATIBLE fidelity accepts that direct render cannot draw subtitles.
+    @Test
+    fun `direct admits compatible-fidelity subtitles and disables subtitle decode`() {
+        val plan = plan(
+            start(
+                graph = graph(GraphOutputProfile.MPV_DIRECT, DecoderMode.HARDWARE),
+                requirements = requirements(subtitles = true, fidelity = SubtitleFidelity.COMPATIBLE),
+            ),
+        )
+
+        assertEquals("mediacodec_embed", plan.preInitOptions["vo"])
+        assertEquals("no", plan.preInitOptions["sid"])
     }
 
     private fun plan(input: PlaybackEngineStart) =
@@ -159,7 +178,10 @@ class MpvAdapterPlanTest {
         surfaceMode = if (profile == GraphOutputProfile.MPV_DIRECT) SurfaceMode.NATIVE_EMBED else SurfaceMode.GPU_RENDER,
     )
 
-    private fun requirements(subtitles: Boolean = true) = PlaybackRequirements(
+    private fun requirements(
+        subtitles: Boolean = true,
+        fidelity: SubtitleFidelity = SubtitleFidelity.FULL,
+    ) = PlaybackRequirements(
         profile = SessionProfile.FULLSCREEN,
         priority = SessionPriority.QUALITY_AND_STABILITY,
         qualityIntent = VideoQualityIntent.FULL,
@@ -168,7 +190,7 @@ class MpvAdapterPlanTest {
         hdrPreference = HdrPreference.AUTO,
         decoderPreference = DecoderPreference.AUTO,
         softwareDecodeFallbackAllowed = true,
-        subtitleFidelity = SubtitleFidelity.FULL,
+        subtitleFidelity = fidelity,
         subtitlesEnabled = subtitles,
         audioOutput = AudioOutputPreference.PCM,
         pcmProcessingAllowed = true,

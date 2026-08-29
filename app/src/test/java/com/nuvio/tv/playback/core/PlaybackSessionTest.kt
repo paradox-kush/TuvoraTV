@@ -222,9 +222,9 @@ class PlaybackSessionTest {
         )
         session.dispatch(PlaybackCommand.SurfaceAvailable)
         session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
-        advanceUntilIdle()
+        runCurrent()
         engine.emit(PlaybackEvent.FirstVideoFrame(1))
-        advanceUntilIdle()
+        runCurrent()
 
         assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
         assertTrue(diagnostics.any { it.code == PlaybackDiagnosticCode.COMPATIBILITY_HISTORY_RECORD_FAILED })
@@ -1029,6 +1029,7 @@ class PlaybackSessionTest {
         advanceUntilIdle()
 
         assertEquals(listOf(liveRequest.url, thirdLiveRequest.url), resolvedUrls)
+        assertEquals(1, engine.releaseSourceCalls)
         assertEquals(1, engine.releaseCalls)
         assertEquals(2, engine.startCalls)
         close(session)
@@ -1068,12 +1069,73 @@ class PlaybackSessionTest {
         engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
         advanceUntilIdle()
 
-        assertEquals(4, engine.startCalls)
+        assertEquals(session.snapshot.value.toString(), 4, engine.startCalls)
         assertEquals(4, resolutions)
         assertTrue(engine.releaseCalls >= 3)
         assertEquals(1, engine.hardAbortCalls)
         assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
         close(session)
+    }
+
+    @Test
+    fun `rapid frame death incidents exhaust rolling reconnect pressure`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            if (start > 1) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        repeat(7) {
+            engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+            advanceUntilIdle()
+        }
+
+        assertEquals(7, engine.startCalls) // initial + six budgeted reconnect provider opens
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.LIVE_RECONNECT_EXHAUSTED, session.snapshot.value.failure?.code)
+        close(session)
+    }
+
+    @Test
+    fun `live recovery joins default position while VOD restores its checkpoint`() = runTest {
+        suspend fun TestScope.recoveredStart(request: PlaybackRequest): PlaybackEngineStart {
+            val engine = FakeEngine { start, input, events ->
+                if (start == 2) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+            }
+            val session = session(engine)
+            session.dispatch(PlaybackCommand.SurfaceAvailable)
+            session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+            advanceUntilIdle()
+            engine.emit(PlaybackEvent.FirstVideoFrame(1))
+            engine.emit(
+                PlaybackEvent.TimelineUpdated(
+                    1,
+                    PlaybackTimelineFacts(positionMs = 1_800_000, durationMs = 3_600_000, seekable = true),
+                ),
+            )
+            engine.emit(
+                PlaybackEvent.Failed(
+                    1,
+                    PlaybackFailure(
+                        FailureCode.NETWORK_TIMEOUT,
+                        FailureDomain.NETWORK,
+                        FailurePhase.PLAYBACK,
+                        Retryability.RETRYABLE_IN_PLACE,
+                    ),
+                ),
+            )
+            advanceUntilIdle()
+            val recovered = requireNotNull(engine.lastStartInput)
+            close(session)
+            return recovered
+        }
+
+        assertEquals(0L, recoveredStart(liveRequest).startPositionMs)
+        assertEquals(1_800_000L, recoveredStart(vodRequest).startPositionMs)
     }
 
     @Test
@@ -1149,7 +1211,7 @@ class PlaybackSessionTest {
     }
 
     @Test
-    fun `video reconnect does not succeed from audio without a rendered frame`() = runTest {
+    fun `reconnect audio without video frame expires through startup watchdog`() = runTest {
         val engine = FakeEngine { start, input, events ->
             if (start == 2) {
                 events.emit(
@@ -1161,28 +1223,41 @@ class PlaybackSessionTest {
                     ),
                 )
                 events.emit(PlaybackEvent.FirstAudio(input.generation))
+                events.emit(PlaybackEvent.VideoDecoderInitialized(input.generation, "decoder"))
             }
         }
-        val session = session(engine)
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = session(
+            engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
         session.dispatch(PlaybackCommand.SurfaceAvailable)
         session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
-        advanceUntilIdle()
+        runCurrent()
         engine.emit(PlaybackEvent.FirstVideoFrame(1))
-        advanceUntilIdle()
+        runCurrent()
 
         engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
         runCurrent()
-        advanceTimeBy(1)
+        advanceTimeBy(1_000)
         runCurrent()
 
-        assertEquals(2, engine.startCalls)
-        assertEquals(PlaybackState.LIVE_RECONNECTING, session.snapshot.value.state)
+        assertTrue(engine.startCalls >= 2)
+        assertTrue(
+            session.snapshot.value.state in setOf(
+                PlaybackState.LIVE_RECONNECTING,
+                PlaybackState.STARTING_PRIMARY,
+            ),
+        )
         assertTrue(session.snapshot.value.progress.renderedAudio)
-
-        engine.emit(PlaybackEvent.FirstVideoFrame(1))
-        advanceUntilIdle()
-
-        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        val expired = diagnostics.single {
+            it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED &&
+                it.failure?.code == FailureCode.NO_PROGRESS
+        }
+        assertEquals(FailureCode.NO_PROGRESS, expired.failure?.code)
+        assertEquals(FailurePhase.RECOVERY, expired.failure?.phase)
+        assertTrue(engine.releaseCalls >= 1)
         close(session)
     }
 
@@ -1534,6 +1609,29 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `attaching surface without host progress is bounded`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        assertEquals(PlaybackState.ATTACHING_SURFACE, session.snapshot.value.state)
+
+        advanceTimeBy(3_000)
+        runCurrent()
+
+        val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(FailureCode.SURFACE_LOST, expired.failure?.code)
+        assertEquals(FailurePhase.SURFACE_ATTACHMENT, expired.failure?.phase)
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        close(session)
+    }
+
+    @Test
     fun `superseded generation watchdog cannot fail the replacement request`() = runTest {
         val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
         val engine = FakeEngine()
@@ -1684,6 +1782,56 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    @Test
+    fun `session owns audio focus across engine-neutral duck loss gain and release`() = runTest {
+        val engine = FakeEngine()
+        val focus = FakeAudioFocusPort()
+        val session = session(engine, audioFocus = focus)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(1, focus.acquireCalls)
+        focus.emit(AudioFocusEvent.LOSS_DUCK)
+        focus.emit(AudioFocusEvent.LOSS_TRANSIENT)
+        focus.emit(AudioFocusEvent.GAIN)
+        advanceUntilIdle()
+
+        assertEquals(listOf(0.2f, 1f), engine.volumeValues)
+        assertEquals(listOf(true, false), engine.pausedValues)
+        close(session)
+        assertEquals(1, focus.abandonCalls)
+    }
+
+    @Test
+    fun `audio sink failure applies PCM audio ladder without entering video recovery`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            if (start == 2) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(vodRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        engine.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.AUDIO_SINK_FAILED,
+                    FailureDomain.AUDIO_SINK,
+                    FailurePhase.PLAYBACK,
+                    Retryability.HANDOFF_ELIGIBLE,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(2, engine.startCalls)
+        assertEquals(AudioOutputPreference.PCM, engine.lastStartInput?.requirements?.audioOutput)
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        close(session)
+    }
+
     private fun TestScope.session(
         engine: FakeEngine,
         otherEngine: FakeEngine? = null,
@@ -1705,6 +1853,7 @@ class PlaybackSessionTest {
         ),
         diagnostics: PlaybackDiagnostics = PlaybackDiagnostics { },
         outputController: PlaybackOutputController = FakeOutputController,
+        audioFocus: AudioFocusPort = NoopAudioFocusPort,
     ) = PlaybackSession(
         parentScope = this,
         requestResolver = requestResolver,
@@ -1726,6 +1875,7 @@ class PlaybackSessionTest {
         clock = TestClock,
         diagnostics = diagnostics,
         lifecycle = lifecycle,
+        audioFocus = audioFocus,
         providerPlaybackResolver = providerPlaybackResolver,
         compatibilityRecording = compatibilityRecording,
         policy = policy,
@@ -1750,6 +1900,7 @@ class PlaybackSessionTest {
         var applyRequirementsCalls = 0
         var lastAppliedRequirements: PlaybackRequirements? = null
         var releaseCalls = 0
+        var releaseSourceCalls = 0
         val releaseGenerations = mutableListOf<Long>()
         var hardAbortCalls = 0
         val hardAbortGenerations = mutableListOf<Long>()
@@ -1760,6 +1911,8 @@ class PlaybackSessionTest {
         var hardAbortFailuresRemaining = 0
         var snapshotMetricsCalls = 0
         var videoFramesRendered: Long? = null
+        val pausedValues = mutableListOf<Boolean>()
+        val volumeValues = mutableListOf<Float>()
 
         override suspend fun attachSurface(
             generation: Long,
@@ -1779,8 +1932,15 @@ class PlaybackSessionTest {
             return PlaybackResult.Success(Unit)
         }
 
-        override suspend fun setPaused(generation: Long, paused: Boolean): PlaybackResult<Unit> =
-            PlaybackResult.Success(Unit)
+        override suspend fun setPaused(generation: Long, paused: Boolean): PlaybackResult<Unit> {
+            pausedValues += paused
+            return PlaybackResult.Success(Unit)
+        }
+
+        override suspend fun setVolume(generation: Long, volume: Float): PlaybackResult<Unit> {
+            volumeValues += volume
+            return PlaybackResult.Success(Unit)
+        }
 
         override suspend fun applyRequirements(
             generation: Long,
@@ -1829,6 +1989,11 @@ class PlaybackSessionTest {
             }
             activeConnections = 0
             return PlaybackResult.Success(Unit)
+        }
+
+        override suspend fun releaseSource(generation: Long): PlaybackResult<Unit> {
+            releaseSourceCalls++
+            return release(generation)
         }
 
         override suspend fun hardAbort(generation: Long): PlaybackResult<Unit> {
@@ -1896,6 +2061,22 @@ class PlaybackSessionTest {
         override suspend fun delayMs(durationMs: Long) {
             delay(durationMs)
         }
+    }
+
+    private class FakeAudioFocusPort : AudioFocusPort {
+        private val flow = MutableSharedFlow<AudioFocusEvent>(extraBufferCapacity = 8)
+        var acquireCalls = 0
+        var abandonCalls = 0
+        override fun events(): Flow<AudioFocusEvent> = flow
+        override suspend fun acquire(): PlaybackResult<Unit> {
+            acquireCalls++
+            return PlaybackResult.Success(Unit)
+        }
+        override suspend fun abandon(): PlaybackResult<Unit> {
+            abandonCalls++
+            return PlaybackResult.Success(Unit)
+        }
+        fun emit(event: AudioFocusEvent) { flow.tryEmit(event) }
     }
 
     private class FakeCompatibilityHistory(

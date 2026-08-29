@@ -3,7 +3,22 @@ package com.nuvio.tv.playback.core
 /** The single deterministic policy consumes already-resolved requirements, never raw platform state. */
 class PlaybackPolicy(
     private val watchdogConfiguration: WatchdogConfiguration = WatchdogConfiguration(),
+    private val liveReconnectConfiguration: LiveReconnectConfiguration = LiveReconnectConfiguration(),
 ) {
+    /** Fleet-derived anti-hammer guardrails; successes must remain stable before pressure resets. */
+    data class LiveReconnectConfiguration(
+        val maxAttemptsPerIncident: Int = 3,
+        val minimumStablePlaybackBeforeResetMs: Long = 30_000L,
+        val rollingWindowMs: Long = 120_000L,
+        val maxAttemptsPerRollingWindow: Int = 6,
+    ) {
+        init {
+            require(maxAttemptsPerIncident > 0)
+            require(minimumStablePlaybackBeforeResetMs > 0)
+            require(rollingWindowMs > 0)
+            require(maxAttemptsPerRollingWindow >= maxAttemptsPerIncident)
+        }
+    }
     /** Bootstrap values from the approved adaptive architecture; telemetry may tune them later. */
     data class WatchdogConfiguration(
         val enabled: Boolean = true,
@@ -16,6 +31,7 @@ class PlaybackPolicy(
         val liveReadyToFirstFrameMs: Long = 1_000L,
         val vodReadyToFirstFrameMs: Long = 2_000L,
         val runtimeVideoProgressWindowMs: Long = 5_000L,
+        val surfaceAttachmentProgressMs: Long = 3_000L,
     ) {
         init {
             if (enabled) {
@@ -26,11 +42,13 @@ class PlaybackPolicy(
                 require(liveReadyToFirstFrameMs > 0)
                 require(vodReadyToFirstFrameMs > 0)
                 require(runtimeVideoProgressWindowMs > 0)
+                require(surfaceAttachmentProgressMs > 0)
             }
         }
     }
 
     enum class WatchdogPhase {
+        WAITING_FOR_SURFACE,
         FIRST_MEDIA_BYTE,
         BYTES_TO_TRACKS,
         VIDEO_TRACKS_TO_READY,
@@ -45,6 +63,7 @@ class PlaybackPolicy(
         contentType: ContentType,
         network: PlaybackNetworkRequest,
     ): Long = when (phase) {
+        WatchdogPhase.WAITING_FOR_SURFACE -> watchdogConfiguration.surfaceAttachmentProgressMs
         WatchdogPhase.FIRST_MEDIA_BYTE -> minOf(
             network.readTimeoutMs.toLong(),
             network.callTimeoutMs?.toLong() ?: Long.MAX_VALUE,
@@ -75,6 +94,12 @@ class PlaybackPolicy(
         phase: WatchdogPhase,
         evidence: StreamEvidence,
     ): PlaybackFailure = when (phase) {
+        WatchdogPhase.WAITING_FOR_SURFACE -> PlaybackFailure(
+            code = FailureCode.SURFACE_LOST,
+            domain = FailureDomain.VIDEO_RENDERER_SURFACE,
+            phase = FailurePhase.SURFACE_ATTACHMENT,
+            retryability = Retryability.HANDOFF_ELIGIBLE,
+        )
         WatchdogPhase.FIRST_MEDIA_BYTE -> PlaybackFailure(
             code = FailureCode.NETWORK_TIMEOUT,
             domain = FailureDomain.NETWORK,
@@ -161,6 +186,47 @@ class PlaybackPolicy(
     fun liveReconnectDelayMs(attempt: Int): Long {
         require(attempt >= 0) { "Reconnect attempt must not be negative" }
         return RECONNECT_DELAYS_MS.getOrElse(attempt) { RECONNECT_DELAYS_MS.last() }
+    }
+
+    fun liveReconnectAllowed(
+        attemptInIncident: Int,
+        recentAttemptsEpochMs: Collection<Long>,
+        nowEpochMs: Long,
+    ): Boolean {
+        if (attemptInIncident >= liveReconnectConfiguration.maxAttemptsPerIncident) return false
+        val windowStart = nowEpochMs - liveReconnectConfiguration.rollingWindowMs
+        return recentAttemptsEpochMs.count { it >= windowStart } <
+            liveReconnectConfiguration.maxAttemptsPerRollingWindow
+    }
+
+    fun liveReconnectWindowStart(nowEpochMs: Long): Long =
+        nowEpochMs - liveReconnectConfiguration.rollingWindowMs
+
+    fun stablePlaybackResetsReconnectPressure(stableForMs: Long): Boolean =
+        stableForMs >= liveReconnectConfiguration.minimumStablePlaybackBeforeResetMs
+
+    fun liveReconnectExhaustedFailure(): PlaybackFailure = PlaybackFailure(
+        code = FailureCode.LIVE_RECONNECT_EXHAUSTED,
+        domain = FailureDomain.NETWORK,
+        phase = FailurePhase.RECOVERY,
+        retryability = Retryability.FATAL,
+    )
+
+    /** Adapters report authorization evidence; provider-link freshness is a core concern. */
+    fun normalizeAuthorizationRecovery(
+        failure: PlaybackFailure,
+        providerCanMintFreshRequest: Boolean,
+    ): PlaybackFailure {
+        if (failure.domain != FailureDomain.AUTHORIZATION_PROVIDER_LIMIT ||
+            failure.code != FailureCode.AUTHORIZATION_REJECTED
+        ) return failure
+        return failure.copy(
+            retryability = if (providerCanMintFreshRequest) {
+                Retryability.RETRYABLE_WITH_FRESH_REQUEST
+            } else {
+                Retryability.FATAL
+            },
+        )
     }
 
     private fun select(input: SelectionInput, handoff: Boolean): Selection {
@@ -257,6 +323,32 @@ class PlaybackPolicy(
     private companion object {
         val DEFAULT_ENGINE_ORDER = listOf(EngineType.MEDIA3, EngineType.LIBMPV)
         val RECONNECT_DELAYS_MS = longArrayOf(0L, 1_000L, 2_000L, 5_000L, 10_000L, 20_000L)
+    }
+}
+
+/** Pure, typed VOD audio ladder; video failures are deliberately outside this policy. */
+object AudioOutputPolicy {
+    fun nextRequirements(
+        current: PlaybackRequirements,
+        failure: PlaybackFailure,
+        failedEngine: EngineType,
+    ): PlaybackRequirements? = when (failure.domain) {
+        FailureDomain.AUDIO_DECODER -> {
+            val alternate = current.preferredEngineOrder.firstOrNull { it != failedEngine }
+            if (alternate != null) {
+                current.copy(preferredEngineOrder = listOf(alternate) + current.preferredEngineOrder.filterNot { it == alternate })
+            } else if (current.audioOutput != AudioOutputPreference.PCM) {
+                current.copy(audioOutput = AudioOutputPreference.PCM, audioDownmixToStereo = true)
+            } else {
+                null
+            }
+        }
+        FailureDomain.AUDIO_SINK -> if (current.audioOutput != AudioOutputPreference.PCM) {
+            current.copy(audioOutput = AudioOutputPreference.PCM, audioDownmixToStereo = true)
+        } else {
+            null
+        }
+        else -> null
     }
 }
 
@@ -431,7 +523,13 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
             EnginePreference.MEDIA3 -> listOf(EngineType.MEDIA3)
             EnginePreference.LIBMPV -> listOf(EngineType.LIBMPV)
         }
-        val requested = explicit + input.environment.preferredEngineOrder + DEFAULT_ENGINE_ORDER
+        val productDefault = when (input.requestSummary.contentType) {
+            ContentType.LIVE -> LIVE_ENGINE_ORDER
+            ContentType.VOD, ContentType.CATCH_UP -> VOD_ENGINE_ORDER
+        }
+        // Environment order is deterministic compatibility/history evidence. It therefore ranks
+        // after an explicit user override but before the product default.
+        val requested = explicit + input.environment.preferredEngineOrder + productDefault
         return requested.distinct().filter(eligible::contains)
     }
 
@@ -480,7 +578,8 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
 
     private companion object {
         const val PREVIEW_HEADROOM = 1.5
-        val DEFAULT_ENGINE_ORDER = listOf(EngineType.MEDIA3, EngineType.LIBMPV)
+        val LIVE_ENGINE_ORDER = listOf(EngineType.LIBMPV, EngineType.MEDIA3)
+        val VOD_ENGINE_ORDER = listOf(EngineType.MEDIA3, EngineType.LIBMPV)
     }
 }
 

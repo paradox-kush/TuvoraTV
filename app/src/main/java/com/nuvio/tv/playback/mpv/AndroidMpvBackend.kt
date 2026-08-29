@@ -22,6 +22,7 @@ import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 internal enum class MpvBackendLifecycle {
@@ -76,6 +78,7 @@ internal interface MpvBackend {
     suspend fun attachSurface(lease: MpvSurfaceLease): PlaybackResult<Unit>
     suspend fun start(): PlaybackResult<Unit>
     suspend fun setPaused(paused: Boolean): PlaybackResult<Unit>
+    suspend fun setVolume(volume: Float): PlaybackResult<Unit>
     suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = unsupportedMpvControl()
     suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = unsupportedMpvControl()
     suspend fun selectAudioTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMpvControl()
@@ -86,6 +89,7 @@ internal interface MpvBackend {
     suspend fun apply(plan: MpvAdapterPlan): PlaybackResult<Unit>
     suspend fun detachSurface(): PlaybackResult<Unit>
     suspend fun metrics(): PlaybackResult<MpvMetrics>
+    suspend fun stopSource(): PlaybackResult<Unit>
     suspend fun release(): PlaybackResult<Unit>
     suspend fun hardAbort(): PlaybackResult<Unit>
 }
@@ -123,6 +127,8 @@ internal interface MpvNativeCore {
     fun long(name: String): Long?
     fun node(name: String): MPVNode
     fun destroyWithResult(): Boolean
+    /** Independent final-termination entry used only after graceful teardown failed. */
+    fun forceTerminateWithResult(): Boolean
 }
 
 internal interface MpvNativeObserver {
@@ -156,6 +162,11 @@ internal class AndroidMpvBackend(
     private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
 ) : MpvBackend, MpvNativeObserver {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
+
+    /** Independent lane for forced termination; see [initiateForcedTermination]. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val terminationScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val _events = MutableSharedFlow<MpvBackendEvent>(extraBufferCapacity = 64)
     override val events: Flow<MpvBackendEvent> = _events.asSharedFlow()
 
@@ -178,6 +189,10 @@ internal class AndroidMpvBackend(
     private var trackReferences: Map<PlaybackTrackId, MpvTrackReference> = emptyMap()
     private var restorationApplied = false
     private var releaseTask: kotlinx.coroutines.Deferred<PlaybackResult<Unit>>? = null
+    private var forceTerminationTask: kotlinx.coroutines.Deferred<PlaybackResult<Unit>>? = null
+    private var stopAcknowledgement: CompletableDeferred<Boolean>? = null
+    private var manualSubtitleSelection = false
+    private var appliedSubtitlesEnabled = plan.preInitOptions["sid"] != "no"
 
     override suspend fun attachSurface(lease: MpvSurfaceLease): PlaybackResult<Unit> =
         withContext(dispatcher) {
@@ -197,6 +212,11 @@ internal class AndroidMpvBackend(
                         if (!core.setOption(name, value)) throw IllegalStateException("Rejected mpv option: $name")
                     }
                     core.initialize()
+                    // Legacy-proven re-assert (NuvioMpvSurfaceView:135): wrapper/init layers have
+                    // historically overwritten idle post-init; idle is runtime-settable and a
+                    // non-idle=yes core self-terminates after `stop`. Assert it after init so the
+                    // reuse lane can never inherit a dying core.
+                    runCatching { core.setString("idle", "yes") }
                     observeFacts()
                     lifecycle = MpvBackendLifecycle.INITIALIZED
                 } else if (lifecycle !in activeStates) {
@@ -288,7 +308,10 @@ internal class AndroidMpvBackend(
             ?.takeIf { it.type == type }
             ?: return@withContext stateFailure(FailurePhase.PLAYBACK)
         runCatching { core.setString(property, reference.nativeId) }.fold(
-            onSuccess = { PlaybackResult.Success(Unit) },
+            onSuccess = {
+                if (type == PlaybackTrackType.SUBTITLE) manualSubtitleSelection = true
+                PlaybackResult.Success(Unit)
+            },
             onFailure = { stateFailure(FailurePhase.PLAYBACK) },
         )
     }
@@ -296,10 +319,21 @@ internal class AndroidMpvBackend(
     override suspend fun setSubtitlesEnabled(enabled: Boolean): PlaybackResult<Unit> =
         withContext(dispatcher) {
             runCatching { core.setString("sid", if (enabled) "auto" else "no") }.fold(
-                onSuccess = { PlaybackResult.Success(Unit) },
+                onSuccess = {
+                    manualSubtitleSelection = true
+                    appliedSubtitlesEnabled = enabled
+                    PlaybackResult.Success(Unit)
+                },
                 onFailure = { stateFailure(FailurePhase.PLAYBACK) },
             )
         }
+
+    override suspend fun setVolume(volume: Float): PlaybackResult<Unit> = withContext(dispatcher) {
+        runCatching { core.setString("volume", (volume.coerceIn(0f, 1f) * 100f).toString()) }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { stateFailure(FailurePhase.PLAYBACK) },
+        )
+    }
 
     override suspend fun attachExternalSubtitle(
         subtitleId: ExternalSubtitleId,
@@ -312,6 +346,7 @@ internal class AndroidMpvBackend(
             registration.label?.let(command::add)
             if (registration.label != null) registration.language?.let(command::add)
             core.command(*command.toTypedArray())
+            manualSubtitleSelection = true
         }.fold(
             onSuccess = { PlaybackResult.Success(Unit) },
             onFailure = { stateFailure(FailurePhase.PLAYBACK) },
@@ -329,13 +364,24 @@ internal class AndroidMpvBackend(
         }
     }
 
-    override suspend fun detachSurface(): PlaybackResult<Unit> = withContext(dispatcher) {
-        if (lifecycle == MpvBackendLifecycle.DEAD) return@withContext PlaybackResult.Success(Unit)
-        val currentLease = lease ?: return@withContext PlaybackResult.Success(Unit)
-        if (!core.detachSurfaceWithResult()) return@withContext releaseFailure(FailureCode.SURFACE_LOST)
+    // Non-child + bounded for the same reason as stopSource: native detach must be abandonable.
+    override suspend fun detachSurface(): PlaybackResult<Unit> {
+        val task = scope.async {
+            detachSurfaceOnLane()
+        }
+        return withTimeoutOrNull(NATIVE_CALL_ABANDON_TIMEOUT_MS) { task.await() }
+            ?: releaseFailure(FailureCode.SURFACE_LOST)
+    }
+
+    private fun detachSurfaceOnLane(): PlaybackResult<Unit> {
+        if (lifecycle == MpvBackendLifecycle.DEAD) return PlaybackResult.Success(Unit)
+        val currentLease = lease ?: return PlaybackResult.Success(Unit)
+        // Stop the VO before the surface leaves (upstream order; see initiateRelease).
+        runCatching { core.setString("vo", "null") }
+        if (!core.detachSurfaceWithResult()) return releaseFailure(FailureCode.SURFACE_LOST)
         currentLease.confirmDetached()
         lease = null
-        PlaybackResult.Success(Unit)
+        return PlaybackResult.Success(Unit)
     }
 
     override suspend fun metrics(): PlaybackResult<MpvMetrics> = withContext(dispatcher) {
@@ -349,9 +395,53 @@ internal class AndroidMpvBackend(
         )
     }
 
+    // NOT withContext: mpv_command is a synchronous native call that blocks until the core's
+    // playloop services it (libmpv contract). A wedged playloop (device-observed: emulator
+    // ANGLE/goldfish, thread dump anchored at MPV.command) blocks that thread forever, and a
+    // structured withContext child can never be abandoned by a caller timeout — the session's
+    // withTimeoutOrNull would wait on it indefinitely, hanging the release barrier. The body
+    // therefore runs as a NON-CHILD task on the backend scope, and the caller-facing await is
+    // bounded here: on expiry the task (and, on a true wedge, its lane thread) is abandoned and
+    // the caller gets a typed failure so the barrier can escalate to hard abort.
+    override suspend fun stopSource(): PlaybackResult<Unit> {
+        val task = scope.async {
+            if (lifecycle == MpvBackendLifecycle.DEAD) return@async PlaybackResult.Success(Unit)
+            if (lifecycle == MpvBackendLifecycle.ATTACHED || lifecycle == MpvBackendLifecycle.IDLE) {
+                return@async PlaybackResult.Success(Unit)
+            }
+            if (lifecycle !in activeStates) return@async stateFailure(FailurePhase.RELEASE)
+            val acknowledgement = CompletableDeferred<Boolean>()
+            stopAcknowledgement = acknowledgement
+            runCatching { core.command("stop") }
+                .getOrElse {
+                    stopAcknowledgement = null
+                    return@async releaseFailure(FailureCode.RESOURCE_RELEASE_FAILED)
+                }
+            val stopped = withTimeoutOrNull(SOURCE_STOP_TIMEOUT_MS) { acknowledgement.await() } == true
+            if (stopAcknowledgement === acknowledgement) stopAcknowledgement = null
+            if (!stopped) return@async releaseFailure(FailureCode.RESOURCE_RELEASE_FAILED)
+            resetSourceFacts()
+            lifecycle = MpvBackendLifecycle.ATTACHED
+            PlaybackResult.Success(Unit)
+        }
+        return withTimeoutOrNull(NATIVE_CALL_ABANDON_TIMEOUT_MS) { task.await() }
+            ?: releaseFailure(FailureCode.RESOURCE_RELEASE_FAILED)
+    }
+
     override suspend fun release(): PlaybackResult<Unit> = initiateRelease().await()
 
-    override suspend fun hardAbort(): PlaybackResult<Unit> = initiateRelease().await()
+    override suspend fun hardAbort(): PlaybackResult<Unit> {
+        val graceful = releaseTask
+        if (graceful == null) return initiateForcedTermination().await()
+        // A wedged native teardown never completes the graceful task. Hard abort must not wait
+        // on it indefinitely — after a bounded grace it escalates to forced termination, which
+        // runs on an independent lane precisely so a stuck serialized call cannot starve it.
+        val gracefulResult = kotlinx.coroutines.withTimeoutOrNull(GRACEFUL_RESULT_WAIT_MS) {
+            graceful.await()
+        }
+        if (gracefulResult is PlaybackResult.Success) return PlaybackResult.Success(Unit)
+        return initiateForcedTermination().await()
+    }
 
     @Synchronized private fun initiateRelease(): kotlinx.coroutines.Deferred<PlaybackResult<Unit>> {
         releaseTask?.let { return it }
@@ -359,6 +449,10 @@ internal class AndroidMpvBackend(
         return scope.async {
             lifecycle = MpvBackendLifecycle.RELEASING
             runCatching { core.command("stop") }
+            // Upstream teardown order (mpv-android BaseMPVView): stop the video output BEFORE
+            // detaching the surface. Detaching while the VO still owns the surface is the
+            // documented native deadlock race; `vo=null` deinitializes the VO first.
+            runCatching { core.setString("vo", "null") }
             runCatching {
                 if (lease != null && core.detachSurfaceWithResult()) lease?.confirmDetached()
             }
@@ -369,6 +463,26 @@ internal class AndroidMpvBackend(
             lifecycle = MpvBackendLifecycle.DEAD
             PlaybackResult.Success(Unit)
         }.also { releaseTask = it }
+    }
+
+    @Synchronized private fun initiateForcedTermination(): kotlinx.coroutines.Deferred<PlaybackResult<Unit>> {
+        forceTerminationTask?.let { return it }
+        terminalEventsSuppressed = true
+        // Deliberately NOT the serialized backend dispatcher: a native call wedged on that lane
+        // (device-observed: emulator ANGLE/goldfish teardown blocking inside `stop`) would queue
+        // forced termination behind itself forever. The fork's forceTerminateWithResult is the
+        // designated concurrent-safe last-resort entry (idempotent before/after initialization),
+        // so it gets its own single-thread lane and can prove death while the graceful call is
+        // still stuck. The wedged thread itself stays leaked until process death — bounded,
+        // fail-closed session release is the containment, not thread recovery.
+        return terminationScope.async {
+            lifecycle = MpvBackendLifecycle.RELEASING
+            val terminated = runCatching { core.forceTerminateWithResult() }.getOrDefault(false)
+            if (!terminated) return@async releaseFailure(FailureCode.RESOURCE_RELEASE_FAILED)
+            lease?.confirmCoreDestroyed()
+            lifecycle = MpvBackendLifecycle.DEAD
+            PlaybackResult.Success(Unit)
+        }.also { forceTerminationTask = it }
     }
 
     override fun property(name: String, value: Long) {
@@ -484,6 +598,7 @@ internal class AndroidMpvBackend(
 
     private fun handleEndFile(end: ParsedMpvEndFile) {
         lifecycle = MpvBackendLifecycle.IDLE
+        if (end.reason == MpvEndReason.STOP) stopAcknowledgement?.complete(true)
         when (end.reason) {
             MpvEndReason.EOF -> _events.tryEmit(MpvBackendEvent.Ended(PlaybackEndReason.EOF))
             MpvEndReason.ERROR -> _events.tryEmit(MpvBackendEvent.Failed(normalizeMpvError(end.fileError)))
@@ -492,6 +607,24 @@ internal class AndroidMpvBackend(
             MpvEndReason.REDIRECT -> Unit // Internal redirect transition, not a terminal playback fact.
             MpvEndReason.UNKNOWN -> _events.tryEmit(MpvBackendEvent.Failed(normalizeMpvError(null)))
         }
+    }
+
+    private fun resetSourceFacts() {
+        lastStreamPosition = -1L
+        firstVideoFrameSent = false
+        firstAudioSent = false
+        videoWidth = 0
+        videoHeight = 0
+        lastVideoFrameRate = null
+        positionMs = 0
+        durationMs = null
+        bufferedDurationMs = 0
+        seekable = false
+        trackReferences = emptyMap()
+        trackRevision = 0
+        restorationApplied = false
+        manualSubtitleSelection = false
+        appliedSubtitlesEnabled = plan.preInitOptions["sid"] != "no"
     }
 
     private fun observeFacts() {
@@ -624,9 +757,15 @@ internal class AndroidMpvBackend(
 
     private fun applyRuntime(plan: MpvAdapterPlan) {
         plan.runtimeProperties.forEach(core::setString)
-        plan.preInitOptions["sid"]?.let { core.setString("sid", it) }
+        val nextSubtitlesEnabled = plan.preInitOptions["sid"] != "no"
+        val subtitlePreferenceChanged = nextSubtitlesEnabled != appliedSubtitlesEnabled
+        if (!manualSubtitleSelection || subtitlePreferenceChanged) {
+            plan.preInitOptions["sid"]?.let { core.setString("sid", it) }
+            plan.preInitOptions["slang"]?.let { core.setString("slang", it) }
+            manualSubtitleSelection = false
+        }
+        appliedSubtitlesEnabled = nextSubtitlesEnabled
         plan.preInitOptions["alang"]?.let { core.setString("alang", it) }
-        plan.preInitOptions["slang"]?.let { core.setString("slang", it) }
     }
 
     private fun stateFailure(phase: FailurePhase) = PlaybackResult.Failure(
@@ -650,6 +789,17 @@ internal class AndroidMpvBackend(
     private companion object {
         const val PRESENTED_VIDEO_FRAMES = "presented-video-frame-count"
         const val BYTE_PROGRESS_STEP = 256L * 1_024L
+        const val SOURCE_STOP_TIMEOUT_MS = 3_000L
+
+        /** How long hard abort waits on an in-flight graceful teardown before forcing death. */
+        const val GRACEFUL_RESULT_WAIT_MS = 1_000L
+
+        /**
+         * Upper bound on any caller-facing wait for a blocking native call. On expiry the task
+         * is abandoned (a truly wedged call leaks its lane thread until process death) and the
+         * caller receives a typed failure instead of hanging the release barrier.
+         */
+        const val NATIVE_CALL_ABANDON_TIMEOUT_MS = 4_000L
         const val MPV_EVENT_SHUTDOWN = 1
         const val MPV_EVENT_START_FILE = 6
         const val MPV_EVENT_END_FILE = 7
@@ -699,6 +849,7 @@ private class AndroidMpvNativeCore(private val mpv: MPV) : MpvNativeCore {
     override fun long(name: String): Long? = mpv.getPropertyLong(name)
     override fun node(name: String): MPVNode = mpv.getPropertyNode(name) ?: MPVNode.None
     override fun destroyWithResult(): Boolean = mpv.destroyWithResult()
+    override fun forceTerminateWithResult(): Boolean = mpv.destroyWithResult()
 }
 
 internal data class ParsedMpvEndFile(val reason: MpvEndReason, val fileError: String?)
@@ -790,9 +941,10 @@ private const val MAX_CONTENT_FRAME_RATE = 120f
 
 internal fun normalizeMpvError(raw: String?): PlaybackFailure {
     val value = raw.orEmpty().lowercase()
+    val inferredStatus = inferHttpAuthorizationStatus(value)
     val (code, domain, retryability) = when {
         "timeout" in value -> Triple(FailureCode.NETWORK_TIMEOUT, FailureDomain.NETWORK, Retryability.RETRYABLE_WITH_FRESH_REQUEST)
-        "401" in value || "403" in value || "unauthorized" in value || "forbidden" in value ->
+        inferredStatus != null ->
             Triple(FailureCode.AUTHORIZATION_REJECTED, FailureDomain.AUTHORIZATION_PROVIDER_LIMIT, Retryability.FATAL)
         "tls" in value || "certificate" in value ->
             Triple(FailureCode.TLS_HANDSHAKE_FAILED, FailureDomain.TLS, Retryability.HANDOFF_ELIGIBLE)
@@ -801,5 +953,27 @@ internal fun normalizeMpvError(raw: String?): PlaybackFailure {
         raw != null -> Triple(FailureCode.DEMUX_FAILED, FailureDomain.DEMUX, Retryability.HANDOFF_ELIGIBLE)
         else -> Triple(FailureCode.UNKNOWN, FailureDomain.UNKNOWN, Retryability.HANDOFF_ELIGIBLE)
     }
-    return PlaybackFailure(code, domain, FailurePhase.PLAYBACK, retryability)
+    return PlaybackFailure(
+        code,
+        domain,
+        FailurePhase.PLAYBACK,
+        retryability,
+        httpStatus = inferredStatus,
+        statusProvenance = inferredStatus?.let {
+            com.nuvio.tv.playback.core.HttpStatusProvenance.INFERRED_FROM_NETWORK_ERROR
+        },
+    )
+}
+
+private val MPV_HTTP_AUTHORIZATION = Regex(
+    "(?:http(?:\\s+(?:error|status))?|server\\s+returned|status\\s+code)\\s*[:=]?\\s*(401|403)\\b|\\b(401\\s+unauthorized|403\\s+forbidden)\\b",
+    RegexOption.IGNORE_CASE,
+)
+
+internal fun inferHttpAuthorizationStatus(raw: String): Int? {
+    val match = MPV_HTTP_AUTHORIZATION.find(raw) ?: return null
+    return match.groupValues.asSequence()
+        .drop(1)
+        .mapNotNull { group -> Regex("\\d{3}").find(group)?.value?.toIntOrNull() }
+        .firstOrNull { it == 401 || it == 403 }
 }

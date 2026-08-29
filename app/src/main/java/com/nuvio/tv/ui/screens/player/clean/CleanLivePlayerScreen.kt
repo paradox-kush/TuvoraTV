@@ -454,6 +454,7 @@ internal object CleanLivePlayerUiPolicy {
     private fun playbackErrorMessageRes(reason: FailureCode): Int = when (reason) {
         FailureCode.NETWORK_UNREACHABLE,
         FailureCode.NETWORK_TIMEOUT,
+        FailureCode.LIVE_RECONNECT_EXHAUSTED,
         -> R.string.clean_live_error_network
         FailureCode.AUTHORIZATION_REJECTED,
         FailureCode.PROVIDER_CONNECTION_LIMIT,
@@ -467,7 +468,10 @@ internal object CleanLivePlayerUiPolicy {
         FailureCode.VIDEO_RENDERER_FAILED,
         -> R.string.clean_live_error_video
         FailureCode.SURFACE_LOST -> R.string.clean_live_error_surface
-        FailureCode.AUDIO_OUTPUT_FAILED -> R.string.clean_live_error_audio
+        FailureCode.AUDIO_OUTPUT_FAILED,
+        FailureCode.AUDIO_DECODER_FAILED,
+        FailureCode.AUDIO_SINK_FAILED,
+        -> R.string.clean_live_error_audio
         FailureCode.SUBTITLE_OUTPUT_UNSUPPORTED -> R.string.clean_live_error_stream_format
         FailureCode.DRM_UNSUPPORTED,
         FailureCode.DRM_LICENSE_FAILED,

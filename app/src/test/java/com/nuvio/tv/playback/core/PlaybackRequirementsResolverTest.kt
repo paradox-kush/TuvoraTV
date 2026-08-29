@@ -11,6 +11,35 @@ class PlaybackRequirementsResolverTest {
     private val resolver = DefaultPlaybackRequirementsResolver()
 
     @Test
+    fun `AUTO product policy prefers libmpv for Live and Media3 for VOD`() = runTest {
+        val live = resolve(input(summary = requestSummary(contentType = ContentType.LIVE)))
+        val vod = resolve(input(summary = requestSummary(contentType = ContentType.VOD)))
+
+        assertEquals(listOf(EngineType.LIBMPV, EngineType.MEDIA3), live.preferredEngineOrder)
+        assertEquals(listOf(EngineType.MEDIA3, EngineType.LIBMPV), vod.preferredEngineOrder)
+    }
+
+    @Test
+    fun `explicit override and compatibility history outrank Live product default`() = runTest {
+        val history = resolve(
+            input(
+                summary = requestSummary(ContentType.LIVE),
+                preferredEngineOrder = listOf(EngineType.MEDIA3),
+            ),
+        )
+        val explicit = resolve(
+            input(
+                summary = requestSummary(ContentType.LIVE),
+                preferences = PlaybackPreferences.recommended().copy(engine = EnginePreference.MEDIA3),
+                preferredEngineOrder = listOf(EngineType.LIBMPV),
+            ),
+        )
+
+        assertEquals(listOf(EngineType.MEDIA3, EngineType.LIBMPV), history.preferredEngineOrder)
+        assertEquals(listOf(EngineType.MEDIA3, EngineType.LIBMPV), explicit.preferredEngineOrder)
+    }
+
+    @Test
     fun `guide uses viewport headroom without forcing HDR display switching or GPU`() = runTest {
         val resolved = resolve(
             input(
@@ -418,9 +447,12 @@ class PlaybackRequirementsResolverTest {
         ),
     )
 
-    private fun requestSummary(hasDrm: Boolean = false) = RequestSummary(
+    private fun requestSummary(
+        contentType: ContentType = ContentType.LIVE,
+        hasDrm: Boolean = false,
+    ) = RequestSummary(
         scheme = "https",
-        contentType = ContentType.LIVE,
+        contentType = contentType,
         hasAuthorization = false,
         hasCustomHeaders = false,
         hasCookies = false,

@@ -19,6 +19,7 @@ import com.nuvio.tv.domain.model.LibraryEntryInput
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.repository.LibraryRepository
 import com.nuvio.tv.playback.core.PlaybackProfileId
+import com.nuvio.tv.playback.core.ProviderSelectionId
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -54,6 +55,14 @@ data class GuideChannel(
     /** `tv_archive_duration` in days; 0 = the panel did not say (see XtreamCatchUp.isWithinWindow). */
     val catchUpDays: Int = 0
 )
+
+internal object GuideRapidZapPolicy {
+    fun advance(currentIndex: Int, channelCount: Int, direction: com.nuvio.tv.playback.live.LiveZapDirection): Int {
+        require(channelCount > 0)
+        val delta = if (direction == com.nuvio.tv.playback.live.LiveZapDirection.NEXT) 1 else -1
+        return Math.floorMod(currentIndex + delta, channelCount)
+    }
+}
 
 /** Programs for a channel: now/next plus the raw list feeding the guide's timeline cells. */
 data class GuideEpg(
@@ -457,6 +466,18 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // not, so this one deliberately does not follow the window.
             ensureHistory(channel)
         }
+    }
+
+    /** Moves the authoritative highlight synchronously and returns its exact stable identity. */
+    fun moveChannelFocus(direction: com.nuvio.tv.playback.live.LiveZapDirection): ProviderSelectionId? {
+        val state = _uiState.value
+        if (state.channels.isEmpty()) return null
+        val current = state.channels.indexOfFirst { it.contentId == state.focusedChannelId }
+            .takeIf { it >= 0 } ?: 0
+        val nextIndex = GuideRapidZapPolicy.advance(current, state.channels.size, direction)
+        val next = state.channels[nextIndex]
+        onChannelFocused(next, nextIndex)
+        return ProviderSelectionId(next.contentId)
     }
 
     /** Add/remove a channel from the platform Library (same store as movies). */

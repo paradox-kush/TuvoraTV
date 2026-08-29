@@ -247,19 +247,26 @@ class CleanLiveSurfaceCoordinatorTest {
     }
 
     @Test
-    fun `current unexpected surface loss is serialized and recoverable`() = runTest {
+    fun `actually removed surface publishes host readiness and replacement recovers`() = runTest {
         val commands = mutableListOf<PlaybackCommand>()
         val owner = owner()
         val coordinator = coordinator(owner, setOf(SurfaceMode.TEXTURE_VIEW))
         start(coordinator, commands)
-        media3Lease(coordinator, SurfaceMode.TEXTURE_VIEW)
-        val listener = (owner.getChildAt(0) as TextureView).surfaceTextureListener!!
+        val lease = media3Lease(coordinator, SurfaceMode.TEXTURE_VIEW)
+        val oldView = owner.getChildAt(0) as TextureView
+        val listener = oldView.surfaceTextureListener!!
         val texture = mockk<SurfaceTexture>()
 
         listener.onSurfaceTextureDestroyed(texture)
         drainMain()
-        listener.onSurfaceTextureAvailable(texture, 1920, 1080)
+        assertTrue(lease.release())
         drainMain()
+
+        assertEquals(0, owner.childCount)
+        val replacement = media3Lease(coordinator, SurfaceMode.TEXTURE_VIEW)
+        val newView = owner.getChildAt(0)
+        assertTrue(newView !== oldView)
+        assertTrue(replacement.release())
 
         assertEquals(
             listOf(

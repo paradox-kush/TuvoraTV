@@ -522,16 +522,24 @@ object PlaybackStateMachine {
     }
 
     private fun lifecycleInactive(state: PlaybackMachineState): PlaybackTransition {
+        val live = (state.request?.contentType ?: state.launch?.contentType) == ContentType.LIVE
         val inactive = state.copy(
             lifecycleActive = false,
             paused = true,
             snapshot = state.snapshot.copy(isPlaying = false),
+            // A live recovery incident belongs to the expiring transport attempt. Preserve the
+            // logical launch identity, but never let recoveryIssued poison the fresh resume.
+            incident = if (live) null else state.incident,
         )
         if (state.activeReleaseEpoch != null) {
             if (state.afterRelease in setOf(AfterRelease.STOP, AfterRelease.FAIL)) {
                 return transition(inactive)
             }
-            val resume = lifecycleResumeForAfterRelease(state.afterRelease)
+            val resume = if (live) {
+                LifecycleResume.RESOLVE_REQUEST
+            } else {
+                lifecycleResumeForAfterRelease(state.afterRelease)
+            }
             return transition(
                 inactive.copy(
                     afterRelease = AfterRelease.SUSPEND,
@@ -610,6 +618,8 @@ object PlaybackStateMachine {
     }
 
     private fun lifecycleResumeForState(state: PlaybackMachineState): LifecycleResume = when {
+        (state.request?.contentType ?: state.launch?.contentType) == ContentType.LIVE ->
+            LifecycleResume.RESOLVE_REQUEST
         state.snapshot.state == PlaybackState.RESOLVING -> LifecycleResume.RESOLVE_REQUEST
         state.snapshot.state == PlaybackState.SELECTING_GRAPH -> LifecycleResume.SELECT_PRIMARY_GRAPH
         state.snapshot.graph != null && state.snapshot.state.isPlaybackActive() ->
@@ -994,9 +1004,19 @@ object PlaybackStateMachine {
         return transition(
             state.copy(
                 snapshot = state.snapshot.copy(
-                    state = PlaybackState.STARTING_PRIMARY,
+                    // Reconnect remains one incident-owned state while resetting phase evidence;
+                    // the session watchdog keys off this state as another startup attempt.
+                    state = if (state.snapshot.state == PlaybackState.LIVE_RECONNECTING) {
+                        PlaybackState.LIVE_RECONNECTING
+                    } else {
+                        PlaybackState.STARTING_PRIMARY
+                    },
                     isReconnecting = state.snapshot.isReconnecting,
-                    statusCode = PlaybackStatusCode.STARTING,
+                    statusCode = if (state.snapshot.isReconnecting) {
+                        PlaybackStatusCode.RECONNECTING
+                    } else {
+                        PlaybackStatusCode.STARTING
+                    },
                     tracks = TrackSummary(),
                     progress = PlaybackProgressEvidence(),
                     videoOutputFacts = VideoOutputFacts(

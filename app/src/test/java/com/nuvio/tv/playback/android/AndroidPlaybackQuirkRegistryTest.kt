@@ -73,6 +73,47 @@ class AndroidPlaybackQuirkRegistryTest {
             apiLevel = 35,
         )
 
+    // The emulator family is identified by exact qemu hardware ("ranchu") across its many AVD
+    // model strings; goldfish decoder teardown deadlocks make hardware decode unusable there.
+    @Test
+    fun `android emulator family forces software video decode regardless of AVD model`() {
+        listOf("sdk_google_atv64_arm64", "sdk_gphone64_arm64", "sdk_gphone_x86_64").forEach { model ->
+            val applied = AndroidPlaybackQuirkRegistry.resolve(
+                device = emulatorDevice.copy(model = model),
+                codecStableIds = setOf("c2.goldfish.h264.decoder|video/avc"),
+                nowEpochMs = 1_800_000_000_000L,
+                apiLevel = 36,
+            ).single()
+
+            assertEquals(AndroidPlaybackQuirkDomain.VIDEO_DECODER, applied.quirk.domain)
+            assertEquals(
+                AndroidPlaybackQuirkOverride.ForceSoftwareVideoDecode,
+                applied.quirk.override,
+            )
+        }
+    }
+
+    @Test
+    fun `real devices never match the emulator software-decode quirk`() {
+        val onnLike = AndroidDeviceFacts(
+            manufacturer = "onn",
+            model = "onn. 4K Streaming Box",
+            device = "dopinder",
+            hardware = "amlogic",
+            board = "g12a",
+            firmware = "UT1A.230419.001",
+        )
+
+        val applied = AndroidPlaybackQuirkRegistry.resolve(
+            device = onnLike,
+            codecStableIds = setOf("OMX.amlogic.avc.decoder.awesome|video/avc"),
+            nowEpochMs = 1_800_000_000_000L,
+            apiLevel = 34,
+        )
+
+        assertTrue(applied.none { it.quirk.override == AndroidPlaybackQuirkOverride.ForceSoftwareVideoDecode })
+    }
+
     private companion object {
         val fireDevice = AndroidDeviceFacts(
             manufacturer = "Amazon",
@@ -81,6 +122,15 @@ class AndroidPlaybackQuirkRegistryTest {
             hardware = "mt8696",
             board = "mt8696",
             firmware = "PS7699/4007",
+        )
+
+        val emulatorDevice = AndroidDeviceFacts(
+            manufacturer = "Google",
+            model = "sdk_google_atv64_arm64",
+            device = "emu64a",
+            hardware = "ranchu",
+            board = "goldfish_arm64",
+            firmware = "UE1A.230829.036",
         )
     }
 }

@@ -129,6 +129,39 @@ class MpvEngineTest {
     }
 
     @Test
+    fun `source replacement acknowledges stop before next libmpv load without recreating core or surface`() = runTest {
+        val backend = FakeBackend()
+        val host = CountingSurfaceHost()
+        var backendCreations = 0
+        val engine = MpvEngine(
+            backgroundScope,
+            host,
+            MpvBackendFactory {
+                backendCreations++
+                PlaybackResult.Success(backend)
+            },
+        )
+        success(engine.attachSurface(31, graph()))
+        success(engine.start(start(31)))
+
+        success(engine.releaseSource(31))
+        success(engine.attachSurface(32, graph()))
+        success(
+            engine.start(
+                start(32).copy(
+                    request = PlaybackRequest("https://example.test/next", contentType = ContentType.LIVE),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("start", "stop-source", "apply", "start"), backend.operations)
+        assertEquals(1, backendCreations)
+        assertEquals(1, host.acquireCalls)
+        assertEquals(1, backend.attachCalls)
+        assertEquals(0, backend.releaseCalls)
+    }
+
+    @Test
     fun `libmpv decoder format and dimensions remain generation facts`() = runTest {
         val backend = FakeBackend()
         val engine = engine(backend, backgroundScope)
@@ -254,6 +287,7 @@ class MpvEngineTest {
         var releaseSucceeds = true
         var detachSucceeds = true
         var metrics = MpvMetrics(0, 0, 0)
+        val operations = mutableListOf<String>()
         private var lease: MpvSurfaceLease? = null
 
         override suspend fun attachSurface(lease: MpvSurfaceLease): PlaybackResult<Unit> {
@@ -264,17 +298,26 @@ class MpvEngineTest {
         }
         override suspend fun start(): PlaybackResult<Unit> {
             startCalls++
+            operations += "start"
             eventOnStart?.let(flow::tryEmit)
             return PlaybackResult.Success(Unit)
         }
         override suspend fun setPaused(paused: Boolean) = PlaybackResult.Success(Unit)
-        override suspend fun apply(plan: MpvAdapterPlan) = PlaybackResult.Success(Unit)
+        override suspend fun setVolume(volume: Float) = PlaybackResult.Success(Unit)
+        override suspend fun apply(plan: MpvAdapterPlan): PlaybackResult<Unit> {
+            operations += "apply"
+            return PlaybackResult.Success(Unit)
+        }
         override suspend fun detachSurface(): PlaybackResult<Unit> {
             if (!detachSucceeds) return failure()
             lease?.confirmDetached()
             return PlaybackResult.Success(Unit)
         }
         override suspend fun metrics() = PlaybackResult.Success(metrics)
+        override suspend fun stopSource(): PlaybackResult<Unit> {
+            operations += "stop-source"
+            return PlaybackResult.Success(Unit)
+        }
         override suspend fun release(): PlaybackResult<Unit> {
             releaseCalls++
             if (!releaseSucceeds) return failure()

@@ -3180,4 +3180,7 @@
     <string name="sub_startup_mode_fast_desc">Start playback immediately. Selecting addon subtitles may reload the player once.</string>
     <string name="sub_startup_mode_preferred_desc">Prefetch addon subtitles before playback and attach preferred/secondary language tracks.</string>
     <string name="sub_startup_mode_all_desc">Prefetch and attach all addon subtitles before playback. Slowest startup.</string>
+    <string name="clean_live_ingress_invalid">This Live TV item cannot be opened.</string>
+    <string name="clean_live_ingress_unavailable">This Live TV channel is currently unavailable.</string>
+    <string name="clean_live_ingress_profile_changed">Your profile changed. Select the channel again.</string>
 </resources>

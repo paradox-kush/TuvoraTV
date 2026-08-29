@@ -152,6 +152,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private val ownerScope = CoroutineScope(ownerJob + ownerDispatcher)
     private val ownershipMutex = Mutex()
     private val tuneRequests = Channel<ProviderSelectionId>(Channel.CONFLATED)
+    private val settledTuneRequests = Channel<ProviderSelectionId>(Channel.CONFLATED)
     private val zapRequests = Channel<LiveZapDirection>(Channel.CONFLATED)
     private val mutableState =
         MutableStateFlow<CleanLiveGuidePlaybackState>(CleanLiveGuidePlaybackState.Detached)
@@ -174,6 +175,17 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
     private val tuneWorker = ownerScope.launch {
         for (contentId in tuneRequests) performTune(contentId)
+    }
+
+    private val settledTuneWorker = ownerScope.launch {
+        for (initial in settledTuneRequests) {
+            var destination = initial
+            delay(RAPID_ZAP_SETTLE_MS)
+            while (true) {
+                destination = settledTuneRequests.tryReceive().getOrNull() ?: break
+            }
+            performTune(destination)
+        }
     }
 
     private val zapWorker = ownerScope.launch {
@@ -292,6 +304,32 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     /** Accepted direct-channel work is independent of a Compose caller's coroutine lifetime. */
     fun requestTune(contentId: ProviderSelectionId) {
         if (!releaseCompleted && !clearedReleaseLoopStarted) tuneRequests.trySend(contentId)
+    }
+
+    /** Exact highlighted destinations are debounced; relative D-pad deltas never enter playback. */
+    fun requestSettledTune(contentId: ProviderSelectionId) {
+        if (!releaseCompleted && !clearedReleaseLoopStarted) settledTuneRequests.trySend(contentId)
+    }
+
+    /**
+     * Invalidates playback ownership as soon as the guide selects a different provider/account.
+     * Catalogue success is deliberately not a prerequisite: a broken or empty replacement can
+     * never leave the previous provider audible behind its error UI.
+     */
+    fun requestProviderOwnershipChange() {
+        if (releaseCompleted || clearedReleaseLoopStarted) return
+        launchContained(CleanLiveGuideFailure.RELEASE_FAILED) { invalidateProviderOwnership() }
+    }
+
+    internal suspend fun invalidateProviderOwnership() = ownershipMutex.withLock {
+        if (releaseCompleted) return@withLock
+        attachGeneration += 1
+        pendingTuneContentId = null
+        activeTarget = null
+        pendingPlayed = null
+        val current = host
+        if (current != null && !releaseHostForSurfaceRebind()) return@withLock
+        mutableState.value = CleanLiveGuidePlaybackState.Detached
     }
 
     private suspend fun performTune(contentId: ProviderSelectionId) {
@@ -748,6 +786,8 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private fun completeRelease() {
         releaseCompleted = true
         tuneRequests.close()
+        settledTuneRequests.close()
+        settledTuneWorker.cancel()
         tuneWorker.cancel()
         zapRequests.close()
         zapWorker.cancel()
@@ -836,6 +876,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
     private companion object {
         const val LOG_TAG = "CleanLiveGuide"
+        const val RAPID_ZAP_SETTLE_MS = 450L
         const val INITIAL_CLEAR_RELEASE_BACKOFF_MS = 100L
         const val MAX_CLEAR_RELEASE_BACKOFF_MS = 5_000L
     }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioDeviceInfo
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.playback.android.AndroidRuntimeCapabilityCollector
+import com.nuvio.tv.playback.android.AndroidAudioFocusPort
 import com.nuvio.tv.playback.android.AndroidRuntimeCapabilitySnapshot
 import com.nuvio.tv.playback.android.FrameworkAndroidCapabilitySource
 import com.nuvio.tv.playback.core.AudioMode
@@ -184,6 +185,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             clock = clock,
             diagnostics = diagnostics,
             lifecycle = host.lifecycle,
+            audioFocus = AndroidAudioFocusPort(appContext),
             compatibilityRecording = CompatibilityRecordingEnvironment(
                 history = history,
                 runtime = firstAndroid.compatibilityRuntime,
@@ -404,6 +406,10 @@ private class ProductionPlaybackEnvironmentProvider(
             appVersion = versions.appVersion,
             engineVersions = versions.engineVersions,
             rapidLiveZapping = input.profile == com.nuvio.tv.playback.core.SessionProfile.GUIDE,
+            quirkForcedDecoder = android.appliedQuirks.firstNotNullOfOrNull { applied ->
+                (applied.quirk.override as? com.nuvio.tv.playback.android.AndroidPlaybackQuirkOverride.ForceSoftwareVideoDecode)
+                    ?.let { com.nuvio.tv.playback.core.DecoderPreference.SOFTWARE_ONLY }
+            },
         ),
     )
 

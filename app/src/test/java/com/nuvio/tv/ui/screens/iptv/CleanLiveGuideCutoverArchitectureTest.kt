@@ -17,11 +17,19 @@ class CleanLiveGuideCutoverArchitectureTest {
         assertTrue(screen.contains("VideoDimensions(width = heightPx * 16 / 9, height = heightPx)"))
         assertTrue(screen.contains("previewViewport = previewViewport"))
         assertTrue(screen.contains("playbackViewModel.attachGuide("))
-        assertTrue(screen.contains("playbackViewModel.requestTune(ProviderSelectionId(ch.contentId))"))
-        assertTrue(screen.contains("playbackViewModel.requestZap(LiveZapDirection."))
+        assertTrue(screen.contains("commitPreview(ch.contentId)"))
+        assertTrue(screen.contains("playbackViewModel::requestSettledTune"))
+        assertTrue(screen.contains("viewModel.moveChannelFocus(LiveZapDirection."))
         assertTrue(screen.contains("playbackViewModel.requestPromote()"))
         assertTrue(screen.contains("playbackViewModel.requestCollapse()"))
         assertTrue(screen.contains("playbackViewModel.detachGuide()"))
+    }
+
+    @Test
+    fun `opening a guide including Stalker never blindly commits channel one`() {
+        assertFalse(screen.contains("val first = uiState.channels.firstOrNull()"))
+        assertFalse(screen.contains("initialContentId = ProviderSelectionId(first.contentId)"))
+        assertTrue(screen.contains("single-use providers are touched only by an explicit"))
     }
 
     @Test

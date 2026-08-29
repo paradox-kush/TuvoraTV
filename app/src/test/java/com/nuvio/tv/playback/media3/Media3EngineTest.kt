@@ -219,6 +219,39 @@ class Media3EngineTest {
         assertEquals(1, backend.startCalls)
     }
 
+    @Test
+    fun `source replacement stops old media before replacing it without recreating player or surface`() = runTest {
+        val backend = FakeBackend()
+        val host = CountingSurfaceHost()
+        var backendCreations = 0
+        val engine = Media3Engine(
+            scope = backgroundScope,
+            surfaceHost = host,
+            backendFactory = Media3BackendFactory {
+                backendCreations++
+                PlaybackResult.Success(backend)
+            },
+        )
+        assertSuccess(engine.attachSurface(21, graph()))
+        assertSuccess(engine.start(start(21)))
+
+        assertSuccess(engine.releaseSource(21))
+        assertSuccess(engine.attachSurface(22, graph()))
+        assertSuccess(
+            engine.start(
+                start(22).copy(
+                    request = PlaybackRequest("https://example.test/next", contentType = ContentType.LIVE),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("start", "stop-source", "replace-source"), backend.operations)
+        assertEquals(1, backendCreations)
+        assertEquals(1, host.acquireCalls)
+        assertEquals(1, backend.attachCalls)
+        assertEquals(0, backend.releaseCalls)
+    }
+
     private fun engine(backend: FakeBackend, scope: kotlinx.coroutines.CoroutineScope) = Media3Engine(
         scope = scope,
         surfaceHost = FakeSurfaceHost(),
@@ -307,6 +340,7 @@ class Media3EngineTest {
         var attachCalls = 0
         var applyCalls = 0
         var retryCalls = 0
+        var releaseCalls = 0
         var hardAbortCalls = 0
         var releaseSucceeds = true
         var hardAbortSucceeds = true
@@ -314,6 +348,7 @@ class Media3EngineTest {
         var eventOnStart: Media3BackendEvent? = null
         var lastPlan: Media3AdapterPlan? = null
         var decoderMetrics = Media3DecoderMetrics(0, 0, 0, 0, 0, 0)
+        val operations = mutableListOf<String>()
 
         fun emit(event: Media3BackendEvent) { mutableEvents.tryEmit(event) }
         override suspend fun attachSurface(lease: Media3SurfaceLease): PlaybackResult<Unit> {
@@ -327,10 +362,12 @@ class Media3EngineTest {
             restorationCheckpoint: com.nuvio.tv.playback.core.VodRestorationCheckpoint?,
         ): PlaybackResult<Unit> {
             startCalls++
+            operations += "start"
             eventOnStart?.let(mutableEvents::tryEmit)
             return PlaybackResult.Success(Unit)
         }
         override suspend fun setPaused(paused: Boolean) = PlaybackResult.Success(Unit)
+        override suspend fun setVolume(volume: Float) = PlaybackResult.Success(Unit)
         override suspend fun apply(plan: Media3AdapterPlan): PlaybackResult<Unit> {
             applyCalls++
             lastPlan = plan
@@ -341,10 +378,28 @@ class Media3EngineTest {
         } else {
             PlaybackResult.Failure(surfaceFailure())
         }
-        override suspend fun release(): PlaybackResult<Unit> = if (releaseSucceeds) {
+        override suspend fun stopSource(): PlaybackResult<Unit> {
+            operations += "stop-source"
+            return PlaybackResult.Success(Unit)
+        }
+        override suspend fun replaceSource(
+            plan: Media3AdapterPlan,
+            paused: Boolean,
+            startPositionMs: Long,
+            playbackRate: Float,
+            restorationCheckpoint: com.nuvio.tv.playback.core.VodRestorationCheckpoint?,
+        ): PlaybackResult<Unit> {
+            operations += "replace-source"
+            lastPlan = plan
+            return PlaybackResult.Success(Unit)
+        }
+        override suspend fun release(): PlaybackResult<Unit> {
+            releaseCalls++
+            return if (releaseSucceeds) {
             PlaybackResult.Success(Unit)
-        } else {
+            } else {
             PlaybackResult.Failure(surfaceFailure())
+            }
         }
         override suspend fun hardAbort(): PlaybackResult<Unit> {
             hardAbortCalls++

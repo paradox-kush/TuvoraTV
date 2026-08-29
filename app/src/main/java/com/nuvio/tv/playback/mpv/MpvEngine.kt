@@ -43,6 +43,7 @@ class MpvEngine internal constructor(
     private var backend: MpvBackend? = null
     private var eventJob: Job? = null
     private var activeStart: PlaybackEngineStart? = null
+    private var sourceReleased = false
 
     override suspend fun attachSurface(generation: Long, graph: PlaybackGraph): PlaybackResult<Unit> = lock.withLock {
         if (!graph.isStructurallyValid() || graph.engine != EngineType.LIBMPV) {
@@ -55,7 +56,10 @@ class MpvEngine internal constructor(
         if (currentBackend != null && activeStart?.graph != graph) {
             return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
         }
-        if (lease != null) return@withLock PlaybackResult.Success(Unit)
+        if (lease != null) {
+            this.generation = generation
+            return@withLock PlaybackResult.Success(Unit)
+        }
         when (val acquired = surfaceHost.acquire(graph.surfaceMode, graph.secureOutput)) {
             is PlaybackResult.Failure -> acquired
             is PlaybackResult.Success -> {
@@ -94,11 +98,42 @@ class MpvEngine internal constructor(
 
     override suspend fun start(input: PlaybackEngineStart): PlaybackResult<Unit> = lock.withLock {
         if (generation != input.generation) return@withLock stale(FailurePhase.ENGINE_START)
-        if (backend != null) return@withLock failure(FailurePhase.ENGINE_START, FailureCode.RESOURCE_BUDGET_EXCEEDED)
         val currentLease = lease ?: return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
         val plan = when (val planned = MpvAdapterPlanFactory.create(input)) {
             is PlaybackResult.Failure -> return@withLock planned
             is PlaybackResult.Success -> planned.value
+        }
+        val retained = backend
+        if (retained != null) {
+            val previous = activeStart
+            val previousPlan = previous?.let {
+                when (val planned = MpvAdapterPlanFactory.create(it)) {
+                    is PlaybackResult.Success -> planned.value
+                    is PlaybackResult.Failure -> null
+                }
+            }
+            val compatible = previousPlan?.let { old ->
+                old.copy(url = plan.url, startPaused = plan.startPaused, startPositionMs = plan.startPositionMs,
+                    playbackRate = plan.playbackRate, restorationCheckpoint = plan.restorationCheckpoint) == plan
+            } == true
+            if (!sourceReleased || previous?.graph != input.graph || !compatible) {
+                return@withLock failure(FailurePhase.ENGINE_START, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+            }
+            when (val applied = retained.apply(plan)) {
+                is PlaybackResult.Failure -> return@withLock applied
+                is PlaybackResult.Success -> Unit
+            }
+            activeStart = input
+            eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                retained.events.collect { publish(input.generation, it) }
+            }
+            val started = retained.start()
+            if (started is PlaybackResult.Success) sourceReleased = false
+            else {
+                eventJob?.cancelAndJoin()
+                eventJob = null
+            }
+            return@withLock started
         }
         when (val created = backendFactory.create(plan)) {
             is PlaybackResult.Failure -> created
@@ -116,6 +151,7 @@ class MpvEngine internal constructor(
                 }
                 backend = candidate
                 activeStart = input
+                sourceReleased = false
                 eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     candidate.events.collect { publish(input.generation, it) }
                 }
@@ -141,6 +177,12 @@ class MpvEngine internal constructor(
     override suspend fun setPaused(generation: Long, paused: Boolean): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
         backend?.setPaused(paused) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun setVolume(generation: Long, volume: Float): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setVolume(volume.coerceIn(0f, 1f))
+            ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
     }
 
     override suspend fun seekTo(generation: Long, positionMs: Long): PlaybackResult<Unit> = lock.withLock {
@@ -228,6 +270,21 @@ class MpvEngine internal constructor(
 
     override suspend fun release(generation: Long): PlaybackResult<Unit> = finish(generation, hard = false)
 
+    override suspend fun releaseSource(generation: Long): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.RELEASE)
+        val current = backend ?: return@withLock PlaybackResult.Success(Unit)
+        when (val stopped = current.stopSource()) {
+            is PlaybackResult.Failure -> stopped
+            is PlaybackResult.Success -> {
+                eventJob?.cancelAndJoin()
+                eventJob = null
+                sourceReleased = true
+                this.generation = null
+                PlaybackResult.Success(Unit)
+            }
+        }
+    }
+
     override suspend fun hardAbort(generation: Long): PlaybackResult<Unit> = finish(generation, hard = true)
 
     private suspend fun finish(generation: Long, hard: Boolean): PlaybackResult<Unit> = lock.withLock {
@@ -247,6 +304,7 @@ class MpvEngine internal constructor(
         lease = null
         this.generation = null
         activeStart = null
+        sourceReleased = false
         PlaybackResult.Success(Unit)
     }
 

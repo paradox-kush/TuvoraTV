@@ -226,24 +226,28 @@ fun LiveGuide(
     }
     var playbackAccountId by remember { mutableStateOf<String?>(null) }
 
-    // The catalog VM publishes this profile's URL-free lineup before exposing channels. The clean
-    // owner receives only the stable id and keeps this one FrameLayout across GUIDE/FULLSCREEN.
-    LaunchedEffect(activity, account.id, uiState.accountId, uiState.channels) {
-        if (uiState.accountId != account.id) return@LaunchedEffect
-        val first = uiState.channels.firstOrNull() ?: return@LaunchedEffect
-        val hostActivity = activity ?: return@LaunchedEffect
-        if (playbackAccountId == null) {
+    // Invalidate the old provider immediately. Opening a guide never commits channels.first():
+    // single-use providers are touched only by an explicit preview/fullscreen selection.
+    LaunchedEffect(account.id) {
+        if (playbackAccountId != null && playbackAccountId != account.id) {
+            playbackViewModel.requestProviderOwnershipChange()
+        }
+        playbackAccountId = account.id
+    }
+    fun commitPreview(contentId: String) {
+        val selection = ProviderSelectionId(contentId)
+        val hostActivity = activity ?: return
+        if (readyPlayback == null) {
             playbackViewModel.attachGuide(
-                initialContentId = ProviderSelectionId(first.contentId),
+                initialContentId = selection,
                 activity = hostActivity,
                 lifecycle = lifecycleOwner.lifecycle,
                 surfaceOwner = surfaceOwner,
                 previewViewport = previewViewport,
             )
-        } else if (playbackAccountId != account.id) {
-            playbackViewModel.requestTune(ProviderSelectionId(first.contentId))
+        } else {
+            playbackViewModel.requestTune(selection)
         }
-        playbackAccountId = account.id
     }
     DisposableEffect(playbackViewModel) {
         onDispose { playbackViewModel.detachGuide() }
@@ -293,8 +297,10 @@ fun LiveGuide(
                         Key.MediaPlay -> if (playbackUi?.isPaused == true) togglePause() else showControls()
                         Key.MediaPause -> if (playbackUi?.isPaused != true) togglePause() else showControls()
                         // The live-TV remote split: UP/DOWN are the channel keys.
-                        Key.DirectionUp -> playbackViewModel.requestZap(LiveZapDirection.PREVIOUS)
-                        Key.DirectionDown -> playbackViewModel.requestZap(LiveZapDirection.NEXT)
+                        Key.DirectionUp -> viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS)
+                            ?.let(playbackViewModel::requestSettledTune)
+                        Key.DirectionDown -> viewModel.moveChannelFocus(LiveZapDirection.NEXT)
+                            ?.let(playbackViewModel::requestSettledTune)
                         else -> showControls()
                     }
                 }
@@ -406,7 +412,7 @@ fun LiveGuide(
                                 // OK: tune the preview; OK on the tuned channel: go fullscreen.
                                 onClick = {
                                     when {
-                                        !isPlaying -> playbackViewModel.requestTune(ProviderSelectionId(ch.contentId))
+                                        !isPlaying -> commitPreview(ch.contentId)
                                         playbackUi?.openFullscreenEnabled == true -> onFullscreenChange(true)
                                         else -> playbackViewModel.requestRetry()
                                     }
@@ -441,7 +447,7 @@ fun LiveGuide(
                                         GuideCellIntent.Intent.REPLAY -> viewModel.startReplay(ch, programme)
                                         GuideCellIntent.Intent.OPEN_SHEET -> sheetProgramme = programme
                                         GuideCellIntent.Intent.PLAY_LIVE -> when {
-                                            !isPlaying -> playbackViewModel.requestTune(ProviderSelectionId(ch.contentId))
+                                            !isPlaying -> commitPreview(ch.contentId)
                                             playbackUi?.openFullscreenEnabled == true -> onFullscreenChange(true)
                                             else -> playbackViewModel.requestRetry()
                                         }
@@ -507,7 +513,7 @@ fun LiveGuide(
                 },
                 onWatchLive = {
                     sheetProgramme = null
-                    playbackViewModel.requestTune(ProviderSelectionId(sheetChannel.contentId))
+                    commitPreview(sheetChannel.contentId)
                 },
             )
         }

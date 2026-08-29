@@ -123,6 +123,25 @@ class CleanLiveGuidePlaybackViewModelTest {
     }
 
     @Test
+    fun `provider ownership change stops old playback before replacement catalogue succeeds`() = runTest {
+        val fixture = fixture()
+        fixture.viewModel.attach(
+            fixture.initial.contentId,
+            fixture.activity,
+            fixture.lifecycle,
+            fixture.owner,
+        )
+
+        fixture.viewModel.invalidateProviderOwnership()
+
+        assertEquals(1, fixture.firstHost.releaseCalls)
+        assertEquals(0, fixture.owner.childCount)
+        assertEquals(CleanLiveGuidePlaybackState.Detached, fixture.viewModel.state.value)
+        assertTrue(fixture.firstHost.zapSelections.isEmpty())
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
     fun `history accepts exact acknowledged generation first video only once`() = runTest {
         val fixture = fixture()
         fixture.viewModel.attach(
@@ -461,6 +480,28 @@ class CleanLiveGuidePlaybackViewModelTest {
     }
 
     @Test
+    fun `ten exact rapid destinations settle to one final provider tune`() = runTest {
+        val destinations = (1..10).map { fixtureTarget("rapid-$it", "${100 + it}") }
+        val fixture = fixture(
+            extraTargets = destinations,
+            ownerDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        fixture.viewModel.attach(
+            fixture.initial.contentId,
+            fixture.activity,
+            fixture.lifecycle,
+            fixture.owner,
+        )
+
+        destinations.forEach { fixture.viewModel.requestSettledTune(it.contentId) }
+        advanceUntilIdle()
+
+        assertEquals(listOf(fixture.initial.contentId, destinations.last().contentId), fixture.selectionRequests.map { it.contentId })
+        assertEquals(listOf(destinations.last().selection), fixture.firstHost.zapSelections)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
     fun `caller cancellation cannot split requested profile and accepted channel state`() = runTest {
         val fixture = fixture(ownerDispatcher = StandardTestDispatcher(testScheduler))
         fixture.viewModel.attach(
@@ -520,6 +561,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         commandFailures: Int = 0,
         releaseWait: CleanLiveGuideReleaseRetryWait = CleanLiveGuideReleaseRetryWait {},
         ownerDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
+        extraTargets: List<LiveChannelTarget> = emptyList(),
     ): Fixture {
         val context = RuntimeEnvironment.getApplication() as Context
         val operations = mutableListOf<String>()
@@ -528,10 +570,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         val afterNext = fixtureTarget("after-next", "43")
         val relativeResult: suspend (LiveRelativeRequest, Int) -> LiveRelativeResult =
             relative ?: { _, _ -> LiveRelativeResult.Target(afterNext) }
-        val selections = mapOf(
-            initial.contentId to initial,
-            next.contentId to next,
-        )
+        val selections = (listOf(initial, next) + extraTargets).associateBy(LiveChannelTarget::contentId)
         val selectionRequests = mutableListOf<LiveInitialRequest>()
         val relativeRequests = mutableListOf<LiveRelativeRequest>()
         val played = mutableListOf<LivePlayedIdentity>()

@@ -131,6 +131,24 @@ internal fun PlaybackException.isDeterministicVideoCapabilityFailure(): Boolean 
 }
 
 /**
+ * A deterministic AUDIO-renderer decode failure (e.g. DTS/E-AC-3 on a device without the codec)
+ * that the safe-audio → PCM → audio-disabled ladder can absorb so video keeps playing. This is
+ * distinct from [isAudioTrackFailure] (AudioTrack init/write, 5001/5002) and deliberately
+ * mime-gated to the audio renderer: a video decode failure must never enter an audio recovery
+ * ladder — the cross-domain routing this classifier exists to prevent.
+ */
+internal fun PlaybackException.isAudioDecoderFailure(): Boolean {
+    val exoError = this as? ExoPlaybackException ?: return false
+    if (exoError.type != ExoPlaybackException.TYPE_RENDERER) return false
+    if (exoError.rendererFormat?.sampleMimeType?.startsWith("audio/") != true) return false
+    return errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+        errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK
+}
+
+/**
  * Audio-track failures that the safe-audio → audio-disabled fallback ladder can recover from.
  *
  * - [PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED] (5001): the AudioTrack could not be

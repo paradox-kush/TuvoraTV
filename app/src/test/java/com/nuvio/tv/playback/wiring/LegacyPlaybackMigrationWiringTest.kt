@@ -3,6 +3,8 @@ package com.nuvio.tv.playback.wiring
 import com.nuvio.tv.data.local.BufferSettings
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.PlayerSettings
+import com.nuvio.tv.playback.core.EnginePreference
+import com.nuvio.tv.playback.settings.LegacyPlaybackPreferenceImporter
 import com.nuvio.tv.playback.settings.PlaybackPreferenceDocument
 import com.nuvio.tv.playback.settings.PlaybackPreferenceDocumentStore
 import com.nuvio.tv.playback.settings.PlaybackPreferenceRepository
@@ -78,6 +80,54 @@ class LegacyPlaybackMigrationWiringTest {
         assertFalse(second.imported)
         assertEquals(1, store.writeCount)
         assertEquals("player-settings-v1", second.snapshot.legacyImportToken)
+    }
+
+    // Regression: PlayerSettings materializes EXOPLAYER / autoSwitch=false for keys the user
+    // never stored. Importing those materialized defaults as explicit choices pinned every
+    // untouched profile to Media3 with automatic fallback disabled — reverting the live libmpv
+    // product default and disabling engine handoff (the emulator "render error" cascade).
+    @Test
+    fun `materialized engine and fallback defaults do not import without stored keys`() {
+        val mapped = LegacyPlayerSettingsSnapshotMapper.map(
+            PlayerSettings(),
+            "player-settings-v1",
+            storedRawKeyNames = emptySet(),
+        )
+
+        val imported = LegacyPlaybackPreferenceImporter.map(mapped)
+
+        assertEquals(EnginePreference.AUTO, imported.preferences.playback.engine)
+        assertTrue(imported.preferences.playback.automaticFallback)
+    }
+
+    @Test
+    fun `stored engine and fallback keys import as explicit user choices`() {
+        val mapped = LegacyPlayerSettingsSnapshotMapper.map(
+            PlayerSettings(
+                internalPlayerEngine = InternalPlayerEngine.EXOPLAYER,
+                autoSwitchInternalPlayerOnError = false,
+            ),
+            "player-settings-v1",
+            storedRawKeyNames = setOf(
+                "internal_player_engine",
+                "auto_switch_internal_player_on_error",
+            ),
+        )
+
+        val imported = LegacyPlaybackPreferenceImporter.map(mapped)
+
+        assertEquals(EnginePreference.MEDIA3, imported.preferences.playback.engine)
+        assertFalse(imported.preferences.playback.automaticFallback)
+    }
+
+    @Test
+    fun `mapper without stored key knowledge keeps the imported-as-stored fallback`() {
+        val mapped = LegacyPlayerSettingsSnapshotMapper.map(PlayerSettings(), "player-settings-v1")
+
+        val imported = LegacyPlaybackPreferenceImporter.map(mapped)
+
+        assertEquals(EnginePreference.MEDIA3, imported.preferences.playback.engine)
+        assertFalse(imported.preferences.playback.automaticFallback)
     }
 
     @Test

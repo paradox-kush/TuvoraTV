@@ -775,6 +775,17 @@ class PlayerSettingsDataStore @Inject constructor(
     }
 
     /**
+     * Raw preference key names actually persisted for the active profile. [playerSettings]
+     * materializes data-class defaults for absent keys; consumers that must distinguish a
+     * stored user choice from a materialized default (the clean-player legacy import) read
+     * this alongside it.
+     */
+    val storedPlayerSettingKeyNames: Flow<Set<String>> =
+        profileManager.activeProfileId.flatMapLatest { pid ->
+            factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
+        }.map { prefs -> prefs.asMap().keys.mapTo(mutableSetOf()) { it.name } }
+
+    /**
      * Flow of current player settings
      */
     val playerSettings: Flow<PlayerSettings> = profileManager.activeProfileId.flatMapLatest { pid ->

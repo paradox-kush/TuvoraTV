@@ -12,6 +12,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+import com.nuvio.tv.R
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -70,6 +73,7 @@ fun NuvioNavHost(
     val cleanLiveIngressViewModel =
         androidx.hilt.navigation.compose.hiltViewModel<CleanLiveIngressViewModel>()
     val cleanLiveIngressJob = remember { AtomicReference<Job?>(null) }
+    val context = LocalContext.current
 
     DisposableEffect(Unit) {
         onDispose {
@@ -102,7 +106,18 @@ fun NuvioNavHost(
                         }
                     }
                 }
-                is CleanLiveIngressResult.Rejected -> Unit
+                is CleanLiveIngressResult.Rejected -> {
+                    val ownerCanPresent = owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                        navController.currentBackStackEntry === owner
+                    if (ownerCanPresent) {
+                        val message = when (CleanLiveIngressFallbackPolicy.feedback(result.reason)) {
+                            CleanLiveIngressFeedback.INVALID_REQUEST -> R.string.clean_live_ingress_invalid
+                            CleanLiveIngressFeedback.UNAVAILABLE -> R.string.clean_live_ingress_unavailable
+                            CleanLiveIngressFeedback.PROFILE_CHANGED -> R.string.clean_live_ingress_profile_changed
+                        }
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         })
     }

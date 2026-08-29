@@ -1,15 +1,95 @@
 package com.nuvio.tv.playback.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackPolicyTest {
+    @Test
+    fun `authorization evidence has engine-neutral core recovery semantics`() {
+        val policy = PlaybackPolicy()
+        val media3 = PlaybackFailure(
+            FailureCode.AUTHORIZATION_REJECTED,
+            FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
+            FailurePhase.PLAYBACK,
+            Retryability.FATAL,
+            httpStatus = 401,
+            statusProvenance = HttpStatusProvenance.CONFIRMED,
+        )
+        val mpv = media3.copy(
+            statusProvenance = HttpStatusProvenance.INFERRED_FROM_NETWORK_ERROR,
+        )
+
+        assertEquals(
+            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+            policy.normalizeAuthorizationRecovery(media3, providerCanMintFreshRequest = true).retryability,
+        )
+        assertEquals(
+            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+            policy.normalizeAuthorizationRecovery(mpv, providerCanMintFreshRequest = true).retryability,
+        )
+        assertEquals(
+            Retryability.FATAL,
+            policy.normalizeAuthorizationRecovery(media3, providerCanMintFreshRequest = false).retryability,
+        )
+    }
+
+    @Test
+    fun `live reconnect budget is per incident rolling and stable-reset gated`() {
+        val policy = PlaybackPolicy(
+            liveReconnectConfiguration = PlaybackPolicy.LiveReconnectConfiguration(
+                maxAttemptsPerIncident = 3,
+                minimumStablePlaybackBeforeResetMs = 30_000,
+                rollingWindowMs = 120_000,
+                maxAttemptsPerRollingWindow = 6,
+            ),
+        )
+        assertTrue(policy.liveReconnectAllowed(2, listOf(0, 1, 2, 3, 4), 5))
+        assertFalse(policy.liveReconnectAllowed(3, emptyList(), 5))
+        assertFalse(policy.liveReconnectAllowed(0, listOf(0, 1, 2, 3, 4, 5), 5))
+        assertFalse(policy.stablePlaybackResetsReconnectPressure(29_999))
+        assertTrue(policy.stablePlaybackResetsReconnectPressure(30_000))
+        assertEquals(FailureCode.LIVE_RECONNECT_EXHAUSTED, policy.liveReconnectExhaustedFailure().code)
+    }
+
+    @Test
+    fun `audio decoder failure enters audio ladder while video decoder never does`() {
+        val current = requirements(
+            preferredEngineOrder = listOf(EngineType.MEDIA3, EngineType.LIBMPV),
+        )
+        val audio = PlaybackFailure(
+            FailureCode.AUDIO_DECODER_FAILED,
+            FailureDomain.AUDIO_DECODER,
+            FailurePhase.PLAYBACK,
+            Retryability.HANDOFF_ELIGIBLE,
+        )
+        val video = audio.copy(
+            code = FailureCode.VIDEO_DECODER_FAILED,
+            domain = FailureDomain.VIDEO_DECODER,
+        )
+
+        assertEquals(
+            EngineType.LIBMPV,
+            AudioOutputPolicy.nextRequirements(current, audio, EngineType.MEDIA3)
+                ?.preferredEngineOrder?.first(),
+        )
+        assertEquals(null, AudioOutputPolicy.nextRequirements(current, video, EngineType.MEDIA3))
+    }
     private val policy = PlaybackPolicy()
 
     @Test
     fun `watchdog budgets follow live and VOD bootstrap architecture`() {
         val network = PlaybackNetworkRequest(readTimeoutMs = 60_000, callTimeoutMs = 12_000)
+
+        assertEquals(
+            3_000L,
+            policy.watchdogDelayMs(
+                PlaybackPolicy.WatchdogPhase.WAITING_FOR_SURFACE,
+                ContentType.LIVE,
+                network,
+            ),
+        )
 
         assertEquals(
             12_000L,
@@ -76,6 +156,10 @@ class PlaybackPolicyTest {
         val noBytes = policy.watchdogFailure(PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE, hls)
         assertEquals(FailureDomain.NETWORK, noBytes.domain)
         assertEquals(Retryability.RETRYABLE_WITH_FRESH_REQUEST, noBytes.retryability)
+
+        val noSurface = policy.watchdogFailure(PlaybackPolicy.WatchdogPhase.WAITING_FOR_SURFACE, hls)
+        assertEquals(FailureCode.SURFACE_LOST, noSurface.code)
+        assertEquals(FailureDomain.VIDEO_RENDERER_SURFACE, noSurface.domain)
 
         val noManifestTracks = policy.watchdogFailure(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, hls)
         assertEquals(FailureCode.MANIFEST_INVALID, noManifestTracks.code)

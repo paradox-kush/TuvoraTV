@@ -231,6 +231,7 @@ class PlaybackPreferenceResolverTest {
         val result = PlaybackPreferenceResolver.resolve(
             defaults(),
             context(
+                request = vodRequest(),
                 scope = scope,
                 records = listOf(media3Fatal, mpvSuccess),
             ),
@@ -247,6 +248,7 @@ class PlaybackPreferenceResolverTest {
         val successOnly = PlaybackPreferenceResolver.resolve(
             defaults(),
             context(
+                request = vodRequest(),
                 scope = scope,
                 records = listOf(mpvSuccess),
             ),
@@ -257,6 +259,7 @@ class PlaybackPreferenceResolverTest {
         val fatalOnly = PlaybackPreferenceResolver.resolve(
             defaults(),
             context(
+                request = vodRequest(),
                 scope = scope,
                 records = listOf(
                     record(
@@ -278,6 +281,7 @@ class PlaybackPreferenceResolverTest {
         val result = PlaybackPreferenceResolver.resolve(
             defaults(),
             context(
+                request = vodRequest(),
                 scope = scope,
                 records = listOf(
                     record(scope, EngineType.LIBMPV, CompatibilityOutcome.SUCCESS, recordedAt = 9),
@@ -314,6 +318,7 @@ class PlaybackPreferenceResolverTest {
                     record(scope, EngineType.LIBMPV, CompatibilityOutcome.SUCCESS, recordedAt = 11),
                 ),
                 eligibleGraphs = setOf(media3Graph, renderGraph),
+                request = vodRequest(),
             ),
         )
 
@@ -328,6 +333,7 @@ class PlaybackPreferenceResolverTest {
         val result = PlaybackPreferenceResolver.resolve(
             defaults(),
             context(
+                request = vodRequest(),
                 scope = scope,
                 records = listOf(
                     record(
@@ -343,6 +349,63 @@ class PlaybackPreferenceResolverTest {
 
         assertNull(result.engine.effective)
         assertEquals(PreferenceAvailability.UNAVAILABLE, result.engine.availability)
+    }
+
+    @Test
+    fun `quirk-forced software decode is a hard constraint over any saved preference`() {
+        val result = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(quirkForcedDecoder = DecoderPreference.SOFTWARE_ONLY),
+        )
+
+        assertEquals(DecoderPreference.SOFTWARE_ONLY, result.decoder.effective)
+        assertEquals(ResolutionAuthority.HARD_CONSTRAINT, result.decoder.authority)
+    }
+
+    @Test
+    fun `AUTO live defaults to the libmpv engine`() {
+        val result = PlaybackPreferenceResolver.resolve(defaults(), context())
+
+        assertEquals(EnginePreference.LIBMPV, result.engine.effective)
+        assertEquals(ResolutionAuthority.DEFAULT_POLICY, result.engine.authority)
+        assertEquals(PreferenceAvailability.SUPPORTED, result.engine.availability)
+    }
+
+    @Test
+    fun `AUTO VOD keeps the Media3 default`() {
+        val result = PlaybackPreferenceResolver.resolve(defaults(), context(request = vodRequest()))
+
+        assertEquals(EnginePreference.MEDIA3, result.engine.effective)
+        assertEquals(ResolutionAuthority.DEFAULT_POLICY, result.engine.authority)
+    }
+
+    @Test
+    fun `AUTO live falls back to Media3 after deterministic libmpv fatal records`() {
+        val scope = CompatibilityScopeKey("provider|device|stream")
+        val result = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(
+                scope = scope,
+                records = listOf(
+                    record(
+                        scope,
+                        EngineType.LIBMPV,
+                        CompatibilityOutcome.DETERMINISTIC_FATAL,
+                        output = GraphOutputProfile.MPV_DIRECT,
+                        recordedAt = 10,
+                    ),
+                    record(
+                        scope,
+                        EngineType.LIBMPV,
+                        CompatibilityOutcome.DETERMINISTIC_FATAL,
+                        output = GraphOutputProfile.MPV_RENDER,
+                        recordedAt = 11,
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(EnginePreference.MEDIA3, result.engine.effective)
     }
 
     @Test
@@ -641,6 +704,11 @@ class PlaybackPreferenceResolverTest {
         return defaults.copy(playback = defaults.playback.copy(engine = engine))
     }
 
+    private fun vodRequest() = PlaybackRequest(
+        url = "https://example.invalid/movie.mp4",
+        contentType = ContentType.VOD,
+    )
+
     private fun context(
         request: PlaybackRequest = PlaybackRequest("https://example.invalid/live.ts", contentType = ContentType.LIVE),
         evidence: StreamEvidence = StreamEvidence(),
@@ -652,6 +720,7 @@ class PlaybackPreferenceResolverTest {
         runtimeFingerprint: CompatibilityRuntimeFingerprint = runtime,
         now: Long = 100,
         rapidLiveZapping: Boolean = false,
+        quirkForcedDecoder: DecoderPreference? = null,
     ) = PlaybackPreferenceResolutionContext(
         request = request.summary(),
         evidence = evidence,
@@ -665,6 +734,7 @@ class PlaybackPreferenceResolverTest {
         appVersion = "app-1",
         engineVersions = mapOf(EngineType.MEDIA3 to "media3-1", EngineType.LIBMPV to "mpv-1"),
         rapidLiveZapping = rapidLiveZapping,
+        quirkForcedDecoder = quirkForcedDecoder,
     )
 
     private fun capabilities(

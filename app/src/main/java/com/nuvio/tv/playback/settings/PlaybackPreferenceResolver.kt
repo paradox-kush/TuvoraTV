@@ -57,6 +57,12 @@ data class PlaybackPreferenceResolutionContext(
     val engineVersions: Map<EngineType, String> = emptyMap(),
     val temporaryEngineOverride: EnginePreference? = null,
     val rapidLiveZapping: Boolean = false,
+    /**
+     * Decoder preference forced by a device quirk (AndroidPlaybackQuirkRegistry). A hard
+     * constraint above any saved preference — quirks exist because the device identity proves
+     * the alternative broken.
+     */
+    val quirkForcedDecoder: DecoderPreference? = null,
 )
 
 data class ResolvedPlaybackPreferences(
@@ -333,9 +339,14 @@ object PlaybackPreferenceResolver {
         }
         val historyChoice = provenLibmpvChoice(eligible, effectiveMpvOutput, context)
         val chosen = historyChoice ?: when {
+            // Live TV defaults to the ffmpeg/libmpv engine (product decision, 1.5.8). A current
+            // deterministic-fatal libmpv record has already been filtered out of `eligible`, so
+            // learned incompatibility still routes live back to Media3.
+            context.request.contentType == ContentType.LIVE && EngineType.LIBMPV in eligible ->
+                EngineType.LIBMPV
             EngineType.MEDIA3 in eligible -> EngineType.MEDIA3
-            // AUTO never speculates on libmpv. It may pre-route there only after the exact current
-            // Media3 fatal + eligible libmpv success pair has been persisted.
+            // VOD/catch-up AUTO never speculates on libmpv. It may pre-route there only after the
+            // exact current Media3 fatal + eligible libmpv success pair has been persisted.
             else -> null
         }
         return PreferenceResolution(
@@ -360,6 +371,16 @@ object PlaybackPreferenceResolver {
         requested: CleanPlaybackPreferences,
         context: PlaybackPreferenceResolutionContext,
     ): PreferenceResolution<DecoderPreference> {
+        context.quirkForcedDecoder?.let { forced ->
+            return PreferenceResolution(
+                requested = requested.playback.decoder,
+                effective = forced,
+                authority = ResolutionAuthority.HARD_CONSTRAINT,
+                availability = PreferenceAvailability.SUPPORTED,
+                primaryReason = PreferenceReason.UNSUPPORTED_BY_DEVICE,
+                impact = ChangeImpact.RESELECT_GRAPH,
+            )
+        }
         val value = requested.playback.decoder
         val dimensions = context.evidence.dimensions?.value
         val codec = context.evidence.videoCodec?.value
@@ -649,6 +670,8 @@ object PlaybackPreferenceResolver {
             // The stable compatibility runtime intentionally excludes the dynamic audio route.
             // Audio failures cannot become engine preference until a route-exact key exists.
             FailureDomain.AUDIO,
+            FailureDomain.AUDIO_DECODER,
+            FailureDomain.AUDIO_SINK,
             FailureDomain.SUBTITLE,
             FailureDomain.NETWORK,
             FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,

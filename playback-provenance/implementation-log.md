@@ -400,3 +400,57 @@ and Fire TV sequentially with separate saved IPTV profiles and the device harnes
   repeated `Starting stream` / `Fetching subtitles` cycle.
 - This is a narrow deletion of invalid cross-domain recovery, not a new legacy recovery ladder.
   Release remains stopped pending the approved clean VOD session cutover and its certification.
+
+## 2026-08-28 — post-cutover repair round (emulator-exposed)
+
+- Legacy import materialized-default bug: `LegacyPlayerSettingsSnapshotMapper` mapped the
+  materialized `PlayerSettings` object, so profiles that never stored `internal_player_engine` /
+  `auto_switch_internal_player_on_error` imported the data-class defaults (`EXOPLAYER`, `false`)
+  as explicit clean preferences — pinning every untouched profile to Media3 with automatic
+  fallback disabled, reverting the live libmpv default and disabling engine handoff. Fixed via
+  stored-raw-key gating (`PlayerSettingsDataStore.storedPlayerSettingKeyNames` → snapshot
+  `storedFieldNames`); only genuinely stored keys import for those two fields.
+- Stream User-Agent parity: both engine plans defaulted to new `TuvoraTV/1` idents; UA-gated
+  panels answered 407 on tiers that accept the legacy browser UA. Both plans now consume
+  `DEFAULT_STREAM_USER_AGENT` in `playback/core`, byte-identical to the legacy stream UA.
+- MPV_DIRECT subtitle veto disagreement: the plan rejected direct render whenever subtitles were
+  enabled at all, while selection excludes it only for FULL fidelity — with default preferences
+  every guide live tune selected MPV_DIRECT, was vetoed at engine start
+  (NO_ELIGIBLE_GRAPH/DEVICE_RESOURCE), and silently landed on Media3. **Product decision
+  (user, 2026-08-28): video is priority; subtitles are best-effort.** The plan now mirrors the
+  selection filter (only SOFTWARE decode or FULL-fidelity subtitles exclude direct) and sets
+  `sid=no` on direct graphs since mediacodec_embed cannot draw them.
+- Emulator caveat: goldfish decoders remain broken for these streams (androidx/media#2461), so
+  guide preview (direct/hwdec) may still fail on AVDs; fullscreen (render-first + mpv software
+  fallback) is the emulator-playable path. Device certification remains the ONN/Fire matrix.
+
+## 2026-08-28 — release-wedge RCA chain and device certification (emulator + ONN)
+
+- Thread-dump-anchored RCA of "stuck on releasing": `MPV.command("stop")` blocked in native
+  (`AndroidMpvBackend.stopSource`) — a wedged mpv playloop never services synchronous commands,
+  and a structured `withContext` child cannot be abandoned by any caller timeout, so the release
+  barrier hung indefinitely. Fixes: `stopSource`/`detachSurface` now run as non-child backend
+  tasks with bounded, abandonable awaits (`NATIVE_CALL_ABANDON_TIMEOUT_MS`); forced termination
+  moved to an independent lane (a wedged serialized lane starved it); hard abort bounds its wait
+  on an in-flight graceful task; teardown order now stops the VO (`vo=null`) before surface
+  detach (upstream mpv-android order; detaching under a live VO is the documented native race);
+  and `idle=yes` is set in the plan and re-asserted post-init (1.5.8-proven — a non-idle core
+  self-terminates after `stop`, wedging every later native call).
+- Root cause of the emulator wedges beneath all of it: goldfish C2 hardware decoder teardown
+  deadlocks on repeated sessions (androidx/media#2461 class). Added
+  `emulator-ranchu-software-video-decode-v1` quirk (manufacturer Google + ro.hardware ranchu,
+  any AVD model) forcing SOFTWARE_ONLY decode through a new `ForceSoftwareVideoDecode` override
+  and a hard-constraint `quirkForcedDecoder` seam in the preference resolver. Emulators are
+  development surfaces; expiry set far out deliberately. Real devices are unaffected (verified:
+  ONN identity does not match).
+- Emulator certification (API 36 arm64 AVD): guide tune + 5-zap matrix all barriers completed,
+  zero failures/watchdogs; guide preview renders via Media3+software; fullscreen renders via
+  LIBMPV (gpu render, software decode); rapid fullscreen zap = no wedges (known conflation gap:
+  direction-only twin lands short — fullscreen zap path still pending the settled exact-id fix).
+- ONN certification (real Amlogic hardware, v7a debug build over existing data): first live tune
+  selects LIBMPV via the corrected import (AUTO); 5-zap matrix across 4K channels — every
+  release barrier completed, zero failures, seamless LIBMPV→MEDIA3 handoffs on channels mpv
+  could not render; 4K UHD confirmed rendering in guide preview and fullscreen; 100s fullscreen
+  soak stable; zero crashes in the crash buffer.
+- The `isDebuggable=true` diagnostic flip used for the jdb thread dump has been reverted; the
+  builds installed on the emulator and ONN during this session carry it and must not be released.

@@ -744,7 +744,7 @@ class PlaybackStateMachineTest {
         )
         assertFalse(inactive.state.lifecycleActive)
         assertEquals(AfterRelease.SUSPEND, inactive.state.afterRelease)
-        assertEquals(LifecycleResume.REBUILD_CURRENT_GRAPH, inactive.state.lifecycleResume)
+        assertEquals(LifecycleResume.RESOLVE_REQUEST, inactive.state.lifecycleResume)
         val release = assertAction<PlaybackAction.ReleaseActiveWork>(inactive)
         assertEquals(ActiveWorkReleaseReason.LIFECYCLE_INACTIVE, release.reason)
 
@@ -756,8 +756,8 @@ class PlaybackStateMachineTest {
             suspended.state,
             PlaybackReducerInput.LifecycleChanged(active = true),
         )
-        assertEquals(PlaybackState.ATTACHING_SURFACE, active.state.snapshot.state)
-        assertAction<PlaybackAction.AttachSurface>(active)
+        assertEquals(PlaybackState.RESOLVING, active.state.snapshot.state)
+        assertAction<PlaybackAction.ResolveRequest>(active)
         assertEquals(LifecycleResume.NONE, active.state.lifecycleResume)
 
         val duplicate = PlaybackStateMachine.reduce(
@@ -782,9 +782,50 @@ class PlaybackStateMachineTest {
         assertTrue(earlyActive.state.activeReleaseEpoch != null)
 
         val completed = completeBarrier(earlyActive.state)
-        assertEquals(PlaybackState.ATTACHING_SURFACE, completed.state.snapshot.state)
-        assertAction<PlaybackAction.AttachSurface>(completed)
+        assertEquals(PlaybackState.RESOLVING, completed.state.snapshot.state)
+        assertAction<PlaybackAction.ResolveRequest>(completed)
         assertEquals(LifecycleResume.NONE, completed.state.lifecycleResume)
+    }
+
+    @Test
+    fun `live HOME during startup reconnect degraded and handoff always resumes with fresh resolve`() {
+        listOf(
+            PlaybackState.STARTING_PRIMARY,
+            PlaybackState.LIVE_RECONNECTING,
+            PlaybackState.DEGRADED,
+            PlaybackState.HANDING_OFF_ONCE,
+        ).forEach { phase ->
+            val base = playingState(ContentType.LIVE).let { playing ->
+                val phased = playing.copy(
+                    snapshot = playing.snapshot.copy(state = phase),
+                    incident = PlaybackIncident(sequence = 4, recoveryIssued = true, handoffIssued = true),
+                )
+                if (phase == PlaybackState.HANDING_OFF_ONCE) {
+                    phased.copy(
+                        afterRelease = AfterRelease.HANDOFF,
+                        graphBeforeRelease = phased.snapshot.graph,
+                        activeReleaseEpoch = 9,
+                    )
+                } else {
+                    phased
+                }
+            }
+
+            val inactive = PlaybackStateMachine.reduce(
+                base,
+                PlaybackReducerInput.LifecycleChanged(active = false),
+            )
+            assertEquals("$phase resume", LifecycleResume.RESOLVE_REQUEST, inactive.state.lifecycleResume)
+            assertEquals("$phase incident", null, inactive.state.incident)
+
+            val suspended = completeBarrier(inactive.state).state
+            val active = PlaybackStateMachine.reduce(
+                suspended,
+                PlaybackReducerInput.LifecycleChanged(active = true),
+            )
+            assertEquals("$phase state", PlaybackState.RESOLVING, active.state.snapshot.state)
+            assertAction<PlaybackAction.ResolveRequest>(active)
+        }
     }
 
     @Test

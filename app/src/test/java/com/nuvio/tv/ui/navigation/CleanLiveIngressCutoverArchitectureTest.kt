@@ -20,11 +20,30 @@ class CleanLiveIngressCutoverArchitectureTest {
         assertTrue(dispatch.contains("Lifecycle.State.RESUMED"))
         assertTrue(dispatch.contains("navController.currentBackStackEntry === owner"))
         assertTrue(dispatch.contains("Screen.CleanLivePlayer.createRoute(result.token)"))
-        assertTrue(dispatch.contains("is CleanLiveIngressResult.Rejected -> Unit"))
+        assertTrue(dispatch.contains("CleanLiveIngressFallbackPolicy.feedback(result.reason)"))
+        assertTrue(dispatch.contains("Toast.makeText(context, message, Toast.LENGTH_SHORT).show()"))
         assertFalse(dispatch.contains("Screen.Player.createRoute"))
         assertFalse(dispatch.contains("streamUrl"))
         assertFalse(dispatch.contains("recordPlayed"))
         assertFalse(dispatch.contains("resolve("))
+    }
+
+    @Test
+    fun `every typed rejection has deterministic feedback for every live caller`() {
+        CleanLiveLaunchOrigin.entries.forEach { _ ->
+            assertEquals(
+                CleanLiveIngressFeedback.INVALID_REQUEST,
+                CleanLiveIngressFallbackPolicy.feedback(CleanLiveIngressFailure.INVALID_REQUEST),
+            )
+            assertEquals(
+                CleanLiveIngressFeedback.UNAVAILABLE,
+                CleanLiveIngressFallbackPolicy.feedback(CleanLiveIngressFailure.UNAVAILABLE),
+            )
+            assertEquals(
+                CleanLiveIngressFeedback.PROFILE_CHANGED,
+                CleanLiveIngressFallbackPolicy.feedback(CleanLiveIngressFailure.PROFILE_CHANGED),
+            )
+        }
     }
 
     @Test

@@ -41,6 +41,7 @@ class PlaybackSession(
     private val clock: PlaybackClock,
     private val diagnostics: PlaybackDiagnostics,
     private val lifecycle: PlaybackLifecyclePort? = null,
+    private val audioFocus: AudioFocusPort = NoopAudioFocusPort,
     private val providerPlaybackResolver: ProviderPlaybackResolver? = null,
     private val compatibilityRecording: CompatibilityRecordingEnvironment? = null,
     private val policy: PlaybackPolicy = PlaybackPolicy(),
@@ -85,6 +86,10 @@ class PlaybackSession(
     private var runtimeMetricsUnavailableAttempt: Long? = null
     private val decoderStableIds = mutableMapOf<Pair<Long, EngineType>, String>()
     private val recordedCompatibilityOutcomes = mutableSetOf<CompatibilityRecordingKey>()
+    private val liveReconnectAttempts = ArrayDeque<Long>()
+    private var reconnectPlaybackStableSinceEpochMs: Long? = null
+    private var audioFocusOwned = false
+    private var pausedByAudioFocus = false
 
     private val actorJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         for (message in lane) process(message)
@@ -96,8 +101,18 @@ class PlaybackSession(
                 scope.launch {
                     engine.events.collect { event ->
                         if (!isIntentionalTerminal(engine.type, event)) {
-                            engineEvents.emit(event)
-                            lane.send(LaneMessage.Reducer(PlaybackReducerInput.Event(event)))
+                            val normalized = if (event is PlaybackEvent.Failed) {
+                                event.copy(
+                                    failure = policy.normalizeAuthorizationRecovery(
+                                        event.failure,
+                                        machine.launch is PlaybackLaunch.DeferredProvider,
+                                    ),
+                                )
+                            } else {
+                                event
+                            }
+                            engineEvents.emit(normalized)
+                            lane.send(LaneMessage.Reducer(PlaybackReducerInput.Event(normalized)))
                         }
                     }
                 }
@@ -115,6 +130,9 @@ class PlaybackSession(
                     lane.send(LaneMessage.Reducer(input))
                 }
             }
+        }
+        scope.launch {
+            audioFocus.events().collect { lane.send(LaneMessage.AudioFocusChanged(it)) }
         }
     }
 
@@ -176,7 +194,7 @@ class PlaybackSession(
 
     private suspend fun process(message: LaneMessage) {
         when (message) {
-            is LaneMessage.Reducer -> applyReducer(message.input)
+            is LaneMessage.Reducer -> applyReducer(normalizeAudioRecovery(message.input))
             is LaneMessage.ResolutionFinished -> resolutionFinished(message)
             is LaneMessage.HandoffResolutionFinished -> handoffResolutionFinished(message)
             is LaneMessage.FreshResolutionReady -> freshResolutionReady(message)
@@ -186,7 +204,29 @@ class PlaybackSession(
             is LaneMessage.BarrierFinished -> barrierFinished(message)
             is LaneMessage.WatchdogExpired -> watchdogExpired(message)
             is LaneMessage.RuntimeWindowFinished -> runtimeWindowFinished(message)
+            is LaneMessage.ReconnectFailureObserved -> {
+                applyReducer(PlaybackReducerInput.Event(message.event))
+                message.accepted.complete(Unit)
+            }
+            is LaneMessage.AudioFocusChanged -> audioFocusChanged(message.event)
         }
+    }
+
+    private fun normalizeAudioRecovery(input: PlaybackReducerInput): PlaybackReducerInput {
+        val event = (input as? PlaybackReducerInput.Event)?.value as? PlaybackEvent.Failed ?: return input
+        val current = requirements?.takeIf { it.generation == event.generation }?.value ?: return input
+        val graph = activeGraph ?: return input
+        val next = AudioOutputPolicy.nextRequirements(current, event.failure, graph.engine) ?: return input
+        requirements = GenerationValue(event.generation, next)
+        val preferred = next.preferredEngineOrder.firstOrNull()
+        val handoff = preferred != null && preferred != graph.engine
+        return PlaybackReducerInput.Event(
+            event.copy(
+                failure = event.failure.copy(
+                    retryability = if (handoff) Retryability.HANDOFF_ELIGIBLE else Retryability.RETRYABLE_IN_PLACE,
+                ),
+            ),
+        )
     }
 
     private suspend fun applyReducer(input: PlaybackReducerInput) {
@@ -201,6 +241,13 @@ class PlaybackSession(
                 PlaybackState.LIVE_RECONNECTING,
             )
         val before = machine
+        val event = (input as? PlaybackReducerInput.Event)?.value
+        if (event is PlaybackEvent.FirstVideoFrame &&
+            event.generation == before.snapshot.generation &&
+            before.snapshot.isReconnecting
+        ) {
+            reconnectPlaybackStableSinceEpochMs = clock.nowEpochMs()
+        }
         observeCompatibilityFact(before, input)
         val transition = PlaybackStateMachine.reduce(before, input)
         if (engineStartAccepted) {
@@ -654,6 +701,8 @@ class PlaybackSession(
                 ),
             )
             val result = safeResult(FailurePhase.ENGINE_START) {
+                val focus = ensureAudioFocus()
+                if (focus is PlaybackResult.Failure) return@safeResult focus
                 engine.start(
                     PlaybackEngineStart(
                         generation = action.generation,
@@ -662,7 +711,7 @@ class PlaybackSession(
                         graph = action.graph,
                         requirements = effective,
                         startPaused = action.startPaused,
-                        startPositionMs = machine.snapshot.positionMs,
+                        startPositionMs = restorationStartPositionMs(resolvedRequest.request.contentType),
                         playbackRate = machine.snapshot.playbackRate,
                         restorationCheckpoint = if (resolvedRequest.request.contentType == ContentType.VOD) {
                             machine.snapshot.vodCheckpoint(effective.subtitleDelayMs)
@@ -916,11 +965,19 @@ class PlaybackSession(
         val engine = graph?.let { engineRegistry.engine(it.engine) }
         scope.launch {
             workToCancel?.cancelAndJoin()
-            val releaseResult = releaseAdapterUntilComplete(
-                generation = action.generation,
-                engine = engine,
-                engineGeneration = releasedGraphGeneration,
-            )
+            val releaseResult = if (action.reason == ActiveWorkReleaseReason.REPLACE_REQUEST) {
+                releaseSourceUntilComplete(
+                    generation = action.generation,
+                    engine = engine,
+                    engineGeneration = releasedGraphGeneration,
+                )
+            } else {
+                releaseAdapterUntilComplete(
+                    generation = action.generation,
+                    engine = engine,
+                    engineGeneration = releasedGraphGeneration,
+                )
+            }
             if (releaseResult is PlaybackResult.Failure) {
                 lane.send(
                     LaneMessage.BarrierFinished(
@@ -972,7 +1029,7 @@ class PlaybackSession(
         }
         activeGraph = null
         activeGraphGeneration = null
-        if (message.reason in setOf(
+            if (message.reason in setOf(
                 ActiveWorkReleaseReason.STOP,
                 ActiveWorkReleaseReason.REPLACE_REQUEST,
                 ActiveWorkReleaseReason.COMPLETED,
@@ -981,6 +1038,11 @@ class PlaybackSession(
         ) {
             resolved = null
             requirements = null
+        }
+        if (message.reason != ActiveWorkReleaseReason.REPLACE_REQUEST && audioFocusOwned) {
+            safeResult(FailurePhase.RELEASE) { audioFocus.abandon() }
+            audioFocusOwned = false
+            pausedByAudioFocus = false
         }
         diagnostics.record(
             PlaybackDiagnosticEvent(
@@ -1068,6 +1130,8 @@ class PlaybackSession(
             )
             intentionalReleases -= engine.type
             val started = safeResult(FailurePhase.RECOVERY) {
+                val focus = ensureAudioFocus()
+                if (focus is PlaybackResult.Failure) return@safeResult focus
                 engine.start(
                     PlaybackEngineStart(
                         generation = action.generation,
@@ -1076,7 +1140,7 @@ class PlaybackSession(
                         graph = graph,
                         requirements = effective,
                         startPaused = startPaused,
-                        startPositionMs = machine.snapshot.positionMs,
+                        startPositionMs = restorationStartPositionMs(resolvedRequest.request.contentType),
                         playbackRate = machine.snapshot.playbackRate,
                         restorationCheckpoint = if (resolvedRequest.request.contentType == ContentType.VOD) {
                             machine.snapshot.vodCheckpoint(effective.subtitleDelayMs)
@@ -1122,6 +1186,22 @@ class PlaybackSession(
                     clock.delayMs(SURFACE_RECHECK_MS)
                     continue
                 }
+                val now = clock.nowEpochMs()
+                reconnectPlaybackStableSinceEpochMs?.let { stableSince ->
+                    if (policy.stablePlaybackResetsReconnectPressure((now - stableSince).coerceAtLeast(0L))) {
+                        liveReconnectAttempts.clear()
+                        reconnectPlaybackStableSinceEpochMs = null
+                    }
+                }
+                val windowStart = policy.liveReconnectWindowStart(now)
+                while (liveReconnectAttempts.firstOrNull()?.let { it < windowStart } == true) {
+                    liveReconnectAttempts.removeFirst()
+                }
+                if (!policy.liveReconnectAllowed(attempt, liveReconnectAttempts, now)) {
+                    liveReconnectEscalated(action.generation, policy.liveReconnectExhaustedFailure())
+                    return@launch
+                }
+                liveReconnectAttempts.addLast(now)
                 diagnostics.record(
                     PlaybackDiagnosticEvent(
                         generation = action.generation,
@@ -1210,7 +1290,16 @@ class PlaybackSession(
                     attempt++
                     continue
                 }
+                // Reconnect is another engine startup attempt. Publish the same phase boundary as
+                // primary startup so byte/track/decoder/first-frame watchdogs are armed.
+                lane.send(
+                    LaneMessage.Reducer(
+                        PlaybackReducerInput.Event(PlaybackEvent.EngineStarting(action.generation)),
+                    ),
+                )
                 val started = safeResult(FailurePhase.RECOVERY) {
+                    val focus = ensureAudioFocus()
+                    if (focus is PlaybackResult.Failure) return@safeResult focus
                     engine.start(
                         PlaybackEngineStart(
                             generation = action.generation,
@@ -1251,6 +1340,12 @@ class PlaybackSession(
                             return@launch
                         }
                         attempt++
+                        // The shared event reaches this waiter before the general engine collector
+                        // necessarily queues the same fact. Cross an acknowledged actor boundary
+                        // before deciding whether another attempt is still authorized.
+                        val accepted = CompletableDeferred<Unit>()
+                        lane.send(LaneMessage.ReconnectFailureObserved(event, accepted))
+                        accepted.await()
                     }
                     else -> attempt++
                 }
@@ -1299,6 +1394,36 @@ class PlaybackSession(
         // safe semantic is that resource ownership could not be proven ended. It is fatal and can
         // never authorize a handoff, reconnect, or second provider request.
         return PlaybackResult.Failure(releaseFailure())
+    }
+
+    private suspend fun releaseSourceUntilComplete(
+        generation: Long,
+        engine: PlaybackEngine?,
+        engineGeneration: Long?,
+    ): PlaybackResult<Unit> {
+        if (engine == null) return PlaybackResult.Success(Unit)
+        val adapterGeneration = engineGeneration ?: generation
+        intentionalReleases[engine.type] = setOfNotNull(generation, engineGeneration)
+        val stopped = withTimeoutOrNull(releaseTimeoutMs) {
+            safeResult(FailurePhase.RELEASE) { engine.releaseSource(adapterGeneration) }
+        }
+        if (stopped is PlaybackResult.Success) return stopped
+
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = generation,
+                code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                engine = engine.type,
+                failure = stopped?.failureOrNull() ?: releaseFailure(),
+            ),
+        )
+        // A source-stop failure cannot authorize another provider connection. Destroy the retained
+        // core independently and proceed only if that stronger barrier proves ownership ended.
+        val abort = withTimeoutOrNull(releaseTimeoutMs) {
+            safeResult(FailurePhase.RELEASE) { engine.hardAbort(adapterGeneration) }
+        }
+        return abort.takeIf { it is PlaybackResult.Success }
+            ?: PlaybackResult.Failure(releaseFailure())
     }
 
     /**
@@ -1353,6 +1478,13 @@ class PlaybackSession(
     private fun desiredWatchdogPhase(): PlaybackPolicy.WatchdogPhase? {
         val snapshot = machine.snapshot
         if (
+            snapshot.state == PlaybackState.ATTACHING_SURFACE &&
+            machine.sessionActive &&
+            machine.lifecycleActive
+        ) {
+            return PlaybackPolicy.WatchdogPhase.WAITING_FOR_SURFACE
+        }
+        if (
             engineAttemptGeneration != snapshot.generation ||
             !machine.sessionActive ||
             !machine.lifecycleActive ||
@@ -1361,7 +1493,9 @@ class PlaybackSession(
             return null
         }
         return when (snapshot.state) {
-            PlaybackState.STARTING_PRIMARY -> when {
+            PlaybackState.STARTING_PRIMARY,
+            PlaybackState.LIVE_RECONNECTING,
+            -> when {
                 !snapshot.progress.receivedBytes -> PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE
                 !snapshot.progress.discoveredTracks -> PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS
                 snapshot.tracks.hasVideoTrack &&
@@ -1483,7 +1617,15 @@ class PlaybackSession(
         phase: PlaybackPolicy.WatchdogPhase,
     ) {
         val evidence = machine.evidence ?: return
-        val failure = policy.watchdogFailure(phase, evidence)
+        val classified = policy.watchdogFailure(phase, evidence)
+        val failure = if (machine.snapshot.isReconnecting) {
+            classified.copy(
+                code = FailureCode.NO_PROGRESS,
+                phase = FailurePhase.RECOVERY,
+            )
+        } else {
+            classified
+        }
         diagnostics.record(
             PlaybackDiagnosticEvent(
                 generation = generation,
@@ -1702,7 +1844,46 @@ class PlaybackSession(
 
     private fun isCurrentReconnect(forGeneration: Long): Boolean =
         snapshot.value.generation == forGeneration &&
-            snapshot.value.state == PlaybackState.LIVE_RECONNECTING
+            (
+                snapshot.value.state == PlaybackState.LIVE_RECONNECTING ||
+                    snapshot.value.state == PlaybackState.STARTING_PRIMARY &&
+                    snapshot.value.isReconnecting
+            )
+
+    private suspend fun ensureAudioFocus(): PlaybackResult<Unit> {
+        if (audioFocusOwned) return PlaybackResult.Success(Unit)
+        return audioFocus.acquire().also { if (it is PlaybackResult.Success) audioFocusOwned = true }
+    }
+
+    private suspend fun audioFocusChanged(event: AudioFocusEvent) {
+        val graph = activeGraph ?: return
+        val generation = activeGraphGeneration ?: return
+        val engine = engineRegistry.engine(graph.engine) ?: return
+        when (event) {
+            AudioFocusEvent.GAIN -> {
+                safeResult(FailurePhase.PLAYBACK) { engine.setVolume(generation, 1f) }
+                if (pausedByAudioFocus) {
+                    safeResult(FailurePhase.PLAYBACK) { engine.setPaused(generation, false) }
+                    pausedByAudioFocus = false
+                }
+            }
+            AudioFocusEvent.LOSS_TRANSIENT -> {
+                safeResult(FailurePhase.PLAYBACK) { engine.setPaused(generation, true) }
+                pausedByAudioFocus = true
+            }
+            AudioFocusEvent.LOSS_DUCK ->
+                safeResult(FailurePhase.PLAYBACK) { engine.setVolume(generation, 0.2f) }
+            AudioFocusEvent.LOSS_PERMANENT -> {
+                safeResult(FailurePhase.PLAYBACK) { engine.setPaused(generation, true) }
+                pausedByAudioFocus = false
+                safeResult(FailurePhase.RELEASE) { audioFocus.abandon() }
+                audioFocusOwned = false
+            }
+        }
+    }
+
+    private fun restorationStartPositionMs(contentType: ContentType): Long =
+        if (contentType == ContentType.VOD) machine.snapshot.positionMs else 0L
 
     private fun isCurrentGeneration(forGeneration: Long): Boolean =
         machine.snapshot.generation == forGeneration
@@ -1816,6 +1997,11 @@ class PlaybackSession(
             val before: PlaybackEngineMetricsSnapshot?,
             val after: PlaybackEngineMetricsSnapshot?,
         ) : LaneMessage
+        data class ReconnectFailureObserved(
+            val event: PlaybackEvent.Failed,
+            val accepted: CompletableDeferred<Unit>,
+        ) : LaneMessage
+        data class AudioFocusChanged(val event: AudioFocusEvent) : LaneMessage
     }
 
     private companion object {

@@ -89,7 +89,21 @@ object LegacyPlayerSettingsSnapshotMapper {
         "nuvioPerformanceModeEnabled",
     )
 
-    fun map(settings: PlayerSettings, importToken: String): LegacyPlayerSettingsSnapshot {
+    /**
+     * Raw DataStore key names → snapshot field names for the fields where a materialized
+     * legacy default must never import as an explicit user choice. Fields without an entry
+     * keep the previous imported-as-stored behavior.
+     */
+    private val RAW_KEY_TO_GATED_FIELD = mapOf(
+        "internal_player_engine" to "internalPlayerEngine",
+        "auto_switch_internal_player_on_error" to "autoSwitchInternalPlayerOnError",
+    )
+
+    fun map(
+        settings: PlayerSettings,
+        importToken: String,
+        storedRawKeyNames: Set<String>? = null,
+    ): LegacyPlayerSettingsSnapshot {
         val values = linkedMapOf(
             "playerPreference" to settings.playerPreference.name,
             "internalPlayerEngine" to settings.internalPlayerEngine.name,
@@ -175,7 +189,19 @@ object LegacyPlayerSettingsSnapshotMapper {
             "bufferSettings.retainBackBufferFromKeyframe" to
                 settings.bufferSettings.retainBackBufferFromKeyframe.toString(),
         )
-        return LegacyPlayerSettingsSnapshot(importToken = importToken, values = values)
+        val storedFieldNames = storedRawKeyNames?.let { raw ->
+            buildSet {
+                addAll(values.keys)
+                RAW_KEY_TO_GATED_FIELD.forEach { (rawKey, field) ->
+                    if (rawKey !in raw) remove(field)
+                }
+            }
+        }
+        return LegacyPlayerSettingsSnapshot(
+            importToken = importToken,
+            values = values,
+            storedFieldNames = storedFieldNames,
+        )
     }
 }
 
@@ -207,10 +233,15 @@ internal class ActiveProfileLegacyPlaybackPreferenceSnapshotSource @Inject const
             "Playback preference bootstrap profile is not active"
         }
         val settings = legacyStore.playerSettings.first()
+        val storedRawKeyNames = legacyStore.storedPlayerSettingKeyNames.first()
         check(profileManager.activeProfileId.value == numericProfileId) {
             "Playback preference profile changed during bootstrap"
         }
-        return LegacyPlayerSettingsSnapshotMapper.map(settings, LEGACY_PLAYBACK_IMPORT_TOKEN)
+        return LegacyPlayerSettingsSnapshotMapper.map(
+            settings,
+            LEGACY_PLAYBACK_IMPORT_TOKEN,
+            storedRawKeyNames,
+        )
     }
 
     private companion object {

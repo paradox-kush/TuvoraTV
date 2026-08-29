@@ -13,8 +13,17 @@ import com.nuvio.tv.playback.core.SubtitleFidelity
 class LegacyPlayerSettingsSnapshot(
     val importToken: String,
     values: Map<String, String>,
+    storedFieldNames: Set<String>? = null,
 ) {
     val values: Map<String, String> = values.toMap()
+
+    /**
+     * Field names genuinely present in legacy storage. The legacy settings object materializes
+     * data-class defaults for keys the user never stored, and a materialized default is not a
+     * user choice — the importer must not turn it into an explicit clean preference. Absent
+     * (null) means the wiring could not distinguish, and every value counts as stored.
+     */
+    val storedFieldNames: Set<String> = storedFieldNames?.toSet() ?: this.values.keys
 
     init {
         require(importToken.isNotBlank())
@@ -44,7 +53,14 @@ object LegacyPlaybackPreferenceImporter {
         if (playerPreference != null && playerPreference != "INTERNAL") {
             notes += LegacyImportNote.EXTERNAL_PLAYER_PREFERENCE_NOT_IMPORTED
         }
-        val engine = when (values["internalPlayerEngine"]) {
+        // EXOPLAYER/false are the materialized legacy defaults of internalPlayerEngine and
+        // autoSwitchInternalPlayerOnError. Importing them as explicit choices would pin every
+        // untouched profile to Media3 with automatic fallback disabled — reverting the live
+        // libmpv product default and disabling engine handoff fleet-wide at cutover. Only a
+        // genuinely stored key imports as a user choice.
+        val engine = if ("internalPlayerEngine" !in snapshot.storedFieldNames) {
+            EnginePreference.AUTO
+        } else when (values["internalPlayerEngine"]) {
             null, "AUTO" -> EnginePreference.AUTO
             "EXOPLAYER" -> EnginePreference.MEDIA3
             "MVP_PLAYER" -> EnginePreference.LIBMPV
@@ -83,7 +99,11 @@ object LegacyPlaybackPreferenceImporter {
 
         val playback = defaults.playback.copy(
             engine = engine,
-            automaticFallback = values.boolean("autoSwitchInternalPlayerOnError", true),
+            automaticFallback = if ("autoSwitchInternalPlayerOnError" in snapshot.storedFieldNames) {
+                values.boolean("autoSwitchInternalPlayerOnError", true)
+            } else {
+                defaults.playback.automaticFallback
+            },
             decoder = decoder,
             buffering = buffering.first,
             customBuffer = buffering.second,

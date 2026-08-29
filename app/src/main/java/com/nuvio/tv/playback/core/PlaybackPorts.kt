@@ -1,6 +1,7 @@
 package com.nuvio.tv.playback.core
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 /** A failure is already normalized before it crosses a core port; raw engine exceptions stay local. */
 sealed interface PlaybackResult<out T> {
@@ -131,6 +132,8 @@ interface PlaybackEngine {
     suspend fun detachSurface(generation: Long): PlaybackResult<Unit>
     suspend fun start(input: PlaybackEngineStart): PlaybackResult<Unit>
     suspend fun setPaused(generation: Long, paused: Boolean): PlaybackResult<Unit>
+    suspend fun setVolume(generation: Long, volume: Float): PlaybackResult<Unit> =
+        unsupportedPlaybackControl()
     suspend fun seekTo(generation: Long, positionMs: Long): PlaybackResult<Unit> =
         unsupportedPlaybackControl()
     suspend fun setPlaybackRate(generation: Long, rate: Float): PlaybackResult<Unit> =
@@ -153,6 +156,12 @@ interface PlaybackEngine {
     /** Reads continuing decoder progress without changing playback or owning watchdog policy. */
     suspend fun snapshotMetrics(generation: Long): PlaybackResult<PlaybackEngineMetricsSnapshot>
 
+    /**
+     * Stops only the generation-owned provider/media source while retaining a healthy compatible
+     * engine core and surface. Success is affirmative proof that the old provider connection ended.
+     */
+    suspend fun releaseSource(generation: Long): PlaybackResult<Unit> = release(generation)
+
     /** Returns only after the adapter has stopped using its provider connection and surface. */
     suspend fun release(generation: Long): PlaybackResult<Unit>
 
@@ -162,6 +171,20 @@ interface PlaybackEngine {
      * never translated to success. Implementations must be idempotent.
      */
     suspend fun hardAbort(generation: Long): PlaybackResult<Unit>
+}
+
+enum class AudioFocusEvent { GAIN, LOSS_TRANSIENT, LOSS_DUCK, LOSS_PERMANENT }
+
+interface AudioFocusPort {
+    fun events(): Flow<AudioFocusEvent>
+    suspend fun acquire(): PlaybackResult<Unit>
+    suspend fun abandon(): PlaybackResult<Unit>
+}
+
+object NoopAudioFocusPort : AudioFocusPort {
+    override fun events(): Flow<AudioFocusEvent> = emptyFlow()
+    override suspend fun acquire(): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
+    override suspend fun abandon(): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
 }
 
 private fun unsupportedPlaybackControl(): PlaybackResult.Failure = PlaybackResult.Failure(

@@ -20,6 +20,16 @@ enum class CleanLiveIngressFailure {
     PROFILE_CHANGED,
 }
 
+enum class CleanLiveIngressFeedback { INVALID_REQUEST, UNAVAILABLE, PROFILE_CHANGED }
+
+internal object CleanLiveIngressFallbackPolicy {
+    fun feedback(reason: CleanLiveIngressFailure): CleanLiveIngressFeedback = when (reason) {
+        CleanLiveIngressFailure.INVALID_REQUEST -> CleanLiveIngressFeedback.INVALID_REQUEST
+        CleanLiveIngressFailure.UNAVAILABLE -> CleanLiveIngressFeedback.UNAVAILABLE
+        CleanLiveIngressFailure.PROFILE_CHANGED -> CleanLiveIngressFeedback.PROFILE_CHANGED
+    }
+}
+
 sealed interface CleanLiveIngressResult {
     class Ready(val token: CleanLiveLaunchToken) : CleanLiveIngressResult {
         override fun toString(): String = "CleanLiveIngressResult.Ready(token=[REDACTED])"

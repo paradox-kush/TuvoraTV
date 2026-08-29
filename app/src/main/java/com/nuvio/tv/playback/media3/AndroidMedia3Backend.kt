@@ -3,6 +3,7 @@ package com.nuvio.tv.playback.media3
 import android.content.Context
 import android.net.Uri
 import androidx.media3.common.C
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -293,26 +294,19 @@ internal class AndroidMedia3BackendFactory(
             .setLoadControl(loadControl)
             .setReleaseTimeoutMs(GRACEFUL_RELEASE_TIMEOUT_MS)
             .build()
+        player.setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build(),
+            false,
+        )
         player.trackSelectionParameters = buildTrackParameters(
             player.trackSelectionParameters.buildUpon(),
             plan,
         ).build()
         player.skipSilenceEnabled = plan.skipSilence
-        val mediaItem = MediaItem.Builder()
-            .setUri(plan.request.url)
-            .apply { plan.request.mimeType?.let(::setMimeType) }
-            .apply {
-                plan.request.drm?.let { drm ->
-                    setDrmConfiguration(
-                        MediaItem.DrmConfiguration.Builder(drm.schemeUuid)
-                            .setLicenseUri(drm.licenseUrl)
-                            .setLicenseRequestHeaders(drm.headers)
-                            .setMultiSession(drm.multiSession)
-                            .build(),
-                    )
-                }
-            }
-            .build()
+        val mediaItem = mediaItemFor(plan)
         return AndroidMedia3Backend(
             player,
             mediaItem,
@@ -738,26 +732,20 @@ private class AndroidMedia3Backend(
             return@withContext it
         }
         runCatching {
-            val tracks = plan.tracks
-            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
-                if (tracks.viewportWidth != null && tracks.viewportHeight != null) {
-                    setViewportSize(tracks.viewportWidth, tracks.viewportHeight, true)
-                } else {
-                    clearViewportSizeConstraints()
-                }
-                if (tracks.maximumVideoWidth != null && tracks.maximumVideoHeight != null) {
-                    setMaxVideoSize(tracks.maximumVideoWidth, tracks.maximumVideoHeight)
-                } else {
-                    setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-                }
-                setMaxVideoBitrate(tracks.maximumVideoBitrate ?: Int.MAX_VALUE)
-                setPreferredAudioLanguage(tracks.preferredAudioLanguage)
-                setPreferredTextLanguage(tracks.preferredSubtitleLanguage)
-                setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !tracks.subtitlesEnabled)
-            }.build()
+            player.trackSelectionParameters = applyMedia3RuntimeTrackPlan(
+                player.trackSelectionParameters,
+                plan.tracks,
+            )
             player.skipSilenceEnabled = plan.skipSilence
             this@AndroidMedia3Backend.plan = plan
         }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { backendFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    override suspend fun setVolume(volume: Float): PlaybackResult<Unit> = withContext(dispatcher) {
+        runCatching { player.volume = volume.coerceIn(0f, 1f) }.fold(
             onSuccess = { PlaybackResult.Success(Unit) },
             onFailure = { backendFailure(FailurePhase.PLAYBACK) },
         )
@@ -771,6 +759,56 @@ private class AndroidMedia3Backend(
             PlaybackResult.Success(Unit)
         } else {
             backendFailure(FailurePhase.RELEASE, FailureCode.SURFACE_LOST)
+        }
+    }
+
+    override suspend fun stopSource(): PlaybackResult<Unit> = withContext(dispatcher) {
+        if (released) return@withContext PlaybackResult.Success(Unit)
+        terminalSuppressed = true
+        timelineJob?.cancel()
+        timelineJob = null
+        runCatching {
+            player.playWhenReady = false
+            player.stop()
+            player.clearMediaItems()
+            calls.cancelAll()
+        }.getOrElse { return@withContext backendFailure(FailurePhase.RELEASE) }
+        if (!calls.awaitIdle(NETWORK_HARD_ABORT_TIMEOUT_MS)) {
+            return@withContext backendFailure(FailurePhase.RELEASE, FailureCode.NETWORK_TIMEOUT)
+        }
+        PlaybackResult.Success(Unit)
+    }
+
+    override suspend fun replaceSource(
+        plan: Media3AdapterPlan,
+        paused: Boolean,
+        startPositionMs: Long,
+        playbackRate: Float,
+        restorationCheckpoint: VodRestorationCheckpoint?,
+    ): PlaybackResult<Unit> = withContext(dispatcher) {
+        // The retained player's data-source factory owns request headers/DNS/proxy configuration.
+        // Reuse is safe only when the per-source URL is the sole network-plan change.
+        if (!media3SourceReplacementCompatible(this@AndroidMedia3Backend.plan, plan)) {
+            return@withContext backendFailure(
+                FailurePhase.ENGINE_START,
+                FailureCode.NO_ELIGIBLE_GRAPH,
+            )
+        }
+        this@AndroidMedia3Backend.plan = plan
+        mediaItem = mediaItemFor(plan)
+        firstAudioReported.set(false)
+        firstVideoReported.set(false)
+        trackReferences = emptyMap()
+        currentTrackCatalog = PlaybackTrackCatalog()
+        trackRevision = 0
+        when (val applied = apply(plan)) {
+            is PlaybackResult.Failure -> applied
+            is PlaybackResult.Success -> start(
+                paused,
+                startPositionMs,
+                playbackRate,
+                restorationCheckpoint,
+            )
         }
     }
 
@@ -989,6 +1027,48 @@ private class AndroidMedia3Backend(
         const val HARD_ABORT_RELEASE_AWAIT_ATTEMPTS = 4
     }
 }
+
+/** Runtime quality/profile changes deliberately build on, and therefore retain, manual overrides. */
+internal fun applyMedia3RuntimeTrackPlan(
+    current: TrackSelectionParameters,
+    tracks: Media3TrackPlan,
+): TrackSelectionParameters = current.buildUpon().apply {
+    if (tracks.viewportWidth != null && tracks.viewportHeight != null) {
+        setViewportSize(tracks.viewportWidth, tracks.viewportHeight, true)
+    } else {
+        clearViewportSizeConstraints()
+    }
+    if (tracks.maximumVideoWidth != null && tracks.maximumVideoHeight != null) {
+        setMaxVideoSize(tracks.maximumVideoWidth, tracks.maximumVideoHeight)
+    } else {
+        setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+    }
+    setMaxVideoBitrate(tracks.maximumVideoBitrate ?: Int.MAX_VALUE)
+    setPreferredAudioLanguage(tracks.preferredAudioLanguage)
+    setPreferredTextLanguage(tracks.preferredSubtitleLanguage)
+    setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !tracks.subtitlesEnabled)
+}.build()
+
+private fun mediaItemFor(plan: Media3AdapterPlan): MediaItem = MediaItem.Builder()
+    .setUri(plan.request.url)
+    .apply { plan.request.mimeType?.let(::setMimeType) }
+    .apply {
+        plan.request.drm?.let { drm ->
+            setDrmConfiguration(
+                MediaItem.DrmConfiguration.Builder(drm.schemeUuid)
+                    .setLicenseUri(drm.licenseUrl)
+                    .setLicenseRequestHeaders(drm.headers)
+                    .setMultiSession(drm.multiSession)
+                    .build(),
+            )
+        }
+    }
+    .build()
+
+internal fun media3SourceReplacementCompatible(
+    previous: Media3AdapterPlan,
+    next: Media3AdapterPlan,
+): Boolean = previous.copy(request = previous.request.copy(url = next.request.url)) == next
 
 /** Extracts only facts carried by Media3's selected video input format. */
 internal fun media3VideoFormatFacts(format: Format): List<Media3BackendEvent> = buildList {

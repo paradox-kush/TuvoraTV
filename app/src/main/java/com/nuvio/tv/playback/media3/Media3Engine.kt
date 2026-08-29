@@ -70,6 +70,7 @@ internal interface Media3Backend {
         restorationCheckpoint: VodRestorationCheckpoint?,
     ): PlaybackResult<Unit>
     suspend fun setPaused(paused: Boolean): PlaybackResult<Unit>
+    suspend fun setVolume(volume: Float): PlaybackResult<Unit>
     suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = unsupportedMedia3Control()
     suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = unsupportedMedia3Control()
     suspend fun selectAudioTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMedia3Control()
@@ -79,6 +80,14 @@ internal interface Media3Backend {
         unsupportedMedia3Control()
     suspend fun apply(plan: Media3AdapterPlan): PlaybackResult<Unit>
     suspend fun detachSurface(): PlaybackResult<Unit>
+    suspend fun stopSource(): PlaybackResult<Unit>
+    suspend fun replaceSource(
+        plan: Media3AdapterPlan,
+        paused: Boolean,
+        startPositionMs: Long,
+        playbackRate: Float,
+        restorationCheckpoint: VodRestorationCheckpoint?,
+    ): PlaybackResult<Unit>
 
     /** Includes tracked HTTP-call cancellation and returns only on affirmative ownership release. */
     suspend fun release(): PlaybackResult<Unit>
@@ -131,6 +140,7 @@ class Media3Engine internal constructor(
     private var eventJob: Job? = null
     private var activeGraph: com.nuvio.tv.playback.core.PlaybackGraph? = null
     private var activeEvidence: com.nuvio.tv.playback.core.StreamEvidence? = null
+    private var sourceReleased = false
 
     override suspend fun attachSurface(
         generation: Long,
@@ -149,7 +159,10 @@ class Media3Engine internal constructor(
         if (currentBackend != null && activeGraph != graph) {
             return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
         }
-        if (lease != null) return@withLock PlaybackResult.Success(Unit)
+        if (lease != null) {
+            this.generation = generation
+            return@withLock PlaybackResult.Success(Unit)
+        }
         when (val acquired = surfaceHost.acquire(graph.surfaceMode, graph.secureOutput)) {
             is PlaybackResult.Success -> {
                 if (acquired.value.mode != graph.surfaceMode || acquired.value.secure != graph.secureOutput) {
@@ -196,9 +209,32 @@ class Media3Engine internal constructor(
         }
         if (generation != input.generation) return@withLock stale(FailurePhase.ENGINE_START)
         val currentLease = lease ?: return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
-        if (backend != null) return@withLock failure(FailurePhase.ENGINE_START, FailureCode.RESOURCE_BUDGET_EXCEEDED)
-
         val plan = Media3AdapterPlanFactory.create(input.request, input.evidence, input.graph, input.requirements)
+        val retained = backend
+        if (retained != null) {
+            if (!sourceReleased || activeGraph != input.graph) {
+                return@withLock failure(FailurePhase.ENGINE_START, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+            }
+            eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                retained.events.collect { event -> publish(input.generation, event) }
+            }
+            val replaced = retained.replaceSource(
+                plan,
+                input.startPaused,
+                input.startPositionMs,
+                input.playbackRate,
+                input.restorationCheckpoint,
+            )
+            if (replaced is PlaybackResult.Success) {
+                sourceReleased = false
+                activeRequest = input.request
+                activeEvidence = input.evidence
+            } else {
+                eventJob?.cancelAndJoin()
+                eventJob = null
+            }
+            return@withLock replaced
+        }
         when (val created = backendFactory.create(plan)) {
             is PlaybackResult.Failure -> created
             is PlaybackResult.Success -> {
@@ -217,6 +253,7 @@ class Media3Engine internal constructor(
                 activeRequest = input.request
                 activeGraph = input.graph
                 activeEvidence = input.evidence
+                sourceReleased = false
                 // Subscribe before prepare/play can synchronously publish a terminal or failure fact.
                 eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     candidate.events.collect { event -> publish(input.generation, event) }
@@ -252,6 +289,12 @@ class Media3Engine internal constructor(
     override suspend fun setPaused(generation: Long, paused: Boolean): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
         backend?.setPaused(paused) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun setVolume(generation: Long, volume: Float): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setVolume(volume.coerceIn(0f, 1f))
+            ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
     }
 
     override suspend fun seekTo(generation: Long, positionMs: Long): PlaybackResult<Unit> = lock.withLock {
@@ -347,7 +390,23 @@ class Media3Engine internal constructor(
         activeRequest = null
         activeGraph = null
         activeEvidence = null
+        sourceReleased = false
         PlaybackResult.Success(Unit)
+    }
+
+    override suspend fun releaseSource(generation: Long): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.RELEASE)
+        val current = backend ?: return@withLock PlaybackResult.Success(Unit)
+        when (val stopped = current.stopSource()) {
+            is PlaybackResult.Failure -> stopped
+            is PlaybackResult.Success -> {
+                eventJob?.cancelAndJoin()
+                eventJob = null
+                sourceReleased = true
+                this.generation = null
+                PlaybackResult.Success(Unit)
+            }
+        }
     }
 
     override suspend fun hardAbort(generation: Long): PlaybackResult<Unit> = lock.withLock {
@@ -374,6 +433,7 @@ class Media3Engine internal constructor(
         activeRequest = null
         activeGraph = null
         activeEvidence = null
+        sourceReleased = false
         PlaybackResult.Success(Unit)
     }
 

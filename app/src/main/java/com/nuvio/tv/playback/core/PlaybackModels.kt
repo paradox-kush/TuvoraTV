@@ -1,5 +1,15 @@
 package com.nuvio.tv.playback.core
 
+/**
+ * Default stream User-Agent when a request carries none — byte-identical to the legacy player's
+ * stream UA (PlayerMediaSourceFactory). IPTV panels are UA-gated: an unrecognized agent draws
+ * WAF refusals (401/403/407) on tiers that accept the fleet's long-standing browser UA, so the
+ * cutover must not change the wire identity of provider streams. Both engine plans consume this.
+ */
+const val DEFAULT_STREAM_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
 /** A secret-bearing request. Its string form is deliberately limited to [RequestSummary]. */
 class PlaybackRequest(
     val url: String,
@@ -665,7 +675,11 @@ data class PlaybackFailure(
     val phase: FailurePhase,
     val retryability: Retryability,
     val deterministic: Boolean = false,
+    val httpStatus: Int? = null,
+    val statusProvenance: HttpStatusProvenance? = null,
 )
+
+enum class HttpStatusProvenance { CONFIRMED, INFERRED_FROM_NETWORK_ERROR }
 
 enum class FailureCode {
     NETWORK_UNREACHABLE,
@@ -680,6 +694,8 @@ enum class FailureCode {
     VIDEO_RENDERER_FAILED,
     SURFACE_LOST,
     AUDIO_OUTPUT_FAILED,
+    AUDIO_DECODER_FAILED,
+    AUDIO_SINK_FAILED,
     SUBTITLE_OUTPUT_UNSUPPORTED,
     DRM_UNSUPPORTED,
     DRM_LICENSE_FAILED,
@@ -687,6 +703,7 @@ enum class FailureCode {
     RESOURCE_RELEASE_FAILED,
     NO_ELIGIBLE_GRAPH,
     NO_PROGRESS,
+    LIVE_RECONNECT_EXHAUSTED,
     UNKNOWN,
 }
 
@@ -699,6 +716,8 @@ enum class FailureDomain {
     VIDEO_DECODER,
     VIDEO_RENDERER_SURFACE,
     AUDIO,
+    AUDIO_DECODER,
+    AUDIO_SINK,
     SUBTITLE,
     DRM,
     DEVICE_RESOURCE,
@@ -1085,6 +1104,8 @@ fun isLearnableCompatibilityFailure(domain: FailureDomain?, code: FailureCode?):
             FailureCode.SURFACE_LOST,
         )
         FailureDomain.AUDIO,
+        FailureDomain.AUDIO_DECODER,
+        FailureDomain.AUDIO_SINK,
         FailureDomain.SUBTITLE,
         FailureDomain.NETWORK,
         FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,

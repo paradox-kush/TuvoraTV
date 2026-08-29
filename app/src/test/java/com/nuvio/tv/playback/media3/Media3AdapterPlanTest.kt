@@ -1,6 +1,11 @@
 package com.nuvio.tv.playback.media3
 
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.Format
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.common.PlaybackException
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import com.nuvio.tv.playback.core.AudioMode
@@ -45,6 +50,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import io.mockk.mockk
 
 class Media3AdapterPlanTest {
     @Test
@@ -237,6 +243,47 @@ class Media3AdapterPlanTest {
         val drm = Media3FailureMapper.map(PlaybackException.ERROR_CODE_DRM_SCHEME_UNSUPPORTED)
         assertEquals(FailureCode.DRM_UNSUPPORTED, drm.code)
         assertTrue(drm.deterministic)
+    }
+
+    @Test
+    fun `Media3 structured authorization status is confirmed evidence only`() {
+        val response = HttpDataSource.InvalidResponseCodeException(
+            403,
+            "Forbidden",
+            null,
+            emptyMap(),
+            mockk(),
+            byteArrayOf(),
+        )
+        val error = PlaybackException(
+            "http status",
+            response,
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        )
+
+        val failure = Media3FailureMapper.map(error)
+
+        assertEquals(FailureCode.AUTHORIZATION_REJECTED, failure.code)
+        assertEquals(403, failure.httpStatus)
+        assertEquals(com.nuvio.tv.playback.core.HttpStatusProvenance.CONFIRMED, failure.statusProvenance)
+    }
+
+    @Test
+    fun `Media3 manual subtitle override survives guide fullscreen runtime plan change`() {
+        val subtitleGroup = TrackGroup(
+            Format.Builder().setId("subtitle-fr").setSampleMimeType(MimeTypes.TEXT_VTT).build(),
+        )
+        val manual = TrackSelectionOverride(subtitleGroup, 0)
+        val current = TrackSelectionParameters.DEFAULT_WITHOUT_CONTEXT.buildUpon()
+            .setOverrideForType(manual)
+            .build()
+
+        val updated = applyMedia3RuntimeTrackPlan(
+            current,
+            plan().tracks.copy(viewportWidth = 1920, viewportHeight = 1080),
+        )
+
+        assertEquals(current.overrides, updated.overrides)
     }
 
     @Test

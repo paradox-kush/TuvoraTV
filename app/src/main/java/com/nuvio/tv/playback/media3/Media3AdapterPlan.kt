@@ -118,7 +118,7 @@ internal data class Media3BufferPlan(
 )
 
 internal object Media3AdapterPlanFactory {
-    private const val DEFAULT_USER_AGENT = "TuvoraTV/1 Media3"
+    private const val DEFAULT_USER_AGENT = com.nuvio.tv.playback.core.DEFAULT_STREAM_USER_AGENT
 
     fun create(
         request: PlaybackRequest,
@@ -259,7 +259,9 @@ internal object Media3FailureMapper {
                         FailureCode.AUTHORIZATION_REJECTED,
                         FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
                         phase,
-                        Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                        Retryability.FATAL,
+                        httpStatus = response.responseCode,
+                        statusProvenance = com.nuvio.tv.playback.core.HttpStatusProvenance.CONFIRMED,
                     )
                     429 -> failure(
                         FailureCode.PROVIDER_CONNECTION_LIMIT,
@@ -292,13 +294,32 @@ internal object Media3FailureMapper {
         }
         val exo = error as? ExoPlaybackException
         val rendererMime = exo?.rendererFormat?.sampleMimeType
-        if (rendererMime != null && MimeTypes.isAudio(rendererMime) && error.errorCode in 4001..4006) {
-            return failure(
-                FailureCode.AUDIO_OUTPUT_FAILED,
-                FailureDomain.AUDIO,
-                phase,
-                Retryability.HANDOFF_ELIGIBLE,
-            )
+        if (rendererMime != null && MimeTypes.isAudio(rendererMime)) {
+            return when (error.errorCode) {
+                PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+                PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+                PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+                PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+                PlaybackException.ERROR_CODE_DECODING_FAILED,
+                PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED,
+                -> failure(
+                    FailureCode.AUDIO_DECODER_FAILED,
+                    FailureDomain.AUDIO_DECODER,
+                    phase,
+                    Retryability.HANDOFF_ELIGIBLE,
+                )
+                PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+                PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
+                PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_INIT_FAILED,
+                PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED,
+                -> failure(
+                    FailureCode.AUDIO_SINK_FAILED,
+                    FailureDomain.AUDIO_SINK,
+                    phase,
+                    Retryability.HANDOFF_ELIGIBLE,
+                )
+                else -> failure(FailureCode.UNKNOWN, FailureDomain.UNKNOWN, phase, Retryability.HANDOFF_ELIGIBLE)
+            }
         }
         return map(error.errorCode, phase)
     }
@@ -341,7 +362,7 @@ internal object Media3FailureMapper {
         PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
         PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_INIT_FAILED,
         PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED,
-        -> failure(FailureCode.AUDIO_OUTPUT_FAILED, FailureDomain.AUDIO, phase, Retryability.HANDOFF_ELIGIBLE)
+        -> failure(FailureCode.AUDIO_SINK_FAILED, FailureDomain.AUDIO_SINK, phase, Retryability.HANDOFF_ELIGIBLE)
 
         in PlaybackException.ERROR_CODE_DRM_UNSPECIFIED..PlaybackException.ERROR_CODE_DRM_LICENSE_EXPIRED -> failure(
             if (errorCode == PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED) {
@@ -364,7 +385,9 @@ internal object Media3FailureMapper {
         phase: FailurePhase,
         retryability: Retryability,
         deterministic: Boolean = false,
-    ) = PlaybackFailure(code, domain, phase, retryability, deterministic)
+        httpStatus: Int? = null,
+        statusProvenance: com.nuvio.tv.playback.core.HttpStatusProvenance? = null,
+    ) = PlaybackFailure(code, domain, phase, retryability, deterministic, httpStatus, statusProvenance)
 
     private fun Throwable.causeChain(): Sequence<Throwable> = generateSequence(this) { it.cause }
 }

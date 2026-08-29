@@ -16,6 +16,7 @@ import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.ProxyMode
 import com.nuvio.tv.playback.core.RedirectPolicy
 import com.nuvio.tv.playback.core.Retryability
+import com.nuvio.tv.playback.core.SubtitleFidelity
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.core.TransientLoadRetryPolicy
 import com.nuvio.tv.playback.core.VodRestorationCheckpoint
@@ -52,7 +53,7 @@ internal enum class MpvDnsMode {
 }
 
 internal object MpvAdapterPlanFactory {
-    private const val DEFAULT_USER_AGENT = "TuvoraTV/1 libmpv"
+    private const val DEFAULT_USER_AGENT = com.nuvio.tv.playback.core.DEFAULT_STREAM_USER_AGENT
 
     fun create(input: PlaybackEngineStart): PlaybackResult<MpvAdapterPlan> {
         val request = input.request
@@ -83,8 +84,15 @@ internal object MpvAdapterPlanFactory {
         if (graph.audioMode == AudioMode.OFFLOAD || requirements.audioSkipSilence) {
             return unsupported(FailureCode.NO_ELIGIBLE_GRAPH)
         }
+        // Product decision (2026-08-28): video is priority, subtitles are best-effort. Direct
+        // render (mediacodec_embed) cannot draw subtitles; COMPATIBLE fidelity accepts that and
+        // keeps the 1.5.8 direct live path. Only an explicit FULL fidelity demand excludes the
+        // direct graph — mirroring PlaybackPolicy's selection filter exactly, so a graph the
+        // policy selects is never vetoed here.
         if (graph.outputProfile == GraphOutputProfile.MPV_DIRECT &&
-            (graph.decoderMode == DecoderMode.SOFTWARE || requirements.subtitlesEnabled)
+            (graph.decoderMode == DecoderMode.SOFTWARE ||
+                (requirements.subtitlesEnabled &&
+                    requirements.subtitleFidelity == SubtitleFidelity.FULL))
         ) {
             return unsupported(FailureCode.NO_ELIGIBLE_GRAPH)
         }
@@ -102,6 +110,11 @@ internal object MpvAdapterPlanFactory {
 
         val options = linkedMapOf(
             "config" to "no",
+            // 1.5.8-proven (NuvioMpvSurfaceView): a core that is not idle=yes is a zap-session
+            // time bomb — at mpv's default (idle=no) the first `stop` empties the playlist and
+            // the core initiates self-termination, wedging every later native command. The
+            // source-replacement reuse lane depends on the core surviving `stop`.
+            "idle" to "yes",
             "terminal" to "no",
             // Raw mpv/FFmpeg messages may contain provider URLs; normalized facts are the only
             // clean-adapter diagnostic channel.
@@ -160,7 +173,14 @@ internal object MpvAdapterPlanFactory {
         if (requirements.audioNormalization) options["af"] = "lavfi=[dynaudnorm]"
         requirements.preferredAudioLanguage?.let { options["alang"] = it }
         requirements.preferredSubtitleLanguage?.let { options["slang"] = it }
-        options["sid"] = if (requirements.subtitlesEnabled) "auto" else "no"
+        // Direct render cannot draw subtitles — do not decode them there (best-effort decision).
+        options["sid"] = if (
+            requirements.subtitlesEnabled && graph.outputProfile != GraphOutputProfile.MPV_DIRECT
+        ) {
+            "auto"
+        } else {
+            "no"
+        }
 
         val properties = linkedMapOf(
             "audio-delay" to (requirements.audioDelayMs / 1_000.0).toString(),

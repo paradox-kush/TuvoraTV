@@ -262,7 +262,14 @@ internal class CleanLiveSurfaceCoordinator(
         slot.released = true
         callbackScope.launch(mainDispatcher) {
             ownershipMutex.withLock {
-                if (current === slot && slot.released) removeControlled(slot)
+                if (current !== slot || !slot.released) return@withLock
+                val replacementMayBeCreated = slot.unexpectedlyLost && hosting && !disposed
+                removeControlled(slot)
+                // SurfaceAvailable means the UI-owned host is ready to construct a replacement;
+                // the engine attachment path still acquires the concrete Surface/View. Without
+                // this edge an actually removed child leaves the reducer in ATTACHING_SURFACE
+                // forever because no object remains that can publish another framework callback.
+                if (replacementMayBeCreated) notifyAvailability(available = true, token = null)
             }
         }
     }
@@ -287,6 +294,7 @@ internal class CleanLiveSurfaceCoordinator(
 
     private fun enqueueAvailability(token: Long, available: Boolean) {
         if (token != currentToken || token == controlledRemovalToken || !hosting) return
+        if (!available) current?.takeIf { it.token == token }?.unexpectedlyLost = true
         callbackScope.launch { notifyAvailability(available, token) }
     }
 
@@ -348,6 +356,7 @@ internal class CleanLiveSurfaceCoordinator(
         val view: View,
         @Volatile var attached: Boolean = false,
         @Volatile var released: Boolean = false,
+        @Volatile var unexpectedlyLost: Boolean = false,
         var ownedSurface: Surface? = null,
     )
 
