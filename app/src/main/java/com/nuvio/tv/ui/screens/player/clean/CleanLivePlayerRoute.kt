@@ -58,9 +58,11 @@ internal fun CleanLivePlayerRoute(
         }
     }
 
-    LaunchedEffect(routeState) {
-        val rejected = routeState as? CleanLivePlayerRouteState.Rejected
-        if (rejected != null && rejected.reason != CleanLivePlayerRejection.RELEASE_FAILED) {
+    // Keyed on the derived rejection, not the whole route state: a Ready refresh must not
+    // cancel and relaunch this effect.
+    val rejectionReason = (routeState as? CleanLivePlayerRouteState.Rejected)?.reason
+    LaunchedEffect(rejectionReason) {
+        if (rejectionReason != null && rejectionReason != CleanLivePlayerRejection.RELEASE_FAILED) {
             requestReleaseAndExit()
         }
     }

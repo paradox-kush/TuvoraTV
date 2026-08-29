@@ -379,11 +379,48 @@ internal class CleanLiveSurfaceCoordinator(
     private enum class MpvLeaseState { ACQUIRED, ATTACHED, DETACHED, CORE_DESTROYED, RELEASED }
 }
 
-private suspend fun awaitAndroidSurfaceValidity(view: View, timeoutMs: Long): Boolean =
-    withTimeoutOrNull(timeoutMs) {
-        while (!view.hasValidSurface()) delay(16L)
-        true
-    } ?: false
+private suspend fun awaitAndroidSurfaceValidity(view: View, timeoutMs: Long): Boolean {
+    if (view.hasValidSurface()) return true
+    return when (view) {
+        // SurfaceHolder supports multiple callbacks, so we can suspend on the platform's own
+        // surfaceCreated push instead of spinning a 16ms poll through the zap-contended window.
+        is SurfaceView -> withTimeoutOrNull(timeoutMs) {
+            kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+                val callback = object : android.view.SurfaceHolder.Callback {
+                    override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+                        view.holder.removeCallback(this)
+                        if (continuation.isActive) continuation.resume(Unit) {}
+                    }
+
+                    override fun surfaceChanged(
+                        holder: android.view.SurfaceHolder,
+                        format: Int,
+                        width: Int,
+                        height: Int,
+                    ) = Unit
+
+                    override fun surfaceDestroyed(holder: android.view.SurfaceHolder) = Unit
+                }
+                view.holder.addCallback(callback)
+                continuation.invokeOnCancellation { view.holder.removeCallback(callback) }
+                // The surface may have become valid between the fast-path check and callback
+                // registration; never wait on a push that already happened.
+                if (view.hasValidSurface()) {
+                    view.holder.removeCallback(callback)
+                    if (continuation.isActive) continuation.resume(Unit) {}
+                }
+            }
+            true
+        } ?: false
+        // TextureView exposes a SINGLE surfaceTextureListener slot and the coordinator already
+        // owns it for availability reporting — installing a second listener here would clobber
+        // it. Polling stays for this type only.
+        else -> withTimeoutOrNull(timeoutMs) {
+            while (!view.hasValidSurface()) delay(16L)
+            true
+        } ?: false
+    }
+}
 
 private fun View.hasValidSurface(): Boolean = when (this) {
     is SurfaceView -> holder.surface.isValid

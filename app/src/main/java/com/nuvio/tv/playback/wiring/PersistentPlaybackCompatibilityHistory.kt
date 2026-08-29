@@ -55,6 +55,21 @@ class PersistentPlaybackCompatibilityHistory(
 ) : PlaybackCompatibilityHistory {
     private val mutex = Mutex()
 
+    /**
+     * Decoded once and served from memory: `records()` runs on every tune/zap/recovery, and a
+     * full base64 decode + re-encode + SharedPreferences commit per zap was measurable CPU and
+     * flash I/O on budget boxes. Guarded by [mutex]; every persisted write refreshes it.
+     */
+    private var cached: List<StoredRecord>? = null
+
+    private fun loadLocked(): List<StoredRecord> =
+        cached ?: decode(storage.read()).also { cached = it }
+
+    private fun persistLocked(records: List<StoredRecord>) {
+        cached = records
+        storage.write(encode(records))
+    }
+
     init {
         require(maxRecords > 0) { "Compatibility history record cap must be positive" }
         require(maxEncodedBytes > FORMAT_VERSION.length + 1) {
@@ -64,7 +79,7 @@ class PersistentPlaybackCompatibilityHistory(
 
     override suspend fun records(scopeKey: CompatibilityScopeKey): List<CompatibilityRecord> = mutex.withLock {
         val now = clock.nowEpochMs()
-        val decoded = decode(storage.read())
+        val decoded = loadLocked()
         val retained = compact(decoded, now).map { stored ->
             if (stored.record.scopeKey == scopeKey && matchesCurrentRuntime(stored.record)) {
                 stored.copy(lastAccessedAtEpochMs = now)
@@ -73,7 +88,14 @@ class PersistentPlaybackCompatibilityHistory(
             }
         }
         val compacted = compact(retained, now)
-        if (compacted != decoded) storage.write(encode(compacted))
+        // Access-timestamp touches are LRU metadata, not learning data: they live in the cache
+        // and ride the next real write. Persist on a read only when actual records changed
+        // (expiry/cap eviction) - never a flash commit per zap just to say "recently used".
+        if (compacted.map(StoredRecord::record) != decoded.map(StoredRecord::record)) {
+            persistLocked(compacted)
+        } else {
+            cached = compacted
+        }
         compacted.asSequence()
             .filter { it.record.scopeKey == scopeKey }
             .filter { matchesCurrentRuntime(it.record) }
@@ -85,7 +107,7 @@ class PersistentPlaybackCompatibilityHistory(
     override suspend fun record(value: CompatibilityRecord) = mutex.withLock {
         val now = clock.nowEpochMs()
         if (!isLearnable(value) || value.isExpired(now)) return@withLock
-        val existing = compact(decode(storage.read()), now).toMutableList()
+        val existing = compact(loadLocked(), now).toMutableList()
         val sameGraph: (StoredRecord) -> Boolean = {
             it.record.scopeKey == value.scopeKey &&
                 it.record.graph == value.graph &&
@@ -103,7 +125,7 @@ class PersistentPlaybackCompatibilityHistory(
         // likewise replaces stale success; history never votes with contradictory simultaneous rows.
         existing.removeAll(sameGraph)
         existing += StoredRecord(value, lastAccessedAtEpochMs = now)
-        storage.write(encode(compact(existing, now)))
+        persistLocked(compact(existing, now))
     }
 
     private fun isLearnable(record: CompatibilityRecord): Boolean {
@@ -218,8 +240,11 @@ class PersistentPlaybackCompatibilityHistory(
             )
             .take(maxRecords)
             .toMutableList()
+        // Trim to the byte budget in proportional batches: re-encoding the whole document once
+        // per removed record was O(n^2) string building on the compaction path.
         while (retained.isNotEmpty() && encode(retained).toByteArray(StandardCharsets.UTF_8).size > maxEncodedBytes) {
-            retained.removeAt(retained.lastIndex)
+            val drop = (retained.size / 10).coerceAtLeast(1)
+            repeat(drop.coerceAtMost(retained.size)) { retained.removeAt(retained.lastIndex) }
         }
         return retained
     }

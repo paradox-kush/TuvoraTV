@@ -483,10 +483,12 @@ internal class CleanLivePlayerViewModel private constructor(
         origin: CleanLiveLaunchOrigin,
     ) {
         fun publish(snapshot: PlaybackSnapshot) {
+            // Tick-stable like the guide: live position ticks in the route state recomposed the
+            // fullscreen route (and relaunched its keyed effects) at 2Hz for zero visual change.
             mutableRouteState.value = CleanLivePlayerRouteState.Ready(
                 metadata = metadata,
                 origin = origin,
-                snapshot = snapshot,
+                snapshot = snapshot.copy(positionMs = 0L, bufferedPositionMs = 0L),
                 presentation = LivePlaybackUiPresenter.present(snapshot),
             )
             acceptRenderedVideoEvidence(snapshot)

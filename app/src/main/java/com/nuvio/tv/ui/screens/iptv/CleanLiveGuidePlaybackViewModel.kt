@@ -638,9 +638,13 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
     private fun publishSnapshot(snapshot: PlaybackSnapshot) {
         val target = activeTarget ?: return
+        // The guide renders presentation/target only; live position ticks (500ms) embedded in
+        // Ready defeated StateFlow equality and recomposed the whole (already main-thread-bound)
+        // guide at 2Hz for zero visual change. The published snapshot is tick-stable; rendered-
+        // frame evidence below still consumes the raw snapshot.
         mutableState.value = CleanLiveGuidePlaybackState.Ready(
             target = target,
-            snapshot = snapshot,
+            snapshot = snapshot.copy(positionMs = 0L, bufferedPositionMs = 0L),
             presentation = LivePlaybackUiPresenter.present(snapshot),
             sessionProfile = sessionProfile,
         )

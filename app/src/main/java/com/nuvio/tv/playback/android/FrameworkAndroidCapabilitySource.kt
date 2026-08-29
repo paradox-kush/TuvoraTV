@@ -26,7 +26,7 @@ internal class FrameworkAndroidCapabilitySource(
     private val appContext = context.applicationContext
 
     override fun read(): AndroidPlatformCapabilityFacts {
-        val codecs = readCodecs()
+        val codecs = codecFacts
         val resources = readResources(codecs)
         return AndroidPlatformCapabilityFacts(
             device = AndroidDeviceFacts(
@@ -45,6 +45,14 @@ internal class FrameworkAndroidCapabilitySource(
             surfaces = readSurfaces(),
         )
     }
+
+    /**
+     * The MediaCodecList walk (per-mime capability queries plus four size/rate probes per
+     * decoder) is the heaviest read here and its answer is static for the process lifetime —
+     * codec inventories do not change at runtime. Volatile facts (memory, thermal, audio route,
+     * display) stay per-call; this read ran on every tune/zap/recovery.
+     */
+    private val codecFacts: List<AndroidVideoDecoderFacts> by lazy { readCodecs() }
 
     private fun readCodecs(): List<AndroidVideoDecoderFacts> = runCatching {
         MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos

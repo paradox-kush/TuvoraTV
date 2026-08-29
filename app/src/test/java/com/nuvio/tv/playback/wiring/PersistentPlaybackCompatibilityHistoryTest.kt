@@ -41,6 +41,30 @@ class PersistentPlaybackCompatibilityHistoryTest {
         assertFalse(storage.value.orEmpty().contains("scope-a"))
     }
 
+    // Review follow-up: records() ran on every tune/zap and paid a full decode + re-encode +
+    // storage commit per call (access-timestamp touches forced the write). Reads now serve from
+    // one decoded cache, and LRU touches ride the next real write instead of committing flash.
+    @Test
+    fun `reads serve from cache and never write storage for access touches alone`() = runTest {
+        val storage = FakeStorage()
+        val clock = FakeClock(1_000)
+        val history = history(storage, clock)
+        history.record(fatal(scopeA, recordedAt = 1_000, expiresAt = 100_000))
+        val readsAfterRecord = storage.readCalls
+        val writesAfterRecord = storage.writeCalls
+
+        clock.now = 1_500
+        repeat(20) { assertEquals(1, history.records(scopeA).size) }
+
+        assertEquals(readsAfterRecord, storage.readCalls)
+        assertEquals(writesAfterRecord, storage.writeCalls)
+
+        // Expiry is a real content change and still persists.
+        clock.now = 200_000
+        assertTrue(history.records(scopeA).isEmpty())
+        assertEquals(writesAfterRecord + 1, storage.writeCalls)
+    }
+
     @Test
     fun `success invalidates deterministic failure for the exact graph only`() = runTest {
         val storage = FakeStorage()
@@ -322,8 +346,14 @@ class PersistentPlaybackCompatibilityHistoryTest {
 
     private class FakeStorage : PlaybackCompatibilityStorage {
         var value: String? = null
-        override fun read(): String? = value
+        var readCalls = 0
+        var writeCalls = 0
+        override fun read(): String? {
+            readCalls += 1
+            return value
+        }
         override fun write(value: String) {
+            writeCalls += 1
             this.value = value
         }
     }

@@ -1136,25 +1136,45 @@ private class TrackingCallFactory(
 }
 
 private class TrackingCallRegistry {
-    private val calls = Collections.synchronizedSet(mutableSetOf<Call>())
+    private val lock = Any()
+    private val calls = mutableSetOf<Call>()
+    private var idleSignal = kotlinx.coroutines.CompletableDeferred<Unit>().apply { complete(Unit) }
 
     fun track(call: Call): Call {
         lateinit var wrapped: TrackingCall
         wrapped = TrackingCall(
             delegate = call,
-            completed = { calls -= wrapped },
+            completed = { remove(wrapped) },
             cloneCall = { track(call.clone()) },
         )
-        calls += wrapped
+        synchronized(lock) {
+            if (calls.isEmpty()) idleSignal = kotlinx.coroutines.CompletableDeferred()
+            calls += wrapped
+        }
         return wrapped
     }
 
-    fun cancelAll() = synchronized(calls) { calls.toList() }.forEach(Call::cancel)
+    private fun remove(call: Call) {
+        synchronized(lock) {
+            calls -= call
+            if (calls.isEmpty()) idleSignal.complete(Unit)
+        }
+    }
 
+    fun cancelAll() = synchronized(lock) { calls.toList() }.forEach(Call::cancel)
+
+    // Completion-driven, not polled: every tracked call already reports completion, so the
+    // release barrier wakes exactly when the last call finishes instead of burning 10ms timer
+    // wakeups on the zap critical path.
     suspend fun awaitIdle(timeoutMs: Long): Boolean {
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-        while (calls.isNotEmpty() && System.nanoTime() < deadline) delay(10)
-        return calls.isEmpty()
+        val signal = synchronized(lock) {
+            if (calls.isEmpty()) return true
+            idleSignal
+        }
+        return kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            signal.await()
+            true
+        } ?: synchronized(lock) { calls.isEmpty() }
     }
 }
 

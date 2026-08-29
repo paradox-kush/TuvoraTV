@@ -346,6 +346,7 @@ private class ProductionPlaybackEnvironmentProvider(
 ) : PlaybackEnvironmentProvider {
     private val nextObservation = AtomicLong(firstSnapshot.observationSequence + 1)
     private val compatibilityRuntime = firstSnapshot.compatibilityRuntime
+    private val provisionalRequirementsResolver = DefaultPlaybackRequirementsResolver()
 
     override suspend fun snapshot(input: PlaybackEnvironmentInput): PlaybackResult<PlaybackEnvironmentResolution> {
         val now = clock.nowEpochMs()
@@ -357,7 +358,7 @@ private class ProductionPlaybackEnvironmentProvider(
         val records = input.compatibilityScopeKey?.let { history.records(it) }.orEmpty()
         val provisional = resolvePreferences(input, android, currentRequested, records, emptySet(), now)
         val provisionalEnvironment = environment(input, android, provisional)
-        val provisionalRequirements = DefaultPlaybackRequirementsResolver().resolve(
+        val provisionalRequirements = provisionalRequirementsResolver.resolve(
             PlaybackRequirementsInput(
                 requestSummary = input.requestSummary,
                 evidence = input.evidence,

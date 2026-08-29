@@ -75,8 +75,20 @@ internal class CleanMediaSessionPlayer(
 
     private fun publishSnapshot(snapshot: PlaybackSnapshot) {
         runOnApplicationLooper {
+            val previous = latestSnapshot
             latestSnapshot = snapshot
-            invalidateState()
+            // The system session projects only discrete fields; a live position tick (500ms)
+            // must not rebuild MediaMetadata/State and ping system UI twice a second.
+            val discreteChange = previous.generation != snapshot.generation ||
+                previous.state != snapshot.state ||
+                previous.playWhenReady != snapshot.playWhenReady ||
+                previous.isPlaying != snapshot.isPlaying ||
+                previous.isBuffering != snapshot.isBuffering ||
+                previous.durationMs != snapshot.durationMs ||
+                previous.seekable != snapshot.seekable ||
+                previous.playbackRate != snapshot.playbackRate ||
+                previous.failure != snapshot.failure
+            if (discreteChange) invalidateState()
         }
     }
 
