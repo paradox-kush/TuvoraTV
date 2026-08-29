@@ -19,8 +19,6 @@ import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.VideoDimensions
 import com.nuvio.tv.playback.mediasession.CleanMediaSessionMetadata
 import com.nuvio.tv.playback.mediasession.CleanMediaSessionOwner
-import com.nuvio.tv.playback.ui.LivePlaybackUiPresenter
-import com.nuvio.tv.playback.ui.LivePlaybackUiState
 import com.nuvio.tv.playback.ui.PlaybackSessionController
 import com.nuvio.tv.playback.wiring.ProductionPlaybackHost
 import com.nuvio.tv.playback.wiring.ProductionPlaybackSessionFactory
@@ -32,11 +30,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -60,7 +55,6 @@ internal class CleanLivePlaybackHost private constructor(
     private val controller: PlaybackSessionController,
     private val surfaces: CleanLiveSurfaceCoordinator,
     private val releaseAuthority: ReleaseAuthority,
-    presentationScope: CoroutineScope,
 ) {
     private val commandMutex = Mutex()
 
@@ -70,14 +64,10 @@ internal class CleanLivePlaybackHost private constructor(
     @Volatile
     private var releaseStarted = false
 
+    // Presentation is derived by the consuming ViewModels via LivePlaybackUiPresenter; a
+    // host-owned eager StateFlow re-presenting every snapshot had no production reader and kept
+    // a collector alive for the life of every host.
     val snapshot: StateFlow<PlaybackSnapshot> = controller.snapshot
-    val presentation: StateFlow<LivePlaybackUiState> = snapshot
-        .map(LivePlaybackUiPresenter::present)
-        .stateIn(
-            scope = presentationScope,
-            started = SharingStarted.Eagerly,
-            initialValue = LivePlaybackUiPresenter.present(snapshot.value),
-        )
 
     suspend fun tune(
         selection: ProviderPlaybackSelection,
@@ -325,7 +315,6 @@ internal class CleanLivePlaybackHost private constructor(
                 controller = controller,
                 surfaces = surfaces,
                 releaseAuthority = authority,
-                presentationScope = hostScope,
             )
         }
 

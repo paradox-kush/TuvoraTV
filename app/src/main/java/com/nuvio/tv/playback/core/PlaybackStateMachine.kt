@@ -74,14 +74,7 @@ sealed interface PlaybackAction {
     data class ResolveRequest(
         override val generation: Long,
         val launch: PlaybackLaunch,
-    ) : PlaybackAction {
-        constructor(generation: Long, request: PlaybackRequest) :
-            this(generation, PlaybackLaunch.ConcreteRequest(request))
-
-        /** Temporary compatibility accessor for concrete-request reducer tests. */
-        val request: PlaybackRequest?
-            get() = (launch as? PlaybackLaunch.ConcreteRequest)?.request
-    }
+    ) : PlaybackAction
 
     data class ResolveHandoffRequest(
         override val generation: Long,

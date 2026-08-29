@@ -31,8 +31,6 @@ internal sealed interface AndroidDisplayModeSelection {
 
 /** Pure, deterministic display-mode policy. It consumes engine facts and never probes a stream. */
 internal object AndroidDisplayModeSelector {
-    private const val MIN_FACTUAL_FRAME_RATE = 10f
-    private const val MAX_FACTUAL_FRAME_RATE = 120f
     private const val MIN_REFRESH_TOLERANCE_HZ = 0.08f
     private val fallbackCadenceRatios = floatArrayOf(1f, 2f, 2.5f, 3f, 4f, 5f, 6f)
 
@@ -45,7 +43,7 @@ internal object AndroidDisplayModeSelector {
 
         val frameRate = input.factualFrameRate
         if (frameRate != null &&
-            (!frameRate.isFinite() || frameRate !in MIN_FACTUAL_FRAME_RATE..MAX_FACTUAL_FRAME_RATE)
+            (com.nuvio.tv.playback.core.ContentFrameRatePolicy.validOrNull(frameRate) == null)
         ) {
             return AndroidDisplayModeSelection.NoCompatibleMode
         }

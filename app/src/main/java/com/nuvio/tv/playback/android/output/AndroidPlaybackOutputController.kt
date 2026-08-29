@@ -117,8 +117,8 @@ class AndroidPlaybackOutputController internal constructor(
             }
             val frameRate = request.facts.frameRate
             if (frameRatePreference != FrameRatePreference.OFF &&
-                (frameRate == null || !frameRate.isFinite() ||
-                    frameRate !in MIN_FACTUAL_FRAME_RATE..MAX_FACTUAL_FRAME_RATE)
+                (frameRate == null ||
+                    com.nuvio.tv.playback.core.ContentFrameRatePolicy.validOrNull(frameRate) == null)
             ) {
                 return@withLock success(PlaybackOutputStatus.WAITING_FOR_FRAME_RATE)
             }
@@ -315,8 +315,6 @@ class AndroidPlaybackOutputController internal constructor(
     }
 
     private companion object {
-        const val MIN_FACTUAL_FRAME_RATE = 10f
-        const val MAX_FACTUAL_FRAME_RATE = 120f
         val PRESERVE_REASONS = setOf(
             ActiveWorkReleaseReason.REBUILD,
             ActiveWorkReleaseReason.RESELECT,

@@ -5,6 +5,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlaybackException
+import com.nuvio.tv.playback.core.assembledHttpHeaders
+import com.nuvio.tv.playback.core.putReplacingCaseInsensitive
 import com.nuvio.tv.playback.core.AudioOutputPreference
 import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.AudioMode
@@ -126,19 +128,10 @@ internal object Media3AdapterPlanFactory {
         graph: PlaybackGraph,
         requirements: PlaybackRequirements,
     ): Media3AdapterPlan {
-        val headers = linkedMapOf<String, String>()
-        request.headers.forEach { (name, value) -> headers.putReplacingCaseInsensitive(name, value) }
+        val headers = request.assembledHttpHeaders()
         request.userAgent?.let { headers.putReplacingCaseInsensitive("User-Agent", it) }
         if (headers.none { (name, _) -> name.equals("User-Agent", ignoreCase = true) }) {
             headers["User-Agent"] = DEFAULT_USER_AGENT
-        }
-        request.referer?.let { headers.putReplacingCaseInsensitive("Referer", it) }
-        request.origin?.let { headers.putReplacingCaseInsensitive("Origin", it) }
-        if (request.cookies.isNotEmpty()) {
-            headers.putReplacingCaseInsensitive(
-                "Cookie",
-                request.cookies.entries.joinToString("; ") { (name, value) -> "$name=$value" },
-            )
         }
 
         val ceiling = requirements.adaptiveDimensionCeiling
@@ -242,10 +235,6 @@ internal object Media3AdapterPlanFactory {
         }
     }
 
-    private fun MutableMap<String, String>.putReplacingCaseInsensitive(name: String, value: String) {
-        keys.firstOrNull { it.equals(name, ignoreCase = true) }?.let(::remove)
-        put(name, value)
-    }
 }
 
 /** Stable normalization of Media3's public error codes. Raw exceptions never leave this package. */

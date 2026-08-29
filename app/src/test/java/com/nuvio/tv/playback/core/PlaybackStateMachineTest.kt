@@ -345,7 +345,7 @@ class PlaybackStateMachineTest {
         assertEquals(PlaybackState.RESOLVING, completed.state.snapshot.state)
         val resolve = assertAction<PlaybackAction.ResolveRequest>(completed)
         assertEquals(3, resolve.generation)
-        assertSame(requestThree, resolve.request)
+        assertSame(requestThree, (resolve.launch as PlaybackLaunch.ConcreteRequest).request)
     }
 
     @Test
@@ -368,7 +368,7 @@ class PlaybackStateMachineTest {
         )
         val resolve = assertAction<PlaybackAction.ResolveRequest>(completed)
         assertEquals(selection, (resolve.launch as PlaybackLaunch.DeferredProvider).selection)
-        assertEquals(null, resolve.request)
+        assertEquals(null, resolve.launch as? PlaybackLaunch.ConcreteRequest)
 
         val concrete = PlaybackRequest(
             url = "https://example.invalid/resolved",

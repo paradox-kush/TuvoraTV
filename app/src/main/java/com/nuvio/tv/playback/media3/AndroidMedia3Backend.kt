@@ -942,24 +942,11 @@ private class AndroidMedia3Backend(
         trackReferences[selection.originalId]?.let { exact ->
             if (exact.type == selection.type) return exact
         }
-        return trackReferences.values
-            .asSequence()
-            .filter { it.type == selection.type }
-            .map { it to selectionScore(it.descriptor, selection) }
-            .filter { (_, score) -> score > 0 }
-            .maxByOrNull { (_, score) -> score }
-            ?.first
+        return com.nuvio.tv.playback.core.TrackRestorationPolicy.bestMatch(
+            trackReferences.values.filter { it.type == selection.type },
+            selection,
+        ) { it.descriptor }
     }
-
-    private fun selectionScore(
-        candidate: PlaybackTrackDescriptor,
-        selection: RestorableTrackSelection,
-    ): Int =
-        (if (candidate.language == selection.language && selection.language != null) 16 else 0) +
-            (if (candidate.label == selection.label && selection.label != null) 8 else 0) +
-            (if (candidate.mimeType == selection.mimeType && selection.mimeType != null) 4 else 0) +
-            (if (candidate.codec == selection.codec && selection.codec != null) 2 else 0) +
-            (if (candidate.channelCount == selection.channelCount && selection.channelCount != null) 1 else 0)
 
     private data class Media3TrackReference(
         val group: Tracks.Group,
@@ -1077,12 +1064,10 @@ internal fun media3VideoFormatFacts(format: Format): List<Media3BackendEvent> = 
         ?.let { add(Media3BackendEvent.VideoFrameRateChanged(it)) }
 }
 
-internal fun validMedia3VideoFrameRate(frameRate: Float): Float? = frameRate.takeIf {
-    it != C.RATE_UNSET && it.isFinite() && it in MIN_CONTENT_FRAME_RATE..MAX_CONTENT_FRAME_RATE
-}
+internal fun validMedia3VideoFrameRate(frameRate: Float): Float? =
+    frameRate.takeIf { it != C.RATE_UNSET }
+        ?.let(com.nuvio.tv.playback.core.ContentFrameRatePolicy::validOrNull)
 
-private const val MIN_CONTENT_FRAME_RATE = 10f
-private const val MAX_CONTENT_FRAME_RATE = 120f
 
 /**
  * Reports byte activity while an endless HTTP load is still open. The first callback is immediate;

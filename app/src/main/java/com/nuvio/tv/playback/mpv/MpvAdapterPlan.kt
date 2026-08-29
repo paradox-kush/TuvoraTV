@@ -1,5 +1,6 @@
 package com.nuvio.tv.playback.mpv
 
+import com.nuvio.tv.playback.core.assembledHttpHeaders
 import com.nuvio.tv.playback.core.AudioMode
 import com.nuvio.tv.playback.core.CrossHostAuthorization
 import com.nuvio.tv.playback.core.DecoderMode
@@ -97,16 +98,7 @@ internal object MpvAdapterPlanFactory {
             return unsupported(FailureCode.NO_ELIGIBLE_GRAPH)
         }
 
-        val headers = linkedMapOf<String, String>()
-        request.headers.forEach { (name, value) -> headers.putReplacingCaseInsensitive(name, value) }
-        request.referer?.let { headers.putReplacingCaseInsensitive("Referer", it) }
-        request.origin?.let { headers.putReplacingCaseInsensitive("Origin", it) }
-        if (request.cookies.isNotEmpty()) {
-            headers.putReplacingCaseInsensitive(
-                "Cookie",
-                request.cookies.entries.joinToString("; ") { (name, value) -> "$name=$value" },
-            )
-        }
+        val headers = request.assembledHttpHeaders()
 
         val options = linkedMapOf(
             "config" to "no",
@@ -215,11 +207,6 @@ internal object MpvAdapterPlanFactory {
             com.nuvio.tv.playback.core.BufferingPreference.CUSTOM,
             -> 50_000
         }
-    }
-
-    private fun MutableMap<String, String>.putReplacingCaseInsensitive(name: String, value: String) {
-        keys.firstOrNull { it.equals(name, ignoreCase = true) }?.let(::remove)
-        put(name, value)
     }
 
     private fun unsupported(code: FailureCode): PlaybackResult.Failure = PlaybackResult.Failure(

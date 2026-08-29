@@ -711,24 +711,11 @@ internal class AndroidMpvBackend(
         trackReferences[selection.originalId]?.let { exact ->
             if (exact.type == selection.type) return exact
         }
-        return trackReferences.values
-            .asSequence()
-            .filter { it.type == selection.type }
-            .map { it to selectionScore(it.descriptor, selection) }
-            .filter { (_, score) -> score > 0 }
-            .maxByOrNull { (_, score) -> score }
-            ?.first
+        return com.nuvio.tv.playback.core.TrackRestorationPolicy.bestMatch(
+            trackReferences.values.filter { it.type == selection.type },
+            selection,
+        ) { it.descriptor }
     }
-
-    private fun selectionScore(
-        candidate: PlaybackTrackDescriptor,
-        selection: RestorableTrackSelection,
-    ): Int =
-        (if (candidate.language == selection.language && selection.language != null) 16 else 0) +
-            (if (candidate.label == selection.label && selection.label != null) 8 else 0) +
-            (if (candidate.mimeType == selection.mimeType && selection.mimeType != null) 4 else 0) +
-            (if (candidate.codec == selection.codec && selection.codec != null) 2 else 0) +
-            (if (candidate.channelCount == selection.channelCount && selection.channelCount != null) 1 else 0)
 
     private fun String.toVideoMimeType(): String? = when (lowercase()) {
         "h264", "avc", "avc1" -> "video/avc"
@@ -893,7 +880,7 @@ internal fun parseMpvTracks(node: MPVNode): ParsedMpvTracks {
     val selectedVideoFrameRate = tracks.firstOrNull { track ->
         track["type"]?.asString() == "video" && track["selected"]?.asBoolean() == true
     }?.get("demux-fps")?.asDouble()?.toFloat()?.takeIf { frameRate ->
-        frameRate.isFinite() && frameRate in MIN_CONTENT_FRAME_RATE..MAX_CONTENT_FRAME_RATE
+        com.nuvio.tv.playback.core.ContentFrameRatePolicy.validOrNull(frameRate) != null
     }
     val references = mutableListOf<MpvTrackReference>()
     val audioTracks = mutableListOf<PlaybackTrackDescriptor>()
@@ -936,8 +923,6 @@ internal fun parseMpvTracks(node: MPVNode): ParsedMpvTracks {
     )
 }
 
-private const val MIN_CONTENT_FRAME_RATE = 10f
-private const val MAX_CONTENT_FRAME_RATE = 120f
 
 internal fun normalizeMpvError(raw: String?): PlaybackFailure {
     val value = raw.orEmpty().lowercase()

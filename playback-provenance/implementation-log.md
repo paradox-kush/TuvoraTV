@@ -470,3 +470,33 @@ and Fire TV sequentially with separate saved IPTV profiles and the device harnes
   release barrier + one resolution + one LIBMPV tune; presses spaced beyond the window commit
   individually as intended. TV-only (no CleanLivePlayerViewModel/LiveZapSettlePolicy twins in
   Mobile/Desktop).
+
+## 2026-08-29 — review backlog sweep (correctness, efficiency, dedup)
+
+Three commits close the max-effort review's confirmed backlog: the remaining correctness
+findings (preferences-change loss during selection, reconnect pause, retry generation
+acknowledgement, idempotent session release + closed-lane dispatch, typed Media3 apply failure,
+loud quirk staleness, guide attach-input leak, pre-attach mpv event subscription, hardened VOD
+bridge), the hot-path efficiency items (cached compatibility history with write-on-change only,
+memoized codec walk, tick-stable UI snapshots + gated MediaSession invalidation, completion-driven
+awaitIdle, callback-driven SurfaceView validity waits), and the mechanical dedups (one
+assembledHttpHeaders, one TrackRestorationPolicy scorer, one ContentFrameRatePolicy band that
+replaced FOUR copies, Media3Engine finish(hard) factoring, dead host presentation flow and the
+test-only ResolveRequest accessor removed).
+
+Cross-platform audit (root parity rule): the review flagged the TV VOD-retry fix as unported to
+NuvioMobile. Verified: mobile's decoder-failure handler (PlayerEngine.android.kt isDecoderFailure)
+responds to capability-exceeded failures with a ONE-SHOT switch to extension renderers — a
+different decoder graph that can legitimately succeed in software. That is detect-then-switch,
+not the TV bug (unbounded same-graph retry), so no mobile change is required; this entry is the
+previously missing audit statement. Desktop mirrors mobile's engine and needs nothing either.
+
+Deliberately deferred to a dedicated refactor pass (structural moves on freshly certified seams;
+each needs its own device re-verification): the guide/fullscreen ViewModel host-machinery
+extraction, the Media3/mpv engine skeleton and backend-event unification, the Zap/Tune command
+merge, the host-factory builder share, and the AndroidDisplayModeSelector/FrameRateUtils AFR
+consolidation (legacy player still ships its copy). Latent until their features cut over:
+clean-lane catch-up winner persistence (resolver has no playback-proven hook; legacy coordinator
+still owns production catch-up). Product decisions awaiting the user: sports dead-channel
+pre-play signal replacement and the richer viewer-facing failure detail the legacy freeze screen
+carried.

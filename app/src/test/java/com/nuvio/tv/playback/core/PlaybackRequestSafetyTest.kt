@@ -134,7 +134,7 @@ class PlaybackRequestSafetyTest {
             headers = mapOf("Authorization" to secret),
             contentType = ContentType.LIVE,
         )
-        val action = PlaybackAction.ResolveRequest(7, request)
+        val action = PlaybackAction.ResolveRequest(7, PlaybackLaunch.ConcreteRequest(request))
         val machine = PlaybackMachineState(
             request = request,
             snapshot = PlaybackSnapshot(generation = 7, state = PlaybackState.RESOLVING),

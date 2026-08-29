@@ -367,33 +367,8 @@ class Media3Engine internal constructor(
 
     private var activeRequest: com.nuvio.tv.playback.core.PlaybackRequest? = null
 
-    override suspend fun release(generation: Long): PlaybackResult<Unit> = lock.withLock {
-        val currentGeneration = this.generation
-        if (currentGeneration != null && currentGeneration != generation) {
-            return@withLock stale(FailurePhase.RELEASE)
-        }
-        val current = backend
-        if (current != null) {
-            when (val released = current.release()) {
-                is PlaybackResult.Failure -> return@withLock released
-                is PlaybackResult.Success -> Unit
-            }
-        }
-        eventJob?.cancelAndJoin()
-        eventJob = null
-        backend = null
-        val currentLease = lease
-        if (currentLease != null && !currentLease.release()) {
-            return@withLock failure(FailurePhase.RELEASE, FailureCode.SURFACE_LOST)
-        }
-        lease = null
-        this.generation = null
-        activeRequest = null
-        activeGraph = null
-        activeEvidence = null
-        sourceReleased = false
-        PlaybackResult.Success(Unit)
-    }
+    override suspend fun release(generation: Long): PlaybackResult<Unit> =
+        finish(generation, hard = false)
 
     override suspend fun releaseSource(generation: Long): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.RELEASE)
@@ -410,15 +385,22 @@ class Media3Engine internal constructor(
         }
     }
 
-    override suspend fun hardAbort(generation: Long): PlaybackResult<Unit> = lock.withLock {
+    override suspend fun hardAbort(generation: Long): PlaybackResult<Unit> =
+        finish(generation, hard = true)
+
+    // MpvEngine proved this factoring: one teardown choreography, the only difference being
+    // which backend entry proves death. A drifted release/hardAbort pair was the review's
+    // canonical duplication finding in this file.
+    private suspend fun finish(generation: Long, hard: Boolean): PlaybackResult<Unit> = lock.withLock {
         val currentGeneration = this.generation
         if (currentGeneration != null && currentGeneration != generation) {
             return@withLock stale(FailurePhase.RELEASE)
         }
         val current = backend
         if (current != null) {
-            when (val aborted = current.hardAbort()) {
-                is PlaybackResult.Failure -> return@withLock aborted
+            val finished = if (hard) current.hardAbort() else current.release()
+            when (finished) {
+                is PlaybackResult.Failure -> return@withLock finished
                 is PlaybackResult.Success -> Unit
             }
         }

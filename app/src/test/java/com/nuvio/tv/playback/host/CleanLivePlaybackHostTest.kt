@@ -6,6 +6,7 @@ import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.playback.core.ActiveWorkReleaseReason
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackCommand
+import com.nuvio.tv.playback.ui.LivePlaybackUiPresenter
 import com.nuvio.tv.playback.core.PlaybackLifecyclePort
 import com.nuvio.tv.playback.core.PlaybackOutputApplication
 import com.nuvio.tv.playback.core.PlaybackOutputController
@@ -83,7 +84,7 @@ class CleanLivePlaybackHostTest {
         assertEquals(PlaybackState.PLAYING, host.snapshot.value.state)
         assertEquals(2L, tuneGeneration)
         assertEquals(3L, zapGeneration)
-        assertEquals(null, host.presentation.value.bottomStatusCode)
+        assertEquals(null, LivePlaybackUiPresenter.present(host.snapshot.value).bottomStatusCode)
         assertEquals(
             listOf(
                 PlaybackCommand.SurfaceAvailable,
