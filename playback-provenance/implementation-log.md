@@ -500,3 +500,21 @@ clean-lane catch-up winner persistence (resolver has no playback-proven hook; le
 still owns production catch-up). Product decisions awaiting the user: sports dead-channel
 pre-play signal replacement and the richer viewer-facing failure detail the legacy freeze screen
 carried.
+
+## 2026-08-29 — clean-build regression pass (emulator + ONN, post-backlog-sweep)
+
+- Rebuilt at 6d4b2308e with the diagnostic `isDebuggable` flip reverted; aapt confirms no
+  `application-debuggable` in the shipped APKs. Installed arm64 on the API 36 AVD and v7a on ONN.
+- Emulator: 8 tunes (initial + 5-zap matrix + one settled rapid-guide commit + one settled rapid
+  fullscreen zap) — 8/8 release barriers completed, both 6-press and 4-press rapid bursts settled
+  to exactly ONE committed tune each, fullscreen rendering verified (98% non-black frame). One
+  transient NO_ELIGIBLE_GRAPH at the fullscreen promote recovered on the next generation
+  (LIBMPV playing); emulator/software-quirk-specific — did NOT reproduce on ONN; watch item.
+- ONN: 8 tunes, 8/8 barriers, ZERO failures/watchdogs, one seamless engine handoff, both rapid
+  bursts settled to one tune. During the fullscreen soak the provider dropped the stream
+  (`end-file` ~76s in); the bounded reconnect recovered on attempt 0 (video-reconfig immediately
+  after, no further attempts, no exhaustion) and the system media session reports PLAYING with
+  no error — the new recovery ladder working unattended on real hardware. Zero crashes.
+- Screenrecord captured black for this ONN fullscreen graph (hardware overlay path); playback
+  state, event silence, and the reconnect telemetry are the authoritative signals per the
+  existing screenshot-black guidance.
