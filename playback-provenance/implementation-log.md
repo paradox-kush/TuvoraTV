@@ -518,3 +518,20 @@ carried.
 - Screenrecord captured black for this ONN fullscreen graph (hardware overlay path); playback
   state, event silence, and the reconnect telemetry are the authoritative signals per the
   existing screenshot-black guidance.
+
+## 2026-08-29 — fullscreen zap channel banner (guide fullscreen mode)
+
+- Gap: zapping UP/DOWN in the guide's fullscreen mode never surfaced the channel overlay — the
+  `LiveControlsOverlay` (which already carried logo/name/now-next EPG and even a doc comment for
+  the zap-ahead case) was only shown via `showControls()`, and the zap key branches never called
+  it; it also keyed on the PLAYING channel, so mid-settle it would have named the stale channel.
+- Fix (XtreamLiveGuideScreen.kt): both fullscreen zap branches now call `showControls()` (each
+  press restarts the 4s auto-hide), and the overlay resolves `uiState.focusedChannel` first —
+  the AIMED channel during a settled zap, converging with the playing channel on commit — with
+  the playing-channel lookup as fallback. `tuning` is now true whenever the aimed channel differs
+  from the playing one (or the spinner is up), so the state chip reads "Tuning…" until the frame
+  on screen actually belongs to the named channel.
+- Verified on the API 36 AVD and ONN (manual, Compose-UI-only change; unit gate green): single
+  zap shows the banner naming the next channel with "Tuning…" over the old channel's frame; a
+  3-press rapid burst walks the name to the final aim with ONE committed tune; banner auto-hides
+  ~4s after the last press; committed channel plays with the overlay gone.

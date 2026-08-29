@@ -296,11 +296,19 @@ fun LiveGuide(
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> togglePause()
                         Key.MediaPlay -> if (playbackUi?.isPaused == true) togglePause() else showControls()
                         Key.MediaPause -> if (playbackUi?.isPaused != true) togglePause() else showControls()
-                        // The live-TV remote split: UP/DOWN are the channel keys.
-                        Key.DirectionUp -> viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS)
-                            ?.let(playbackViewModel::requestSettledTune)
-                        Key.DirectionDown -> viewModel.moveChannelFocus(LiveZapDirection.NEXT)
-                            ?.let(playbackViewModel::requestSettledTune)
+                        // The live-TV remote split: UP/DOWN are the channel keys. Every press
+                        // surfaces the overlay naming the AIMED channel immediately (each press
+                        // restarts the 4s auto-hide), so a settled zap is never a blind walk.
+                        Key.DirectionUp -> {
+                            viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS)
+                                ?.let(playbackViewModel::requestSettledTune)
+                            showControls()
+                        }
+                        Key.DirectionDown -> {
+                            viewModel.moveChannelFocus(LiveZapDirection.NEXT)
+                                ?.let(playbackViewModel::requestSettledTune)
+                            showControls()
+                        }
                         else -> showControls()
                     }
                 }
@@ -483,12 +491,17 @@ fun LiveGuide(
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
             if (fullscreen && controlsVisible) {
-                val overlayChannel = uiState.channels.firstOrNull { it.contentId == playingContentId }
+                // The focused channel is the AIMED one during a settled zap; it converges with
+                // the playing channel once the tune commits. Naming the aim (not the frame still
+                // on screen) is what makes a multi-press zap legible.
+                val overlayChannel = uiState.focusedChannel
+                    ?: uiState.channels.firstOrNull { it.contentId == playingContentId }
                 LiveControlsOverlay(
                     channel = overlayChannel,
                     epg = overlayChannel?.let { uiState.epg[it.streamId] },
                     paused = playbackUi?.isPaused == true,
-                    tuning = playbackUi?.spinnerVisible == true,
+                    tuning = playbackUi?.spinnerVisible == true ||
+                        (overlayChannel != null && overlayChannel.contentId != playingContentId),
                 )
             }
             playbackUi?.bottomStatusCode?.let { status ->
