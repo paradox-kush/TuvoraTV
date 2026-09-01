@@ -16,10 +16,14 @@ import com.nuvio.tv.playback.ui.PlaybackSessionController
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -309,6 +313,74 @@ class CleanLiveSurfaceCoordinatorTest {
         assertFailure(coordinator.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false))
         assertEquals(41L, observedTimeout)
         assertEquals(0, owner.childCount)
+    }
+
+    @Test
+    fun `cancelled Media3 acquisition mid surface wait must not orphan the slot`() = runTest {
+        val owner = owner()
+        val waitStarted = CompletableDeferred<Unit>()
+        var validityWaits = 0
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW),
+            awaitSurfaceValidity = { _, _ ->
+                if (++validityWaits == 1) {
+                    waitStarted.complete(Unit)
+                    awaitCancellation()
+                } else {
+                    true
+                }
+            },
+        )
+        start(coordinator)
+
+        // A release barrier (HOME, zap) cancels the generation scope while the attach is still
+        // waiting for the surface to become valid — the field-repro path for the dead guide.
+        val acquisition = launch {
+            coordinator.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false)
+        }
+        waitStarted.await()
+        acquisition.cancelAndJoin()
+
+        assertEquals("cancelled acquisition must remove its child", 0, owner.childCount)
+        val next = coordinator.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false)
+        assertTrue(
+            "next acquire after a cancelled acquisition must succeed: $next",
+            next is PlaybackResult.Success,
+        )
+    }
+
+    @Test
+    fun `cancelled libmpv acquisition mid surface wait must not orphan the slot`() = runTest {
+        val owner = owner()
+        val waitStarted = CompletableDeferred<Unit>()
+        var validityWaits = 0
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.NATIVE_EMBED),
+            awaitSurfaceValidity = { _, _ ->
+                if (++validityWaits == 1) {
+                    waitStarted.complete(Unit)
+                    awaitCancellation()
+                } else {
+                    true
+                }
+            },
+        )
+        start(coordinator)
+
+        val acquisition = launch {
+            coordinator.mpvSurfaceHost.acquire(SurfaceMode.NATIVE_EMBED, secure = false)
+        }
+        waitStarted.await()
+        acquisition.cancelAndJoin()
+
+        assertEquals("cancelled acquisition must remove its child", 0, owner.childCount)
+        val next = coordinator.mpvSurfaceHost.acquire(SurfaceMode.NATIVE_EMBED, secure = false)
+        assertTrue(
+            "next acquire after a cancelled acquisition must succeed: $next",
+            next is PlaybackResult.Success,
+        )
     }
 
     @Test

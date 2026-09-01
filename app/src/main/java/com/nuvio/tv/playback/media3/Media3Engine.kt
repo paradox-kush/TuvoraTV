@@ -21,6 +21,7 @@ import com.nuvio.tv.playback.core.ExternalSubtitleId
 import com.nuvio.tv.playback.core.VodRestorationCheckpoint
 import com.nuvio.tv.playback.core.Retryability
 import com.nuvio.tv.playback.core.SurfaceMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -170,12 +171,21 @@ class Media3Engine internal constructor(
                     failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
                 } else {
                     if (currentBackend != null) {
-                        when (val attached = currentBackend.attachSurface(acquired.value)) {
+                        // A cancellation inside the backend attach would abandon the acquired
+                        // lease with no owner able to release it later; store it first so the
+                        // engine's release barrier always covers it.
+                        lease = acquired.value
+                        when (val attached = try {
+                            currentBackend.attachSurface(acquired.value)
+                        } catch (cancelled: CancellationException) {
+                            if (acquired.value.release()) lease = null
+                            throw cancelled
+                        }) {
                             is PlaybackResult.Failure -> {
                                 // If a backend failed after taking partial ownership, retain the
                                 // lease unless its release is affirmative. This keeps later release
                                 // and retry decisions fail-closed.
-                                if (!acquired.value.release()) lease = acquired.value
+                                if (acquired.value.release()) lease = null
                                 return@withLock attached
                             }
                             is PlaybackResult.Success -> Unit

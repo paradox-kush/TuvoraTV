@@ -535,3 +535,43 @@ carried.
   zap shows the banner naming the next channel with "Tuning…" over the old channel's frame; a
   3-press rapid burst walks the name to the final aim with ONE committed tune; banner auto-hides
   ~4s after the last press; committed channel plays with the overlay gone.
+
+## 2026-09-01 — warm-relaunch render-path death: RCA + fix (release blocker from 2026-08-31 cert)
+
+- **Field shape:** play live → HOME → reopen the app: guide restore fails
+  `PreviewUnavailable(GUIDE_RENDER_PATH_UNAVAILABLE)`, every tune fails `NO_ELIGIBLE_GRAPH`
+  ~50ms after GRAPH_SELECTED with no engine start and no network I/O, OK renders pure black,
+  only force-stop recovers. Reproduced on demand on the emulator against the mock Xtream rig
+  (`scratchpad/mock_xtream.py` + scripted `repro_loop.sh`, hit on iteration 1–2).
+- **RCA (instrumented on-device, then proven in a unit test):**
+  `CleanLiveSurfaceCoordinator.acquireMedia3/acquireMpv` were not cancellation-safe. A release
+  barrier (HOME suspend, rapid zap) cancels the in-flight generation scope; if that cancellation
+  lands between `install(slot)` and the lease handoff — most likely inside the up-to-3s
+  surface-validity wait — the installed slot is orphaned (`current != null`, `released=false`)
+  with NO owner: the engine never got a lease, so no later release barrier can free it. Every
+  subsequent acquire fast-fails `SURFACE_LOST` (that is the GUIDE_RENDER_PATH_UNAVAILABLE the
+  user sees); the handoff excludes the failed engine, and on graph spaces with no alternate
+  engine for the guide (emulator: ranchu quirk forces SOFTWARE_ONLY, killing mpv's GPU_RENDER
+  via guide `gpuRenderingAllowed=false` and MPV_DIRECT via the software veto) the re-selection
+  is EMPTY → fatal `NO_ELIGIBLE_GRAPH` until process death. Instrumented barrier trail that
+  nailed it: HOME's LIFECYCLE_INACTIVE release resolved the right engine but had no lease to
+  release (`activeGraph=null, graphBeforeRelease=MEDIA3, engineGen=null`) — the barrier
+  "succeeded" while the coordinator stayed occupied.
+- **Fix:** both coordinator acquire paths now wrap post-install work in try/finally — any
+  non-success exit (failure, cancellation, throw) removes the slot before the mutex is
+  released (CleanLiveSurfaceCoordinator.kt). Belt-and-braces in both engines
+  (Media3Engine/MpvEngine attachSurface): the acquired lease is stored on the engine BEFORE the
+  backend attach, so a cancellation inside the backend attach leaves the lease covered by the
+  engine's release barrier instead of abandoned.
+- **Tests (red-first, watched fail):** `CleanLiveSurfaceCoordinatorTest` — "cancelled Media3/
+  libmpv acquisition mid surface wait must not orphan the slot": park the acquisition in the
+  injectable surface-validity wait, cancel it (exactly what a release barrier does), assert the
+  child is removed and the next acquire succeeds. Both failed `childCount expected 0 was 1` on
+  the old code; green after the fix; full gate green (2407 tests).
+- **Secondary findings kept open:** (a) session `activeGraph`/`activeGraphGeneration` are null
+  during rebuilt playback — release falls back to `graphBeforeRelease` correctly today, but the
+  bookkeeping gap deserves its own look; (b) a HANDOFF_ELIGIBLE SURFACE_LOST at attach excludes
+  a healthy engine from re-selection — with the orphan fixed this no longer strands the guide,
+  but surface-collision-vs-engine-fault attribution is worth revisiting; (c) the rich
+  selection-rejection diagnostics used during this RCA were temporary Log.d lines and were
+  stripped — porting them into CleanPlaybackDiag properly is a follow-up.

@@ -150,24 +150,30 @@ internal class CleanLiveSurfaceCoordinator(
                 SurfaceMode.TEXTURE_VIEW -> createTextureViewSlot(mode)
                 else -> error("validated Media3 mode")
             }
-            if (!awaitValid(slot)) {
-                slot.released = true
-                removeControlled(slot)
-                return@withLock failure()
+            // A release barrier can cancel an in-flight acquisition at any suspension point
+            // (the surface-validity wait especially). An installed slot that never reached a
+            // lease has no owner able to release it later, so any non-success exit — failure,
+            // cancellation, or unexpected throw — must remove it here or the coordinator stays
+            // occupied for the rest of the process and every later tune fails SURFACE_LOST.
+            var leased = false
+            try {
+                if (!awaitValid(slot)) return@withLock failure()
+                val result = ViewMedia3SurfaceHost(
+                    surfaceView = { slot.view as? SurfaceView },
+                    textureView = { slot.view as? TextureView },
+                    viewDispatcher = mainDispatcher,
+                    onReleasedView = { releasedView ->
+                        if (releasedView === slot.view) markMedia3Released(slot)
+                    },
+                ).acquire(mode, secure)
+                leased = result is PlaybackResult.Success
+                result
+            } finally {
+                if (!leased) {
+                    slot.released = true
+                    removeControlled(slot)
+                }
             }
-            val result = ViewMedia3SurfaceHost(
-                surfaceView = { slot.view as? SurfaceView },
-                textureView = { slot.view as? TextureView },
-                viewDispatcher = mainDispatcher,
-                onReleasedView = { releasedView ->
-                    if (releasedView === slot.view) markMedia3Released(slot)
-                },
-            ).acquire(mode, secure)
-            if (result is PlaybackResult.Failure) {
-                slot.released = true
-                removeControlled(slot)
-            }
-            result
         }
     }
 
@@ -186,19 +192,22 @@ internal class CleanLiveSurfaceCoordinator(
                 SurfaceMode.GPU_RENDER -> createTextureViewSlot(mode)
                 else -> error("validated libmpv mode")
             }
-            if (!awaitValid(slot)) {
-                slot.released = true
-                removeControlled(slot)
-                return@withLock failure()
+            // Same cancellation-safety contract as the Media3 path: an installed slot that never
+            // became a lease must never survive this call.
+            var leased = false
+            try {
+                if (!awaitValid(slot)) return@withLock failure()
+                val surface = mpvSurfaceFactory(slot.view)
+                if (slot.view is TextureView) slot.ownedSurface = surface
+                if (surface == null || !surface.isValid) return@withLock failure()
+                leased = true
+                PlaybackResult.Success(CoordinatorMpvLease(slot, surface))
+            } finally {
+                if (!leased) {
+                    slot.released = true
+                    removeControlled(slot)
+                }
             }
-            val surface = mpvSurfaceFactory(slot.view)
-            if (slot.view is TextureView) slot.ownedSurface = surface
-            if (surface == null || !surface.isValid) {
-                slot.released = true
-                removeControlled(slot)
-                return@withLock failure()
-            }
-            PlaybackResult.Success(CoordinatorMpvLease(slot, surface))
         }
     }
 
