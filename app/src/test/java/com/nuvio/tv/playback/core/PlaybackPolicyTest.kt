@@ -239,6 +239,43 @@ class PlaybackPolicyTest {
     }
 
     @Test
+    fun `fullscreen live prefers zero-copy direct mpv output over GPU render`() {
+        // Field regression (Onn 4K HEVC): fullscreen ranked the GPU render path first, so every
+        // 4K frame was copied through OpenGL and playback stuttered while the guide preview —
+        // which ranks direct embed first — was smooth. Live is judged on motion, so direct wins.
+        val selection = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(
+                requirements(
+                    profile = SessionProfile.FULLSCREEN,
+                    preferredEngineOrder = listOf(EngineType.LIBMPV),
+                    eligibleEngines = setOf(EngineType.LIBMPV),
+                    liveContent = true,
+                ),
+                listOf(mpvRender, mpvDirect),
+            ),
+        )
+
+        assertEquals(mpvDirect, selection.selectedGraph())
+    }
+
+    @Test
+    fun `fullscreen non-live keeps GPU render first so mpv can draw subtitles`() {
+        val selection = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(
+                requirements(
+                    profile = SessionProfile.FULLSCREEN,
+                    preferredEngineOrder = listOf(EngineType.LIBMPV),
+                    eligibleEngines = setOf(EngineType.LIBMPV),
+                    liveContent = false,
+                ),
+                listOf(mpvRender, mpvDirect),
+            ),
+        )
+
+        assertEquals(mpvRender, selection.selectedGraph())
+    }
+
+    @Test
     fun `full subtitle fidelity rejects feature-limited direct output`() {
         val selection = policy.selectPrimary(
             PlaybackPolicy.SelectionInput(
@@ -399,6 +436,7 @@ class PlaybackPolicyTest {
         secureOutputRequired: Boolean = false,
         audioOutput: AudioOutputPreference = AudioOutputPreference.AUTO,
         allowedSurfaceModes: Set<SurfaceMode> = SurfaceMode.entries.toSet(),
+        liveContent: Boolean = false,
     ) = PlaybackRequirements(
         profile = profile,
         priority = if (profile == SessionProfile.GUIDE) {
@@ -427,6 +465,7 @@ class PlaybackPolicyTest {
         allowedSurfaceModes = allowedSurfaceModes,
         secureOutputRequired = secureOutputRequired,
         resourceBudget = ResourceBudget(),
+        liveContent = liveContent,
     )
 
     private fun PlaybackPolicy.Selection.selectedGraph(): PlaybackGraph =

@@ -257,7 +257,7 @@ class PlaybackPolicy(
         val selected = eligible.minWithOrNull(
             compareBy<PlaybackGraph>(
                 { engineOrder.indexOf(it.engine).takeIf { rank -> rank >= 0 } ?: Int.MAX_VALUE },
-                { outputRank(it, input.requirements.profile) },
+                { outputRank(it, input.requirements) },
                 { decoderRank(it) },
                 PlaybackGraph::id,
             ),
@@ -282,10 +282,20 @@ class PlaybackPolicy(
         return DEFAULT_ENGINE_ORDER.filter(requirements.eligibleEngines::contains)
     }
 
-    private fun outputRank(graph: PlaybackGraph, profile: SessionProfile): Int = when (graph.outputProfile) {
-        GraphOutputProfile.MEDIA3_STANDARD -> 0
-        GraphOutputProfile.MPV_DIRECT -> if (profile == SessionProfile.GUIDE) 0 else 1
-        GraphOutputProfile.MPV_RENDER -> if (profile == SessionProfile.FULLSCREEN) 0 else 2
+    private fun outputRank(graph: PlaybackGraph, requirements: PlaybackRequirements): Int {
+        // Live is zapped and judged on motion: the zero-copy direct embed wins in every profile
+        // (the guide preview always ranked it first; fullscreen used to prefer the GPU render
+        // path for subtitles/OSD, which copies every frame through OpenGL — at 4K on a budget SoC
+        // that stuttered while the identical stream was smooth in the preview). Keeping the same
+        // output path across guide and fullscreen also lets a promote reuse the graph instead of
+        // rebuilding it. Non-live keeps GPU render first in fullscreen so mpv can draw subtitles.
+        val directFirst = requirements.profile == SessionProfile.GUIDE || requirements.liveContent
+        return when (graph.outputProfile) {
+            GraphOutputProfile.MEDIA3_STANDARD -> 0
+            GraphOutputProfile.MPV_DIRECT -> if (directFirst) 0 else 1
+            GraphOutputProfile.MPV_RENDER ->
+                if (requirements.profile == SessionProfile.FULLSCREEN && !requirements.liveContent) 0 else 2
+        }
     }
 
     private fun decoderRank(graph: PlaybackGraph): Int = when (graph.decoderMode) {
@@ -453,6 +463,7 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
                 allowedSurfaceModes = allowedSurfaces,
                 secureOutputRequired = secureOutputRequired,
                 resourceBudget = environment.resourceBudget,
+                liveContent = input.requestSummary.contentType == ContentType.LIVE,
             ),
         )
     }

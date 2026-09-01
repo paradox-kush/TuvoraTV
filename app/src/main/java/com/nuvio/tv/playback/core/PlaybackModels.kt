@@ -592,6 +592,12 @@ data class PlaybackRequirements(
     val allowedSurfaceModes: Set<SurfaceMode> = SurfaceMode.entries.toSet(),
     val secureOutputRequired: Boolean,
     val resourceBudget: ResourceBudget,
+    /**
+     * Live content is zapped and judged on motion smoothness, so its mpv output ranking favours
+     * the zero-copy direct embed over the GPU render path even in fullscreen. Fixed for the life
+     * of a request (content type never changes mid-session), so it takes no part in diffs.
+     */
+    val liveContent: Boolean = false,
 ) {
     init {
         require(eligibleEngines.isNotEmpty()) { "At least one playback engine must be eligible" }

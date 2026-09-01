@@ -249,6 +249,8 @@ data class PlaybackDiagnosticEvent(
     val generation: Long,
     val code: PlaybackDiagnosticCode,
     val engine: EngineType? = null,
+    /** Which output path the selected graph uses (direct embed vs GPU render) — an enum, never a secret. */
+    val outputProfile: GraphOutputProfile? = null,
     val failure: PlaybackFailure? = null,
     val attempt: Int? = null,
     val outputStatus: PlaybackOutputStatus? = null,

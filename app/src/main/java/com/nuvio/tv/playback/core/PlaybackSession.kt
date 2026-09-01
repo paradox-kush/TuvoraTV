@@ -642,6 +642,7 @@ class PlaybackSession(
                         generation = message.generation,
                         code = PlaybackDiagnosticCode.GRAPH_SELECTED,
                         engine = selection.graph.engine,
+                        outputProfile = selection.graph.outputProfile,
                     ),
                 )
                 applyReducer(

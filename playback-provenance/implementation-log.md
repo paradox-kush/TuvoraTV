@@ -657,3 +657,34 @@ three devices** (emulator, Onn 4K, Fire TV 4K Max). Warm-relaunch fix solid; ful
 (720p/4K H264/HEVC + AC3 + HLS) plays; one-connection invariant held; zap soak + background/resume
 clean; zero crashes. Non-blocking follow-ups remain: Onn H264-4K ~3s libmpv watchdog latency;
 Fire OS log-tag suppression (setprop to debug).
+
+## 2026-09-01 — post-1.5.9 field regression: 4K live choppy in fullscreen, smooth in preview (Onn)
+
+- **Report:** same 4K HEVC live stream smooth on TiViMate, "very choppy and sluggish" in Tuvora
+  fullscreen — but **smooth in the guide preview**. TiViMate logs: ExoPlayer → `c2.amlogic.hevc.decoder`
+  (hardware), 3840×2160@30, direct to surface. Tuvora reached the same hardware decoder, so it was
+  not a decode problem.
+- **RCA:** `PlaybackPolicy.outputRank` ranked mpv output by profile only — GUIDE preferred
+  `MPV_DIRECT` (`vo=mediacodec_embed`, zero-copy) while FULLSCREEN preferred `MPV_RENDER`
+  (`vo=gpu` + `hwdec=mediacodec-copy`, every frame copied through OpenGL for subtitles/OSD). At 4K
+  on a budget Amlogic the copy path can't keep up: stutter, then the freeze detector's reconnect
+  ladder thrashes (`end-file`→`start-file` every ~2s — the *symptom* seen in the logs). A regression
+  from 1.5.8's proven direct-mediacodec live default, and it inverted the user's stated priority
+  ("video is priority, subtitles best-effort"). Cert missed it because synthetic 4K made libmpv
+  hard-fail its watchdog and hand off to Media3; the real stream renders slowly without failing.
+- **Fix:** `PlaybackRequirements.liveContent` (set by the resolver from the request's content type);
+  `outputRank` now prefers `MPV_DIRECT` for live in every profile and keeps `MPV_RENDER` first only
+  for non-live fullscreen (subtitles). Red-first: "fullscreen live prefers zero-copy direct mpv
+  output" failed on the old ranking, green after; non-live guard stays render-first. Gate green.
+- **Diagnostics:** `GRAPH_SELECTED` now carries `output_profile` (enum, secret-free) so this is
+  visible in field logs next time. Also learned: the release build compiles out CleanPlaybackDiag
+  (IS_DEBUG_BUILD=false) and the mpv plan sets `msg-level=all=no` (URL-leak guard) — field logs of
+  the release build show only mpv *events*, never mpv's EOF reason.
+- **Related finding (not in this fix):** preview→fullscreen promote rebuilds the player because the
+  profile change flips `gpuRenderingAllowed` (RESELECT_FIELDS) and buffering/frame-rate
+  (REBUILD_FIELDS); RESELECT/REBUILD barriers do a full adapter release, not source-only. With the
+  graph now identical across promote, that rebuild is avoidable — a separate change (classifier /
+  resolver: don't reselect or rebuild a promote that lands on the same graph), to be done with its
+  own red tests after this hotfix ships.
+- TV-only: the clean pipeline exists only on NuvioTV; Mobile deliberately uses vo=gpu on live for
+  the gpu-next fd-leak reason — genuinely different constraint, no port.
