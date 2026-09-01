@@ -769,3 +769,9 @@ Fire OS log-tag suppression (setprop to debug).
   `WATCHDOG_EXPIRED`, no handoff; both promotes `APPLY_IN_PLACE changed_fields=GPU_RENDERING,PROFILE`,
   no barrier. Every item from the 1.5.9 field round is now device-verified: fullscreen 4K smooth
   (direct output), screen held, 4K starts on the first engine, promote seamless.
+- **SHIPPED: TuvoraTV v1.5.10** (tag on ba02d26d1; release.yml green; assets Tuvora-TV-1.5.10.apk/.aab/
+  -playstore.aab; tuvora.co/tv → v1.5.10). Contains: direct mpv output for live fullscreen, guide
+  fullscreen screen hold, 3.5 s high-resolution decoder budget, in-place promote for default settings.
+  NOT in it (landed on main after the tag): live LOW_LATENCY_LIVE in every profile (39ed3b555 — the
+  promote fix for upgraded devices carrying a legacy-imported CUSTOM buffer), the 6 s budget
+  (73932878d), and the change/barrier diagnostics (e96f01b41) → next tag.
