@@ -730,3 +730,16 @@ Fire OS log-tag suppression (setprop to debug).
 - **Named limitations:** a user-chosen non-default buffer or an HDR/audio-pipeline change across the
   promote still rebuilds (engine-owned config). `gpuRenderingAllowed` in-place is scoped to live.
 - TV-only (clean pipeline exists only on NuvioTV).
+- **Device verification (Fire TV Stick 4K Max, cert build ba02d26d1, real provider):** the UHD F1
+  channel that failed on 1.5.9 *and on TiViMate* (ExoPlayer's codec-list check refuses the MediaTek
+  HEVC decoder for its profile and the software decoder dies at 4K) now PLAYS: libmpv `MPV_DIRECT`
+  hands the stream straight to `OMX.MTK.VIDEO.DECODER.HEVC`, first frame 3.8 s after selection — the
+  old 1 s budget killed it at exactly that point every time; no `WATCHDOG_EXPIRED`, no second
+  `GRAPH_SELECTED`/`RELEASE_BARRIER` after the promote. Screen hold verified (`mHoldScreenWindow`).
+- **New finding — HDR10 on an SDR output (Fire → 1080p SDR TV, `mHdrCapabilities=[]`):** the direct
+  embed configures MediaCodec without HDR static info, so PQ frames reach an SDR pipe untone-mapped
+  (flat/grey "black overlay"). Media3 fullscreen on a SurfaceView tone-maps via the platform (correct
+  colour); the AFTKM quirk forces the guide preview onto a TextureView → Media3 on a GPU-composited
+  layer → never tone-mapped (dark preview on every path). 1.5.9's `MPV_RENDER` tone-mapped in
+  software (right colour, choppy). Candidate policy: displays reporting no HDR capability order Media3
+  first for live. Decision pending (engine-order change vs the 1.5.8 Exo-freeze history on Fire).
