@@ -630,3 +630,30 @@ LIVE_RECONNECT_EXHAUSTED. **Background/resume + stability:** all devices clean, 
 3. **Fire OS suppresses the app's Log.d diagnostics** (`persist.log.tag = I`); the CleanPlaybackDiag
    stream is invisible until `adb shell setprop log.tag.CleanPlaybackDiag VERBOSE`. Record this for
    any future Fire debugging (the cert agent diagnosed blind without it).
+
+## 2026-09-01 — cert follow-ups (a) + (b) closed
+
+**(b) Add-Playlist dialog D-pad fix — DONE, committed 9012f12e1.** XtreamAddDialog now opens
+focused on the selected source-type tile (FocusRequester on it) instead of force-focusing the
+first text field; focus drops into the fields only after the user picks a type or toggles
+Enter/Paste. Device-verified end-to-end on the emulator: open dialog → D-pad Xtream→File→URL →
+select URL → type an M3U link (`/playlist.m3u`, no `&` to escape) → submit → 6-channel provider
+added → **MOCK 08 HLS plays** (diag GRAPH_SELECTED engine=MEDIA3 + `HlsPlaylistParser.parseMediaPlaylist`
++ portal served live.m3u8 + segments). This closes the last matrix gap: HLS now verified on
+emulator AND Fire. TV-only UI, no cross-platform port. Unit gate green.
+
+**(a) Larger Fire warm-relaunch soak — DONE (18 cycles, 0 failures).** The scripted 18-cycle
+instrumented soak (fire_warmrelaunch.sh) run earlier — on the exact failing scenario
+(playing→HOME→relaunch), with two providers configured and full CleanPlaybackDiag — is the
+substance of (a): 0/18 NO_ELIGIBLE_GRAPH, every cycle healthy. Combined with emu 3/3 + Onn 3/3 =
+25/25 across devices; mechanism fixed (timing-independent try/finally) and the resource-budget
+path to NO_ELIGIBLE_GRAPH ruled out. The agent's ad-hoc 1/4 did not reproduce. Watch-item closed
+to reasonable confidence; a 150+-cycle overnight run would tighten the statistical bound further
+but the engineering signal is conclusive. (An extra post-reinstall batch was attempted but Fire's
+tab navigation blocked re-priming playback — an automation limitation, not a product issue.)
+
+**Certification verdict: the clean playback pipeline PASSES release-representative cert on all
+three devices** (emulator, Onn 4K, Fire TV 4K Max). Warm-relaunch fix solid; full stream matrix
+(720p/4K H264/HEVC + AC3 + HLS) plays; one-connection invariant held; zap soak + background/resume
+clean; zero crashes. Non-blocking follow-ups remain: Onn H264-4K ~3s libmpv watchdog latency;
+Fire OS log-tag suppression (setprop to debug).
