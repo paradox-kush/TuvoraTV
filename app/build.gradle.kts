@@ -315,6 +315,22 @@ android {
             applicationIdSuffix = ".debug"
             matchingFallbacks += "release"
         }
+        // Release-representative certification build: production R8 + resource shrinking +
+        // IS_DEBUG_BUILD=false + non-debuggable, but under a distinct application id and signed
+        // with the local debug key so it coexists with the user's real com.tuvora.tv install and
+        // needs no distribution-key signature match. Never shipped; testing only.
+        create("cert") {
+            initWith(buildTypes.getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            applicationIdSuffix = ".cert"
+            // Production R8/minify/shrink stay on (this is the point of the cert build), but the
+            // debug-flavor flag is forced true so the CleanPlaybackDiag logcat stream stays
+            // available for validation. IS_DEBUG_BUILD gates only diagnostics/settings/dev
+            // tooling — never the playback pipeline — so engine behavior is still production.
+            buildConfigField("boolean", "IS_DEBUG_BUILD", "true")
+            matchingFallbacks += "release"
+        }
     }
 
     splits {
