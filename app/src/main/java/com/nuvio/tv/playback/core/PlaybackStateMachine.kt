@@ -1043,7 +1043,12 @@ object PlaybackStateMachine {
         if (!state.snapshot.state.acceptsProgress()) return unchanged(state)
         val updated = state.copy(
             snapshot = state.snapshot.copy(
-                tracks = TrackSummary(event.audioTrackCount, event.subtitleTrackCount, event.hasVideo),
+                tracks = TrackSummary(
+                    event.audioTrackCount,
+                    event.subtitleTrackCount,
+                    event.hasVideo,
+                    event.videoDimensions,
+                ),
                 // Track discovery is downstream proof that media bytes were received even if an
                 // adapter's first-byte callback and track callback raced on different threads.
                 progress = state.snapshot.progress.copy(

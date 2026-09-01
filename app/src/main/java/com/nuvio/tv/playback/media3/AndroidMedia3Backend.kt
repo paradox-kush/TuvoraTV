@@ -3,6 +3,7 @@ package com.nuvio.tv.playback.media3
 import android.content.Context
 import android.net.Uri
 import androidx.media3.common.C
+import com.nuvio.tv.playback.core.VideoDimensions
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
@@ -521,6 +522,7 @@ private class AndroidMedia3Backend(
                     hasVideo = groups.any { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 },
                     audioTrackCount = groups.filter { it.type == C.TRACK_TYPE_AUDIO }.sumOf { it.length },
                     subtitleTrackCount = groups.filter { it.type == C.TRACK_TYPE_TEXT }.sumOf { it.length },
+                    videoDimensions = videoHeaderDimensions(groups),
                 ),
             )
             publishTrackCatalog(tracks)
@@ -869,6 +871,15 @@ private class AndroidMedia3Backend(
             ),
         )
     }
+
+    /** Largest video format the track header declares; NO_VALUE dimensions never fabricate a size. */
+    private fun videoHeaderDimensions(groups: List<Tracks.Group>): VideoDimensions? =
+        groups.asSequence()
+            .filter { it.type == C.TRACK_TYPE_VIDEO }
+            .flatMap { group -> (0 until group.length).asSequence().map(group::getTrackFormat) }
+            .filter { it.width > 0 && it.height > 0 }
+            .maxByOrNull { it.width.toLong() * it.height }
+            ?.let { VideoDimensions(it.width, it.height) }
 
     private fun publishTrackCatalog(tracks: Tracks) {
         val references = linkedMapOf<PlaybackTrackId, Media3TrackReference>()

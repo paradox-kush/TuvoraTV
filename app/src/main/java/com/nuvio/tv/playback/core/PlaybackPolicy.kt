@@ -32,9 +32,16 @@ class PlaybackPolicy(
         val vodReadyToFirstFrameMs: Long = 2_000L,
         val runtimeVideoProgressWindowMs: Long = 5_000L,
         val surfaceAttachmentProgressMs: Long = 3_000L,
+        /**
+         * Floor for the two decoder phases when the track header says >1080p. Measured: Amlogic
+         * (Onn) and MediaTek boxes take ~3s to open a 4K HEVC hardware decoder; the 1s zap budget
+         * declared them failed and forced a pointless engine handoff.
+         */
+        val highResolutionDecoderMs: Long = 3_500L,
     ) {
         init {
             if (enabled) {
+                require(highResolutionDecoderMs > 0)
                 require(liveBytesToTracksMs > 0)
                 require(vodBytesToTracksMs > 0)
                 require(liveTracksToReadyMs > 0)
@@ -62,6 +69,7 @@ class PlaybackPolicy(
         phase: WatchdogPhase,
         contentType: ContentType,
         network: PlaybackNetworkRequest,
+        videoDimensions: VideoDimensions? = null,
     ): Long = when (phase) {
         WatchdogPhase.WAITING_FOR_SURFACE -> watchdogConfiguration.surfaceAttachmentProgressMs
         WatchdogPhase.FIRST_MEDIA_BYTE -> minOf(
@@ -73,18 +81,37 @@ class PlaybackPolicy(
         } else {
             watchdogConfiguration.vodBytesToTracksMs
         }
-        WatchdogPhase.VIDEO_TRACKS_TO_READY -> if (contentType == ContentType.LIVE) {
-            watchdogConfiguration.liveTracksToReadyMs
-        } else {
-            watchdogConfiguration.vodTracksToReadyMs
-        }
-        WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME -> if (contentType == ContentType.LIVE) {
-            watchdogConfiguration.liveReadyToFirstFrameMs
-        } else {
-            watchdogConfiguration.vodReadyToFirstFrameMs
-        }
+        WatchdogPhase.VIDEO_TRACKS_TO_READY -> decoderBudget(
+            if (contentType == ContentType.LIVE) {
+                watchdogConfiguration.liveTracksToReadyMs
+            } else {
+                watchdogConfiguration.vodTracksToReadyMs
+            },
+            videoDimensions,
+        )
+        WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME -> decoderBudget(
+            if (contentType == ContentType.LIVE) {
+                watchdogConfiguration.liveReadyToFirstFrameMs
+            } else {
+                watchdogConfiguration.vodReadyToFirstFrameMs
+            },
+            videoDimensions,
+        )
         WatchdogPhase.RUNTIME_VIDEO_PROGRESS -> watchdogConfiguration.runtimeVideoProgressWindowMs
     }
+
+    /**
+     * The zap budgets are tuned for SD/HD. A hardware decoder takes several seconds to open a
+     * 4K stream on Amlogic/MediaTek boxes, and treating that as a decoder failure hands the
+     * stream off for nothing (field: 1.5.9 "starting takes seconds" on 4K channels). Track headers
+     * expose the size before the decoder opens, so the budget can follow the resolution.
+     */
+    private fun decoderBudget(baseMs: Long, videoDimensions: VideoDimensions?): Long =
+        if (videoDimensions?.isHighResolution == true) {
+            maxOf(baseMs, watchdogConfiguration.highResolutionDecoderMs)
+        } else {
+            baseMs
+        }
 
     /**
      * A timeout is classified from the last proven phase, never from a URL suffix or playhead.
@@ -416,7 +443,10 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
             requestedAudioOutput
         }
         val pcmProcessingAllowed = effectiveAudioOutput != AudioOutputPreference.PASSTHROUGH
-        val effectiveBuffering = if (guide && input.requestSummary.contentType == ContentType.LIVE) {
+        // Live keeps the low-latency buffer in every profile unless the user picked one: the
+        // guide->fullscreen promote must not rebuild the player just to resize a buffer.
+        val live = input.requestSummary.contentType == ContentType.LIVE
+        val effectiveBuffering = if (live && (guide || preferences.buffering == BufferingPreference.RECOMMENDED)) {
             BufferingPreference.LOW_LATENCY_LIVE
         } else {
             preferences.buffering
@@ -640,8 +670,12 @@ object PlaybackRequirementsDiffClassifier {
             if (previous.secureOutputRequired != next.secureOutputRequired) add(RequirementsField.SECURE_OUTPUT)
             if (previous.resourceBudget != next.resourceBudget) add(RequirementsField.RESOURCE_BUDGET)
         }
+        // For live content the direct embed outranks the GPU render path in every profile (see
+        // PlaybackPolicy.outputRank), so a GPU permission flip alone can never change the selected
+        // graph: a guide->fullscreen promote keeps the playing graph instead of rebuilding it.
+        val reselectFields = if (next.liveContent) RESELECT_FIELDS - RequirementsField.GPU_RENDERING else RESELECT_FIELDS
         val impact = when {
-            changed.any(RESELECT_FIELDS::contains) -> ChangeImpact.RESELECT_GRAPH
+            changed.any(reselectFields::contains) -> ChangeImpact.RESELECT_GRAPH
             changed.any(REBUILD_FIELDS::contains) -> ChangeImpact.REBUILD_CURRENT_GRAPH
             else -> ChangeImpact.APPLY_IN_PLACE
         }
@@ -658,8 +692,11 @@ object PlaybackRequirementsDiffClassifier {
         RequirementsField.SURFACE_ELIGIBILITY,
         RequirementsField.SECURE_OUTPUT,
     )
+    // DISPLAY_OUTPUT is deliberately absent: neither engine reads the display fields. The output
+    // controller owns mode switching and the in-place apply path re-runs it on the same
+    // generation, so it performs the one ON_START switch a rebuild used to buy (field: the
+    // guide->fullscreen promote rebuilt the player for ~3.5s just to switch refresh rate).
     private val REBUILD_FIELDS = setOf(
-        RequirementsField.DISPLAY_OUTPUT,
         RequirementsField.HDR,
         RequirementsField.BUFFERING,
         RequirementsField.AUDIO_PIPELINE,

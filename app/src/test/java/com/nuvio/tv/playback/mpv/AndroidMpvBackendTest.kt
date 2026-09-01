@@ -436,9 +436,24 @@ class AndroidMpvBackendTest {
 
     private fun assertSuccess(result: PlaybackResult<Unit>) = assertTrue(result is PlaybackResult.Success)
 
+    @Test
+    fun `track list carries the selected video demux resolution before the decoder starts`() {
+        // demux-w/h come from the container header, so they are known at tracks time: the
+        // watchdog uses them to size the decoder budget (4K needs longer than the 1s zap budget).
+        assertEquals(
+            com.nuvio.tv.playback.core.VideoDimensions(3840, 2160),
+            parseMpvTracks(trackList(selectedFrameRate = 50.0, width = 3840, height = 2160)).videoDimensions,
+        )
+        // Absent or degenerate headers never fabricate a size.
+        assertEquals(null, parseMpvTracks(trackList(selectedFrameRate = 50.0)).videoDimensions)
+        assertEquals(null, parseMpvTracks(trackList(selectedFrameRate = 50.0, width = 0, height = 2160)).videoDimensions)
+    }
+
     private fun trackList(
         selectedFrameRate: Double?,
         estimatedFrameRate: Double? = null,
+        width: Long? = null,
+        height: Long? = null,
     ): MPVNode = MPVNode.ArrayNode(
         arrayOf(
             MPVNode.MapNode(
@@ -447,6 +462,8 @@ class AndroidMpvBackendTest {
                     put("selected", MPVNode.BooleanNode(true))
                     selectedFrameRate?.let { put("demux-fps", MPVNode.DoubleNode(it)) }
                     estimatedFrameRate?.let { put("estimated-vf-fps", MPVNode.DoubleNode(it)) }
+                    width?.let { put("demux-w", MPVNode.IntNode(it)) }
+                    height?.let { put("demux-h", MPVNode.IntNode(it)) }
                 },
             ),
             MPVNode.MapNode(

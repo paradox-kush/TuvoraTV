@@ -46,6 +46,7 @@ internal sealed interface MpvBackendEvent {
         val hasVideo: Boolean,
         val audioTrackCount: Int,
         val subtitleTrackCount: Int,
+        val videoDimensions: com.nuvio.tv.playback.core.VideoDimensions? = null,
     ) : MpvBackendEvent
     data class TimelineUpdated(val facts: PlaybackTimelineFacts) : MpvBackendEvent
     data class TrackCatalogUpdated(val catalog: PlaybackTrackCatalog) : MpvBackendEvent
@@ -656,7 +657,9 @@ internal class AndroidMpvBackend(
         tracks: ParsedMpvTracks,
         includeFrameRate: Boolean = true,
     ) {
-        _events.tryEmit(MpvBackendEvent.TracksAvailable(tracks.hasVideo, tracks.audio, tracks.subtitles))
+        _events.tryEmit(
+            MpvBackendEvent.TracksAvailable(tracks.hasVideo, tracks.audio, tracks.subtitles, tracks.videoDimensions),
+        )
         trackReferences = tracks.references.associateBy { it.id }
         trackRevision = if (trackRevision == Long.MAX_VALUE) Long.MAX_VALUE else trackRevision + 1
         _events.tryEmit(
@@ -859,6 +862,8 @@ internal data class ParsedMpvTracks(
     val audio: Int,
     val subtitles: Int,
     val selectedVideoFrameRate: Float?,
+    /** Selected video track's container header size (demux-w/h); known before the decoder opens. */
+    val videoDimensions: com.nuvio.tv.playback.core.VideoDimensions? = null,
     val audioTracks: List<PlaybackTrackDescriptor>,
     val subtitleTracks: List<PlaybackTrackDescriptor>,
     val selectedAudioTrackId: PlaybackTrackId?,
@@ -877,10 +882,18 @@ internal data class MpvTrackReference(
 internal fun parseMpvTracks(node: MPVNode): ParsedMpvTracks {
     val tracks = node.asArray().orEmpty().mapNotNull { it.asMap() }
     val types = tracks.mapNotNull { it["type"]?.asString() }
-    val selectedVideoFrameRate = tracks.firstOrNull { track ->
+    val selectedVideo = tracks.firstOrNull { track ->
         track["type"]?.asString() == "video" && track["selected"]?.asBoolean() == true
-    }?.get("demux-fps")?.asDouble()?.toFloat()?.takeIf { frameRate ->
+    }
+    val selectedVideoFrameRate = selectedVideo?.get("demux-fps")?.asDouble()?.toFloat()?.takeIf { frameRate ->
         com.nuvio.tv.playback.core.ContentFrameRatePolicy.validOrNull(frameRate) != null
+    }
+    val width = selectedVideo?.get("demux-w")?.asInt() ?: 0L
+    val height = selectedVideo?.get("demux-h")?.asInt() ?: 0L
+    val videoDimensions = if (width > 0 && height > 0 && width <= Int.MAX_VALUE && height <= Int.MAX_VALUE) {
+        com.nuvio.tv.playback.core.VideoDimensions(width.toInt(), height.toInt())
+    } else {
+        null
     }
     val references = mutableListOf<MpvTrackReference>()
     val audioTracks = mutableListOf<PlaybackTrackDescriptor>()
@@ -915,6 +928,7 @@ internal fun parseMpvTracks(node: MPVNode): ParsedMpvTracks {
         audio = types.count { it == "audio" },
         subtitles = types.count { it == "sub" },
         selectedVideoFrameRate = selectedVideoFrameRate,
+        videoDimensions = videoDimensions,
         audioTracks = audioTracks,
         subtitleTracks = subtitleTracks,
         selectedAudioTrackId = selectedAudio,

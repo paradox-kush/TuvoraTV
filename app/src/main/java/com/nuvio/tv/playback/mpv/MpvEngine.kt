@@ -328,7 +328,7 @@ class MpvEngine internal constructor(
         val normalized = when (event) {
             MpvBackendEvent.BytesReceived -> PlaybackEvent.BytesReceived(generation)
             is MpvBackendEvent.TracksAvailable -> PlaybackEvent.TracksAvailable(
-                generation, event.hasVideo, event.audioTrackCount, event.subtitleTrackCount,
+                generation, event.hasVideo, event.audioTrackCount, event.subtitleTrackCount, event.videoDimensions,
             )
             is MpvBackendEvent.TimelineUpdated -> PlaybackEvent.TimelineUpdated(generation, event.facts)
             is MpvBackendEvent.TrackCatalogUpdated -> PlaybackEvent.TrackCatalogUpdated(generation, event.catalog)

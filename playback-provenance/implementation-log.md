@@ -688,3 +688,45 @@ Fire OS log-tag suppression (setprop to debug).
   own red tests after this hotfix ships.
 - TV-only: the clean pipeline exists only on NuvioTV; Mobile deliberately uses vo=gpu on live for
   the gpu-next fd-leak reason — genuinely different constraint, no port.
+
+## 2026-09-01 — post-1.5.9 (cont.): 4K "starting takes seconds" + preview→fullscreen rebuild
+
+- **Report (Discord + Onn/Fire re-test):** "starting" takes several seconds on 4K channels; the
+  preview→fullscreen promote still tears the player down (~3.5 s black) even though both profiles now
+  land on the same `MPV_DIRECT` graph.
+- **RCA 1 — a 1-second decoder budget declared 4K a failure.** `WatchdogConfiguration` gives live
+  `VIDEO_TRACKS_TO_READY` and `READY_TO_FIRST_VIDEO_FRAME` 1 000 ms each, tuned for SD/HD zapping.
+  An Amlogic/MediaTek hardware decoder takes ~3 s to open a 4K HEVC stream, so the watchdog raised
+  `VIDEO_DECODER_FAILED` (deterministic=false, never learned) before libmpv finished starting and
+  handed off to Media3 — a pointless engine swap on every 4K tune and every promote. The Onn capture
+  shows the same libmpv + `c2.amlogic.hevc.decoder` that "failed" in the preview playing fine in
+  fullscreen seconds later; it was timing, not capability.
+- **Fix 1 — resolution-aware decoder budget.** Both engines know the video size at tracks time
+  (mpv `track-list` `demux-w/h`; Media3 `Tracks.Group.getTrackFormat().width/height`), before the
+  decoder opens. `TracksAvailable`/`TrackSummary` now carry `videoDimensions`; the watchdog arm
+  passes them to `watchdogDelayMs`, which floors the two decoder phases at
+  `highResolutionDecoderMs = 3 500` when `VideoDimensions.isHighResolution` (> 1080p pixels).
+  ≤1080p keeps the 1 s zap budget; transport phases are untouched. Red-first: "high resolution live
+  streams get a realistic decoder budget while HD keeps the zap budget" (policy), "track list carries
+  the selected video demux resolution before the decoder starts" (mpv parser). The Media3 side is
+  Android-only (Format), covered by device verification, named here.
+- **RCA 2 — the promote diff was classified as a rebuild three times over.** With default settings a
+  live GUIDE→FULLSCREEN diff changes `PROFILE, DISPLAY_OUTPUT, GPU_RENDERING` (+`BUFFERING` when the
+  guide's forced `LOW_LATENCY_LIVE` reverts to the user's buffer): `GPU_RENDERING` ∈ RESELECT_FIELDS,
+  `DISPLAY_OUTPUT`/`BUFFERING` ∈ REBUILD_FIELDS, and those barriers do a full adapter release.
+- **Fix 2 — the promote applies in place.** (a) Classifier: for `liveContent` the GPU permission flip
+  is in-place — the live-aware `outputRank` makes the direct embed win in every profile, so the flag
+  can never change the winner. (b) Resolver: live keeps `LOW_LATENCY_LIVE` in fullscreen when the
+  user's buffering is `RECOMMENDED`; a user-chosen buffer still applies (and still rebuilds — their
+  call). (c) Classifier: `DISPLAY_OUTPUT` leaves REBUILD_FIELDS — neither engine reads the display
+  fields; `AndroidPlaybackOutputController` owns mode switching, is re-run by the in-place apply
+  path on the same generation, and its `ON_START` gate had not fired for the guide (switching
+  disallowed there), so the promote still performs the single refresh-rate switch a rebuild used to
+  buy. Red-first: "live guide to fullscreen promote with default settings applies in place"
+  (end-to-end: resolve both profiles, classify) failed with `[PROFILE, DISPLAY_OUTPUT, GPU_RENDERING]
+  → REBUILD`, green after; plus direct classifier tests for the GPU-flip (live in-place, non-live
+  still reselects) and the display-output change. The old "resolution matching change is a display
+  output rebuild" test was rewritten to the new contract.
+- **Named limitations:** a user-chosen non-default buffer or an HDR/audio-pipeline change across the
+  promote still rebuilds (engine-owned config). `gpuRenderingAllowed` in-place is scoped to live.
+- TV-only (clean pipeline exists only on NuvioTV).

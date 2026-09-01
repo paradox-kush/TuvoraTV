@@ -426,6 +426,73 @@ class PlaybackPolicyTest {
         assertEquals(20_000L, policy.liveReconnectDelayMs(500))
     }
 
+    @Test
+    fun `live guide promote keeps the playing graph when only GPU permission flips`() {
+        // GUIDE forbids GPU render, FULLSCREEN allows it. For live the direct embed outranks the
+        // GPU path in both profiles, so the flip can never change the winner: it must apply in
+        // place instead of tearing the player down for an identical re-selection.
+        val guide = requirements(profile = SessionProfile.GUIDE, gpuRenderingAllowed = false, liveContent = true)
+        val fullscreen = requirements(
+            profile = SessionProfile.FULLSCREEN,
+            gpuRenderingAllowed = true,
+            liveContent = true,
+            displayModeSwitchAllowed = false,
+        )
+
+        val diff = PlaybackRequirementsDiffClassifier.classify(guide, fullscreen)
+
+        assertEquals(ChangeImpact.APPLY_IN_PLACE, diff.impact)
+        assertTrue(RequirementsField.GPU_RENDERING in diff.changedFields)
+    }
+
+    @Test
+    fun `display output changes apply in place because the output controller owns them`() {
+        val guide = requirements(profile = SessionProfile.GUIDE, gpuRenderingAllowed = false, liveContent = true)
+        val fullscreen = guide.copy(
+            profile = SessionProfile.FULLSCREEN,
+            gpuRenderingAllowed = true,
+            displayModeSwitchAllowed = true,
+            frameRatePreference = FrameRatePreference.ON_START,
+        )
+
+        val diff = PlaybackRequirementsDiffClassifier.classify(guide, fullscreen)
+
+        assertTrue(RequirementsField.DISPLAY_OUTPUT in diff.changedFields)
+        assertEquals(ChangeImpact.APPLY_IN_PLACE, diff.impact)
+    }
+
+    @Test
+    fun `non-live GPU permission flip still reselects because render may win fullscreen`() {
+        val guide = requirements(profile = SessionProfile.GUIDE, gpuRenderingAllowed = false)
+        val fullscreen = requirements(profile = SessionProfile.FULLSCREEN, gpuRenderingAllowed = true)
+
+        assertEquals(
+            ChangeImpact.RESELECT_GRAPH,
+            PlaybackRequirementsDiffClassifier.classify(guide, fullscreen).impact,
+        )
+    }
+
+    @Test
+    fun `high resolution live streams get a realistic decoder budget while HD keeps the zap budget`() {
+        val network = PlaybackNetworkRequest(readTimeoutMs = 60_000, callTimeoutMs = 12_000)
+        val uhd = VideoDimensions(3840, 2160)
+        val hd = VideoDimensions(1920, 1080)
+
+        for (phase in listOf(
+            PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
+            PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
+        )) {
+            assertEquals("$phase 4K", 3_500L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, uhd))
+            assertEquals("$phase HD", 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, hd))
+            assertEquals("$phase unknown", 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, null))
+        }
+        // Resolution never touches the transport phases: those budgets are about bytes, not decoders.
+        assertEquals(
+            1_500L,
+            policy.watchdogDelayMs(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, ContentType.LIVE, network, uhd),
+        )
+    }
+
     private fun requirements(
         profile: SessionProfile = SessionProfile.FULLSCREEN,
         preferredEngineOrder: List<EngineType> = emptyList(),
@@ -437,6 +504,7 @@ class PlaybackPolicyTest {
         audioOutput: AudioOutputPreference = AudioOutputPreference.AUTO,
         allowedSurfaceModes: Set<SurfaceMode> = SurfaceMode.entries.toSet(),
         liveContent: Boolean = false,
+        displayModeSwitchAllowed: Boolean = profile == SessionProfile.FULLSCREEN,
     ) = PlaybackRequirements(
         profile = profile,
         priority = if (profile == SessionProfile.GUIDE) {
@@ -449,7 +517,7 @@ class PlaybackPolicyTest {
         } else {
             VideoQualityIntent.FULL
         },
-        displayModeSwitchAllowed = profile == SessionProfile.FULLSCREEN,
+        displayModeSwitchAllowed = displayModeSwitchAllowed,
         frameRatePreference = FrameRatePreference.OFF,
         hdrPreference = HdrPreference.AUTO,
         decoderPreference = DecoderPreference.AUTO,

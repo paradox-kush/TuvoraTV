@@ -1495,7 +1495,14 @@ class PlaybackSession(
             generationScope(arm.generation).launch {
                 val request = resolved.takeIf { it?.generation == arm.generation }?.value?.request
                     ?: return@launch
-                clock.delayMs(policy.watchdogDelayMs(desired, request.contentType, request.network))
+                clock.delayMs(
+                    policy.watchdogDelayMs(
+                        desired,
+                        request.contentType,
+                        request.network,
+                        machine.snapshot.tracks.videoDimensions,
+                    ),
+                )
                 lane.send(
                     LaneMessage.WatchdogExpired(
                         token = arm.token,

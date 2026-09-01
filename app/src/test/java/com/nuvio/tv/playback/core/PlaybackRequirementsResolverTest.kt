@@ -334,13 +334,15 @@ class PlaybackRequirementsResolverTest {
     }
 
     @Test
-    fun `resolution matching change is a display output rebuild`() {
+    fun `resolution matching change is a display output change applied in place`() {
+        // The output controller owns display modes and is re-run by the in-place apply path;
+        // no engine reads these fields, so rebuilding the player for them only cost a black gap.
         val previous = requirements().copy(resolutionMatchingEnabled = false)
         val next = previous.copy(resolutionMatchingEnabled = true)
 
         val diff = PlaybackRequirementsDiffClassifier.classify(previous, next)
 
-        assertEquals(ChangeImpact.REBUILD_CURRENT_GRAPH, diff.impact)
+        assertEquals(ChangeImpact.APPLY_IN_PLACE, diff.impact)
         assertEquals(setOf(RequirementsField.DISPLAY_OUTPUT), diff.changedFields)
     }
 
@@ -417,6 +419,39 @@ class PlaybackRequirementsResolverTest {
     private suspend fun resolve(input: PlaybackRequirementsInput): PlaybackRequirements {
         val result = resolver.resolve(input)
         return (result as PlaybackResult.Success).value
+    }
+
+    @Test
+    fun `live fullscreen keeps the low-latency buffer so a guide promote applies in place`() = runTest {
+        // The guide forces LOW_LATENCY_LIVE for zap speed. If fullscreen fell back to the
+        // recommended buffer, every preview->fullscreen promote would rebuild the player just to
+        // resize a buffer. Live keeps the same buffer in both profiles unless the user chose one.
+        val fullscreenLive = resolve(input(profile = SessionProfile.FULLSCREEN))
+        assertEquals(BufferingPreference.LOW_LATENCY_LIVE, fullscreenLive.buffering)
+
+        val userChosen = resolve(
+            input(
+                profile = SessionProfile.FULLSCREEN,
+                preferences = PlaybackPreferences(buffering = BufferingPreference.BALANCED),
+            ),
+        )
+        assertEquals(BufferingPreference.BALANCED, userChosen.buffering)
+
+        val vod = resolve(input(summary = requestSummary(contentType = ContentType.VOD)))
+        assertEquals(BufferingPreference.RECOMMENDED, vod.buffering)
+    }
+
+    @Test
+    fun `live guide to fullscreen promote with default settings applies in place`() = runTest {
+        // Field regression (1.5.9): every preview->fullscreen promote tore the player down and
+        // rebuilt it (~3.5s black). With default settings the resolved GUIDE and FULLSCREEN
+        // requirements for a live stream must differ only in fields the engine applies in place.
+        val guide = resolve(input(profile = SessionProfile.GUIDE, previewViewport = VideoDimensions(640, 360)))
+        val fullscreen = resolve(input(profile = SessionProfile.FULLSCREEN))
+
+        val diff = PlaybackRequirementsDiffClassifier.classify(guide, fullscreen)
+
+        assertEquals(diff.changedFields.toString(), ChangeImpact.APPLY_IN_PLACE, diff.impact)
     }
 
     private fun input(

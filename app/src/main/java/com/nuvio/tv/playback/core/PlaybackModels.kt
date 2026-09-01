@@ -345,6 +345,13 @@ data class VideoDimensions(val width: Int, val height: Int) {
     init {
         require(width > 0 && height > 0) { "Video dimensions must be positive" }
     }
+
+    /** More pixels than 1080p (1440p, 4K): hardware decoders need noticeably longer to open. */
+    val isHighResolution: Boolean get() = width.toLong() * height > FULL_HD_PIXELS
+
+    private companion object {
+        const val FULL_HD_PIXELS = 1920L * 1080L
+    }
 }
 
 data class RuntimeCapabilities(
@@ -825,6 +832,8 @@ sealed interface PlaybackEvent {
         val hasVideo: Boolean,
         val audioTrackCount: Int,
         val subtitleTrackCount: Int,
+        /** Container-header size of the video track, when the engine knows it at tracks time. */
+        val videoDimensions: VideoDimensions? = null,
     ) : PlaybackEvent
     data class TimelineUpdated(
         override val generation: Long,
@@ -956,6 +965,7 @@ data class TrackSummary(
     val audioTrackCount: Int = 0,
     val subtitleTrackCount: Int = 0,
     val hasVideoTrack: Boolean = false,
+    val videoDimensions: VideoDimensions? = null,
 )
 
 /** Runtime video facts reported by an engine. Values are factual and never URL-derived guesses. */

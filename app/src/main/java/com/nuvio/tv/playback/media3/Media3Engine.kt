@@ -40,6 +40,7 @@ internal sealed interface Media3BackendEvent {
         val hasVideo: Boolean,
         val audioTrackCount: Int,
         val subtitleTrackCount: Int,
+        val videoDimensions: com.nuvio.tv.playback.core.VideoDimensions? = null,
     ) : Media3BackendEvent
     data class TimelineUpdated(val facts: PlaybackTimelineFacts) : Media3BackendEvent
     data class TrackCatalogUpdated(val catalog: PlaybackTrackCatalog) : Media3BackendEvent
@@ -460,6 +461,7 @@ class Media3Engine internal constructor(
                 event.hasVideo,
                 event.audioTrackCount,
                 event.subtitleTrackCount,
+                event.videoDimensions,
             )
             is Media3BackendEvent.TimelineUpdated -> PlaybackEvent.TimelineUpdated(generation, event.facts)
             is Media3BackendEvent.TrackCatalogUpdated -> PlaybackEvent.TrackCatalogUpdated(generation, event.catalog)
