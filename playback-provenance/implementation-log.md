@@ -756,3 +756,11 @@ Fire OS log-tag suppression (setprop to debug).
   Resolver test rewritten to the new contract with a legacy-shaped CUSTOM end-to-end promote diff →
   APPLY_IN_PLACE. Lesson (again): a layered preference pipeline — test with what production
   actually feeds (legacy import shapes), not only `PlaybackPreferences.recommended()`.
+- **Onn verification after 39ed3b555 (live = LOW_LATENCY_LIVE in every profile): promote IN PLACE.**
+  Diag: `REQUIREMENTS_CHANGE_RESOLVED change_impact=APPLY_IN_PLACE changed_fields=GPU_RENDERING,PROFILE`
+  for both the promote and the collapse, no barrier, mpv `start-file` once; user: "now the preview to
+  full screen does not rebuild". Same capture exposed the 3.5 s floor as 2 ms too short on Amlogic:
+  `WATCHDOG_EXPIRED` at +4.176 s, mpv `playback-restart` at +4.178 s → needless HANDOFF to Media3 and
+  the next zap skipped libmpv. Floor raised to 6 s (Fire 3.8 s / Onn 4.18 s measured; still a bounded
+  net for a wedged decoder) and `WATCHDOG_EXPIRED` now carries `high_resolution` so a field log shows
+  whether the >1080p budget applied at all (i.e. whether the engine reported the size at tracks time).
