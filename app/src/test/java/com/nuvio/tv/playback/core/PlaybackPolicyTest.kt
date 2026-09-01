@@ -482,7 +482,7 @@ class PlaybackPolicyTest {
             PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
             PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
         )) {
-            assertEquals("$phase 4K", 3_500L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, uhd))
+            assertEquals("$phase 4K", 6_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, uhd))
             assertEquals("$phase HD", 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, hd))
             assertEquals("$phase unknown", 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, null))
         }

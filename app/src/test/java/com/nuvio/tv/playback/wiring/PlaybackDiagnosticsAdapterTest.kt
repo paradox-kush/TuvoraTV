@@ -75,6 +75,15 @@ class PlaybackDiagnosticsAdapterTest {
         )
         assertEquals("REBUILD", barrier.properties["release_reason"])
         assertTrue(barrier.properties.values.all { it is String || it is Number || it is Boolean })
+
+        val watchdog = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 7,
+                code = PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+                highResolution = true,
+            ),
+        )
+        assertEquals(true, watchdog.properties["high_resolution"])
     }
 
     @Test

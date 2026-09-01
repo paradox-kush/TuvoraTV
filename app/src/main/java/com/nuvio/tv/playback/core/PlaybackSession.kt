@@ -1687,6 +1687,7 @@ class PlaybackSession(
                 code = PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
                 engine = activeGraph?.engine,
                 failure = failure,
+                highResolution = machine.snapshot.tracks.videoDimensions?.isHighResolution ?: false,
             ),
         )
         val event = PlaybackEvent.Failed(generation, failure)

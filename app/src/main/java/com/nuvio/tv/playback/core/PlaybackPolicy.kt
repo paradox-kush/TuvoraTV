@@ -33,11 +33,12 @@ class PlaybackPolicy(
         val runtimeVideoProgressWindowMs: Long = 5_000L,
         val surfaceAttachmentProgressMs: Long = 3_000L,
         /**
-         * Floor for the two decoder phases when the track header says >1080p. Measured: Amlogic
-         * (Onn) and MediaTek boxes take ~3s to open a 4K HEVC hardware decoder; the 1s zap budget
-         * declared them failed and forced a pointless engine handoff.
+         * Floor for the two decoder phases when the track header says >1080p. Measured first
+         * frame on 4K HEVC: MediaTek (Fire TV 4K Max) 3.8s, Amlogic (Onn) 4.18s — a 3.5s floor
+         * lost the Onn by 2ms and forced the handoff it was meant to prevent. 6s is still a bounded
+         * safety net for a genuinely wedged decoder; the 1s zap budget stays for <=1080p.
          */
-        val highResolutionDecoderMs: Long = 3_500L,
+        val highResolutionDecoderMs: Long = 6_000L,
     ) {
         init {
             if (enabled) {

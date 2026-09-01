@@ -260,6 +260,8 @@ data class PlaybackDiagnosticEvent(
     /** How a requirements change was classified and which neutral fields moved — enums only. */
     val changeImpact: ChangeImpact? = null,
     val changedFields: Set<RequirementsField>? = null,
+    /** Whether the >1080p decoder budget applied when a watchdog fired — a boolean, never a size. */
+    val highResolution: Boolean? = null,
 )
 
 fun interface PlaybackDiagnostics {
