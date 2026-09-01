@@ -24,6 +24,11 @@ object PlaybackDiagnosticFormatter {
         event.outputProfile?.let { properties["output_profile"] = it.name }
         event.attempt?.let { properties["attempt"] = it }
         event.outputStatus?.let { properties["output_status"] = it.name }
+        event.releaseReason?.let { properties["release_reason"] = it.name }
+        event.changeImpact?.let { properties["change_impact"] = it.name }
+        event.changedFields?.let { fields ->
+            properties["changed_fields"] = fields.map { it.name }.sorted().joinToString(",")
+        }
         event.failure?.let { failure ->
             properties["failure_code"] = failure.code.name
             properties["failure_domain"] = failure.domain.name

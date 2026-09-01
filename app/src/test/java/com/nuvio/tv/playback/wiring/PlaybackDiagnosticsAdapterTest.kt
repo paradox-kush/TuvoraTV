@@ -51,6 +51,33 @@ class PlaybackDiagnosticsAdapterTest {
     }
 
     @Test
+    fun `requirements change and barrier reason cross the boundary as enums only`() {
+        val change = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 7,
+                code = PlaybackDiagnosticCode.REQUIREMENTS_CHANGE_RESOLVED,
+                changeImpact = com.nuvio.tv.playback.core.ChangeImpact.REBUILD_CURRENT_GRAPH,
+                changedFields = setOf(
+                    com.nuvio.tv.playback.core.RequirementsField.PROFILE,
+                    com.nuvio.tv.playback.core.RequirementsField.BUFFERING,
+                ),
+            ),
+        )
+        assertEquals("REBUILD_CURRENT_GRAPH", change.properties["change_impact"])
+        assertEquals("BUFFERING,PROFILE", change.properties["changed_fields"])
+
+        val barrier = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 7,
+                code = PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED,
+                releaseReason = com.nuvio.tv.playback.core.ActiveWorkReleaseReason.REBUILD,
+            ),
+        )
+        assertEquals("REBUILD", barrier.properties["release_reason"])
+        assertTrue(barrier.properties.values.all { it is String || it is Number || it is Boolean })
+    }
+
+    @Test
     fun `formatted event cannot carry endpoint or request identity fields`() {
         val formatted = PlaybackDiagnosticFormatter.format(
             PlaybackDiagnosticEvent(

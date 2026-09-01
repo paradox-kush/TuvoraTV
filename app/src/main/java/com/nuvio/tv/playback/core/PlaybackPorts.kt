@@ -240,6 +240,7 @@ enum class PlaybackDiagnosticCode {
     LIVE_RECONNECT_ATTEMPT,
     LIVE_RECONNECT_SUCCEEDED,
     REQUIREMENTS_CHANGE_REJECTED,
+    REQUIREMENTS_CHANGE_RESOLVED,
     WATCHDOG_EXPIRED,
     COMPATIBILITY_HISTORY_RECORD_FAILED,
     PLAYBACK_OUTPUT_NONFATAL,
@@ -254,6 +255,11 @@ data class PlaybackDiagnosticEvent(
     val failure: PlaybackFailure? = null,
     val attempt: Int? = null,
     val outputStatus: PlaybackOutputStatus? = null,
+    /** Why a release barrier ran (stop, replace, rebuild, reselect, handoff, surface loss…) — enum only. */
+    val releaseReason: ActiveWorkReleaseReason? = null,
+    /** How a requirements change was classified and which neutral fields moved — enums only. */
+    val changeImpact: ChangeImpact? = null,
+    val changedFields: Set<RequirementsField>? = null,
 )
 
 fun interface PlaybackDiagnostics {

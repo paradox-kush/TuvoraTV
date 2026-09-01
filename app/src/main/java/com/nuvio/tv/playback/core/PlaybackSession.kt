@@ -876,9 +876,20 @@ class PlaybackSession(
                     requirements = GenerationValue(message.generation, result.value)
                     return
                 }
-                val impact = message.previous?.let {
-                    PlaybackRequirementsDiffClassifier.classify(it, result.value).impact
-                } ?: ChangeImpact.RESELECT_GRAPH
+                val diff = message.previous?.let {
+                    PlaybackRequirementsDiffClassifier.classify(it, result.value)
+                }
+                val impact = diff?.impact ?: ChangeImpact.RESELECT_GRAPH
+                // Field debugging of "why did the promote rebuild?" needs the classification, not
+                // just the barrier it caused; enums only, so it crosses the diagnostics boundary.
+                diagnostics.record(
+                    PlaybackDiagnosticEvent(
+                        generation = message.generation,
+                        code = PlaybackDiagnosticCode.REQUIREMENTS_CHANGE_RESOLVED,
+                        changeImpact = impact,
+                        changedFields = diff?.changedFields,
+                    ),
+                )
                 // Rebuild uses this exact coherent snapshot after its release barrier. Reselection
                 // will refresh it as part of selecting the new graph.
                 requirements = GenerationValue(message.generation, result.value)
@@ -989,7 +1000,11 @@ class PlaybackSession(
         reconnectJob = null
         requirementsApplyJob = null
         diagnostics.record(
-            PlaybackDiagnosticEvent(action.generation, PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED),
+            PlaybackDiagnosticEvent(
+                action.generation,
+                PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED,
+                releaseReason = action.reason,
+            ),
         )
         val graph = activeGraph ?: machine.graphBeforeRelease
         val releasedGraphGeneration = activeGraphGeneration
