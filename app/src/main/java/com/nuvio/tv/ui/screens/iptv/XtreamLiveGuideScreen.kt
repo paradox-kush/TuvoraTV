@@ -84,6 +84,7 @@ import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.CircularProgressIndicator
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerUiPolicy
 import kotlinx.coroutines.delay
 
 /**
@@ -486,7 +487,11 @@ fun LiveGuide(
                     .aspectRatio(16f / 9f)
                 ).background(Color.Black)
         ) {
-            AndroidView(factory = { surfaceOwner }, modifier = Modifier.fillMaxSize())
+            // Hold the screen awake while video is actually playing (or tuning) — the same policy
+            // the standalone player uses. Without this the Android TV screensaver fires mid-stream
+            // in the guide's fullscreen, which the legacy player prevented on its player view.
+            val keepScreenOn = playbackUi?.let { CleanLivePlayerUiPolicy.present(it).keepScreenOn } == true
+            AndroidView(factory = { surfaceOwner }, update = { it.keepScreenOn = keepScreenOn }, modifier = Modifier.fillMaxSize())
             if (playbackUi?.spinnerVisible == true) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
