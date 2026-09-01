@@ -575,3 +575,58 @@ carried.
   but surface-collision-vs-engine-fault attribution is worth revisiting; (c) the rich
   selection-rejection diagnostics used during this RCA were temporary Log.d lines and were
   stripped — porting them into CleanPlaybackDiag properly is a follow-up.
+
+## 2026-09-01 — release-representative 3-device certification (cert build, R8-minified)
+
+Built a coexisting **`cert` build type** (initWith release → R8 minify + resource shrink +
+IS_DEBUG_BUILD forced true only to keep the CleanPlaybackDiag logcat stream; IS_DEBUG_BUILD gates
+only diagnostics/settings/dev-tooling, never the playback pipeline) under appId
+`com.tuvora.tv.cert`, debug-signed so it installs alongside the user's real `com.tuvora.tv`
+(distribution-key-signed — a local release build canNOT update it: INSTALL_FAILED_UPDATE_INCOMPATIBLE;
+never uninstall the user's app). Note: the v1.5.9 "release-generation" blocker was a runtime
+generation bug (already fixed), NOT an R8 issue — but R8 coverage is still worth having.
+
+Mock portal rebuilt (`scratchpad/mock_portal.py`, one instance per device on 8918/8919/8920 for
+isolated connection counts) to serve the FULL stream-type matrix via one M3U (get.php): 720p +
+4K in both H.264 and HEVC (ffmpeg testsrc2), an AC3-audio channel, and a real HLS rendition
+(.m3u8 + 237 segments). Xtream live is always `.ts` (XtreamClient:385) so HLS only reachable via
+the URL/M3U lane.
+
+Ran 3 parallel device agents (emulator arm64, Onn 4K v7a, Fire TV Stick 4K Max/AFTKM v7a).
+
+**Warm-relaunch regression (the surface-orphan fix, headline):** emulator 3/3, Onn 3/3, Fire
+**18/18** controlled cycles with full diagnostics (+ the manual cycle = 19/19) — all clean
+(RELEASE_BARRIER → REQUEST_RESOLVED → GRAPH_SELECTED → PLAYING, zero NO_ELIGIBLE_GRAPH). **25/25
+across devices on the exact failing scenario (playing→HOME→relaunch).** The Fire agent observed
+ONE NO_ELIGIBLE_GRAPH during ad-hoc multi-provider testing that did NOT reproduce in 18 controlled
+cycles → **named watch-item**, not a confirmed blocker; recommend a larger multi-provider soak
+before final release sign-off. Resource-budget path to NO_ELIGIBLE_GRAPH ruled out (guide always
+uses static ResourceBudget()/NORMAL).
+
+**Stream matrix:** all 6 types play. Fire: every channel on MEDIA3 incl. 4K HEVC with NO
+macroblocking (historical 4K-AVC bug does not reproduce on AFTKM); ~70 dropped frames/8s on 4K =
+throughput, not corruption. HLS PASS on Fire (media3.exoplayer.hls). Onn: dual-engine recovery
+proven — H264-4K fails LIBMPV watchdog (~3s VIDEO_DECODER_FAILED) then hands off to MEDIA3 and
+plays; HEVC-4K + AC3 go straight to MEDIA3. Emulator: 720p/AC3 pass, 4K slow on software decode
+(expected, mirrors the field "4K render error on sim"). Engine selection is device-adaptive
+(Fire favors MEDIA3; Onn tries LIBMPV first for live).
+
+**One-connection invariant:** Onn max concurrent=1, Fire max=1, emulator transient=2 on a handoff
+(never sustained). **Zap soak:** Onn 56, emulator 51, Fire 50 — all clean, no NO_ELIGIBLE_GRAPH /
+LIVE_RECONNECT_EXHAUSTED. **Background/resume + stability:** all devices clean, zero crashes/ANRs.
+
+**Findings for follow-up (not playback-pipeline regressions):**
+1. **Add-Playlist dialog type row (URL/File/Xtream/Stalker) is D-pad-unreliable** — confirmed on
+   all 3 devices (agents' uiautomator: chips report focusable/clickable=false; taps don't register
+   on Compose-TV). Root cause: `XtreamAddDialog` runs `LaunchedEffect(manualMode, sourceType) {
+   firstFieldFocus.requestFocus() }` which yanks focus into the first text field on open, past the
+   type tiles, and getting focus back up is unreliable. Impact: a remote-only user is stuck on the
+   default Xtream type; on-TV add of M3U/URL or Stalker is broken/finicky (the "Add from phone" QR
+   flow is the workaround). Blocked HLS coverage on Onn/emulator this round (Fire got it via a
+   fought-through URL add). Candidate fix: start focus on the selected type tile, descend into
+   fields. Pre-existing; not from the playback work.
+2. **H264-4K on Onn: ~3s libmpv watchdog before MEDIA3 handoff** — recovers, but a capability
+   pre-check (as HEVC-4K/AC3 apparently have) would remove the visible delay.
+3. **Fire OS suppresses the app's Log.d diagnostics** (`persist.log.tag = I`); the CleanPlaybackDiag
+   stream is invisible until `adb shell setprop log.tag.CleanPlaybackDiag VERBOSE`. Record this for
+   any future Fire debugging (the cert agent diagnosed blind without it).

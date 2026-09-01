@@ -873,7 +873,17 @@ private fun XtreamAddDialog(
     var showRefreshPicker by remember { mutableStateOf(false) }
 
     val firstFieldFocus = remember { FocusRequester() }
-    LaunchedEffect(manualMode, sourceType) { runCatching { firstFieldFocus.requestFocus() } }
+    val sourceTypeFocus = remember { FocusRequester() }
+    // Open the dialog on the source-type row (URL / File / Xtream / Stalker) so a D-pad user can
+    // actually reach every type. Previously focus was forced straight into the first text field,
+    // which stranded the type row above it — a remote user was stuck on whatever type was default.
+    // Only after the user actively picks a type (or toggles Enter details / Paste link) do we drop
+    // focus into the fields so they're ready to type.
+    var sourceTypePicked by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { sourceTypeFocus.requestFocusAfterFrames() }
+    LaunchedEffect(manualMode, sourceType) {
+        if (sourceTypePicked) runCatching { firstFieldFocus.requestFocus() }
+    }
 
     val options = {
         XtreamSettingsViewModel.PlaylistOptions(
@@ -945,7 +955,14 @@ private fun XtreamAddDialog(
                     SourceTypeTile(
                         source = source,
                         selected = sourceType == source.id,
-                        onClick = { if (source.enabled) sourceType = source.id }
+                        // The selected tile carries the requester so the dialog opens focused on it.
+                        focusRequester = if (sourceType == source.id) sourceTypeFocus else null,
+                        onClick = {
+                            if (source.enabled) {
+                                sourceTypePicked = true
+                                sourceType = source.id
+                            }
+                        }
                     )
                 }
             }
@@ -955,9 +972,9 @@ private fun XtreamAddDialog(
                     // Xtream = portal (Server URL) + username + password. Enter details is primary;
                     // Paste link is a secondary convenience.
                     Row(modifier = Modifier.padding(top = NuvioTheme.spacing.xs)) {
-                        SettingsChoiceChip("Enter details", selected = manualMode, onClick = { manualMode = true })
+                        SettingsChoiceChip("Enter details", selected = manualMode, onClick = { sourceTypePicked = true; manualMode = true })
                         Spacer(Modifier.width(NuvioTheme.spacing.sm))
-                        SettingsChoiceChip("Paste link", selected = !manualMode, onClick = { manualMode = false })
+                        SettingsChoiceChip("Paste link", selected = !manualMode, onClick = { sourceTypePicked = true; manualMode = false })
                     }
                     if (manualMode) {
                         // Pasting a full get.php URL into Server URL auto-fills username/password.
@@ -1104,11 +1121,13 @@ private fun FormHelperText(text: String) {
 private fun SourceTypeTile(
     source: PlaylistSource,
     selected: Boolean,
+    focusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     val alpha = if (source.enabled) 1f else 0.4f
     Card(
         onClick = onClick,
+        modifier = focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier,
         colors = CardDefaults.colors(
             containerColor = if (selected) NuvioTheme.colors.FocusRing.copy(alpha = 0.2f) else NuvioTheme.colors.Background,
             focusedContainerColor = if (selected) NuvioTheme.colors.FocusRing.copy(alpha = 0.2f) else NuvioTheme.colors.Background
