@@ -261,7 +261,8 @@ class PlaybackRequirementsResolverTest {
             ),
         )
 
-        val resolved = resolve(input(preferences = preferences))
+        // The buffer preference is a VOD contract: live always runs the low-latency live buffer.
+        val resolved = resolve(input(summary = requestSummary(contentType = ContentType.VOD), preferences = preferences))
 
         assertEquals(customBuffer, resolved.customBuffer)
         assertTrue(resolved.audioDownmixToStereo)
@@ -422,23 +423,28 @@ class PlaybackRequirementsResolverTest {
     }
 
     @Test
-    fun `live fullscreen keeps the low-latency buffer so a guide promote applies in place`() = runTest {
-        // The guide forces LOW_LATENCY_LIVE for zap speed. If fullscreen fell back to the
-        // recommended buffer, every preview->fullscreen promote would rebuild the player just to
-        // resize a buffer. Live keeps the same buffer in both profiles unless the user chose one.
+    fun `live uses the low-latency buffer in every profile so a guide promote applies in place`() = runTest {
+        // The guide forces LOW_LATENCY_LIVE for zap speed. If fullscreen used the buffer
+        // preference instead, every preview->fullscreen promote would rebuild the player just to
+        // resize a buffer. The buffer preference is a VOD setting — and the legacy importer marks
+        // most upgraded devices CUSTOM without the user ever choosing one (field: Onn rebuilt with
+        // changed_fields=BUFFERING,GPU_RENDERING,PROFILE) — so live ignores it in both profiles.
         val fullscreenLive = resolve(input(profile = SessionProfile.FULLSCREEN))
         assertEquals(BufferingPreference.LOW_LATENCY_LIVE, fullscreenLive.buffering)
 
-        val userChosen = resolve(
-            input(
-                profile = SessionProfile.FULLSCREEN,
-                preferences = PlaybackPreferences(buffering = BufferingPreference.BALANCED),
-            ),
+        val legacyCustom = PlaybackPreferences(
+            buffering = BufferingPreference.CUSTOM,
+            customBuffer = CustomBufferPreference(15_000, 45_000, 5_000, 3_000),
         )
-        assertEquals(BufferingPreference.BALANCED, userChosen.buffering)
+        val guide = resolve(input(profile = SessionProfile.GUIDE, preferences = legacyCustom))
+        val fullscreen = resolve(input(profile = SessionProfile.FULLSCREEN, preferences = legacyCustom))
+        assertEquals(BufferingPreference.LOW_LATENCY_LIVE, fullscreen.buffering)
+        assertNull(fullscreen.customBuffer)
+        val diff = PlaybackRequirementsDiffClassifier.classify(guide, fullscreen)
+        assertEquals(diff.changedFields.toString(), ChangeImpact.APPLY_IN_PLACE, diff.impact)
 
-        val vod = resolve(input(summary = requestSummary(contentType = ContentType.VOD)))
-        assertEquals(BufferingPreference.RECOMMENDED, vod.buffering)
+        val vod = resolve(input(summary = requestSummary(contentType = ContentType.VOD), preferences = legacyCustom))
+        assertEquals(BufferingPreference.CUSTOM, vod.buffering)
     }
 
     @Test

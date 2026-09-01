@@ -743,3 +743,16 @@ Fire OS log-tag suppression (setprop to debug).
   layer → never tone-mapped (dark preview on every path). 1.5.9's `MPV_RENDER` tone-mapped in
   software (right colour, choppy). Candidate policy: displays reporting no HDR capability order Media3
   first for live. Decision pending (engine-order change vs the 1.5.8 Exo-freeze history on Fire).
+- **Onn verification of the promote (debug build, real provider) — NOT in place yet, and the new
+  diagnostic said why.** Added `REQUIREMENTS_CHANGE_RESOLVED` (change_impact + changed_fields) and
+  `release_reason` on `RELEASE_BARRIER_STARTED` (e96f01b41; enums only, formatter test). Field capture:
+  `changed_fields=BUFFERING,GPU_RENDERING,PROFILE → REBUILD_CURRENT_GRAPH`, barrier `REBUILD`, mpv
+  `start-file` twice. Cause: `LegacyPlaybackPreferenceImporter.mapBuffer` turns ANY pre-1.5.9
+  `bufferSettings.*` key into `CUSTOM` + a CustomBufferPreference, so most upgraded devices carry
+  CUSTOM without ever choosing a buffer (the user has no buffering setting at all); fullscreen live
+  honoured it while the guide forced LOW_LATENCY_LIVE, and the earlier "keep low-latency when
+  RECOMMENDED" rule never fired. Fix: live uses LOW_LATENCY_LIVE (Media3 2–8 s window, mpv 8 s
+  readahead — what the preview already runs on) in every profile; VOD keeps the user's buffer.
+  Resolver test rewritten to the new contract with a legacy-shaped CUSTOM end-to-end promote diff →
+  APPLY_IN_PLACE. Lesson (again): a layered preference pipeline — test with what production
+  actually feeds (legacy import shapes), not only `PlaybackPreferences.recommended()`.

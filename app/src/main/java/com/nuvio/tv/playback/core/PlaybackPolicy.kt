@@ -443,10 +443,11 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
             requestedAudioOutput
         }
         val pcmProcessingAllowed = effectiveAudioOutput != AudioOutputPreference.PASSTHROUGH
-        // Live keeps the low-latency buffer in every profile unless the user picked one: the
-        // guide->fullscreen promote must not rebuild the player just to resize a buffer.
-        val live = input.requestSummary.contentType == ContentType.LIVE
-        val effectiveBuffering = if (live && (guide || preferences.buffering == BufferingPreference.RECOMMENDED)) {
+        // Live uses the low-latency buffer in every profile. The buffer preference is a VOD
+        // setting, and the legacy importer marks most upgraded devices CUSTOM without the user
+        // ever choosing a buffer; honouring it in fullscreen made every guide->fullscreen promote
+        // rebuild the player just to resize a buffer (field: changed_fields=BUFFERING on the Onn).
+        val effectiveBuffering = if (input.requestSummary.contentType == ContentType.LIVE) {
             BufferingPreference.LOW_LATENCY_LIVE
         } else {
             preferences.buffering
