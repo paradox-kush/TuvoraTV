@@ -764,3 +764,8 @@ Fire OS log-tag suppression (setprop to debug).
   the next zap skipped libmpv. Floor raised to 6 s (Fire 3.8 s / Onn 4.18 s measured; still a bounded
   net for a wedged decoder) and `WATCHDOG_EXPIRED` now carries `high_resolution` so a field log shows
   whether the >1080p budget applied at all (i.e. whether the engine reported the size at tracks time).
+- **Onn verification of 73932878d (6 s high-resolution budget): CLOSED.** Two 4K HEVC tunes on
+  libmpv `MPV_DIRECT`: selection→first frame 4.5 s and 3.0 s, `c2.amlogic.hevc.decoder`, no
+  `WATCHDOG_EXPIRED`, no handoff; both promotes `APPLY_IN_PLACE changed_fields=GPU_RENDERING,PROFILE`,
+  no barrier. Every item from the 1.5.9 field round is now device-verified: fullscreen 4K smooth
+  (direct output), screen held, 4K starts on the first engine, promote seamless.
