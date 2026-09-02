@@ -159,6 +159,7 @@ private fun XtreamAccount.withDecodeDefaults(
     password = password,
     enabled = enabled,
     sourceType = sourceType ?: XtreamAccount.SOURCE_XTREAM,
+    userAgent = userAgent,   // nullable; missing in older JSON -> null, which is the default anyway
     epgUrl = epgUrl,
     dnsProvider = dnsProvider ?: XtreamAccount.DNS_SYSTEM,
     // Missing (pre-playlist-manager JSON) → the 24h default, like a freshly-added playlist;

@@ -2660,6 +2660,7 @@
     <string name="player_error_stream_expired">\n\nThe stream link has expired. Try a different source.</string>
     <string name="player_error_stream_rate_limited">\n\nToo many requests to the stream source. Wait a moment and try again.</string>
     <string name="player_error_stream_unavailable">\n\nThe stream server is currently unavailable. Try a different source.</string>
+    <string name="player_error_stream_provider_firewall">\n\nYour provider\'s firewall blocked this stream. Set a custom User-Agent for this playlist (for example VLC), or ask your provider to allow this device.</string>
     <string name="player_error_source_invalid_content">Source error: The stream source returned invalid or unplayable content. The link may have expired or the server returned an error page instead of video.\n\nTry a different source. [%1$s]</string>
     <string name="player_error_decoder">Decoder error</string>
     <string name="player_error_unsupported_format">This stream uses a format your device may not support. Try a different source. [%1$s]</string>

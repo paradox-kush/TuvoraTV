@@ -852,6 +852,8 @@ private fun XtreamAddDialog(
     var user by remember { mutableStateOf(if (isEditingM3U) "" else initial?.username ?: "") }
     var pass by remember { mutableStateOf(initial?.password ?: "") }
     var name by remember { mutableStateOf(initial?.name ?: "") }
+    // Optional per-playlist stream UA for the Xtream source (M3U keeps its UA in [m3uUserAgent]).
+    var xtreamUserAgent by remember { mutableStateOf(if (isEditingM3U) "" else initial?.userAgent ?: "") }
 
     // M3U URL source fields: the playlist URL lives in baseUrl, the optional User-Agent in username.
     var m3uUrl by remember { mutableStateOf(if (isEditingM3U) initial.baseUrl else "") }
@@ -889,7 +891,9 @@ private fun XtreamAddDialog(
         XtreamSettingsViewModel.PlaylistOptions(
             epgUrl = epgUrl.trim().ifEmpty { null },
             dnsProvider = dnsProvider,
-            autoRefreshHours = autoRefreshHours
+            autoRefreshHours = autoRefreshHours,
+            // Only the Xtream form exposes this field; blank (every other source) => no override.
+            userAgent = xtreamUserAgent.trim().ifEmpty { null }
         )
     }
     val submit = {
@@ -986,6 +990,9 @@ private fun XtreamAddDialog(
                         XtreamField(user, { user = it }, "Username", onSubmit = submit)
                         XtreamField(pass, { pass = it }, "Password", isPassword = true, onSubmit = submit)
                         XtreamField(name, { name = it }, "Name (optional)", onSubmit = submit)
+                        // Only needed when a provider firewall blocks the default UA (HTTP 456) —
+                        // pin a player UA the provider allows, e.g. VLC/3.0.20 LibVLC/3.0.20.
+                        XtreamField(xtreamUserAgent, { xtreamUserAgent = it }, "User-Agent (optional)", onSubmit = submit)
                     } else {
                         XtreamField(url, { url = it }, "http://host:port/get.php?username=…&password=…", firstFieldFocus, onSubmit = submit)
                     }

@@ -243,7 +243,7 @@ class IptvProviderPlaybackResolver internal constructor(
         val mapped = mapper.map(
             NavigationPlaybackInput(
                 url = url,
-                userAgent = account.username.takeIf { account.isM3UBacked() && it.isNotBlank() },
+                userAgent = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.resolve(account),
                 redirectPolicy = RedirectPolicy.FOLLOW,
                 crossHostAuthorization = CrossHostAuthorization.STRIP,
                 tlsPolicy = TlsPolicy.PLATFORM_DEFAULT,

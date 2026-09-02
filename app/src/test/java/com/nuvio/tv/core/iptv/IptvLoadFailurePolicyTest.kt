@@ -31,7 +31,7 @@ class IptvLoadFailurePolicyTest {
 
     @Test
     fun `every blocking status classifies the same way`() {
-        for (status in listOf(403, 419, 429, 451)) {
+        for (status in listOf(403, 419, 429, 451, 456)) {
             assertEquals(
                 "HTTP $status means the edge refused us",
                 IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER,

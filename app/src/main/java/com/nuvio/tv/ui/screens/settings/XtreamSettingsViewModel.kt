@@ -119,7 +119,9 @@ class XtreamSettingsViewModel @Inject constructor(
     data class PlaylistOptions(
         val epgUrl: String? = null,
         val dnsProvider: String = XtreamAccount.DNS_SYSTEM,
-        val autoRefreshHours: Int = XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS
+        val autoRefreshHours: Int = XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS,
+        /** Optional per-playlist stream UA for Xtream/Stalker (M3U keeps its UA in username). */
+        val userAgent: String? = null
     )
 
     /** Stalker portal form fields collected by the Add/Edit Playlist dialog. */
@@ -195,10 +197,13 @@ class XtreamSettingsViewModel @Inject constructor(
     /** Copies the form's shared playlist options onto a parsed/built account before verify+save. */
     private fun XtreamAccount.withOptions(options: PlaylistOptions): XtreamAccount =
         withPlaylistOptions(options.epgUrl, options.dnsProvider, options.autoRefreshHours)
+            // M3U keeps its UA in username, so options.userAgent is null there and this is a no-op;
+            // for Xtream/Stalker it applies the form's per-playlist stream UA.
+            .copy(userAgent = options.userAgent?.trim()?.takeIf { it.isNotEmpty() })
 
     /** The form's shared options as currently persisted on an account (to prefill an edit). */
     private fun XtreamAccount.toOptions(): PlaylistOptions =
-        PlaylistOptions(epgUrl = epgUrl, dnsProvider = dnsProvider, autoRefreshHours = autoRefreshHours)
+        PlaylistOptions(epgUrl = epgUrl, dnsProvider = dnsProvider, autoRefreshHours = autoRefreshHours, userAgent = userAgent)
 
     /** Parse a pasted portal/M3U URL, verify the credentials live, then persist (with form options). */
     fun addFromUrl(input: String, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {

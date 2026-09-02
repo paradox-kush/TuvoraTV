@@ -186,15 +186,20 @@ internal fun PlaybackException.toDisplayMessage(context: android.content.Context
     if (responseException != null) {
         val code = responseException.responseCode
         val statusText = responseException.responseMessage?.takeIf { it.isNotBlank() }
-        val providerHint = when (code) {
-            400 -> context.getString(com.nuvio.tv.R.string.player_error_stream_blocked)
-            401 -> context.getString(com.nuvio.tv.R.string.player_error_stream_expired)
-            403 -> context.getString(com.nuvio.tv.R.string.player_error_stream_blocked)
-            404 -> context.getString(com.nuvio.tv.R.string.player_error_stream_removed)
-            410 -> context.getString(com.nuvio.tv.R.string.player_error_stream_expired)
-            429 -> context.getString(com.nuvio.tv.R.string.player_error_stream_rate_limited)
-            500, 502, 503, 504 -> context.getString(com.nuvio.tv.R.string.player_error_stream_unavailable)
-            else -> ""
+        val providerHint = when (com.nuvio.tv.core.iptv.StreamHttpStatusPolicy.hint(code)) {
+            com.nuvio.tv.core.iptv.StreamHttpStatusHint.BLOCKED ->
+                context.getString(com.nuvio.tv.R.string.player_error_stream_blocked)
+            com.nuvio.tv.core.iptv.StreamHttpStatusHint.EXPIRED ->
+                context.getString(com.nuvio.tv.R.string.player_error_stream_expired)
+            com.nuvio.tv.core.iptv.StreamHttpStatusHint.REMOVED ->
+                context.getString(com.nuvio.tv.R.string.player_error_stream_removed)
+            com.nuvio.tv.core.iptv.StreamHttpStatusHint.RATE_LIMITED ->
+                context.getString(com.nuvio.tv.R.string.player_error_stream_rate_limited)
+            com.nuvio.tv.core.iptv.StreamHttpStatusHint.UNAVAILABLE ->
+                context.getString(com.nuvio.tv.R.string.player_error_stream_unavailable)
+            com.nuvio.tv.core.iptv.StreamHttpStatusHint.PROVIDER_FIREWALL ->
+                context.getString(com.nuvio.tv.R.string.player_error_stream_provider_firewall)
+            com.nuvio.tv.core.iptv.StreamHttpStatusHint.NONE -> ""
         }
         return buildString {
             append("HTTP $code")

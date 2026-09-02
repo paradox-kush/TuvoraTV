@@ -95,11 +95,12 @@ object IptvLoadFailurePolicy {
      *
      * 403 is Cloudflare's block page (measured live against a real provider: a couple of dozen
      * ordinary MAG requests earned one), 429 is a plain rate limit, 419 is the non-standard code
-     * some panels return for the same thing, and 451 is a filtering block. Deliberately narrow —
-     * a 404 means the portal URL is wrong and a 5xx means the origin really is unwell, and
-     * dressing either of those up as "you are blocked" would send the viewer somewhere useless.
+     * some panels return for the same thing, 451 is a filtering block, and 456 is the body-less
+     * anti-bot refusal seen live on a Cloudflare-fronted panel (same family, different vendor code).
+     * Deliberately narrow — a 404 means the portal URL is wrong and a 5xx means the origin really is
+     * unwell, and dressing either of those up as "you are blocked" would send the viewer nowhere useful.
      */
-    private val BLOCKING_STATUSES = setOf(403, 419, 429, 451)
+    private val BLOCKING_STATUSES = setOf(403, 419, 429, 451, 456)
 
     private const val UNKNOWN_REASON = "unknown error"
 }

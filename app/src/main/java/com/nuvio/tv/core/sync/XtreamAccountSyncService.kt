@@ -228,7 +228,8 @@ internal fun SupabaseIptvPlaylist.toXtreamAccountOrNull(): XtreamAccount? {
                 username = user,
                 password = pass,
                 enabled = enabled,
-                sourceType = XtreamAccount.SOURCE_XTREAM
+                sourceType = XtreamAccount.SOURCE_XTREAM,
+                userAgent = userAgent?.takeIf { it.isNotBlank() }   // canonical `user_agent` column
             )
         }
         WIRE_M3U_URL, XtreamAccount.SOURCE_URL -> {
@@ -363,6 +364,10 @@ internal fun playlistPushJson(acc: XtreamAccount, sortOrder: Int): JsonObject = 
     put("username", acc.username)
     put("password", acc.password)
     when (acc.sourceType) {
+        XtreamAccount.SOURCE_XTREAM -> {
+            // Optional per-playlist stream UA (base_url/username/password already put above).
+            acc.userAgent?.takeIf { it.isNotBlank() }?.let { put("user_agent", it) }
+        }
         XtreamAccount.SOURCE_URL -> {
             put("url", acc.baseUrl)                                    // the playlist URL IS the base
             acc.username.takeIf { it.isNotBlank() }?.let { put("user_agent", it) }   // UA lives in username

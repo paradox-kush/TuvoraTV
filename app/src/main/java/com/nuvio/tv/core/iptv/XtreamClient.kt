@@ -60,6 +60,14 @@ data class XtreamAccount(
     val password: String,
     val enabled: Boolean = true,
     val sourceType: String = SOURCE_XTREAM,
+    /**
+     * Optional per-playlist stream User-Agent for Xtream/Stalker sources (M3U URL/file playlists
+     * keep theirs in [username]). Null = send the engine default. Resolved for playback by
+     * [StreamUserAgentPolicy]; a shared option (not part of [sameConnectionAs]) so it can be edited
+     * to un-block a provider whose WAF is refusing the default UA without a re-verify. Additive +
+     * defaulted so previously-persisted JSON loads unchanged (see XtreamAccountStore's normalizer).
+     */
+    val userAgent: String? = null,
     val epgUrl: String? = null,
     val dnsProvider: String = DNS_SYSTEM,
     val autoRefreshHours: Int = DEFAULT_AUTO_REFRESH_HOURS,   // 0 = off; 24 = default
