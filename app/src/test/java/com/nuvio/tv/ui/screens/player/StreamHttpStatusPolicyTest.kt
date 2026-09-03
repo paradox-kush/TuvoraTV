@@ -1,4 +1,4 @@
-package com.nuvio.tv.core.iptv
+package com.nuvio.tv.ui.screens.player
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

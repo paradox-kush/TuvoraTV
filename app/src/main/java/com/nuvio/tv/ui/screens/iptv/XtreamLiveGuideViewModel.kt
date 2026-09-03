@@ -393,9 +393,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // + loadingChannels spinner flash on revisit. (FAVORITES/RECENT stay dynamic — not cached here.)
         if (category.special == null || category.special == GuideSpecial.ALL) {
             channelsCache["${acc.id}|${categoryId}"]?.let { cached ->
-                if (!publishPlaybackLineup(acc.id, token, cached)) return
-                _uiState.update { it.copy(selectedCategoryId = categoryId, channels = cached, loadingChannels = false, error = null, focusedChannelId = cached.firstOrNull()?.contentId) }
-                if (isCurrentAccount(token)) primeEpgFor(cached)
+                val shown = withOverlay(acc.id, cached)
+                if (!publishPlaybackLineup(acc.id, token, shown)) return
+                _uiState.update { it.copy(selectedCategoryId = categoryId, channels = shown, loadingChannels = false, error = null, focusedChannelId = shown.firstOrNull()?.contentId) }
+                if (isCurrentAccount(token)) primeEpgFor(shown)
                 return
             }
         }
@@ -403,7 +404,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         channelsJob = viewModelScope.launch {
             // null = the panel request FAILED (these panels throw transient 403/500s and
             // rate-limit bursts) — retry once, then surface an error instead of faking "empty".
-            val channels: List<GuideChannel>? = when (category.special) {
+            val rawChannels: List<GuideChannel>? = when (category.special) {
                 GuideSpecial.FAVORITES -> favoriteChannels(acc)
                 // Scoped to THIS account: the store keeps one flat profile-wide list (favorites
                 // and recents across every playlist), and these rails live inside a provider's
@@ -419,7 +420,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 null -> retryOnce { fetchChannels(acc, category.id) }
             }
             if (!isCurrentAccount(token)) return@launch
-            if (channels == null) {
+            if (rawChannels == null) {
                 _uiState.update {
                     it.copy(loadingChannels = false, error = "Provider error loading \"${category.name}\" — re-select to retry")
                 }
@@ -427,12 +428,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
             }
             // Cache network-backed lists so revisiting the category is instant. Never cache an
             // empty list: a transient panel failure must not pin a category empty all session.
-            if ((category.special == null || category.special == GuideSpecial.ALL) && channels.isNotEmpty()) {
-                channelsCache["${acc.id}|${category.id}"] = channels
+            if ((category.special == null || category.special == GuideSpecial.ALL) && rawChannels.isNotEmpty()) {
+                channelsCache["${acc.id}|${category.id}"] = rawChannels
             }
+            // Apply the personalization overlay (hide/pin/reorder) BEFORE publishing, so the playback
+            // lineup and the guide agree and EPG is primed only for what's shown.
+            val channels = withOverlay(acc.id, rawChannels)
             if (!publishPlaybackLineup(acc.id, token, channels)) return@launch
-            val shown = withOverlay(acc.id, channels)
-            _uiState.update { it.copy(channels = shown, loadingChannels = false, focusedChannelId = shown.firstOrNull()?.contentId) }
+            _uiState.update { it.copy(channels = channels, loadingChannels = false, focusedChannelId = channels.firstOrNull()?.contentId) }
             if (isCurrentAccount(token)) primeEpgFor(channels)
         }
     }

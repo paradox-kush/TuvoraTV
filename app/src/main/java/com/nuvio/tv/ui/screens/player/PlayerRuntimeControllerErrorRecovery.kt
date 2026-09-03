@@ -186,20 +186,20 @@ internal fun PlaybackException.toDisplayMessage(context: android.content.Context
     if (responseException != null) {
         val code = responseException.responseCode
         val statusText = responseException.responseMessage?.takeIf { it.isNotBlank() }
-        val providerHint = when (com.nuvio.tv.core.iptv.StreamHttpStatusPolicy.hint(code)) {
-            com.nuvio.tv.core.iptv.StreamHttpStatusHint.BLOCKED ->
+        val providerHint = when (StreamHttpStatusPolicy.hint(code)) {
+            StreamHttpStatusHint.BLOCKED ->
                 context.getString(com.nuvio.tv.R.string.player_error_stream_blocked)
-            com.nuvio.tv.core.iptv.StreamHttpStatusHint.EXPIRED ->
+            StreamHttpStatusHint.EXPIRED ->
                 context.getString(com.nuvio.tv.R.string.player_error_stream_expired)
-            com.nuvio.tv.core.iptv.StreamHttpStatusHint.REMOVED ->
+            StreamHttpStatusHint.REMOVED ->
                 context.getString(com.nuvio.tv.R.string.player_error_stream_removed)
-            com.nuvio.tv.core.iptv.StreamHttpStatusHint.RATE_LIMITED ->
+            StreamHttpStatusHint.RATE_LIMITED ->
                 context.getString(com.nuvio.tv.R.string.player_error_stream_rate_limited)
-            com.nuvio.tv.core.iptv.StreamHttpStatusHint.UNAVAILABLE ->
+            StreamHttpStatusHint.UNAVAILABLE ->
                 context.getString(com.nuvio.tv.R.string.player_error_stream_unavailable)
-            com.nuvio.tv.core.iptv.StreamHttpStatusHint.PROVIDER_FIREWALL ->
+            StreamHttpStatusHint.PROVIDER_FIREWALL ->
                 context.getString(com.nuvio.tv.R.string.player_error_stream_provider_firewall)
-            com.nuvio.tv.core.iptv.StreamHttpStatusHint.NONE -> ""
+            StreamHttpStatusHint.NONE -> ""
         }
         return buildString {
             append("HTTP $code")

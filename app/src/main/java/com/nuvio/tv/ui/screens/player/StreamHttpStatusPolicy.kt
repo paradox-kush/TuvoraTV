@@ -1,4 +1,4 @@
-package com.nuvio.tv.core.iptv
+package com.nuvio.tv.ui.screens.player
 
 /** A viewer-facing hint for a non-2xx status the *player* got while fetching a stream. */
 enum class StreamHttpStatusHint {
@@ -24,7 +24,7 @@ enum class StreamHttpStatusHint {
      * A provider firewall / anti-bot edge turned the stream request away with a non-standard,
      * usually body-less code (456 seen live on a Cloudflare-fronted panel). Distinct from [BLOCKED]
      * because the remedy is specific and actionable: pin an honest IPTV-client User-Agent on the
-     * playlist (see [StreamUserAgentPolicy]) rather than "try a different source".
+     * playlist (see StreamUserAgentPolicy) rather than "try a different source".
      */
     PROVIDER_FIREWALL,
 }
@@ -33,7 +33,7 @@ enum class StreamHttpStatusHint {
  * Maps the HTTP status the *stream* fetch received to a [StreamHttpStatusHint]. Pure and
  * Context-free so it unit-tests without Android; the player controller owns the string resources.
  *
- * Sibling of [IptvLoadFailurePolicy], which classifies *catalog/portal-load* failures — this one is
+ * Sibling of IptvLoadFailurePolicy, which classifies *catalog/portal-load* failures — this one is
  * for the media fetch (ExoPlayer's `ERROR_CODE_IO_BAD_HTTP_STATUS`). 456 lands here as
  * [StreamHttpStatusHint.PROVIDER_FIREWALL] instead of falling through to a raw, unexplained code.
  */
