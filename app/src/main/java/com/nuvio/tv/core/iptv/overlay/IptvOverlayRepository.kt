@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.iptv.overlay
 
+import android.util.Log
 import com.nuvio.tv.core.profile.ProfileManager
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.rpc
@@ -41,14 +42,19 @@ class IptvOverlayRepository @Inject constructor(
     private fun profile() = profileManager.activeProfileId.value
     private fun now() = System.currentTimeMillis()
 
-    fun ensureLoaded() {
-        scope.launch { _uiState.value = db.snapshot(profile()) }
-    }
+    // The personalization overlay is an OPTIONAL layer: if its DB read, sync, or apply fails, the guide
+    // must still render (unfiltered) — never crash. Every fire-and-forget op runs through here so a
+    // throw can't reach the scope's uncaught handler and kill the app (that was the v1.6.0 crash: an
+    // unguarded ensureLoaded()/db.snapshot() closed the app the moment the user opened IPTV).
+    private fun launchSafely(what: String, block: suspend () -> Unit) =
+        scope.launch { runCatching { block() }.onFailure { Log.w("IptvOverlay", "overlay $what failed: ${it.message}", it) } }
+
+    fun ensureLoaded() = launchSafely("ensureLoaded") { _uiState.value = db.snapshot(profile()) }
 
     fun toggleChannelHidden(entityId: String, playlistId: String?) {
         val p = profile()
         val cur = _uiState.value.channels[entityId] ?: ChannelOverlay()
-        scope.launch {
+        launchSafely("toggleChannelHidden") {
             db.setChannel(p, entityId, playlistId, cur.copy(hidden = !cur.hidden), now())
             _uiState.value = db.snapshot(p)
             push(p)
@@ -58,7 +64,7 @@ class IptvOverlayRepository @Inject constructor(
     fun setChannelPinned(entityId: String, playlistId: String?, pinned: Boolean) {
         val p = profile()
         val cur = _uiState.value.channels[entityId] ?: ChannelOverlay()
-        scope.launch {
+        launchSafely("setChannelPinned") {
             db.setChannel(p, entityId, playlistId, cur.copy(pinned = pinned), now())
             _uiState.value = db.snapshot(p)
             push(p)

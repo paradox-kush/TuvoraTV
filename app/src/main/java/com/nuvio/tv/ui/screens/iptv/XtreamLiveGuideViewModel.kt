@@ -248,12 +248,22 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** Hidden dropped, pinned/reordered, renamed via the shared policy. Degrades to [channels] on any error. */
     private fun withOverlay(accountId: String?, channels: List<GuideChannel>): List<GuideChannel> {
         lastRawChannels = channels; lastOverlayAccountId = accountId
-        val overlay = try { overlayRepository.uiState.value.channels } catch (e: Throwable) { return channels }
-        if (overlay.isEmpty()) return channels
-        val tagged = channels.mapIndexed { i, c -> com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.Tagged(c.entityId, i, c) }
-        return com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.displayed(
-            tagged, overlay, honorOrder = true, withName = { row, newName -> row.copy(name = newName) },
-        )
+        // The overlay is optional — any failure applying it must fall back to the unfiltered guide,
+        // never crash. (Whole body guarded, not just the read.)
+        return try {
+            val overlay = overlayRepository.uiState.value.channels
+            if (overlay.isEmpty()) {
+                channels
+            } else {
+                val tagged = channels.mapIndexed { i, c -> com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.Tagged(c.entityId, i, c) }
+                com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.displayed(
+                    tagged, overlay, honorOrder = true, withName = { row, newName -> row.copy(name = newName) },
+                )
+            }
+        } catch (e: Throwable) {
+            android.util.Log.w("IptvOverlay", "withOverlay failed: ${e.message}", e)
+            channels
+        }
     }
 
     /** D-pad "hide"/"unhide" this channel — writes the overlay (local + synced to the web/other devices). */
