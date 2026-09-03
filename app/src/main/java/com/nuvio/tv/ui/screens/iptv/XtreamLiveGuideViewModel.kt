@@ -186,6 +186,16 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(LiveGuideUiState())
     val uiState: StateFlow<LiveGuideUiState> = _uiState.asStateFlow()
 
+    // Personalization overlay: the last unfiltered channel list + account, so a hide/pin edit (D-pad or
+    // synced from the web) re-applies live without a re-fetch. DECLARED BEFORE init on purpose:
+    // viewModelScope dispatches on Dispatchers.Main.immediate and a StateFlow replays its current value
+    // to a new collector INLINE, so the init-block overlay collector observes that first emission during
+    // construction. If these were declared after init they'd still be JVM-null at that moment and
+    // `lastRawChannels.isNotEmpty()` would NPE, killing the app the instant IPTV opens (the v1.6.0/1.6.1
+    // "when I go to IPTV it just closes" crash).
+    private var lastRawChannels: List<GuideChannel> = emptyList()
+    private var lastOverlayAccountId: String? = null
+
     init {
         overlayRepository.ensureLoaded()
         overlayRepository.pull()
@@ -238,13 +248,6 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> full list
     private val channelsCache = mutableMapOf<String, List<GuideChannel>>()      // "accountId|categoryId"
 
-    /** Called by the screen when the hub's selected account changes (or its options change —
-     *  category selections filter the guide's category column at display time). */
-    // Personalization overlay: the last unfiltered channel list + account, so a hide/pin edit (D-pad or
-    // synced from the web) re-applies live without a re-fetch.
-    private var lastRawChannels: List<GuideChannel> = emptyList()
-    private var lastOverlayAccountId: String? = null
-
     /** Hidden dropped, pinned/reordered, renamed via the shared policy. Degrades to [channels] on any error. */
     private fun withOverlay(accountId: String?, channels: List<GuideChannel>): List<GuideChannel> {
         lastRawChannels = channels; lastOverlayAccountId = accountId
@@ -272,6 +275,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
         overlayRepository.toggleChannelHidden(channel.entityId, acc)
     }
 
+    /** Called by the screen when the hub's selected account changes (or its options change —
+     *  category selections filter the guide's category column at display time). */
     fun setAccount(acc: XtreamAccount) {
         if (acc == account) return
         val sameAccount = acc.id == account?.id
