@@ -102,7 +102,14 @@ class StreamRepositoryImpl @Inject constructor(
         val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == parsed.accountId } ?: return null
         val client = iptvClientFactory.clientFor(account)
         return when (parsed.kind) {
-            "live" -> client.resolveStreamUrl(account, "live", parsed.streamId.toIntOrNull() ?: return null, forceFresh)
+            "live" -> {
+                // The saved sid is a hint, not the truth: bind the channel's identity to whatever
+                // sid the CURRENT catalog gives it (panels renumber — commit 9c7248641). Falls back to
+                // the saved sid only when this device has never indexed the playlist.
+                val saved = parsed.streamId.toIntOrNull() ?: return null
+                val current = xtreamStreamSource.currentLiveSid(account, saved) ?: saved
+                client.resolveStreamUrl(account, "live", current, forceFresh)
+            }
             "vod" -> client.resolveStreamUrl(account, "movie", parsed.streamId.toIntOrNull() ?: return null, forceFresh)
             "episode" -> {
                 // Stalker episode ids encode "seriesId:season:episodeNum" as the streamId segment.

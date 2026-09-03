@@ -53,7 +53,9 @@ data class GuideChannel(
     /** The panel's channel-level `tv_archive` flag — the ⟲ beside the channel name. */
     val hasArchive: Boolean = false,
     /** `tv_archive_duration` in days; 0 = the panel did not say (see XtreamCatchUp.isWithinWindow). */
-    val catchUpDays: Int = 0
+    val catchUpDays: Int = 0,
+    /** The channel's durable canon-v1 identity — the key the personalization overlay + D-pad toggle use. */
+    val entityId: String = ""
 )
 
 internal object GuideRapidZapPolicy {
@@ -164,6 +166,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val catchUp: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
+    private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
 ) : ViewModel() {
 
     /**
@@ -184,6 +187,16 @@ class XtreamLiveGuideViewModel @Inject constructor(
     val uiState: StateFlow<LiveGuideUiState> = _uiState.asStateFlow()
 
     init {
+        overlayRepository.ensureLoaded()
+        overlayRepository.pull()
+        viewModelScope.launch {
+            overlayRepository.uiState.collect {
+                if (lastRawChannels.isNotEmpty()) {
+                    val shown = withOverlay(lastOverlayAccountId, lastRawChannels)
+                    _uiState.update { st -> st.copy(channels = shown) }
+                }
+            }
+        }
         // Warm the canonical-EPG mirror (12h TTL, no-op when fresh) — it backs the guide's
         // now/next whenever the panel's own EPG is missing.
         //
@@ -227,6 +240,28 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     /** Called by the screen when the hub's selected account changes (or its options change —
      *  category selections filter the guide's category column at display time). */
+    // Personalization overlay: the last unfiltered channel list + account, so a hide/pin edit (D-pad or
+    // synced from the web) re-applies live without a re-fetch.
+    private var lastRawChannels: List<GuideChannel> = emptyList()
+    private var lastOverlayAccountId: String? = null
+
+    /** Hidden dropped, pinned/reordered, renamed via the shared policy. Degrades to [channels] on any error. */
+    private fun withOverlay(accountId: String?, channels: List<GuideChannel>): List<GuideChannel> {
+        lastRawChannels = channels; lastOverlayAccountId = accountId
+        val overlay = try { overlayRepository.uiState.value.channels } catch (e: Throwable) { return channels }
+        if (overlay.isEmpty()) return channels
+        val tagged = channels.mapIndexed { i, c -> com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.Tagged(c.entityId, i, c) }
+        return com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.displayed(
+            tagged, overlay, honorOrder = true, withName = { row, newName -> row.copy(name = newName) },
+        )
+    }
+
+    /** D-pad "hide"/"unhide" this channel — writes the overlay (local + synced to the web/other devices). */
+    fun toggleChannelHidden(channel: GuideChannel) {
+        val acc = com.nuvio.tv.core.iptv.XtreamItemRegistry.parseId(channel.contentId)?.accountId ?: lastOverlayAccountId
+        overlayRepository.toggleChannelHidden(channel.entityId, acc)
+    }
+
     fun setAccount(acc: XtreamAccount) {
         if (acc == account) return
         val sameAccount = acc.id == account?.id
@@ -396,7 +431,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 channelsCache["${acc.id}|${category.id}"] = channels
             }
             if (!publishPlaybackLineup(acc.id, token, channels)) return@launch
-            _uiState.update { it.copy(channels = channels, loadingChannels = false, focusedChannelId = channels.firstOrNull()?.contentId) }
+            val shown = withOverlay(acc.id, channels)
+            _uiState.update { it.copy(channels = shown, loadingChannels = false, focusedChannelId = shown.firstOrNull()?.contentId) }
             if (isCurrentAccount(token)) primeEpgFor(channels)
         }
     }
@@ -604,7 +640,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 GuideChannel(
                     contentId = id, name = ch.name, logo = ch.logo, streamUrl = ch.streamUrl,
                     streamId = ch.streamId, categoryId = ch.categoryId,
-                    hasArchive = ch.hasArchive, catchUpDays = ch.catchUpDays
+                    hasArchive = ch.hasArchive, catchUpDays = ch.catchUpDays,
+                    entityId = com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(acc.id, ch.name, ch.epgChannelId)
                 )
             }
         }

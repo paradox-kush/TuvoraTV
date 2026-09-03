@@ -288,7 +288,7 @@ fun LiveGuide(
                 val handled = when (event.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
                     Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause,
-                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> true
+                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight, Key.Menu -> true
                     else -> false
                 }
                 if (!handled) return@onPreviewKeyEvent false
@@ -297,6 +297,8 @@ fun LiveGuide(
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> togglePause()
                         Key.MediaPlay -> if (playbackUi?.isPaused == true) togglePause() else showControls()
                         Key.MediaPause -> if (playbackUi?.isPaused != true) togglePause() else showControls()
+                        // MENU on the aimed channel toggles hide (personalization overlay; syncs to web + other devices).
+                        Key.Menu -> uiState.focusedChannel?.let { viewModel.toggleChannelHidden(it) }
                         // The live-TV remote split: UP/DOWN are the channel keys. Every press
                         // surfaces the overlay naming the AIMED channel immediately (each press
                         // restarts the 4s auto-hide), so a settled zap is never a blind walk.

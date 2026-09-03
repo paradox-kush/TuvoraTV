@@ -123,6 +123,34 @@ class CleanLivePlayerUiPolicyTest {
     }
 
     @Test
+    fun `controls auto-hide while playing but stay up when paused or retryable`() {
+        // Regression: the clean player drew its chrome unconditionally, so after launching a
+        // channel from the Sports feed the controls never left the screen. A plain playing state
+        // must now permit auto-hide.
+        assertTrue(
+            "playing with no error should auto-hide",
+            CleanLivePlayerUiPolicy.controlsMayAutoHide(
+                state(controlsEnabled = true, playWhenReady = true, isPlaying = true),
+                retryEnabled = false,
+            ),
+        )
+        assertFalse(
+            "paused keeps controls up",
+            CleanLivePlayerUiPolicy.controlsMayAutoHide(
+                state(controlsEnabled = true, playWhenReady = false),
+                retryEnabled = false,
+            ),
+        )
+        assertFalse(
+            "an actionable retry keeps controls up even under play intent",
+            CleanLivePlayerUiPolicy.controlsMayAutoHide(
+                state(controlsEnabled = true, playWhenReady = true),
+                retryEnabled = true,
+            ),
+        )
+    }
+
+    @Test
     fun `enabled up and down dispatch zap while disabled keys remain unconsumed`() {
         val enabled = state(controlsEnabled = true)
         assertEquals(

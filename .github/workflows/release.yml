@@ -143,7 +143,22 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist
-          cp "$(find app/build/outputs/apk/full/release -name '*.apk' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}.apk"
+          # Primary sideload asset — the arm-only UNIVERSAL APK, selected by EXACT name.
+          # tuvora.co/tv and the aftv.news Downloader code both point at this exact filename
+          # (see the pointer step below), so it must install on every real Android TV device:
+          # arm64-v8a AND 32-bit armeabi-v7a (e.g. the Onn 4K). The universal carries both.
+          # NEVER select with `find ... | head -1`: with ABI splits enabled that returns a
+          # non-deterministic per-ABI APK and could ship an ARM-incompatible (x86_64) build to
+          # every real TV — "App not installed" for all of them.
+          cp "app/build/outputs/apk/full/release/app-full-universal-release.apk" \
+            "dist/Tuvora-TV-${{ steps.ver.outputs.version }}.apk"
+          # Smaller per-ABI alternates (~72 MB vs the universal's ~130 MB) for users who know
+          # their device. Linked from the release notes; the Downloader code stays on the
+          # universal so a wrong pick can never brick the one-tap install.
+          cp "app/build/outputs/apk/full/release/app-full-arm64-v8a-release.apk" \
+            "dist/Tuvora-TV-${{ steps.ver.outputs.version }}-arm64-v8a.apk"
+          cp "app/build/outputs/apk/full/release/app-full-armeabi-v7a-release.apk" \
+            "dist/Tuvora-TV-${{ steps.ver.outputs.version }}-armeabi-v7a.apk"
           cp "$(find app/build/outputs/bundle/fullRelease -name '*.aab' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}.aab"
           cp "$(find app/build/outputs/bundle/playstoreRelease -name '*.aab' | head -1)" "dist/Tuvora-TV-${{ steps.ver.outputs.version }}-playstore.aab"
           ls -la dist

@@ -37,6 +37,28 @@ fun m3uAccountFromUrl(playlistUrl: String, userAgent: String? = null, name: Stri
 }
 
 /**
+ * The Xtream panel behind an M3U-URL paste, when the URL is the panel's own `get.php` export or its
+ * `player_api.php` root carrying `username` + `password`; null for any other URL (a plain `.m3u` is
+ * not a panel). The M3U lane hard-codes every channel as no-archive, so saving such a paste as an
+ * M3U playlist silently strips catch-up from a perfectly good account — the ADD flow consults this
+ * first. Twin of NuvioMobile's recogniseXtreamPanelInM3uField.
+ *
+ * Deliberately NOT folded into [m3uAccountFromUrl]: that builder also runs on EDIT, pairing and
+ * sync, where an existing `m3u:…` playlist must keep its identity — re-keying it would orphan every
+ * favourite and progress entry saved under the old id. Recognition is an add-time offer only.
+ */
+fun xtreamPanelInM3uUrl(playlistUrl: String, userAgent: String? = null, name: String? = null): XtreamAccount? {
+    val raw = playlistUrl.trim()
+    if (raw.isEmpty()) return null
+    val withScheme = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
+    val url = withScheme.toHttpUrlOrNull() ?: return null
+    val path = url.encodedPath.lowercase()
+    if (!(path.endsWith("/get.php") || path.endsWith("/player_api.php"))) return null
+    val parsed = parseXtreamAccount(withScheme, name) ?: return null
+    return parsed.copy(userAgent = userAgent?.trim()?.takeIf { it.isNotEmpty() })
+}
+
+/**
  * Builds an [XtreamAccount] for an **M3U FILE** playlist (sourceType = [XtreamAccount.SOURCE_FILE]).
  * The picked file is copied into app storage (see M3UFileStore) so the original can disappear; the
  * account only carries a stable [playlistId] and the [fileName] for display + re-import prompts.

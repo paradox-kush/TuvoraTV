@@ -31,8 +31,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -58,6 +61,10 @@ import com.nuvio.tv.playback.ui.LivePlaybackUiErrorCode
 import com.nuvio.tv.playback.ui.LivePlaybackUiState
 import com.nuvio.tv.playback.ui.LivePlaybackUiStatusCode
 import com.nuvio.tv.updater.ImmersivePlaybackGate
+import kotlinx.coroutines.delay
+
+/** Idle delay before the overlay chrome fades away over live video, matching the live guide's 4s. */
+private const val CLEAN_LIVE_CONTROLS_AUTO_HIDE_MS = 4_000L
 
 /**
  * Engine-neutral fullscreen live UI. The future route owns session construction and release.
@@ -80,6 +87,26 @@ internal fun CleanLivePlayerScreen(
     val chrome = CleanLivePlayerUiPolicy.present(uiState)
     val latestSurfaceOwnerReady by rememberUpdatedState(onSurfaceOwnerReady)
 
+    // The overlay chrome starts shown so the viewer sees what's playing, then auto-hides over the
+    // video — the behaviour the live guide has always had but the clean player was missing, which
+    // left the controls stuck on screen after launching from the Sports feed. Any remote key
+    // reveals it again and re-arms the idle timer.
+    var controlsVisible by remember { mutableStateOf(true) }
+    var revealTick by remember { mutableIntStateOf(0) }
+    val rootFocus = remember { FocusRequester() }
+
+    LaunchedEffect(revealTick, controlsVisible, uiState.playWhenReady, chrome.retryEnabled) {
+        if (controlsVisible && CleanLivePlayerUiPolicy.controlsMayAutoHide(uiState, chrome.retryEnabled)) {
+            delay(CLEAN_LIVE_CONTROLS_AUTO_HIDE_MS)
+            controlsVisible = false
+        }
+    }
+    // When the chrome hides, its focusable buttons leave composition; grab focus back to the root
+    // so the next key press still reaches the handler that reveals the controls.
+    LaunchedEffect(controlsVisible) {
+        if (!controlsVisible) runCatching { rootFocus.requestFocus() }
+    }
+
     DisposableEffect(Unit) {
         ImmersivePlaybackGate.setImmersive(true)
         onDispose { ImmersivePlaybackGate.setImmersive(false) }
@@ -90,8 +117,13 @@ internal fun CleanLivePlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(rootFocus)
             .focusable()
             .onPreviewKeyEvent { event ->
+                if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                    controlsVisible = true
+                    revealTick++
+                }
                 val action = CleanLivePlayerUiPolicy.remoteAction(
                     keyCode = event.nativeKeyEvent.keyCode,
                     keyAction = event.nativeKeyEvent.action,
@@ -124,6 +156,7 @@ internal fun CleanLivePlayerScreen(
             sanitizedStation = sanitizedStation,
             uiState = uiState,
             chrome = chrome,
+            controlsVisible = controlsVisible,
             onPause = onPause,
             onResume = onResume,
             onRetry = onRetry,
@@ -141,6 +174,7 @@ private fun CleanLivePlayerChrome(
     sanitizedStation: String?,
     uiState: LivePlaybackUiState,
     chrome: CleanLivePlayerChromeState,
+    controlsVisible: Boolean,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
@@ -152,7 +186,9 @@ private fun CleanLivePlayerChrome(
     val retryFocus = remember { FocusRequester() }
     val exitFocus = remember { FocusRequester() }
 
-    LaunchedEffect(uiState.controlsEnabled, chrome.retryEnabled) {
+    // Re-focus a control each time the overlay reappears; when hidden its buttons aren't composed.
+    LaunchedEffect(controlsVisible, uiState.controlsEnabled, chrome.retryEnabled) {
+        if (!controlsVisible) return@LaunchedEffect
         runCatching {
             when {
                 uiState.controlsEnabled -> playPauseFocus.requestFocus()
@@ -163,6 +199,18 @@ private fun CleanLivePlayerChrome(
     }
 
     Box(Modifier.fillMaxSize()) {
+        // The spinner is playback feedback, not a control — it stays regardless of the overlay.
+        if (uiState.spinnerVisible) {
+            CircularProgressIndicator(
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(44.dp),
+            )
+        }
+
+        if (!controlsVisible) return@Box
+
         Box(
             Modifier
                 .fillMaxWidth()
@@ -194,15 +242,6 @@ private fun CleanLivePlayerChrome(
                 .align(Alignment.TopStart)
                 .padding(horizontal = 48.dp, vertical = 32.dp),
         )
-
-        if (uiState.spinnerVisible) {
-            CircularProgressIndicator(
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(44.dp),
-            )
-        }
 
         Column(
             modifier = Modifier
@@ -365,6 +404,16 @@ internal object CleanLivePlayerUiPolicy {
             messageIsError = error != null,
         )
     }
+
+    /**
+     * Whether the overlay chrome may auto-hide after the idle delay. It hides only while playback
+     * is proceeding under the user's play intent with nothing to act on; a paused stream or an
+     * actionable (retryable) error keeps the controls up so the buttons stay reachable. This is the
+     * decision the Sports/clean-player path was missing entirely — its chrome was drawn
+     * unconditionally, so the controls never went away over the video.
+     */
+    fun controlsMayAutoHide(uiState: LivePlaybackUiState, retryEnabled: Boolean): Boolean =
+        uiState.playWhenReady && !retryEnabled
 
     /** UP/DOWN are consumed by the screen only when an enabled zap is actually dispatched. */
     fun remoteAction(

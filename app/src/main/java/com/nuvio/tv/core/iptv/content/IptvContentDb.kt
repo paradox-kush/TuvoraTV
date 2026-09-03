@@ -41,7 +41,11 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     // per-(playlist, channel) fetch-stamp table, and the Xtream channel flags. This helper
     // rebuilds on upgrade (everything here is a re-ingestable cache), so the bump IS the
     // migration and onCreate always carries the current schema.
-    private val helper = object : SQLiteOpenHelper(context, "iptv_content.db", null, 4) {
+    // v5 (Overlay Build Spec v1.3.3 §5, the generation swap): every catalog table gains a
+    // `generation` column in its primary key, so a refresh builds generation N+1 BESIDE the one
+    // still being served and flips in one transaction (IngestWriter.finish). A crash before the
+    // flip leaves the previous, complete catalog serving — the old clear-first ingest left it empty.
+    private val helper = object : SQLiteOpenHelper(context, "iptv_content.db", null, 5) {
         override fun onConfigure(db: SQLiteDatabase) {
             // WAL: browse/guide reads keep serving while a background ingest writes — the
             // default journal mode blocks every reader for the duration of each write
@@ -52,18 +56,19 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         }
 
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, cmd TEXT, tv_archive INTEGER, use_http_tmp_link INTEGER, use_load_balancing INTEGER, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
-            db.execSQL("CREATE INDEX channels_cat ON channels(playlist_id, category_id)")
-            db.execSQL("CREATE TABLE vod(playlist_id TEXT NOT NULL, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, cmd TEXT, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
-            db.execSQL("CREATE INDEX vod_cat ON vod(playlist_id, category_id)")
-            db.execSQL("CREATE TABLE series(playlist_id TEXT NOT NULL, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
-            db.execSQL("CREATE INDEX series_cat ON series(playlist_id, category_id)")
-            db.execSQL("CREATE TABLE episodes(playlist_id TEXT NOT NULL, series_sid INTEGER NOT NULL, episode_sid TEXT NOT NULL, season INTEGER NOT NULL, episode_num INTEGER NOT NULL, title TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, cmd TEXT, PRIMARY KEY(playlist_id, episode_sid)) WITHOUT ROWID")
-            db.execSQL("CREATE INDEX episodes_series ON episodes(playlist_id, series_sid)")
-            db.execSQL("CREATE TABLE categories(playlist_id TEXT NOT NULL, type TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(playlist_id, type, id)) WITHOUT ROWID")
+            db.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, cmd TEXT, tv_archive INTEGER, use_http_tmp_link INTEGER, use_load_balancing INTEGER, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            db.execSQL("CREATE INDEX channels_cat ON channels(playlist_id, generation, category_id)")
+            db.execSQL("CREATE TABLE vod(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, cmd TEXT, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            db.execSQL("CREATE INDEX vod_cat ON vod(playlist_id, generation, category_id)")
+            db.execSQL("CREATE TABLE series(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            db.execSQL("CREATE INDEX series_cat ON series(playlist_id, generation, category_id)")
+            db.execSQL("CREATE TABLE episodes(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, series_sid INTEGER NOT NULL, episode_sid TEXT NOT NULL, season INTEGER NOT NULL, episode_num INTEGER NOT NULL, title TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, cmd TEXT, PRIMARY KEY(playlist_id, generation, episode_sid)) WITHOUT ROWID")
+            db.execSQL("CREATE INDEX episodes_series ON episodes(playlist_id, generation, series_sid)")
+            db.execSQL("CREATE TABLE categories(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, type TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(playlist_id, generation, type, id)) WITHOUT ROWID")
             // tvg_url = the url-tvg/x-tvg-url captured from the #EXTM3U header (default XMLTV source);
-            // epg_built_at = when this playlist's EPG was last fetched (throttles the ~2×/day refresh).
-            db.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL, tvg_url TEXT, epg_built_at INTEGER) WITHOUT ROWID")
+            // epg_built_at = when this playlist's EPG was last fetched (throttles the ~2×/day refresh);
+            // active_generation = the generation readers see (the last COMPLETE build's).
+            db.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL, tvg_url TEXT, epg_built_at INTEGER, active_generation INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID")
             createEpgTable(db)
         }
 
@@ -85,6 +90,23 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     }
 
     private val db: SQLiteDatabase by lazy { helper.writableDatabase }
+
+    /** The generation an in-flight ingest (ingest → writer → finish) is writing, per playlist. */
+    private val pendingGeneration = HashMap<String, Long>()
+
+    private val catalogTables = listOf("channels", "vod", "series", "episodes", "categories")
+
+    /**
+     * SQL predicate selecting the served generation — the last COMPLETE build's (0 before any build,
+     * which is also where Stalker's write-through rows live). Every query using it binds the playlist
+     * id a second time, right after the first.
+     */
+    private val gen = "generation = COALESCE((SELECT active_generation FROM ingest_meta WHERE playlist_id = ?), 0)"
+
+    private fun activeGeneration(playlistId: String): Long =
+        db.rawQuery("SELECT active_generation FROM ingest_meta WHERE playlist_id = ?", arrayOf(playlistId)).use { c ->
+            if (c.moveToFirst()) c.getLong(0) else 0L
+        }
 
     /** Non-null when the playlist has a completed ingest. */
     suspend fun builtAt(playlistId: String): Long? = withContext(Dispatchers.IO) {
@@ -127,7 +149,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
      * Series are grouped by header: [addEpisode] auto-creates the header row on first sight of a
      * (categoryId, seriesName) and returns the synthetic series sid.
      */
-    inner class IngestWriter internal constructor(private val playlistId: String) {
+    inner class IngestWriter internal constructor(private val playlistId: String, private val generation: Long) {
         private val counts = Counts()
         private val channelBatch = ArrayList<ContentChannel>(CHUNK)
         private val vodBatch = ArrayList<ContentVod>(CHUNK)
@@ -188,13 +210,13 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         // --- batched writers (each its own transaction) ---
         private fun flushChannels() {
             inTx {
-                val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
                 for (r in channelBatch) {
                     s.clearBindings()
-                    s.bindString(1, playlistId); bindNullable(s, 2, r.categoryId); s.bindLong(3, r.sid.toLong())
-                    s.bindString(4, r.name); bindNullable(s, 5, r.logo); bindNullable(s, 6, r.tvgId); s.bindString(7, r.url)
-                    bindNullable(s, 8, r.cmd); s.bindLong(9, if (r.hasArchive) 1L else 0L)
-                    s.bindLong(10, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(11, if (r.useLoadBalancing) 1L else 0L)
+                    s.bindString(1, playlistId); s.bindLong(2, generation); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
+                    s.bindString(5, r.name); bindNullable(s, 6, r.logo); bindNullable(s, 7, r.tvgId); s.bindString(8, r.url)
+                    bindNullable(s, 9, r.cmd); s.bindLong(10, if (r.hasArchive) 1L else 0L)
+                    s.bindLong(11, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(12, if (r.useLoadBalancing) 1L else 0L)
                     s.executeInsert()
                 }
                 s.close()
@@ -204,12 +226,12 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
         private fun flushVod() {
             inTx {
-                val s = db.compileStatement("INSERT OR REPLACE INTO vod(playlist_id, category_id, sid, name, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO vod(playlist_id, generation, category_id, sid, name, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?,?)")
                 for (r in vodBatch) {
                     s.clearBindings()
-                    s.bindString(1, playlistId); bindNullable(s, 2, r.categoryId); s.bindLong(3, r.sid.toLong())
-                    s.bindString(4, r.name); bindNullable(s, 5, r.logo); s.bindString(6, r.url); bindNullable(s, 7, r.ext)
-                    bindNullable(s, 8, r.cmd)
+                    s.bindString(1, playlistId); s.bindLong(2, generation); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
+                    s.bindString(5, r.name); bindNullable(s, 6, r.logo); s.bindString(7, r.url); bindNullable(s, 8, r.ext)
+                    bindNullable(s, 9, r.cmd)
                     s.executeInsert()
                 }
                 s.close()
@@ -219,11 +241,11 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
         private fun flushSeries() {
             inTx {
-                val s = db.compileStatement("INSERT OR REPLACE INTO series(playlist_id, category_id, sid, name, logo) VALUES(?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO series(playlist_id, generation, category_id, sid, name, logo) VALUES(?,?,?,?,?,?)")
                 for (r in seriesBatch) {
                     s.clearBindings()
-                    s.bindString(1, playlistId); bindNullable(s, 2, r.categoryId); s.bindLong(3, r.sid.toLong())
-                    s.bindString(4, r.name); bindNullable(s, 5, r.logo)
+                    s.bindString(1, playlistId); s.bindLong(2, generation); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
+                    s.bindString(5, r.name); bindNullable(s, 6, r.logo)
                     s.executeInsert()
                 }
                 s.close()
@@ -233,12 +255,12 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
         private fun flushEpisodes() {
             inTx {
-                val s = db.compileStatement("INSERT OR REPLACE INTO episodes(playlist_id, series_sid, episode_sid, season, episode_num, title, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO episodes(playlist_id, generation, series_sid, episode_sid, season, episode_num, title, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 for (r in episodeBatch) {
                     s.clearBindings()
-                    s.bindString(1, playlistId); s.bindLong(2, r.seriesSid.toLong()); s.bindString(3, r.episodeSid)
-                    s.bindLong(4, r.season.toLong()); s.bindLong(5, r.episodeNum.toLong()); s.bindString(6, r.title)
-                    bindNullable(s, 7, r.logo); s.bindString(8, r.url); bindNullable(s, 9, r.ext); bindNullable(s, 10, r.cmd)
+                    s.bindString(1, playlistId); s.bindLong(2, generation); s.bindLong(3, r.seriesSid.toLong()); s.bindString(4, r.episodeSid)
+                    s.bindLong(5, r.season.toLong()); s.bindLong(6, r.episodeNum.toLong()); s.bindString(7, r.title)
+                    bindNullable(s, 8, r.logo); s.bindString(9, r.url); bindNullable(s, 10, r.ext); bindNullable(s, 11, r.cmd)
                     s.executeInsert()
                 }
                 s.close()
@@ -248,10 +270,10 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
         private fun flushCategories() {
             inTx {
-                val s = db.compileStatement("INSERT OR REPLACE INTO categories(playlist_id, type, id, name) VALUES(?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO categories(playlist_id, generation, type, id, name) VALUES(?,?,?,?,?)")
                 for ((type, id, name) in categoryBatch) {
                     s.clearBindings()
-                    s.bindString(1, playlistId); s.bindString(2, type); s.bindString(3, id); s.bindString(4, name)
+                    s.bindString(1, playlistId); s.bindLong(2, generation); s.bindString(3, type); s.bindString(4, id); s.bindString(5, name)
                     s.executeInsert()
                 }
                 s.close()
@@ -259,16 +281,23 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             categoryBatch.clear()
         }
 
-        /** Flush remaining batches then write the crash-safe meta row LAST. epg_built_at is left
-         *  null so a fresh ingest re-fetches the EPG (the catalog's channel set may have changed). */
+        /**
+         * The flip: flush remaining batches, then in ONE transaction point readers at this
+         * generation (the meta row, written LAST, is still the "ingest complete" signal) and drop
+         * every other generation's rows. epg_built_at is left null so a fresh ingest re-fetches the
+         * EPG (the catalog's channel set may have changed); the old programmes stay readable until
+         * that fetch replaces them.
+         */
         internal fun finish() {
             flushAll()
             inTx {
                 db.execSQL(
-                    "INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, tvg_url, epg_built_at) VALUES(?,?,?,?,?,?,NULL)",
-                    arrayOf<Any?>(playlistId, System.currentTimeMillis(), counts.live, counts.vod, counts.series, tvgUrl)
+                    "INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, tvg_url, epg_built_at, active_generation) VALUES(?,?,?,?,?,?,NULL,?)",
+                    arrayOf<Any?>(playlistId, System.currentTimeMillis(), counts.live, counts.vod, counts.series, tvgUrl, generation)
                 )
+                for (t in catalogTables) db.delete(t, "playlist_id = ? AND generation <> ?", arrayOf(playlistId, generation.toString()))
             }
+            pendingGeneration.remove(playlistId)
         }
 
         val liveCount get() = counts.live
@@ -286,14 +315,20 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     }
 
     /**
-     * Runs a full ingest atomically-ish: clears the playlist's old rows in one transaction, hands
-     * an [IngestWriter] to [fill] (which streams rows in), then finalizes with the meta row last.
-     * The old catalog stays readable until the clear commits; a crash before [finish] leaves
-     * [builtAt] null so the next access re-ingests.
+     * Runs a full ingest without ever touching what is being served: the new rows land at
+     * `active_generation + 1` while readers keep the last complete build, and [IngestWriter.finish]
+     * flips them in one transaction. Rows a previous attempt left at a non-active generation (a
+     * crash before its flip) are purged first. A crash before [finish] leaves the previous catalog
+     * serving and [builtAt] untouched; the next scheduled refresh simply retries.
      */
     suspend fun ingest(playlistId: String, fill: suspend (IngestWriter) -> Unit): IngestWriter = withContext(Dispatchers.IO) {
-        clear(playlistId)
-        val writer = IngestWriter(playlistId)
+        val generation = inTxReturning {
+            val active = activeGeneration(playlistId)
+            for (t in catalogTables) db.delete(t, "playlist_id = ? AND generation <> ?", arrayOf(playlistId, active.toString()))
+            active + 1
+        }
+        pendingGeneration[playlistId] = generation
+        val writer = IngestWriter(playlistId, generation)
         fill(writer)
         writer.finish()
         writer
@@ -307,6 +342,18 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta")) {
                 db.delete(t, "playlist_id = ?", arrayOf(playlistId))
             }
+        }
+        pendingGeneration.remove(playlistId)
+    }
+
+    private inline fun <T> inTxReturning(block: () -> T): T {
+        db.beginTransaction()
+        try {
+            val result = block()
+            db.setTransactionSuccessful()
+            return result
+        } finally {
+            db.endTransaction()
         }
     }
 
@@ -324,7 +371,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     // --- Queries ------------------------------------------------------------
 
     suspend fun categoriesFor(playlistId: String, type: String): List<ContentCategory> = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT id, name FROM categories WHERE playlist_id = ? AND type = ? ORDER BY name", arrayOf(playlistId, type)).use { c ->
+        db.rawQuery("SELECT id, name FROM categories WHERE playlist_id = ? AND $gen AND type = ? ORDER BY name", arrayOf(playlistId, playlistId, type)).use { c ->
             buildList { while (c.moveToNext()) add(ContentCategory(c.getString(0), c.getString(1))) }
         }
     }
@@ -396,8 +443,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
     suspend fun episodesFor(playlistId: String, seriesSid: Int): List<ContentEpisode> = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT series_sid, episode_sid, season, episode_num, title, logo, url, ext, cmd FROM episodes WHERE playlist_id = ? AND series_sid = ? ORDER BY season, episode_num",
-            arrayOf(playlistId, seriesSid.toString())
+            "SELECT series_sid, episode_sid, season, episode_num, title, logo, url, ext, cmd FROM episodes WHERE playlist_id = ? AND $gen AND series_sid = ? ORDER BY season, episode_num",
+            arrayOf(playlistId, playlistId, seriesSid.toString())
         ).use { c ->
             buildList {
                 while (c.moveToNext()) add(ContentEpisode(c.getInt(0), c.getString(1), c.getInt(2), c.getInt(3), c.getString(4), c.getStringOrNull(5), c.getString(6), c.getStringOrNull(7), c.getStringOrNull(8)))
@@ -407,26 +454,26 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
     /** Direct URL of a single channel (live) — used to rebuild a deep-linked/saved item. */
     suspend fun channelUrl(playlistId: String, sid: Int): String? = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT url FROM channels WHERE playlist_id = ? AND sid = ?", arrayOf(playlistId, sid.toString())).use { c ->
+        db.rawQuery("SELECT url FROM channels WHERE playlist_id = ? AND $gen AND sid = ?", arrayOf(playlistId, playlistId, sid.toString())).use { c ->
             if (c.moveToFirst()) c.getString(0) else null
         }
     }
 
     suspend fun vodUrl(playlistId: String, sid: Int): String? = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT url FROM vod WHERE playlist_id = ? AND sid = ?", arrayOf(playlistId, sid.toString())).use { c ->
+        db.rawQuery("SELECT url FROM vod WHERE playlist_id = ? AND $gen AND sid = ?", arrayOf(playlistId, playlistId, sid.toString())).use { c ->
             if (c.moveToFirst()) c.getString(0) else null
         }
     }
 
     suspend fun channelRow(playlistId: String, sid: Int): ContentChannel? = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE playlist_id = ? AND sid = ?", arrayOf(playlistId, sid.toString())).use { c ->
+        db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE playlist_id = ? AND $gen AND sid = ?", arrayOf(playlistId, playlistId, sid.toString())).use { c ->
             if (c.moveToFirst()) ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0) else null
         }
     }
 
     /** A single VOD row by sid (with its Stalker cmd) — the cold-start Library play path (P6). */
     suspend fun vodRow(playlistId: String, sid: Int): ContentVod? = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT sid, name, logo, category_id, url, ext, cmd FROM vod WHERE playlist_id = ? AND sid = ?", arrayOf(playlistId, sid.toString())).use { c ->
+        db.rawQuery("SELECT sid, name, logo, category_id, url, ext, cmd FROM vod WHERE playlist_id = ? AND $gen AND sid = ?", arrayOf(playlistId, playlistId, sid.toString())).use { c ->
             if (c.moveToFirst()) ContentVod(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getString(4), c.getStringOrNull(5), c.getStringOrNull(6)) else null
         }
     }
@@ -445,22 +492,25 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         categories: List<Pair<String, String>>, // (id, name), type = live
     ) = withContext(Dispatchers.IO) {
         inTx {
-            db.delete("channels", "playlist_id = ?", arrayOf(playlistId))
-            db.delete("categories", "playlist_id = ? AND type = ?", arrayOf(playlistId, TYPE_LIVE))
-            val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+            // The Stalker lineup lives at the served generation and is replaced in place — this
+            // transaction is already atomic, so no generation flip is needed here.
+            val g = activeGeneration(playlistId)
+            db.delete("channels", "playlist_id = ? AND generation = ?", arrayOf(playlistId, g.toString()))
+            db.delete("categories", "playlist_id = ? AND generation = ? AND type = ?", arrayOf(playlistId, g.toString(), TYPE_LIVE))
+            val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
             for (r in channels) {
                 s.clearBindings()
-                s.bindString(1, playlistId); bindNullable(s, 2, r.categoryId); s.bindLong(3, r.sid.toLong())
-                s.bindString(4, r.name); bindNullable(s, 5, r.logo); bindNullable(s, 6, r.tvgId); s.bindString(7, r.url)
-                bindNullable(s, 8, r.cmd); s.bindLong(9, if (r.hasArchive) 1L else 0L)
-                s.bindLong(10, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(11, if (r.useLoadBalancing) 1L else 0L)
+                s.bindString(1, playlistId); s.bindLong(2, g); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
+                s.bindString(5, r.name); bindNullable(s, 6, r.logo); bindNullable(s, 7, r.tvgId); s.bindString(8, r.url)
+                bindNullable(s, 9, r.cmd); s.bindLong(10, if (r.hasArchive) 1L else 0L)
+                s.bindLong(11, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(12, if (r.useLoadBalancing) 1L else 0L)
                 s.executeInsert()
             }
             s.close()
-            val cs = db.compileStatement("INSERT OR REPLACE INTO categories(playlist_id, type, id, name) VALUES(?,?,?,?)")
+            val cs = db.compileStatement("INSERT OR REPLACE INTO categories(playlist_id, generation, type, id, name) VALUES(?,?,?,?,?)")
             for ((id, name) in categories) {
                 cs.clearBindings()
-                cs.bindString(1, playlistId); cs.bindString(2, TYPE_LIVE); cs.bindString(3, id); cs.bindString(4, name)
+                cs.bindString(1, playlistId); cs.bindLong(2, g); cs.bindString(3, TYPE_LIVE); cs.bindString(4, id); cs.bindString(5, name)
                 cs.executeInsert()
             }
             cs.close()
@@ -490,34 +540,36 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     ) = withContext(Dispatchers.IO) {
         if (vod.isEmpty() && series.isEmpty() && episodes.isEmpty()) return@withContext
         inTx {
+            // Write-through rows join the served generation (Stalker never runs the M3U ingest).
+            val g = activeGeneration(playlistId)
             if (vod.isNotEmpty()) {
-                val s = db.compileStatement("INSERT OR REPLACE INTO vod(playlist_id, category_id, sid, name, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO vod(playlist_id, generation, category_id, sid, name, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?,?)")
                 for (r in vod) {
                     s.clearBindings()
-                    s.bindString(1, playlistId); bindNullable(s, 2, r.categoryId); s.bindLong(3, r.sid.toLong())
-                    s.bindString(4, r.name); bindNullable(s, 5, r.logo); s.bindString(6, r.url); bindNullable(s, 7, r.ext)
-                    bindNullable(s, 8, r.cmd)
+                    s.bindString(1, playlistId); s.bindLong(2, g); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
+                    s.bindString(5, r.name); bindNullable(s, 6, r.logo); s.bindString(7, r.url); bindNullable(s, 8, r.ext)
+                    bindNullable(s, 9, r.cmd)
                     s.executeInsert()
                 }
                 s.close()
             }
             if (series.isNotEmpty()) {
-                val s = db.compileStatement("INSERT OR REPLACE INTO series(playlist_id, category_id, sid, name, logo) VALUES(?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO series(playlist_id, generation, category_id, sid, name, logo) VALUES(?,?,?,?,?,?)")
                 for (r in series) {
                     s.clearBindings()
-                    s.bindString(1, playlistId); bindNullable(s, 2, r.categoryId); s.bindLong(3, r.sid.toLong())
-                    s.bindString(4, r.name); bindNullable(s, 5, r.logo)
+                    s.bindString(1, playlistId); s.bindLong(2, g); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
+                    s.bindString(5, r.name); bindNullable(s, 6, r.logo)
                     s.executeInsert()
                 }
                 s.close()
             }
             if (episodes.isNotEmpty()) {
-                val s = db.compileStatement("INSERT OR REPLACE INTO episodes(playlist_id, series_sid, episode_sid, season, episode_num, title, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO episodes(playlist_id, generation, series_sid, episode_sid, season, episode_num, title, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 for (r in episodes) {
                     s.clearBindings()
-                    s.bindString(1, playlistId); s.bindLong(2, r.seriesSid.toLong()); s.bindString(3, r.episodeSid)
-                    s.bindLong(4, r.season.toLong()); s.bindLong(5, r.episodeNum.toLong()); s.bindString(6, r.title)
-                    bindNullable(s, 7, r.logo); s.bindString(8, r.url); bindNullable(s, 9, r.ext); bindNullable(s, 10, r.cmd)
+                    s.bindString(1, playlistId); s.bindLong(2, g); s.bindLong(3, r.seriesSid.toLong()); s.bindString(4, r.episodeSid)
+                    s.bindLong(5, r.season.toLong()); s.bindLong(6, r.episodeNum.toLong()); s.bindString(7, r.title)
+                    bindNullable(s, 8, r.logo); s.bindString(9, r.url); bindNullable(s, 10, r.ext); bindNullable(s, 11, r.cmd)
                     s.executeInsert()
                 }
                 s.close()
@@ -526,7 +578,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     }
 
     suspend fun seriesRow(playlistId: String, sid: Int): ContentSeries? = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? AND sid = ?", arrayOf(playlistId, sid.toString())).use { c ->
+        db.rawQuery("SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? AND $gen AND sid = ?", arrayOf(playlistId, playlistId, sid.toString())).use { c ->
             if (c.moveToFirst()) ContentSeries(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3)) else null
         }
     }
@@ -534,8 +586,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     /** Substring name search within a content type (backs the IPTV rows in Search). */
     suspend fun searchChannels(playlistId: String, query: String, limit: Int): List<ContentChannel> = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT sid, name, logo, tvg_id, category_id, url FROM channels WHERE playlist_id = ? AND name LIKE '%' || ? || '%' LIMIT ?",
-            arrayOf(playlistId, query, limit.toString())
+            "SELECT sid, name, logo, tvg_id, category_id, url FROM channels WHERE playlist_id = ? AND $gen AND name LIKE '%' || ? || '%' LIMIT ?",
+            arrayOf(playlistId, playlistId, query, limit.toString())
         ).use { c ->
             buildList { while (c.moveToNext()) add(ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5))) }
         }
@@ -543,8 +595,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
     suspend fun searchVod(playlistId: String, query: String, limit: Int): List<ContentVod> = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT sid, name, logo, category_id, url, ext FROM vod WHERE playlist_id = ? AND name LIKE '%' || ? || '%' LIMIT ?",
-            arrayOf(playlistId, query, limit.toString())
+            "SELECT sid, name, logo, category_id, url, ext FROM vod WHERE playlist_id = ? AND $gen AND name LIKE '%' || ? || '%' LIMIT ?",
+            arrayOf(playlistId, playlistId, query, limit.toString())
         ).use { c ->
             buildList { while (c.moveToNext()) add(ContentVod(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getString(4), c.getStringOrNull(5))) }
         }
@@ -552,16 +604,16 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
     suspend fun searchSeries(playlistId: String, query: String, limit: Int): List<ContentSeries> = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? AND name LIKE '%' || ? || '%' LIMIT ?",
-            arrayOf(playlistId, query, limit.toString())
+            "SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? AND $gen AND name LIKE '%' || ? || '%' LIMIT ?",
+            arrayOf(playlistId, playlistId, query, limit.toString())
         ).use { c ->
             buildList { while (c.moveToNext()) add(ContentSeries(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3))) }
         }
     }
 
     private fun catFilter(playlistId: String, categoryId: String?): Pair<String, Array<String>> =
-        if (categoryId == null) "playlist_id = ?" to arrayOf(playlistId)
-        else "playlist_id = ? AND category_id = ?" to arrayOf(playlistId, categoryId)
+        if (categoryId == null) "playlist_id = ? AND $gen" to arrayOf(playlistId, playlistId)
+        else "playlist_id = ? AND $gen AND category_id = ?" to arrayOf(playlistId, playlistId, categoryId)
 
     // --- EPG (XMLTV for M3U live now/next) ----------------------------------
 
@@ -571,7 +623,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
      * only programmes for channels the user actually has are stored.
      */
     suspend fun channelTvgIds(playlistId: String): Set<String> = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT DISTINCT tvg_id FROM channels WHERE playlist_id = ? AND tvg_id IS NOT NULL", arrayOf(playlistId)).use { c ->
+        db.rawQuery("SELECT DISTINCT tvg_id FROM channels WHERE playlist_id = ? AND $gen AND tvg_id IS NOT NULL", arrayOf(playlistId, playlistId)).use { c ->
             buildSet { while (c.moveToNext()) c.getStringOrNull(0)?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }?.let { add(it) } }
         }
     }

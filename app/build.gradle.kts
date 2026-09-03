@@ -337,7 +337,17 @@ android {
         abi {
             isEnable = !buildingAppBundle
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            // ARM only for the sideload APKs. Every real Android TV / Fire TV / Google TV /
+            // Onn / Shield device is ARM — x86/x86_64 are emulator-only and were ~90 MB of
+            // dead weight in the universal APK (a torrserver + FFmpeg copy per ABI), which
+            // drove the sideload download to 230 MB and caused "App not installed"
+            // (INSUFFICIENT_STORAGE / truncated download) on low-storage boxes. Dropping them
+            // makes the shipped universal arm-only (~130 MB) and removes the stray x86_64 APK
+            // that release.yml's per-ABI selection could otherwise grab.
+            // This affects ONLY the sideload APK splits — the Play Store AAB (built with
+            // buildingAppBundle, splits disabled above) still carries every ABI and Play
+            // delivers per device. Emulator dev on Apple-Silicon uses arm64 system images.
+            include("armeabi-v7a", "arm64-v8a")
             isUniversalApk = true
         }
     }

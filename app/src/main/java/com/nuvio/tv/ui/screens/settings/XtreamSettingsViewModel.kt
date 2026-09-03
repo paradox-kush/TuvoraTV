@@ -20,6 +20,7 @@ import com.nuvio.tv.core.iptv.newM3UFilePlaylistId
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.core.iptv.withPlaylistOptions
 import com.nuvio.tv.core.iptv.xtreamAccountFromFields
+import com.nuvio.tv.core.iptv.xtreamPanelInM3uUrl
 import com.nuvio.tv.core.sync.XtreamAccountSyncService
 import com.nuvio.tv.data.local.LibraryPreferences
 import com.nuvio.tv.data.local.WatchProgressPreferences
@@ -237,7 +238,32 @@ class XtreamSettingsViewModel @Inject constructor(
      * a first hub/search access also triggers ingest if it hasn't run yet.
      */
     fun addM3UUrl(playlistUrl: String, userAgent: String?, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {
-        val account = m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options)
+        // An Xtream get.php / player_api.php paste is saved as the panel it is (catch-up, VOD
+        // metadata, search index) — at ADD time only: m3uAccountFromUrl itself is untouched, so
+        // edit, pairing and sync keep every existing `m3u:…` id. If the panel API refuses the
+        // credentials the paste still works as a plain M3U playlist, so fall back to that lane.
+        val panel = xtreamPanelInM3uUrl(playlistUrl, userAgent, name)?.let { p -> p.withOptions(options).copy(userAgent = p.userAgent) }
+        if (panel != null) {
+            viewModelScope.launch {
+                _uiState.update { it.copy(isValidating = true, error = null) }
+                val verified = client.verify(panel).isSuccess
+                _uiState.update { it.copy(isValidating = false) }
+                if (verified) {
+                    store.upsert(panel)
+                    resolver.warmUp(listOf(panel))
+                    syncService.triggerRemoteSync()
+                    onSuccess()
+                } else {
+                    saveM3UUrl(m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options), onSuccess)
+                }
+            }
+            return
+        }
+        saveM3UUrl(m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options), onSuccess)
+    }
+
+    /** Persist a built M3U URL account and kick off its ingest (see [addM3UUrl]). */
+    private fun saveM3UUrl(account: XtreamAccount?, onSuccess: () -> Unit) {
         if (account == null) {
             _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
             return

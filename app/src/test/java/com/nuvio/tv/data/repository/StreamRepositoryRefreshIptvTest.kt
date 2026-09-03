@@ -52,7 +52,7 @@ class StreamRepositoryRefreshIptvTest {
             xtreamRegistry = XtreamItemRegistry(),
             iptvClientFactory = factory,
             xtreamAccountStore = accountStore,
-            xtreamStreamSource = mockk(relaxed = true)
+            xtreamStreamSource = mockk(relaxed = true) { coEvery { currentLiveSid(any(), any()) } returns null } // relaxed would answer 0 (a sid); "cannot say" is null
         )
     }
 
@@ -101,7 +101,7 @@ class StreamRepositoryRefreshIptvTest {
             xtreamRegistry = XtreamItemRegistry(),
             iptvClientFactory = factory,
             xtreamAccountStore = accountStore,
-            xtreamStreamSource = mockk(relaxed = true)
+            xtreamStreamSource = mockk(relaxed = true) { coEvery { currentLiveSid(any(), any()) } returns null } // relaxed would answer 0 (a sid); "cannot say" is null
         )
         assertNull(repo.refreshIptvStreamUrl(XtreamItemRegistry.episodeId(account.id, "12:3:4")))
     }

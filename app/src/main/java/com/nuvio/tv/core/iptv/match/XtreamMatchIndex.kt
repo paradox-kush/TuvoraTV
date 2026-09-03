@@ -133,15 +133,34 @@ data class UnsyncedMapping(val kind: String, val tmdb: Int, val sid: Int?, val m
 @Singleton
 class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context) {
 
-    private val helper = object : SQLiteOpenHelper(context, "xtream_match.db", null, 6) {
-        override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, category_id TEXT, epg_id TEXT, tv_archive INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
+    private val helper = object : SQLiteOpenHelper(context, "xtream_match.db", null, 7) {
+        /** The rebuildable index tables (items/keys/idx_meta/cats). tmdb_map and live_sid_history are not here. */
+        private fun createIndexTables(db: SQLiteDatabase) {
+            // v7 (Overlay Build Spec P1): items.entity_id — the channel's deterministic identity
+            // (IptvIdentity), materialized at index time so a saved live id can be re-bound to the
+            // channel's CURRENT sid after the panel renumbers.
+            db.execSQL("CREATE TABLE items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, category_id TEXT, epg_id TEXT, tv_archive INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0, entity_id TEXT, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX items_cat ON items(provider, kind, category_id, pos)")
+            db.execSQL("CREATE INDEX items_entity ON items(provider, kind, entity_id)")
             db.execSQL("CREATE TABLE cats(provider TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, sort INTEGER NOT NULL, PRIMARY KEY(provider, kind, id)) WITHOUT ROWID")
             db.execSQL("CREATE INDEX items_tmdb ON items(provider, kind, tmdb)")
             db.execSQL("CREATE TABLE keys(provider TEXT NOT NULL, kind TEXT NOT NULL, k TEXT NOT NULL, sid INTEGER NOT NULL, PRIMARY KEY(provider, kind, k, sid)) WITHOUT ROWID")
             db.execSQL("CREATE TABLE idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, last_added_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
+        }
+
+        /**
+         * The FIRST identity each live sid was ever seen carrying (INSERT OR IGNORE, never
+         * overwritten): a favourite saved as `live:{sid}` meant THAT channel, even if the panel later
+         * hands the number to another one. Survives index rebuilds; purged only with the account.
+         */
+        private fun createHistoryTable(db: SQLiteDatabase) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS live_sid_history(provider TEXT NOT NULL, sid INTEGER NOT NULL, entity_id TEXT NOT NULL, seen_at INTEGER NOT NULL, PRIMARY KEY(provider, sid)) WITHOUT ROWID")
+        }
+
+        override fun onCreate(db: SQLiteDatabase) {
+            createIndexTables(db)
             db.execSQL("CREATE TABLE tmdb_map(provider TEXT NOT NULL, kind TEXT NOT NULL, tmdb INTEGER NOT NULL, sid INTEGER, matched_name TEXT, updated_at INTEGER NOT NULL, synced INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, tmdb)) WITHOUT ROWID")
+            createHistoryTable(db)
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -157,6 +176,15 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                 // returning a constant tmdb_id rejected its whole catalog). One-time purge —
                 // positives untouched, a negative regenerates in a single resolve.
                 db.execSQL("DELETE FROM tmdb_map WHERE sid IS NULL")
+                if (oldVersion < 7) {
+                    // v7 stamps every LIVE row with its identity; a sync only rewrites changed
+                    // rows, so the index is rebuilt (rebuildable cache; tmdb_map untouched) rather
+                    // than left half-stamped. live_sid_history is created, never dropped.
+                    db.execSQL("DROP TABLE IF EXISTS items"); db.execSQL("DROP TABLE IF EXISTS keys")
+                    db.execSQL("DROP TABLE IF EXISTS idx_meta"); db.execSQL("DROP TABLE IF EXISTS cats")
+                    createIndexTables(db)
+                    createHistoryTable(db)
+                }
                 return
             }
             // pre-v4: index tables are rebuildable caches; mappings re-pull from Supabase
@@ -210,7 +238,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
     suspend fun purge(provider: String) = withContext(Dispatchers.IO) {
         db.beginTransaction()
         try {
-            for (t in listOf("items", "keys", "idx_meta", "tmdb_map", "cats")) {
+            for (t in listOf("items", "keys", "idx_meta", "tmdb_map", "cats", "live_sid_history")) {
                 db.delete(t, "provider = ?", arrayOf(provider))
             }
             db.setTransactionSuccessful()
@@ -327,6 +355,32 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
      * Panels fill this field very unevenly, so an empty result is a normal answer meaning "this
      * panel cannot be matched by id" — not an error.
      */
+    /**
+     * The sid the channel a saved live id meant carries in the CURRENT catalog, or null when this
+     * device cannot say (never indexed the playlist, or the identity is no longer in it). Twin of
+     * NuvioMobile's resolveLiveSid: [live_sid_history] remembers which identity a saved number FIRST
+     * meant, and the current row carrying the same identity is the channel now — which also covers
+     * a number handed to a different channel afterwards. Duplicates resolve to the saved sid if it
+     * is one of them, else deterministically to the lowest.
+     */
+    suspend fun resolveLiveSid(provider: String, savedSid: Int): Int? = withContext(Dispatchers.IO) {
+        val entity = db.rawQuery("SELECT entity_id FROM live_sid_history WHERE provider = ? AND sid = ?", arrayOf(provider, savedSid.toString())).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        } ?: db.rawQuery("SELECT entity_id FROM items WHERE provider = ? AND kind = ? AND sid = ?", arrayOf(provider, MatchKind.LIVE.slug, savedSid.toString())).use { c ->
+            // No history for this sid (indexed before v7): trust the current row's own identity.
+            if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
+        } ?: return@withContext null
+        db.rawQuery("SELECT sid FROM items WHERE provider = ? AND kind = ? AND entity_id = ? ORDER BY sid", arrayOf(provider, MatchKind.LIVE.slug, entity)).use { c ->
+            var lowest: Int? = null
+            while (c.moveToNext()) {
+                val sid = c.getInt(0)
+                if (sid == savedSid) return@withContext sid
+                if (lowest == null) lowest = sid
+            }
+            lowest
+        }
+    }
+
     suspend fun liveEpgIds(provider: String): Set<String> = withContext(Dispatchers.IO) {
         db.rawQuery(
             "SELECT DISTINCT epg_id FROM items WHERE provider = ? AND kind = ? AND epg_id IS NOT NULL",
@@ -626,10 +680,14 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                 // survive an incoming null (B-style panels ship empty bulk icons; the stored value
                 // may be PosterEnricher's work). COALESCE keeps non-null incoming icons flowing.
                 // Framework SQLite on the oldest supported TVs predates UPSERT, hence two steps.
-                val updStmt = db.compileStatement("UPDATE items SET name=?, year=?, tmdb=?, ext=?, poster=COALESCE(?, poster), category_id=?, epg_id=?, tv_archive=?, pos=? WHERE provider=? AND kind=? AND sid=?")
-                val insStmt = db.compileStatement("INSERT OR REPLACE INTO items(provider, kind, sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive, pos) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+                val updStmt = db.compileStatement("UPDATE items SET name=?, year=?, tmdb=?, ext=?, poster=COALESCE(?, poster), category_id=?, epg_id=?, tv_archive=?, pos=?, entity_id=? WHERE provider=? AND kind=? AND sid=?")
+                val insStmt = db.compileStatement("INSERT OR REPLACE INTO items(provider, kind, sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive, pos, entity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
                 val keyStmt = db.compileStatement("INSERT OR REPLACE INTO keys(provider, kind, k, sid) VALUES(?,?,?,?)")
+                val histStmt = db.compileStatement("INSERT OR IGNORE INTO live_sid_history(provider, sid, entity_id, seen_at) VALUES(?,?,?,?)")
+                val seenAt = System.currentTimeMillis()
                 for (it in chunk) {
+                    // Live rows carry their identity; VOD/series identity is a different problem (TMDB).
+                    val entity = if (kind == MatchKind.LIVE) com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(provider, it.name, it.epgId) else null
                     updStmt.clearBindings()
                     updStmt.bindString(1, it.name)
                     if (it.year != null) updStmt.bindLong(2, it.year.toLong()) else updStmt.bindNull(2)
@@ -640,7 +698,8 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                     if (it.epgId != null) updStmt.bindString(7, it.epgId) else updStmt.bindNull(7)
                     updStmt.bindLong(8, if (it.hasArchive) 1L else 0L)
                     updStmt.bindLong(9, it.pos.toLong())
-                    updStmt.bindString(10, provider); updStmt.bindString(11, kind.slug); updStmt.bindLong(12, it.sid.toLong())
+                    if (entity != null) updStmt.bindString(10, entity) else updStmt.bindNull(10)
+                    updStmt.bindString(11, provider); updStmt.bindString(12, kind.slug); updStmt.bindLong(13, it.sid.toLong())
                     if (updStmt.executeUpdateDelete() == 0) {
                         insStmt.clearBindings()
                         insStmt.bindString(1, provider); insStmt.bindString(2, kind.slug); insStmt.bindLong(3, it.sid.toLong())
@@ -653,7 +712,14 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                         if (it.epgId != null) insStmt.bindString(10, it.epgId) else insStmt.bindNull(10)
                         insStmt.bindLong(11, if (it.hasArchive) 1L else 0L)
                         insStmt.bindLong(12, it.pos.toLong())
+                        if (entity != null) insStmt.bindString(13, entity) else insStmt.bindNull(13)
                         insStmt.executeInsert()
+                    }
+                    if (entity != null) {
+                        // First-seen identity per sid, never overwritten (see live_sid_history).
+                        histStmt.clearBindings()
+                        histStmt.bindString(1, provider); histStmt.bindLong(2, it.sid.toLong()); histStmt.bindString(3, entity); histStmt.bindLong(4, seenAt)
+                        histStmt.executeInsert()
                     }
                 }
                 for (row in keyRows) {
@@ -661,7 +727,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
                     keyStmt.bindString(1, provider); keyStmt.bindString(2, kind.slug); keyStmt.bindString(3, row.key); keyStmt.bindLong(4, row.sid.toLong())
                     keyStmt.executeInsert()
                 }
-                updStmt.close(); insStmt.close(); keyStmt.close()
+                updStmt.close(); insStmt.close(); keyStmt.close(); histStmt.close()
                 db.setTransactionSuccessful()
             } finally {
                 db.endTransaction()

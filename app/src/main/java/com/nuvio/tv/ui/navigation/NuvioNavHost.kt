@@ -64,6 +64,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicReference
 
+/** The single feedback-string mapping shared by every Live TV ingress rejection path. */
+@androidx.annotation.StringRes
+private fun cleanLiveFeedbackMessage(feedback: CleanLiveIngressFeedback): Int = when (feedback) {
+    CleanLiveIngressFeedback.INVALID_REQUEST -> R.string.clean_live_ingress_invalid
+    CleanLiveIngressFeedback.UNAVAILABLE -> R.string.clean_live_ingress_unavailable
+    CleanLiveIngressFeedback.PROFILE_CHANGED -> R.string.clean_live_ingress_profile_changed
+}
+
 @Composable
 fun NuvioNavHost(
     navController: NavHostController,
@@ -90,7 +98,24 @@ fun NuvioNavHost(
     ) {
         cleanLiveIngressJob.getAndSet(null)?.cancel()
         if (!com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(contentId)) {
-            onNonLive()
+            when (val outcome = CleanLiveNonLiveDispatchPolicy.outcome(origin)) {
+                // Content-card ingresses hand a non-live id to their native-detail route.
+                CleanLiveNonLiveOutcome.Handoff -> onNonLive()
+                // Ingresses with no non-live destination (Sports) surface feedback so a tap that
+                // can't open a channel is never a silent dead-click.
+                is CleanLiveNonLiveOutcome.Feedback -> {
+                    val ownerCanPresent =
+                        owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                            navController.currentBackStackEntry === owner
+                    if (ownerCanPresent) {
+                        Toast.makeText(
+                            context,
+                            cleanLiveFeedbackMessage(outcome.feedback),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
             return
         }
 
@@ -110,11 +135,8 @@ fun NuvioNavHost(
                     val ownerCanPresent = owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
                         navController.currentBackStackEntry === owner
                     if (ownerCanPresent) {
-                        val message = when (CleanLiveIngressFallbackPolicy.feedback(result.reason)) {
-                            CleanLiveIngressFeedback.INVALID_REQUEST -> R.string.clean_live_ingress_invalid
-                            CleanLiveIngressFeedback.UNAVAILABLE -> R.string.clean_live_ingress_unavailable
-                            CleanLiveIngressFeedback.PROFILE_CHANGED -> R.string.clean_live_ingress_profile_changed
-                        }
+                        val message =
+                            cleanLiveFeedbackMessage(CleanLiveIngressFallbackPolicy.feedback(result.reason))
                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -1290,6 +1312,10 @@ fun NuvioNavHost(
         composable(Screen.SportsHub.route) { backStackEntry ->
             com.nuvio.tv.ui.screens.radar.SportsHubScreen(
                 onPlayChannel = { contentId ->
+                    // A Sports match card is always a live channel, so there is no non-live detail
+                    // route to hand off to. CleanLiveNonLiveDispatchPolicy routes the SPORTS origin
+                    // to user-visible feedback instead — this onNonLive is never invoked, and must
+                    // never silently swallow an unopenable channel (the old `{}` dead-click).
                     dispatchLiveOrElse(
                         owner = backStackEntry,
                         contentId = contentId,

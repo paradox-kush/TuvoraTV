@@ -30,6 +30,41 @@ internal object CleanLiveIngressFallbackPolicy {
     }
 }
 
+/**
+ * What a Live TV ingress does when the tapped content id is NOT classified as a live channel.
+ *
+ * Content-card ingresses (Search, Library, Folder, See-All) list mixed content, so a non-live id
+ * there is a movie/series/collection item: the ingress hands the tap back to its own native-detail
+ * route ([Handoff]). A Sports match card, by contrast, is ALWAYS a live channel — there is no
+ * non-live detail destination for it, so a non-live id can only mean the channel could not be
+ * opened and MUST surface feedback ([Feedback]) rather than a silent dead-click.
+ *
+ * Extracting the per-origin decision here (rather than leaving the Sports ingress an empty `{}`
+ * no-op in the nav host) is what makes "a Live TV ingress can never dead-click" a testable
+ * guarantee instead of a per-call-site convention that one caller already forgot.
+ */
+sealed interface CleanLiveNonLiveOutcome {
+    /** Hand the tap to the ingress's own non-live route (native detail). */
+    data object Handoff : CleanLiveNonLiveOutcome
+
+    /** No non-live meaning at this ingress — surface this feedback instead of doing nothing. */
+    data class Feedback(val feedback: CleanLiveIngressFeedback) : CleanLiveNonLiveOutcome
+}
+
+internal object CleanLiveNonLiveDispatchPolicy {
+    fun outcome(origin: CleanLiveLaunchOrigin): CleanLiveNonLiveOutcome = when (origin) {
+        // A Sports match card resolves to a live channel by construction; a non-live id here is an
+        // unopenable request, not a movie/series — so tell the user, never fall silent.
+        CleanLiveLaunchOrigin.SPORTS ->
+            CleanLiveNonLiveOutcome.Feedback(CleanLiveIngressFeedback.INVALID_REQUEST)
+        CleanLiveLaunchOrigin.SEARCH,
+        CleanLiveLaunchOrigin.LIBRARY,
+        CleanLiveLaunchOrigin.FOLDER,
+        CleanLiveLaunchOrigin.CATALOG_SEE_ALL,
+        -> CleanLiveNonLiveOutcome.Handoff
+    }
+}
+
 sealed interface CleanLiveIngressResult {
     class Ready(val token: CleanLiveLaunchToken) : CleanLiveIngressResult {
         override fun toString(): String = "CleanLiveIngressResult.Ready(token=[REDACTED])"

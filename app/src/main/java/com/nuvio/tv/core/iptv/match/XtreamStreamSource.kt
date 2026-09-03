@@ -20,6 +20,14 @@ class XtreamStreamSource @Inject constructor(
     private val index: XtreamMatchIndex,
     private val tmdbService: TmdbService,
 ) {
+    /**
+     * The sid a saved live id's channel carries in the CURRENT catalog, or null when the index
+     * cannot say. Xtream only: M3U sids are URL hashes and Stalker ids are the portal's own, neither
+     * renumbers the way an Xtream panel does (see XtreamMatchIndex.resolveLiveSid).
+     */
+    suspend fun currentLiveSid(acc: XtreamAccount, savedSid: Int): Int? =
+        if (acc.sourceType == XtreamAccount.SOURCE_XTREAM) index.resolveLiveSid(acc.id, savedSid) else null
+
     suspend fun streamsFor(acc: XtreamAccount, type: String, videoId: String, season: Int?, episode: Int?): List<Stream> {
         val kind = when (type) {
             "movie" -> MatchKind.MOVIE
