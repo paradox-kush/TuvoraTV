@@ -122,7 +122,16 @@ jobs:
           NUVIO_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           NUVIO_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          ./gradlew :app:assembleFullRelease :app:bundleFullRelease \
+          # Assemble and bundle in SEPARATE invocations. The ABI splits are gated
+          # `isEnable = !buildingAppBundle`, and buildingAppBundle is true whenever ANY task name
+          # contains "bundle" — so assembling + bundling together disables the splits for the whole
+          # build and produces a single un-split APK (no per-ABI, no universal), which broke Collect
+          # artifacts on the v1.6.0 release. Keeping them separate: assemble gets splits ON (per-ABI +
+          # universal sideload APKs), bundle gets splits OFF (the fullRelease AAB carries every ABI).
+          ./gradlew :app:assembleFullRelease \
+            -PversionNameOverride="${{ steps.ver.outputs.version }}" \
+            -PversionCodeOverride="${{ github.run_number }}" --stacktrace
+          ./gradlew :app:bundleFullRelease \
             -PversionNameOverride="${{ steps.ver.outputs.version }}" \
             -PversionCodeOverride="${{ github.run_number }}" --stacktrace
 
