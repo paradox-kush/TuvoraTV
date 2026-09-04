@@ -135,6 +135,21 @@ android {
         minSdk = 24
         targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Compile native code for ARM only. Every real Android TV / Fire TV / Google TV /
+        // Onn / Shield device is ARM (arm64-v8a or 32-bit armeabi-v7a); x86/x86_64 are
+        // emulator-only. This is the ONLY lever that shrinks the shipped UNIVERSAL sideload
+        // APK: `splits.abi.include(...)` below filters only the per-ABI split outputs, while
+        // `isUniversalApk = true` packs every ABI that was actually COMPILED — so without
+        // this filter the universal carried a torrserver + FFmpeg + libmpv copy for all four
+        // ABIs (~220 MB) and failed to install (INSUFFICIENT_STORAGE / truncated download) on
+        // low-storage boxes. Restricting compilation to both ARM ABIs keeps one universal APK
+        // that installs on every real TV device (64-bit AND 32-bit — no wrong-ABI brick) at
+        // ~130 MB. Emulator dev on Apple Silicon uses arm64 images, so this does not hurt it.
+        ndk {
+            abiFilters.clear()
+            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+        }
         versionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull() ?: 1050
         versionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() } ?: "0.8.9-beta"
 
@@ -337,16 +352,12 @@ android {
         abi {
             isEnable = !buildingAppBundle
             reset()
-            // ARM only for the sideload APKs. Every real Android TV / Fire TV / Google TV /
-            // Onn / Shield device is ARM — x86/x86_64 are emulator-only and were ~90 MB of
-            // dead weight in the universal APK (a torrserver + FFmpeg copy per ABI), which
-            // drove the sideload download to 230 MB and caused "App not installed"
-            // (INSUFFICIENT_STORAGE / truncated download) on low-storage boxes. Dropping them
-            // makes the shipped universal arm-only (~130 MB) and removes the stray x86_64 APK
-            // that release.yml's per-ABI selection could otherwise grab.
-            // This affects ONLY the sideload APK splits — the Play Store AAB (built with
-            // buildingAppBundle, splits disabled above) still carries every ABI and Play
-            // delivers per device. Emulator dev on Apple-Silicon uses arm64 system images.
+            // Generate a per-ABI split APK for each ARM architecture (~70 MB each) as smaller
+            // alternates. NOTE: `include(...)` filters ONLY these per-ABI outputs — it does
+            // NOT trim the universal APK, which packs every COMPILED ABI. The ARM-only trim of
+            // the universal is enforced by defaultConfig.ndk.abiFilters above; keep the two
+            // ABI lists in sync. The Play Store AAB (buildingAppBundle → splits disabled) is
+            // also ARM-only now via abiFilters, and Play still delivers per device.
             include("armeabi-v7a", "arm64-v8a")
             isUniversalApk = true
         }
