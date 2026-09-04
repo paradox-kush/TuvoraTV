@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.iptv.overlay
 
 import android.util.Log
+import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.profile.ProfileManager
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.rpc
@@ -33,6 +34,7 @@ class IptvOverlayRepository @Inject constructor(
     private val db: IptvOverlayDb,
     private val postgrest: Postgrest,
     private val profileManager: ProfileManager,
+    private val authManager: AuthManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -88,6 +90,10 @@ class IptvOverlayRepository @Inject constructor(
 
     /** Pull one profile's overlay edits from the server and apply them. Called from the sync loop / guide open. */
     suspend fun pullForProfile(profileId: Int): Boolean {
+        // No cloud sync for a signed-out/anon user (or a lapsed session): every sync_* RPC would run as
+        // `anon` and come back 42501, burning a request per guide-open. The local overlay still applies
+        // (ensureLoaded/db.snapshot are ungated). Gate matches every other sync service — see AuthManager.canSync.
+        if (!authManager.canSync) return false
         var since = db.getCursor(profileId)
         var changed = false
         while (true) {
@@ -118,6 +124,7 @@ class IptvOverlayRepository @Inject constructor(
     fun pull() { scope.launch { runCatching { pullForProfile(profile()) } } }
 
     private fun push(profileId: Int) {
+        if (!authManager.canSync) return   // signed-out/anon: keep the edit local, don't 42501 the server
         scope.launch {
             runCatching {
                 val rows = db.channelRowsForPush(profileId)
