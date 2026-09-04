@@ -195,6 +195,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
     // "when I go to IPTV it just closes" crash).
     private var lastRawChannels: List<GuideChannel> = emptyList()
     private var lastOverlayAccountId: String? = null
+    // Same for the CATEGORY column: the raw provider categories + account, so a category reorder/hide/rename
+    // from the website re-applies live. (Also declared before init, for the same inline-emit reason.)
+    private var lastRawCategories: List<GuideCategory> = emptyList()
+    private var lastCategoryAccountId: String? = null
 
     init {
         overlayRepository.ensureLoaded()
@@ -204,6 +208,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 if (lastRawChannels.isNotEmpty()) {
                     val shown = withOverlay(lastOverlayAccountId, lastRawChannels)
                     _uiState.update { st -> st.copy(channels = shown) }
+                }
+                // The overlay pull is async, so the category column is often built before the website's
+                // edits land — re-apply the category overlay whenever the snapshot changes.
+                val acc = account
+                if (lastRawCategories.isNotEmpty() && acc != null && lastCategoryAccountId == acc.id) {
+                    val full = withCategoryOverlay(lastCategoryAccountId, lastRawCategories)
+                    _uiState.update { st -> st.copy(categories = filteredCategories(acc, full)) }
                 }
             }
         }
@@ -245,7 +256,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val epgAdmission = com.nuvio.tv.core.iptv.TileEpgAdmission()
 
     // Caches so revisiting an account/category is instant (no spinner flash, no re-fetch).
-    private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> full list
+    private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> RAW provider cats (overlay applied at display)
     private val channelsCache = mutableMapOf<String, List<GuideChannel>>()      // "accountId|categoryId"
 
     /** Hidden dropped, pinned/reordered, renamed via the shared policy. Degrades to [channels] on any error. */
@@ -266,6 +277,36 @@ class XtreamLiveGuideViewModel @Inject constructor(
         } catch (e: Throwable) {
             android.util.Log.w("IptvOverlay", "withOverlay failed: ${e.message}", e)
             channels
+        }
+    }
+
+    /** Provider categories reordered / hidden / renamed by the CATEGORY overlay (the website's edits),
+     *  with the synthetic Favorites/Recent/All rows kept on top. This is the layer TV was missing — the
+     *  data + policy shipped but nothing applied them, so TV showed provider order regardless. Custom
+     *  groups aren't surfaced on TV yet (they need member-channel loading — a follow-up), hence
+     *  customGroups = emptyList(). Degrades to provider order on any error; never crashes. */
+    private fun withCategoryOverlay(accountId: String?, rawCats: List<GuideCategory>): List<GuideCategory> {
+        lastRawCategories = rawCats; lastCategoryAccountId = accountId
+        val specials = listOf(
+            GuideCategory("__fav", "Favorites", GuideSpecial.FAVORITES),
+            GuideCategory("__recent", "Recent", GuideSpecial.RECENT),
+            GuideCategory(ALL_ID, "All channels", GuideSpecial.ALL),
+        )
+        return try {
+            val overlay = overlayRepository.uiState.value.categories
+            if (overlay.isEmpty() || accountId == null) return specials + rawCats
+            val tagged = rawCats.mapIndexed { i, c ->
+                com.nuvio.tv.core.iptv.overlay.IptvCategoryOverlayPolicy.TaggedCategory(
+                    key = com.nuvio.tv.core.iptv.identity.IptvIdentity.categoryKey(accountId, "live", c.name),
+                    providerIndex = i, id = c.id, name = c.name,
+                )
+            }
+            specials + com.nuvio.tv.core.iptv.overlay.IptvCategoryOverlayPolicy
+                .displayed(tagged, overlay, customGroups = emptyList())
+                .map { GuideCategory(it.id, it.name) }
+        } catch (e: Throwable) {
+            android.util.Log.w("IptvOverlay", "withCategoryOverlay failed: ${e.message}", e)
+            specials + rawCats
         }
     }
 
@@ -304,7 +345,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
         clientFactory.clientFor(acc).warm(acc)
         if (sameAccount) {
             // Option-only change: re-filter the cached category column, keep everything else.
-            categoriesCache[acc.id]?.let { full ->
+            categoriesCache[acc.id]?.let { rawCats ->
+                val full = withCategoryOverlay(acc.id, rawCats)
                 val visible = filteredCategories(acc, full)
                 _uiState.update { it.copy(categories = visible) }
                 // "All channels" was fetched+filtered under the OLD selections — rebuild it.
@@ -342,9 +384,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 windowStartMs = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis()),
             )
         }
-        // Cache hit: show the category column immediately without re-fetching. The cache keeps
-        // the UNFILTERED list; category selections filter at display time.
-        categoriesCache[acc.id]?.let { full ->
+        // Cache hit: show the category column immediately without re-fetching. The cache keeps the RAW
+        // provider list; the overlay + category selections apply at display time.
+        categoriesCache[acc.id]?.let { rawCats ->
+            val full = withCategoryOverlay(acc.id, rawCats)
             val visible = filteredCategories(acc, full)
             _uiState.update { it.copy(categories = visible) }
             selectCategoryFor(
@@ -359,13 +402,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
         categoriesJob = viewModelScope.launch {
             val cats = clientFactory.clientFor(acc).liveCategories(acc).getOrDefault(emptyList())
             if (!isCurrentAccount(accountToken)) return@launch
-            val full = buildList {
-                add(GuideCategory("__fav", "Favorites", GuideSpecial.FAVORITES))
-                add(GuideCategory("__recent", "Recent", GuideSpecial.RECENT))
-                add(GuideCategory(ALL_ID, "All channels", GuideSpecial.ALL))
-                cats.forEach { add(GuideCategory(it.id, it.name)) }
-            }
-            categoriesCache[acc.id] = full
+            // Cache the RAW provider categories; the overlay (reorder/hide/rename) + synthetic rows are
+            // applied on every display, so a later website edit is reflected without a re-fetch.
+            val rawCats = cats.map { GuideCategory(it.id, it.name) }
+            categoriesCache[acc.id] = rawCats
+            val full = withCategoryOverlay(acc.id, rawCats)
             val visible = filteredCategories(acc, full)
             _uiState.update { it.copy(categories = visible) }
             // Default to "All channels" so the guide isn't empty for a fresh account.
