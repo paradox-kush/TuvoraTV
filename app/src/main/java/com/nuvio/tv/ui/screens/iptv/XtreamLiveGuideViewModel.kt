@@ -195,6 +195,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
     // "when I go to IPTV it just closes" crash).
     private var lastRawChannels: List<GuideChannel> = emptyList()
     private var lastOverlayAccountId: String? = null
+    // Whether [lastRawChannels] is the default "All channels" view, which is capped at ALL_CAP AFTER the
+    // overlay floats pins (GuideAllChannelsCapPolicy). Kept so an overlay change arriving via sync while
+    // the guide is open re-applies through the same cap path. (Declared before init for the inline-emit
+    // reason above; the collector only reads it once lastRawChannels is non-empty, so its default is safe.)
+    private var lastAllChannelsView: Boolean = false
     // Same for the CATEGORY column: the raw provider categories + account, so a category reorder/hide/rename
     // from the website re-applies live. (Also declared before init, for the same inline-emit reason.)
     private var lastRawCategories: List<GuideCategory> = emptyList()
@@ -206,7 +211,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         viewModelScope.launch {
             overlayRepository.uiState.collect {
                 if (lastRawChannels.isNotEmpty()) {
-                    val shown = withOverlay(lastOverlayAccountId, lastRawChannels)
+                    val shown = displayChannels(lastOverlayAccountId, lastRawChannels, lastAllChannelsView)
                     _uiState.update { st -> st.copy(channels = shown) }
                 }
                 // The overlay pull is async, so the category column is often built before the website's
@@ -259,14 +264,33 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> RAW provider cats (overlay applied at display)
     private val channelsCache = mutableMapOf<String, List<GuideChannel>>()      // "accountId|categoryId"
 
-    /** Hidden dropped, pinned/reordered, renamed via the shared policy. Degrades to [channels] on any error. */
-    private fun withOverlay(accountId: String?, channels: List<GuideChannel>): List<GuideChannel> {
-        lastRawChannels = channels; lastOverlayAccountId = accountId
-        // The overlay is optional — any failure applying it must fall back to the unfiltered guide,
-        // never crash. (Whole body guarded, not just the read.)
+    /**
+     * Turns the raw provider channel list into what the user sees: the personalization overlay
+     * (hidden dropped, pinned/reordered, renamed) applied via the shared policy. Degrades to
+     * [channels] on any error — the overlay is optional and must never crash the guide.
+     *
+     * [isAllView] is the default "All channels" tab, which is capped at [ALL_CAP]. There the overlay
+     * MUST be applied to the FULL list BEFORE the cap (GuideAllChannelsCapPolicy) — capping first
+     * dropped a channel pinned past the cap before its pin could float it (the "web pin never shows
+     * on TV" bug). Every other tab (a single category, Favorites, Recent) is uncapped.
+     *
+     * The raw list + account + view flag are remembered so an overlay change (a D-pad edit, or a web
+     * edit arriving via sync while the guide is open) re-applies through here without a re-fetch —
+     * including re-floating a beyond-cap pin, because the FULL pre-cap list is what is kept here.
+     */
+    private fun displayChannels(accountId: String?, channels: List<GuideChannel>, isAllView: Boolean): List<GuideChannel> {
+        lastRawChannels = channels; lastOverlayAccountId = accountId; lastAllChannelsView = isAllView
         return try {
             val overlay = overlayRepository.uiState.value.channels
-            if (overlay.isEmpty()) {
+            if (isAllView) {
+                com.nuvio.tv.core.iptv.GuideAllChannelsCapPolicy.capped(
+                    channels = channels,
+                    overlay = overlay,
+                    cap = ALL_CAP,
+                    entityId = { it.entityId },
+                    withName = { row, newName -> row.copy(name = newName) },
+                )
+            } else if (overlay.isEmpty()) {
                 channels
             } else {
                 val tagged = channels.mapIndexed { i, c -> com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.Tagged(c.entityId, i, c) }
@@ -275,7 +299,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 )
             }
         } catch (e: Throwable) {
-            android.util.Log.w("IptvOverlay", "withOverlay failed: ${e.message}", e)
+            android.util.Log.w("IptvOverlay", "displayChannels failed: ${e.message}", e)
             channels
         }
     }
@@ -449,7 +473,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // + loadingChannels spinner flash on revisit. (FAVORITES/RECENT stay dynamic — not cached here.)
         if (category.special == null || category.special == GuideSpecial.ALL) {
             channelsCache["${acc.id}|${categoryId}"]?.let { cached ->
-                val shown = withOverlay(acc.id, cached)
+                val shown = displayChannels(acc.id, cached, isAllView = category.special == GuideSpecial.ALL)
                 if (!publishPlaybackLineup(acc.id, token, shown)) return
                 _uiState.update { it.copy(selectedCategoryId = categoryId, channels = shown, loadingChannels = false, error = null, focusedChannelId = shown.firstOrNull()?.contentId) }
                 if (isCurrentAccount(token)) primeEpgFor(shown)
@@ -468,11 +492,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 GuideSpecial.RECENT -> liveStore.recents.first()
                     .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
                     .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) }
-                // "All channels" honors the category selections too (filter BEFORE the cap so
-                // a selection at the catalog's tail isn't cut off). Favorites/Recent stay unfiltered.
+                // "All channels" honors the category selections too. NOTE: no cap here — the cap is
+                // applied by displayChannels(isAllView = true) AFTER the overlay floats pins, so a
+                // channel pinned past ALL_CAP survives (the "web pin never shows on TV" bug). rawChannels
+                // is therefore the FULL category-filtered catalog. Favorites/Recent stay unfiltered.
                 GuideSpecial.ALL -> retryOnce { fetchChannels(acc, null) }
                     ?.filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) }
-                    ?.take(ALL_CAP)
                 null -> retryOnce { fetchChannels(acc, category.id) }
             }
             if (!isCurrentAccount(token)) return@launch
@@ -482,14 +507,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 }
                 return@launch
             }
-            // Cache network-backed lists so revisiting the category is instant. Never cache an
-            // empty list: a transient panel failure must not pin a category empty all session.
-            if ((category.special == null || category.special == GuideSpecial.ALL) && rawChannels.isNotEmpty()) {
-                channelsCache["${acc.id}|${category.id}"] = rawChannels
+            // Apply the personalization overlay (hide/pin/reorder) — and, for "All channels", the
+            // ALL_CAP after the pins float — BEFORE publishing, so the playback lineup and the guide
+            // agree and EPG is primed only for what's shown.
+            val isAllView = category.special == GuideSpecial.ALL
+            val channels = displayChannels(acc.id, rawChannels, isAllView = isAllView)
+            // Cache network-backed lists so revisiting the category is instant. Never cache an empty
+            // list: a transient panel failure must not pin a category empty all session. "All channels"
+            // caches the CAPPED display list (not the full catalog) to bound memory on weak TV boxes;
+            // a single category is already small so it caches its raw list. The FULL pre-cap list stays
+            // alive in lastRawChannels only while this ALL view is on screen (for live overlay re-apply).
+            if ((category.special == null || isAllView) && rawChannels.isNotEmpty()) {
+                channelsCache["${acc.id}|${category.id}"] = if (isAllView) channels else rawChannels
             }
-            // Apply the personalization overlay (hide/pin/reorder) BEFORE publishing, so the playback
-            // lineup and the guide agree and EPG is primed only for what's shown.
-            val channels = withOverlay(acc.id, rawChannels)
             if (!publishPlaybackLineup(acc.id, token, channels)) return@launch
             _uiState.update { it.copy(channels = channels, loadingChannels = false, focusedChannelId = channels.firstOrNull()?.contentId) }
             if (isCurrentAccount(token)) primeEpgFor(channels)
@@ -706,15 +736,28 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
     }
 
-    /** Live favorites belonging to [acc] — see the RECENT rail for why this is account-scoped. */
+    /**
+     * Live favorites belonging to [acc] — see the RECENT rail for why this is account-scoped.
+     *
+     * Thin adapter over [com.nuvio.tv.core.iptv.LiveFavoritesRowPolicy]: a favourite is a synced
+     * Library ★ item, but the device-local [liveStore] ref is never synced — so a favourite made on
+     * mobile has no ref on TV. The policy builds a row for EVERY live favourite from the library
+     * entry's own name/logo (the ref is only an optional fast-path), fixing the empty Favorites row.
+     */
     private suspend fun favoriteChannels(acc: XtreamAccount): List<GuideChannel> {
-        val prefix = XtreamItemRegistry.accountPrefix(acc.id)
-        val favIds = libraryRepository.libraryItems.first()
-            .filter { XtreamItemRegistry.isLiveContentId(it.id) && it.id.startsWith(prefix) }
-            .map { it.id }
-        return favIds.mapNotNull { id ->
-            liveStore.refFor(id)?.let { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) }
+        val entries = libraryRepository.libraryItems.first().map {
+            com.nuvio.tv.core.iptv.LiveFavoritesRowPolicy.FavoriteEntry(it.id, it.name, it.logo)
         }
+        return com.nuvio.tv.core.iptv.LiveFavoritesRowPolicy.rows(
+            entries = entries,
+            accountPrefix = XtreamItemRegistry.accountPrefix(acc.id),
+            localRef = { id ->
+                liveStore.refFor(id)?.let {
+                    com.nuvio.tv.core.iptv.LiveFavoritesRowPolicy.LocalRef(it.name, it.logo, it.streamUrl)
+                }
+            },
+            streamIdOf = ::streamIdOf,
+        ).map { GuideChannel(it.contentId, it.name, it.logo, it.streamUrl, it.streamId) }
     }
 
     /** Best-effort streamId from a live content id ("xtream:acc:live:<streamId>"). */
