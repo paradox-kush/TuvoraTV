@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.sync
 
 import android.util.Log
+import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.sync.library.LIBRARY_DELTA_PAGE_SIZE
 import com.nuvio.tv.core.sync.library.LIBRARY_SNAPSHOT_PAGE_SIZE
 import com.nuvio.tv.core.sync.library.LibrarySyncLocalStore
@@ -28,7 +29,8 @@ data class LibraryRemoteSyncResult(
 @Singleton
 class LibrarySyncService @Inject constructor(
     private val remoteDataSource: LibrarySyncRemoteDataSource,
-    private val localStore: LibrarySyncLocalStore
+    private val localStore: LibrarySyncLocalStore,
+    private val authManager: AuthManager
 ) {
     private val syncMutex = Mutex()
 
@@ -53,6 +55,15 @@ class LibrarySyncService @Inject constructor(
     suspend fun syncFromRemote(
         profileId: Int
     ): Result<LibraryRemoteSyncResult> = withContext(Dispatchers.IO) {
+        // Gate at entry: the pull RPCs (sync_get_library_delta_cursor / sync_pull_library /
+        // sync_pull_library_delta) live in the remote data source, which this is the sole caller of.
+        // A lapsed/anon session would send them as `anon` and collect 42501, and — worse — an empty
+        // gated snapshot would wrongly mark delta state initialized at cursor 0. AuthManager isn't on
+        // the data-source port, so gate here where the sync cycle is owned. Fail so callers stay on
+        // their existing "pull failed, keep local" path.
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         syncMutex.withLock {
             try {
                 var state = localStore.getSyncState(profileId)

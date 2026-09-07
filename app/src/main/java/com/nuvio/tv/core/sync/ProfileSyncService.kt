@@ -182,6 +182,14 @@ class ProfileSyncService @Inject constructor(
     }
 
     suspend fun pullProfileLockStates(): Result<Map<Int, Boolean>> = withContext(Dispatchers.IO) {
+        // Biggest single 42501 source on the backend: this leaf ran ungated, so a lapsed/anon
+        // session sent sync_pull_profile_locks as `anon` and collected a permission-denied every
+        // profile-selection open. AuthState.FullAccount deliberately survives a lapsed session, so
+        // reaching here without a usable token is normal; the failed Result keeps every caller
+        // (MainActivity, ProfileSelectionViewModel) on its existing "pull failed" path.
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         try {
             val response = withJwtRefreshRetry {
                 postgrest.rpc("sync_pull_profile_locks")

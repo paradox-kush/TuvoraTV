@@ -119,6 +119,12 @@ class HomeCatalogSettingsSyncService @Inject constructor(
     }
 
     suspend fun pullFromRemote(): Result<Boolean> = withContext(Dispatchers.IO) {
+        // Without a usable session sync_pull_home_catalog_settings goes out as `anon` and comes back
+        // 42501. Same 42501 class as the sync_pull_* leaves the backend measured; gate it at entry so
+        // callers stay on their existing "keep local" path. Matches the push gate in triggerPush().
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         try {
             val profileId = profileManager.activeProfileId.value
             val syncScope = currentScope(profileId)

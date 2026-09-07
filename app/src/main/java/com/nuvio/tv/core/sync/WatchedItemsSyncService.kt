@@ -178,6 +178,12 @@ class WatchedItemsSyncService @Inject constructor(
     suspend fun pullFromRemote(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<List<WatchedItem>> = withContext(Dispatchers.IO) {
+        // Without a usable session sync_pull_watched_items goes out as `anon` and comes back 42501.
+        // Fail (do NOT return success(emptyList)) so pullSnapshotFromRemote's replaceWithRemoteItems
+        // never runs on an empty remote and deletes local items. Matches the sibling gates.
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         try {
             Log.d(TAG, "pullFromRemote: starting full watched items snapshot for profile $profileId")
             if (!shouldUseSupabaseWatchProgressSync()) {
@@ -226,6 +232,13 @@ class WatchedItemsSyncService @Inject constructor(
     suspend fun syncDeltaFromRemote(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<WatchedItemsRemoteSyncResult> = withContext(Dispatchers.IO) {
+        // Gate the whole cycle at entry: the nested cursor/delta/snapshot RPCs
+        // (sync_get_watched_items_delta_cursor / sync_pull_watched_items_delta / sync_pull_watched_items)
+        // are reachable only through here, so this one check keeps them all off the `anon` role and
+        // collapses the mid-cycle race (a token that lapses after the orchestrator's cycle began).
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         deltaSyncMutex.withLock {
             syncDeltaFromRemoteLocked(profileId)
         }
@@ -234,6 +247,9 @@ class WatchedItemsSyncService @Inject constructor(
     suspend fun syncSnapshotFromRemote(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<WatchedItemsRemoteSyncResult> = withContext(Dispatchers.IO) {
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         deltaSyncMutex.withLock {
             syncSnapshotFromRemoteLocked(profileId)
         }

@@ -234,6 +234,13 @@ class ProfileSettingsSyncService @Inject constructor(
     }
 
     suspend fun pullCurrentProfileFromRemote(): Result<Boolean> = withContext(Dispatchers.IO) {
+        // Without a usable session sync_pull_profile_settings_blob goes out as `anon` and comes back
+        // 42501. Gate at entry (before taking the mutex) so the callers (requestForegroundPull is
+        // already gated, but StartupSyncService/AccountViewModel/realtime call this directly) stay on
+        // their existing "keep local" path.
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         syncMutex.withLock {
             try {
                 val profileId = profileManager.activeProfileId.value

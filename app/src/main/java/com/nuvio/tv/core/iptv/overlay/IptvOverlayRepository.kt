@@ -128,7 +128,9 @@ class IptvOverlayRepository @Inject constructor(
         scope.launch {
             runCatching {
                 val rows = db.channelRowsForPush(profileId)
-                val upserts = rows.filter { !it.deleted }
+                // Collapse any duplicate (kind, okey) so the batch can't trip sync_push_iptv_overlay's
+                // ON CONFLICT(kind, okey) and abort the whole push with 21000. Keeps the freshest edit.
+                val upserts = IptvOverlayPushDedupPolicy.dedupe(rows.filter { !it.deleted })
                 val deletes = rows.filter { it.deleted }
                 if (upserts.isNotEmpty()) postgrest.rpc("sync_push_iptv_overlay", buildJsonObject {
                     put("p_profile_id", profileId)

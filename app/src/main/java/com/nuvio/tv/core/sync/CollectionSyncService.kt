@@ -84,6 +84,12 @@ class CollectionSyncService @Inject constructor(
      * Returns true if local state was updated.
      */
     suspend fun pullFromRemote(): Result<Boolean> = withContext(Dispatchers.IO) {
+        // Without a usable session sync_pull_collections goes out as `anon` and comes back 42501.
+        // The failed Result keeps every caller (StartupSyncService, realtime surface pull) on its
+        // existing "keep local" path. Matches the push gate in triggerPush() below.
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         try {
             val profileId = profileManager.activeProfileId.value
 

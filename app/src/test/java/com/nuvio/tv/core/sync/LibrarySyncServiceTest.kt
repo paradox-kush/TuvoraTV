@@ -1,7 +1,10 @@
 package com.nuvio.tv.core.sync
 
+import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.sync.library.LibrarySyncLocalStore
 import com.nuvio.tv.core.sync.library.LibrarySyncRemoteDataSource
+import io.mockk.every
+import io.mockk.mockk
 import com.nuvio.tv.domain.model.LibraryDeltaApplyResult
 import com.nuvio.tv.domain.model.LibraryDeltaEvent
 import com.nuvio.tv.domain.model.LibrarySnapshotApplyResult
@@ -27,7 +30,7 @@ class LibrarySyncServiceTest {
                 LibraryDeltaEvent(12L, "upsert", libraryItem("delta"))
             )
         )
-        val service = LibrarySyncService(remote, local)
+        val service = LibrarySyncService(remote, local, authManagerCanSync())
 
         val result = service.syncFromRemote(profileId = 3).getOrThrow()
 
@@ -55,7 +58,7 @@ class LibrarySyncServiceTest {
             LibrarySyncState(deltaInitialized = true)
         )
         val remote = FakeLibrarySyncRemote(events = events)
-        val service = LibrarySyncService(remote, local)
+        val service = LibrarySyncService(remote, local, authManagerCanSync())
 
         val result = service.syncFromRemote(profileId = 5).getOrThrow()
 
@@ -85,7 +88,7 @@ class LibrarySyncServiceTest {
                 LibraryDeltaEvent(5L, "delete", localItem)
             )
         )
-        val service = LibrarySyncService(remote, local)
+        val service = LibrarySyncService(remote, local, authManagerCanSync())
 
         val result = service.syncFromRemote(profileId = 1).getOrThrow()
 
@@ -108,7 +111,7 @@ class LibrarySyncServiceTest {
         )
         val local = InMemoryLibrarySyncStore(pendingState)
         val remote = FakeLibrarySyncRemote()
-        val service = LibrarySyncService(remote, local)
+        val service = LibrarySyncService(remote, local, authManagerCanSync())
 
         val result = service.pushToRemote(profileId = 2)
 
@@ -130,7 +133,7 @@ class LibrarySyncServiceTest {
         )
         val local = InMemoryLibrarySyncStore(pendingState)
         val remote = FakeLibrarySyncRemote(deleteFailure = IllegalStateException("offline"))
-        val service = LibrarySyncService(remote, local)
+        val service = LibrarySyncService(remote, local, authManagerCanSync())
 
         val result = service.pushToRemote(profileId = 1)
 
@@ -147,7 +150,7 @@ class LibrarySyncServiceTest {
             )
         )
         val remote = FakeLibrarySyncRemote()
-        val service = LibrarySyncService(remote, local)
+        val service = LibrarySyncService(remote, local, authManagerCanSync())
 
         val result = service.pushToRemote(profileId = 1)
 
@@ -155,6 +158,11 @@ class LibrarySyncServiceTest {
         assertEquals(setOf("one", "two"), remote.pushedItems.map { it.id }.toSet())
         assertTrue(local.state.pendingUpsertKeys.isEmpty())
     }
+
+    // These tests exercise the sync logic for a signed-in device, so canSync is true. The entry
+    // gate itself (canSync == false -> failure) is covered by the sync services' own gate reasoning.
+    private fun authManagerCanSync(): AuthManager =
+        mockk(relaxed = true) { every { canSync } returns true }
 
     private fun libraryItem(id: String): SavedLibraryItem {
         return SavedLibraryItem(

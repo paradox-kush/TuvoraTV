@@ -261,6 +261,12 @@ class WatchProgressSyncService @Inject constructor(
         sinceLastWatched: Long? = null,
         limit: Int? = null
     ): Result<List<Pair<String, WatchProgress>>> = withContext(Dispatchers.IO) {
+        // Without a usable session sync_pull_watch_progress goes out as `anon` and comes back 42501.
+        // Fail (do NOT return success(emptyList)) so pullSnapshotFromRemote's mergeRemoteEntries never
+        // treats an empty remote as authoritative. Matches the sibling gates.
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         try {
             if (!shouldUseSupabaseWatchProgressSync()) {
                 Log.d(TAG, "Using tracking provider watch progress, skipping watch progress pull")
@@ -317,6 +323,13 @@ class WatchProgressSyncService @Inject constructor(
     suspend fun syncDeltaFromRemote(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<WatchProgressRemoteSyncResult> = withContext(Dispatchers.IO) {
+        // Gate the whole cycle at entry: the nested cursor/delta/snapshot RPCs
+        // (sync_get_watch_progress_delta_cursor / sync_pull_watch_progress_delta / sync_pull_watch_progress)
+        // are reachable only through here, so this one check keeps them all off the `anon` role and
+        // collapses the mid-cycle race (a token that lapses after the orchestrator's cycle began).
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         deltaSyncMutex.withLock {
             syncDeltaFromRemoteLocked(profileId)
         }
@@ -325,6 +338,9 @@ class WatchProgressSyncService @Inject constructor(
     suspend fun syncSnapshotFromRemote(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<WatchProgressRemoteSyncResult> = withContext(Dispatchers.IO) {
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         deltaSyncMutex.withLock {
             try {
                 if (!shouldUseSupabaseWatchProgressSync()) {

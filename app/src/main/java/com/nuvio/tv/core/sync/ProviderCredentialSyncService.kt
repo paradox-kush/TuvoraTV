@@ -83,6 +83,13 @@ class ProviderCredentialSyncService @Inject constructor(
     suspend fun syncFromRemote(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<Boolean> = withContext(Dispatchers.IO) {
+        // Without a usable session sync_pull_provider_credentials (and the push/seed this method fires
+        // before it) go out as `anon` and come back 42501. Same 42501 class as the sync_pull_* leaves
+        // the backend measured; gate the whole push-then-pull cycle at entry so callers stay on their
+        // existing "keep local" path.
+        if (!authManager.canSync) {
+            return@withContext Result.failure(SyncNotAuthenticatedException())
+        }
         syncMutex.withLock {
             try {
                 val credentialScope = currentScope(profileId) ?: return@withLock Result.success(false)
