@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -415,6 +416,7 @@ fun LiveGuide(
                                 windowStartMs = windowStartMs,
                                 nowMs = nowMs,
                                 isFavorite = ch.contentId in favoriteIds,
+                                isPinned = ch.pinned,
                                 // While fullscreen, focus is locked in place behind the video;
                                 // keys are intercepted by the root onPreviewKeyEvent (controls
                                 // overlay + play/pause + zapping), BACK collapses.
@@ -773,6 +775,7 @@ private fun GuideChannelRow(
     windowStartMs: Long,
     nowMs: Long,
     isFavorite: Boolean,
+    isPinned: Boolean,
     lockFocus: Boolean,
     clampUp: Boolean = false,
     onFocused: () -> Unit,
@@ -893,6 +896,17 @@ private fun GuideChannelRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+            // Personalization pin marker — matches the favorite star's trailing-glyph style/placement.
+            // A distinct glyph from the star (favorite) and the play icon (currently tuned); does not
+            // touch the row's focus modifiers, so the D-pad highlight stays intact.
+            if (isPinned) {
+                Icon(
+                    imageVector = Icons.Default.PushPin,
+                    contentDescription = null,
+                    tint = NuvioTheme.colors.Primary,
+                    modifier = Modifier.size(NuvioTheme.spacing.md)
+                )
+            }
             if (isFavorite) {
                 Icon(
                     imageVector = Icons.Default.Star,

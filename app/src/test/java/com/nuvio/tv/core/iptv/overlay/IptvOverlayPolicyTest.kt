@@ -26,6 +26,35 @@ class IptvOverlayPolicyTest {
     @Test fun `rename applied`() =
         assertEquals(listOf("Alpha", "b", "c", "d"), IptvChannelOverlayPolicy.displayed(raw, mapOf("a" to ChannelOverlay(rename = "Alpha")), withName = { _, n -> n }))
 
+    // --- withPinned: the data source for the guide's visible pin marker ---
+
+    private data class Row(val id: String, val pinned: Boolean = false)
+
+    private fun stamp(rows: List<Row>, overlay: Map<String, ChannelOverlay>) =
+        IptvChannelOverlayPolicy.withPinned(rows, overlay, entityId = { it.id }, setPinned = { r, p -> r.copy(pinned = p) })
+
+    @Test fun `withPinned marks only pinned entities`() {
+        val rows = listOf(Row("a"), Row("b"), Row("c"))
+        val out = stamp(rows, mapOf("b" to ChannelOverlay(pinned = true)))
+        assertEquals("only the pinned entity is stamped", listOf(false, true, false), out.map { it.pinned })
+    }
+
+    @Test fun `withPinned leaves all false when overlay empty`() {
+        val rows = listOf(Row("a"), Row("b"))
+        assertEquals("no overlay pins nothing", listOf(false, false), stamp(rows, emptyMap()).map { it.pinned })
+    }
+
+    @Test fun `withPinned ignores hidden-only edit`() {
+        val out = stamp(listOf(Row("a")), mapOf("a" to ChannelOverlay(hidden = true)))
+        assertEquals("a hide edit is not a pin", listOf(false), out.map { it.pinned })
+    }
+
+    @Test fun `withPinned never pins a blank entity id`() {
+        // TV's synthetic Favorites/Recent rows carry no entity id; a stray blank-key overlay must not pin them.
+        val out = stamp(listOf(Row("")), mapOf("" to ChannelOverlay(pinned = true)))
+        assertEquals("blank entity id stays unpinned", listOf(false), out.map { it.pinned })
+    }
+
     @Test fun `custom groups above provider categories`() {
         val cats = listOf(TaggedCategory("k1", 0, "1", "News"), TaggedCategory("k2", 1, "2", "Sports"))
         val groups = listOf(

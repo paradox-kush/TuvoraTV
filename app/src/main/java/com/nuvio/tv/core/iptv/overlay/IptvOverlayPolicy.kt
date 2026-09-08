@@ -43,6 +43,22 @@ object IptvChannelOverlayPolicy {
             if (rename != null) withName(t.row, rename) else t.row
         }
     }
+
+    /**
+     * Stamp each already-displayed row with whether its entity is pinned in [overlay] — the data
+     * source for the guide's visible pin marker. Pure: the caller supplies the row's durable entity
+     * id and a setter; no DB / network / identity call. A row whose entity id is blank (TV's
+     * synthetic Favorites/Recent rows, built without one) is never pinned.
+     */
+    fun <T> withPinned(
+        rows: List<T>,
+        overlay: Map<String, ChannelOverlay>,
+        entityId: (T) -> String,
+        setPinned: (T, pinned: Boolean) -> T,
+    ): List<T> = rows.map { row ->
+        val id = entityId(row)
+        setPinned(row, id.isNotBlank() && overlay[id]?.pinned == true)
+    }
 }
 
 object IptvCategoryOverlayPolicy {

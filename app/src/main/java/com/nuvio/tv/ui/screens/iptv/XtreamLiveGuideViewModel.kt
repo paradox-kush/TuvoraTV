@@ -55,7 +55,10 @@ data class GuideChannel(
     /** `tv_archive_duration` in days; 0 = the panel did not say (see XtreamCatchUp.isWithinWindow). */
     val catchUpDays: Int = 0,
     /** The channel's durable canon-v1 identity — the key the personalization overlay + D-pad toggle use. */
-    val entityId: String = ""
+    val entityId: String = "",
+    /** True when this channel is pinned in the personalization overlay — drives the guide's pin marker.
+     *  Stamped by [displayChannels] from the overlay; synthetic Favorites/Recent rows stay false. */
+    val pinned: Boolean = false
 )
 
 internal object GuideRapidZapPolicy {
@@ -282,7 +285,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         lastRawChannels = channels; lastOverlayAccountId = accountId; lastAllChannelsView = isAllView
         return try {
             val overlay = overlayRepository.uiState.value.channels
-            if (isAllView) {
+            val displayed = if (isAllView) {
                 com.nuvio.tv.core.iptv.GuideAllChannelsCapPolicy.capped(
                     channels = channels,
                     overlay = overlay,
@@ -298,6 +301,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     tagged, overlay, honorOrder = true, withName = { row, newName -> row.copy(name = newName) },
                 )
             }
+            // Stamp the visible pin marker's source onto each displayed row (pure; a row without an
+            // entity id — the synthetic Favorites/Recent rows — stays pinned=false).
+            com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.withPinned(
+                displayed, overlay, entityId = { it.entityId }, setPinned = { row, pinned -> row.copy(pinned = pinned) },
+            )
         } catch (e: Throwable) {
             android.util.Log.w("IptvOverlay", "displayChannels failed: ${e.message}", e)
             channels
