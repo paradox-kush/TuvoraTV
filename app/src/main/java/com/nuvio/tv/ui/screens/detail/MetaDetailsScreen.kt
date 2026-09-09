@@ -83,6 +83,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.nuvio.tv.ui.util.EpisodeBucket
+import com.nuvio.tv.ui.util.episodeRangeDownTargetId
 import com.nuvio.tv.ui.util.localizedGenreLabel
 import com.nuvio.tv.ui.util.recompositionHighlighter
 import androidx.compose.foundation.lazy.LazyColumn
@@ -1363,6 +1364,10 @@ private fun MetaDetailsContent(
     // Tracks whether the initial auto-scroll to the "next to play" episode has fired.
     // Once it fires, no more auto-scrolls happen for the lifetime of this detail screen.
     var initialEpisodeScrollDone by remember(meta.id) { mutableStateOf(false) }
+    // Set to the range's first episode id when the user switches range, so the episode row (whose
+    // list-state is keyed by season only and therefore keeps its old scroll offset) is reset to the
+    // top of the new range. Cleared once the scroll is applied.
+    var episodeRangeScrollTargetId by remember(selectedSeason) { mutableStateOf<String?>(null) }
     val episodeFocusRequestersBySeason = remember(meta.id) { mutableMapOf<Int, MutableMap<String, FocusRequester>>() }
     val seasonEpisodeFocusRequesters = remember(selectedSeason, episodesForSeason) {
         val byEpisodeId = episodeFocusRequestersBySeason.getOrPut(selectedSeason) { mutableMapOf() }
@@ -1382,10 +1387,33 @@ private fun MetaDetailsContent(
                 ?: nextToWatch?.let { ntw -> episodesForSeason.firstOrNull { it.season == ntw.nextSeason && it.episode == ntw.nextEpisode }?.id }
                 ?: defaultSeriesVideo?.id?.takeIf { defaultId -> episodesForSeason.any { it.id == defaultId } }
         }
-        val preferredEpisodeId = lastFocusedEpisodeIdBySeason[selectedSeason]
-            ?: nextEpisodeId?.takeIf { episodesForSeason.any { ep -> ep.id == it } }
+        // The down-target must be an episode that is actually in — and therefore composed within —
+        // the currently selected range. A stale last-focused id from a previous range resolves to an
+        // unattached FocusRequester and the move is silently dropped, so guard it by range membership
+        // (falling back to the resume episode on first load, then the range's first episode).
+        val rangeEpisodeIds = episodesForSeason.map { it.id }
+        val preferredEpisodeId = episodeRangeDownTargetId(
+            rangeEpisodeIds,
+            lastFocusedEpisodeIdBySeason[selectedSeason] ?: nextEpisodeId,
+        )
         (preferredEpisodeId?.let { seasonEpisodeFocusRequesters[it] })
             ?: episodesForSeason.firstOrNull()?.id?.let { seasonEpisodeFocusRequesters[it] }
+    }
+
+    // On a user range switch, reset the episode row to the new range's first episode and forget the
+    // previous range's focused episode, so the chips' down-target recomputes onto a composed, on-
+    // screen card. Skipped on first load and on season switches (previous == current there), which
+    // preserves the resume-range selection behaviour.
+    var lastAppliedEpisodeRange by remember(selectedSeason) { mutableStateOf(selectedEpisodeRange) }
+    LaunchedEffect(selectedEpisodeRange, selectedSeason) {
+        val previous = lastAppliedEpisodeRange
+        if (selectedEpisodeRange != previous) {
+            lastAppliedEpisodeRange = selectedEpisodeRange
+            if (previous != null && selectedEpisodeRange != null) {
+                lastFocusedEpisodeIdBySeason.remove(selectedSeason)
+                episodeRangeScrollTargetId = episodesForSeason.firstOrNull()?.id
+            }
+        }
     }
 
     val activePeopleTabFocusRequester = visiblePeopleTabItems
@@ -1820,7 +1848,10 @@ private fun MetaDetailsContent(
                             onEpisodeFocused = { episodeId ->
                                 lastFocusedEpisodeIdBySeason[selectedSeason] = episodeId
                             },
-                            scrollToEpisodeId = if (lastFocusedEpisodeIdBySeason[selectedSeason] != null) {
+                            scrollToEpisodeId = if (episodeRangeScrollTargetId != null) {
+                                // A range switch just happened: pull the row to the top of the new range.
+                                episodeRangeScrollTargetId
+                            } else if (lastFocusedEpisodeIdBySeason[selectedSeason] != null) {
                                 null
                             } else if (!initialEpisodeScrollDone && pendingRestoreType != RestoreTarget.EPISODE) {
                                 val ntwId = nextToWatch?.nextVideoId
@@ -1841,6 +1872,7 @@ private fun MetaDetailsContent(
                             } else null,
                             onScrollToEpisodeHandled = {
                                 initialEpisodeScrollDone = true
+                                episodeRangeScrollTargetId = null
                             }
                         )
                     }

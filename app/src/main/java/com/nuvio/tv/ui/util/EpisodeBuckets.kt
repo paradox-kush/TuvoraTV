@@ -51,3 +51,15 @@ fun List<EpisodeBucket>.bucketContaining(episodeIndex: Int): EpisodeBucket? =
 /** The slice of [episodes] the given bucket covers, or everything when there is no bucketing. */
 fun List<Video>.sliceForBucket(bucket: EpisodeBucket?): List<Video> =
     if (bucket == null) this else subList(bucket.fromIndex, bucket.untilIndex)
+
+/**
+ * Which episode the range chips' "down" press should land on, given the episode ids visible in the
+ * currently selected range and the id of the episode last focused in the row.
+ *
+ * After a range switch the last-focused id belongs to the *previous* range, so its card is neither
+ * composed nor attached — aiming a focus move at its FocusRequester is silently dropped and the
+ * D-pad appears stuck. When the last-focused id is not part of the current range (or is unknown),
+ * the down-target is the range's first episode, which is on screen once the row is reset.
+ */
+fun episodeRangeDownTargetId(rangeEpisodeIds: List<String>, lastFocusedId: String?): String? =
+    lastFocusedId?.takeIf { it in rangeEpisodeIds } ?: rangeEpisodeIds.firstOrNull()
