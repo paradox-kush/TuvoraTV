@@ -298,10 +298,14 @@ class RecEventLogger @Inject constructor(
 
     private fun persistQueue(records: List<RecEventRecord>) {
         runCatching {
-            if (records.isEmpty()) {
+            // Bound the WRITE too: newest MAX_QUEUED_EVENTS records, drop an over-length record, keep
+            // the blob within the cap — so the app never creates the oversized file restore defends against.
+            val lines = records.map { json.encodeToString(it) }
+            val bounded = RecEventQueueRestorePolicy.boundLines(lines, MAX_QUEUED_EVENTS)
+            if (bounded.isEmpty()) {
                 queueFile.delete()
             } else {
-                queueFile.writeText(records.joinToString("\n") { json.encodeToString(it) })
+                queueFile.writeText(bounded.joinToString("\n"))
             }
         }.onFailure { Log.d(TAG, "Queue persist failed: ${it.message}") }
     }
@@ -309,11 +313,27 @@ class RecEventLogger @Inject constructor(
     private fun restoreQueue() {
         val file = queueFile
         if (!file.exists()) return
-        val restored = runCatching {
-            file.readLines()
-                .filter { it.isNotBlank() }
-                .mapNotNull { line -> runCatching { json.decodeFromString<RecEventRecord>(line) }.getOrNull() }
-        }.getOrElse { emptyList() }
+        // Enforce the byte limit WHILE consuming the stream (not a length pre-check, which races a
+        // growing file and can't bound a length-unknown source). Over MAX_QUEUE_BYTES / unreadable →
+        // drop it so it can't linger and re-OOM next launch.
+        val contents = runCatching {
+            readBoundedUtf8(file.inputStream(), RecEventQueueRestorePolicy.MAX_QUEUE_BYTES)
+        }.getOrNull()
+        if (contents == null) {
+            Log.w(TAG, "Rec queue file over ${RecEventQueueRestorePolicy.MAX_QUEUE_BYTES} bytes or unreadable; discarding")
+            file.delete()
+            return
+        }
+        // Then bound the decode: over-length lines dropped, only the newest MAX_QUEUED_EVENTS kept.
+        val bounded = RecEventQueueRestorePolicy.select(contents, "\n", MAX_QUEUED_EVENTS)
+        if (bounded.oversized) {
+            Log.w(TAG, "Rec queue exceeded ${RecEventQueueRestorePolicy.MAX_QUEUE_CHARS} chars; discarding corrupt queue")
+            file.delete()
+            return
+        }
+        val restored = bounded.lines.mapNotNull { line ->
+            runCatching { json.decodeFromString<RecEventRecord>(line) }.getOrNull()
+        }
         if (restored.isEmpty()) {
             file.delete()
             return

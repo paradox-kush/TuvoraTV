@@ -52,6 +52,13 @@ class IptvRefreshWorker @AssistedInject constructor(
             Log.i(TAG, "playback active — deferring IPTV refresh")
             return Result.retry()
         }
+        // Recovery safe mode: the app is crash-looping before it reaches an interactive screen —
+        // this worker does the same force=true M3U re-ingest + index rebuild as the warm-up, so a
+        // UI-level gate would be bypassed here. Skip this run; the next healthy launch clears it.
+        if (com.nuvio.tv.core.journal.StartupJournal.isSafeMode) {
+            Log.i(TAG, "recovery safe mode — skipping IPTV refresh this run")
+            return Result.success()
+        }
 
         val accounts = runCatching { accountStore.accounts.first() }.getOrDefault(emptyList())
         val enabled = accounts.filter { it.enabled }

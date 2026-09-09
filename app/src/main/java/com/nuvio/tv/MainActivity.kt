@@ -312,6 +312,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // A REAL UI launch (not a headless worker/JobService run) — open the recovery gate's
+        // "reached interactive" attempt now. Idempotent per process, so a config-change recreate
+        // does not re-open it. markInteractiveReached() fires from the first screen breadcrumb.
+        com.nuvio.tv.core.journal.StartupJournal.markUiLaunchStarted()
         isFirstResumeAfterCreate = true
         window?.setBackgroundDrawable(null)
 

@@ -9,6 +9,12 @@ import com.nuvio.tv.core.util.DeviceClass
 import com.nuvio.tv.core.tmdb.TmdbTitleBundle
 import com.nuvio.tv.data.local.XtreamAccountStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.nuvio.tv.core.journal.JournalOutcome
+import com.nuvio.tv.core.journal.StartupJournal
+import com.nuvio.tv.core.util.Guarded
+import com.nuvio.tv.core.util.containTask
+import com.nuvio.tv.core.util.guarded
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -106,6 +112,10 @@ class XtreamTmdbResolver @Inject constructor(
      * accounts participate in TMDB matching (M3U/Stalker have no player_api catalog).
      */
     fun warmUp(accounts: List<XtreamAccount>, startDelayMs: Long = 0L) {
+        // Recovery safe mode: the app is crash-looping before it reaches an interactive screen, so
+        // withhold ALL optional index warm-ups this run (the heaviest cold-start allocation). The
+        // per-account durable backoff in ensureIndexed still applies once out of safe mode.
+        if (StartupJournal.isSafeMode) return
         // Low-RAM devices used to skip this build outright — justified when it buffered the
         // whole catalog in heap. The build STREAMS now (measured ~54-87 MB total app heap on a
         // 2 GB device mid-build, its normal operating range), and skipping became actively
@@ -118,13 +128,19 @@ class XtreamTmdbResolver @Inject constructor(
         accounts.filter { it.enabled && it.isXtream() }.forEach { acc ->
             buildScope.launch {
                 if (delayMs > 0) delay(delayMs)
-                // Respect the playlist's content types: get_vod_streams is the single largest
-                // fetch the app makes (~15 MB on a 60k panel, whole catalog in one response —
-                // the API has no paging), so a user who turned Movies off was still paying for
-                // it on every add and every 72h refresh.
-                if (acc.typeEnabled(XtreamAccount.TYPE_LIVE)) ensureIndexed(acc, MatchKind.LIVE)
-                if (acc.typeEnabled(XtreamAccount.TYPE_MOVIES)) ensureIndexed(acc, MatchKind.MOVIE)
-                if (acc.typeEnabled(XtreamAccount.TYPE_SERIES)) ensureIndexed(acc, MatchKind.SERIES)
+                // Contain every failure at the task boundary — this is a bare launch on a
+                // SupervisorJob scope with no CoroutineExceptionHandler, so an uncaught throwable
+                // here crashes the app. ensureIndexed is contracted never to throw, but a foreign
+                // throw from an early index-state read must degrade to a skipped warm-up, never a
+                // fatal cold-start loop. containTask re-raises CancellationException.
+                containTask(onError = { Log.w(TAG, "warm-up index build failed for ${acc.name}", it) }) {
+                    // Respect the playlist's content types: get_vod_streams is the single largest
+                    // fetch the app makes (~15 MB on a 60k panel, whole catalog in one response —
+                    // the API has no paging), so a user who turned Movies off was still paying for it.
+                    if (acc.typeEnabled(XtreamAccount.TYPE_LIVE)) ensureIndexed(acc, MatchKind.LIVE)
+                    if (acc.typeEnabled(XtreamAccount.TYPE_MOVIES)) ensureIndexed(acc, MatchKind.MOVIE)
+                    if (acc.typeEnabled(XtreamAccount.TYPE_SERIES)) ensureIndexed(acc, MatchKind.SERIES)
+                }
             }
         }
     }
@@ -132,7 +148,12 @@ class XtreamTmdbResolver @Inject constructor(
     /** App-start warm-up for every enabled account, delayed so the home screen wins the cold-start bandwidth. */
     fun warmUpAll() {
         buildScope.launch {
-            warmUp(accountStore.accounts.first(), startDelayMs = STARTUP_WARM_DELAY_MS)
+            // Runs from NuvioApplication.onCreate — the earliest, most crash-loop-prone moment.
+            // Reading the account store (a Flow.first()) can throw; contain it so a cold start never
+            // dies here. Per-account build failures are already contained inside warmUp's launches.
+            containTask(onError = { Log.w(TAG, "startup warm-up scheduling failed", it) }) {
+                warmUp(accountStore.accounts.first(), startDelayMs = STARTUP_WARM_DELAY_MS)
+            }
         }
     }
 
@@ -247,8 +268,26 @@ class XtreamTmdbResolver @Inject constructor(
      */
     suspend fun ensureIndexed(acc: XtreamAccount, kind: MatchKind, force: Boolean = false) {
         val key = "${acc.id}#${kind.slug}"
-        val existing = index.builtAt(acc.id, kind)
+        // The index-state read is a SQLite query BEFORE the build's own try/catch, on the caller's
+        // coroutine (a warm-up launch, a resolve() call, or a headless refresh worker). A
+        // locked/corrupt handle must not escape ensureIndexed — its contract is "never throws;
+        // resolve degrades to whatever index exists". Degrade to a skipped build this cycle. A null
+        // value (no index yet) is preserved via Guarded.Ok; only a THROW returns early.
+        val existing = when (
+            val g = guarded(onError = {
+                Log.w(TAG, "index-state read failed for ${acc.name} ${kind.slug}; skipping build this cycle", it)
+            }) { index.builtAt(acc.id, kind) }
+        ) {
+            is Guarded.Ok -> g.value
+            Guarded.Failed -> return
+        }
         if (!force && existing != null && System.currentTimeMillis() - existing < INDEX_TTL_MS) return
+
+        // Durable cross-run backoff (survives an OS kill that bypasses the catch below): if a prior
+        // run began this build and never recorded an outcome, defer with bounded backoff instead of
+        // repeating a build that may have killed the process. Complements the SharedPrefs failure
+        // backoff (lastFailedAt) already checked in the buildLock below. See StartupJournal.
+        if (StartupJournal.shouldDefer(StartupJournal.OP_INDEX_BUILD, key)) return
 
         val (deferred, isOwner) = buildLock.withLock {
             inFlightBuilds[key]?.let { return@withLock it to false }
@@ -263,6 +302,18 @@ class XtreamTmdbResolver @Inject constructor(
 
         if (isOwner) {
             buildScope.launch {
+                // Attempt-before-work: record the attempt durably BEFORE the heavy build, so an OS
+                // kill mid-build (which bypasses every catch below) is detected next run and deferred.
+                // A null token means the attempt could not be persisted — withhold the build this run.
+                val token = StartupJournal.beginAttempt(StartupJournal.OP_INDEX_BUILD, key)
+                if (token == null) {
+                    buildLock.withLock {
+                        inFlightBuilds.remove(key)
+                        markIndexingLocked(acc.id, -1)
+                    }
+                    deferred.complete(Unit)
+                    return@launch
+                }
                 val startedMs = System.currentTimeMillis()
                 var itemCount = 0
                 try {
@@ -299,7 +350,14 @@ class XtreamTmdbResolver @Inject constructor(
                         Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
                     }
                     reportBuild(kind, itemCount, startedMs, outcome = "ok", detail = null)
+                    StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.COMPLETED)
                     buildLock.withLock { clearLastFailure(key) }
+                } catch (c: CancellationException) {
+                    // Preserve cancellation — do NOT swallow it or treat it as a failure/backoff.
+                    // Record it as a non-failure so it is not mistaken for an abnormal death next run,
+                    // then re-raise so structured cancellation of buildScope still works.
+                    StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.CANCELLED)
+                    throw c
                 } catch (oom: OutOfMemoryError) {
                     // Deliberately not rethrown: the build owns the only large allocations here,
                     // so releasing them and backing off recovers, where a rethrow would take the
@@ -307,10 +365,12 @@ class XtreamTmdbResolver @Inject constructor(
                     // showed up in telemetry only as an OS low-memory kill with no stack trace.
                     Log.e(TAG, "index build ran out of memory for ${acc.name} ${kind.slug} ($itemCount items)", oom)
                     reportBuild(kind, itemCount, startedMs, outcome = "oom", detail = oom.message)
+                    StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.EXPECTED_FAILURE)
                     buildLock.withLock { recordFailure(key) }
                 } catch (t: Throwable) {
                     Log.w(TAG, "index build failed for ${acc.name} ${kind.slug}", t)
                     reportBuild(kind, itemCount, startedMs, outcome = "error", detail = "${t::class.java.simpleName}: ${t.message}")
+                    StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.EXPECTED_FAILURE)
                     buildLock.withLock { recordFailure(key) }
                 } finally {
                     buildLock.withLock {

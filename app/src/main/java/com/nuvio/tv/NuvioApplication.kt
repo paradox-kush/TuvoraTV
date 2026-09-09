@@ -116,6 +116,14 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         super.onCreate()
         // Resolve the memory tier once, before anything sizes a cache from it.
         com.nuvio.tv.core.memory.AndroidMemoryTierProbe.tier(this)
+        // Startup journal — foundational to the durable resolver backoff and the crash-loop recovery
+        // gate. Initialize before any risky optional work (warm-ups, workers) is scheduled below.
+        com.nuvio.tv.core.journal.StartupJournalStore.initialize(this)
+        // Recovery gate DECISION ONLY here (Application.onCreate runs for headless worker/JobService
+        // starts too, so opening a UI attempt here would falsely accumulate startup failures). This
+        // only sweeps + decides safe mode; the UI-launch attempt is opened in MainActivity. In safe
+        // mode the resolver warm-up + IPTV refresh worker + channel sync withhold their heavy work.
+        com.nuvio.tv.core.journal.StartupJournal.decideStartupMode()
         val crashReportsEnabled = runBlocking(Dispatchers.IO) {
             sentrySettingsDataStore.isEnabled()
         }
@@ -125,6 +133,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         com.nuvio.tv.core.analytics.Breadcrumbs.crashWriter =
             object : com.nuvio.tv.core.analytics.Breadcrumbs.CrashWriter {
                 override fun onScreen(name: String) {
+                    // First real screen = interactive shell reached — resets the crash-loop counter.
+                    com.nuvio.tv.core.journal.StartupJournal.markInteractiveReached()
                     AppExitReporter.recordRoute(this@NuvioApplication, name)
                 }
 

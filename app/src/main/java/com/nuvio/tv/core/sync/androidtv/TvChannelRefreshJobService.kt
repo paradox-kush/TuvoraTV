@@ -55,6 +55,15 @@ class TvChannelRefreshJobService : JobService() {
             jobFinished(params, false)
             return false
         }
+        // Recovery safe mode: the app is crash-looping before it reaches an interactive screen. This
+        // is a headless entry point (a JobService run triggers Application.onCreate, which only takes
+        // the DECISION — it does not open a startup attempt, so this run never inflates the crash-loop
+        // counter). Skip the reconcile this run; the next healthy launch clears safe mode.
+        if (com.nuvio.tv.core.journal.StartupJournal.isSafeMode) {
+            Log.i(TAG, "recovery safe mode — skipping channel refresh")
+            jobFinished(params, false)
+            return false
+        }
 
         jobScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         jobScope!!.launch {
