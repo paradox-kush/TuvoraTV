@@ -135,6 +135,65 @@ class EpgMirrorDb @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
+    /** Test-only: observes each shadow-insert batch size, to prove the streamed batch stays bounded
+     *  no matter how large the catalog is. Null (no-op) in production. */
+    @Volatile
+    var indexInsertObserver: ((Int) -> Unit)? = null
+
+    /**
+     * A SYNCHRONOUS streaming channels-index refresh — the bounded-memory counterpart to
+     * [replaceIndex] and twin of the KMP EpgMirrorDb.IndexIngest. Synchronous because the stream
+     * parser's element callback cannot suspend, so a bounded batch must be flushed to SQLite from
+     * inside that callback rather than collected into one big list and inserted afterwards. Framework
+     * [SQLiteDatabase] serializes its own writes and WAL keeps guide reads (nowNext/programmesWindow)
+     * serving throughout, so no external lock is held. The live `index_channels` keeps serving until
+     * [IndexIngest.commit]; if the caller never commits (parse threw), the orphan shadow is dropped.
+     *
+     * Runs on the caller's thread (the sync EPG dispatcher) — do not call from the main thread.
+     */
+    fun indexIngest(): IndexIngest = IndexIngest()
+
+    inner class IndexIngest internal constructor() {
+        private var committed = false
+
+        /** Create a fresh, empty shadow. Call once before the first [insert]. */
+        fun begin() = inTx {
+            db.execSQL("DROP TABLE IF EXISTS index_channels_shadow")
+            db.execSQL("CREATE TABLE index_channels_shadow(slug TEXT NOT NULL, epg_id TEXT NOT NULL, name TEXT NOT NULL)")
+        }
+
+        /** Insert one bounded batch and RELEASE it (the caller clears its buffer after this returns).
+         *  Lowercases epg_id exactly as [replaceIndex] does, so reads/mappings resolve after the swap. */
+        fun insert(rows: List<EpgIndexRow>) {
+            if (rows.isEmpty()) return
+            indexInsertObserver?.invoke(rows.size)
+            inTx {
+                val s = db.compileStatement("INSERT INTO index_channels_shadow(slug, epg_id, name) VALUES(?,?,?)")
+                for (r in rows) {
+                    s.clearBindings()
+                    s.bindString(1, r.slug); s.bindString(2, r.epgId.lowercase()); s.bindString(3, r.name)
+                    s.executeInsert()
+                }
+                s.close()
+            }
+        }
+
+        /** Atomically swap the filled shadow in as the live index (and rebuild its slug lookup). */
+        fun commit() {
+            inTx {
+                db.execSQL("DROP TABLE IF EXISTS index_channels")
+                db.execSQL("ALTER TABLE index_channels_shadow RENAME TO index_channels")
+                db.execSQL("CREATE INDEX index_channels_slug ON index_channels(slug)")
+            }
+            committed = true
+        }
+
+        /** Drop the shadow if it was never committed (aborted refresh) — keeps the live index intact. */
+        fun dropIfUncommitted() {
+            if (!committed) db.execSQL("DROP TABLE IF EXISTS index_channels_shadow")
+        }
+    }
+
     /** Stream every index row (build the transient [EpgChannelIndex] without a big list copy). */
     suspend fun forEachIndexRow(block: (EpgIndexRow) -> Unit): Unit = withContext(Dispatchers.IO) {
         db.rawQuery("SELECT slug, epg_id, name FROM index_channels", null).use { c ->

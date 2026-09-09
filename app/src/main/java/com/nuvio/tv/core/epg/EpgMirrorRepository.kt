@@ -8,12 +8,14 @@ import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.data.local.XtreamAccountStore
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -196,30 +198,15 @@ class EpgMirrorRepository @Inject constructor(
                 return@withContext
             }
 
-            val index = fetchChannelsIndex(base, manifest.channelsIndexPath ?: "channels-index.json.gz")
-                ?: return@withContext
-            // Remember what the mirror offers before filtering, so the picker can list every
-            // region (including ones the viewer switched off) without a re-fetch.
-            val published = index.sources.map {
-                EpgSourceInfo(it.slug, it.label ?: it.slug, it.countries, it.channels.size)
+            // Stream the channels-index: decode ONE source at a time (the whole ChannelsIndexDoc
+            // tree and the whole decompressed body are never materialized), store the selected
+            // regions' rows into a bounded shadow, and swap it in only after a fully successful
+            // parse — so an oversized/malformed/truncated response leaves the previous generation
+            // intact. Twin of the KMP EpgMirrorRepository.ingestChannelsIndexStream.
+            val committed = ingestChannelsIndexStream(db, json, selectedRegions()) { onChunk ->
+                streamIndexChars(base, manifest.channelsIndexPath ?: "channels-index.json.gz", onChunk)
             }
-            db.replaceSources(published)
-
-            // Only selected regions are STORED. Filtering here rather than at query time is the
-            // point of the picker: the index is what costs disk on every device and a match walk
-            // per channel, and a household typically uses ~13% of it.
-            val keepSlugs = EpgRegionCatalog.slugsFor(selectedRegions(), published)
-            val rows = ArrayList<EpgIndexRow>(64_000)
-            for (src in index.sources) {
-                if (src.slug !in keepSlugs) continue
-                for (ch in src.channels) {
-                    if (ch.id.isBlank()) continue
-                    if (ch.names.isEmpty()) rows.add(EpgIndexRow(src.slug, ch.id, ch.id))
-                    else ch.names.forEach { n -> if (n.isNotBlank()) rows.add(EpgIndexRow(src.slug, ch.id, n)) }
-                }
-            }
-            if (rows.isEmpty()) return@withContext
-            db.replaceIndex(rows)
+            if (!committed) return@withContext
 
             // The index just changed, so this is the one moment a re-match can produce a new
             // answer — but the policy still admits at most ONE account per sync, so a bump that
@@ -376,19 +363,49 @@ class EpgMirrorRepository @Inject constructor(
     private fun fetchManifest(base: String): MirrorManifest? = runCatching {
         http.newCall(Request.Builder().url("$base/manifest.json").get().build()).execute().use { resp ->
             check(resp.isSuccessful) { "manifest HTTP ${resp.code}" }
-            json.decodeFromString<MirrorManifest>(resp.body?.string().orEmpty())
+            // Bound the manifest read too (small JSON): a corrupt/runaway manifest is rejected
+            // without OOM, matching the KMP manifest cap.
+            val text = readBoundedChars(checkNotNull(resp.body) { "empty manifest body" }.charStream(), MAX_FETCH_CHARS)
+                ?: run { Log.w(TAG, "manifest exceeded $MAX_FETCH_CHARS chars; rejected"); return@use null }
+            json.decodeFromString<MirrorManifest>(text)
         }
     }.onFailure { Log.d(TAG, "manifest fetch failed: $it") }.getOrNull()
 
-    private fun fetchChannelsIndex(base: String, path: String): ChannelsIndexDoc? = runCatching {
-        http.newCall(Request.Builder().url("$base/$path").get().build()).execute().use { resp ->
-            check(resp.isSuccessful) { "index HTTP ${resp.code}" }
-            val body = checkNotNull(resp.body) { "empty index body" }
-            GZIPInputStream(body.byteStream()).bufferedReader().use { reader ->
-                json.decodeFromString<ChannelsIndexDoc>(reader.readText())
+    /**
+     * Stream the (gunzipped) channels-index to [onChunk] as decoded char chunks, NEVER materializing
+     * the whole decompressed body. The response is closed on any throw (`.use`) — so when the element
+     * parser rejects an oversized/malformed record and throws through [onChunk], the upstream read
+     * stops and the socket is released rather than draining the rest of the body. The GZIP wrap caps
+     * the INFLATED size the parser sees, defeating a gz bomb.
+     */
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
+    private suspend fun streamIndexChars(base: String, path: String, onChunk: (String) -> Unit) {
+        // Cancellation must stop the actual blocking read (a synchronous reader ignores coroutine
+        // cancellation): wire it to Call.cancel() on the cancelling transition, then ensureActive()
+        // maps the resulting read failure to CancellationException. Twin of the KMP httpStreamLines.
+        val call = http.newCall(Request.Builder().url("$base/$path").get().build())
+        val cancelHook = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+            ?.invokeOnCompletion(onCancelling = true, invokeImmediately = true) { cause -> if (cause != null) call.cancel() }
+        try {
+            call.execute().use { resp ->
+                check(resp.isSuccessful) { "index HTTP ${resp.code}" }
+                val body = checkNotNull(resp.body) { "empty index body" }
+                GZIPInputStream(body.byteStream()).bufferedReader().use { reader ->
+                    val buf = CharArray(64 * 1024)
+                    while (true) {
+                        val n = reader.read(buf)
+                        if (n < 0) break
+                        if (n > 0) onChunk(String(buf, 0, n))
+                    }
+                }
             }
+        } catch (t: Throwable) {
+            kotlin.coroutines.coroutineContext.ensureActive() // cancel-induced failure → CancellationException
+            throw t
+        } finally {
+            cancelHook?.dispose()
         }
-    }.onFailure { Log.w(TAG, "channels index fetch failed: $it") }.getOrNull()
+    }
 
     /** Stream-parse one feed from its origin URL, emitting programmes for [wantIds]. */
     private fun streamFeed(url: String, wantIds: Set<String>, onProgramme: (EpgProgramme) -> Unit) {
@@ -424,27 +441,6 @@ class EpgMirrorRepository @Inject constructor(
         val error: String? = null,
     )
 
-    @Serializable
-    private data class ChannelsIndexDoc(
-        val generatedAt: String? = null,
-        val sources: List<IndexSourceDoc> = emptyList(),
-    )
-
-    @Serializable
-    private data class IndexSourceDoc(
-        val slug: String,
-        val label: String? = null,
-        /** Comma-separated country names; drives the region picker. */
-        val countries: String? = null,
-        val channels: List<IndexChannelDoc> = emptyList(),
-    )
-
-    @Serializable
-    private data class IndexChannelDoc(
-        val id: String,
-        val names: List<String> = emptyList(),
-    )
-
     private companion object {
         const val TAG = "EpgMirror"
         const val META_SYNCED_AT = "synced_at"
@@ -463,4 +459,174 @@ class EpgMirrorRepository @Inject constructor(
         const val WINDOW_BACK_MS = 6 * 60 * 60 * 1000L
         const val WINDOW_AHEAD_MS = 48 * 60 * 60 * 1000L
     }
+}
+
+/** Manifest fetch cap (small JSON) — a corrupt/runaway manifest is rejected without OOM. The
+ *  channels-index no longer accumulates: it is streamed element-wise (below). Matches the KMP cap. */
+private const val MAX_FETCH_CHARS = 4_000_000
+
+// --- streaming channels-index bounds — twin of the KMP constants ---
+// Working-set bounds (retained memory, independent of catalog size):
+/** One source's metadata string (slug/label/countries) cap — larger ⇒ reject the update. */
+private const val MAX_SCALAR_CHARS = 8_192
+/** One channel object's JSON cap — larger ⇒ reject. A channel is `{"id":..,"names":[..]}`; tiny. */
+private const val MAX_CHANNEL_CHARS = 64 * 1024
+/** Max nesting depth inside a channel object or a skipped field — larger ⇒ reject. */
+private const val MAX_DEPTH = 32
+/** Rows buffered before a flush+clear: the parser callback can't suspend, so a full batch is the peak
+ *  retained selected-row memory. Kept modest so working memory stays flat. */
+private const val INDEX_BATCH = 4_000
+/** Max source records before the update is rejected (the mirror publishes ~tens of regions). */
+private const val MAX_SOURCES = 4_096
+// Total-accepted bound (NOT a working-set bound — rows are streamed to disk in INDEX_BATCH flushes):
+/** Max selected index rows accepted in one refresh. The full multi-region index is ~49k channels; a
+ *  household stores ~13%. Well above the real ceiling so a valid catalog is never rejected. */
+private const val MAX_ROWS = 400_000
+
+@Serializable
+internal data class IndexChannelDoc(
+    val id: String,
+    val names: List<String> = emptyList(),
+)
+
+/**
+ * Bounded-memory channels-index ingestion (hand-port of the KMP EpgMirrorRepository.ingestChannelsIndexStream).
+ * [feed] streams the (gunzipped) response as chunks; a [ChannelsIndexStreamParser] emits each source's
+ * scalar metadata and then its channel objects one at a time — so neither the whole document, nor a
+ * whole source's channel list, nor the whole selected catalog is ever materialized. Selected channels
+ * accumulate into ONE reusable batch that is flushed to a shadow table and cleared as soon as it reaches
+ * [INDEX_BATCH]; the shadow is swapped in atomically only after the entire response has parsed and
+ * validated. Any oversized record/field, over-deep nesting, too many sources, exceeding the total-rows
+ * cap, or a truncated body throws → no commit → the previous valid generation is retained.
+ *
+ * Retained memory is O([INDEX_BATCH] rows + [MAX_SOURCES] source metadata + one channel object),
+ * independent of channel count; [MAX_ROWS] bounds the *total accepted* catalog, a separate concern.
+ *
+ * A top-level function (depends only on [db] + [json]) so a Robolectric test can drive it through real
+ * framework SQLite without the Hilt graph. Returns true iff a new (non-empty) generation was committed.
+ */
+/** Serializes channels-index ingests so two never interleave shadow begin/insert/commit. `ensureFresh`
+ *  already single-flights via its own mutex; this additionally guards a direct call. It does NOT gate
+ *  guide reads (they run on Dispatchers.IO against WAL SQLite), so serializing ingests never blocks the
+ *  guide. Twin of the KMP EpgMirrorRepository.indexIngestMutex. */
+private val indexIngestMutex = kotlinx.coroutines.sync.Mutex()
+
+/**
+ * Bounded-memory channels-index ingestion in two phases (twin of the KMP implementation).
+ *
+ * PHASE 1 (no EPG DB write): [feed] streams the response; EVERY source's channels are appended to
+ * bounded off-DB [EpgIngestStaging], tagged by a stable per-source ordinal. Keep is NOT decided here —
+ * a late/duplicate slug/label/countries could still change it — so field order is fully independent
+ * and no channel is selected on a stale value. The document, a whole source's channel list, and the
+ * whole catalog stay out of memory.
+ *
+ * PHASE 2 (WAL DB writes, no network): once metadata is final, [EpgRegionCatalog.slugsFor] decides the
+ * kept sources; staged rows for kept ordinals are promoted into the shadow in [INDEX_BATCH] batches
+ * and swapped atomically. The previous generation serves until the swap; any failure/cancellation
+ * drops the shadow and keeps the prior generation. On TV the network read never blocks guide reads:
+ * phase 1 touches no DB, and guide reads run on Dispatchers.IO against WAL — NOT on the single-thread
+ * EPG dispatcher this ingest occupies.
+ */
+internal suspend fun ingestChannelsIndexStream(
+    db: EpgMirrorDb,
+    json: Json,
+    selection: Set<String>,
+    feed: suspend (onChunk: (String) -> Unit) -> Unit,
+): Boolean = indexIngestMutex.withLock {
+    val published = ArrayList<EpgSourceInfo>() // index == source ordinal; each source's FINAL metadata
+    val staging = EpgIngestStaging()
+    try {
+        // --- PHASE 1: network → staging, no EPG DB lock ---
+        var ordinal = -1
+        var slug = ""; var label: String? = null; var countries: String? = null; var channelCount = 0
+        var stagedRows = 0
+        val handler = object : ChannelsIndexStreamParser.Handler {
+            override fun onSourceBegin() {
+                ordinal++
+                if (ordinal >= MAX_SOURCES) throw EpgElementTooLargeException(ordinal)
+                slug = ""; label = null; countries = null; channelCount = 0
+            }
+
+            // Last value wins for a repeated key — the final scalars are what onSourceEnd records.
+            override fun onSourceScalar(key: String, value: String?) {
+                when (key) {
+                    "slug" -> slug = value.orEmpty()
+                    "label" -> label = value
+                    "countries" -> countries = value
+                }
+            }
+
+            override fun onChannel(channelJson: String) {
+                channelCount++
+                val ch = json.decodeFromString<IndexChannelDoc>(channelJson)
+                if (ch.id.isBlank()) return
+                val names = if (ch.names.isEmpty()) listOf(ch.id) else ch.names
+                for (n in names) {
+                    if (n.isBlank()) continue
+                    if (stagedRows >= MAX_ROWS) throw EpgElementTooLargeException(stagedRows)
+                    staging.append(encodeStagedRow(EpgStagedRow(ordinal, ch.id, n)))
+                    stagedRows++
+                }
+            }
+
+            override fun onSourceEnd() {
+                published.add(EpgSourceInfo(slug, label ?: slug, countries, channelCount))
+            }
+        }
+        val parser = ChannelsIndexStreamParser(MAX_SCALAR_CHARS, MAX_CHANNEL_CHARS, MAX_DEPTH, handler)
+        val parsed = runCatching {
+            feed { chunk -> parser.accept(chunk) }
+            parser.finish() // throws on an absent/truncated array — never publish a partial replacement
+            true
+        }.getOrElse { t ->
+            if (t is kotlinx.coroutines.CancellationException) throw t // propagate; finally disposes staging
+            Log.w("EpgMirror", "channels-index stream rejected; kept prior generation", t)
+            false
+        }
+        if (!parsed) return@withLock false // parse failed/truncated → prior generation intact
+
+        // --- keep decision from FINAL metadata (field-order independent; duplicate key = last wins) ---
+        val keptSlugs = EpgRegionCatalog.slugsFor(selection, published)
+        val slugByKeptOrdinal = HashMap<Int, String>()
+        published.forEachIndexed { ord, info -> if (info.slug in keptSlugs) slugByKeptOrdinal[ord] = info.slug }
+
+        // --- PHASE 2: staging → shadow, no network ---
+        staging.finishWriting()
+        val ingest = db.indexIngest()
+        var committed = false
+        try {
+            ingest.begin()
+            val batch = ArrayList<EpgIndexRow>(INDEX_BATCH)
+            var promoted = 0
+            staging.forEachLine { line ->
+                val row = decodeStagedRow(line)
+                val rowSlug = slugByKeptOrdinal[row.o] ?: return@forEachLine // skipped region — never promoted
+                batch.add(EpgIndexRow(rowSlug, row.i, row.n))
+                promoted++
+                if (batch.size >= INDEX_BATCH) { ingest.insert(batch); batch.clear() }
+            }
+            if (batch.isNotEmpty()) ingest.insert(batch)
+            if (promoted > 0) { ingest.commit(); committed = true }
+        } finally {
+            ingest.dropIfUncommitted()
+        }
+        db.replaceSources(published) // full catalog parsed → publish for the region picker
+        return@withLock committed
+    } finally {
+        staging.dispose()
+    }
+}
+
+/** Reads up to [maxChars] from [reader], returning null if exceeded — enforced while consuming, so a
+ *  decompression-bomb / oversized response never fully lands in memory. Testable with a StringReader. */
+internal fun readBoundedChars(reader: java.io.Reader, maxChars: Int): String? {
+    val sb = StringBuilder()
+    val buf = CharArray(8192)
+    while (true) {
+        val n = reader.read(buf)
+        if (n < 0) break
+        if (sb.length.toLong() + n > maxChars) return null
+        sb.append(buf, 0, n)
+    }
+    return sb.toString()
 }
