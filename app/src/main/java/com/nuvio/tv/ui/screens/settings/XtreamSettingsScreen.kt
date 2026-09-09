@@ -47,9 +47,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
@@ -1224,9 +1226,28 @@ private fun UrlSourceFields(
     firstFieldFocus: FocusRequester,
     onSubmit: () -> Unit
 ) {
-    XtreamField(url, onUrlChange, "M3U URL  (http://host/get.php?…&type=m3u_plus  or  …/playlist.m3u)", firstFieldFocus, onSubmit = onSubmit)
-    XtreamField(userAgent, onUserAgentChange, "User-Agent (optional)", onSubmit = onSubmit)
-    XtreamField(name, onNameChange, "Name (optional)", onSubmit = onSubmit)
+    val focusManager = LocalFocusManager.current
+    // The M3U URL field has more fields below it (User-Agent, Name, then the shared EPG URL). On the
+    // Fire TV on-screen keyboard "Done" submits the whole form, so those later fields — the optional
+    // EPG URL in particular — were never reachable. Move focus down instead of submitting here.
+    XtreamField(
+        url, onUrlChange, "M3U URL  (http://host/get.php?…&type=m3u_plus  or  …/playlist.m3u)",
+        firstFieldFocus, imeAction = ImeAction.Next, onSubmit = onSubmit,
+        onImeAction = { focusManager.moveFocus(FocusDirection.Down) },
+    )
+    // User-Agent and Name also have fields below them (each other, then the shared EPG URL). Chain
+    // the on-screen-keyboard "Next" down the form so it never submits before the EPG URL field is
+    // reachable — the Fire TV keyboard "Done" on any of these used to save-and-close the whole form.
+    XtreamField(
+        userAgent, onUserAgentChange, "User-Agent (optional)",
+        imeAction = ImeAction.Next, onSubmit = onSubmit,
+        onImeAction = { focusManager.moveFocus(FocusDirection.Down) },
+    )
+    XtreamField(
+        name, onNameChange, "Name (optional)",
+        imeAction = ImeAction.Next, onSubmit = onSubmit,
+        onImeAction = { focusManager.moveFocus(FocusDirection.Down) },
+    )
     FormHelperText("Paste the playlist URL. The whole list is downloaded and indexed once so it browses fast; large lists take a moment after saving.")
 }
 
@@ -1326,7 +1347,13 @@ private fun XtreamField(
     placeholder: String,
     focusRequester: FocusRequester? = null,
     isPassword: Boolean = false,
-    onSubmit: () -> Unit
+    imeAction: ImeAction = ImeAction.Done,
+    onSubmit: () -> Unit,
+    // What the keyboard action (and hardware ENTER) does. Defaults to submitting the form, so every
+    // existing field is unchanged; a field that has more fields below it (e.g. the M3U URL field with
+    // the EPG URL field after it) passes ImeAction.Next + a move-focus-down here so the on-screen
+    // "Done" key does not submit the whole form before the later fields are reachable.
+    onImeAction: () -> Unit = onSubmit,
 ) {
     var focused by remember { mutableStateOf(false) }
     BasicTextField(
@@ -1349,13 +1376,13 @@ private fun XtreamField(
                 when {
                     native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER && native.action == KeyEvent.ACTION_DOWN -> true
                     (native.keyCode == KeyEvent.KEYCODE_ENTER || native.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) &&
-                        native.action == KeyEvent.ACTION_DOWN -> { onSubmit(); true }
+                        native.action == KeyEvent.ACTION_DOWN -> { onImeAction(); true }
                     else -> false
                 }
             },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-        keyboardActions = KeyboardActions(onDone = { onSubmit() }),
+        keyboardOptions = KeyboardOptions(imeAction = imeAction),
+        keyboardActions = KeyboardActions(onDone = { onImeAction() }, onNext = { onImeAction() }),
         visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
         textStyle = MaterialTheme.typography.bodyMedium.copy(color = NuvioTheme.colors.TextPrimary),
         cursorBrush = SolidColor(if (focused) NuvioTheme.colors.Primary else Color.Transparent),
