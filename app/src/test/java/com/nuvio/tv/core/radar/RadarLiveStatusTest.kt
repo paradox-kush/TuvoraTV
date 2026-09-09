@@ -66,4 +66,20 @@ class RadarLiveStatusTest {
             state(nfl).isLive(nfl, start + 60 * 60 * 1000L),
         )
     }
+
+    @Test
+    fun `a feed-listed game before kickoff is not live`() {
+        assertFalse(
+            "a fixture the feed already lists must not read LIVE before kickoff (B49)",
+            state(nfl).isLive(nfl, start - 4 * 60 * 60 * 1000L),
+        )
+    }
+
+    @Test
+    fun `a feed-listed game within the pre-kickoff grace still reads live`() {
+        assertTrue(
+            "within the pre-kickoff grace a feed-confirmed fixture may read LIVE (clock skew)",
+            state(nfl).isLive(nfl, start - 5 * 60 * 1000L),
+        )
+    }
 }
