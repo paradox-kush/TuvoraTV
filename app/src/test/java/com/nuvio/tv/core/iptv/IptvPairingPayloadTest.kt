@@ -184,8 +184,8 @@ class IptvPairingPayloadTest {
     @Test
     fun `pairing web url appends the code as a query param`() {
         assertEquals(
-            "https://paradox-kush.github.io/iptv-pairing/?code=ABC123",
-            pairingWebUrl("https://paradox-kush.github.io/iptv-pairing/", "ABC123")
+            "https://tuvora.co/iptv-pairing/?code=ABC123",
+            pairingWebUrl("https://tuvora.co/iptv-pairing/", "ABC123")
         )
         // Tolerates an existing query string.
         assertEquals(

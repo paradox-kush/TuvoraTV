@@ -171,7 +171,7 @@ android {
         // Fork keeps its own TV-login approver + IPTV pairing page (upstream's nuvio.tv host
         // serves THEIR backend).
         buildConfigField("String", "TV_LOGIN_WEB_BASE_URL", "\"${localProperties.getProperty("TV_LOGIN_WEB_BASE_URL", "https://qsonncwknzdixurjyqap.functions.supabase.co/tv-login-approve")}\"")
-        buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${localProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://paradox-kush.github.io/iptv-pairing/")}\"")
+        buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${localProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://tuvora.co/iptv-pairing/")}\"")
         buildConfigField("boolean", "DOVI_NATIVE_ENABLED", enableDoviNative.toString())
         buildConfigField("boolean", "DOVI_EXTRACTOR_HOOK_READY", doviExtractorHookReady.toString())
         buildConfigField("boolean", "REALTIME_SYNC_ENABLED", realtimeSyncEnabled.toString())
@@ -261,7 +261,7 @@ android {
             buildConfigField("String", "NUVIO_SUPABASE_ANON_KEY", "\"${resolveProperty(devProperties, localProperties, "NUVIO_SUPABASE_ANON_KEY")}\"")
             buildConfigField("String", "NUVIO_AVATAR_PUBLIC_BASE_URL", "\"${resolveProperty(devProperties, localProperties, "NUVIO_AVATAR_PUBLIC_BASE_URL")}\"")
             buildConfigField("String", "TV_LOGIN_WEB_BASE_URL", "\"${devProperties.getProperty("TV_LOGIN_WEB_BASE_URL", "https://qsonncwknzdixurjyqap.functions.supabase.co/tv-login-approve")}\"")
-            buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${devProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://paradox-kush.github.io/iptv-pairing/")}\"")
+            buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${devProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://tuvora.co/iptv-pairing/")}\"")
             buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${devProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
             buildConfigField("String", "INTRODB_API_URL", "\"${devProperties.getProperty("INTRODB_API_URL", "")}\"")
             buildConfigField("String", "TRAILER_API_URL", "\"${devProperties.getProperty("TRAILER_API_URL", "")}\"")
@@ -301,7 +301,7 @@ android {
             buildConfigField("String", "NUVIO_SUPABASE_ANON_KEY", "\"${resolveLocalProperty(localProperties, "NUVIO_SUPABASE_ANON_KEY")}\"")
             buildConfigField("String", "NUVIO_AVATAR_PUBLIC_BASE_URL", "\"${resolveLocalProperty(localProperties, "NUVIO_AVATAR_PUBLIC_BASE_URL")}\"")
             buildConfigField("String", "TV_LOGIN_WEB_BASE_URL", "\"${localProperties.getProperty("TV_LOGIN_WEB_BASE_URL", "https://qsonncwknzdixurjyqap.functions.supabase.co/tv-login-approve")}\"")
-            buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${localProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://paradox-kush.github.io/iptv-pairing/")}\"")
+            buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${localProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://tuvora.co/iptv-pairing/")}\"")
             buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
             buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
             buildConfigField("String", "TRAILER_API_URL", "\"${localProperties.getProperty("TRAILER_API_URL", "")}\"")
