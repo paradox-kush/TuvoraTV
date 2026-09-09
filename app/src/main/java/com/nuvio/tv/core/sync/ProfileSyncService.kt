@@ -256,8 +256,10 @@ class ProfileSyncService @Inject constructor(
             val response = withJwtRefreshRetry {
                 postgrest.rpc("verify_profile_pin", params)
             }
-            val decoded = response.decodeList<SupabaseProfilePinVerifyResult>().firstOrNull()
-                ?: SupabaseProfilePinVerifyResult(unlocked = false, retryAfterSeconds = 0)
+            // verify_profile_pin returns a single JSON OBJECT ({"unlocked":..,"retry_after_seconds":..}),
+            // not an array. decodeList (supabase-kt 3.6.0) deserializes the body as a List and throws on
+            // an object, turning every verify — right PIN or wrong — into Result.failure. Decode the object.
+            val decoded = response.decodeAs<SupabaseProfilePinVerifyResult>()
             Result.success(decoded)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to verify profile PIN", e)
