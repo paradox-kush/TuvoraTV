@@ -1320,6 +1320,7 @@ internal fun PlayerRuntimeController.initializePlayer(
 
                     override fun onTracksChanged(tracks: Tracks) {
                         updateAvailableTracks(tracks)
+                        emitAudioOutputProfileIfNeeded()
                     }
 
                     override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {

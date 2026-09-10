@@ -207,6 +207,8 @@ class PlayerRuntimeController(
     internal var currentVideoFrameRate: Float? = null
     internal var currentAudioBitrate: Int? = null
     internal var currentStreamUrl: String
+    /** The stream URL an audio_output_profile diagnostic was already emitted for — one per stream. */
+    @Volatile internal var audioProfileEmittedStreamUrl: String? = null
     internal var currentStreamResponseHeaders: Map<String, String> = emptyMap()
     internal var currentStreamMimeType: String?
     internal var currentHeaders: Map<String, String>

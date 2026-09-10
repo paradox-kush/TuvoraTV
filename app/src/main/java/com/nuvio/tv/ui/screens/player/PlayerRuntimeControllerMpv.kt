@@ -441,6 +441,7 @@ private fun PlayerRuntimeController.applyMpvTrackSnapshot(snapshot: MpvTrackSnap
             "uiSubtitleIndex=${_uiState.value.selectedSubtitleTrackIndex} " +
             "uiAddonSelected=${_uiState.value.selectedAddonSubtitle?.let { "${it.lang}/${it.addonName}/${it.id}" } ?: "none"}"
     )
+    emitAudioOutputProfileIfNeeded()
 }
 
 private fun PlayerRuntimeController.performPendingMpvHardRestartIfNeeded(view: MpvSurface): Boolean {
