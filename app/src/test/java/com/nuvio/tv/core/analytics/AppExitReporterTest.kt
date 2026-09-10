@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.analytics
 
 import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import java.io.ByteArrayInputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -111,6 +112,47 @@ class AppExitReporterTest {
 
         assertTrue(excerpt.contains("SIGSEGV"))
         assertTrue(excerpt.contains("libmpv.so"))
+    }
+
+    @Test
+    fun `a native reason scrapes printable strings even from a protobuf with no NUL bytes`() {
+        // A protobuf-shaped tombstone: varint field tags/values (all >= 0x01, NO 0x00) interleaved
+        // with the readable strings debuggerd emits. The old null-byte sniff would call this "text"
+        // and dump the raw bytes; reason-based classification scrapes the printable runs instead.
+        val proto = byteArrayOf(0x08, 0x0B, 0x12, 0x07) + "SIGSEGV".toByteArray() +
+            byteArrayOf(0x1A, 0x09) + "libmpv.so".toByteArray() +
+            byteArrayOf(0x22, 0x08) + "Thread-7".toByteArray()
+        assertFalse("no NUL byte -> the old content sniff would misclassify this as text", proto.any { it == 0.toByte() })
+
+        val excerpt = readNativePrintableStrings(ByteArrayInputStream(proto), maxChars = 1_000)
+
+        assertTrue(excerpt.contains("SIGSEGV"))
+        assertTrue(excerpt.contains("libmpv.so"))
+        assertTrue(excerpt.contains("Thread-7"))
+    }
+
+    @Test
+    fun `a native crash on a non-main thread keeps that thread's frames`() {
+        // Native tombstones carry the crashing thread's backtrace whatever its name; the native path
+        // keeps every printable run (no main-thread focus), so a background-thread crash is not lost.
+        val tombstone = byteArrayOf(0, 1) + (
+            "signal 11 (SIGSEGV)\n" +
+                "--- tid: 42, name: mpv/vo ---\n" +
+                "  #00 pc 0001 /data/app/base.apk!libmpv.so (mp_image_alloc+40)"
+            ).toByteArray()
+
+        val excerpt = readNativePrintableStrings(ByteArrayInputStream(tombstone), maxChars = 2_000)
+
+        assertTrue("crashing (non-main) thread name retained", excerpt.contains("name: mpv/vo"))
+        assertTrue("crashing frame retained", excerpt.contains("mp_image_alloc"))
+    }
+
+    @Test
+    fun `trace format is decided by exit reason not by content`() {
+        assertEquals("native_tombstone_best_effort", traceFormatLabel(ApplicationExitInfo.REASON_CRASH_NATIVE))
+        assertEquals("native_tombstone_best_effort", traceFormatLabel(ApplicationExitInfo.REASON_SIGNALED))
+        assertEquals("text", traceFormatLabel(ApplicationExitInfo.REASON_ANR))
+        assertEquals("text", traceFormatLabel(ApplicationExitInfo.REASON_CRASH))
     }
 
     @Test

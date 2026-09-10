@@ -225,7 +225,12 @@ object AppExitReporter {
         sanitizeDiagnosticText(exit.description, MAX_DESCRIPTION_CHARS)?.let {
             put("description", it)
         }
-        readTraceExcerpt(exit)?.let { put("trace_excerpt", it) }
+        readTraceExcerpt(exit)?.let {
+            put("trace_excerpt", it)
+            // Names how the excerpt was produced so downstream never mistakes a best-effort native
+            // string-scrape for a structured/complete decode.
+            put("trace_format", traceFormatLabel(exit.reason))
+        }
 
         failedRun?.let { run ->
             put("failed_app_version", run.versionName)
@@ -290,14 +295,29 @@ object AppExitReporter {
 
     private fun readTraceExcerpt(exit: ApplicationExitInfo): String? = runCatching {
         exit.traceInputStream?.use { input ->
-            val focused = focusTraceOnMainThread(
-                text = readDiagnosticExcerpt(input, TRACE_SCAN_CHARS),
-                headChars = TRACE_HEAD_CHARS,
-                mainChars = MAX_TRACE_CHARS,
-            )
-            sanitizeDiagnosticText(focused, TRACE_HEAD_CHARS + MAX_TRACE_CHARS + ELISION.length)
+            if (isNativeTombstoneReason(exit.reason)) {
+                // Native crash/signal: the trace is a debuggerd tombstone, a PROTOBUF whose schema
+                // (system/core/debuggerd/proto/tombstone.proto) is NOT in the public SDK — and we
+                // bundle no protobuf runtime — so STRUCTURED NATIVE DECODING IS UNSUPPORTED. We keep a
+                // best-effort printable-string excerpt (signal, abort message, backtrace symbols),
+                // chosen by exit.reason rather than by sniffing for a NUL byte: a valid protobuf that
+                // happens to contain none would otherwise be misread as clean text and dumped verbatim.
+                // The crashing thread need not be "main", so no main-thread focus is applied here.
+                sanitizeDiagnosticText(readNativePrintableStrings(input, MAX_TRACE_CHARS), MAX_TRACE_CHARS)
+            } else {
+                // ANR / managed traces are text: keep a header slice + the blocked main-thread stack.
+                val focused = focusTraceOnMainThread(
+                    text = readDiagnosticExcerpt(input, TRACE_SCAN_CHARS),
+                    headChars = TRACE_HEAD_CHARS,
+                    mainChars = MAX_TRACE_CHARS,
+                )
+                sanitizeDiagnosticText(focused, TRACE_HEAD_CHARS + MAX_TRACE_CHARS + ELISION.length)
+            }
         }
     }.getOrNull()
+
+    private fun isNativeTombstoneReason(reason: Int): Boolean =
+        reason == ApplicationExitInfo.REASON_CRASH_NATIVE || reason == ApplicationExitInfo.REASON_SIGNALED
 
     /**
      * ApplicationExitInfo failures are ordinary analytics events by default, so they never
@@ -876,7 +896,37 @@ internal fun focusTraceOnMainThread(text: String, headChars: Int, mainChars: Int
     return head + ELISION + main
 }
 
-/** Native tombstones are protobuf on newer Android versions; retain their printable strings. */
+/**
+ * The excerpt's provenance, decided by the OS exit reason (authoritative), NOT by content sniffing:
+ * a native crash/signal carries a protobuf tombstone we can only scrape best-effort; everything else
+ * is text we keep as-is (with main-thread focus applied by the caller).
+ */
+internal fun traceFormatLabel(reason: Int): String =
+    if (reason == ApplicationExitInfo.REASON_CRASH_NATIVE || reason == ApplicationExitInfo.REASON_SIGNALED) {
+        "native_tombstone_best_effort"
+    } else {
+        "text"
+    }
+
+/**
+ * Best-effort native excerpt: the printable ASCII runs (>= 4 chars) of a binary tombstone — its
+ * signal line, abort message, and backtrace symbols. This is explicitly NOT a structured protobuf
+ * decode (no bundled schema/runtime); it is chosen for native reasons regardless of whether the blob
+ * contains a NUL byte, so a valid protobuf with none is still scraped rather than dumped as "text".
+ */
+internal fun readNativePrintableStrings(input: InputStream, maxChars: Int): String {
+    val bytes = readBoundedBytes(input, maxChars * 4)
+    return Regex("[\\x20-\\x7E]{4,}")
+        .findAll(bytes.toString(Charsets.ISO_8859_1))
+        .joinToString("\n") { it.value }
+        .take(maxChars)
+}
+
+/**
+ * Text-path reader for ANR / managed traces. Returns UTF-8 text; if the blob is unexpectedly binary
+ * (a defensive fallback — the reason-based classifier already routes true tombstones away from here),
+ * its printable strings are extracted instead so the excerpt is never raw binary.
+ */
 internal fun readDiagnosticExcerpt(input: InputStream, maxChars: Int): String {
     val bytes = readBoundedBytes(input, maxChars * 4)
     if (bytes.none { it == 0.toByte() }) return bytes.toString(Charsets.UTF_8).take(maxChars)
