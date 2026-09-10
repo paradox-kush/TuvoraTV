@@ -23,7 +23,21 @@ import com.posthog.PostHog
  */
 object AudioOutputTelemetry {
 
-    enum class SinkCapsSource { ACTIVE_ROUTE, ENUMERATED_DEVICES, UNKNOWN }
+    /**
+     * Where the sink capabilities came from. [DEFAULT_ROUTE_PROBE] is media3
+     * `AudioCapabilities.getCapabilities(routedDevice = null)` — the DEFAULT route, an authoritative
+     * answer for "can the default route pass this encoding through" but NOT proof of the actual routed
+     * device (we do not observe routing). [ENUMERATED_DEVICES] is a connected output from
+     * [android.media.AudioDeviceInfo], likewise not confirmed to be the active route.
+     */
+    enum class SinkCapsSource { DEFAULT_ROUTE_PROBE, ENUMERATED_DEVICES, UNKNOWN }
+
+    /** Provenance of [audio_output_path]. No public runtime API exposes the AudioSink's configured
+     *  output mode in the shipped fork, so it is INFERRED (from an active MediaCodec audio decoder =
+     *  PCM decode) or UNKNOWN — never asserted as observed runtime configuration. */
+    const val OUTPUT_PATH_SOURCE_RUNTIME = "runtime"
+    const val OUTPUT_PATH_SOURCE_INFERRED = "inferred"
+    const val OUTPUT_PATH_SOURCE_UNKNOWN = "unknown"
 
     /** The device audio-sink truth, already reduced to neutral facts, with its provenance. */
     data class SinkCaps(
@@ -55,6 +69,7 @@ object AudioOutputTelemetry {
         audioTrackCount: Int,
         selectedDecoder: String?,
         outputPath: String?,
+        outputPathSource: String?,
         audioInputFormat: String?,
         recoveryStage: String?,
         sink: SinkCaps,
@@ -74,6 +89,7 @@ object AudioOutputTelemetry {
             audioSampleRate?.takeIf { it > 0 }?.let { put("audio_sample_rate", it) }
             selectedDecoder?.takeIf { it.isNotBlank() }?.let { put("selected_decoder", it) }
             outputPath?.let { put("audio_output_path", it) } // pcm_decode | passthrough | offload | unknown
+            outputPathSource?.let { put("audio_output_path_source", it) } // runtime | inferred | unknown
             audioInputFormat?.takeIf { it.isNotBlank() }?.let { put("audio_input_format", it) }
             recoveryStage?.let { put("audio_recovery_stage", it) }
 
@@ -117,6 +133,7 @@ object AudioOutputTelemetry {
         audioTrackCount: Int,
         selectedDecoder: String?,
         outputPath: String?,
+        outputPathSource: String?,
         audioInputFormat: String?,
         recoveryStage: String?,
         sink: SinkCaps,
@@ -135,6 +152,7 @@ object AudioOutputTelemetry {
                     audioTrackCount = audioTrackCount,
                     selectedDecoder = selectedDecoder,
                     outputPath = outputPath,
+                    outputPathSource = outputPathSource,
                     audioInputFormat = audioInputFormat,
                     recoveryStage = recoveryStage,
                     sink = sink,
@@ -166,13 +184,14 @@ object AudioOutputTelemetry {
      * codec is passthrough-class AND the sink caps are known and complete.
      */
     /**
-     * Chooses which capabilities describe where audio actually goes. The ACTIVE ROUTE wins: a
-     * connected-but-inactive output (e.g. an HDMI receiver the TV is not currently routing to) must
-     * never make a codec look supported when the real route (the built-in speaker) cannot take it.
-     * Falls back to enumerated, then to an UNKNOWN sentinel.
+     * Chooses the more trustworthy capability answer. The DEFAULT-ROUTE PROBE wins: it reflects what
+     * the platform's default output route can pass through, so a connected-but-inactive enumerated
+     * device (e.g. an HDMI receiver the TV is not currently routing to) cannot make a codec look
+     * supported. Neither source is a VERIFIED active route — actual routing is not observed — so the
+     * provenance travels with the result. Falls back to enumerated, then to an UNKNOWN sentinel.
      */
-    fun selectSinkCaps(activeRoute: SinkCaps?, enumerated: SinkCaps?): SinkCaps = when {
-        activeRoute != null && activeRoute.source == SinkCapsSource.ACTIVE_ROUTE -> activeRoute
+    fun selectSinkCaps(defaultRouteProbe: SinkCaps?, enumerated: SinkCaps?): SinkCaps = when {
+        defaultRouteProbe != null && defaultRouteProbe.source == SinkCapsSource.DEFAULT_ROUTE_PROBE -> defaultRouteProbe
         enumerated != null && enumerated.source != SinkCapsSource.UNKNOWN -> enumerated
         else -> SinkCaps(SinkCapsSource.UNKNOWN, supportedEncodings = null, maxChannels = null, route = null)
     }

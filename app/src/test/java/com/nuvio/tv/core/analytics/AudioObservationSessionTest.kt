@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.analytics
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -90,12 +91,12 @@ class AudioObservationSessionTest {
     }
 
     @Test
-    fun `an audio pipeline error is output_error regardless of progress`() {
+    fun `an audio error with no subsequent progress is output_error`() {
         val s = session()
         s.onPlaybackState(1L, 0, playing = true, buffering = false, suppressed = false)
         s.onRenderedBuffers(1L, 0, count = 100)
         s.onAudioError(1L, 500, code = "audio_track_init")
-        s.onRenderedBuffers(1L, 3_500, count = 900) // even with progress, an error dominates
+        s.onRenderedBuffers(1L, 3_500, count = 100) // still stuck after the error -> not recovered
         assertTrue(s.isDecidable(3_500))
         val r = s.evaluate(3_500)
         assertEquals(AudioStatus.OUTPUT_ERROR, r.status)
@@ -110,5 +111,47 @@ class AudioObservationSessionTest {
         s.onDisruptiveChange(1L, 200)
         s.onDisruptiveChange(1L, 300) // beyond maxRearms -> ignored
         assertEquals(2, s.evaluate(300).rearmCount)
+    }
+
+    /** A sink error is potentially recoverable: rendered progress after it -> recovered, not error. */
+    @Test
+    fun `a sink error followed by rendered progress recovers within the window`() {
+        val s = session()
+        s.onPlaybackState(1L, 0, playing = true, buffering = false, suppressed = false)
+        s.onRenderedBuffers(1L, 0, count = 100)
+        s.onAudioError(1L, 500, code = "audio_sink_error") // observed, potentially recoverable
+        s.onRenderedBuffers(1L, 3_500, count = 700)        // audio resumed after the error
+        val r = s.evaluate(3_500)
+        assertEquals(AudioStatus.PROGRESS_OBSERVED, r.status)
+        assertEquals("recovered_after_error", r.reason)
+        assertEquals("audio_sink_error", r.errorCode) // the error is retained as a fact
+    }
+
+    /** No rendered samples at all (offload / a mode the fork's counter does not cover) stays UNKNOWN. */
+    @Test
+    fun `an unsupported observation with no rendered samples is unknown not not_observed`() {
+        val s = session()
+        s.onPlaybackState(1L, 0, playing = true, buffering = false, suppressed = false)
+        // Adapter never feeds rendered buffers (no MediaCodec audio decoder -> counter not trusted).
+        val r = s.evaluate(5_000)
+        assertEquals(AudioStatus.UNKNOWN, r.status)
+        assertEquals(AudioPipelineProgress.UNKNOWN, r.progress)
+        assertNull(r.renderedBufferDelta)
+    }
+
+    /** The total per-session budget holds across repeated route/track changes: the wall-clock window
+     *  forces a single decision and re-arms are capped, so a flapping stream cannot observe forever. */
+    @Test
+    fun `total observation is bounded by the max window across repeated route or track changes`() {
+        val s = AudioObservationSession(generation = 1L, minEligibleMs = 3_000L, maxWindowMs = 8_000L, maxRearms = 3)
+        // Perpetually buffering (never eligible) + repeated changes: eligible time never reaches the
+        // minimum, so only the wall-clock window can end it — proving observation cannot run forever.
+        s.onPlaybackState(1L, 0, playing = false, buffering = true, suppressed = false)
+        for (t in longArrayOf(1_000, 2_000, 3_000, 4_000, 5_000)) s.onDisruptiveChange(1L, t)
+        assertEquals(false, s.isDecidable(7_999))          // window not yet reached
+        assertEquals(true, s.isDecidable(8_001))           // window forces the single decision
+        val r = s.evaluate(8_001)
+        assertTrue("re-arms are capped at the budget", r.rearmCount <= 3)
+        assertEquals("no eligible observation accrued while buffering", 0L, r.eligibleObservationMs)
     }
 }

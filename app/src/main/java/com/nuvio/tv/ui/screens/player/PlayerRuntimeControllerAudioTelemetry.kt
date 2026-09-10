@@ -63,7 +63,11 @@ internal fun PlayerRuntimeController.emitAudioOutputProfileIfNeeded() {
                 val suppressed = exo != null &&
                     exo.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE
                 session.onPlaybackState(generation, nowMs, playing, buffering, suppressed)
-                if (!mpv) {
+                // The rendered-output-buffer counter is only meaningful for PCM DECODE (a MediaCodec
+                // audio decoder is active). For passthrough/offload the shipped media3 fork does not run
+                // one, so the counter is absent or does not reflect real output — we do NOT feed it, and
+                // progress stays UNKNOWN rather than a false NOT_OBSERVED.
+                if (!mpv && playbackAnalyticsDiagnostics.currentAudioDecoderName() != null) {
                     exo?.audioDecoderCounters?.apply { ensureUpdated() }?.renderedOutputBufferCount?.let {
                         session.onRenderedBuffers(generation, nowMs, it.toLong())
                     }
@@ -82,11 +86,16 @@ internal fun PlayerRuntimeController.emitAudioOutputProfileIfNeeded() {
             val selected = stateNow.audioTracks.getOrNull(stateNow.selectedAudioTrackIndex)
                 ?: stateNow.audioTracks.firstOrNull { it.isSelected }
             val decoderName = if (!mpv) playbackAnalyticsDiagnostics.currentAudioDecoderName() else null
-            // A MediaCodec audio decoder implies PCM decode; passthrough/offload uses none. Best-effort.
+            // No public runtime API exposes the AudioSink's configured output mode in the shipped fork,
+            // so this is INFERRED from an active MediaCodec audio decoder (= PCM decode), never asserted
+            // as observed runtime configuration. Absent a decoder (passthrough/offload) it stays unknown.
             val outputPath = when {
-                mpv -> AudioOutputTelemetry.OUTPUT_PATH_UNKNOWN
-                decoderName != null -> AudioOutputTelemetry.OUTPUT_PATH_PCM_DECODE
+                !mpv && decoderName != null -> AudioOutputTelemetry.OUTPUT_PATH_PCM_DECODE
                 else -> AudioOutputTelemetry.OUTPUT_PATH_UNKNOWN
+            }
+            val outputPathSource = when {
+                !mpv && decoderName != null -> AudioOutputTelemetry.OUTPUT_PATH_SOURCE_INFERRED
+                else -> AudioOutputTelemetry.OUTPUT_PATH_SOURCE_UNKNOWN
             }
             val recoveryStage = when {
                 audioDisabledForcedStreamUrls.contains(streamUrl) -> AudioOutputTelemetry.RECOVERY_DISABLED
@@ -94,7 +103,7 @@ internal fun PlayerRuntimeController.emitAudioOutputProfileIfNeeded() {
                 else -> AudioOutputTelemetry.RECOVERY_NONE
             }
             val sink = AudioOutputTelemetry.selectSinkCaps(
-                activeRoute = readActiveRouteSinkCaps(),
+                defaultRouteProbe = readDefaultRouteSinkCaps(),
                 enumerated = AudioSinkCapabilities.readEnumerated(context),
             )
 
@@ -106,6 +115,7 @@ internal fun PlayerRuntimeController.emitAudioOutputProfileIfNeeded() {
                 audioTrackCount = stateNow.audioTracks.size,
                 selectedDecoder = decoderName,
                 outputPath = outputPath,
+                outputPathSource = outputPathSource,
                 audioInputFormat = selected?.codec,
                 recoveryStage = recoveryStage,
                 sink = sink,
@@ -118,13 +128,14 @@ internal fun PlayerRuntimeController.emitAudioOutputProfileIfNeeded() {
 }
 
 /**
- * The ACTIVE-ROUTE sink capabilities (where audio actually goes), probed from media3's
- * [AudioCapabilities] for the default route — distinct from [AudioSinkCapabilities.readEnumerated],
- * which only enumerates connected devices. Probing named encodings never claims incompatibility for an
- * encoding we did not ask about.
+ * The DEFAULT-ROUTE sink capabilities, probed from media3's [AudioCapabilities] with
+ * `routedDevice = null` — what the platform's default output route can pass through. This is NOT a
+ * verified active route (actual routing is not observed); the provenance
+ * ([AudioOutputTelemetry.SinkCapsSource.DEFAULT_ROUTE_PROBE]) says so. Probing named encodings never
+ * claims incompatibility for an encoding we did not ask about, and carries no route label.
  */
 @OptIn(UnstableApi::class)
-private fun PlayerRuntimeController.readActiveRouteSinkCaps(): AudioOutputTelemetry.SinkCaps? = runCatching {
+private fun PlayerRuntimeController.readDefaultRouteSinkCaps(): AudioOutputTelemetry.SinkCaps? = runCatching {
     val detected = AudioCapabilities.getCapabilities(context, AudioAttributes.DEFAULT, null)
     val probes = listOf(
         "pcm" to C.ENCODING_PCM_16BIT,
@@ -138,11 +149,11 @@ private fun PlayerRuntimeController.readActiveRouteSinkCaps(): AudioOutputTeleme
     )
     val supported = probes.filter { detected.supportsEncoding(it.second) }.map { it.first }.toSet()
     AudioOutputTelemetry.SinkCaps(
-        source = AudioOutputTelemetry.SinkCapsSource.ACTIVE_ROUTE,
+        source = AudioOutputTelemetry.SinkCapsSource.DEFAULT_ROUTE_PROBE,
         supportedEncodings = supported,
         hasUnclassifiedEncodings = false,
         maxChannels = detected.maxChannelCount.takeIf { it > 0 },
-        route = null,
+        route = null, // no verified active route is claimed
     )
 }.getOrNull()
 

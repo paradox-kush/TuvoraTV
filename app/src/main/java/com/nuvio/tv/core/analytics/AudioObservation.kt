@@ -53,6 +53,14 @@ data class AudioObservationResult(
  * bounded number of times after a disruptive change (route / track / engine / recovery-stage) so a
  * successful recovery is what gets reported. No Android, player, clock, or PostHog here — the adapter
  * feeds it real callbacks and their timestamps.
+ *
+ * TOTAL BUDGET per playback session (enforced here, across ALL re-arms):
+ *  - wall-clock observation: [maxWindowMs] from the first event — [isDecidable] forces a decision then
+ *    regardless of re-arms, so repeated route/track changes cannot extend observation indefinitely;
+ *  - re-arms: at most [maxRearms] (further disruptive changes are ignored);
+ *  - events: exactly ONE result per session ([evaluate] is called once by the adapter, which also
+ *    guards one emission per stream). A sink error is treated as a POTENTIALLY-RECOVERABLE observed
+ *    fact: if rendered progress resumes after it within the window, the outcome is progress, not error.
  */
 class AudioObservationSession(
     val generation: Long,
@@ -71,6 +79,7 @@ class AudioObservationSession(
     private var baselineRendered: Long? = null
     private var latestRendered: Long? = null
     private var errorCode: String? = null
+    private var errorRenderedBaseline: Long? = null // rendered count at the moment of the first error
     private var rearms = 0
 
     private fun stale(generation: Long) = generation != this.generation
@@ -112,7 +121,10 @@ class AudioObservationSession(
     fun onAudioError(generation: Long, atMs: Long, code: String) {
         if (stale(generation)) return
         accrue(atMs)
-        if (errorCode == null) errorCode = code
+        if (errorCode == null) {
+            errorCode = code
+            errorRenderedBaseline = latestRendered // progress past this point = recovery after the error
+        }
     }
 
     /**
@@ -146,19 +158,25 @@ class AudioObservationSession(
             delta > 0L -> AudioPipelineProgress.OBSERVED
             else -> AudioPipelineProgress.NOT_OBSERVED
         }
+        // A sink error is potentially recoverable: rendered progress AFTER the error means the pipeline
+        // recovered within the window, so it is reported as progress (the error is still kept as a fact).
+        val recoveredAfterError = errorCode != null &&
+            errorRenderedBaseline?.let { eb -> latestRendered?.let { l -> l - eb > 0L } } == true
         val status = when {
-            errorCode != null -> AudioStatus.OUTPUT_ERROR
+            errorCode != null && !recoveredAfterError -> AudioStatus.OUTPUT_ERROR
             progress == AudioPipelineProgress.UNKNOWN -> AudioStatus.UNKNOWN
             eligibleMs < minEligibleMs -> AudioStatus.INSUFFICIENT_OBSERVATION
+            recoveredAfterError -> AudioStatus.PROGRESS_OBSERVED
             progress == AudioPipelineProgress.OBSERVED -> AudioStatus.PROGRESS_OBSERVED
             else -> AudioStatus.PROGRESS_NOT_OBSERVED
         }
-        val reason = when (status) {
-            AudioStatus.OUTPUT_ERROR -> "audio_error"
-            AudioStatus.UNKNOWN -> "engine_reports_no_counter"
-            AudioStatus.INSUFFICIENT_OBSERVATION -> "eligible_time_below_min"
-            AudioStatus.PROGRESS_OBSERVED -> "rendered_buffers_advanced"
-            AudioStatus.PROGRESS_NOT_OBSERVED -> "no_rendered_buffer_progress"
+        val reason = when {
+            status == AudioStatus.OUTPUT_ERROR -> "audio_error"
+            status == AudioStatus.PROGRESS_OBSERVED && recoveredAfterError -> "recovered_after_error"
+            status == AudioStatus.UNKNOWN -> "engine_reports_no_counter"
+            status == AudioStatus.INSUFFICIENT_OBSERVATION -> "eligible_time_below_min"
+            status == AudioStatus.PROGRESS_OBSERVED -> "rendered_buffers_advanced"
+            else -> "no_rendered_buffer_progress"
         }
         return AudioObservationResult(
             status = status,
