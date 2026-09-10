@@ -187,6 +187,86 @@ class IptvContentDbTest {
         assertEquals(listOf("P"), db.epgNowNext(pid, "bbc.uk", nowMs = 1L).map { it.title })
     }
 
+    // --- EPG generation swap: a failed/cancelled/empty refresh must not blank the guide ---
+
+    @Test
+    fun `a refresh that fails mid-fill keeps the previously stored EPG generation`() = runTest {
+        ingestSample()
+        // A prior, COMPLETE generation is being served.
+        db.replaceEpg(pid, builtAtMs = 1_000L) { w ->
+            w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Prior Now", "p"))
+            w.add(EpgProgramme("bbc.uk", 3_000L, 4_000L, "Prior Next", null))
+        }
+        assertEquals(listOf("Prior Now", "Prior Next"), db.epgNowNext(pid, "bbc.uk", 2_500L).map { it.title })
+
+        // A refresh that throws mid-fill (network drop / disk error) must NOT destroy the prior guide.
+        val thrown = runCatching {
+            db.replaceEpg(pid, builtAtMs = 9_000L) { w ->
+                w.add(EpgProgramme("bbc.uk", 10_000L, 11_000L, "Partial", null))
+                throw RuntimeException("network dropped mid-parse")
+            }
+        }.exceptionOrNull()
+        // The failure propagates (coroutine stacktrace recovery may re-wrap it, so match on message).
+        assertEquals("network dropped mid-parse", thrown?.message)
+
+        // Prior generation intact; the partial fill never became visible; the throttle wasn't advanced.
+        assertEquals(listOf("Prior Now", "Prior Next"), db.epgNowNext(pid, "bbc.uk", 2_500L).map { it.title })
+        assertEquals(1_000L, db.epgBuiltAt(pid))
+    }
+
+    @Test
+    fun `a cancelled refresh keeps the previously stored EPG generation`() = runTest {
+        ingestSample()
+        db.replaceEpg(pid, builtAtMs = 1_000L) { w -> w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Prior", null)) }
+        // Cooperative cancellation surfaces as a CancellationException out of the fill block, before
+        // the swap — exactly the ingest-scope-cancelled case (the 2026-08-18 mirror bug's shape).
+        runCatching {
+            db.replaceEpg(pid, builtAtMs = 9_000L) { w ->
+                w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "New", null))
+                throw kotlinx.coroutines.CancellationException("ingest scope cancelled mid-fill")
+            }
+        }
+        assertEquals(listOf("Prior"), db.epgNowNext(pid, "bbc.uk", 2_500L).map { it.title })
+    }
+
+    @Test
+    fun `an empty or truncated-to-nothing refresh keeps the prior generation but still throttles`() = runTest {
+        ingestSample()
+        db.replaceEpg(pid, builtAtMs = 1_000L) { w -> w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Prior", null)) }
+        // A bad fetch that parsed to zero programmes (HTTP 200 but truncated/garbage body).
+        db.replaceEpg(pid, builtAtMs = 9_000L) { /* nothing usable parsed */ }
+        // A good guide is not blanked by an empty refresh...
+        assertEquals(listOf("Prior"), db.epgNowNext(pid, "bbc.uk", 2_500L).map { it.title })
+        // ...but the attempt IS throttled so we don't refetch the whole guide on every browse.
+        assertEquals(9_000L, db.epgBuiltAt(pid))
+    }
+
+    @Test
+    fun `a successful refresh swaps the whole generation atomically leaving no old rows`() = runTest {
+        ingestSample()
+        db.replaceEpg(pid, builtAtMs = 1_000L) { w ->
+            w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Old Now", null))
+            w.add(EpgProgramme("cnn.us", 2_000L, 3_000L, "Old CNN", null))
+        }
+        db.replaceEpg(pid, builtAtMs = 2_000L) { w ->
+            w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "New Now", null))
+        }
+        // The new generation is fully visible and EVERY row of the old one is gone (including the
+        // channel the new generation didn't mention) — the shadow must not leak stale rows.
+        assertEquals(listOf("New Now"), db.epgNowNext(pid, "bbc.uk", 2_500L).map { it.title })
+        assertTrue(db.epgNowNext(pid, "cnn.us", 2_500L).isEmpty())
+        assertEquals(2_000L, db.epgBuiltAt(pid))
+    }
+
+    @Test
+    fun `a fresh install with no prior generation stores the first successful refresh`() = runTest {
+        ingestSample()
+        // No prior replaceEpg — the shadow/swap path must still populate the very first generation.
+        db.replaceEpg(pid, builtAtMs = 3_000L) { w -> w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "First", null)) }
+        assertEquals(listOf("First"), db.epgNowNext(pid, "bbc.uk", 2_500L).map { it.title })
+        assertEquals(3_000L, db.epgBuiltAt(pid))
+    }
+
     // --- WP1: windowed reads, per-channel refill, prune, has_archive, channel flags ---
 
     @Test

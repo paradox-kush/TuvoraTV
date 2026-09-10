@@ -629,22 +629,46 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     }
 
     /**
-     * Replace this playlist's EPG in one pass: clear its old programmes, stream new ones in via the
-     * [fill] block ([EpgWriter] batches [CHUNK]-sized inserts), then stamp epg_built_at LAST so a
-     * crash mid-write reads as "not built" and the next refresh retries. channel_id is stored
-     * already-normalized by the caller so lookups are a plain equality match.
+     * Replace this playlist's EPG as an ATOMIC generation swap. New programmes stream into a shadow
+     * table via [fill] ([EpgWriter] batches [CHUNK]-sized inserts); only once the fill COMPLETES do we
+     * flip the live table to the new generation and stamp epg_built_at, all in one transaction.
+     *
+     * A failed / cancelled / partial fill (network drop, disk error, ingest-scope cancellation) throws
+     * out of [fill] BEFORE the swap, so the previous COMPLETE generation keeps serving. The old
+     * clear-first-then-fill deleted the guide up front, so any failure left it empty until a later
+     * refresh happened to succeed. An empty result (a bad fetch that parsed to nothing) likewise keeps
+     * the prior generation, but still advances epg_built_at so we don't refetch the whole ~100MB guide
+     * on every browse. Under WAL a reader that races the swap sees the old generation or the new one,
+     * never the empty middle. channel_id is stored already-normalized by the caller.
+     *
+     * Concurrency: whole-guide refresh is single-flight per playlist upstream ([XmltvClient]), so the
+     * shadow only ever holds one in-flight generation for a playlist; any rows a previously aborted
+     * attempt left behind are cleared before this fill begins.
      */
     suspend fun replaceEpg(playlistId: String, builtAtMs: Long, fill: suspend (EpgWriter) -> Unit) = withContext(Dispatchers.IO) {
-        // A wholesale refresh supersedes the per-channel fetch stamps too.
-        inTx {
-            db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
-            db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
-        }
-        val writer = EpgWriter(playlistId)
-        fill(writer)
+        db.execSQL(EPG_SHADOW_DDL) // lazily created so existing v5 databases pick it up with no migration
+        inTx { db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(playlistId)) }
+
+        val writer = EpgWriter(playlistId) // writes into the shadow, never the live table
+        fill(writer)                       // may throw / be cancelled -> we never reach the swap below
         writer.flush()
-        // Stamp freshness last (row exists from the catalog ingest; UPDATE it).
-        inTx { db.execSQL("UPDATE ingest_meta SET epg_built_at = ? WHERE playlist_id = ?", arrayOf<Any?>(builtAtMs, playlistId)) }
+
+        inTx {
+            if (writer.count > 0) {
+                // A wholesale refresh supersedes the per-channel fetch stamps too.
+                db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
+                db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
+                db.execSQL(
+                    "INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) " +
+                        "SELECT playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive FROM $EPG_SHADOW WHERE playlist_id = ?",
+                    arrayOf(playlistId),
+                )
+            }
+            db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(playlistId))
+            // Stamp freshness last (row exists from the catalog ingest; UPDATE it) — even on an empty
+            // result, so a provider serving no guide right now doesn't refetch on every browse.
+            db.execSQL("UPDATE ingest_meta SET epg_built_at = ? WHERE playlist_id = ?", arrayOf<Any?>(builtAtMs, playlistId))
+        }
     }
 
     /** Batches programme inserts during an XMLTV parse (mirrors IngestWriter's chunking). */
@@ -660,7 +684,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         internal fun flush() {
             if (batch.isEmpty()) return
             inTx {
-                val s = db.compileStatement("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES(?,?,?,?,?,?,?)")
+                // Into the shadow: replaceEpg swaps it into the live table only once the fill completes.
+                val s = db.compileStatement("INSERT INTO $EPG_SHADOW(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES(?,?,?,?,?,?,?)")
                 for (p in batch) {
                     s.clearBindings()
                     s.bindString(1, playlistId); s.bindString(2, p.channelId)
@@ -840,6 +865,13 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         const val TYPE_SERIES = "series"
         /** Insert batch size — matches XtreamMatchIndex's chunk to keep write locks short. */
         const val CHUNK = 5_000
+
+        /** Staging table for [replaceEpg]'s generation swap; holds only the in-flight refresh's rows. */
+        private const val EPG_SHADOW = "epg_programmes_shadow"
+        private const val EPG_SHADOW_DDL =
+            "CREATE TABLE IF NOT EXISTS $EPG_SHADOW(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, " +
+                "start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, " +
+                "has_archive INTEGER NOT NULL DEFAULT 0)"
     }
 }
 
