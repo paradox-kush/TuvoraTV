@@ -71,9 +71,28 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
     @ApplicationContext private val context: Context,
     private val profileManager: ProfileManager
 ) {
+    /**
+     * Read a snapshot file, but DROP it first if it is implausibly large. This is a disposable derived
+     * cache (rebuilt by the enrichment pipeline), and both readers are on startup / background-worker
+     * paths — a corrupt or runaway file must not be `readText()`-ed whole into memory on a low-RAM TV.
+     * The bound is enforced BEFORE the allocation; a normal cache is a few KB, so 4 MB is generous.
+     */
+    private fun readSnapshotOrDrop(file: File): String? {
+        if (!file.exists()) return null
+        val size = file.length()
+        if (size > MAX_CACHE_BYTES) {
+            Log.w(TAG, "cw enrichment cache ${file.name} is ${size}B > ${MAX_CACHE_BYTES}B cap; dropping (rebuilds)")
+            runCatching { file.delete() }
+            return null
+        }
+        return file.readText()
+    }
+
     companion object {
         private const val TAG = "CwEnrichCache"
         private const val THROTTLE_MS = 1_000L
+        // Disposable snapshot cache; a real one is a few KB. Past this it is corrupt/runaway → drop.
+        private const val MAX_CACHE_BYTES = 4L * 1024 * 1024
     }
 
     private val gson = Gson()
@@ -103,9 +122,8 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
     suspend fun getNextUpSnapshot(): List<CachedNextUpItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {
-                val file = nextUpFile()
-                if (!file.exists()) return@withContext emptyList()
-                gson.fromJson(file.readText(), object : TypeToken<List<CachedNextUpItem>>() {}.type)
+                val text = readSnapshotOrDrop(nextUpFile()) ?: return@withContext emptyList()
+                gson.fromJson(text, object : TypeToken<List<CachedNextUpItem>>() {}.type)
                     ?: emptyList()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to read next-up cache: ${e.message}")
@@ -149,9 +167,8 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
     suspend fun getInProgressSnapshot(): List<CachedInProgressItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {
-                val file = inProgressFile()
-                if (!file.exists()) return@withContext emptyList()
-                gson.fromJson(file.readText(), object : TypeToken<List<CachedInProgressItem>>() {}.type)
+                val text = readSnapshotOrDrop(inProgressFile()) ?: return@withContext emptyList()
+                gson.fromJson(text, object : TypeToken<List<CachedInProgressItem>>() {}.type)
                     ?: emptyList()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to read in-progress cache: ${e.message}")
