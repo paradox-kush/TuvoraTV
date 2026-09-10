@@ -3,7 +3,7 @@ package com.nuvio.tv.data.local
 import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import com.google.gson.stream.JsonReader
 import com.nuvio.tv.core.profile.ProfileManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.lang.reflect.Type
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -72,20 +73,45 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
     private val profileManager: ProfileManager
 ) {
     /**
-     * Read a snapshot file, but DROP it first if it is implausibly large. This is a disposable derived
-     * cache (rebuilt by the enrichment pipeline), and both readers are on startup / background-worker
-     * paths — a corrupt or runaway file must not be `readText()`-ed whole into memory on a low-RAM TV.
-     * The bound is enforced BEFORE the allocation; a normal cache is a few KB, so 4 MB is generous.
+     * Read a disposable snapshot file with two independent bounds enforced *before/while* consuming,
+     * never by materializing the whole thing first (both readers are on startup / background-worker
+     * paths, so a corrupt or runaway file must not spike memory on a low-RAM TV):
+     *  - BYTE cap ([MAX_CACHE_BYTES]) checked on `file.length()` before any read — an over-cap file is
+     *    dropped (it is a rebuildable derived cache; a real one is a few KB).
+     *  - decoded-RECORD cap ([MAX_RECORDS]) enforced while streaming the JSON array with [JsonReader],
+     *    so we stop after the cap instead of decoding an unbounded number of objects into a list.
+     * A record-capped file is kept (it is valid, just clamped); only an over-byte or unparseable file
+     * is deleted — and only under [mutex], so a concurrent writer's newer valid snapshot is never
+     * dropped mid-write.
      */
-    private fun readSnapshotOrDrop(file: File): String? {
-        if (!file.exists()) return null
+    private fun <T> readBoundedSnapshot(file: File, elementType: Type): List<T> {
+        if (!file.exists()) return emptyList()
         val size = file.length()
         if (size > MAX_CACHE_BYTES) {
-            Log.w(TAG, "cw enrichment cache ${file.name} is ${size}B > ${MAX_CACHE_BYTES}B cap; dropping (rebuilds)")
+            Log.w(TAG, "cw snapshot ${file.name} is ${size}B > ${MAX_CACHE_BYTES}B cap; dropping (rebuilds)")
             runCatching { file.delete() }
-            return null
+            return emptyList()
         }
-        return file.readText()
+        return try {
+            file.bufferedReader().use { reader ->
+                gson.newJsonReader(reader).use { json ->
+                    val out = ArrayList<T>()
+                    json.beginArray()
+                    while (json.hasNext()) {
+                        if (out.size >= MAX_RECORDS) {
+                            Log.w(TAG, "cw snapshot ${file.name} exceeded $MAX_RECORDS records; using the first $MAX_RECORDS")
+                            break
+                        }
+                        out.add(gson.fromJson(json, elementType))
+                    }
+                    out
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "cw snapshot ${file.name} unparseable: ${e.message}; dropping")
+            runCatching { file.delete() }
+            emptyList()
+        }
     }
 
     companion object {
@@ -93,6 +119,9 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
         private const val THROTTLE_MS = 1_000L
         // Disposable snapshot cache; a real one is a few KB. Past this it is corrupt/runaway → drop.
         private const val MAX_CACHE_BYTES = 4L * 1024 * 1024
+        // Continue-watching is a bounded UI list; cap what we decode AND what we write. A real list is
+        // tens of items — 500 is generous headroom and bounds a runaway producer or a hostile file.
+        private const val MAX_RECORDS = 500
     }
 
     private val gson = Gson()
@@ -122,9 +151,7 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
     suspend fun getNextUpSnapshot(): List<CachedNextUpItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {
-                val text = readSnapshotOrDrop(nextUpFile()) ?: return@withContext emptyList()
-                gson.fromJson(text, object : TypeToken<List<CachedNextUpItem>>() {}.type)
-                    ?: emptyList()
+                readBoundedSnapshot<CachedNextUpItem>(nextUpFile(), CachedNextUpItem::class.java)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to read next-up cache: ${e.message}")
                 emptyList()
@@ -136,7 +163,8 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
      * @param force bypass throttle and content-change check (use at end of pipeline or for clears)
      */
     suspend fun saveNextUpSnapshot(items: List<CachedNextUpItem>, force: Boolean = false) = withContext(Dispatchers.IO) {
-        val contentHash = items.hashCode()
+        val capped = if (items.size > MAX_RECORDS) items.take(MAX_RECORDS) else items // bound the write (producer cap)
+        val contentHash = capped.hashCode()
         if (!force) {
             if (contentHash == lastNextUpHash) return@withContext
             val now = System.currentTimeMillis()
@@ -145,7 +173,7 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
         mutex.withLock {
             try {
                 val file = nextUpFile()
-                atomicWrite(file, gson.toJson(items))
+                atomicWrite(file, gson.toJson(capped))
                 lastNextUpWriteMs = System.currentTimeMillis()
                 lastNextUpHash = contentHash
                 _snapshotVersion.value++
@@ -167,9 +195,7 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
     suspend fun getInProgressSnapshot(): List<CachedInProgressItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {
-                val text = readSnapshotOrDrop(inProgressFile()) ?: return@withContext emptyList()
-                gson.fromJson(text, object : TypeToken<List<CachedInProgressItem>>() {}.type)
-                    ?: emptyList()
+                readBoundedSnapshot<CachedInProgressItem>(inProgressFile(), CachedInProgressItem::class.java)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to read in-progress cache: ${e.message}")
                 emptyList()
@@ -181,7 +207,8 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
      * @param force bypass throttle and content-change check (use at end of pipeline or for clears)
      */
     suspend fun saveInProgressSnapshot(items: List<CachedInProgressItem>, force: Boolean = false) = withContext(Dispatchers.IO) {
-        val contentHash = items.hashCode()
+        val capped = if (items.size > MAX_RECORDS) items.take(MAX_RECORDS) else items // bound the write (producer cap)
+        val contentHash = capped.hashCode()
         if (!force) {
             if (contentHash == lastInProgressHash) return@withContext
             val now = System.currentTimeMillis()
@@ -190,7 +217,7 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
         mutex.withLock {
             try {
                 val file = inProgressFile()
-                atomicWrite(file, gson.toJson(items))
+                atomicWrite(file, gson.toJson(capped))
                 lastInProgressWriteMs = System.currentTimeMillis()
                 lastInProgressHash = contentHash
                 _snapshotVersion.value++
