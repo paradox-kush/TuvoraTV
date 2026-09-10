@@ -1748,6 +1748,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         eventTime: AnalyticsListener.EventTime,
                         audioSinkError: Exception
                     ) {
+                        lastAudioPipelineErrorCode = "audio_sink_error" // closed vocab; fed to audio observation
                         maybeRecoverFromWedgedAudioSink(audioSinkError)
                     }
 

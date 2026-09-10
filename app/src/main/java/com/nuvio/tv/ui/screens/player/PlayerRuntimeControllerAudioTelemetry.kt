@@ -1,67 +1,150 @@
 package com.nuvio.tv.ui.screens.player
 
+import android.os.SystemClock
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.audio.AudioCapabilities
+import com.nuvio.tv.core.analytics.AudioObservationSession
 import com.nuvio.tv.core.analytics.AudioOutputTelemetry
 import com.nuvio.tv.core.analytics.AudioSinkCapabilities
 import com.nuvio.tv.data.local.InternalPlayerEngine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Emits one [AudioOutputTelemetry] `audio_output_profile` per stream so "some channels have no audio"
- * becomes measurable: it pairs the stream's audio codec/channels with the device sink's real
- * capabilities and the user's audio settings, and records whether audio actually rendered.
+ * Observes the audio pipeline for the current stream and emits ONE evidence-based
+ * [AudioOutputTelemetry] `audio_output_profile`. It reports observed facts (codec, effective output
+ * path + decoder, sink capabilities + provenance, settings) and an evidence-based status from an
+ * [AudioObservationSession] — it never infers silence from codec-versus-sink.
  *
- * Timing: the sample is taken a few seconds AFTER a selected audio track appears, so
- * `audioDecoderCounters.renderedOutputBufferCount` has had time to move — reading it at track-change
- * time would false-flag healthy audio as silent. Read-only and fully guarded: a diagnostic must never
- * perturb playback. Called from both engines' track-refresh paths; the per-stream guard de-dupes.
+ * Runtime contract:
+ *  - PLAYBACK-STATE-AWARE: only eligible (playing, non-buffering, non-suppressed) time counts toward
+ *    the observation, so a slow-starting channel reads insufficient_observation, not a false silence.
+ *  - GENERATION-GUARDED: each observation has a monotonic generation; a stale sample is rejected, and
+ *    the loop abandons itself the moment the stream changes.
+ *  - BOUNDED + CANCELLATION-AWARE: the sampling loop is capped by the session's max window and runs in
+ *    the controller scope, so it is cancelled with playback.
+ *  - THREADING: ExoPlayer is read on the application main thread (Main.immediate); PostHog is
+ *    thread-safe and enforces consent/opt-out itself.
+ *  - mpv: progress is UNKNOWN (no cheap rendered-buffer counter), never NOT_OBSERVED.
  */
 internal fun PlayerRuntimeController.emitAudioOutputProfileIfNeeded() {
     val streamUrl = currentStreamUrl
     if (streamUrl.isBlank() || audioProfileEmittedStreamUrl == streamUrl) return
-    val state = _uiState.value
-    val selected = state.audioTracks.getOrNull(state.selectedAudioTrackIndex)
-        ?: state.audioTracks.firstOrNull { it.isSelected }
-        ?: return // no audio track established yet — wait for the next refresh
-    audioProfileEmittedStreamUrl = streamUrl // claim before the async body so a burst emits once
+    val state0 = _uiState.value
+    val hasSelectedAudio = state0.audioTracks.getOrNull(state0.selectedAudioTrackIndex) != null ||
+        state0.audioTracks.any { it.isSelected }
+    if (!hasSelectedAudio) return // nothing to observe yet — a later track refresh will retry
+    audioProfileEmittedStreamUrl = streamUrl // claim: one observation per stream
+    lastAudioPipelineErrorCode = null
 
+    val generation = audioObservationGeneration.incrementAndGet()
     val engine = currentInternalPlayerEngine
-    val trackCount = state.audioTracks.size
-    val rawCodec = selected.codec
-    val channels = selected.channelCount
-    val sampleRate = selected.sampleRate
+    val mpv = engine != InternalPlayerEngine.EXOPLAYER
+    val session = AudioObservationSession(generation = generation, progressUnobservable = mpv)
 
-    scope.launch {
+    scope.launch(Dispatchers.Main.immediate) {
         runCatching {
-            delay(AUDIO_PROFILE_SAMPLE_DELAY_MS)
-            if (currentStreamUrl != streamUrl) return@runCatching // stream changed under us
             val settings = playerSettingsDataStore.playerSettings.first()
-            val sink = AudioSinkCapabilities.read(context)
-            // Direct "is audio being heard" signal for ExoPlayer; mpv exposes no cheap equivalent.
-            val audioRendered: Boolean? = if (engine == InternalPlayerEngine.EXOPLAYER) {
-                _exoPlayer?.audioDecoderCounters?.renderedOutputBufferCount?.let { it > 0 }
-            } else {
-                null
+            val startedAt = SystemClock.elapsedRealtime()
+            var lastErr: String? = null
+
+            while (isActive) {
+                if (currentStreamUrl != streamUrl) return@runCatching // stream changed -> abandon
+                val nowMs = SystemClock.elapsedRealtime() - startedAt
+                val exo = _exoPlayer
+                val playing = exo?.isPlaying == true
+                val buffering = exo?.playbackState == Player.STATE_BUFFERING
+                val suppressed = exo != null &&
+                    exo.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE
+                session.onPlaybackState(generation, nowMs, playing, buffering, suppressed)
+                if (!mpv) {
+                    exo?.audioDecoderCounters?.apply { ensureUpdated() }?.renderedOutputBufferCount?.let {
+                        session.onRenderedBuffers(generation, nowMs, it.toLong())
+                    }
+                }
+                lastAudioPipelineErrorCode?.let {
+                    if (it != lastErr) { lastErr = it; session.onAudioError(generation, nowMs, it) }
+                }
+                if (session.isDecidable(nowMs)) break
+                delay(AUDIO_SAMPLE_INTERVAL_MS)
             }
+
+            if (currentStreamUrl != streamUrl) return@runCatching
+            val observation = session.evaluate(SystemClock.elapsedRealtime() - startedAt)
+
+            val stateNow = _uiState.value
+            val selected = stateNow.audioTracks.getOrNull(stateNow.selectedAudioTrackIndex)
+                ?: stateNow.audioTracks.firstOrNull { it.isSelected }
+            val decoderName = if (!mpv) playbackAnalyticsDiagnostics.currentAudioDecoderName() else null
+            // A MediaCodec audio decoder implies PCM decode; passthrough/offload uses none. Best-effort.
+            val outputPath = when {
+                mpv -> AudioOutputTelemetry.OUTPUT_PATH_UNKNOWN
+                decoderName != null -> AudioOutputTelemetry.OUTPUT_PATH_PCM_DECODE
+                else -> AudioOutputTelemetry.OUTPUT_PATH_UNKNOWN
+            }
+            val recoveryStage = when {
+                audioDisabledForcedStreamUrls.contains(streamUrl) -> AudioOutputTelemetry.RECOVERY_DISABLED
+                safeAudioForcedStreamUrls.contains(streamUrl) -> AudioOutputTelemetry.RECOVERY_SAFE_AUDIO
+                else -> AudioOutputTelemetry.RECOVERY_NONE
+            }
+            val sink = AudioOutputTelemetry.selectSinkCaps(
+                activeRoute = readActiveRouteSinkCaps(),
+                enumerated = AudioSinkCapabilities.readEnumerated(context),
+            )
+
             AudioOutputTelemetry.audioProfile(
-                engine = if (engine == InternalPlayerEngine.EXOPLAYER) "exo" else "mpv",
-                rawAudioCodec = rawCodec,
-                audioChannels = channels,
-                audioSampleRate = sampleRate,
-                audioTrackCount = trackCount,
+                engine = if (mpv) "mpv" else "exo",
+                rawAudioCodec = selected?.codec,
+                audioChannels = selected?.channelCount,
+                audioSampleRate = selected?.sampleRate,
+                audioTrackCount = stateNow.audioTracks.size,
+                selectedDecoder = decoderName,
+                outputPath = outputPath,
+                audioInputFormat = selected?.codec,
+                recoveryStage = recoveryStage,
                 sink = sink,
                 forceOpticalPassthrough = settings.forceOpticalPassthrough,
                 decoderPriority = settings.decoderPriority,
-                audioRendered = audioRendered,
-                // The safe-audio -> PCM -> disabled ladder stage is not yet threaded here; the
-                // codec x sink x settings x audio_rendered correlation already localizes the fault.
-                recoveryStage = null,
-                audioErrorCode = null,
+                observation = observation,
             )
         }
     }
 }
 
-/** Long enough for audio decoder output buffers to accrue, short enough to catch a channel zap. */
-private const val AUDIO_PROFILE_SAMPLE_DELAY_MS = 4_000L
+/**
+ * The ACTIVE-ROUTE sink capabilities (where audio actually goes), probed from media3's
+ * [AudioCapabilities] for the default route — distinct from [AudioSinkCapabilities.readEnumerated],
+ * which only enumerates connected devices. Probing named encodings never claims incompatibility for an
+ * encoding we did not ask about.
+ */
+@OptIn(UnstableApi::class)
+private fun PlayerRuntimeController.readActiveRouteSinkCaps(): AudioOutputTelemetry.SinkCaps? = runCatching {
+    val detected = AudioCapabilities.getCapabilities(context, AudioAttributes.DEFAULT, null)
+    val probes = listOf(
+        "pcm" to C.ENCODING_PCM_16BIT,
+        "ac3" to C.ENCODING_AC3,
+        "eac3" to C.ENCODING_E_AC3,
+        "eac3" to C.ENCODING_E_AC3_JOC,
+        "ac4" to C.ENCODING_AC4,
+        "dts" to C.ENCODING_DTS,
+        "dts_hd" to C.ENCODING_DTS_HD,
+        "truehd" to C.ENCODING_DOLBY_TRUEHD,
+    )
+    val supported = probes.filter { detected.supportsEncoding(it.second) }.map { it.first }.toSet()
+    AudioOutputTelemetry.SinkCaps(
+        source = AudioOutputTelemetry.SinkCapsSource.ACTIVE_ROUTE,
+        supportedEncodings = supported,
+        hasUnclassifiedEncodings = false,
+        maxChannels = detected.maxChannelCount.takeIf { it > 0 },
+        route = null,
+    )
+}.getOrNull()
+
+/** Fast enough to catch a channel zap, sparse enough to be negligible over a multi-second window. */
+private const val AUDIO_SAMPLE_INTERVAL_MS = 750L

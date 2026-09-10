@@ -209,6 +209,11 @@ class PlayerRuntimeController(
     internal var currentStreamUrl: String
     /** The stream URL an audio_output_profile diagnostic was already emitted for — one per stream. */
     @Volatile internal var audioProfileEmittedStreamUrl: String? = null
+    /** Monotonic id for the current audio observation; rejects late/stale audio callbacks. */
+    internal val audioObservationGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Closed-vocab audio-pipeline error observed for the current stream, or null. Fed to the audio
+     *  observation so a real sink/decoder fault reads as output_error rather than "not observed". */
+    @Volatile internal var lastAudioPipelineErrorCode: String? = null
     internal var currentStreamResponseHeaders: Map<String, String> = emptyMap()
     internal var currentStreamMimeType: String?
     internal var currentHeaders: Map<String, String>

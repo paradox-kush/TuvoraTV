@@ -69,6 +69,9 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
     private var videoFormat: PlaybackIssuePlaybackFormatInput? = null
 
     private var audioDecoderName: String? = null
+    /** The MediaCodec audio decoder currently in use, if one was initialized. Its presence implies a
+     *  PCM-decode output path (a passthrough/offload path uses no MediaCodec audio decoder). */
+    fun currentAudioDecoderName(): String? = audioDecoderName
     private var audioDecoderInitMs: Long? = null
     private var audioDecoderReleaseCount: Int = 0
     private var audioUnderrunCount: Int = 0
