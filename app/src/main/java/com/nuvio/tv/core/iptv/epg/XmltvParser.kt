@@ -21,8 +21,17 @@ import org.xmlpull.v1.XmlPullParser
  */
 object XmltvParser {
 
-    /** Clamp a single `<title>`/`<desc>`'s characters — a broken/hostile feed must not grow one
-     *  field without bound. Matches the KMP XmltvParser's MAX_TEXT. */
+    /**
+     * Clamp the characters we RETAIN for a single `<title>`/`<desc>`. Note the honest scope of this
+     * bound: [android.util.Xml] (KXmlParser) coalesces and materializes each whole contiguous text
+     * run into `parser.text` BEFORE the TEXT event fires, so this clamp truncates an already-
+     * materialized string — it bounds the [StringBuilder] we keep (and the DB row), NOT the parser's
+     * peak allocation for one run. The genuine before-allocation bound lives in the KMP twin
+     * (XmltvStreamingParser), whose hand-written char tokenizer caps at MAX_TEXT *during*
+     * accumulation; KXmlParser gives no equivalent hook. What protects this path against a hostile
+     * single giant node is defence-in-depth elsewhere: the ingest is size/window-filtered on the way
+     * in, and — since the EPG refresh is now an atomic generation swap — a parser OOM/throw leaves the
+     * previous guide intact rather than blanking it. Same 8 KB value as the KMP twin's MAX_TEXT. */
     private const val MAX_TEXT_CHARS = 8 * 1024
 
     /**
