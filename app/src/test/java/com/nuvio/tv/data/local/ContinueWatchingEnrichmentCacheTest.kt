@@ -85,6 +85,23 @@ class ContinueWatchingEnrichmentCacheTest {
     }
 
     @Test
+    fun `the record cap halts decoding mid-stream instead of parsing the whole file then truncating`() = runBlocking {
+        // 500 valid records, then a MALFORMED object. If the JsonReader stops after MAX_RECORDS (the
+        // `if (out.size >= MAX_RECORDS) break` in readBoundedSnapshot), the malformed tail is never
+        // parsed -> no exception -> 500 kept. If instead the whole file were decoded and only then
+        // truncated, the malformed object would throw -> the file would be dropped -> empty. So a KEPT
+        // 500 is proof the decode halts mid-stream. (The tail starts with '{' so hasNext() can peek it
+        // without throwing; it only fails if actually parsed as a value.)
+        val valid = (1..500).joinToString(",") {
+            """{"contentId":"r$it","contentType":"movie","name":"n","videoId":"v","season":1,"episode":1,"lastWatched":1,"sortTimestamp":1}"""
+        }
+        nextUpFile().parentFile!!.mkdirs()
+        nextUpFile().writeText("""[$valid,{"broken":}]""")
+        assertEquals(500, cache.getNextUpSnapshot().size)
+        assertTrue("early-stop must keep the valid, record-capped file", nextUpFile().exists())
+    }
+
+    @Test
     fun `a corrupt file returns empty and is dropped`() = runBlocking {
         inProgressFile().parentFile!!.mkdirs()
         inProgressFile().writeText("this is not json")
