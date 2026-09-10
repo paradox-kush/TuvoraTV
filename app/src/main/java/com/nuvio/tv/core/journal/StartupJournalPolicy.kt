@@ -116,9 +116,19 @@ internal object StartupJournalPolicy {
 
     fun shouldDefer(j: Journal, op: String, subject: String, nowMs: Long): Boolean {
         val e = j.entries.find(op, subject) ?: return false
+        // The backoff is measured against a PERSISTED wall-clock timestamp (the only clock stable
+        // across process death and reboot — see StartupJournalController). Wall-clock can move
+        // backward (NTP/user correction) or the whole journal can be restored from a backup or another
+        // device, leaving lastFailureMs in the FUTURE relative to nowMs. A future timestamp is not a
+        // trustworthy "recently failed" signal, so fail OPEN — never defer indefinitely. NOTE:
+        // clamping the delta with coerceAtLeast(0) would be WRONG here: it treats a rollback as "just
+        // failed" and restarts the FULL backoff, locking the op out. The count-based crash-loop gate
+        // (shouldEnterSafeMode) is clock-independent and still protects against a genuine loop.
+        val elapsed = nowMs - e.lastFailureMs
+        if (elapsed < 0L) return false
         return when (e.outcome) {
-            JournalOutcome.INTERRUPTED_UNKNOWN -> nowMs - e.lastFailureMs < interruptBackoffMs(e.interruptCount)
-            JournalOutcome.EXPECTED_FAILURE -> nowMs - e.lastFailureMs < EXPECTED_FAILURE_BACKOFF_MS
+            JournalOutcome.INTERRUPTED_UNKNOWN -> elapsed < interruptBackoffMs(e.interruptCount)
+            JournalOutcome.EXPECTED_FAILURE -> elapsed < EXPECTED_FAILURE_BACKOFF_MS
             else -> false
         }
     }

@@ -164,4 +164,55 @@ class StartupJournalPolicyTest {
         val j4 = StartupJournalPolicy.record(j3, "startup_interactive", "", gen, JournalOutcome.COMPLETED, 5_000L)
         assertFalse(StartupJournalPolicy.shouldEnterSafeMode(StartupJournalPolicy.interruptCount(j4, "startup_interactive", "")))
     }
+
+    // --- clock anomalies against the PERSISTED backoff timestamp (rollback / forward jump /
+    //     reboot / restored-from-backup) — the cooldown must never lock an op out indefinitely ---
+
+    /** Builds a journal with one recorded failure at [failAtMs] for [op]/[subj]. */
+    private fun failedAt(outcome: JournalOutcome, failAtMs: Long): Journal {
+        val (j0, run) = freshRun(failAtMs - 1)
+        val (j1, gen) = StartupJournalPolicy.begin(j0, op, subj, run, build, failAtMs - 1)
+        return StartupJournalPolicy.record(j1, op, subj, gen, outcome, failAtMs)
+    }
+
+    @Test
+    fun `a wall-clock rollback after a failure does not defer forever`() {
+        val failAt = 10_000_000L
+        val j = failedAt(JournalOutcome.EXPECTED_FAILURE, failAt)
+        // Clock rolled BACKWARD to before the stored failure: elapsed is negative. The old code did
+        // `negative < backoff` -> true and deferred indefinitely; a future timestamp must fail open.
+        assertFalse("a rolled-back clock must not lock the op out", StartupJournalPolicy.shouldDefer(j, op, subj, failAt - 5_000L))
+    }
+
+    @Test
+    fun `a restored-from-backup journal with a future failure timestamp fails open`() {
+        // A journal restored onto a device whose wall-clock is BEHIND the one that wrote it: every
+        // stored timestamp is in this device's future. The op must be allowed, not deferred forever.
+        val j = failedAt(JournalOutcome.INTERRUPTED_UNKNOWN, failAtMs = 5_000_000_000L)
+        assertFalse(StartupJournalPolicy.shouldDefer(j, op, subj, nowMs = 1_000L))
+    }
+
+    @Test
+    fun `a large forward clock jump expires the backoff instead of extending it`() {
+        val failAt = 1_000L
+        val j = failedAt(JournalOutcome.EXPECTED_FAILURE, failAt)
+        assertTrue("still within the window at real time", StartupJournalPolicy.shouldDefer(j, op, subj, failAt + 1_000L))
+        // NTP corrects the clock far forward: the bounded backoff is simply past, so the op proceeds.
+        assertFalse(StartupJournalPolicy.shouldDefer(j, op, subj, failAt + 10L * 365 * 24 * 60 * 60 * 1000L))
+    }
+
+    @Test
+    fun `across a reboot the swept interruption backoff is measured on surviving wall-clock`() {
+        // Attempt opens, process dies (reboot) mid-op; the next start sweeps it to INTERRUPTED_UNKNOWN
+        // stamped at the post-reboot wall-clock. Wall-clock survives reboot, so the bounded backoff
+        // measures correctly: deferred right after, cleared once the window elapses.
+        val (j0, run) = freshRun(1_000L)
+        val (jInflight, _) = StartupJournalPolicy.begin(j0, op, subj, run, build, 1_000L)
+        val rebootAt = 2_000L
+        val (jSwept, _) = StartupJournalPolicy.startRun(jInflight, rebootAt)
+        assertEquals("swept to interrupted", JournalOutcome.INTERRUPTED_UNKNOWN, jSwept.entries.single { it.op == op }.outcome)
+        val backoff = StartupJournalPolicy.interruptBackoffMs(1)
+        assertTrue(StartupJournalPolicy.shouldDefer(jSwept, op, subj, rebootAt + backoff - 1))
+        assertFalse(StartupJournalPolicy.shouldDefer(jSwept, op, subj, rebootAt + backoff + 1))
+    }
 }
