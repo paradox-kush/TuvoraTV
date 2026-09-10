@@ -524,6 +524,20 @@ tasks.named("check").configure {
     dependsOn(verifyPlaybackEngineArtifacts, verifyMedia3RuntimeConvergence)
 }
 
+// Gate EVERY shipping release build on the pinned-artifact hash + Media3-convergence checks. Wiring
+// them only onto `check` (above) meant they never ran at release time: release.yml builds the signed
+// APK+AAB with assemble/bundle and does NOT run `check`, so a tampered/substituted playback engine
+// AAR would have shipped unverified. Matching the release assemble/bundle tasks makes a hash mismatch
+// FAIL the release build itself. (Debug/dev builds stay fast — they are gated only via `check`.)
+tasks.configureEach {
+    val n = name
+    val isReleasePackaging = (n.startsWith("assemble") || n.startsWith("bundle")) &&
+        n.endsWith("Release") // e.g. assembleFullRelease, bundleFullRelease, assemblePlaystoreRelease
+    if (isReleasePackaging) {
+        dependsOn(verifyPlaybackEngineArtifacts, verifyMedia3RuntimeConvergence)
+    }
+}
+
 baselineProfile {
     automaticGenerationDuringBuild = false
     saveInSrc = true
