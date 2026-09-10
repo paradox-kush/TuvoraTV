@@ -113,4 +113,23 @@ class XmltvParserTest {
     fun `channel not in filter yields nothing`() {
         assertTrue(parse(XMLTV, setOf("nonexistent.tv")).isEmpty())
     }
+
+    @Test
+    fun `an enormous title is clamped so a hostile feed cannot grow the buffer without bound`() {
+        val huge = "x".repeat(20_000) // a broken/hostile <title> far past the 8 KB cap
+        val xml = """
+            <tv>
+              <programme start="20260702180000 +0000" stop="20260702190000 +0000" channel="bbc.uk">
+                <title>$huge</title>
+              </programme>
+            </tv>
+        """.trimIndent()
+        val programmes = parse(xml, setOf("bbc.uk"))
+        assertEquals(1, programmes.size)
+        assertTrue(
+            "title must be clamped to <= 8 KB, was ${programmes[0].title.length}",
+            programmes[0].title.length <= 8 * 1024,
+        )
+        assertTrue("clamp must still keep real content", programmes[0].title.length >= 4 * 1024)
+    }
 }

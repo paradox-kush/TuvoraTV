@@ -21,6 +21,10 @@ import org.xmlpull.v1.XmlPullParser
  */
 object XmltvParser {
 
+    /** Clamp a single `<title>`/`<desc>`'s characters — a broken/hostile feed must not grow one
+     *  field without bound. Matches the KMP XmltvParser's MAX_TEXT. */
+    private const val MAX_TEXT_CHARS = 8 * 1024
+
     /**
      * Convert an XMLTV time (`YYYYMMDDHHMMSS` optionally followed by a ` ±HHMM` / `±HHMM` offset)
      * to UTC epoch millis. With no offset the time is treated as UTC (the XMLTV spec's fallback).
@@ -111,7 +115,13 @@ object XmltvParser {
                     "title" -> if (inProgramme && keep && title == null) currentText = StringBuilder()
                     "desc" -> if (inProgramme && keep && desc == null) currentText = StringBuilder()
                 }
-                XmlPullParser.TEXT -> currentText?.append(parser.text)
+                // Clamp a single title/desc so a broken/hostile feed with an enormous field cannot
+                // grow this buffer without bound on a low-RAM TV box (parity with the KMP parser's
+                // MAX_TEXT clamp; the KMP twin caps it at the same 8 KB).
+                XmlPullParser.TEXT -> currentText?.let {
+                    if (it.length < MAX_TEXT_CHARS) it.append(parser.text)
+                    if (it.length > MAX_TEXT_CHARS) it.setLength(MAX_TEXT_CHARS)
+                }
                 XmlPullParser.END_TAG -> when (parser.name) {
                     "title" -> { currentText?.let { title = it.toString().trim() }; currentText = null }
                     "desc" -> { currentText?.let { desc = it.toString().trim() }; currentText = null }
