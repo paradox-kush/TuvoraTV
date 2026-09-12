@@ -38,6 +38,28 @@ class CleanLivePlayerUiPolicyTest {
     }
 
     @Test
+    fun `keep screen on stays true through a live stall so the TV screensaver never fires`() {
+        // Regression (reported on 1.7.1): keepScreenOn was gated on the transient isPlaying, so a
+        // live stall / re-buffer with no spinner dropped FLAG_KEEP_SCREEN_ON and Android TV entered
+        // Ambient Mode (the "screen blacks out during live TV" black-out) after its inactivity
+        // timeout. Intent-based keep-awake holds the flag whenever the user is watching, even when
+        // isPlaying momentarily reports false with no spinner up.
+        assertTrue(
+            "an actively-watched channel keeps the screen on during a non-playing, non-spinner stall",
+            CleanLivePlayerUiPolicy.present(
+                state(playWhenReady = true, isPlaying = false, spinnerVisible = false),
+            ).keepScreenOn,
+        )
+        // And it still correctly releases on pause so a paused channel can sleep.
+        assertFalse(
+            "a paused channel (no play intent) lets the screen sleep",
+            CleanLivePlayerUiPolicy.present(
+                state(playWhenReady = false, isPlaying = false),
+            ).keepScreenOn,
+        )
+    }
+
+    @Test
     fun `retry is conservative for playback and preview failure but not terminal stream`() {
         assertTrue(
             CleanLivePlayerUiPolicy.present(

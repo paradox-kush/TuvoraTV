@@ -730,12 +730,18 @@ fun PlayerScreen(
                 } else false
             }
     ) {
+        // Keep the screen awake on watch INTENT (FLAG_KEEP_SCREEN_ON), not the transient isPlaying —
+        // otherwise a stall/re-buffer drops the flag and Android TV enters Ambient Mode (the
+        // screensaver black-out). Held while playing, buffering, or paused-not: released only when the
+        // user pauses (showPauseOverlay) or playback ends. Monotonic vs the old (isPlaying||isBuffering):
+        // it can only keep the screen on MORE, never less, so it cannot introduce a new black-out.
+        val keepScreenOnIntent = uiState.isPlaying || uiState.isBuffering ||
+            (!uiState.playbackEnded && !uiState.showPauseOverlay)
         // Video Player
         if (uiState.internalPlayerEngine == InternalPlayerEngine.MVP_PLAYER) {
             MpvPlayerSurface(
                 viewModel = viewModel,
-                isPlaying = uiState.isPlaying,
-                isBuffering = uiState.isBuffering,
+                keepScreenOn = keepScreenOnIntent,
                 aspectMode = uiState.aspectMode,
                 subtitleStyle = uiState.subtitleStyle,
                 modifier = Modifier.fillMaxSize()
@@ -745,8 +751,7 @@ fun PlayerScreen(
                 ExoPlayerSurface(
                     player = player,
                     controller = viewModel.controller,
-                    isPlaying = uiState.isPlaying,
-                    isBuffering = uiState.isBuffering,
+                    keepScreenOn = keepScreenOnIntent,
                     aspectMode = uiState.aspectMode,
                     useLibass = uiState.useLibass,
                     libassRenderType = uiState.libassRenderType,
@@ -1371,8 +1376,7 @@ fun PlayerScreen(
 @Composable
 private fun MpvPlayerSurface(
     viewModel: PlayerViewModel,
-    isPlaying: Boolean,
-    isBuffering: Boolean,
+    keepScreenOn: Boolean,
     aspectMode: AspectMode,
     subtitleStyle: SubtitleStyleSettings,
     modifier: Modifier = Modifier
@@ -1405,10 +1409,9 @@ private fun MpvPlayerSurface(
         }
     }
 
-    LaunchedEffect(mpvView, isPlaying, isBuffering) {
-        val shouldKeepScreenOn = isPlaying || isBuffering
-        if (mpvView.keepScreenOn != shouldKeepScreenOn) {
-            mpvView.keepScreenOn = shouldKeepScreenOn
+    LaunchedEffect(mpvView, keepScreenOn) {
+        if (mpvView.keepScreenOn != keepScreenOn) {
+            mpvView.keepScreenOn = keepScreenOn
         }
     }
 
@@ -1425,8 +1428,7 @@ private fun MpvPlayerSurface(
 private fun ExoPlayerSurface(
     player: ExoPlayer,
     controller: PlayerRuntimeController,
-    isPlaying: Boolean,
-    isBuffering: Boolean,
+    keepScreenOn: Boolean,
     aspectMode: AspectMode,
     useLibass: Boolean,
     libassRenderType: LibassRenderType,
@@ -1439,7 +1441,7 @@ private fun ExoPlayerSurface(
     val playerView = remember(context, player) {
         PlayerView(context).apply {
             useController = false
-            keepScreenOn = false
+            this.keepScreenOn = false // qualify: the composable param `keepScreenOn` shadows the View prop
             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
             enableComposeSurfaceSyncWorkaroundIfAvailable()
@@ -1527,10 +1529,9 @@ private fun ExoPlayerSurface(
         }
     }
 
-    LaunchedEffect(playerView, isPlaying, isBuffering) {
-        val shouldKeepScreenOn = isPlaying || isBuffering
-        if (playerView.keepScreenOn != shouldKeepScreenOn) {
-            playerView.keepScreenOn = shouldKeepScreenOn
+    LaunchedEffect(playerView, keepScreenOn) {
+        if (playerView.keepScreenOn != keepScreenOn) {
+            playerView.keepScreenOn = keepScreenOn
         }
     }
 

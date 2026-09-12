@@ -395,8 +395,13 @@ internal object CleanLivePlayerUiPolicy {
     fun present(uiState: LivePlaybackUiState): CleanLivePlayerChromeState {
         val error = uiState.bottomErrorCode
         return CleanLivePlayerChromeState(
-            keepScreenOn = uiState.playWhenReady &&
-                (uiState.isPlaying || uiState.spinnerVisible),
+            // Keep the screen awake on watch INTENT, not the transient isPlaying: FLAG_KEEP_SCREEN_ON
+            // must stay held for the whole time the user is watching or Android TV enters Ambient Mode
+            // (the screensaver black-out) after its inactivity timeout. Gating on the momentary
+            // isPlaying dropped the flag during live stalls/re-buffers, letting the screensaver fire.
+            // playWhenReady is false only when the user pauses (isPaused = !playWhenReady), so the
+            // screen still correctly sleeps on pause. See developer.android.com .../awake/screen-on.
+            keepScreenOn = uiState.playWhenReady,
             retryEnabled = error is LivePlaybackUiErrorCode.PlaybackFailed ||
                 error is LivePlaybackUiErrorCode.PreviewUnavailable,
             messageRes = error?.let(::errorMessageRes)

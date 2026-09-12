@@ -252,7 +252,11 @@ fun XtreamHubScreen(
     }
 
     if (showAccountPicker) {
-        NuvioDialog(onDismiss = { showAccountPicker = false }, title = stringResource(R.string.iptv_hub_choose_provider)) {
+        NuvioDialog(
+            onDismiss = { showAccountPicker = false },
+            title = stringResource(R.string.iptv_hub_choose_provider),
+            scrollable = true, // many providers must all be reachable — don't clip past the dialog height
+        ) {
             uiState.accounts.forEach { acc ->
                 com.nuvio.tv.ui.screens.settings.SettingsActionRow(
                     title = acc.name,

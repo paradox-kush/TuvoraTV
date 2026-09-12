@@ -6,6 +6,8 @@ import android.os.SystemClock
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -53,6 +55,11 @@ fun NuvioDialog(
     containerCornerRadius: Dp = NuvioTheme.radii.xl,
     contentPadding: Dp = NuvioTheme.spacing.xl,
     contentSpacing: Dp = NuvioTheme.spacing.lg,
+    // Opt-in: make the content Column scroll when it exceeds the (height-capped) dialog. Default off
+    // so existing dialogs — some of which nest their own LazyColumn — are unchanged. Turn on for a
+    // long flat list (e.g. the provider picker) so extra rows aren't clipped off the bottom + become
+    // D-pad-unreachable. On TV a scrollable Column auto-scrolls to the focused row.
+    scrollable: Boolean = false,
     backgroundContent: @Composable BoxScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -97,6 +104,7 @@ fun NuvioDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                     .padding(contentPadding),
                 verticalArrangement = Arrangement.spacedBy(contentSpacing)
             ) {
