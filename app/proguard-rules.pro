@@ -42,6 +42,18 @@
 -keep class com.nuvio.tv.data.remote.dto.** { *; }
 -keep class com.nuvio.tv.domain.model.** { *; }
 
+# ── B24 IPTV playlist sync-state (serialized with Gson via decode/encodePlaylistSyncState) ──
+# These are reflectively (de)serialized by Gson. If R8 shrinks/obfuscates them, Gson deserializes
+# the `pending: List<PendingOpDto>` elements to LinkedTreeMap and a later cast throws
+# ClassCastException ("com.google.gson.internal.LinkedTreeMap cannot be cast to PendingOpDto") — the
+# 1.7.0 TV crash on the recordPending path, which only surfaced once v2 was enabled in a MINIFIED
+# release build (debug is not minified). Keep the whole Gson object graph: the sync-state, the pending
+# op, and the nested account + category-selection value types it carries.
+-keep class com.nuvio.tv.core.iptv.PlaylistSyncState { *; }
+-keep class com.nuvio.tv.core.iptv.PendingOpDto { *; }
+-keep class com.nuvio.tv.core.iptv.XtreamAccount { *; }
+-keep class com.nuvio.tv.core.iptv.CategorySelections { *; }
+
 # ── Kotlin ─────────────────────────────────────────────────────────────────────
 -keepattributes *Annotation*
 -keepattributes InnerClasses
