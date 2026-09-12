@@ -176,6 +176,11 @@ object AppExitReporter {
                 )
                 if (exitId in seenIds) return@forEach
 
+                // Drop normal OS lifecycle (e.g. a cached/background process SIGKILLed to reclaim RAM)
+                // so it does not skew crash metrics — only report app faults and user-visible reclaims.
+                // The end-of-loop timestamp advance below still moves past the skipped record.
+                if (!AppExitReportPolicy.shouldReport(reason, exit.importance)) return@forEach
+
                 val failedRun = findRunContext(exit.timestamp, runContexts)
                 val properties = buildProperties(context, exit, reason, failedRun)
                 PostHog.capture("app_exit", properties = properties)
