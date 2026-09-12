@@ -56,6 +56,7 @@ class XtreamAccountSyncService @Inject constructor(
     private val postgrest get() = supabaseProvider.postgrest
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pushJob: Job? = null
+    private val gson = com.google.gson.Gson()
 
     var isSyncingFromRemote: Boolean = false
 
@@ -74,7 +75,14 @@ class XtreamAccountSyncService @Inject constructor(
         pushJob?.cancel()
         pushJob = scope.launch {
             delay(600)
-            if (!isSyncingFromRemote) pushToRemote()
+            if (!isSyncingFromRemote) {
+                when (activationFor()) {
+                    com.nuvio.tv.core.iptv.PlaylistSyncActivation.V2_ACTIVE -> runV2Sync()
+                    com.nuvio.tv.core.iptv.PlaylistSyncActivation.V1_LEGACY -> pushToRemote()
+                    com.nuvio.tv.core.iptv.PlaylistSyncActivation.V2_PAUSED ->
+                        Log.w(TAG, "triggerRemoteSync — v2 paused; pending retained, no v1 write")
+                }
+            }
         }
     }
 
@@ -83,15 +91,128 @@ class XtreamAccountSyncService @Inject constructor(
     suspend fun pushToRemote(onlyIfEmpty: Boolean = false): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val profileId = profileManager.activeProfileId.value
-            val accounts = accountStore.accounts.first()
-            val params = playlistPushParams(accounts, profileId, onlyIfEmpty)
+            // B24 §2: capture authority AND the outgoing accounts from ONE read of THIS profile's
+            // blob. The prior code read authority (canPushFullReplace) and the payload (the
+            // active-profile accounts flow) separately — a profile switch in between could push
+            // another profile's accounts under this id, and a concurrent edit could desync the
+            // authority decision from the payload. The snapshot is an immutable value, so nothing
+            // that happens during the network call below can redirect it or change what it sends.
+            val snapshot = accountStore.pushSnapshot(profileId)
+            // A full-replace whose blob is not authoritative (absent/reset, corrupt, or partially
+            // recovered) would delete-then-insert an empty/truncated set and wipe the server.
+            // Withhold it; a genuine delete-all writes [] and stays pushable (B24).
+            if (!snapshot.canFullReplace) {
+                Log.w(TAG, "pushToRemote withheld: local playlist store not authoritative (absent/corrupt); preserving server (B24)")
+                return@withContext Result.success(Unit)
+            }
+            val params = playlistPushParams(snapshot.accounts, snapshot.profileId, onlyIfEmpty)
+            // No lock is held across this network call; the payload is the immutable snapshot, and a
+            // failure below leaves NO local authority/synced state changed (it can neither authorize
+            // a future push nor mark a newer edit synced — this push records nothing locally).
             withJwtRefreshRetry { postgrest.rpc("sync_push_iptv_playlists", params) }
-            Log.d(TAG, "Pushed ${accounts.size} iptv playlists for profile $profileId")
+            Log.d(TAG, "Pushed ${snapshot.accounts.size} iptv playlists for profile ${snapshot.profileId}")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to push iptv playlists", e)
             Result.failure(e)
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // B24 v2 — the REAL revision-contract sync path (debug/local only; see PlaylistSyncConfig).
+    // Drives the shared PlaylistV2SyncEngine through a transport that calls the actual v2 RPCs, using
+    // the real account store + reconcile core. Serialized per call by [v2Mutex]; the network calls
+    // happen INSIDE the engine, not inside any DataStore edit lock.
+    // ---------------------------------------------------------------------------------------------
+    private val v2Mutex = kotlinx.coroutines.sync.Mutex()
+    private val pullJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+    private fun newPlaylistMutationId(): String =
+        "m-" + kotlin.random.Random.nextLong().toULong().toString(16) + kotlin.random.Random.nextLong().toULong().toString(16)
+
+    private val v2Transport = object : com.nuvio.tv.core.iptv.PlaylistSyncTransport {
+        override suspend fun pull(profileId: Int): com.nuvio.tv.core.iptv.PlaylistPullResponse {
+            val result: JsonObject = withJwtRefreshRetry {
+                postgrest.rpc("sync_pull_iptv_playlists_v2", buildJsonObject { put("p_profile_id", profileId) }).decodeAs()
+            }
+            val revision = (result["revision"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
+            val generation = (result["generation"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
+            val rows = (result["playlists"] as? JsonArray ?: JsonArray(emptyList())).mapNotNull { el ->
+                runCatching { pullJson.decodeFromJsonElement(SupabaseIptvPlaylist.serializer(), el) }.getOrNull()
+            }
+            return com.nuvio.tv.core.iptv.PlaylistPullResponse(revision, rows.mapNotNull { it.toXtreamAccountOrNull() }, generation)
+        }
+
+        override suspend fun push(
+            profileId: Int, expectedRevision: Long?, accounts: List<XtreamAccount>, deleteAll: Boolean, mutationId: String,
+            expectedGeneration: Long?,
+        ): com.nuvio.tv.core.iptv.PlaylistPushResponse {
+            val params = buildJsonObject {
+                put("p_profile_id", profileId)
+                put("p_expected_revision", if (expectedRevision == null) JsonNull else JsonPrimitive(expectedRevision))
+                put("p_playlists", buildJsonArray { accounts.forEachIndexed { i, acc -> add(playlistPushJson(acc, i)) } })
+                put("p_source_types", buildJsonArray { SYNCED_SOURCE_TYPES.forEach { add(it) } })
+                put("p_delete_all", deleteAll)
+                put("p_mutation_id", mutationId)
+                put("p_expected_generation", if (expectedGeneration == null) JsonNull else JsonPrimitive(expectedGeneration))
+            }
+            val result: JsonObject = withJwtRefreshRetry {
+                postgrest.rpc("sync_push_iptv_playlists_v2", params).decodeAs()
+            }
+            return when ((result["status"] as? JsonPrimitive)?.content) {
+                "ok" -> com.nuvio.tv.core.iptv.PlaylistPushResponse.Ok(
+                    revision = (result["revision"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
+                    deduped = (result["deduped"] as? JsonPrimitive)?.content?.toBoolean() ?: false,
+                )
+                "conflict" -> {
+                    val curRows = (result["current_rows"] as? JsonArray ?: JsonArray(emptyList()))
+                        .mapNotNull { el -> runCatching { pullJson.decodeFromJsonElement(SupabaseIptvPlaylist.serializer(), el) }.getOrNull() }
+                    com.nuvio.tv.core.iptv.PlaylistPushResponse.Conflict(
+                        currentRevision = (result["current_revision"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
+                        currentRows = curRows.mapNotNull { it.toXtreamAccountOrNull() },
+                    )
+                }
+                else -> com.nuvio.tv.core.iptv.PlaylistPushResponse.Rejected(result.toString())
+            }
+        }
+    }
+
+    /** Runs one full v2 sync for the active profile. Never falls back to v1. */
+    /** Per-profile activation: reads the active profile's stored sync-state to decide adoption, then
+     *  applies the rollout policy (B24 production activation). */
+    private suspend fun activationFor(): com.nuvio.tv.core.iptv.PlaylistSyncActivation {
+        val pid = profileManager.activeProfileId.value
+        val st = com.nuvio.tv.core.iptv.decodePlaylistSyncState(gson, accountStore.loadPlaylistSyncStateRaw(pid))
+        val adopted = st.revision > 0 || st.pending.isNotEmpty()
+        return com.nuvio.tv.core.iptv.PlaylistSyncConfig.activationFor(adopted)
+    }
+
+    suspend fun runV2Sync(): Result<Unit> = withContext(Dispatchers.IO) {
+        val profileId = profileManager.activeProfileId.value
+        // Capture the initial local snapshot synchronously-enough (before the engine mutates it).
+        val startAccounts = runCatching { accountStore.accountsForProfile(profileId) }.getOrDefault(emptyList())
+        val startCanPush = runCatching { accountStore.canPushFullReplace(profileId) }.getOrDefault(false)
+        val engine = com.nuvio.tv.core.iptv.PlaylistV2SyncEngine(
+            transport = v2Transport,
+            loadState = { com.nuvio.tv.core.iptv.decodePlaylistSyncState(gson, accountStore.loadPlaylistSyncStateRaw(it)) },
+            saveState = { p, s -> accountStore.savePlaylistSyncStateRaw(p, com.nuvio.tv.core.iptv.encodePlaylistSyncState(gson, s)) },
+            currentAccounts = { startAccounts },
+            canPush = { startCanPush },
+            applyLocal = { _, accounts -> applyRemote(accounts) },
+            stillActive = { profileManager.activeProfileId.value == it },
+            newMutationId = { newPlaylistMutationId() },
+        )
+        v2Mutex.lock()
+        val outcome = try {
+            engine.sync(profileId)
+        } catch (e: Throwable) {
+            Log.e(TAG, "runV2Sync FAILED (no v1 fallback; server preserved)", e)
+            com.nuvio.tv.core.iptv.PlaylistSyncOutcome.PUSH_FAILED
+        } finally {
+            v2Mutex.unlock()
+        }
+        Log.i(TAG, "runV2Sync(profile $profileId) — $outcome")
+        Result.success(Unit)
     }
 
     /**
@@ -102,6 +223,16 @@ class XtreamAccountSyncService @Inject constructor(
      * foreign rows).
      */
     suspend fun pullAndApply(): Result<Unit> = withContext(Dispatchers.IO) {
+        when (activationFor()) {
+            com.nuvio.tv.core.iptv.PlaylistSyncActivation.V2_ACTIVE -> return@withContext runV2Sync()
+            // Adopted-but-paused: don't run a v1 pull/apply that could overwrite local; freeze the
+            // profile (local + pending preserved) until v2 is re-enabled.
+            com.nuvio.tv.core.iptv.PlaylistSyncActivation.V2_PAUSED -> {
+                Log.w(TAG, "pullAndApply — v2 paused; skipping (local + pending preserved)")
+                return@withContext Result.success(Unit)
+            }
+            com.nuvio.tv.core.iptv.PlaylistSyncActivation.V1_LEGACY -> Unit // fall through to legacy v1
+        }
         try {
             val effectiveUserId = authManager.getEffectiveUserId(fallbackToOwnIdOnFailure = false)
                 ?: return@withContext Result.failure(

@@ -3,6 +3,8 @@ package com.nuvio.tv.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
+import android.util.Log
+import kotlinx.coroutines.CancellationException
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
@@ -167,9 +169,10 @@ class XtreamSettingsViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            store.upsert(account)
-            syncService.triggerRemoteSync()
-            onSuccess()
+            if (persistOrError { store.upsert(account) }) {
+                syncService.triggerRemoteSync()
+                onSuccess()
+            }
         }
     }
 
@@ -186,12 +189,13 @@ class XtreamSettingsViewModel @Inject constructor(
             categorySelections = old.categorySelections
         )
         viewModelScope.launch {
-            store.replace(old.id, account)
-            if (account.id != old.id) migrateSavedData(old, account)
-            registry.clear()
-            evictAccountCaches(old.id, account.id)
-            syncService.triggerRemoteSync()
-            onSuccess()
+            if (persistOrError { store.replace(old.id, account) }) {
+                if (account.id != old.id) migrateSavedData(old, account)
+                registry.clear()
+                evictAccountCaches(old.id, account.id)
+                syncService.triggerRemoteSync()
+                onSuccess()
+            }
         }
     }
 
@@ -249,10 +253,11 @@ class XtreamSettingsViewModel @Inject constructor(
                 val verified = client.verify(panel).isSuccess
                 _uiState.update { it.copy(isValidating = false) }
                 if (verified) {
-                    store.upsert(panel)
-                    resolver.warmUp(listOf(panel))
-                    syncService.triggerRemoteSync()
-                    onSuccess()
+                    if (persistOrError { store.upsert(panel) }) {
+                        resolver.warmUp(listOf(panel))
+                        syncService.triggerRemoteSync()
+                        onSuccess()
+                    }
                 } else {
                     saveM3UUrl(m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options), onSuccess)
                 }
@@ -269,11 +274,12 @@ class XtreamSettingsViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            store.upsert(account)
-            syncService.triggerRemoteSync()
-            onSuccess()
-            // Ingest in the background (M3UClient is single-flight + self-scoped, survives this scope).
-            runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+            if (persistOrError { store.upsert(account) }) {
+                syncService.triggerRemoteSync()
+                onSuccess()
+                // Ingest in the background (M3UClient is single-flight + self-scoped, survives this scope).
+                runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+            }
         }
     }
 
@@ -290,13 +296,14 @@ class XtreamSettingsViewModel @Inject constructor(
             categorySelections = old.categorySelections
         )
         viewModelScope.launch {
-            store.replace(old.id, account)
-            if (account.id != old.id) migrateSavedData(old, account)
-            registry.clear()
-            evictAccountCaches(old.id, account.id)
-            syncService.triggerRemoteSync()
-            onSuccess()
-            runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+            if (persistOrError { store.replace(old.id, account) }) {
+                if (account.id != old.id) migrateSavedData(old, account)
+                registry.clear()
+                evictAccountCaches(old.id, account.id)
+                syncService.triggerRemoteSync()
+                onSuccess()
+                runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+            }
         }
     }
 
@@ -327,12 +334,14 @@ class XtreamSettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(error = e.message ?: "Couldn't read the selected file") }
                 return@launch
             }
-            store.upsert(account)   // upsert also covers the re-import case (same id -> replace).
-            // File playlists aren't synced (contents can't travel), but push keeps the account list
-            // consistent; the sync filters non-xtream rows out anyway.
-            syncService.triggerRemoteSync()
-            onSuccess()
-            runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+            // upsert also covers the re-import case (same id -> replace).
+            if (persistOrError { store.upsert(account) }) {
+                // File playlists aren't synced (contents can't travel), but push keeps the account
+                // list consistent; the sync filters non-xtream rows out anyway.
+                syncService.triggerRemoteSync()
+                onSuccess()
+                runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
+            }
         }
     }
 
@@ -340,6 +349,29 @@ class XtreamSettingsViewModel @Inject constructor(
      *  and must be re-imported before it can browse. Always false for non-file playlists. */
     fun needsReimport(account: XtreamAccount): Boolean =
         account.isM3UFile() && !fileStore.exists(account.id)
+
+    /**
+     * B24 §3 — the durable-write boundary for a verified add/edit. Runs the store [write] and returns
+     * whether it committed. A storage failure surfaces a save error and returns false, so the caller
+     * skips the sync push and the success callback (no false success, no push from an unsaved state).
+     * A CancellationException propagates (structured concurrency) instead of being reported as a save
+     * failure. The TV store write is a suspend DataStore edit{}, which is transactional — a failure
+     * leaves the persisted bytes (and therefore the sync authority derived from them) unchanged.
+     */
+    private suspend fun persistOrError(write: suspend () -> Unit): Boolean {
+        try {
+            write()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (e: Throwable) {
+            Log.e("XtreamSettingsVM", "playlist save failed", e)
+            _uiState.update {
+                it.copy(isValidating = false, error = "Couldn't save the playlist on this device. Free up space and try again.")
+            }
+            return false
+        }
+        return true
+    }
 
     private fun verifyAndSave(account: XtreamAccount?, parseError: String, onSuccess: () -> Unit) {
         if (account == null) {
@@ -351,11 +383,12 @@ class XtreamSettingsViewModel @Inject constructor(
             val result = client.verify(account)
             _uiState.update { it.copy(isValidating = false) }
             result.onSuccess {
-                store.upsert(account)
-                // Start the catalog index now, not on first play — minutes on budget boxes.
-                resolver.warmUp(listOf(account))
-                syncService.triggerRemoteSync()
-                onSuccess()
+                if (persistOrError { store.upsert(account) }) {
+                    // Start the catalog index now, not on first play — minutes on budget boxes.
+                    resolver.warmUp(listOf(account))
+                    syncService.triggerRemoteSync()
+                    onSuccess()
+                }
             }.onFailure { e ->
                 _uiState.update { it.copy(error = e.message ?: "Could not reach the panel") }
             }
@@ -412,16 +445,17 @@ class XtreamSettingsViewModel @Inject constructor(
                 if (account.sameConnectionAs(old)) Result.success(Unit) else client.verify(account)
             _uiState.update { it.copy(isValidating = false) }
             result.onSuccess {
-                store.replace(old.id, account)
-                if (account.id != old.id) migrateSavedData(old, account)
-                // Cached stream URLs embed the old server/creds; rebuild lazily on demand.
-                registry.clear()
-                // A renewed/edited account must not keep showing a stale "Expired" status or
-                // category lists fetched under the old creds — evict both ids' caches.
-                evictAccountCaches(old.id, account.id)
-                resolver.warmUp(listOf(account))
-                syncService.triggerRemoteSync()
-                onSuccess()
+                if (persistOrError { store.replace(old.id, account) }) {
+                    if (account.id != old.id) migrateSavedData(old, account)
+                    // Cached stream URLs embed the old server/creds; rebuild lazily on demand.
+                    registry.clear()
+                    // A renewed/edited account must not keep showing a stale "Expired" status or
+                    // category lists fetched under the old creds — evict both ids' caches.
+                    evictAccountCaches(old.id, account.id)
+                    resolver.warmUp(listOf(account))
+                    syncService.triggerRemoteSync()
+                    onSuccess()
+                }
             }.onFailure { e ->
                 _uiState.update { it.copy(error = e.message ?: "Could not reach the panel") }
             }

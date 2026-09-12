@@ -2,6 +2,8 @@ package com.nuvio.tv.core.network
 
 import android.util.Log
 import com.nuvio.tv.BuildConfig
+import com.nuvio.tv.core.auth.AuthManager
+import dagger.Lazy
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,6 +24,9 @@ private const val SYNC_BACKEND_REPOSITORY_TAG = "SyncBackendRepository"
 class SyncBackendRepository @Inject constructor(
     private val storage: SyncBackendStorage,
     private val okHttpClient: OkHttpClient,
+    // Lazy breaks the DI cycle (AuthManager depends on SyncBackendRepository). Used only to read the
+    // signed-in account id for the B24 v2 cohort at manifest-apply time.
+    private val authManager: Lazy<AuthManager>,
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -93,6 +98,21 @@ class SyncBackendRepository @Inject constructor(
         }.getOrNull() ?: return SyncBackendRefreshResult.Failed(
             _state.value.lastManifestError ?: "Failed to fetch sync backend manifest",
         )
+
+        // B24 — resolve this client's effective v2 rollout from the manifest cohort (percent-by-account
+        // + platform), evaluated against this device's account id + platform, and publish it into the
+        // core-owned signal the IPTV activation policy reads. Cohorting is a client-side feature-flag
+        // decision (the backend contract enforces safety regardless). Null mode ⇒ client build default;
+        // a missing account buckets out of an enabled cohort until sign-in.
+        PlaylistSyncRolloutSignal.raw = manifest.iptvPlaylistV2?.let { rawMode ->
+            PlaylistV2CohortPolicy.resolveMode(
+                rawMode = rawMode,
+                percent = manifest.iptvPlaylistV2Percent,
+                platforms = manifest.iptvPlaylistV2Platforms,
+                userId = runCatching { authManager.get().currentUserId }.getOrNull(),
+                platform = "tv",
+            )
+        }
 
         val targetBackend = manifest.backendConfigForActiveBackend()
             ?: return SyncBackendRefreshResult.Failed("Sync backend manifest is invalid")

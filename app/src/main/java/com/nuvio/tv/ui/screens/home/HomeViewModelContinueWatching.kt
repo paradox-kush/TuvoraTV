@@ -1190,13 +1190,25 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
     }
 }
 
-private fun deduplicateInProgress(items: List<WatchProgress>): List<WatchProgress> {
+internal fun deduplicateInProgress(items: List<WatchProgress>): List<WatchProgress> {
     val (series, nonSeries) = items.partition { isSeriesTypeCW(it.contentType) }
+    // One row per show: the most recently watched, and on a lastWatched tie (batch mark-as-watched,
+    // or a tracking provider's null-timestamp fallback) prefer the highest season/episode so
+    // Continue Watching never surfaces an earlier episode than the one actually being watched (B55).
+    // Mirrors WatchProgressPreferences' local collapser and the Mobile/Desktop SeriesContinuity
+    // comparator; a distinctBy over a lastWatched-sorted list left the tie to unstable input order.
     val latestPerShow = series
-        .sortedByDescending { it.lastWatched }
-        .distinctBy { it.contentId }
+        .groupBy { it.contentId }
+        .values
+        .mapNotNull { rows -> rows.maxWithOrNull(inProgressRecencyComparator) }
     return (nonSeries + latestPerShow).sortedByDescending { it.lastWatched }
 }
+
+/** Recency first, then a deterministic season/episode tiebreak (missing values sort as 0). */
+private val inProgressRecencyComparator: Comparator<WatchProgress> =
+    compareBy<WatchProgress> { it.lastWatched }
+        .thenBy { it.season ?: 0 }
+        .thenBy { it.episode ?: 0 }
 
 private fun shouldTreatAsInProgressForContinueWatching(progress: WatchProgress): Boolean {
     // Live channels have no meaningful resume position — never show them as CW cards.

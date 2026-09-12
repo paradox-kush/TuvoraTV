@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.res.stringResource
@@ -1356,6 +1357,7 @@ private fun XtreamField(
     onImeAction: () -> Unit = onSubmit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -1371,6 +1373,23 @@ private fun XtreamField(
             .padding(horizontal = 14.dp, vertical = NuvioTheme.spacing.md)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            // A focused (IME-dismissed) BasicTextField swallows D-pad UP/DOWN — it re-shows the
+            // keyboard instead of letting focus advance — so on a remote the multi-field Xtream
+            // form was a trap: DOWN never reached Username/Password and everything typed piled into
+            // Server URL. Intercept UP/DOWN in the tunneling (preview) pass, BEFORE the field's own
+            // key handling, and drive the focus manager so DOWN steps to the next field and UP to
+            // the previous one (and out to the mode toggle / DNS tiles at the ends). We always
+            // consume the key so the field can never grab it back to pop the IME. LEFT/RIGHT
+            // (cursor) and CENTER/ENTER fall through to the field untouched.
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                if (native.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                when (native.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_DOWN -> { focusManager.moveFocus(FocusDirection.Down); true }
+                    KeyEvent.KEYCODE_DPAD_UP -> { focusManager.moveFocus(FocusDirection.Up); true }
+                    else -> false
+                }
+            }
             .onKeyEvent { event ->
                 val native = event.nativeKeyEvent
                 when {

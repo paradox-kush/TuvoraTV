@@ -39,6 +39,13 @@ data class SyncBackendManifest(
     val activeBackend: String,
     val revision: String = "",
     val forceLogoutOnChange: Boolean = true,
+    /** B24 — server-driven rollout of the IPTV-playlist v2 sync ("enabled"|"disabled"|"debug_only";
+     *  null leaves the client build default). Lets v2 be turned on/killed without a client release. */
+    val iptvPlaylistV2: String? = null,
+    /** B24 canary — when "enabled", enrol only this percent (0..100) of accounts (stable-hash bucket). */
+    val iptvPlaylistV2Percent: Int? = null,
+    /** B24 canary — when "enabled", restrict to these platform tokens (TV uses "tv"). null ⇒ all. */
+    val iptvPlaylistV2Platforms: List<String>? = null,
 )
 
 data class SyncBackendState(
