@@ -1241,7 +1241,15 @@ object PlaybackStateMachine {
                     ),
                 )
             }
-            if (incident.recoveryIssued) return unchanged(withIncident)
+            // A live end-file means the stream is gone; always (re)establish the reconnect loop.
+            // Only an in-flight reconnect (already LIVE_RECONNECTING) swallows a duplicate EOF —
+            // do NOT gate on the one-shot recoveryIssued. An ongoing Amlogic decoder silent-discard
+            // opens an incident and consumes recoveryIssued while playback limps on in PLAYING; if
+            // we swallowed on it, the subsequent end-file left mpv idle, the surface black, and the
+            // media session leaked PLAYING/speed=0 with no reconnect until a manual channel switch.
+            // StartLiveReconnectLoop is idempotent (no-ops when a loop is already active), so
+            // re-issuing here is safe and the loop's own bounded backoff governs escalation.
+            if (state.snapshot.state == PlaybackState.LIVE_RECONNECTING) return unchanged(withIncident)
             return transition(
                 withIncident.copy(
                     snapshot = withIncident.snapshot.copy(

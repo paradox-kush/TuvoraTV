@@ -2,6 +2,7 @@ package com.nuvio.tv.playback.mpv
 
 import com.nuvio.tv.playback.core.assembledHttpHeaders
 import com.nuvio.tv.playback.core.AudioMode
+import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.CrossHostAuthorization
 import com.nuvio.tv.playback.core.DecoderMode
 import com.nuvio.tv.playback.core.DnsPolicy
@@ -111,7 +112,12 @@ internal object MpvAdapterPlanFactory {
             // Raw mpv/FFmpeg messages may contain provider URLs; normalized facts are the only
             // clean-adapter diagnostic channel.
             "msg-level" to "all=no",
-            "network-timeout" to "60",
+            // Live: surface a genuinely-dead channel fast so PlaybackSession's fresh-link reconnect
+            // can start, instead of hanging up to mpv's 60s default before end-file. Transient
+            // mid-stream drops are already absorbed by the socket-level stream-lavf-o reconnect
+            // (reconnect_delay_max=5) below, so this bound only governs "how long before we admit the
+            // channel is dead". VOD/catch-up keep the long default (a slow seekable read is not dead).
+            "network-timeout" to if (request.contentType == ContentType.LIVE) "15" else "60",
             "user-agent" to (request.userAgent ?: DEFAULT_USER_AGENT),
             "tls-verify" to "yes",
             "cache" to "yes",
@@ -129,10 +135,21 @@ internal object MpvAdapterPlanFactory {
                 options["http-proxy"] = "http://$credentials${proxy.host}:${proxy.port}"
             }
         }
+        // FFmpeg demuxer-level reconnect (the VLC/mpv approach to a transient live drop): re-open
+        // the HTTP read underneath the running graph so the decoder + video output stay alive — the
+        // last frame stays frozen under the buffering spinner and playback resumes without a black
+        // screen. Scoped to re-openable live: a single-use / SESSION_ONLY link (e.g. Stalker
+        // create_link) is dead after first use, so it must NOT be re-opened at the socket layer —
+        // only PlaybackSession may mint a fresh link. reconnect_delay_max bounds the socket-level
+        // retry; if FFmpeg still can't restore the read it emits end-file and PlaybackSession's
+        // fresh-link reconnect loop takes over. VOD/catch-up keep FFmpeg's default (a legitimate
+        // stream end must remain a clean EOF, never a reconnect).
         if (!request.network.retryConnectionFailures ||
             request.network.transientLoadRetryPolicy == TransientLoadRetryPolicy.SESSION_ONLY
         ) {
             options["stream-lavf-o"] = "reconnect=0,reconnect_streamed=0"
+        } else if (request.contentType == ContentType.LIVE) {
+            options["stream-lavf-o"] = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5"
         }
         if (headers.isNotEmpty()) {
             options["http-header-fields"] = headers.entries.joinToString(",") {

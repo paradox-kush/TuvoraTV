@@ -16,6 +16,7 @@ import com.nuvio.tv.playback.core.HdrPreference
 import com.nuvio.tv.playback.core.PlaybackEngineStart
 import com.nuvio.tv.playback.core.PlaybackGraph
 import com.nuvio.tv.playback.core.PlaybackNetworkRequest
+import com.nuvio.tv.playback.core.TransientLoadRetryPolicy
 import com.nuvio.tv.playback.core.PlaybackRequest
 import com.nuvio.tv.playback.core.PlaybackRequirements
 import com.nuvio.tv.playback.core.PlaybackResult
@@ -52,6 +53,50 @@ class MpvAdapterPlanTest {
         assertEquals("gpu", plan.preInitOptions["vo"])
         assertEquals("android", plan.preInitOptions["gpu-context"])
         assertEquals("no", plan.preInitOptions["hwdec"])
+    }
+
+    @Test
+    fun `re-openable live enables ffmpeg demuxer reconnect so a transient drop freezes not blacks`() {
+        // Field bug (Amlogic onn box): a transient live drop / provider rollover tore the graph
+        // down to a black screen with no auto-recovery. FFmpeg-level reconnect keeps the decoder and
+        // video output alive so the last frame stays under the buffering spinner and playback
+        // resumes — the VLC/mpv approach. reconnect_streamed=1 is required for non-seekable live.
+        val plan = plan(
+            start(request = PlaybackRequest("https://example.test/live", contentType = ContentType.LIVE)),
+        )
+        assertEquals(
+            "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+            plan.preInitOptions["stream-lavf-o"],
+        )
+    }
+
+    @Test
+    fun `live uses a short network-timeout so a dead channel surfaces fast while vod keeps the long default`() {
+        // A dead live channel must emit end-file quickly so the fresh-link reconnect loop can start,
+        // rather than hanging for mpv's 60s default. VOD keeps the long default (a slow seekable read
+        // is not a dead source).
+        val live = plan(start(request = PlaybackRequest("https://example.test/live", contentType = ContentType.LIVE)))
+        assertEquals("15", live.preInitOptions["network-timeout"])
+        val vod = plan(start(request = PlaybackRequest("https://example.test/movie.mkv", contentType = ContentType.VOD)))
+        assertEquals("60", vod.preInitOptions["network-timeout"])
+    }
+
+    @Test
+    fun `single-use link never reconnects at the socket layer`() {
+        // A SESSION_ONLY link (e.g. Stalker create_link) is dead after first use; re-opening the
+        // same URL would replay a stale/expired link. Only PlaybackSession may mint a fresh one.
+        val plan = plan(
+            start(
+                request = PlaybackRequest(
+                    "https://example.test/live",
+                    contentType = ContentType.LIVE,
+                    network = PlaybackNetworkRequest(
+                        transientLoadRetryPolicy = TransientLoadRetryPolicy.SESSION_ONLY,
+                    ),
+                ),
+            ),
+        )
+        assertEquals("reconnect=0,reconnect_streamed=0", plan.preInitOptions["stream-lavf-o"])
     }
 
     @Test

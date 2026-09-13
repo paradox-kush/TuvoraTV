@@ -528,6 +528,33 @@ class PlaybackStateMachineTest {
     }
 
     @Test
+    fun `live EOF still reconnects when a prior in-place recovery already consumed recoveryIssued`() {
+        // Field bug (Amlogic onn box, reported black-out during live TV): an ongoing decoder
+        // silent-discard opens an incident and consumes its one-shot recoveryIssued while playback
+        // limps on in PLAYING (never rendering a clean frame to clear the incident). When mpv then
+        // hits end-file, the EOF+live branch used to see recoveryIssued==true and swallow the event
+        // (return unchanged) — leaving the machine in PLAYING, mpv idle, the surface black, and the
+        // media session leaking PLAYING/speed=0 with NO reconnect until a manual channel switch.
+        // A live end-file means the stream is gone; it must ALWAYS (re)establish the reconnect loop.
+        val limpingPlaying = playingState(ContentType.LIVE).let { playing ->
+            playing.copy(incident = PlaybackIncident(sequence = 1, recoveryIssued = true))
+        }
+
+        val ended = PlaybackStateMachine.reduce(
+            limpingPlaying,
+            PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF),
+        )
+
+        assertEquals(
+            "a live end-file must not be swallowed by a stale recoveryIssued",
+            PlaybackState.LIVE_RECONNECTING,
+            ended.state.snapshot.state,
+        )
+        assertTrue(ended.state.snapshot.isReconnecting)
+        assertAction<PlaybackAction.StartLiveReconnectLoop>(ended)
+    }
+
+    @Test
     fun `failed live reconnect attempts stay inside one indefinite session loop`() {
         val reconnecting = PlaybackStateMachine.reduce(
             playingState(ContentType.LIVE),
