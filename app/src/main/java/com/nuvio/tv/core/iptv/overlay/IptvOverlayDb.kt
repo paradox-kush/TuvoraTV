@@ -16,39 +16,44 @@ import javax.inject.Singleton
 @Singleton
 class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
 
-    private val helper = object : SQLiteOpenHelper(context, "iptv_overlay.db", null, 1) {
+    private val helper = object : SQLiteOpenHelper(context, "iptv_overlay.db", null, 2) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 "CREATE TABLE channel_overlay(profile_id INTEGER NOT NULL, entity_id TEXT NOT NULL, playlist_id TEXT, " +
                     "hidden INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0, position INTEGER, rename TEXT, " +
-                    "updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, " +
+                    "updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
                     "PRIMARY KEY(profile_id, entity_id)) WITHOUT ROWID",
             )
             db.execSQL("CREATE INDEX channel_overlay_pl ON channel_overlay(profile_id, playlist_id)")
             db.execSQL(
                 "CREATE TABLE category_overlay(profile_id INTEGER NOT NULL, playlist_id TEXT NOT NULL, content_type TEXT NOT NULL, " +
                     "category_key TEXT NOT NULL, hidden INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0, position INTEGER, " +
-                    "rename TEXT, updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, " +
+                    "rename TEXT, updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
                     "PRIMARY KEY(profile_id, playlist_id, content_type, category_key)) WITHOUT ROWID",
             )
             db.execSQL(
                 "CREATE TABLE custom_group(profile_id INTEGER NOT NULL, group_id TEXT NOT NULL, playlist_id TEXT, content_type TEXT NOT NULL, " +
-                    "name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, " +
+                    "name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
                     "PRIMARY KEY(profile_id, group_id)) WITHOUT ROWID",
             )
             db.execSQL(
                 "CREATE TABLE custom_group_member(profile_id INTEGER NOT NULL, group_id TEXT NOT NULL, entity_id TEXT NOT NULL, " +
-                    "position INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, " +
+                    "position INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
                     "PRIMARY KEY(profile_id, group_id, entity_id)) WITHOUT ROWID",
             )
             db.execSQL("CREATE TABLE overlay_cursor(profile_id INTEGER NOT NULL PRIMARY KEY, cursor INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID")
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            for (t in listOf("channel_overlay", "category_overlay", "custom_group", "custom_group_member", "overlay_cursor")) {
-                db.execSQL("DROP TABLE IF EXISTS $t")
+            // v2: `dirty` marks locally-edited rows still to be pushed, so a push sends only the delta
+            // instead of the whole overlay set on every edit (2026-09-19 write-amplification). Add the
+            // column in place — do NOT drop the tables (that would lose the user's customizations). Any
+            // pre-v2 row defaults dirty=0: it was already force-pushed by the old full-set path.
+            if (oldVersion < 2) {
+                for (t in listOf("channel_overlay", "category_overlay", "custom_group", "custom_group_member")) {
+                    runCatching { db.execSQL("ALTER TABLE $t ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0") }
+                }
             }
-            onCreate(db)
         }
     }
 
@@ -80,23 +85,31 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
 
     @Synchronized
     fun setChannel(profileId: Int, entityId: String, playlistId: String?, o: ChannelOverlay, updatedAt: Long, deletedOverride: Boolean? = null) {
+        // The pull path reuses this setter (deletedOverride != null): a remote apply is not a local
+        // edit, so it stays dirty=0 (never pushed back) and only wins under LWW (>= stored updated_at).
+        val remote = deletedOverride != null
         val deleted = deletedOverride ?: o.isNoop
+        val dirty = if (remote) 0 else 1
+        val lww = if (remote) " WHERE excluded.updated_at >= channel_overlay.updated_at" else ""
         db.execSQL(
-            "INSERT INTO channel_overlay(profile_id, entity_id, playlist_id, hidden, pinned, position, rename, updated_at, deleted) VALUES(?,?,?,?,?,?,?,?,?) " +
+            "INSERT INTO channel_overlay(profile_id, entity_id, playlist_id, hidden, pinned, position, rename, updated_at, deleted, dirty) VALUES(?,?,?,?,?,?,?,?,?,?) " +
                 "ON CONFLICT(profile_id, entity_id) DO UPDATE SET playlist_id=excluded.playlist_id, hidden=excluded.hidden, pinned=excluded.pinned, " +
-                "position=excluded.position, rename=excluded.rename, updated_at=excluded.updated_at, deleted=excluded.deleted",
-            arrayOf<Any?>(profileId, entityId, playlistId, if (o.hidden) 1 else 0, if (o.pinned) 1 else 0, o.position, o.rename, updatedAt, if (deleted) 1 else 0),
+                "position=excluded.position, rename=excluded.rename, updated_at=excluded.updated_at, deleted=excluded.deleted, dirty=$dirty$lww",
+            arrayOf<Any?>(profileId, entityId, playlistId, if (o.hidden) 1 else 0, if (o.pinned) 1 else 0, o.position, o.rename, updatedAt, if (deleted) 1 else 0, dirty),
         )
     }
 
     @Synchronized
     fun setCategory(profileId: Int, playlistId: String, contentType: String, categoryKey: String, o: CategoryOverlay, updatedAt: Long, deletedOverride: Boolean? = null) {
+        val remote = deletedOverride != null
         val deleted = deletedOverride ?: o.isNoop
+        val dirty = if (remote) 0 else 1
+        val lww = if (remote) " WHERE excluded.updated_at >= category_overlay.updated_at" else ""
         db.execSQL(
-            "INSERT INTO category_overlay(profile_id, playlist_id, content_type, category_key, hidden, pinned, position, rename, updated_at, deleted) VALUES(?,?,?,?,?,?,?,?,?,?) " +
+            "INSERT INTO category_overlay(profile_id, playlist_id, content_type, category_key, hidden, pinned, position, rename, updated_at, deleted, dirty) VALUES(?,?,?,?,?,?,?,?,?,?,?) " +
                 "ON CONFLICT(profile_id, playlist_id, content_type, category_key) DO UPDATE SET hidden=excluded.hidden, pinned=excluded.pinned, position=excluded.position, " +
-                "rename=excluded.rename, updated_at=excluded.updated_at, deleted=excluded.deleted",
-            arrayOf<Any?>(profileId, playlistId, contentType, categoryKey, if (o.hidden) 1 else 0, if (o.pinned) 1 else 0, o.position, o.rename, updatedAt, if (deleted) 1 else 0),
+                "rename=excluded.rename, updated_at=excluded.updated_at, deleted=excluded.deleted, dirty=$dirty$lww",
+            arrayOf<Any?>(profileId, playlistId, contentType, categoryKey, if (o.hidden) 1 else 0, if (o.pinned) 1 else 0, o.position, o.rename, updatedAt, if (deleted) 1 else 0, dirty),
         )
     }
 
@@ -110,7 +123,7 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
     fun applyRemoteGroup(profileId: Int, groupId: String, playlistId: String?, contentType: String, name: String, position: Int, updatedAt: Long, deleted: Boolean) =
         db.execSQL(
             "INSERT INTO custom_group(profile_id, group_id, playlist_id, content_type, name, position, updated_at, deleted) VALUES(?,?,?,?,?,?,?,?) " +
-                "ON CONFLICT(profile_id, group_id) DO UPDATE SET playlist_id=excluded.playlist_id, content_type=excluded.content_type, name=excluded.name, position=excluded.position, updated_at=excluded.updated_at, deleted=excluded.deleted",
+                "ON CONFLICT(profile_id, group_id) DO UPDATE SET playlist_id=excluded.playlist_id, content_type=excluded.content_type, name=excluded.name, position=excluded.position, updated_at=excluded.updated_at, deleted=excluded.deleted, dirty=0 WHERE excluded.updated_at >= custom_group.updated_at",
             arrayOf<Any?>(profileId, groupId, playlistId, contentType, name, position, updatedAt, if (deleted) 1 else 0),
         )
 
@@ -118,15 +131,19 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
     fun applyRemoteMember(profileId: Int, groupId: String, entityId: String, position: Int, updatedAt: Long, deleted: Boolean) =
         db.execSQL(
             "INSERT INTO custom_group_member(profile_id, group_id, entity_id, position, updated_at, deleted) VALUES(?,?,?,?,?,?) " +
-                "ON CONFLICT(profile_id, group_id, entity_id) DO UPDATE SET position=excluded.position, updated_at=excluded.updated_at, deleted=excluded.deleted",
+                "ON CONFLICT(profile_id, group_id, entity_id) DO UPDATE SET position=excluded.position, updated_at=excluded.updated_at, deleted=excluded.deleted, dirty=0 WHERE excluded.updated_at >= custom_group_member.updated_at",
             arrayOf<Any?>(profileId, groupId, entityId, position, updatedAt, if (deleted) 1 else 0),
         )
 
-    /** Rows (channel edits) to push to the server, as (kind, okey, playlistId, valueJson, updatedAt, deleted). */
+    /**
+     * Channel rows the device still owes the server: only rows dirtied since the last successful push
+     * (each edit sets dirty=1; [markChannelsPushed] clears it on ack). Pushing every row on each edit
+     * is what caused the 2026-09-19 write-amplification.
+     */
     @Synchronized
     fun channelRowsForPush(profileId: Int): List<OverlayPushRow> {
         val out = ArrayList<OverlayPushRow>()
-        db.rawQuery("SELECT entity_id, playlist_id, hidden, pinned, position, rename, updated_at, deleted FROM channel_overlay WHERE profile_id=?", arrayOf(profileId.toString())).use { c ->
+        db.rawQuery("SELECT entity_id, playlist_id, hidden, pinned, position, rename, updated_at, deleted FROM channel_overlay WHERE profile_id=? AND dirty=1", arrayOf(profileId.toString())).use { c ->
             while (c.moveToNext()) {
                 val v = buildString {
                     append("{\"hidden\":").append(c.getInt(2) != 0).append(",\"pinned\":").append(c.getInt(3) != 0)
@@ -138,5 +155,21 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
             }
         }
         return out
+    }
+
+    /**
+     * Clear the dirty flag for exactly the channel rows the server just acked — matched by entity_id
+     * AND the pushed updated_at, so a row re-edited during the push (newer updated_at) stays dirty and
+     * is re-sent next time instead of being dropped.
+     */
+    @Synchronized
+    fun markChannelsPushed(profileId: Int, rows: List<OverlayPushRow>) {
+        for (r in rows) {
+            if (r.kind != "channel") continue
+            db.execSQL(
+                "UPDATE channel_overlay SET dirty=0 WHERE profile_id=? AND entity_id=? AND updated_at=? AND dirty=1",
+                arrayOf<Any?>(profileId, r.okey, r.updatedAt),
+            )
+        }
     }
 }

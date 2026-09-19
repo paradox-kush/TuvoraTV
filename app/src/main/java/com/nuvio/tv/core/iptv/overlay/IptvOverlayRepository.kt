@@ -132,22 +132,29 @@ class IptvOverlayRepository @Inject constructor(
                 // ON CONFLICT(kind, okey) and abort the whole push with 21000. Keeps the freshest edit.
                 val upserts = IptvOverlayPushDedupPolicy.dedupe(rows.filter { !it.deleted })
                 val deletes = rows.filter { it.deleted }
-                if (upserts.isNotEmpty()) postgrest.rpc("sync_push_iptv_overlay", buildJsonObject {
-                    put("p_profile_id", profileId)
-                    put("p_items", buildJsonArray {
-                        upserts.forEach { row ->
-                            add(buildJsonObject {
-                                put("kind", row.kind); put("okey", row.okey)
-                                if (row.playlistId != null) put("playlist_id", row.playlistId)
-                                put("value", json.parseToJsonElement(row.valueJson)); put("updated_at", row.updatedAt)
-                            })
-                        }
+                if (upserts.isNotEmpty()) {
+                    postgrest.rpc("sync_push_iptv_overlay", buildJsonObject {
+                        put("p_profile_id", profileId)
+                        put("p_items", buildJsonArray {
+                            upserts.forEach { row ->
+                                add(buildJsonObject {
+                                    put("kind", row.kind); put("okey", row.okey)
+                                    if (row.playlistId != null) put("playlist_id", row.playlistId)
+                                    put("value", json.parseToJsonElement(row.valueJson)); put("updated_at", row.updatedAt)
+                                })
+                            }
+                        })
                     })
-                })
-                if (deletes.isNotEmpty()) postgrest.rpc("sync_delete_iptv_overlay", buildJsonObject {
-                    put("p_profile_id", profileId)
-                    put("p_keys", buildJsonArray { deletes.forEach { add(buildJsonObject { put("kind", it.kind); put("okey", it.okey) }) } })
-                })
+                    // Acked: drop the dirty flag so the next push sends only the NEXT edit, not everything.
+                    db.markChannelsPushed(profileId, upserts)
+                }
+                if (deletes.isNotEmpty()) {
+                    postgrest.rpc("sync_delete_iptv_overlay", buildJsonObject {
+                        put("p_profile_id", profileId)
+                        put("p_keys", buildJsonArray { deletes.forEach { add(buildJsonObject { put("kind", it.kind); put("okey", it.okey) }) } })
+                    })
+                    db.markChannelsPushed(profileId, deletes)
+                }
             }
         }
     }
