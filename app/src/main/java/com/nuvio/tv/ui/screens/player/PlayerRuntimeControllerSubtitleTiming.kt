@@ -10,9 +10,35 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.core.player.SubtitleCharsetDetector
+import com.nuvio.tv.core.player.SubtitleCredentialScope
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.util.concurrent.TimeUnit
+
+/**
+ * Strips forwarded stream-credential headers on any redirect hop that leaves the original subtitle
+ * host. Runs as a network interceptor so it observes each hop (OkHttp copies most headers across a
+ * redirect and drops only Authorization on a host change). See [SubtitleCredentialScope].
+ */
+private class SubtitleStreamHeaderScopeInterceptor(
+    private val originSubtitleUrl: String,
+    private val forwardedHeaderNames: Set<String>,
+) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        if (forwardedHeaderNames.isEmpty() ||
+            !SubtitleCredentialScope.redirectLeavesOriginHost(originSubtitleUrl, request.url.toString())
+        ) {
+            return chain.proceed(request)
+        }
+        val stripped = request.newBuilder().apply {
+            forwardedHeaderNames.forEach { removeHeader(it) }
+        }.build()
+        return chain.proceed(stripped)
+    }
+}
 
 private val subtitleAutoSyncHttpClient: OkHttpClient by lazy {
     OkHttpClient.Builder()
@@ -196,9 +222,11 @@ private fun PlayerRuntimeController.maybeLoadSubtitleAutoSyncCues(force: Boolean
 /**
  * Downloads a remote subtitle body for sidecar rendering / auto-sync.
  *
- * Video stream headers (Authorization, Cookie, custom Host, …) are only forwarded when the
- * subtitle URL shares the same host as the active stream. Forwarding debrid/CDN headers to
- * OpenSubtitles-style hosts is a common cause of intermittent HTTP 4xx / empty bodies.
+ * Video stream headers (Authorization, Cookie, custom credential names, …) are only forwarded when
+ * the subtitle URL shares the active stream's host and does not downgrade https->http — see
+ * [SubtitleCredentialScope]. Forwarding debrid/CDN headers to OpenSubtitles-style hosts is also a
+ * common cause of intermittent HTTP 4xx / empty bodies. A same-host subtitle URL can still redirect
+ * to a foreign host, so forwarded credentials are stripped on any hop that leaves the origin host.
  */
 internal suspend fun PlayerRuntimeController.downloadSubtitleBody(url: String, languageHint: String? = null): String =
     withContext(Dispatchers.IO) {
@@ -220,24 +248,16 @@ internal suspend fun PlayerRuntimeController.downloadSubtitleBody(url: String, l
 
 private fun PlayerRuntimeController.executeSubtitleDownload(url: String, languageHint: String? = null): String {
     val requestBuilder = Request.Builder().url(url)
-    val subtitleHost = runCatching { android.net.Uri.parse(url).host }.getOrNull()
-    val streamHost = runCatching { android.net.Uri.parse(currentStreamUrl).host }.getOrNull()
-    val sameHost = !subtitleHost.isNullOrBlank() &&
-        subtitleHost.equals(streamHost, ignoreCase = true)
 
-    if (sameHost) {
-        currentHeaders
-            .filterKeys { key ->
-                // Never forward hop-by-hop / range / host — they break foreign or CDN edges.
-                !key.equals("Range", ignoreCase = true) &&
-                    !key.equals("Host", ignoreCase = true) &&
-                    !key.equals("Connection", ignoreCase = true) &&
-                    !key.equals("Transfer-Encoding", ignoreCase = true)
-            }
-            .forEach { (key, value) ->
-                requestBuilder.header(key, value)
-            }
-    }
+    // Forward the stream's credential-bearing headers only when the policy allows it (same host, no
+    // https->http downgrade, hop-by-hop stripped). Forwarding to a foreign OpenSubtitles-style host
+    // also causes intermittent 4xx / empty bodies, so this doubles as a correctness guard.
+    val forwardedStreamHeaders = SubtitleCredentialScope.forwardableStreamHeaders(
+        streamUrl = currentStreamUrl,
+        subtitleUrl = url,
+        streamHeaders = currentHeaders,
+    )
+    forwardedStreamHeaders.forEach { (key, value) -> requestBuilder.header(key, value) }
 
     requestBuilder.header(
         "User-Agent",
@@ -246,7 +266,17 @@ private fun PlayerRuntimeController.executeSubtitleDownload(url: String, languag
     )
     requestBuilder.header("Accept", "text/plain, text/vtt, application/x-subrip, */*")
 
-    subtitleAutoSyncHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+    // A same-host subtitle URL can still 30x to a foreign host; OkHttp only drops Authorization on a
+    // cross-host redirect, so strip every forwarded stream credential on any hop leaving the origin.
+    val client = if (forwardedStreamHeaders.isEmpty()) {
+        subtitleAutoSyncHttpClient
+    } else {
+        subtitleAutoSyncHttpClient.newBuilder()
+            .addNetworkInterceptor(SubtitleStreamHeaderScopeInterceptor(url, forwardedStreamHeaders.keys))
+            .build()
+    }
+
+    client.newCall(requestBuilder.build()).execute().use { response ->
         if (!response.isSuccessful) {
             error(context.getString(com.nuvio.tv.R.string.subtitle_download_failed_http, response.code))
         }
