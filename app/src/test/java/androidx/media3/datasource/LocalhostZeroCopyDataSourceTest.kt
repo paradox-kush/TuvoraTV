@@ -145,7 +145,17 @@ class LocalhostZeroCopyDataSourceTest {
         thread {
             try {
                 val client = serverSocket.accept()
+                // Drain the client's request before responding + closing. Skipping this leaves the
+                // GET in the socket's receive buffer, so close() sends a TCP RST (not a FIN) that can
+                // reset the client mid-response under load — the source of this test's flakiness.
+                val reader = client.getInputStream().bufferedReader()
+                while (true) {
+                    val line = reader.readLine()
+                    if (line.isNullOrEmpty()) break
+                }
                 val out = client.getOutputStream()
+                // Headers and body written together so the data source reads body bytes into its
+                // header buffer (the excess-bytes look-ahead path under test).
                 val fullPayload = responseHeaders.toByteArray() + expectedData.toByteArray()
                 out.write(fullPayload)
                 out.flush()
