@@ -17,6 +17,7 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
 
 /**
@@ -284,8 +285,12 @@ data class XtreamVodSignal(val tmdbId: Int?, val year: Int?)
 class XtreamClient @Inject constructor(
     /** System-DNS API (shared client) — the fast path when a playlist uses no DoH. */
     private val api: XtreamApi,
-    /** Shared OkHttp client whose connection pool a per-provider DoH client reuses. */
-    private val baseClient: OkHttpClient,
+    /**
+     * Base client the per-provider DoH clients are derived from. Must be the permissive addon
+     * client: Xtream panels routinely have self-signed certs, and the non-DoH [api] (built on the
+     * placeholder Retrofit) is permissive too — keep both Xtream lanes on the same TLS policy.
+     */
+    @param:Named("addonPermissive") private val baseClient: OkHttpClient,
     private val moshi: Moshi,
     private val playlistDns: PlaylistDns,
 ) : IptvClient {

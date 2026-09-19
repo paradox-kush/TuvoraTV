@@ -110,22 +110,21 @@ object NetworkModule {
         .add(KotlinJsonAdapterFactory())
         .build()
 
+    /**
+     * Validating client for fixed first-party endpoints (TMDB, Trakt, the updater, sync backend,
+     * and our own metadata services). Performs platform certificate and hostname verification.
+     *
+     * Addon- and IPTV-provided URLs, which routinely point at self-hosted servers with self-signed
+     * certificates, must NOT ride this client — they use the `addonPermissive` client below. Keeping
+     * trust-all off the unnamed default is a security fix: first-party traffic previously inherited
+     * a trust-all `X509TrustManager` + always-true hostname verifier through this binding.
+     */
     @Provides
     @Singleton
     fun provideOkHttpClient(@ApplicationContext context: Context): OkHttpClient {
-        val trustAllManager = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-        }
-        val sslContext = SSLContext.getInstance("TLS").apply {
-            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
-        }
         return OkHttpClient.Builder()
             .dns(IPv4FirstDns())
             .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("API"))
-            .sslSocketFactory(sslContext.socketFactory, trustAllManager)
-            .hostnameVerifier { _, _ -> true }
             .cache(Cache(File(context.cacheDir, "http_cache"), 50L * 1024 * 1024)) // 50 MB disk cache
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
@@ -177,6 +176,38 @@ object NetworkModule {
                 level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC
                         else HttpLoggingInterceptor.Level.NONE
             })
+            .build()
+    }
+
+    /**
+     * Permissive client for addon- and IPTV-provided URLs, which commonly point at self-hosted
+     * servers with self-signed certificates. Do NOT use for first-party endpoints.
+     *
+     * Derived from the validating default via [OkHttpClient.newBuilder] so it inherits the shared
+     * interceptor stack — including the whole Xtream panel lane (catalog disk-cache, stale fallback,
+     * and [PanelHostGuardInterceptor]) — then swaps in trust-all TLS. It uses its OWN cache dir so a
+     * response fetched without certificate validation can never be reused by a first-party request
+     * sharing the same cache key.
+     */
+    @Provides
+    @Singleton
+    @Named("addonPermissive")
+    fun provideAddonPermissiveOkHttpClient(
+        @ApplicationContext context: Context,
+        okHttpClient: OkHttpClient
+    ): OkHttpClient {
+        val trustAllManager = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
+        }
+        return okHttpClient.newBuilder()
+            .cache(Cache(File(context.cacheDir, "addon_http_cache"), 50L * 1024 * 1024))
+            .sslSocketFactory(sslContext.socketFactory, trustAllManager)
+            .hostnameVerifier { _, _ -> true }
             .build()
     }
 
@@ -371,9 +402,18 @@ object NetworkModule {
         }
         .build()
 
+    /**
+     * Placeholder-base Retrofit for [AddonApi] and [com.nuvio.tv.data.remote.api.XtreamApi]: both
+     * take addon-/user-supplied dynamic URLs (self-hosted, self-signed certs are common), so this
+     * uses the permissive addon client. First-party APIs build their own Retrofit on the validating
+     * default client instead.
+     */
     @Provides
     @Singleton
-    fun provideRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
+    fun provideRetrofit(
+        @Named("addonPermissive") okHttpClient: OkHttpClient,
+        moshi: Moshi
+    ): Retrofit =
         Retrofit.Builder()
             .baseUrl("https://placeholder.nuvio.tv/")
             .client(okHttpClient)
