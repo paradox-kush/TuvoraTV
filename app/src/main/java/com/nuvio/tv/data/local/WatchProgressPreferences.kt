@@ -51,6 +51,17 @@ class WatchProgressPreferences @Inject constructor(
         }
     }
 
+    /**
+     * Advances the persisted push timestamp, never lowering it. The compare happens inside the
+     * edit, so two pushes finishing out of order cannot leave the older point on disk.
+     */
+    suspend fun advanceLastSuccessfulPushMs(timestampMs: Long, profileId: Int = profileManager.activeProfileId.value) {
+        store(profileId).edit { prefs ->
+            val current = prefs[lastSuccessfulPushMsKey] ?: 0L
+            prefs[lastSuccessfulPushMsKey] = com.nuvio.tv.core.sync.WatchSyncPoint.advance(current, timestampMs)
+        }
+    }
+
     suspend fun getDeltaCursor(profileId: Int = profileManager.activeProfileId.value): Long {
         val prefs = store(profileId).data.first()
         return prefs[deltaCursorKey] ?: 0L

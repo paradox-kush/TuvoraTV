@@ -51,25 +51,33 @@ class WatchedItemsSyncService @Inject constructor(
 ) {
     private val deltaSyncMutex = Mutex()
 
-    /**
-     * Timestamp of the last successful push to remote.
-     * Used to protect local items created after this point from being
-     * removed during pull (they haven't reached remote yet).
-     */
-    @Volatile
-    var lastSuccessfulPushMs: Long = 0L
-        private set
+    /** Serializes full pushes so two overlapping ones cannot each claim a sync point for a
+     *  payload the other did not contain. */
+    private val pushMutex = Mutex()
 
-    fun markPushSucceeded(profileId: Int = profileManager.activeProfileId.value) {
-        val now = System.currentTimeMillis()
-        lastSuccessfulPushMs = now
+    /**
+     * Read time of the last full push, per profile. Protects local items created after that point
+     * from being removed during a pull (they have not reached remote yet). Kept per profile so one
+     * profile's push cannot vouch for another profile's items.
+     */
+    private val syncPoints = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
+    private fun syncPointFor(profileId: Int): Long = syncPoints[profileId] ?: 0L
+
+    /**
+     * @param syncPointMs when the pushed items were READ, not when the upload finished — see
+     * WatchProgressSyncService.markPushSucceeded.
+     */
+    fun markPushSucceeded(profileId: Int, syncPointMs: Long) {
+        val advanced = WatchSyncPoint.advance(syncPointFor(profileId), syncPointMs)
+        syncPoints[profileId] = advanced
         CoroutineScope(Dispatchers.IO).launch {
-            watchedItemsPreferences.setLastSuccessfulPushMs(now, profileId)
+            watchedItemsPreferences.advanceLastSuccessfulPushMs(advanced, profileId)
         }
     }
 
     suspend fun restoreLastPushTimestamp(profileId: Int = profileManager.activeProfileId.value) {
-        lastSuccessfulPushMs = watchedItemsPreferences.getLastSuccessfulPushMs(profileId)
+        syncPoints[profileId] = watchedItemsPreferences.getLastSuccessfulPushMs(profileId)
     }
 
     private suspend fun <T> withJwtRefreshRetry(block: suspend () -> T): T {
@@ -118,19 +126,27 @@ class WatchedItemsSyncService @Inject constructor(
     }
 
     suspend fun pushToRemote(profileId: Int = profileManager.activeProfileId.value): Result<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val items = watchedItemsPreferences.getAllItems()
-            Log.d(TAG, "pushToRemote: ${items.size} watched items to push")
-            pushItemsToRemote(items, updateLastSuccessfulPush = true, profileId = profileId)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to push watched items to remote", e)
-            Result.failure(e)
+        pushMutex.withLock {
+            try {
+                // Stamp the read moment, and read the SAME profile we stamp (the parameter exists to
+                // survive a profile switch mid-operation — getAllItems() alone would read the active
+                // profile while stamping the passed one).
+                val syncPointMs = System.currentTimeMillis()
+                val items = watchedItemsPreferences.getAllItems(profileId)
+                Log.d(TAG, "pushToRemote: ${items.size} watched items to push")
+                pushItemsToRemote(items, syncPointMs = syncPointMs, profileId = profileId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to push watched items to remote", e)
+                Result.failure(e)
+            }
         }
     }
 
     suspend fun pushItemsToRemote(
         items: Collection<WatchedItem>,
-        updateLastSuccessfulPush: Boolean = false,
+        // When non-null, advance the sync point to this read time after a successful push. Left null
+        // for partial/batch pushes, which must not vouch for entries they did not upload.
+        syncPointMs: Long? = null,
         profileId: Int = profileManager.activeProfileId.value
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
@@ -165,8 +181,8 @@ class WatchedItemsSyncService @Inject constructor(
             }
 
             Log.d(TAG, "Pushed ${items.size} watched items to remote for profile $profileId")
-            if (updateLastSuccessfulPush) {
-                markPushSucceeded(profileId)
+            if (syncPointMs != null) {
+                markPushSucceeded(profileId, syncPointMs)
             }
             Result.success(Unit)
         } catch (e: Exception) {
@@ -289,7 +305,7 @@ class WatchedItemsSyncService @Inject constructor(
             val localCount = watchedItemsPreferences.getAllItems().size
             Log.d(
                 TAG,
-                "syncDeltaFromRemote: start profile=$profileId localCount=$localCount deltaInitialized=$deltaInitialized cursor=$deltaCursor lastPush=$lastSuccessfulPushMs"
+                "syncDeltaFromRemote: start profile=$profileId localCount=$localCount deltaInitialized=$deltaInitialized cursor=$deltaCursor lastPush=${syncPointFor(profileId)}"
             )
             if (!shouldUseSupabaseWatchProgressSync()) {
                 Log.d(TAG, "Using tracking provider watch progress, skipping watched items delta pull")
@@ -383,7 +399,7 @@ class WatchedItemsSyncService @Inject constructor(
         Log.d(TAG, "pullSnapshotFromRemote: snapshot returned ${remoteWatchedItems.size} watched items for profile $profileId")
         val hadUnsyncedItems = watchedItemsPreferences.replaceWithRemoteItems(
             remoteWatchedItems,
-            lastSuccessfulPushMs = lastSuccessfulPushMs,
+            lastSuccessfulPushMs = syncPointFor(profileId),
             profileId = profileId
         )
         if (resetDeltaState) {

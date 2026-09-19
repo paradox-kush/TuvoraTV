@@ -54,29 +54,43 @@ class WatchProgressSyncService @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deltaSyncMutex = Mutex()
 
-    /**
-     * Timestamp (epoch ms) of the last successful push to remote.
-     * Used by [WatchProgressPreferences.mergeRemoteEntries] to protect local entries
-     * that were created after the last push - these haven't reached remote yet,
-     * so their absence from a pull response does NOT mean they were deleted on
-     * another device.
-     */
-    @Volatile
-    var lastSuccessfulPushMs: Long = 0L
-        private set
+    /** Serializes full pushes. Two overlapping ones would each claim a sync point for a
+     *  payload the other did not contain. */
+    private val pushMutex = Mutex()
 
-    /** Called after a successful push to record the sync point. */
-    fun markPushSucceeded(profileId: Int = profileManager.activeProfileId.value) {
-        val now = System.currentTimeMillis()
-        lastSuccessfulPushMs = now
+    /**
+     * Read time of the last full push, per profile. Used by
+     * [WatchProgressPreferences.mergeRemoteEntries] to protect local entries created after that
+     * point: they have not reached remote yet, so their absence from a pull response does NOT mean
+     * they were deleted on another device.
+     *
+     * Kept per profile because the payload each stamp describes belongs to one profile. A single
+     * shared value would let one profile's push vouch for another profile's entries — the same
+     * misread this guard exists to prevent.
+     */
+    private val syncPoints = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
+    private fun syncPointFor(profileId: Int): Long = syncPoints[profileId] ?: 0L
+
+    /**
+     * Records the sync point after a successful push.
+     *
+     * @param syncPointMs when the pushed entries were READ, not when the upload finished. Anything
+     * saved while the upload was in flight is missing from that payload, so stamping the finish
+     * time would mark it as already synced and the next pull would delete it.
+     */
+    fun markPushSucceeded(profileId: Int, syncPointMs: Long) {
+        // Never move the point backwards: a push that read older data can still finish last.
+        val advanced = WatchSyncPoint.advance(syncPointFor(profileId), syncPointMs)
+        syncPoints[profileId] = advanced
         scope.launch {
-            watchProgressPreferences.setLastSuccessfulPushMs(now, profileId)
+            watchProgressPreferences.advanceLastSuccessfulPushMs(advanced, profileId)
         }
     }
 
     /** Restores persisted push timestamp on startup. */
     suspend fun restoreLastPushTimestamp(profileId: Int = profileManager.activeProfileId.value) {
-        lastSuccessfulPushMs = watchProgressPreferences.getLastSuccessfulPushMs(profileId)
+        syncPoints[profileId] = watchProgressPreferences.getLastSuccessfulPushMs(profileId)
     }
     private suspend fun <T> withJwtRefreshRetry(block: suspend () -> T): T {
         return try {
@@ -165,42 +179,47 @@ class WatchProgressSyncService @Inject constructor(
     suspend fun pushToRemote(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<Unit> = withContext(Dispatchers.IO) {
-        try {
-            if (!authManager.canSync) {
-                // Signed out: the RPC would go out as `anon` and come back 42501. Leave the write
-                // queued locally — do NOT markPushSucceeded, or the next pull deletes it.
-                Log.d(TAG, "Deferred watch progress push - not signed in")
-                return@withContext Result.failure(SyncNotAuthenticatedException())
-            }
-            val rawEntries = watchProgressPreferences.getAllRawEntries(profileId)
-            val entries = canonicalizeForRemote(rawEntries).filterValues { progress ->
-                !(progress.position <= 1L && progress.duration <= 1L && progress.duration > 0L) &&
-                    !isLiveProgress(progress)
-            }
-            Log.d(TAG, "pushToRemote: ${rawEntries.size} local entries, ${entries.size} canonical entries to push for profile $profileId")
-            entries.forEach { (key, progress) ->
-                Log.d(TAG, "  push entry: key=$key contentId=${progress.contentId} type=${progress.contentType} pos=${progress.position} dur=${progress.duration} lastWatched=${progress.lastWatched}")
-            }
+        pushMutex.withLock {
+            try {
+                if (!authManager.canSync) {
+                    // Signed out: the RPC would go out as `anon` and come back 42501. Leave the write
+                    // queued locally — do NOT markPushSucceeded, or the next pull deletes it.
+                    Log.d(TAG, "Deferred watch progress push - not signed in")
+                    return@withContext Result.failure(SyncNotAuthenticatedException())
+                }
+                // Stamp the moment the payload is READ, before the upload. Anything saved while the
+                // upload is in flight is absent from this payload but must not be treated as synced.
+                val syncPointMs = System.currentTimeMillis()
+                val rawEntries = watchProgressPreferences.getAllRawEntries(profileId)
+                val entries = canonicalizeForRemote(rawEntries).filterValues { progress ->
+                    !(progress.position <= 1L && progress.duration <= 1L && progress.duration > 0L) &&
+                        !isLiveProgress(progress)
+                }
+                Log.d(TAG, "pushToRemote: ${rawEntries.size} local entries, ${entries.size} canonical entries to push for profile $profileId")
+                entries.forEach { (key, progress) ->
+                    Log.d(TAG, "  push entry: key=$key contentId=${progress.contentId} type=${progress.contentType} pos=${progress.position} dur=${progress.duration} lastWatched=${progress.lastWatched}")
+                }
 
-            val params = buildJsonObject {
-                put("p_entries", buildJsonArray {
-                    entries.forEach { (key, progress) ->
-                        addJsonObject { putProgressEntry(key, progress) }
-                    }
-                })
-                put("p_profile_id", profileId)
-                putSyncOriginClientId(syncClientIdentity)
-            }
-            withJwtRefreshRetry {
-                postgrest.rpc("sync_push_watch_progress", params)
-            }
+                val params = buildJsonObject {
+                    put("p_entries", buildJsonArray {
+                        entries.forEach { (key, progress) ->
+                            addJsonObject { putProgressEntry(key, progress) }
+                        }
+                    })
+                    put("p_profile_id", profileId)
+                    putSyncOriginClientId(syncClientIdentity)
+                }
+                withJwtRefreshRetry {
+                    postgrest.rpc("sync_push_watch_progress", params)
+                }
 
-            Log.d(TAG, "Pushed ${entries.size} watch progress entries to remote for profile $profileId")
-            markPushSucceeded(profileId)
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to push watch progress to remote", e)
-            Result.failure(e)
+                Log.d(TAG, "Pushed ${entries.size} watch progress entries to remote for profile $profileId")
+                markPushSucceeded(profileId, syncPointMs)
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to push watch progress to remote", e)
+                Result.failure(e)
+            }
         }
     }
 
@@ -239,7 +258,9 @@ class WatchProgressSyncService @Inject constructor(
             }
 
             Log.d(TAG, "Pushed single watch progress entry to remote for profile $profileId (key=$key)")
-            markPushSucceeded(profileId)
+            // Deliberately does NOT advance the sync point: this uploaded one entry, so moving the
+            // global point would mark every OTHER local entry as synced whether or not it ever
+            // reached remote. The single entry is now on remote and a pull will return it anyway.
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to push single watch progress to remote", e)
@@ -374,7 +395,7 @@ class WatchProgressSyncService @Inject constructor(
             val localCount = watchProgressPreferences.getAllRawEntries(profileId).size
             Log.d(
                 TAG,
-                "syncDeltaFromRemote: start profile=$profileId localCount=$localCount deltaInitialized=$deltaInitialized cursor=$deltaCursor lastPush=$lastSuccessfulPushMs"
+                "syncDeltaFromRemote: start profile=$profileId localCount=$localCount deltaInitialized=$deltaInitialized cursor=$deltaCursor lastPush=${syncPointFor(profileId)}"
             )
             if (!shouldUseSupabaseWatchProgressSync()) {
                 Log.d(TAG, "Using tracking provider watch progress, skipping watch progress delta pull")
@@ -393,7 +414,7 @@ class WatchProgressSyncService @Inject constructor(
                 val remoteEntries = pullFromRemote(profileId).getOrElse { throw it }
                 val hadUnsyncedProgress = watchProgressPreferences.mergeRemoteEntries(
                     remoteEntries.toMap(),
-                    lastSuccessfulPushMs = lastSuccessfulPushMs,
+                    lastSuccessfulPushMs = syncPointFor(profileId),
                     profileId = profileId
                 )
                 watchProgressPreferences.setDeltaState(cursorBeforeSnapshot, initialized = true, profileId = profileId)
@@ -450,7 +471,7 @@ class WatchProgressSyncService @Inject constructor(
                 val pagePreservedLocal = watchProgressPreferences.applyRemoteChanges(
                     upserts = upserts,
                     deletes = deletes,
-                    lastSuccessfulPushMs = lastSuccessfulPushMs,
+                    lastSuccessfulPushMs = syncPointFor(profileId),
                     profileId = profileId
                 )
                 preservedLocalItems = preservedLocalItems || pagePreservedLocal
@@ -487,7 +508,7 @@ class WatchProgressSyncService @Inject constructor(
         val remoteEntries = pullFromRemote(profileId).getOrElse { throw it }
         val hadUnsyncedProgress = watchProgressPreferences.mergeRemoteEntries(
             remoteEntries.toMap(),
-            lastSuccessfulPushMs = lastSuccessfulPushMs,
+            lastSuccessfulPushMs = syncPointFor(profileId),
             profileId = profileId
         )
         if (resetDeltaState) {

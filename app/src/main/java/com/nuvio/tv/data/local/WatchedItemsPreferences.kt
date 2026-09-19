@@ -47,6 +47,17 @@ class WatchedItemsPreferences @Inject constructor(
         }
     }
 
+    /**
+     * Advances the persisted push timestamp, never lowering it. The compare happens inside the
+     * edit, so two pushes finishing out of order cannot leave the older point on disk.
+     */
+    suspend fun advanceLastSuccessfulPushMs(timestampMs: Long, profileId: Int = profileManager.activeProfileId.value) {
+        store(profileId).edit { prefs ->
+            val current = prefs[lastSuccessfulPushMsKey] ?: 0L
+            prefs[lastSuccessfulPushMsKey] = com.nuvio.tv.core.sync.WatchSyncPoint.advance(current, timestampMs)
+        }
+    }
+
     suspend fun getDeltaCursor(profileId: Int = profileManager.activeProfileId.value): Long {
         val prefs = store(profileId).data.first()
         return prefs[deltaCursorKey] ?: 0L
@@ -256,20 +267,20 @@ class WatchedItemsPreferences @Inject constructor(
             remoteItems.forEach { item ->
                 deduped[Triple(item.contentId, item.season, item.episode)] = item
             }
-            // Preserve local items that were marked as watched after the last
-            // successful push - they haven't reached remote yet, so their
-            // absence doesn't mean deletion on another device.
-            if (lastSuccessfulPushMs > 0L) {
-                val localItems = current.mapNotNull { json ->
-                    runCatching { gson.fromJson(json, WatchedItem::class.java) }.getOrNull()
-                }
-                localItems.forEach { localItem ->
-                    val key = Triple(localItem.contentId, localItem.season, localItem.episode)
-                    if (key !in deduped && localItem.watchedAt > lastSuccessfulPushMs) {
-                        deduped[key] = localItem
-                        preservedLocalItems = true
-                        Log.d(TAG, "replaceWithRemoteItems: preserved local item ${localItem.contentId} s${localItem.season}e${localItem.episode} (watchedAt=${localItem.watchedAt} > lastPush=$lastSuccessfulPushMs)")
-                    }
+            // Preserve local items marked watched after the last successful push - they haven't
+            // reached remote yet, so their absence doesn't mean deletion on another device. No
+            // `> 0L` gate: a device that has never pushed (point 0) has nothing on remote, so a pull
+            // returning none of its items proves nothing — dropping them here lost data. At point 0
+            // every real item (watchedAt > 0) is preserved, matching WatchProgressPreferences.
+            val localItems = current.mapNotNull { json ->
+                runCatching { gson.fromJson(json, WatchedItem::class.java) }.getOrNull()
+            }
+            localItems.forEach { localItem ->
+                val key = Triple(localItem.contentId, localItem.season, localItem.episode)
+                if (key !in deduped && com.nuvio.tv.core.sync.WatchSyncPoint.preservesLocal(localItem.watchedAt, lastSuccessfulPushMs)) {
+                    deduped[key] = localItem
+                    preservedLocalItems = true
+                    Log.d(TAG, "replaceWithRemoteItems: preserved local item ${localItem.contentId} s${localItem.season}e${localItem.episode} (watchedAt=${localItem.watchedAt} > lastPush=$lastSuccessfulPushMs)")
                 }
             }
             preferences[watchedItemsKey] = deduped.values
