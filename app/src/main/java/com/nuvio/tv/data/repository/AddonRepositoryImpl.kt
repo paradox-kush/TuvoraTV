@@ -282,15 +282,11 @@ class AddonRepositoryImpl @Inject constructor(
 
         val initialLocalUrls = preferences.installedAddonUrls.first()
         val initialLocalSet = initialLocalUrls.map { normalizeUrl(it) }.toSet()
-        val shouldRemoveMissingLocal = if (removeMissingLocal && normalizedRemote.isEmpty() && initialLocalUrls.isNotEmpty()) {
-            Log.w(
-                TAG,
-                "reconcileWithRemoteAddonUrls: remote list empty while local has ${initialLocalUrls.size} entries; preserving local addons"
-            )
-            false
-        } else {
-            removeMissingLocal
-        }
+        // Honor removal even when the server list is empty. Callers fetch with getOrElse { throw }
+        // and only reconcile on success, so an empty remote here is a genuine "server has no addons"
+        // (e.g. the user deleted them all) — the old preserve-on-empty path resurrected deleted
+        // addons on the next pull. (parity with upstream 1854dfc3c)
+        val shouldRemoveMissingLocal = removeMissingLocal
 
      
         val localByNormalized = linkedMapOf<String, String>()

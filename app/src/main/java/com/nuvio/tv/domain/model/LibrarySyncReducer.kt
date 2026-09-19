@@ -112,28 +112,18 @@ object LibrarySyncReducer {
         val pendingUpserts = current.pendingUpsertKeys.toKeyMap()
         val pendingDeletes = current.pendingDeleteKeys.toKeyMap()
         val beforeUpserts = pendingUpserts.toMap()
-        val migrateLegacyLocal =
-            !current.deltaInitialized &&
-                remoteItemsByKey.isEmpty() &&
-                localItems.isNotEmpty()
 
-        val reconciledItems = if (migrateLegacyLocal) {
-            localItems
-        } else {
-            pendingDeletes.keys.forEach(remoteItemsByKey::remove)
-            pendingUpserts.keys.forEach { identity ->
-                localItems[identity]?.let { localItem ->
-                    remoteItemsByKey[identity] = localItem
-                }
-            }
-            remoteItemsByKey
-        }
-
-        if (migrateLegacyLocal) {
-            localItems.forEach { (identity, item) ->
-                pendingUpserts[identity] = item.toLibrarySyncKey()
+        // Server is authoritative: apply pending local deletes/upserts on top of the server set,
+        // but never resurrect local items the server no longer has. The old migrateLegacyLocal path
+        // re-upserted every local item whenever a pull returned an empty server set (e.g. before the
+        // delta was initialized), undoing a deletion made on another device. (upstream 1854dfc3c)
+        pendingDeletes.keys.forEach(remoteItemsByKey::remove)
+        pendingUpserts.keys.forEach { identity ->
+            localItems[identity]?.let { localItem ->
+                remoteItemsByKey[identity] = localItem
             }
         }
+        val reconciledItems = remoteItemsByKey
 
         val pendingChanged = pendingUpserts != beforeUpserts
         return LibrarySnapshotApplyResult(
@@ -146,8 +136,7 @@ object LibrarySyncReducer {
                 mutationRevision = current.mutationRevision + if (pendingChanged) 1L else 0L
             ),
             preservedLocalItems =
-                migrateLegacyLocal ||
-                    pendingUpserts.isNotEmpty() ||
+                pendingUpserts.isNotEmpty() ||
                     pendingDeletes.isNotEmpty()
         )
     }

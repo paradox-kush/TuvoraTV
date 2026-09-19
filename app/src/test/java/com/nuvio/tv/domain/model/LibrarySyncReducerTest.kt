@@ -58,12 +58,13 @@ class LibrarySyncReducerTest {
     }
 
     @Test
-    fun emptyLegacySnapshotQueuesEveryDesiredLocalItem() {
-        val legacy = libraryItem("legacy")
-        val newlyAdded = libraryItem("new")
+    fun emptyServerSnapshotDropsUnpushedLocalItemsInsteadOfResurrectingThem() {
+        // Regression: a pull returning an empty server set (e.g. before the delta is initialized,
+        // or after the user deleted everything on another device) must NOT re-queue local leftovers.
+        // The old migrateLegacyLocal path re-upserted them, undoing the deletion. (upstream 1854dfc3c)
+        val leftover = libraryItem("leftover")
         val state = LibrarySyncState(
-            items = listOf(legacy, newlyAdded),
-            pendingUpsertKeys = listOf(newlyAdded.toLibrarySyncKey()),
+            items = listOf(leftover),
             deltaInitialized = false,
             mutationRevision = 1L
         )
@@ -74,15 +75,33 @@ class LibrarySyncReducerTest {
             cursorEventId = 12L
         )
 
-        assertEquals(
-            setOf("legacy", "new"),
-            result.state.items.mapTo(mutableSetOf(), SavedLibraryItem::id)
+        assertTrue("unpushed local items must be dropped, not resurrected", result.state.items.isEmpty())
+        assertTrue(result.state.pendingUpsertKeys.isEmpty())
+        assertEquals(1L, result.state.mutationRevision)
+        assertFalse(result.preservedLocalItems)
+    }
+
+    @Test
+    fun emptyServerSnapshotStillKeepsItemsWithPendingUpserts() {
+        // A genuinely local-only edit not yet pushed (pending upsert) survives an empty server pull;
+        // only leftovers with no pending op are dropped.
+        val leftover = libraryItem("leftover")
+        val pending = libraryItem("pending")
+        val state = LibrarySyncState(
+            items = listOf(leftover, pending),
+            pendingUpsertKeys = listOf(pending.toLibrarySyncKey()),
+            deltaInitialized = false,
+            mutationRevision = 1L
         )
-        assertEquals(
-            setOf("legacy", "new"),
-            result.state.pendingUpsertKeys.mapTo(mutableSetOf()) { it.contentId }
+
+        val result = LibrarySyncReducer.applySnapshot(
+            state = state,
+            remoteItems = emptyList(),
+            cursorEventId = 12L
         )
-        assertEquals(2L, result.state.mutationRevision)
+
+        assertEquals(setOf("pending"), result.state.items.mapTo(mutableSetOf(), SavedLibraryItem::id))
+        assertEquals(setOf("pending"), result.state.pendingUpsertKeys.mapTo(mutableSetOf()) { it.contentId })
         assertTrue(result.preservedLocalItems)
     }
 

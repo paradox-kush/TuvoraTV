@@ -494,15 +494,11 @@ class PluginManager @Inject constructor(
 
         val initialLocalRepos = dataStore.repositories.first()
         val initialLocalByNormalizedUrl = initialLocalRepos.associateBy { normalizeUrl(it.url) }
-        val shouldRemoveMissingLocal = if (removeMissingLocal && normalizedRemote.isEmpty() && initialLocalRepos.isNotEmpty()) {
-            Log.w(
-                TAG,
-                "reconcileWithRemoteRepoUrls: remote list empty while local has ${initialLocalRepos.size} repos; preserving local plugins"
-            )
-            false
-        } else {
-            removeMissingLocal
-        }
+        // Honor removal even when the server list is empty. Callers fetch with getOrElse { throw }
+        // and only reconcile on success, so an empty remote here is a genuine "server has no repos"
+        // (e.g. the user removed them all) — the old preserve-on-empty path resurrected deleted
+        // plugin repos on the next pull. (parity with upstream 1854dfc3c)
+        val shouldRemoveMissingLocal = removeMissingLocal
 
         if (shouldRemoveMissingLocal) {
             initialLocalRepos
