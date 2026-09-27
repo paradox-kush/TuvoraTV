@@ -773,6 +773,19 @@ fun PlayerScreen(
                 .zIndex(2f)
         )
 
+        val startOverAt = uiState.startOverOfferPositionMs
+        if (startOverAt != null && uiState.showLoadingOverlay && uiState.error == null) {
+            StartOverAction(
+                resumeAtLabel = formatTime(startOverAt),
+                onStartOver = { viewModel.onEvent(PlayerEvent.OnStartOverFromBeginning) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    // Sits above the loading-issue report action when both are up.
+                    .padding(bottom = if (uiState.loadingIssueReportVisible) 200.dp else 72.dp)
+                    .zIndex(2.4f)
+            )
+        }
+
         if (uiState.playbackIssueReportsEnabled &&
             uiState.showLoadingOverlay &&
             uiState.error == null &&
@@ -2723,6 +2736,39 @@ private fun rememberRawSvgPainter(@RawRes iconRes: Int): Painter {
             .build()
     }
     return rememberAsyncImagePainter(model = request)
+}
+
+@Composable
+private fun StartOverAction(
+    resumeAtLabel: String,
+    onStartOver: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(NuvioTheme.radii.lg))
+            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.md),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+    ) {
+        Text(
+            text = stringResource(R.string.player_loading_resuming_slow, resumeAtLabel),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.86f),
+            textAlign = TextAlign.Center
+        )
+        DialogButton(
+            text = stringResource(R.string.player_start_from_beginning),
+            onClick = onStartOver,
+            isPrimary = true,
+            modifier = Modifier.focusRequester(focusRequester)
+        )
+    }
 }
 
 @Composable

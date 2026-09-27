@@ -381,6 +381,7 @@ class PlayerRuntimeController(
     internal var debridResolveJob: Job? = null
     internal var stillWatchingPromptJob: Job? = null
     internal var startupLoadingReportJob: Job? = null
+    internal var startOverOfferJob: Job? = null
     internal var sourceStreamsJob: Job? = null
     internal var sourceBadgeJob: Job? = null
     internal var sourceBadgedAddonNames: Set<String> = emptySet()
@@ -669,6 +670,7 @@ class PlayerRuntimeController(
         releasePlayer()
         stopTorrentStream()
         startupLoadingReportJob?.cancel()
+        startOverOfferJob?.cancel()
         vodTelemetryJob?.cancel()
         mediaSourceFactory.shutdown()
         sourceChipErrorDismissJob?.cancel()

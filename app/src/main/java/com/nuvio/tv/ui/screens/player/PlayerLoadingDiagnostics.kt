@@ -39,6 +39,7 @@ internal fun PlayerRuntimeController.resetLoadingDiagnostics(
     loadingDiagnosticRawEventLines.clear()
     recordLoadingDiagnosticEvent(phase = phase, message = message, progress = progress)
     scheduleLoadingIssueReportAvailability()
+    scheduleStartOverOffer()
 }
 
 internal fun PlayerRuntimeController.setLoadingStatus(
@@ -110,11 +111,68 @@ internal fun PlayerRuntimeController.finishLoadingDiagnostics(phase: String) {
     recordLoadingDiagnosticEvent(phase = phase, message = null, progress = 1f)
     startupLoadingReportJob?.cancel()
     startupLoadingReportJob = null
+    startOverOfferJob?.cancel()
+    startOverOfferJob = null
     _uiState.update {
         it.copy(
             loadingIssueReportVisible = false,
-            loadingIssueElapsedMs = 0L
+            loadingIssueElapsedMs = 0L,
+            startOverOfferPositionMs = null
         )
+    }
+}
+
+/**
+ * A resume opens the file mid-way, and some providers take a minute to serve that jump (seen:
+ * ~1m46s on Onn for an IPTV MP4 resumed at 13:42 that starts instantly from 0:00). Once a resume has
+ * shown no frame for [ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS], offer "Start from beginning".
+ */
+internal fun PlayerRuntimeController.scheduleStartOverOffer() {
+    startOverOfferJob?.cancel()
+    if (_uiState.value.startOverOfferPositionMs != null) {
+        _uiState.update { it.copy(startOverOfferPositionMs = null) }
+    }
+    startOverOfferJob = scope.launch {
+        delay(ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS)
+        val state = _uiState.value
+        // The target lives in whichever slot the engine path used; the player's own position reads
+        // the seek target while a mid-file load is still pending.
+        val resumeAt = listOfNotNull(
+            pendingResumeProgress?.position,
+            state.pendingSeekPosition,
+            currentPlaybackPositionMs(),
+        ).maxOrNull() ?: 0L
+        val offer = ResumeLoadPolicy.offerStartOver(
+            isResumeLoad = ResumeLoadPolicy.isResumeLoad(resumeAt, isLive = isLiveContent()),
+            firstFrameShown = hasRenderedFirstFrame,
+            loadingForMs = ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS,
+        )
+        if (offer && state.error == null && state.showLoadingOverlay) {
+            _uiState.update { it.copy(startOverOfferPositionMs = resumeAt) }
+        }
+    }
+}
+
+/** "Start from beginning": drop the resume target and reopen the current source at 0:00. */
+internal fun PlayerRuntimeController.startOverFromBeginning() {
+    val url = currentStreamUrl ?: return
+    pendingResumeProgress = null
+    startOverOfferJob?.cancel()
+    _uiState.update { it.copy(pendingSeekPosition = null, startOverOfferPositionMs = null) }
+    val view = mpvView
+    if (view != null && isUsingMpvEngine()) {
+        // mpv rejects a seek before playback is initialised; reopen at 0 instead (loadfile replace).
+        hasRenderedFirstFrame = false
+        runCatching {
+            view.setMedia(url, currentHeaders, startPositionMs = 0L)
+            view.setPaused(false)
+        }
+    } else {
+        // ExoPlayer honours a seek during preparation: it drops the pending mid-file request.
+        _exoPlayer?.let { player ->
+            player.seekTo(0L)
+            player.playWhenReady = true
+        }
     }
 }
 

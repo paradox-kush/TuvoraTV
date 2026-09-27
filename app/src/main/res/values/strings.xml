@@ -1797,6 +1797,8 @@
     <string name="player_report_issue_sent_button">Report Sent</string>
     <string name="player_report_issue_failed">Unable to send report</string>
     <string name="player_report_loading_issue">Report Loading Issue</string>
+    <string name="player_loading_resuming_slow">Resuming at %1$s — the provider is slow to jump there</string>
+    <string name="player_start_from_beginning">Start from beginning</string>
     <plurals name="player_report_loading_issue_prompt">
         <item quantity="one">Still loading after %1$d second</item>
         <item quantity="other">Still loading after %1$d seconds</item>

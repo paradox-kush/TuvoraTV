@@ -98,6 +98,9 @@ data class PlayerUiState(
     val loadingProgress: Float? = null,
     val loadingIssueReportVisible: Boolean = false,
     val loadingIssueElapsedMs: Long = 0L,
+    // Set when a resume has shown no frame for ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS: the
+    // position it is trying to reach; the loading screen offers "Start from beginning".
+    val startOverOfferPositionMs: Long? = null,
     val pauseOverlayEnabled: Boolean = true,
     val osdClockEnabled: Boolean = true,
     val showPauseOverlay: Boolean = false,
@@ -333,6 +336,7 @@ sealed class PlayerEvent {
     data object OnDismissTransientOverlay : PlayerEvent()
     data object OnRetry : PlayerEvent()
     data object OnReportPlaybackIssue : PlayerEvent()
+    data object OnStartOverFromBeginning : PlayerEvent()
     data object OnReportFrozen : PlayerEvent()
     data object OnParentalGuideHide : PlayerEvent()
     data class OnShowDisplayModeInfo(val info: DisplayModeInfo) : PlayerEvent()

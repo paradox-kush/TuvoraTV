@@ -1598,6 +1598,7 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                 initializePlayer(currentStreamUrl, currentHeaders)
             }
         }
+        PlayerEvent.OnStartOverFromBeginning -> startOverFromBeginning()
         PlayerEvent.OnReportPlaybackIssue -> {
             submitPlaybackIssueReport()
         }
