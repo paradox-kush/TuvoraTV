@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Button
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -81,6 +82,7 @@ import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamProgram
 import com.nuvio.tv.ui.components.EmptyScreenState
 import com.nuvio.tv.ui.components.ErrorState
+import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.components.placeholderCardShimmer
 import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
 import androidx.compose.ui.platform.LocalContext
@@ -164,6 +166,8 @@ fun LiveGuide(
     // Shown only for the airing programme on an archive channel — the one state with two
     // reasonable destinations (see GuideCellIntent).
     var sheetProgramme by remember { mutableStateOf<XtreamProgram?>(null) }
+    // F02: the category MENU was pressed on, awaiting "Hide group" / Cancel.
+    var hideCategoryAsk by remember { mutableStateOf<GuideCategory?>(null) }
 
     // Launch a replay in the full player, once.
     val replayLaunch = uiState.replayLaunch
@@ -347,7 +351,9 @@ fun LiveGuide(
                         rightFocus = channelListFocus,
                         // First category routes UP back to the active tab so the tabs stay reachable.
                         upFocus = if (index == 0) selectedTabRequester else null,
-                        onFocused = { viewModel.selectCategory(cat.id) }
+                        onFocused = { viewModel.selectCategory(cat.id) },
+                        // F02: MENU on a provider category offers to hide it (Favorites/Recent/All can't be hidden).
+                        onMenu = if (cat.special == null) { { hideCategoryAsk = cat } } else null,
                     )
                 }
             }
@@ -539,6 +545,31 @@ fun LiveGuide(
                     commitPreview(sheetChannel.contentId)
                 },
             )
+        }
+
+        hideCategoryAsk?.let { cat ->
+            val cancelFocus = remember { FocusRequester() }
+            LaunchedEffect(cat.id) { cancelFocus.requestFocus() }
+            NuvioDialog(
+                onDismiss = { hideCategoryAsk = null },
+                title = "Hide \u201C${cat.name}\u201D?",
+                subtitle = "Its channels leave the guide on all your devices. Bring it back any time in " +
+                    "Settings \u2192 Integrations \u2192 IPTV \u2192 this playlist \u2192 Hidden channels & groups.",
+                width = 460.dp
+            ) {
+                Button(
+                    onClick = {
+                        viewModel.hideCategory(cat)
+                        hideCategoryAsk = null
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Hide group") }
+                // Focus starts on Cancel so a stray OK can't hide.
+                Button(
+                    onClick = { hideCategoryAsk = null },
+                    modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus)
+                ) { Text("Cancel") }
+            }
         }
     }
 }
@@ -740,6 +771,7 @@ private fun GuideCategoryRow(
     rightFocus: FocusRequester,
     upFocus: FocusRequester? = null,
     onFocused: () -> Unit,
+    onMenu: (() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val latestOnFocused by rememberUpdatedState(onFocused)
@@ -768,6 +800,11 @@ private fun GuideCategoryRow(
             // (stayed on "All channels"). clickable focuses reliably; Enter selects, and moving
             // focus selects via the LaunchedEffect above. Matches GuideChannelRow.
             .onFocusChanged { focused = it.isFocused }
+            .onPreviewKeyEvent { event ->
+                if (onMenu == null || event.key != Key.Menu) return@onPreviewKeyEvent false
+                if (event.type == KeyEventType.KeyDown) onMenu()
+                true
+            }
             // OK enters the category, the same as RIGHT. Selection already happened on focus, so
             // re-running it was a no-op — pressing OK on a category appeared to do nothing at all.
             .clickable {

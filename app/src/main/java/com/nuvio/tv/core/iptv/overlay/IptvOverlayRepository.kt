@@ -53,11 +53,36 @@ class IptvOverlayRepository @Inject constructor(
 
     fun ensureLoaded() = launchSafely("ensureLoaded") { _uiState.value = db.snapshot(profile()) }
 
+    /** The active profile's overlay read straight from the DB (not whatever the guide last loaded). */
+    suspend fun freshSnapshot(): OverlaySnapshot =
+        kotlinx.coroutines.withContext(Dispatchers.IO) { db.snapshot(profile()) }
+
     fun toggleChannelHidden(entityId: String, playlistId: String?) {
         val p = profile()
         val cur = _uiState.value.channels[entityId] ?: ChannelOverlay()
         launchSafely("toggleChannelHidden") {
             db.setChannel(p, entityId, playlistId, cur.copy(hidden = !cur.hidden), now())
+            _uiState.value = db.snapshot(p)
+            push(p)
+        }
+    }
+
+    fun setChannelHidden(entityId: String, playlistId: String?, hidden: Boolean) {
+        val p = profile()
+        val cur = _uiState.value.channels[entityId] ?: ChannelOverlay()
+        launchSafely("setChannelHidden") {
+            db.setChannel(p, entityId, playlistId, cur.copy(hidden = hidden), now())
+            _uiState.value = db.snapshot(p)
+            push(p)
+        }
+    }
+
+    /** F02: hide/unhide a provider category from the TV itself; pushed like a website edit. */
+    fun setCategoryHidden(playlistId: String, contentType: String, categoryKey: String, hidden: Boolean) {
+        val p = profile()
+        val cur = _uiState.value.categories[categoryKey] ?: CategoryOverlay()
+        launchSafely("setCategoryHidden") {
+            db.setCategory(p, playlistId, contentType, categoryKey, cur.copy(hidden = hidden), now())
             _uiState.value = db.snapshot(p)
             push(p)
         }

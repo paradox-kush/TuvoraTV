@@ -51,7 +51,9 @@ data class XtreamSettingsUiState(
     /** accountId -> the guide's EPG-source coverage line (mirror mapping + session tally; read-only). */
     val guideEpgCoverage: Map<String, String> = emptyMap(),
     /** accountId -> a note about a saved edit (B60: the provider check failed, but the edit was kept). */
-    val saveWarnings: Map<String, String> = emptyMap()
+    val saveWarnings: Map<String, String> = emptyMap(),
+    /** F02: the open "Hidden channels & groups" list; null while it loads. */
+    val hiddenItems: List<com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.HiddenItem>? = null,
 )
 
 @HiltViewModel
@@ -74,6 +76,7 @@ class XtreamSettingsViewModel @Inject constructor(
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
+    private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
@@ -634,6 +637,54 @@ class XtreamSettingsViewModel @Inject constructor(
                     .onFailure { categoryRequests.remove(key) }   // allow a retry on next dialog open
             }
         }
+    }
+
+    /**
+     * F02: everything hidden in [account] (on any device or the website), resolved to names. The overlay
+     * stores only hashed keys, so the playlist's channels are read only when some channel is hidden,
+     * and its categories only when some category is.
+     */
+    fun loadHiddenItems(account: XtreamAccount) {
+        _uiState.update { it.copy(hiddenItems = null) }
+        viewModelScope.launch {
+            val items = runCatching {
+                val overlay = overlayRepository.freshSnapshot()
+                val source = clientFactory.clientFor(account)
+                val channels = if (overlay.channels.values.any { it.hidden }) {
+                    source.liveChannels(account).getOrDefault(emptyList()).map {
+                        com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.CatalogChannel(
+                            com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(account.id, it.name, it.epgChannelId), it.name,
+                        )
+                    }
+                } else emptyList()
+                val categories = if (overlay.categories.values.any { it.hidden }) {
+                    listOf(XtreamAccount.TYPE_LIVE, XtreamAccount.TYPE_MOVIES, XtreamAccount.TYPE_SERIES).flatMap { type ->
+                        when (type) {
+                            XtreamAccount.TYPE_LIVE -> source.liveCategories(account)
+                            XtreamAccount.TYPE_MOVIES -> source.vodCategories(account)
+                            else -> source.seriesCategories(account)
+                        }.getOrDefault(emptyList()).map {
+                            com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.CatalogCategory(
+                                type, com.nuvio.tv.core.iptv.identity.IptvIdentity.categoryKey(account.id, type, it.name), it.name,
+                            )
+                        }
+                    }
+                } else emptyList()
+                com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.hiddenItems(channels, categories, overlay)
+            }.getOrDefault(emptyList())
+            _uiState.update { it.copy(hiddenItems = items) }
+        }
+    }
+
+    /** F02: undo one hide; the row leaves the list at once and the change syncs. */
+    fun unhide(account: XtreamAccount, item: com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.HiddenItem) {
+        when (item.kind) {
+            com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.HiddenKind.GROUP ->
+                overlayRepository.setCategoryHidden(account.id, item.contentType, item.key, hidden = false)
+            com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.HiddenKind.CHANNEL ->
+                overlayRepository.setChannelHidden(item.key, account.id, hidden = false)
+        }
+        _uiState.update { st -> st.copy(hiddenItems = st.hiddenItems?.minus(item)) }
     }
 
     /** Toggle a content type on/off. Option-only edit: no credential re-verification. */

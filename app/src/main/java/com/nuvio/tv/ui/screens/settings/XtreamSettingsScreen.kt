@@ -106,6 +106,7 @@ fun XtreamSettingsContent(
     // B57: Remove used to delete on the first OK with no confirmation, from a row that was cut off
     // the bottom of a non-scrolling dialog.
     var removeConfirmFor by remember { mutableStateOf<XtreamAccount?>(null) }
+    var hiddenFor by remember { mutableStateOf<XtreamAccount?>(null) }
     var correctionFor by remember { mutableStateOf<String?>(null) }
     var guideOffsetFor by remember { mutableStateOf<String?>(null) }
     var editFor by remember { mutableStateOf<XtreamAccount?>(null) }
@@ -325,6 +326,16 @@ fun XtreamSettingsContent(
                     contentForId = id
                 }
             )
+            // F02: hides made on any device or the website are undone here.
+            SettingsActionRow(
+                title = "Hidden channels & groups",
+                subtitle = "Bring back what you hid",
+                onClick = {
+                    actionsFor = null
+                    hiddenFor = account
+                    viewModel.loadHiddenItems(account)
+                }
+            )
             // File playlists have no URL/creds to edit — re-picking the file IS the edit. Only show
             // the plain "Edit" entry when the file is present (a missing file shows Re-import above).
             if (!(account.fileName != null && needsReimport)) {
@@ -394,6 +405,35 @@ fun XtreamSettingsContent(
                     removeConfirmFor = account
                 }
             )
+        }
+    }
+
+    hiddenFor?.let { account ->
+        val items = uiState.hiddenItems
+        NuvioDialog(
+            onDismiss = { hiddenFor = null },
+            title = "Hidden in ${account.name}",
+            subtitle = when {
+                items == null -> "Loading\u2026"
+                items.isEmpty() -> "Nothing is hidden in this playlist. In the Live TV guide, press MENU on a " +
+                    "channel or a group to hide it."
+                else -> "Select one to bring it back."
+            },
+            width = 520.dp,
+            scrollable = true
+        ) {
+            items.orEmpty().forEach { item ->
+                SettingsActionRow(
+                    title = item.name,
+                    subtitle = hiddenItemKindLabel(item),
+                    value = "Unhide",
+                    onClick = { viewModel.unhide(account, item) }
+                )
+            }
+            Button(
+                onClick = { hiddenFor = null },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Done") }
         }
     }
 
@@ -1540,3 +1580,13 @@ private fun catchUpCorrectionLabel(minutes: Int): String {
 /** Same scale as [catchUpCorrectionLabel] but 0 reads "Auto": unset means detect, not "+0". */
 private fun guideEpgOffsetLabel(minutes: Int): String =
     if (minutes == 0) "Auto" else catchUpCorrectionLabel(minutes)
+
+private fun hiddenItemKindLabel(item: com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.HiddenItem): String =
+    when (item.kind) {
+        com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.HiddenKind.CHANNEL -> "Channel"
+        com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.HiddenKind.GROUP -> when (item.contentType) {
+            XtreamAccount.TYPE_MOVIES -> "Movie group"
+            XtreamAccount.TYPE_SERIES -> "Series group"
+            else -> "Channel group"
+        }
+    }

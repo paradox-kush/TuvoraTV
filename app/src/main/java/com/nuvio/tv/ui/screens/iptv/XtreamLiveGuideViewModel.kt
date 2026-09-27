@@ -286,8 +286,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
         return try {
             val overlay = overlayRepository.uiState.value.channels
             val displayed = if (isAllView) {
+                // B65: "All channels" also drops the channels of a category hidden on the website or
+                // on this TV, as the category column already drops the category itself. (Categories
+                // switched off in the playlist's settings were filtered when the list was fetched.)
+                val hiddenIds = if (accountId == null) emptySet() else com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.hiddenCategoryIds(
+                    playlistId = accountId,
+                    contentType = XtreamAccount.TYPE_LIVE,
+                    categories = categoriesCache[accountId].orEmpty().map { com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.NamedCategory(it.id, it.name) },
+                    overlay = overlayRepository.uiState.value.categories,
+                )
                 com.nuvio.tv.core.iptv.GuideAllChannelsCapPolicy.capped(
-                    channels = channels,
+                    channels = com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.guideChannels(
+                        channels, hiddenIds, allowedBySelection = { true }, categoryOf = { it.categoryId },
+                    ),
                     overlay = overlay,
                     cap = ALL_CAP,
                     entityId = { it.entityId },
@@ -340,6 +351,24 @@ class XtreamLiveGuideViewModel @Inject constructor(
             android.util.Log.w("IptvOverlay", "withCategoryOverlay failed: ${e.message}", e)
             specials + rawCats
         }
+    }
+
+    /**
+     * F02: hide a provider category from the TV (MENU on the category column, confirmed first). Keyed on
+     * the provider's own name from the raw cache, never a renamed label; synced like a website hide.
+     * If it was the selected category the guide falls back to "All channels".
+     */
+    fun hideCategory(category: GuideCategory) {
+        if (category.special != null) return
+        val acc = account ?: return
+        val raw = categoriesCache[acc.id]?.firstOrNull { it.id == category.id } ?: return
+        overlayRepository.setCategoryHidden(
+            playlistId = acc.id,
+            contentType = XtreamAccount.TYPE_LIVE,
+            categoryKey = com.nuvio.tv.core.iptv.identity.IptvIdentity.categoryKey(acc.id, XtreamAccount.TYPE_LIVE, raw.name),
+            hidden = true,
+        )
+        if (_uiState.value.selectedCategoryId == category.id) selectCategory(ALL_ID)
     }
 
     /** D-pad "hide"/"unhide" this channel — writes the overlay (local + synced to the web/other devices). */
