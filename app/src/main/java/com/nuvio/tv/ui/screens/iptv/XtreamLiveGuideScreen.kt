@@ -1061,11 +1061,14 @@ private fun PreviewInfoPane(
                 overflow = TextOverflow.Ellipsis
             )
         }
+        // Two lines: with the category column open the panel is narrow, and one line cut the hint
+        // off at "hold OK to" — the part that says what holding does (seen on the emulator).
         Text(
             text = stringResource(R.string.iptv_guide_hint),
             style = MaterialTheme.typography.labelSmall,
             color = NuvioTheme.colors.TextSecondary.copy(alpha = 0.7f),
-            maxLines = 1
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
