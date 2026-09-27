@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.contracts.IptvStreamSources
 import com.nuvio.tv.core.streams.PlaybackAvailability
 import com.nuvio.tv.data.local.PluginDataStore
 import com.nuvio.tv.domain.repository.AddonRepository
@@ -27,8 +28,12 @@ internal val LocalPlaybackAvailability = compositionLocalOf { PlaybackAvailabili
 internal class PlaybackAvailabilityViewModel @Inject constructor(
     addonRepository: AddonRepository,
     pluginDataStore: PluginDataStore,
-    metaRepository: MetaRepository
+    metaRepository: MetaRepository,
+    iptvStreamSources: IptvStreamSources,
 ) : ViewModel() {
+    // Content types the IPTV sources can serve through the Xtream source lane.
+    private val iptvSourceTypes = iptvStreamSources.servedContentTypes
+
     private val enabledScrapers = if (AppFeaturePolicy.pluginsEnabled) {
         combine(pluginDataStore.scrapers, pluginDataStore.pluginsEnabled) { scrapers, enabled ->
             if (enabled) scrapers.filter { it.enabled } else emptyList()
@@ -37,8 +42,18 @@ internal class PlaybackAvailabilityViewModel @Inject constructor(
         flowOf(emptyList())
     }
 
-    val availability = combine(addonRepository.getInstalledAddons(), enabledScrapers) { addons, scrapers ->
-        PlaybackAvailability(addons, scrapers, isLoaded = true, cachedMeta = metaRepository::getCachedMeta)
+    val availability = combine(
+        addonRepository.getInstalledAddons(),
+        enabledScrapers,
+        iptvSourceTypes,
+    ) { addons, scrapers, iptvTypes ->
+        PlaybackAvailability(
+            addons,
+            scrapers,
+            isLoaded = true,
+            cachedMeta = metaRepository::getCachedMeta,
+            iptvSourceTypes = iptvTypes,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PlaybackAvailability())
 }
 
