@@ -83,4 +83,24 @@ class IptvHiddenItemsPolicyTest {
         )
         assertEquals("deduped", 1, items.size)
     }
+
+    @Test
+    fun `search hits drop hidden channels and channels of hidden groups`() {
+        data class Hit(val name: String, val cat: String?)
+        val bbc = IptvIdentity.entityId(pl, "BBC One", null)
+        val hits = listOf(Hit("BBC One", "1"), Hit("BBC News", "2"), Hit("BBC Two", "3"), Hit("BBC Alba", null))
+        val shown = IptvHiddenItemsPolicy.visibleHits(
+            hits, setOf("2"), mapOf(bbc to ChannelOverlay(hidden = true)), { it.cat }, { IptvIdentity.entityId(pl, it.name, null) },
+        )
+        assertEquals("hidden channel and hidden group dropped", listOf("BBC Two", "BBC Alba"), shown.map { it.name })
+    }
+
+    @Test
+    fun `search hits are untouched when nothing is hidden`() {
+        val hits = listOf("a", "b")
+        var hashed = 0
+        val shown = IptvHiddenItemsPolicy.visibleHits(hits, emptySet(), mapOf("x" to ChannelOverlay(pinned = true)), { null }, { hashed++; it })
+        assertEquals("unchanged", hits, shown)
+        assertEquals("no identity computed", 0, hashed)
+    }
 }

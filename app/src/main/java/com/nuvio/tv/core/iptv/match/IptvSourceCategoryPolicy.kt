@@ -8,8 +8,9 @@ import com.nuvio.tv.core.iptv.XtreamAccount
  *
  * Only the playlist's in-app settings count: its content-type toggles ([XtreamAccount.typeEnabled])
  * and its per-type category include list ([XtreamAccount.allowsCategory]: null = all, [] = none,
- * a list = only those ids). Category hides made on the website (the per-profile overlay) are a browse
- * personalisation and deliberately do NOT filter sources or search (product decision, 2026-09-27).
+ * a list = only those ids). Category hides made on the website or a device (the per-profile overlay) do
+ * NOT filter a title's sources; search leaves hidden items out separately in XtreamSearchIndex (F01,
+ * product decision 2026-09-27).
  *
  * Callers filter with [keep] BEFORE any display/fan-out cap (`take(n)`), so hidden items can never
  * crowd allowed ones out of the cap. Filtering happens after TMDB resolution, never inside it: the

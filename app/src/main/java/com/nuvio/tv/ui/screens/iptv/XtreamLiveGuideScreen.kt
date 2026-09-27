@@ -168,6 +168,8 @@ fun LiveGuide(
     var sheetProgramme by remember { mutableStateOf<XtreamProgram?>(null) }
     // F02: the category MENU was pressed on, awaiting "Hide group" / Cancel.
     var hideCategoryAsk by remember { mutableStateOf<GuideCategory?>(null) }
+    // F01: the channel-search keyboard dialog.
+    var searchDialogOpen by remember { mutableStateOf(false) }
 
     // Launch a replay in the full player, once.
     val replayLaunch = uiState.replayLaunch
@@ -346,7 +348,11 @@ fun LiveGuide(
             ) {
                 itemsIndexed(uiState.categories, key = { _, it -> it.id }) { index, cat ->
                     GuideCategoryRow(
-                        label = cat.name,
+                        label = if (cat.special == GuideSpecial.SEARCH && uiState.searchQuery.isNotBlank()) {
+                            "Search: \u201C${uiState.searchQuery}\u201D"
+                        } else {
+                            cat.name
+                        },
                         selected = cat.id == uiState.selectedCategoryId,
                         rightFocus = channelListFocus,
                         // First category routes UP back to the active tab so the tabs stay reachable.
@@ -354,6 +360,8 @@ fun LiveGuide(
                         onFocused = { viewModel.selectCategory(cat.id) },
                         // F02: MENU on a provider category offers to hide it (Favorites/Recent/All can't be hidden).
                         onMenu = if (cat.special == null) { { hideCategoryAsk = cat } } else null,
+                        // F01: OK on "Search" opens the keyboard (focus alone never does).
+                        onClick = if (cat.special == GuideSpecial.SEARCH) { { searchDialogOpen = true } } else null,
                     )
                 }
             }
@@ -387,6 +395,11 @@ fun LiveGuide(
                         message = uiState.error!!,
                         // Retry = re-run the current category load (same path as re-selecting it).
                         onRetry = { viewModel.selectCategory(uiState.selectedCategoryId, force = true) }
+                    )
+                    uiState.selectedCategoryId == XtreamLiveGuideViewModel.SEARCH_ID && uiState.channels.isEmpty() -> EmptyScreenState(
+                        title = if (uiState.searchQuery.isBlank()) "Search channels" else "No channels match \u201C${uiState.searchQuery}\u201D",
+                        subtitle = "Press OK on Search to type a channel name",
+                        height = 280.dp
                     )
                     uiState.channels.isEmpty() -> EmptyScreenState(
                         title = stringResource(R.string.iptv_guide_no_channels),
@@ -544,6 +557,17 @@ fun LiveGuide(
                     sheetProgramme = null
                     commitPreview(sheetChannel.contentId)
                 },
+            )
+        }
+
+        if (searchDialogOpen) {
+            GuideSearchDialog(
+                initialQuery = uiState.searchQuery,
+                onSearch = { q ->
+                    searchDialogOpen = false
+                    viewModel.searchChannels(q)
+                },
+                onDismiss = { searchDialogOpen = false },
             )
         }
 
@@ -772,6 +796,7 @@ private fun GuideCategoryRow(
     upFocus: FocusRequester? = null,
     onFocused: () -> Unit,
     onMenu: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val latestOnFocused by rememberUpdatedState(onFocused)
@@ -808,8 +833,12 @@ private fun GuideCategoryRow(
             // OK enters the category, the same as RIGHT. Selection already happened on focus, so
             // re-running it was a no-op — pressing OK on a category appeared to do nothing at all.
             .clickable {
-                latestOnFocused()
-                runCatching { rightFocus.requestFocus() }
+                if (onClick != null) {
+                    onClick()
+                } else {
+                    latestOnFocused()
+                    runCatching { rightFocus.requestFocus() }
+                }
             }
             .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm)
     ) {
@@ -1147,3 +1176,40 @@ private val CHANNEL_LABEL_WIDTH = 230.dp
 private val GUIDE_ROW_HEIGHT = 44.dp
 private val GUIDE_START_PADDING = 52.dp                   // the app-wide content gutter (Modern rails)
 private const val GUIDE_SKELETON_ROW_COUNT = 10
+
+/** F01: type a channel name for the guide's Search row. The keyboard opens with the dialog. */
+@Composable
+private fun GuideSearchDialog(initialQuery: String, onSearch: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(initialQuery) }
+    val fieldFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = "Search channels",
+        subtitle = "Type part of a channel name, like \u201Cbbc\u201D or \u201Csky sports\u201D.",
+        width = 520.dp
+    ) {
+        androidx.compose.material3.OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+                autoCorrectEnabled = false,
+            ),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onSearch(text) }),
+            colors = androidx.compose.material3.TextFieldDefaults.colors(
+                focusedContainerColor = NuvioTheme.colors.BackgroundCard,
+                unfocusedContainerColor = NuvioTheme.colors.BackgroundCard,
+                focusedIndicatorColor = NuvioTheme.colors.FocusRing,
+                unfocusedIndicatorColor = NuvioTheme.colors.Border,
+                focusedTextColor = NuvioTheme.colors.TextPrimary,
+                unfocusedTextColor = NuvioTheme.colors.TextPrimary,
+                cursorColor = NuvioTheme.colors.FocusRing,
+            ),
+        )
+        Button(onClick = { onSearch(text) }, modifier = Modifier.fillMaxWidth()) { Text("Search") }
+        Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+    }
+}

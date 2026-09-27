@@ -45,6 +45,26 @@ object IptvHiddenItemsPolicy {
         allowedBySelection(category) && (category == null || category !in hiddenCategoryIds)
     }
 
+    /**
+     * Search hits (F01) without the channels the viewer hid, or those in a hidden group. [entityOf]
+     * hashes a hit's identity, so it runs only when some channel is actually hidden.
+     */
+    fun <T> visibleHits(
+        items: List<T>,
+        hiddenCategoryIds: Set<String>,
+        channelOverlay: Map<String, ChannelOverlay>,
+        categoryOf: (T) -> String?,
+        entityOf: (T) -> String,
+    ): List<T> {
+        val anyChannelHidden = channelOverlay.values.any { it.hidden }
+        if (hiddenCategoryIds.isEmpty() && !anyChannelHidden) return items
+        return items.filter { item ->
+            val category = categoryOf(item)
+            (category == null || category !in hiddenCategoryIds) &&
+                (!anyChannelHidden || channelOverlay[entityOf(item)]?.hidden != true)
+        }
+    }
+
     enum class HiddenKind { GROUP, CHANNEL }
 
     /** One row of the "Hidden channels & groups" list. [key] is what the unhide intent takes. */

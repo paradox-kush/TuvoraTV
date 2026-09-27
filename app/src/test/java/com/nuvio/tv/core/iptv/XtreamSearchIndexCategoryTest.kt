@@ -31,7 +31,10 @@ class XtreamSearchIndexCategoryTest {
     private val resolver = mockk<XtreamTmdbResolver>()
     private val contentDb = mockk<IptvContentDb>()
     private val registry = XtreamItemRegistry()
-    private val index = XtreamSearchIndex(store, factory, xtreamClient, registry, matchIndex, resolver, contentDb)
+    private val overlayRepository = mockk<com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository> {
+        io.mockk.coEvery { freshSnapshot() } returns com.nuvio.tv.core.iptv.overlay.OverlaySnapshot()
+    }
+    private val index = XtreamSearchIndex(store, factory, xtreamClient, registry, matchIndex, resolver, contentDb, overlayRepository)
 
     // Live is switched off so the tests need no live-channel fetch.
     private fun account(sourceType: String, selections: CategorySelections) = XtreamAccount(
@@ -76,5 +79,31 @@ class XtreamSearchIndexCategoryTest {
         val results = index.search("Matrix")
 
         assertEquals("allowed movie only", listOf(XtreamItemRegistry.vodId("acc", 2)), results.movies.map { it.contentId })
+    }
+
+    // F01: a group hidden on a device or the website stays out of search.
+    @Test
+    fun `movies in a group the viewer hid are not search hits`() = runTest {
+        val acc = account(XtreamAccount.SOURCE_STALKER, CategorySelections())
+        every { store.accounts } returns flowOf(listOf(acc))
+        every { factory.stalker() } returns stalker
+        val sourceClient = mockk<IptvClient>()
+        every { factory.clientFor(acc) } returns sourceClient
+        coEvery { sourceClient.vodCategories(acc) } returns Result.success(listOf(XtreamCategory("30", "Horror"), XtreamCategory("10", "Action")))
+        coEvery { overlayRepository.freshSnapshot() } returns com.nuvio.tv.core.iptv.overlay.OverlaySnapshot(
+            categories = mapOf(
+                com.nuvio.tv.core.iptv.identity.IptvIdentity.categoryKey("acc", XtreamAccount.TYPE_MOVIES, "Horror") to
+                    com.nuvio.tv.core.iptv.overlay.CategoryOverlay(hidden = true),
+            ),
+        )
+        coEvery { stalker.searchMovies(acc, "Night") } returns listOf(
+            XtreamMovie(streamId = 31, name = "Night Horror", poster = null, categoryId = "30", rating = null, streamUrl = ""),
+            XtreamMovie(streamId = 11, name = "Night Action", poster = null, categoryId = "10", rating = null, streamUrl = ""),
+        )
+        coEvery { stalker.searchSeries(acc, "Night") } returns emptyList()
+
+        val results = index.search("Night")
+
+        assertEquals("the hidden group's movie is left out", listOf(XtreamItemRegistry.vodId("acc", 11)), results.movies.map { it.contentId })
     }
 }

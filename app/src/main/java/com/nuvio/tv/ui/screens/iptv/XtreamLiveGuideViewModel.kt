@@ -38,7 +38,7 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /** A category entry in the guide's left column. [special] marks the synthetic ones. */
-enum class GuideSpecial { FAVORITES, RECENT, ALL }
+enum class GuideSpecial { SEARCH, FAVORITES, RECENT, ALL }
 data class GuideCategory(val id: String, val name: String, val special: GuideSpecial? = null)
 
 /** One channel row in the guide. [categoryId] is null for synthetic rows (Favorites/Recent
@@ -91,6 +91,8 @@ data class LiveGuideUiState(
     val categories: List<GuideCategory> = emptyList(),
     val selectedCategoryId: String? = null,
     val channels: List<GuideChannel> = emptyList(),
+    /** F01: the channel search the "Search" row shows results for (blank = not searched yet). */
+    val searchQuery: String = "",
     val epg: Map<Int, GuideEpg> = emptyMap(),
     val focusedChannelId: String? = null,
     val loadingChannels: Boolean = false,
@@ -331,6 +333,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private fun withCategoryOverlay(accountId: String?, rawCats: List<GuideCategory>): List<GuideCategory> {
         lastRawCategories = rawCats; lastCategoryAccountId = accountId
         val specials = listOf(
+            GuideCategory(SEARCH_ID, "Search", GuideSpecial.SEARCH),
             GuideCategory("__fav", "Favorites", GuideSpecial.FAVORITES),
             GuideCategory("__recent", "Recent", GuideSpecial.RECENT),
             GuideCategory(ALL_ID, "All channels", GuideSpecial.ALL),
@@ -350,6 +353,44 @@ class XtreamLiveGuideViewModel @Inject constructor(
         } catch (e: Throwable) {
             android.util.Log.w("IptvOverlay", "withCategoryOverlay failed: ${e.message}", e)
             specials + rawCats
+        }
+    }
+
+    /** F01: the whole lineup (category settings applied) that the Search row searches; null until needed. */
+    private var searchPool: Pair<String, List<GuideChannel>>? = null
+
+    /** F01: run [query] on the Search row (OK on "Search" opens the keyboard; submitting lands here). */
+    fun searchChannels(query: String) {
+        val acc = account ?: return
+        val token = accountCommitFence.capture(acc.id) ?: return
+        _uiState.update { it.copy(searchQuery = query.trim(), selectedCategoryId = SEARCH_ID, channels = emptyList()) }
+        selectCategoryFor(acc, SEARCH_ID, force = false, token = token)
+    }
+
+    /**
+     * Ranked matches for the current query from the whole lineup, without the channels the viewer hid
+     * or those in a hidden group (F01). Blank query = nothing yet. Null = the lineup failed to load.
+     */
+    private suspend fun searchResults(acc: XtreamAccount): List<GuideChannel>? {
+        val query = _uiState.value.searchQuery
+        if (query.isBlank()) return emptyList()
+        val pool = searchPool?.takeIf { it.first == acc.id }?.second
+            ?: retryOnce { fetchChannels(acc, null) }
+                ?.filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) }
+                ?.also { searchPool = acc.id to it }
+            ?: return null
+        return withContext(Dispatchers.Default) {
+            val overlay = overlayRepository.uiState.value
+            val hiddenIds = com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.hiddenCategoryIds(
+                playlistId = acc.id,
+                contentType = XtreamAccount.TYPE_LIVE,
+                categories = categoriesCache[acc.id].orEmpty().map { com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.NamedCategory(it.id, it.name) },
+                overlay = overlay.categories,
+            )
+            com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.visibleHits(
+                com.nuvio.tv.core.iptv.IptvChannelSearchPolicy.search(pool, query) { it.name },
+                hiddenIds, overlay.channels, categoryOf = { it.categoryId }, entityOf = { it.entityId },
+            ).take(SEARCH_CAP)
         }
     }
 
@@ -501,6 +542,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (!isCurrentAccount(token)) return
         val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
         if (!force && categoryId == _uiState.value.selectedCategoryId && _uiState.value.channels.isNotEmpty()) return
+        // The search pool is the whole lineup; hold it only while the Search row is open.
+        if (category.special != GuideSpecial.SEARCH) searchPool = null
         // force=true is only ever user-driven (the error row's Retry, a category-selection edit):
         // clear the panel breaker FIRST (WP6) so the refresh is never met with a fast-fail. The
         // automatic single retryOnce below deliberately does NOT reset.
@@ -536,6 +579,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 GuideSpecial.ALL -> retryOnce { fetchChannels(acc, null) }
                     ?.filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) }
                 null -> retryOnce { fetchChannels(acc, category.id) }
+                GuideSpecial.SEARCH -> searchResults(acc)
             }
             if (!isCurrentAccount(token)) return@launch
             if (rawChannels == null) {
@@ -548,7 +592,18 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // ALL_CAP after the pins float — BEFORE publishing, so the playback lineup and the guide
             // agree and EPG is primed only for what's shown.
             val isAllView = category.special == GuideSpecial.ALL
-            val channels = displayChannels(acc.id, rawChannels, isAllView = isAllView)
+            val channels = if (category.special == GuideSpecial.SEARCH) {
+                // Results keep their search ranking (the overlay's pin/reorder would scramble it); hidden
+                // rows were already dropped, so only the pin marker is stamped. Clearing lastRawChannels
+                // stops an overlay change from swapping the previous category back in.
+                lastRawChannels = emptyList()
+                com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.withPinned(
+                    rawChannels, overlayRepository.uiState.value.channels,
+                    entityId = { it.entityId }, setPinned = { row, pinned -> row.copy(pinned = pinned) },
+                )
+            } else {
+                displayChannels(acc.id, rawChannels, isAllView = isAllView)
+            }
             // Cache network-backed lists so revisiting the category is instant. Never cache an empty
             // list: a transient panel failure must not pin a category empty all session. "All channels"
             // caches the CAPPED display list (not the full catalog) to bound memory on weak TV boxes;
@@ -980,6 +1035,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     companion object {
         private const val ALL_ID = "__all"
+        const val SEARCH_ID = "__search"
+        /** Enough to scan by eye with a D-pad; a longer list means the query should be narrower. */
+        private const val SEARCH_CAP = 300
         private const val ALL_CAP = 600   // ponytail: don't render 26k rows; categories are the real browse path
         private const val EPG_FOCUS_DEBOUNCE_MS = 250L   // wait for focus to settle before fetching EPG
 
