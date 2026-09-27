@@ -1071,6 +1071,59 @@ internal fun PlayerRuntimeController.loadStreamsForEpisode(video: Video) {
     loadStreamsForEpisode(video = video, forceRefresh = false)
 }
 
+/**
+ * Fills the episode stream picker's cache with results the next-episode search already collected,
+ * so opening the picker for [video] shows them without asking every source again (UX26).
+ * Returns false when there is no content type to key the cache on.
+ */
+internal suspend fun PlayerRuntimeController.seedEpisodeStreamsFromSearch(
+    video: Video,
+    data: List<com.nuvio.tv.domain.model.AddonStreams>,
+): Boolean {
+    val type = contentType
+    if (type.isNullOrBlank()) return false
+    val installedAddons = addonRepository.getInstalledAddons().first().enabledAddons()
+    val installedAddonOrder = installedAddons.map { it.displayName }
+    val addonStreams = StreamAutoPlaySelector.orderAddonStreams(data, installedAddonOrder)
+    val allStreams = addonStreams.flatMap { it.streams }
+
+    episodeStreamsScope?.cancel()
+    episodeStreamsScope = null
+    episodeStreamsJob = null
+    episodeStreamsCacheRequestKey = buildEpisodeRequestKey(type = type, video = video)
+    updateEpisodeSourceChipsForFetchStart(type, video.id, installedAddons)
+    _uiState.update {
+        it.copy(
+            isLoadingEpisodeStreams = false,
+            episodeStreamsError = null,
+            episodeAllStreams = allStreams,
+            episodeSelectedAddonFilter = null,
+            episodeFilteredStreams = allStreams,
+            episodeAvailableAddons = addonStreams.map { group -> group.addonName },
+            episodeSourceChips = mergeSourceChipStatuses(
+                existing = it.episodeSourceChips,
+                succeededNames = addonStreams.map { group -> group.addonName }
+            ),
+            episodeStreamsForVideoId = video.id,
+            episodeStreamsSeason = video.season,
+            episodeStreamsEpisode = video.episode,
+            episodeStreamsTitle = video.title
+        )
+    }
+    // Sources that never answered successfully during the search show as failed, as they would
+    // after a picker fetch; the picker's refresh retries them.
+    markRemainingEpisodeSourceChipsAsError()
+    launchEpisodeDebridPreparationIfNeeded(
+        launched = false,
+        streams = allStreams,
+        season = video.season,
+        episode = video.episode,
+        installedAddonNames = installedAddonOrder.toSet(),
+    ) {}
+    scheduleEpisodeBadgeApplication()
+    return true
+}
+
 internal fun PlayerRuntimeController.buildEpisodeRequestKey(type: String, video: Video): String {
     return "$type|${video.id}|${video.season ?: -1}|${video.episode ?: -1}"
 }
@@ -1657,7 +1710,15 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
                 shouldAutoSelectInManualMode &&
                     !playerSettings.streamAutoPlayNextEpisodeEnabled &&
                     playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode
-            if (playerSettings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL && !shouldAutoSelectInManualMode) {
+            // UX25: a binge-group-only search with no group to follow (IPTV streams carry none) can
+            // only end in the picker — open it now instead of after a "Finding source…" wait.
+            val searchCannotPick = NextEpisodePickerHandoffPolicy.skipSearch(
+                bingeGroupOnly = bingeGroupOnlyManualMode,
+                currentBingeGroup = currentStreamBingeGroup,
+            )
+            if (searchCannotPick ||
+                (playerSettings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL && !shouldAutoSelectInManualMode)
+            ) {
                 _uiState.update {
                     it.copy(
                         postPlayMode = null,
@@ -1849,10 +1910,19 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
                         postPlayDismissedForCurrentEpisode = true,
                     )
                 }
-                showEpisodeStreamPicker(
-                    video = nextVideo,
-                    forceRefresh = lastError != null || selectedStream != null
+                // UX26: a finished search already asked every source — hand its results to the
+                // picker instead of fetching them all again.
+                val collected = lastSuccessData
+                val reuse = NextEpisodePickerHandoffPolicy.reuseSearchResults(
+                    searchComplete = searchComplete,
+                    hasStreams = collected?.any { it.streams.isNotEmpty() } == true,
+                    selectedStreamFailed = selectedStream != null,
                 )
+                if (reuse && collected != null && seedEpisodeStreamsFromSearch(nextVideo, collected)) {
+                    showEpisodeStreamPicker(video = nextVideo, forceRefresh = false)
+                } else {
+                    showEpisodeStreamPicker(video = nextVideo, forceRefresh = true)
+                }
             }
         } catch (e: CancellationException) {
             throw e
