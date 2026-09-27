@@ -34,6 +34,9 @@ class XtreamStreamSource @Inject constructor(
             "series", "tv" -> MatchKind.SERIES
             else -> return emptyList()
         }
+        // B19: a content type switched off (or set to "no categories") in this playlist's settings
+        // offers no sources at all, so skip the TMDB and provider work outright.
+        if (!IptvSourceCategoryPolicy.offers(acc, IptvSourceCategoryPolicy.typeOf(kind))) return emptyList()
         val tmdbId = tmdbService.ensureTmdbId(videoId, type)?.toIntOrNull() ?: run {
             android.util.Log.w("XtreamStreamSource", "skip $videoId: no TMDB id (missing API key or unknown id)")
             return emptyList()
@@ -59,8 +62,13 @@ class XtreamStreamSource @Inject constructor(
                 // catalogs carry several editions (4K/HD/language) of the same film —
                 // surface them all: by shared tmdb id where the panel provides ids, else
                 // by shared normalized name (year-guarded; the verified match stays first)
-                val editions = index.byTmdb(acc.id, kind, tmdbId)
-                    .ifEmpty { sameNameEditions(acc.id, kind, match.item, titles.year) }
+                // B19: only editions in categories the playlist's settings allow. Filtering runs after
+                // resolve() (whose synced tmdb->sid map must stay selection-neutral); a hidden resolved
+                // match still lets its allowed same-name siblings through.
+                fun allowed(items: List<IndexedItem>) =
+                    IptvSourceCategoryPolicy.keep(acc, XtreamAccount.TYPE_MOVIES, items) { it.categoryId }
+                val editions = allowed(index.byTmdb(acc.id, kind, tmdbId))
+                    .ifEmpty { allowed(sameNameEditions(acc.id, kind, match.item, titles.year)) }
                 editions.map { item ->
                     // label with the panel's own catalog name — carries 4K/NF/language tags
                     xtreamStream(
@@ -107,7 +115,10 @@ class XtreamStreamSource @Inject constructor(
         ) {
             entries.addAll(index.probe(acc.id, MatchKind.SERIES, key))
         }
-        val editions = XtreamSeriesEpisodePolicy.editionsForSeason(entries.toList(), s)
+        // B19: drop editions in categories the playlist's settings hide BEFORE the cap, so hidden
+        // editions can't crowd allowed ones out of it.
+        val allowed = IptvSourceCategoryPolicy.keep(acc, XtreamAccount.TYPE_SERIES, entries.toList()) { it.categoryId }
+        val editions = XtreamSeriesEpisodePolicy.editionsForSeason(allowed, s)
             .take(MAX_SERIES_EDITIONS) // one get_series_info per edition — bound it
         return editions.flatMap { ed ->
             val detail = client.seriesInfo(acc, ed.sid).getOrNull() ?: return@flatMap emptyList<Stream>()
@@ -139,10 +150,13 @@ class XtreamStreamSource @Inject constructor(
 
         return when (kind) {
             MatchKind.LIVE -> emptyList()   // live never TMDB-resolves; the guide plays directly
-            MatchKind.MOVIE -> stalkerClient.searchMovies(acc, query)
-                .filter { TitleNormalizer.normKey(it.name) in wantKeys }
-                .filter { yearCompatible(TitleNormalizer.yearOf(it.name), titles.year) }
-                .take(MAX_STALKER_EDITIONS)   // a catalog carries 4K/HD/language cuts of one film
+            MatchKind.MOVIE -> IptvSourceCategoryPolicy.keepCapped(
+                acc, XtreamAccount.TYPE_MOVIES,
+                stalkerClient.searchMovies(acc, query)
+                    .filter { TitleNormalizer.normKey(it.name) in wantKeys }
+                    .filter { yearCompatible(TitleNormalizer.yearOf(it.name), titles.year) },
+                cap = MAX_STALKER_EDITIONS,   // a catalog carries 4K/HD/language cuts of one film
+            ) { it.categoryId }
                 .map { movie ->
                     // DEFERRED — see [deferredMovie]: create_link runs when the viewer picks this
                     // edition, not while the list is merely being built.
@@ -154,9 +168,11 @@ class XtreamStreamSource @Inject constructor(
                 val e = episode ?: return emptyList()
                 // Year is NOT guarded here: a panel names a series "Breaking Bad", rarely with a year,
                 // and TMDB's year is the FIRST-air year — guarding would drop later-season matches.
-                stalkerClient.searchSeries(acc, query)
-                    .filter { TitleNormalizer.normKey(it.name) in wantKeys }
-                    .take(MAX_STALKER_EDITIONS)   // language cuts ("Breaking Bad (Hindi)") are separate
+                IptvSourceCategoryPolicy.keepCapped(
+                    acc, XtreamAccount.TYPE_SERIES,
+                    stalkerClient.searchSeries(acc, query).filter { TitleNormalizer.normKey(it.name) in wantKeys },
+                    cap = MAX_STALKER_EDITIONS,   // language cuts ("Breaking Bad (Hindi)") are separate
+                ) { it.categoryId }
                     .map { series ->
                         val url = deferredEpisode(acc, series.seriesId, s, e)
                         // The label IS what's shown (name wins; title is only a fallback), so the
