@@ -160,6 +160,8 @@ fun XtreamSettingsContent(
                 title = account.name,
                 subtitle = listOfNotNull(
                     account.baseUrl,
+                    // B60: an edit saved although the provider check failed says so on its row.
+                    uiState.saveWarnings[account.id],
                     com.nuvio.tv.core.iptv.match.indexingStatusLine(
                         isIndexing = account.id in indexingAccounts,
                         progress = indexProgress[account.id],
