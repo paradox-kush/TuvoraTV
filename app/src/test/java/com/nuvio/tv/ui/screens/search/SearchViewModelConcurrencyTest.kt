@@ -142,6 +142,7 @@ class SearchViewModelConcurrencyTest {
             watchProgressRepository = watchProgress,
             watchedSeriesStateHolder = watchedSeries,
             posterOptions = mockk<PosterOptionsController>(relaxed = true),
+            iptvSearchProvider = NoIptvSearch,
             context = mockk<Context>(relaxed = true)
         )
     }

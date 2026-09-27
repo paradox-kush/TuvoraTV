@@ -2,6 +2,7 @@ package com.nuvio.tv.core.iptv
 
 import android.util.Log
 import com.nuvio.tv.core.iptv.content.IptvContentDb
+import com.nuvio.tv.core.iptv.match.IptvSourceCategoryPolicy
 import com.nuvio.tv.core.iptv.match.MatchKind
 import com.nuvio.tv.core.iptv.match.XtreamMatchIndex
 import com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
@@ -108,40 +109,89 @@ class XtreamSearchIndex @Inject constructor(
                     )
                     channels += Hit(id, ch.name, ch.logo, isLive = true, streamUrl = ch.streamUrl, detailType = "tv")
                 }
-            if (acc.isXtream() && acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, PER_ACCOUNT).forEach { m ->
-                val id = XtreamItemRegistry.vodId(acc.id, m.sid)
-                val streamUrl = xtreamClient.buildStreamUrl(acc, "movie", m.sid, m.ext ?: "mp4")
-                registry.register(
-                    XtreamResolvedItem(
-                        id = id, type = ContentType.MOVIE, name = m.name, poster = m.poster,
-                        streamUrl = streamUrl, accountId = acc.id, streamId = m.sid
+            // Movies/series (B19): the playlist's in-app content-type toggles and category selections
+            // filter every hit BEFORE the per-account cap. Website (overlay) hides do not apply here.
+            if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) when {
+                acc.isXtream() -> keepCapped(
+                    acc, XtreamAccount.TYPE_MOVIES,
+                    matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, scanLimit(acc, XtreamAccount.TYPE_MOVIES)),
+                ) { it.categoryId }.forEach { m ->
+                    val id = XtreamItemRegistry.vodId(acc.id, m.sid)
+                    val streamUrl = xtreamClient.buildStreamUrl(acc, "movie", m.sid, m.ext ?: "mp4")
+                    registry.register(
+                        XtreamResolvedItem(
+                            id = id, type = ContentType.MOVIE, name = m.name, poster = m.poster,
+                            streamUrl = streamUrl, accountId = acc.id, streamId = m.sid
+                        )
                     )
-                )
-                movies += Hit(id, m.name, m.poster, isLive = false, streamUrl = null, detailType = "movie")
+                    movies += Hit(id, m.name, m.poster, isLive = false, streamUrl = null, detailType = "movie")
+                }
+                // Stalker never enters the match index (its player_api builds fail into backoff), so
+                // ask the portal itself (get_ordered_list&search=), as the source lane and Mobile do.
+                // The play link is minted at play time (streamUrl "" = create_link on play).
+                acc.sourceType == XtreamAccount.SOURCE_STALKER -> keepCapped(
+                    acc, XtreamAccount.TYPE_MOVIES, clientFactory.stalker().searchMovies(acc, q),
+                ) { it.categoryId }.forEach { m ->
+                    val id = XtreamItemRegistry.vodId(acc.id, m.streamId)
+                    registry.register(
+                        XtreamResolvedItem(
+                            id = id, type = ContentType.MOVIE, name = m.name, poster = m.poster,
+                            imdbRating = m.rating?.toFloatOrNull(), streamUrl = m.streamUrl,
+                            accountId = acc.id, streamId = m.streamId
+                        )
+                    )
+                    movies += Hit(id, m.name, m.poster, isLive = false, streamUrl = null, detailType = "movie")
+                }
             }
-            if (acc.isXtream() && acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) matchIndex.searchByName(acc.id, MatchKind.SERIES, q, PER_ACCOUNT).forEach { s ->
-                val id = XtreamItemRegistry.seriesId(acc.id, s.sid)
-                registry.register(
-                    XtreamResolvedItem(
-                        id = id, type = ContentType.SERIES, name = s.name, poster = s.poster,
-                        streamUrl = "", kind = XtreamKind.SERIES, accountId = acc.id, streamId = s.sid
-                    )
-                )
-                series += Hit(id, s.name, s.poster, isLive = false, streamUrl = null, detailType = "series")
+            if (acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) when {
+                acc.isXtream() -> keepCapped(
+                    acc, XtreamAccount.TYPE_SERIES,
+                    matchIndex.searchByName(acc.id, MatchKind.SERIES, q, scanLimit(acc, XtreamAccount.TYPE_SERIES)),
+                ) { it.categoryId }.forEach { s ->
+                    registerSeries(acc, s.sid, s.name, s.poster, series)
+                }
+                acc.sourceType == XtreamAccount.SOURCE_STALKER -> keepCapped(
+                    acc, XtreamAccount.TYPE_SERIES, clientFactory.stalker().searchSeries(acc, q),
+                ) { it.categoryId }.forEach { s ->
+                    registerSeries(acc, s.seriesId, s.name, s.poster, series, description = s.plot, rating = s.rating)
+                }
             }
         }
         return Results(channels.take(DISPLAY), movies.take(DISPLAY), series.take(DISPLAY))
     }
 
+    private fun registerSeries(
+        acc: XtreamAccount, sid: Int, name: String, poster: String?, into: MutableList<Hit>,
+        description: String? = null, rating: String? = null,
+    ) {
+        val id = XtreamItemRegistry.seriesId(acc.id, sid)
+        registry.register(
+            XtreamResolvedItem(
+                id = id, type = ContentType.SERIES, name = name, poster = poster,
+                description = description, imdbRating = rating?.toFloatOrNull(),
+                streamUrl = "", kind = XtreamKind.SERIES, accountId = acc.id, streamId = sid
+            )
+        )
+        into += Hit(id, name, poster, isLive = false, streamUrl = null, detailType = "series")
+    }
+
+    private fun scanLimit(acc: XtreamAccount, type: String) = IptvSourceCategoryPolicy.scanLimit(acc, type, PER_ACCOUNT)
+
+    private fun <T> keepCapped(acc: XtreamAccount, type: String, items: List<T>, categoryOf: (T) -> String?): List<T> =
+        IptvSourceCategoryPolicy.keepCapped(acc, type, items, PER_ACCOUNT, categoryOf)
+
     /**
      * M3U search reads the ingested catalog from [IptvContentDb] (substring name match per type),
      * registering each hit like the Xtream path so it plays via the same short-circuit. Respects the
-     * content-type toggles; live hits also honor per-category selections (they carry a categoryId).
+     * content-type toggles and per-category selections for every type (all rows carry a categoryId),
+     * filtered before the per-account cap.
      */
     private suspend fun searchM3U(acc: XtreamAccount, q: String, channels: MutableList<Hit>, movies: MutableList<Hit>, series: MutableList<Hit>) {
         if (acc.searchIncludesType(XtreamAccount.TYPE_LIVE)) {
-            contentDb.searchChannels(acc.id, q, PER_ACCOUNT).asSequence()
-                .filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) }
+            keepCapped(
+                acc, XtreamAccount.TYPE_LIVE,
+                contentDb.searchChannels(acc.id, q, scanLimit(acc, XtreamAccount.TYPE_LIVE)),
+            ) { it.categoryId }
                 .forEach { ch ->
                     val id = XtreamItemRegistry.liveId(acc.id, ch.sid)
                     registry.register(
@@ -153,7 +203,9 @@ class XtreamSearchIndex @Inject constructor(
                     channels += Hit(id, ch.name, ch.logo, isLive = true, streamUrl = ch.url, detailType = "tv")
                 }
         }
-        if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) contentDb.searchVod(acc.id, q, PER_ACCOUNT).forEach { m ->
+        if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) keepCapped(
+            acc, XtreamAccount.TYPE_MOVIES, contentDb.searchVod(acc.id, q, scanLimit(acc, XtreamAccount.TYPE_MOVIES)),
+        ) { it.categoryId }.forEach { m ->
             val id = XtreamItemRegistry.vodId(acc.id, m.sid)
             registry.register(
                 XtreamResolvedItem(
@@ -163,7 +215,9 @@ class XtreamSearchIndex @Inject constructor(
             )
             movies += Hit(id, m.name, m.logo, isLive = false, streamUrl = null, detailType = "movie")
         }
-        if (acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) contentDb.searchSeries(acc.id, q, PER_ACCOUNT).forEach { s ->
+        if (acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) keepCapped(
+            acc, XtreamAccount.TYPE_SERIES, contentDb.searchSeries(acc.id, q, scanLimit(acc, XtreamAccount.TYPE_SERIES)),
+        ) { it.categoryId }.forEach { s ->
             val id = XtreamItemRegistry.seriesId(acc.id, s.sid)
             registry.register(
                 XtreamResolvedItem(
@@ -184,12 +238,9 @@ class XtreamSearchIndex @Inject constructor(
 }
 
 /**
- * Whether search should index/return [type] for this account.
- *
- * ponytail: movie/series match-index rows carry no categoryId, so a PARTIAL category selection
- * can't filter those hits — they filter at the content-type level only (the ceiling). Upgrade
- * path: persist category_id in XtreamMatchIndex rows. An EXPLICIT EMPTY selection ("Deselect
- * All" = none) needs no per-item id though: the whole type is skipped here.
+ * Whether search should index/return [type] for this account at all: the type is switched on and its
+ * category selection is not the explicit empty "none" ([IptvSourceCategoryPolicy.offers]). Per-item
+ * category filtering happens at search time — every row (live, match-index movie/series, Stalker,
+ * M3U) carries its categoryId.
  */
-internal fun XtreamAccount.searchIncludesType(type: String): Boolean =
-    typeEnabled(type) && categorySelections.forType(type)?.isEmpty() != true
+internal fun XtreamAccount.searchIncludesType(type: String): Boolean = IptvSourceCategoryPolicy.offers(this, type)
