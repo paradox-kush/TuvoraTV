@@ -1449,7 +1449,6 @@
         <!-- AccountSettingsContent -->
     <string name="account_loading">ஏற்றப்படுகிறது\u2026</string>
     <string name="account_sync_description">உங்கள் நூலகம், பார்த்த முன்னேற்றம், அடான்கள் மற்றும் பிளகின்களை சாதனங்கள் முழுவதும் ஒத்திசைக்கவும்.</string>
-    <string name="account_sync_restart_note">செயலில் உள்ள சாதனங்களுக்கு இடையில் ஒத்திசைவு உடனடி அல்ல. உள்நுழைந்த பிறகு அல்லது வேறு இடத்தில் செய்யப்பட்ட மாற்றங்களை பெற இந்த சாதனத்தை மீண்டும் தொடங்கவும்.</string>
     <string name="account_signin_qr_title">க்யூஆர் மூலம் உள்நுழை</string>
     <string name="account_signin_qr_subtitle">க்யூஆர் குறியீட்டை ஸ்கேன் செய்து உங்கள் கைபேசியில் மின்னஞ்சல் உள்நுழைவை முடிக்கவும்</string>
     <string name="account_signed_in_label">உள்நுழைந்தது</string>

@@ -1637,7 +1637,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Memuat\u2026</string>
     <string name="account_sync_description">Sinkronkan pustaka, progres tonton, addon, dan plugin di semua perangkat.</string>
-    <string name="account_sync_restart_note">Sinkronisasi tidak real-time di semua perangkat aktif. Restart perangkat ini setelah masuk atau untuk mengambil perubahan yang dibuat di tempat lain.</string>
     <string name="account_signin_qr_title">Masuk dengan QR</string>
     <string name="account_signin_qr_subtitle">Pindai kode QR dan selesaikan login email di ponsel Anda</string>
     <string name="account_signed_in_label">Sudah masuk</string>

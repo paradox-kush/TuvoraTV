@@ -5,9 +5,11 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -29,6 +31,11 @@ class AuthSessionNoticeDataStore @Inject constructor(
     private val hadNuvioAuthKey = booleanPreferencesKey("had_nuvio_auth")
     private val nuvioExplicitLogoutKey = booleanPreferencesKey("nuvio_explicit_logout")
     private val pendingNuvioNoticeKey = booleanPreferencesKey("pending_nuvio_notice")
+
+    // The account whose data is on this device (D1): recorded while it is signed in, kept across a
+    // LOST session, cleared only by a deliberate sign-out / server switch / confirmed account switch.
+    private val localDataOwnerUserIdKey = stringPreferencesKey("local_data_owner_user_id")
+    private val localDataOwnerEmailKey = stringPreferencesKey("local_data_owner_email")
 
     private val hadTraktAuthKey = booleanPreferencesKey("had_trakt_auth")
     private val traktExplicitLogoutKey = booleanPreferencesKey("trakt_explicit_logout")
@@ -71,6 +78,32 @@ class AuthSessionNoticeDataStore @Inject constructor(
             preferences[nuvioExplicitLogoutKey] = false
         }
         return marked
+    }
+
+    /** (userId, email) of the account that owns the on-device data, or null when none is recorded. */
+    suspend fun localDataOwner(): Pair<String, String?>? {
+        val preferences = context.authSessionNoticeDataStore.data.first()
+        val userId = preferences[localDataOwnerUserIdKey]?.takeIf { it.isNotBlank() } ?: return null
+        return userId to preferences[localDataOwnerEmailKey]?.takeIf { it.isNotBlank() }
+    }
+
+    suspend fun recordLocalDataOwner(userId: String, email: String?) {
+        if (localDataOwner() == (userId to email?.takeIf { it.isNotBlank() })) return
+        context.authSessionNoticeDataStore.edit { preferences ->
+            preferences[localDataOwnerUserIdKey] = userId
+            if (email.isNullOrBlank()) {
+                preferences.remove(localDataOwnerEmailKey)
+            } else {
+                preferences[localDataOwnerEmailKey] = email
+            }
+        }
+    }
+
+    suspend fun clearLocalDataOwner() {
+        context.authSessionNoticeDataStore.edit { preferences ->
+            preferences.remove(localDataOwnerUserIdKey)
+            preferences.remove(localDataOwnerEmailKey)
+        }
     }
 
     suspend fun markTraktAuthenticated() {

@@ -1396,7 +1396,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Nalaganje\u2026</string>
     <string name="account_sync_description">Sinhronizirajte svojo knjižnico, napredek ogledov, dodatke in vtičnike na več napravah.</string>
-	<string name="account_sync_restart_note">Sinhronizacija med aktivnimi napravami ne poteka v realnem času. Po prijavi ali za uveljavitev sprememb, narejenih drugje, znova zaženite to napravo.</string>																																										 
     <string name="account_signin_qr_title">Prijava s QR</string>
     <string name="account_signin_qr_subtitle">Skenirajte QR kodo in dokončajte prijavo z e-pošto na telefonu</string>
     <string name="account_signed_in_label">Prijavljeni</string>

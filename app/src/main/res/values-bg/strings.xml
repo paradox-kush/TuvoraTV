@@ -1699,7 +1699,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Зареждане…</string>
     <string name="account_sync_description">Синхронизирай библиотеката, прогреса на гледане, добавките и плъгините между устройства.</string>
-    <string name="account_sync_restart_note">Синхронизацията не е в реално време между активни устройства. Рестартирай това устройство след вписване или за да вземеш промените, направени другаде.</string>
     <string name="account_signin_qr_title">Впиши се с QR</string>
     <string name="account_signin_qr_subtitle">Сканирай QR код и завърши имейл вписването на телефона си</string>
     <string name="account_signed_in_label">Вписан</string>

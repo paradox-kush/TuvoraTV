@@ -852,7 +852,6 @@ Klaida: Bandomoji simuliuojama klaida — tai nėra tikras gedimas. Šaltinis gr
     <!-- AccountSettingsContent -->
     <string name="account_loading">Įkeliama…</string>
     <string name="account_sync_description">Jūsų paskyra sinchronizuojama per „Tuvora Sync“.</string>
-    <string name="account_sync_restart_note">Pakeitimų įsigaliojimui gali reikėti paleisti programą iš naujo.</string>
     <string name="account_signin_qr_title">Prisijungti</string>
     <string name="account_signin_qr_subtitle">„Tuvora“ naudoja „Supabase“ sinchronizavimui</string>
     <string name="account_signed_in_label">Prisijungta kaip</string>

@@ -2092,7 +2092,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">載入中…</string>
     <string name="account_sync_description">在裝置間同步您的媒體庫、觀看進度、擴充套件和外掛。</string>
-    <string name="account_sync_restart_note">同步並非跨作用中裝置即時進行。登入後或要套用在其他位置進行的變更時，請重新啟動此裝置。</string>
     <string name="account_signin_qr_title">使用 QR 碼登入</string>
     <string name="account_signin_qr_subtitle">掃描 QR 碼並在手機上完成電子郵件登入</string>
     <string name="account_signin_email_title">登入</string>

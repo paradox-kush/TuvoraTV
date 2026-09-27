@@ -1651,7 +1651,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">A carregar\u2026</string>
     <string name="account_sync_description">Sincroniza a tua biblioteca, progresso de visualização, addons e plugins entre dispositivos.</string>
-    <string name="account_sync_restart_note">A sincronização não ocorre em tempo real entre dispositivos ativos. Reinicia este dispositivo após iniciar sessão ou para aplicar as alterações feitas noutros locais.</string>
     <string name="account_signin_qr_title">Iniciar Sessão com QR</string>
     <string name="account_signin_qr_subtitle">Lê um código QR e conclui o início de sessão por e-mail no teu telemóvel</string>
     <string name="account_signed_in_label">Sessão iniciada</string>

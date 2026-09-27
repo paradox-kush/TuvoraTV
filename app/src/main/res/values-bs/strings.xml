@@ -1131,7 +1131,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Učitavanje…</string>
     <string name="account_sync_description">Sinhronizuj svoju biblioteku, napredak gledanja, addone i plugine na svim uređajima.</string>
-    <string name="account_sync_restart_note">Sinhronizacija nije u stvarnom vremenu između aktivnih uređaja. Ponovo pokreni ovaj uređaj nakon prijave ili da preuzmeš promjene napravljene negdje drugo.</string>
     <string name="account_signin_qr_title">Prijava sa QR</string>
     <string name="account_signin_qr_subtitle">Skeniraj QR kod i završi prijavu emailom na telefonu</string>
     <string name="account_signed_in_label">Prijavljeno</string>

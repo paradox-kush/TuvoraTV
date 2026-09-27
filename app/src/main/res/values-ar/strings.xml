@@ -1717,7 +1717,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">جاري التحميل\u2026</string>
     <string name="account_sync_description">زامن مكتبتك، تقدم المشاهدة، الإضافات، والملحقات عبر أجهزتك.</string>
-    <string name="account_sync_restart_note">المزامنة ليست فورية عبر الأجهزة النشطة. أعد تشغيل هذا الجهاز بعد تسجيل الدخول أو لالتقاط التغييرات التي تمت في مكان آخر.</string>
     <string name="account_signin_qr_title">الدخول برمز QR</string>
     <string name="account_signin_qr_subtitle">امسح رمز QR وأكمل تسجيل الدخول ببريدك من هاتفك</string>
     <string name="account_signed_in_label">تم تسجيل الدخول</string>

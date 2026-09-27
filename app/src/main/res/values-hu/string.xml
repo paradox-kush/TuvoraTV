@@ -1889,7 +1889,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Betöltés\u2026</string>
     <string name="account_sync_description">Könyvtár, megtekintési előzmények, bővítmények és beépülő modulok szinkronizálása az eszközök között.</string>
-    <string name="account_sync_restart_note">A szinkronizálás nem valós idejű az aktív eszközök között. Indítsd újra ezt az eszközt bejelentkezés után, vagy ha máshol végzett módosításokat szeretnél érvényesíteni.</string>
     <string name="account_signin_qr_title">Bejelentkezés QR-kóddal</string>
     <string name="account_signin_qr_subtitle">Olvasd be a QR-kódot, és fejezd be a bejelentkezést e-mailben a telefonodon</string>
     <string name="account_signin_email_title">Bejelentkezés</string>

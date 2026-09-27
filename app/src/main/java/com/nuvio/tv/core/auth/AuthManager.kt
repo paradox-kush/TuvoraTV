@@ -69,6 +69,15 @@ class AuthManager @Inject constructor(
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
+    private val _accountSwitchPrompt = MutableStateFlow<AccountSwitchPrompt?>(null)
+
+    /**
+     * Non-null while a DIFFERENT account has signed in over a lost session's kept data (D1). That
+     * account is held back — authState stays SignedOut, so no startup pull/push runs — until the
+     * viewer confirms ([confirmAccountSwitch]) or cancels ([cancelAccountSwitch]).
+     */
+    val accountSwitchPrompt: StateFlow<AccountSwitchPrompt?> = _accountSwitchPrompt.asStateFlow()
+
     private var cachedEffectiveUserId: String? = null
     private var cachedEffectiveUserSourceUserId: String? = null
 
@@ -95,10 +104,10 @@ class AuthManager @Inject constructor(
             if (_authState.value !is AuthState.Loading) return@launch
             val user = runCatching { auth.sessionManager.loadSession() }.getOrNull()?.user
             val email = user?.email?.takeIf { it.isNotBlank() }
-            _authState.value = if (user != null && email != null) {
-                AuthState.FullAccount(userId = user.id, email = email)
+            if (user != null && email != null) {
+                publishFullAccount(userId = user.id, email = email)
             } else {
-                AuthState.SignedOut
+                _authState.value = AuthState.SignedOut
             }
             Log.w(TAG, "Auth init not settled after 3s; proceeding with ${_authState.value}")
         }
@@ -118,11 +127,11 @@ class AuthManager @Inject constructor(
                                     cachedEffectiveUserId = null
                                     cachedEffectiveUserSourceUserId = null
                                 }
-                                if (user.email.isNullOrBlank()) {
+                                val email = user.email
+                                if (email.isNullOrBlank()) {
                                     handleUnexpectedSignedOut()
                                 } else {
-                                    _authState.value = AuthState.FullAccount(userId = user.id, email = user.email!!)
-                                    authSessionNoticeDataStore.markNuvioAuthenticated()
+                                    publishFullAccount(userId = user.id, email = email)
                                 }
                             }
                         }
@@ -287,9 +296,16 @@ class AuthManager @Inject constructor(
         }
     }
 
-    suspend fun signOut(explicit: Boolean = true) {
-        if (explicit) {
+    /**
+     * Ends the session. Local data is wiped only when [reason] is deliberate (the Sign out button);
+     * [SessionEndReason.SESSION_LOST] (e.g. a failed sync-code claim) keeps every profile's data and
+     * shows the sign-in-again notice instead. See [AccountDataRetentionPolicy].
+     */
+    suspend fun signOut(reason: SessionEndReason = SessionEndReason.USER_SIGN_OUT) {
+        val deliberate = AccountDataRetentionPolicy.wipesLocalData(reason)
+        if (deliberate) {
             authSessionNoticeDataStore.markNuvioExplicitLogout()
+            forgetLocalDataOwner()
         } else {
             authSessionNoticeDataStore.markUnexpectedNuvioLogoutIfNeeded()
         }
@@ -301,12 +317,18 @@ class AuthManager @Inject constructor(
         cachedEffectiveUserId = null
         cachedEffectiveUserSourceUserId = null
         _authState.value = AuthState.SignedOut
-        accountLocalDataResetService.clearAfterSignOut()
+        endAccountSession(
+            reason = reason,
+            clearLocalData = { accountLocalDataResetService.clearAfterSignOut() },
+            onSessionLost = { Log.w(TAG, "Signed out ($reason); local data kept") },
+        )
+        if (deliberate) forgetLocalDataOwner()
     }
 
     suspend fun resetForSyncBackendChange(): Result<Unit> {
         return runCatching {
             authSessionNoticeDataStore.markUnexpectedNuvioLogoutIfNeeded()
+            forgetLocalDataOwner()
             try {
                 auth.signOut()
             } catch (e: Exception) {
@@ -315,7 +337,11 @@ class AuthManager @Inject constructor(
             cachedEffectiveUserId = null
             cachedEffectiveUserSourceUserId = null
             _authState.value = AuthState.SignedOut
-            accountLocalDataResetService.clearAfterSignOut()
+            endAccountSession(
+                reason = SessionEndReason.SYNC_BACKEND_SWITCH,
+                clearLocalData = { accountLocalDataResetService.clearAfterSignOut() },
+            )
+            forgetLocalDataOwner()
         }
     }
 
@@ -324,13 +350,120 @@ class AuthManager @Inject constructor(
         cachedEffectiveUserSourceUserId = null
     }
 
+    /**
+     * The session is gone but nobody asked for it (D1): a missing stored session ("No entry with the
+     * key sb-<ref>-session" -> INVALID_SESSION), a rejected refresh, an anonymous QR session. The app
+     * shows as signed out and says so (the "signed out" notice, raised once per loss by
+     * markUnexpectedNuvioLogoutIfNeeded) — but every profile's local data, including progress that
+     * never synced, is KEPT. This used to run clearAfterSignOut() and erased it for good. Signing
+     * back in to the same account syncs what is pending; a different account is held behind
+     * [accountSwitchPrompt].
+     */
     private suspend fun handleUnexpectedSignedOut() {
         cachedEffectiveUserId = null
         cachedEffectiveUserSourceUserId = null
         _authState.value = AuthState.SignedOut
-        if (authSessionNoticeDataStore.markUnexpectedNuvioLogoutIfNeeded()) {
-            accountLocalDataResetService.clearAfterSignOut()
+        val noticeRaised = authSessionNoticeDataStore.markUnexpectedNuvioLogoutIfNeeded()
+        endAccountSession(
+            reason = SessionEndReason.SESSION_LOST,
+            clearLocalData = { accountLocalDataResetService.clearAfterSignOut() },
+            onSessionLost = {
+                if (noticeRaised) Log.w(TAG, "Session lost; local data kept, sign-in notice raised")
+            },
+        )
+    }
+
+    /**
+     * The one place a full account becomes [AuthState.FullAccount]. When a lost session's data from a
+     * DIFFERENT account is still on the device, the new account is held back (SignedOut, so nothing
+     * syncs the kept data into it) and the viewer is asked via [accountSwitchPrompt].
+     */
+    private suspend fun publishFullAccount(userId: String, email: String) {
+        val owner = loadLocalDataOwner()
+        when (AccountDataRetentionPolicy.decideOnSignIn(owner, userId)) {
+            SignInDataDecision.PROCEED -> {
+                authSessionNoticeDataStore.recordLocalDataOwner(userId, email)
+                _accountSwitchPrompt.value = null
+                _authState.value = AuthState.FullAccount(userId = userId, email = email)
+                authSessionNoticeDataStore.markNuvioAuthenticated()
+            }
+            SignInDataDecision.ASK_BEFORE_REPLACING_OTHER_ACCOUNT_DATA -> {
+                val previousOwner = owner ?: return
+                if (_accountSwitchPrompt.value?.newUserId != userId) {
+                    Log.w(TAG, "A different account signed in over a lost session's kept data; asking first")
+                }
+                _accountSwitchPrompt.value = AccountSwitchPrompt(
+                    previousOwner = previousOwner,
+                    newUserId = userId,
+                    newEmail = email,
+                )
+                cachedEffectiveUserId = null
+                cachedEffectiveUserSourceUserId = null
+                _authState.value = AuthState.SignedOut
+            }
         }
+    }
+
+    private suspend fun loadLocalDataOwner(): LocalDataOwner? =
+        runCatching { authSessionNoticeDataStore.localDataOwner() }
+            .getOrNull()
+            ?.let { (userId, email) -> LocalDataOwner(userId = userId, email = email) }
+
+    private suspend fun forgetLocalDataOwner() {
+        runCatching { authSessionNoticeDataStore.clearLocalDataOwner() }
+            .onFailure { Log.w(TAG, "Failed to clear the local data owner", it) }
+        _accountSwitchPrompt.value = null
+    }
+
+    /**
+     * False when the session that just signed in belongs to a different account than the kept data
+     * on this device. The post-sign-in flushes (AccountViewModel.pullRemoteData / pushLocalDataToRemote)
+     * must not run then: they would push one person's data into another person's account.
+     */
+    suspend fun signedInAccountOwnsLocalData(): Boolean {
+        val userId = auth.currentUserOrNull()?.id ?: return true
+        return AccountDataRetentionPolicy.decideOnSignIn(loadLocalDataOwner(), userId) ==
+            SignInDataDecision.PROCEED
+    }
+
+    /**
+     * The viewer confirmed continuing as the new account: the previous account's kept data leaves the
+     * device (deliberate, like signing that account out), then the new account signs in and its own
+     * data syncs through the normal startup pull. Nothing of the previous account is pushed to it.
+     */
+    suspend fun confirmAccountSwitch() {
+        val prompt = _accountSwitchPrompt.value ?: return
+        forgetLocalDataOwner()
+        endAccountSession(
+            reason = SessionEndReason.SWITCHED_ACCOUNT,
+            clearLocalData = { accountLocalDataResetService.clearAfterSignOut() },
+        )
+        forgetLocalDataOwner()
+        val email = prompt.newEmail?.takeIf { it.isNotBlank() }
+            ?: auth.currentUserOrNull()?.takeIf { it.id == prompt.newUserId }?.email?.takeIf { it.isNotBlank() }
+        if (email == null) {
+            Log.w(TAG, "Account switch confirmed but the new account has no email; staying signed out")
+            return
+        }
+        publishFullAccount(userId = prompt.newUserId, email = email)
+    }
+
+    /**
+     * The viewer chose to keep the previous account's data: the new account's session is dropped
+     * (local scope — its other devices are untouched) and the kept data waits for the previous
+     * account to sign back in.
+     */
+    suspend fun cancelAccountSwitch() {
+        if (_accountSwitchPrompt.value == null) return
+        _accountSwitchPrompt.value = null
+        try {
+            auth.signOut()
+        } catch (e: Exception) {
+            Log.w(TAG, "Sign-out of the declined account failed", e)
+        }
+        cachedEffectiveUserId = null
+        cachedEffectiveUserSourceUserId = null
+        _authState.value = AuthState.SignedOut
     }
 
     suspend fun refreshSessionIfJwtExpired(error: Throwable): Boolean {

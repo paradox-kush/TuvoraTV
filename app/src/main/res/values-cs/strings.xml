@@ -1799,7 +1799,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Načítání…</string>
     <string name="account_sync_description">Synchronizujte svou knihovnu, postup sledování, doplňky a pluginy napříč zařízeními.</string>
-    <string name="account_sync_restart_note">Synchronizace není v reálném čase napříč aktivními zařízeními. Po přihlášení restartujte toto zařízení nebo pro načtení změn provedených jinde.</string>
     <string name="account_signin_qr_title">Přihlásit se pomocí QR</string>
     <string name="account_signin_qr_subtitle">Naskenujte QR kód a dokončete přihlášení e-mailem na telefonu</string>
     <string name="account_signin_email_title">Přihlásit se</string>

@@ -904,7 +904,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Laddar\u2026</string>
     <string name="account_sync_description">Synkronisera ditt bibliotek, tittarframsteg, tillägg och plugins mellan enheter.</string>
-    <string name="account_sync_restart_note">Synkronisering sker inte i realtid mellan aktiva enheter. Starta om denna enhet efter inloggning eller för att hämta ändringar gjorda på annat håll.</string>
     <string name="account_signin_qr_title">Logga in med QR</string>
     <string name="account_signin_qr_subtitle">Skanna en QR-kod och slutför e-postinloggning på din telefon</string>
     <string name="account_signed_in_label">Inloggad</string>
