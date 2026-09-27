@@ -198,9 +198,14 @@ class XtreamAccountSyncService @Inject constructor(
             saveState = { p, s -> accountStore.savePlaylistSyncStateRaw(p, com.nuvio.tv.core.iptv.encodePlaylistSyncState(gson, s)) },
             currentAccounts = { startAccounts },
             canPush = { startCanPush },
-            applyLocal = { _, accounts -> applyRemote(accounts) },
+            applyLocal = { p, accounts ->
+                val local = runCatching { accountStore.accountsForProfile(p) }.getOrDefault(startAccounts)
+                applyRemote(v2ApplyLocal(accounts, local))
+            },
             stillActive = { profileManager.activeProfileId.value == it },
             newMutationId = { newPlaylistMutationId() },
+            // "In sync" = the same server rows, compared on exactly what the push writes (B60).
+            syncedKey = { playlistPushJson(it, sortOrder = 0) },
         )
         v2Mutex.lock()
         val outcome = try {
@@ -406,7 +411,10 @@ internal fun SupabaseIptvPlaylist.toXtreamAccountOrNull(): XtreamAccount? {
                 stalkerPassword = stalkerPassword.orEmpty(),
                 serialNumber = serialNumber.orEmpty(),
                 deviceId = deviceId.orEmpty(),
-                sendDeviceId = sendDeviceId
+                sendDeviceId = sendDeviceId,
+                // B04: a Stalker playlist's UA rides the shared `user_agent` column too. Not reading it
+                // here (and not writing it on push) made every TV sync blank it for every device.
+                userAgent = userAgent?.takeIf { it.isNotBlank() }
             )
         }
         else -> return null
@@ -514,6 +522,7 @@ internal fun playlistPushJson(acc: XtreamAccount, sortOrder: Int): JsonObject = 
             acc.serialNumber.takeIf { it.isNotBlank() }?.let { put("serial_number", it) }
             acc.deviceId.takeIf { it.isNotBlank() }?.let { put("device_id", it) }
             put("send_device_id", acc.sendDeviceId)
+            acc.userAgent?.takeIf { it.isNotBlank() }?.let { put("user_agent", it) }   // B04: round-trip the UA
         }
     }
     acc.epgUrl?.let { put("epg_url", it) }
@@ -537,3 +546,12 @@ internal fun decodeCategorySelections(element: JsonElement?): CategorySelections
         ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p !is JsonNull }?.content }
     return CategorySelections(live = list("live"), movies = list("movies"), series = list("series"))
 }
+
+/**
+ * What a v2 sync applies locally for a pulled/reconciled set: this device's file-playlist ids kept
+ * ([reconcileLocalIds]) and its local-only catch-up / guide preferences carried across
+ * ([preserveDeviceLocalPrefs]) — the treatment the v1 pull always gave them (B60 part c). Without it
+ * every v2 apply reset those preferences and re-keyed file playlists away from their local copy.
+ */
+internal fun v2ApplyLocal(pulled: List<XtreamAccount>, local: List<XtreamAccount>): List<XtreamAccount> =
+    preserveDeviceLocalPrefs(reconcileLocalIds(pulled, local), local)

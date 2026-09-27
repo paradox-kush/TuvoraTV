@@ -256,4 +256,51 @@ class XtreamPlaylistSyncPayloadTest {
     }
 
     private fun JsonObject.str(key: String): String = this[key]!!.jsonPrimitive.content
+
+    // --- B04 part 3: TV never round-tripped a Stalker playlist's user agent ----------------------
+
+    @Test
+    fun `stalker user agent survives a pull-push round trip`() {
+        val pulled = SupabaseIptvPlaylist(
+            sourceType = "stalker", portalUrl = "http://p:8080", macAddress = "00:1A:79:AA:BB:CC",
+            userAgent = "MAG250"
+        ).toXtreamAccountOrNull()!!
+        assertEquals("the pull reads a Stalker row's user agent", "MAG250", pulled.userAgent)
+        val pushed = playlistPushJson(pulled, sortOrder = 0)
+        // A v2 push re-sends every server row through this mapping; dropping the UA here blanked it
+        // for every device (the v2 insert writes null for a missing key).
+        assertEquals("the push writes a Stalker row's user agent", "MAG250", pushed.str("user_agent"))
+    }
+
+    @Test
+    fun `every synced column survives a pull-push round trip for every source type`() {
+        val rows = listOf(
+            SupabaseIptvPlaylist(sourceType = "xtream", name = "X", baseUrl = "http://h:8080", username = "u", password = "p",
+                userAgent = "UA-X", epgUrl = "http://e", dnsProvider = "quad9", autoRefreshHours = 6),
+            SupabaseIptvPlaylist(sourceType = "m3u_url", name = "M", url = "http://h/list.m3u", userAgent = "UA-M",
+                epgUrl = "http://e", dnsProvider = "google", autoRefreshHours = 12),
+            SupabaseIptvPlaylist(sourceType = "stalker", name = "S", portalUrl = "http://p:8080", macAddress = "00:1A:79:AA:BB:CC",
+                userAgent = "UA-S", serialNumber = "SN", deviceId = "DID", sendDeviceId = false,
+                epgUrl = "http://e", dnsProvider = "cloudflare", autoRefreshHours = 0),
+        )
+        rows.forEach { row ->
+            val json = playlistPushJson(row.toXtreamAccountOrNull()!!, sortOrder = 0)
+            assertEquals("${row.sourceType}: user_agent", row.userAgent, json.str("user_agent"))
+            assertEquals("${row.sourceType}: epg_url", row.epgUrl, json.str("epg_url"))
+            assertEquals("${row.sourceType}: dns_provider", row.dnsProvider, json.str("dns_provider"))
+            assertEquals("${row.sourceType}: auto_refresh_hours", row.autoRefreshHours.toString(), json.str("auto_refresh_hours"))
+            assertEquals("${row.sourceType}: name", row.name, json.str("name"))
+        }
+    }
+
+    @Test
+    fun `a v2 apply keeps this device's local-only preferences`() {
+        val a = XtreamAccount(id = "http://A|u", name = "P", baseUrl = "http://A", username = "u", password = "p")
+        val local = listOf(a.copy(preferM3u8CatchUp = true, catchUpCorrectionMinutes = 30, guideEpgCorrectionMinutes = -60))
+        val applied = v2ApplyLocal(listOf(a.copy(userAgent = "X")), local).single()
+        assertEquals("the synced field comes from the server", "X", applied.userAgent)
+        assertEquals("the device-local catch-up preference survives", true, applied.preferM3u8CatchUp)
+        assertEquals(30, applied.catchUpCorrectionMinutes)
+        assertEquals(-60, applied.guideEpgCorrectionMinutes)
+    }
 }

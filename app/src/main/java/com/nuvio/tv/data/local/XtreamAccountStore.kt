@@ -7,6 +7,8 @@ import com.google.gson.JsonParser
 import com.nuvio.tv.core.iptv.CategorySelections
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.recordAdd
+import com.nuvio.tv.core.iptv.recordReplace
+import com.nuvio.tv.core.iptv.withoutDeviceLocalPrefs
 import com.nuvio.tv.core.iptv.recordUpdate
 import com.nuvio.tv.core.iptv.recordDelete
 import com.nuvio.tv.core.profile.ProfileManager
@@ -66,14 +68,19 @@ class XtreamAccountStore @Inject constructor(
 
     /** Swap the account stored under oldId in place (URL/creds edit), keeping list position. */
     suspend fun replace(oldId: String, account: XtreamAccount) {
+        val before = accountsForProfile(profileManager.activeProfileId.value).firstOrNull { it.id == oldId }
         store().edit { prefs ->
             val updated = parse(prefs[accountsKey])
                 .filterNot { it.id == account.id && it.id != oldId } // drop a pre-existing duplicate of the new identity
                 .map { if (it.id == oldId) account else it }
             prefs[accountsKey] = mergeXtreamAccountsJson(gson, prefs[accountsKey], updated)
         }
-        if (oldId != account.id) recordPending { it.recordDelete(oldId) }  // identity changed: old id gone
-        recordPending { it.recordUpdate(account) }   // B24 v2: durable edit intent
+        // B24 v2: durable edit intent. An identity change (URL/username/MAC) is ONE replace op (B60) — the
+        // old delete + update pair deleted the playlist on sync, and for the only one pushed a delete-all.
+        recordPending {
+            if (oldId != account.id) it.recordReplace(oldId, account, base = before)
+            else it.recordUpdate(account, base = before)
+        }
     }
 
     suspend fun remove(id: String) {
@@ -94,13 +101,16 @@ class XtreamAccountStore @Inject constructor(
      * instead of a stale UI snapshot clobbering the earlier write.
      */
     suspend fun update(id: String, transform: (XtreamAccount) -> XtreamAccount) {
+        val before = accountsForProfile(profileManager.activeProfileId.value).firstOrNull { it.id == id }
         store().edit { prefs ->
             prefs[accountsKey] = applyAccountUpdate(gson, prefs[accountsKey], id, transform)
         }
         // recordPending self-gates on the per-profile activation (records for active/paused-adopted,
         // skips for pure-legacy), so no outer v2Enabled gate is needed here.
         accountsForProfile(profileManager.activeProfileId.value).firstOrNull { it.id == id }
-            ?.let { updated -> recordPending { it.recordUpdate(updated) } }   // B24 v2: durable field-edit intent
+            // A device-local preference (catch-up / guide offset, never on the wire) pushes nothing.
+            ?.takeIf { updated -> before == null || before.withoutDeviceLocalPrefs() != updated.withoutDeviceLocalPrefs() }
+            ?.let { updated -> recordPending { it.recordUpdate(updated, base = before) } }   // B24 v2: durable field-edit intent
     }
 
     /** Replace all accounts for the active profile (used when applying a remote pull). */

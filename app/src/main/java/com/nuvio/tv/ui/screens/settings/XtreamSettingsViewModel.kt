@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.PlaylistEditVerifyPolicy
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
 import com.nuvio.tv.core.iptv.XtreamCategory
@@ -48,7 +49,9 @@ data class XtreamSettingsUiState(
     /** accountId -> "Active · 0/1 connections · Expires 2027-01-11" (lazily fetched, silent on failure). */
     val accountStatus: Map<String, String> = emptyMap(),
     /** accountId -> the guide's EPG-source coverage line (mirror mapping + session tally; read-only). */
-    val guideEpgCoverage: Map<String, String> = emptyMap()
+    val guideEpgCoverage: Map<String, String> = emptyMap(),
+    /** accountId -> a note about a saved edit (B60: the provider check failed, but the edit was kept). */
+    val saveWarnings: Map<String, String> = emptyMap()
 )
 
 @HiltViewModel
@@ -440,24 +443,29 @@ class XtreamSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             // Options-only edit (name/EPG/DNS/refresh) — nothing about how we reach the provider
-            // changed, so don't make an unreachable provider block the save. See sameConnectionAs.
+            // changed, so it is not checked at all. See sameConnectionAs.
             val result =
-                if (account.sameConnectionAs(old)) Result.success(Unit) else client.verify(account)
+                if (!PlaylistEditVerifyPolicy.needsVerify(old, account)) Result.success(Unit) else client.verify(account)
             _uiState.update { it.copy(isValidating = false) }
-            result.onSuccess {
-                if (persistOrError { store.replace(old.id, account) }) {
-                    if (account.id != old.id) migrateSavedData(old, account)
-                    // Cached stream URLs embed the old server/creds; rebuild lazily on demand.
-                    registry.clear()
-                    // A renewed/edited account must not keep showing a stale "Expired" status or
-                    // category lists fetched under the old creds — evict both ids' caches.
-                    evictAccountCaches(old.id, account.id)
-                    resolver.warmUp(listOf(account))
-                    syncService.triggerRemoteSync()
-                    onSuccess()
+            // B60 decision (2026-09-27): a failed check saves anyway and shows the reason on the row —
+            // the edit that fails a check is usually a provider moving domains, the one users must keep.
+            val outcome = PlaylistEditVerifyPolicy.outcome(result)
+            if (persistOrError { store.replace(old.id, account) }) {
+                if (account.id != old.id) migrateSavedData(old, account)
+                // Cached stream URLs embed the old server/creds; rebuild lazily on demand.
+                registry.clear()
+                // A renewed/edited account must not keep showing a stale "Expired" status or
+                // category lists fetched under the old creds — evict both ids' caches.
+                evictAccountCaches(old.id, account.id)
+                _uiState.update { st ->
+                    st.copy(
+                        saveWarnings = (st.saveWarnings - old.id - account.id) +
+                            (outcome.warning?.let { mapOf(account.id to it) } ?: emptyMap())
+                    )
                 }
-            }.onFailure { e ->
-                _uiState.update { it.copy(error = e.message ?: "Could not reach the panel") }
+                resolver.warmUp(listOf(account))
+                syncService.triggerRemoteSync()
+                onSuccess()
             }
         }
     }
@@ -562,6 +570,7 @@ class XtreamSettingsViewModel @Inject constructor(
     }
 
     fun remove(id: String) {
+        _uiState.update { it.copy(saveWarnings = it.saveWarnings - id) }
         viewModelScope.launch {
             store.remove(id)
             // Caches/indexes keyed by this id (match db, M3U catalog+EPG, session caches,

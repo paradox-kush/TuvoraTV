@@ -21,6 +21,7 @@ class PlaylistV2SyncEngineTest {
         var lastMutationHash: String? = null
         var dropNextResponse = false
         var deletedNoProfile = false   // deleted and NOT recreated (no profiles row) — mirrors the backend guard
+        var lastDeleteAll: Boolean? = null   // the delete-all flag of the last push attempt
 
         fun pull() = PlaylistPullResponse(revision, rows, generation)
 
@@ -28,6 +29,7 @@ class PlaylistV2SyncEngineTest {
         fun delete() { rows = emptyList(); revision += 1; generation += 1; deletedNoProfile = true }
 
         fun push(expected: Long?, expectedGen: Long?, payload: List<XtreamAccount>, deleteAll: Boolean, mutationId: String): PlaylistPushResponse {
+            lastDeleteAll = deleteAll
             val hash = payload.joinToString(",") { it.id } + "|" + deleteAll
             if (mutationId == lastMutationId) {
                 if (hash != lastMutationHash) return PlaylistPushResponse.Rejected("reuse")
@@ -66,6 +68,11 @@ class PlaylistV2SyncEngineTest {
             newMutationId = { "mut-${++mutCounter}" },
         )
         fun recordAdd(a: XtreamAccount) { mutate { it.recordAdd(a) }; local = local.filterNot { x -> x.id == a.id } + a }
+        fun recordUpdate(a: XtreamAccount, base: XtreamAccount? = null) { mutate { it.recordUpdate(a, base) }; local = local.map { x -> if (x.id == a.id) a else x } }
+        /** An id-changing edit (URL / username / MAC): swapped in place locally, recorded as ONE replace. */
+        fun recordReplace(oldId: String, a: XtreamAccount, base: XtreamAccount? = null) {
+            mutate { it.recordReplace(oldId, a, base) }; local = local.map { x -> if (x.id == oldId) a else x }
+        }
         private fun mutate(f: (List<PendingOpDto>) -> List<PendingOpDto>) {
             val s = decodePlaylistSyncState(gson, stateStore[1])
             stateStore[1] = encodePlaylistSyncState(gson, s.copy(pending = f(s.pending)))
@@ -150,5 +157,56 @@ class PlaylistV2SyncEngineTest {
             server.push(expected = 2, expectedGen = 0, payload = listOf(acc("C")), deleteAll = false, mutationId = "m1"),
         )
         assertTrue("server not populated by a stale-generation push", server.rows.isEmpty())
+    }
+
+    // --- B60: id-changing edits (URL / username / MAC) and field-level sync ------------------------
+
+    @Test
+    fun `an id-changing URL edit replaces the playlist and survives sync`() = runBlocking {
+        val a = acc("A")
+        val server = FakeServer(rows = listOf(a, acc("B")), revision = 3)
+        val dev = Device(server, local = listOf(a, acc("B")))
+        dev.recordReplace("A", acc("A2"), base = a)
+
+        assertEquals(PlaylistSyncOutcome.SYNCED, dev.engine().sync(1))
+        assertEquals("server holds the edited playlist in the old one's position", listOf("A2", "B"), server.rows.map { it.id })
+        assertEquals("the edited playlist is not deleted locally", listOf("A2", "B"), dev.local.map { it.id })
+        assertTrue("the replace is acknowledged", decodePlaylistSyncState(gson, dev.stateStore[1]).pending.isEmpty())
+    }
+
+    @Test
+    fun `an id-changing edit of the only playlist never deletes all`() = runBlocking {
+        val a = acc("A")
+        val server = FakeServer(rows = listOf(a), revision = 1)
+        val dev = Device(server, local = listOf(a))
+        dev.recordReplace("A", acc("A2"), base = a)
+
+        assertEquals(PlaylistSyncOutcome.SYNCED, dev.engine().sync(1))
+        assertEquals("an edit is never pushed as a delete-all", false, server.lastDeleteAll)
+        assertEquals("the only playlist survives, edited", listOf("A2"), server.rows.map { it.id })
+        assertEquals(listOf("A2"), dev.local.map { it.id })
+    }
+
+    @Test
+    fun `a field-only change made on another device is applied with nothing pending`() = runBlocking {
+        val server = FakeServer(rows = listOf(acc("A").copy(userAgent = "X", autoRefreshHours = 12)), revision = 5)
+        val dev = Device(server, local = listOf(acc("A")))
+
+        dev.engine().sync(1)
+        assertEquals("the server's user agent lands locally", "X", dev.local.single().userAgent)
+        assertEquals("the server's refresh interval lands locally", 12, dev.local.single().autoRefreshHours)
+        assertEquals("applying a server change pushes nothing", 5L, server.revision)
+    }
+
+    @Test
+    fun `a stale form edit does not overwrite fields another device changed`() = runBlocking {
+        val stale = acc("A")
+        val server = FakeServer(rows = listOf(stale.copy(userAgent = "X")), revision = 2)
+        val dev = Device(server, local = listOf(stale))
+        dev.recordUpdate(stale.copy(autoRefreshHours = 6), base = stale)
+
+        assertEquals(PlaylistSyncOutcome.SYNCED, dev.engine().sync(1))
+        assertEquals("the field the user changed is pushed", 6, server.rows.single().autoRefreshHours)
+        assertEquals("the field the user did not touch keeps the server value", "X", server.rows.single().userAgent)
     }
 }
