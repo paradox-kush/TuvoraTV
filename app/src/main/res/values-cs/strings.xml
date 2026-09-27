@@ -913,7 +913,7 @@
     <string name="layout_trailer_muted">Přehrát trailer ztlumený</string>
     <string name="layout_trailer_muted_sub_preview">Ztlumit zvuk traileru během automatického náhledu.</string>
     <string name="layout_trailer_muted_sub_expanded">Ztlumit zvuk traileru v rozšířených kartách.</string>
-    <string name="layout_section_card_style">Styl karty plakátu</string>
+    <string name="layout_section_card_style">Karta plakátu</string>
     <string name="layout_section_card_style_desc">Vyladit šířku karty a poloměr rohů.</string>
     <string name="settings_card_depth_title">Efekt hloubky karty</string>
     <string name="settings_card_depth_description">Přidá osvětlenou horní hranu a jemný lesk obrazovým kartám pro nenápadný pocit hloubky.</string>
@@ -1184,8 +1184,6 @@
     <string name="tmdb_basic_info_subtitle">Popis, žánry a hodnocení z TMDB</string>
     <string name="tmdb_details_title">Podrobnosti</string>
     <string name="tmdb_details_subtitle">Délka, stav, země a jazyk z TMDB</string>
-    <string name="tmdb_release_dates_title">Data vydání</string>
-    <string name="tmdb_release_dates_subtitle">Data vydání a vysílání z TMDB</string>
     <string name="tmdb_credits_title">Titulky</string>
     <string name="tmdb_credits_subtitle">Obsazení s fotografiemi, režisér a scenárista z TMDB</string>
     <string name="tmdb_productions_title">Produkce</string>
@@ -1833,11 +1831,9 @@
 
     <string name="auth_qr_title">Přihlásit se pomocí QR</string>
     <string name="auth_qr_tagline">Sledujte svou knihovnu odkudkoli</string>
-    <string name="auth_qr_account_login">Přihlášení k účtu</string>
     <string name="auth_qr_finishing">Dokončování přihlášení…</string>
     <string name="auth_qr_code_label">Kód: %1$s</string>
     <string name="auth_qr_expires">Vyprší za %1$s</string>
-    <string name="auth_qr_phone_hint">Pro přihlášení e-mailem/heslem použijte telefon. TV zůstává pouze QR pro rychlejší přihlášení.</string>
     <string name="auth_qr_scan_instruction">Naskenujte QR, schvalte v prohlížeči a poté se sem vraťte.</string>
     <string name="auth_qr_code_display">Kód: %1$s</string>
     <string name="auth_qr_refresh">Obnovit QR</string>
@@ -2868,4 +2864,5 @@
     <string name="stream_test_video_bitrate">Průměrný datový tok videa: %1$s</string>
     <string name="stream_test_error_connection">Připojení selhalo. Platnost posledního přehraného odkazu na stream mohla vypršet, nebo je nedostupný. Přehrajte prosím video znovu a zkuste to opět.</string>
 
+    <string name="auth_qr_phone_hint">Pro přihlášení e-mailem/heslem použijte telefon. TV zůstává pouze QR pro rychlejší přihlášení.</string>
 </resources>

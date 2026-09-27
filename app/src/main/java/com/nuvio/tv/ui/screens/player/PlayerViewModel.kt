@@ -69,8 +69,17 @@ class PlayerViewModel @Inject constructor(
     private val livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
     private val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
     private val playbackActivityTracker: com.nuvio.tv.core.player.PlaybackActivityTracker,
+    private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    /**
+     * Profile this playback belongs to: the one that launched it (nav arg), else the active one.
+     * Watch state recorded for an external-player session is scoped to it, so a profile switch
+     * mid-playback cannot write into another profile's history.
+     */
+    private val launchProfileId: Int =
+        savedStateHandle.get<String>("profileId")?.toIntOrNull() ?: profileManager.activeProfileId.value
 
     init {
         // Release trailer player codec resources so the full-screen player can
@@ -225,7 +234,8 @@ class PlayerViewModel @Inject constructor(
             season = controller.currentSeason,
             episode = controller.currentEpisode,
             episodeTitle = controller.currentEpisodeTitle,
-            year = controller.year
+            year = controller.year,
+            profileId = launchProfileId
         )
 
         // Pass already-loaded addon subtitles if forward setting is enabled

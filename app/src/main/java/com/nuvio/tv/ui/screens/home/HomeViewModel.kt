@@ -62,6 +62,7 @@ import javax.inject.Inject
 class HomeViewModel @Inject constructor(
     @ApplicationContext internal val appContext: Context,
     internal val addonRepository: AddonRepository,
+    internal val startupSyncService: com.nuvio.tv.core.sync.StartupSyncService,
     internal val catalogRepository: CatalogRepository,
     internal val watchProgressRepository: WatchProgressRepository,
     internal val libraryRepository: LibraryRepository,
@@ -91,6 +92,9 @@ class HomeViewModel @Inject constructor(
         private const val MAX_NEXT_UP_LOOKUPS = 24
         private const val MAX_NEXT_UP_CONCURRENCY = 4
         private const val MAX_CATALOG_LOAD_CONCURRENCY = 3
+
+        /** How long a home catalog is left alone before a return to Home re-requests it. */
+        private const val HOME_CATALOG_REFRESH_TTL_MS = 15L * 60L * 1000L
         internal const val EXTERNAL_META_PREFETCH_FOCUS_DEBOUNCE_MS = 220L
         internal const val EXTERNAL_META_PREFETCH_ADJACENT_DEBOUNCE_MS = 120L
         private const val MAX_ENRICHMENT_CACHE_SIZE = 64
@@ -175,6 +179,35 @@ class HomeViewModel @Inject constructor(
     internal val _failedEnrichmentIds = MutableStateFlow<Set<String>>(emptySet())
     val failedEnrichmentIds: StateFlow<Set<String>> = _failedEnrichmentIds.asStateFlow()
 
+    /**
+     * Bounded like the enrichment and prefetch caches beside it. This set is only a hint for the
+     * hero, telling it to stop waiting and render catalog data, so evicting the oldest entry costs
+     * at most one frame of the loading state the next time that item is focused.
+     *
+     * Insertion order is part of the contract even though the type is a plain Set: eviction drops
+     * the oldest entry, and both this and clearEnrichmentFailure preserve order.
+     */
+    internal fun markEnrichmentFailed(id: String) {
+        _failedEnrichmentIds.update { current ->
+            if (id in current) return@update current
+            val updated = LinkedHashSet(current).apply { add(id) }
+            while (updated.size > MAX_ENRICHMENT_CACHE_SIZE) {
+                updated.remove(updated.first())
+            }
+            updated
+        }
+    }
+
+    /** Enrichment succeeded after a previous failure, so the item is no longer a failed one. */
+    internal fun clearEnrichmentFailure(id: String) {
+        _failedEnrichmentIds.update { current -> if (id in current) current - id else current }
+    }
+
+    /** Drops every failure marker, for the resets that clear the caches beside this one. */
+    internal fun clearEnrichmentFailures() {
+        _failedEnrichmentIds.value = emptySet()
+    }
+
     internal val catalogStateLock = Any()
     internal val catalogsMap = linkedMapOf<String, CatalogRow>()
     internal val catalogItemKeyIndex = mutableMapOf<String, MutableSet<String>>()
@@ -219,6 +252,9 @@ class HomeViewModel @Inject constructor(
     internal var externalMetaPrefetchJob: Job? = null
     internal var pendingExternalMetaPrefetchItemId: String? = null
     internal val prefetchedTmdbIds: MutableSet<String> = Collections.newSetFromMap(createLruMap(MAX_PREFETCH_CACHE_SIZE))
+
+    /** Items an enrichment merge was applied for. */
+    internal val enrichmentMergedIds: MutableSet<String> = Collections.newSetFromMap(createLruMap(MAX_PREFETCH_CACHE_SIZE))
     internal val cwMetaCache: MutableMap<String, CwMetaSummary?> = createLruMap(MAX_CW_CACHE_SIZE)
     internal val cwMetaNegativeCacheTimestamps: MutableMap<String, Long> = createLruMap(MAX_CW_CACHE_SIZE)
     /** Ultra-light cache for badge evaluation: contentId → set of aired (season, episode) pairs. */
@@ -325,6 +361,7 @@ class HomeViewModel @Inject constructor(
             observeProgressSourceChanges()
             observeCollections()
             observeInstalledAddons()
+            observeManualAddonRefresh()
 
             // Clear CW state when profile changes so items don't leak between profiles.
             var previousProfileId = profileManager.activeProfileId.value
@@ -474,6 +511,32 @@ class HomeViewModel @Inject constructor(
                     _uiState.update { it.copy(continueWatchingCardStyle = style) }
                 }
         }
+        viewModelScope.launch {
+            var initialPattern = true
+            layoutPreferenceDataStore.customPosterUrlPattern
+                .distinctUntilChanged()
+                .collect { pattern ->
+                    _uiState.update { it.copy(customPosterUrlPattern = pattern) }
+                    if (initialPattern) {
+                        initialPattern = false
+                    } else {
+                        refreshVisibleCatalogsPipeline(forceReplace = true)
+                    }
+                }
+        }
+        viewModelScope.launch {
+            var initialScreens = true
+            layoutPreferenceDataStore.customPosterEnabledScreens
+                .distinctUntilChanged()
+                .collect { screens ->
+                    _uiState.update { it.copy(customPosterEnabledScreens = screens) }
+                    if (initialScreens) {
+                        initialScreens = false
+                    } else {
+                        refreshVisibleCatalogsPipeline(forceReplace = true)
+                    }
+                }
+        }
         // When "next up from furthest episode" changes, clear CW caches and retrigger pipeline
         viewModelScope.launch {
             var initial = true
@@ -547,10 +610,13 @@ class HomeViewModel @Inject constructor(
     private fun observeProgressSourceChanges() {
         viewModelScope.launch {
             var previousSource: com.nuvio.tv.data.local.WatchProgressSource? = null
+            var previousProfileId: Int? = null
             traktSettingsDataStore.watchProgressSource
                 .collect { source ->
-                    if (previousSource != null && previousSource != source) {
-                        // Source changed — clear CW caches to prevent mixing.
+                    val currentProfileId = profileManager.activeProfileId.value
+                    val profileChanged = previousProfileId != null && previousProfileId != currentProfileId
+                    if (previousSource != null && previousSource != source && !profileChanged) {
+                        // Genuine in-profile source change — clear CW caches to prevent mixing.
                         cwMetaCache.clear()
                         cwEnrichedNextUpOverlay.clear()
                         cwEnrichedInProgressOverlay.clear()
@@ -565,6 +631,7 @@ class HomeViewModel @Inject constructor(
                         loadContinueWatching()
                     }
                     previousSource = source
+                    previousProfileId = currentProfileId
                 }
         }
     }
@@ -676,7 +743,8 @@ class HomeViewModel @Inject constructor(
                         isReleaseAlert = cached.isReleaseAlert,
                         isNewSeasonRelease = cached.isNewSeasonRelease,
                         seedSeason = cached.seedSeason,
-                        seedEpisode = cached.seedEpisode
+                        seedEpisode = cached.seedEpisode,
+                        contentLanguage = cached.contentLanguage
                     )
                 )
             }
@@ -710,6 +778,58 @@ class HomeViewModel @Inject constructor(
     private fun observeCollections() = observeCollectionsPipeline()
 
     private fun observeInstalledAddons() = observeInstalledAddonsPipeline()
+
+    /**
+     * Set when the catalogs were last loaded or refreshed, so returning to Home right after
+     * the initial load does not immediately re-request everything. Monotonic, so a clock
+     * correction cannot block or force a refresh.
+     */
+    internal var lastHomeCatalogRefreshAtMs: Long = 0L
+
+    /**
+     * Row the user currently has focus on, reported by the Home content as it changes. Kept out
+     * of [focusState] on purpose: that one is passed down to the Home composables, and emitting
+     * on every vertical move would recompose the whole row list.
+     *
+     * It deliberately survives leaving Home: the refresh runs on the way back in, before the row
+     * list has had a chance to report focus again, so clearing it there would shield nothing.
+     */
+    @Volatile
+    internal var liveFocusedRowKey: String? = null
+
+    /** Called by the Home content when the focused row changes. */
+    fun setLiveFocusedRowKey(rowKey: String?) {
+        liveFocusedRowKey = rowKey
+    }
+
+    /**
+     * Called when Home comes back to the foreground, whether from another screen or from
+     * outside the app.  Re-requests page 1 of the catalogs already loaded when the last
+     * refresh is older than [HOME_CATALOG_REFRESH_TTL_MS], at most once per interval, and
+     * merges each result into the row that is already on screen.
+     */
+    /**
+     * The user pressed refresh in addon settings. Home is still on the back stack, so its
+     * catalogs are re-requested right away rather than waiting for the interval or for the
+     * user to come back. The same merge rules apply, so a row is never rebuilt under focus.
+     */
+    private fun observeManualAddonRefresh() {
+        viewModelScope.launch {
+            startupSyncService.manualAddonRefreshes.collect {
+                if (addonsCache.isEmpty()) return@collect
+                lastHomeCatalogRefreshAtMs = android.os.SystemClock.elapsedRealtime()
+                refreshVisibleCatalogsPipeline(requestedByUser = true)
+            }
+        }
+    }
+
+    fun refreshHomeCatalogsIfStale() {
+        if (addonsCache.isEmpty()) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastHomeCatalogRefreshAtMs < HOME_CATALOG_REFRESH_TTL_MS) return
+        lastHomeCatalogRefreshAtMs = now
+        refreshVisibleCatalogsPipeline()
+    }
 
     private suspend fun loadAllCatalogs(addons: List<Addon>, forceReload: Boolean = false) =
         loadAllCatalogsPipeline(addons, forceReload)
@@ -826,6 +946,7 @@ class HomeViewModel @Inject constructor(
         focusedRowKey: String?,
         focusedItemKeyByRow: Map<String, String>,
         catalogRowScrollStates: Map<String, Int>,
+        catalogRowScrollAnchors: Map<String, String>,
         focusedRowIndex: Int = 0,
         focusedItemIndex: Int = 0
     ) {
@@ -839,6 +960,7 @@ class HomeViewModel @Inject constructor(
             focusedRowKey = focusedRowKey,
             focusedItemKeyByRow = focusedItemKeyByRow,
             catalogRowScrollStates = catalogRowScrollStates,
+            catalogRowScrollAnchors = catalogRowScrollAnchors,
             focusedRowIndex = focusedRowIndex,
             focusedItemIndex = focusedItemIndex,
             hasSavedFocus = true

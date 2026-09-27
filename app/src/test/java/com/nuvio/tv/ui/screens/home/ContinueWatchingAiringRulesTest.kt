@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 
 /**
@@ -132,7 +133,7 @@ class ContinueWatchingAiringRulesTest {
 
         val ms = meta.earliestUpcomingEpisodeMs(now)
         assertNotNull(ms)
-        val expected = tomorrow.atStartOfDay(zone).toInstant().toEpochMilli()
+        val expected = tomorrow.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
         assertEquals(expected, ms)
 
         // Revalidation should prefer the nearer mid-season episode over S2 premiere window.

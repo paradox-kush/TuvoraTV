@@ -26,6 +26,7 @@ data class HomeUiState(
     val installedAddonsCount: Int = 0,
     val homeLayout: HomeLayout = HomeLayout.MODERN,
     val modernLandscapePostersEnabled: Boolean = false,
+    val alwaysShowLandscapeClearlogo: Boolean = false,
     val modernHeroFullScreenBackdropEnabled: Boolean = false,
     val homeImdbRatingsVisibility: HomeImdbRatingsVisibility = HomeImdbRatingsVisibility.SHOW_ALL,
     val heroItems: List<MetaPreview> = emptyList(),
@@ -67,7 +68,10 @@ data class HomeUiState(
     val continueWatchingCardStyle: ContinueWatchingCardStyle = ContinueWatchingCardStyle.CARD,
     val heroEnrichmentEnabled: Boolean = false,
     val startupAuthNotice: StartupAuthNotice? = null,
-    val homeRows: List<HomeRow> = emptyList()
+    val homeRows: List<HomeRow> = emptyList(),
+    val customPosterUrlPattern: String = "",
+    val customPosterEnabledScreens: Set<com.nuvio.tv.core.poster.CustomPosterScreen> =
+        com.nuvio.tv.core.poster.CustomPosterScreen.ALL
 )
 
 @Immutable
@@ -80,11 +84,17 @@ sealed class ContinueWatchingItem {
         val episodeImdbRating: Float? = null,
         val genres: List<String> = emptyList(),
         val releaseInfo: String? = null,
-        val contentLanguage: String? = null
+        val contentLanguage: String? = null,
+        val originalPoster: String? = null,
+        val customLandscapePoster: String? = null
     ) : ContinueWatchingItem()
 
     @Immutable
-    data class NextUp(val info: NextUpInfo) : ContinueWatchingItem()
+    data class NextUp(
+        val info: NextUpInfo,
+        val originalPoster: String? = null,
+        val customLandscapePoster: String? = null
+    ) : ContinueWatchingItem()
 }
 
 @Immutable
@@ -161,7 +171,9 @@ sealed class GridItem {
         val item: MetaPreview,
         val addonBaseUrl: String,
         val catalogId: String,
-        val catalogName: String
+        val catalogName: String,
+        /** Row this card belongs to, so the grid can report which row holds focus. */
+        val addonId: String = ""
     ) : GridItem()
     @Immutable
     data class SeeAll(

@@ -134,6 +134,7 @@ data class CarouselRowLookups(
     val fallbackBackdropByRow: StableMap<String, String>,
     val activeRowKeys: StableSet<String>,
     val activeItemKeysByRow: StableMap<String, Set<String>>,
+    val itemIdentitiesByRow: StableMap<String, StableList<String>>,
     val activeCatalogItemIds: StableSet<String>
 )
 
@@ -148,6 +149,7 @@ data class ModernHomePresentationState(
         fallbackBackdropByRow = StableMap(),
         activeRowKeys = StableSet(),
         activeItemKeysByRow = StableMap(),
+        itemIdentitiesByRow = StableMap(),
         activeCatalogItemIds = StableSet()
     )
 )
@@ -345,7 +347,7 @@ internal fun buildContinueWatchingItem(
                 poster = item.progress.poster,
                 backdrop = item.progress.backdrop,
                 imageUrl = if (useLandscapePosters) {
-                    item.progress.backdrop ?: item.progress.poster
+                    item.customLandscapePoster ?: item.progress.backdrop ?: item.progress.poster
                 } else {
                     item.progress.poster ?: item.progress.backdrop
                 }
@@ -375,7 +377,7 @@ internal fun buildContinueWatchingItem(
                 poster = item.info.poster,
                 backdrop = item.info.backdrop,
                 imageUrl = if (useLandscapePosters) {
-                    firstNonBlank(item.info.backdrop, item.info.poster, item.info.thumbnail)
+                    item.customLandscapePoster ?: firstNonBlank(item.info.backdrop, item.info.poster, item.info.thumbnail)
                 } else {
                     firstNonBlank(item.info.poster, item.info.backdrop, item.info.thumbnail)
                 }
@@ -385,7 +387,7 @@ internal fun buildContinueWatchingItem(
 
     val imageUrl = when (item) {
         is ContinueWatchingItem.InProgress -> if (useLandscapePosters) {
-            if (isSeriesType(item.progress.contentType)) {
+            item.customLandscapePoster ?: if (isSeriesType(item.progress.contentType)) {
                 firstNonBlank(item.episodeThumbnail, item.progress.poster, item.progress.backdrop)
             } else {
                 firstNonBlank(item.progress.backdrop, item.progress.poster)
@@ -398,7 +400,7 @@ internal fun buildContinueWatchingItem(
             }
         }
         is ContinueWatchingItem.NextUp -> if (useLandscapePosters) {
-            if (item.info.hasAired) {
+            item.customLandscapePoster ?: if (item.info.hasAired) {
                 firstNonBlank(item.info.thumbnail, item.info.poster, item.info.backdrop)
             } else {
                 firstNonBlank(item.info.backdrop, item.info.poster, item.info.thumbnail)
@@ -491,7 +493,7 @@ internal fun buildCatalogItem(
         poster = item.poster,
         backdrop = item.backdropUrl,
         imageUrl = if (useLandscapePosters) {
-            item.backdropUrl ?: item.poster
+            item.landscapePoster ?: item.backdropUrl ?: item.poster
         } else {
             item.poster ?: item.backdropUrl
         },
@@ -504,7 +506,7 @@ internal fun buildCatalogItem(
         title = item.name,
         subtitle = item.releaseInfo,
         imageUrl = if (useLandscapePosters) {
-            item.backdropUrl ?: item.poster
+            item.landscapePoster ?: item.backdropUrl ?: item.poster
         } else {
             item.poster ?: item.backdropUrl
         },

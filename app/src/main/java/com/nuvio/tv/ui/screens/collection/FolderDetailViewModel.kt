@@ -26,6 +26,7 @@ import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.TmdbCollectionSource
 import com.nuvio.tv.domain.model.TraktCollectionSource
 import com.nuvio.tv.domain.model.enabledAddons
+import com.nuvio.tv.domain.model.findCollectionCatalog
 import com.nuvio.tv.domain.model.mergeCatalogPage
 import com.nuvio.tv.domain.model.nextCatalogSkip
 import com.nuvio.tv.domain.model.skipStep
@@ -43,6 +44,7 @@ import com.nuvio.tv.ui.screens.home.homeItemStatusKey
 import com.nuvio.tv.ui.screens.home.isPlaceholderItemId
 import com.nuvio.tv.ui.screens.home.isPlaceholderRow
 import com.nuvio.tv.domain.repository.CatalogRepository
+import com.nuvio.tv.core.poster.withCustomPosterUrls
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -77,6 +79,7 @@ data class FolderDetailUiState(
     val focusedPosterBackdropTrailerMuted: Boolean = true,
     val focusedPosterBackdropTrailerPlaybackTarget: FocusedPosterTrailerPlaybackTarget =
         FocusedPosterTrailerPlaybackTarget.HERO_MEDIA,
+    val classicFocusGradientEnabled: Boolean = false,
     val posterCardWidthDp: Int = 126,
     val posterCardHeightDp: Int = 189,
     val posterCardCornerRadiusDp: Int = 12,
@@ -248,6 +251,7 @@ class FolderDetailViewModel @Inject constructor(
             val focusedPosterBackdropTrailerMuted = layoutPreferenceDataStore.focusedPosterBackdropTrailerMuted.first()
             val focusedPosterBackdropTrailerPlaybackTarget =
                 layoutPreferenceDataStore.focusedPosterBackdropTrailerPlaybackTarget.first()
+            val classicFocusGradientEnabled = layoutPreferenceDataStore.classicFocusGradientEnabled.first()
             val posterCardWidthDp = layoutPreferenceDataStore.posterCardWidthDp.first()
             val posterCardHeightDp = layoutPreferenceDataStore.posterCardHeightDp.first()
             val posterCardCornerRadiusDp = layoutPreferenceDataStore.posterCardCornerRadiusDp.first()
@@ -261,11 +265,11 @@ class FolderDetailViewModel @Inject constructor(
                 val (name, typeLabel, rawType) = when (source) {
                     is AddonCatalogCollectionSource -> {
                         val addon = addons.find { it.id == source.addonId }
-                        val catalog = addon?.catalogs?.find { it.id == source.catalogId && it.apiType == source.type }
-                            ?: addon?.catalogs?.find { it.id == source.catalogId.substringBefore(",") && it.apiType == source.type }
-                            ?: addons.firstNotNullOfOrNull { a -> a.catalogs.find { it.id == source.catalogId && it.apiType == source.type } }
+                        val catalog = addon?.catalogs?.findCollectionCatalog(source.type, source.catalogId)
+                            ?: addon?.catalogs?.findCollectionCatalog(source.type, source.catalogId.substringBefore(","))
+                            ?: addons.firstNotNullOfOrNull { a -> a.catalogs.findCollectionCatalog(source.type, source.catalogId) }
                         val labels = buildAddonTabLabels(source, catalog?.name)
-                        Triple(labels.first, labels.second, source.type)
+                        Triple(labels.first, labels.second, catalog?.apiType ?: source.type)
                     }
                     is TmdbCollectionSource -> Triple(source.title, buildTmdbTypeLabel(source), source.mediaType.value.toCollectionRawType())
                     is TraktCollectionSource -> Triple(source.title, buildTraktTypeLabel(source), source.mediaType.value.toCollectionRawType())
@@ -346,6 +350,7 @@ class FolderDetailViewModel @Inject constructor(
                         AppFeaturePolicy.inAppTrailerPlaybackEnabled,
                     focusedPosterBackdropTrailerMuted = focusedPosterBackdropTrailerMuted,
                     focusedPosterBackdropTrailerPlaybackTarget = focusedPosterBackdropTrailerPlaybackTarget,
+                    classicFocusGradientEnabled = classicFocusGradientEnabled && homeLayout == HomeLayout.CLASSIC,
                     posterCardWidthDp = posterCardWidthDp,
                     posterCardHeightDp = posterCardHeightDp,
                     posterCardCornerRadiusDp = posterCardCornerRadiusDp,
@@ -564,7 +569,8 @@ class FolderDetailViewModel @Inject constructor(
                         hideUnreleasedContent = s.hideUnreleasedContent,
                         showFullReleaseDate = s.showFullReleaseDate,
                         movieWatchedStatus = s.movieWatchedStatus,
-                        heroEnrichmentEnabled = computedHeroEnrichmentEnabled
+                        heroEnrichmentEnabled = computedHeroEnrichmentEnabled,
+                        classicFocusGradientEnabled = s.classicFocusGradientEnabled
                     )
                     s.copy(followLayoutHomeState = homeState.copy(modernHomePresentation = modernPresentation))
                 }
@@ -596,7 +602,8 @@ class FolderDetailViewModel @Inject constructor(
                     hideUnreleasedContent = s.hideUnreleasedContent,
                     showFullReleaseDate = s.showFullReleaseDate,
                     movieWatchedStatus = s.movieWatchedStatus,
-                    heroEnrichmentEnabled = false
+                    heroEnrichmentEnabled = false,
+                    classicFocusGradientEnabled = s.classicFocusGradientEnabled
                 )
                 s.copy(followLayoutHomeState = homeState)
             }
@@ -645,13 +652,13 @@ class FolderDetailViewModel @Inject constructor(
                 return@launch
             }
 
-            var catalog = addon.catalogs.find { it.id == source.catalogId && it.apiType == source.type }
-                ?: addon.catalogs.find { it.id == source.catalogId.substringBefore(",") && it.apiType == source.type }
+            var catalog = addon.catalogs.findCollectionCatalog(source.type, source.catalogId)
+                ?: addon.catalogs.findCollectionCatalog(source.type, source.catalogId.substringBefore(","))
             // If the catalog wasn't found in the declared addon, search all installed addons.
             var effectiveAddon: com.nuvio.tv.domain.model.Addon = addon
             if (catalog == null) {
                 for (a in addons) {
-                    val match = a.catalogs.find { it.id == source.catalogId && it.apiType == source.type }
+                    val match = a.catalogs.findCollectionCatalog(source.type, source.catalogId)
                     if (match != null) {
                         effectiveAddon = a
                         catalog = match
@@ -674,11 +681,12 @@ class FolderDetailViewModel @Inject constructor(
                 addonName = effectiveAddon.displayName,
                 catalogId = source.catalogId,
                 catalogName = catalogName,
-                type = source.type,
+                type = catalog?.apiType ?: source.type,
                 skip = 0,
                 skipStep = skipStep,
                 extraArgs = extraArgs,
-                supportsSkip = supportsSkip
+                supportsSkip = supportsSkip,
+                posterScreen = com.nuvio.tv.core.poster.CustomPosterScreen.COLLECTIONS
             ).collect { result ->
                 when (result) {
                     is NetworkResult.Success -> {
@@ -773,7 +781,8 @@ class FolderDetailViewModel @Inject constructor(
                 skip = nextSkip,
                 skipStep = row.skipStep,
                 extraArgs = row.extraArgs,
-                supportsSkip = row.supportsSkip
+                supportsSkip = row.supportsSkip,
+                posterScreen = com.nuvio.tv.core.poster.CustomPosterScreen.COLLECTIONS
             ).collect { result ->
                 when (result) {
                     is NetworkResult.Success -> {
@@ -849,6 +858,7 @@ class FolderDetailViewModel @Inject constructor(
         focusedRowKey: String?,
         focusedItemKeyByRow: Map<String, String>,
         catalogRowScrollStates: Map<String, Int>,
+        catalogRowScrollAnchors: Map<String, String>,
         focusedRowIndex: Int = 0,
         focusedItemIndex: Int = 0
     ) {
@@ -858,6 +868,7 @@ class FolderDetailViewModel @Inject constructor(
             focusedRowKey = focusedRowKey,
             focusedItemKeyByRow = focusedItemKeyByRow,
             catalogRowScrollStates = catalogRowScrollStates,
+            catalogRowScrollAnchors = catalogRowScrollAnchors,
             focusedRowIndex = focusedRowIndex,
             focusedItemIndex = focusedItemIndex,
             hasSavedFocus = true
@@ -873,6 +884,7 @@ class FolderDetailViewModel @Inject constructor(
         focusedRowKey: String?,
         focusedItemKeyByRow: Map<String, String>,
         catalogRowScrollStates: Map<String, Int>,
+        catalogRowScrollAnchors: Map<String, String>,
         focusedRowIndex: Int = 0,
         focusedItemIndex: Int = 0
     ) {
@@ -882,6 +894,7 @@ class FolderDetailViewModel @Inject constructor(
             focusedRowKey = focusedRowKey,
             focusedItemKeyByRow = focusedItemKeyByRow,
             catalogRowScrollStates = catalogRowScrollStates,
+            catalogRowScrollAnchors = catalogRowScrollAnchors,
             focusedRowIndex = focusedRowIndex,
             focusedItemIndex = focusedItemIndex,
             hasSavedFocus = true
@@ -922,6 +935,8 @@ class FolderDetailViewModel @Inject constructor(
             tmdbCollectionSourceResolver.resolve(source, page).collect { result ->
                 when (result) {
                     is NetworkResult.Success -> {
+                        val posterPattern = layoutPreferenceDataStore.customPosterUrlPattern.first()
+                        val enabledScreens = layoutPreferenceDataStore.customPosterEnabledScreens.first()
                         _uiState.update { s ->
                             val tabs = s.tabs.toMutableList()
                             val currentRow = tabs.getOrNull(tabIndex)?.catalogRow
@@ -940,7 +955,7 @@ class FolderDetailViewModel @Inject constructor(
                             } else {
                                 filteredData
                             }
-                            if (tabIndex < tabs.size) tabs[tabIndex] = tabs[tabIndex].copy(catalogRow = row, isLoading = false)
+                            if (tabIndex < tabs.size) tabs[tabIndex] = tabs[tabIndex].copy(catalogRow = row.copy(items = row.items.withCustomPosterUrls(com.nuvio.tv.core.poster.patternForScreen(posterPattern, com.nuvio.tv.core.poster.CustomPosterScreen.COLLECTIONS, enabledScreens))), isLoading = false)
                             s.copy(tabs = tabs)
                         }
                         rebuildAllTab()
@@ -988,6 +1003,8 @@ class FolderDetailViewModel @Inject constructor(
             traktPublicListSourceResolver.resolve(source, page).collect { result ->
                 when (result) {
                     is NetworkResult.Success -> {
+                        val posterPattern = layoutPreferenceDataStore.customPosterUrlPattern.first()
+                        val enabledScreens = layoutPreferenceDataStore.customPosterEnabledScreens.first()
                         _uiState.update { s ->
                             val tabs = s.tabs.toMutableList()
                             val currentRow = tabs.getOrNull(tabIndex)?.catalogRow
@@ -1006,7 +1023,7 @@ class FolderDetailViewModel @Inject constructor(
                             } else {
                                 filteredData
                             }
-                            if (tabIndex < tabs.size) tabs[tabIndex] = tabs[tabIndex].copy(catalogRow = row, isLoading = false)
+                            if (tabIndex < tabs.size) tabs[tabIndex] = tabs[tabIndex].copy(catalogRow = row.copy(items = row.items.withCustomPosterUrls(com.nuvio.tv.core.poster.patternForScreen(posterPattern, com.nuvio.tv.core.poster.CustomPosterScreen.COLLECTIONS, enabledScreens))), isLoading = false)
                             s.copy(tabs = tabs)
                         }
                         rebuildAllTab()
@@ -1214,11 +1231,6 @@ class FolderDetailViewModel @Inject constructor(
                         result = result.copy(
                             background = finalEnrichment.backdrop ?: result.background,
                             logo = finalEnrichment.logo ?: result.logo
-                        )
-                    }
-                    if (tmdbSettings.useReleaseDates) {
-                        result = result.copy(
-                            releaseInfo = finalEnrichment.releaseInfo ?: result.releaseInfo
                         )
                     }
                     if (tmdbSettings.useDetails) {
@@ -1477,11 +1489,6 @@ class FolderDetailViewModel @Inject constructor(
                                     result = result.copy(
                                         background = enrichment.backdrop ?: result.background,
                                         logo = enrichment.logo ?: result.logo
-                                    )
-                                }
-                                if (tmdbSettings.useReleaseDates) {
-                                    result = result.copy(
-                                        releaseInfo = enrichment.releaseInfo ?: result.releaseInfo
                                     )
                                 }
                                 if (tmdbSettings.useDetails) {

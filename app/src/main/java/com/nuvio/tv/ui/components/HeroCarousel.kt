@@ -38,6 +38,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.key.Key
@@ -51,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -64,6 +67,7 @@ import coil3.request.ImageRequest
 import coil3.request.colorSpace
 import coil3.request.crossfade
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.ui.util.contentTextDirection
 import com.nuvio.tv.ui.util.formatHeroRuntime
 import com.nuvio.tv.ui.util.LocalRecompositionHighlighterEnabled
 import com.nuvio.tv.ui.util.localizedContentType
@@ -84,6 +88,7 @@ fun HeroCarousel(
     showImdbRatings: Boolean = true,
     showBackdrop: Boolean = true,
     fullWidth: Dp = Dp.Unspecified,
+    initialActiveIndex: Int = 0,
     modifier: Modifier = Modifier
 ) {
     if (items.isEmpty()) return
@@ -91,7 +96,7 @@ fun HeroCarousel(
     val currentOnItemClick by rememberUpdatedState(onItemClick)
     val currentOnItemFocus by rememberUpdatedState(onItemFocus)
     val currentOnActiveItemChanged by rememberUpdatedState(onActiveItemChanged)
-    var activeIndex by remember { mutableIntStateOf(0) }
+    var activeIndex by remember { mutableIntStateOf(initialActiveIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))) }
     var isFocused by remember { mutableStateOf(false) }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
@@ -173,9 +178,8 @@ fun HeroCarousel(
         }
 
         // Indicator dots — optimized to minimize recompositions and layout passes
-        val focusRing = NuvioTheme.colors.FocusRing
-        val dotColorFocusedInactive = remember(focusRing) { focusRing.copy(alpha = 0.4f) }
-        val dotColorUnfocusedInactive = remember { Color.White.copy(alpha = 0.3f) }
+        val focusRingBrush = NuvioTheme.focusRing.brush()
+        val dotColorInactive = remember { Color.White.copy(alpha = 0.3f) }
         val dotShape = remember { RoundedCornerShape(3.dp) }
         Row(
             modifier = Modifier
@@ -185,24 +189,25 @@ fun HeroCarousel(
         ) {
             repeat(items.size) { index ->
                 val isActive = index == activeIndex
-                val dotBackground = when {
-                    isFocused && isActive -> focusRing
-                    isFocused -> dotColorFocusedInactive
-                    isActive -> focusRing
-                    else -> dotColorUnfocusedInactive
+                val useGradient = isActive
+                val dotColor = when {
+                    isActive -> null // use gradient brush
+                    else -> dotColorInactive
                 }
                 val dotWidth = when {
-                    isFocused && isActive -> NuvioTheme.spacing.xxl
-                    isActive -> NuvioTheme.spacing.xl
+                    isActive -> NuvioTheme.spacing.xxl
                     else -> NuvioTheme.spacing.md
                 }
-                val dotHeight = if (isFocused && isActive) 6.dp else NuvioTheme.spacing.xs
+                val dotHeight = if (isActive) 6.dp else NuvioTheme.spacing.xs
                 
                 Box(
                     modifier = Modifier
                         .size(width = dotWidth, height = dotHeight)
                         .clip(dotShape)
-                        .background(dotBackground)
+                        .then(
+                            if (useGradient) Modifier.background(focusRingBrush)
+                            else Modifier.background(dotColor!!)
+                        )
                 )
             }
         }
@@ -366,7 +371,9 @@ private fun HeroCarouselSlide(
             item.description?.takeIf { it.isNotBlank() }?.let { description ->
                 Text(
                     text = description,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        textDirection = description.contentTextDirection()
+                    ),
                     color = NuvioTheme.colors.TextPrimary,
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis
@@ -418,7 +425,11 @@ internal fun HeroCarouselBackdrop(
     val bgColor = NuvioTheme.colors.Background
 
     Box(
-        modifier = modifier.drawWithCache {
+        modifier = modifier
+            .graphicsLayer {
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .drawWithCache {
             val bottomStartFraction = if (fullPage) 0.55f else 0.30f
             val leftEndFraction = if (fullPage) 0.66f else 0.72f
             val bottomStartY = size.height * bottomStartFraction

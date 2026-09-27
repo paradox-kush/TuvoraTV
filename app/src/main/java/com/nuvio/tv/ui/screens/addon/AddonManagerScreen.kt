@@ -102,6 +102,7 @@ import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.ExperienceMode
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.util.contentTextDirection
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -202,7 +203,7 @@ fun AddonManagerScreen(
         }
     }
 
-    LaunchedEffect(uiState.isQrModeActive, uiState.pendingChange, isEditing, addonUrlPendingDeletion) {
+    LaunchedEffect(uiState.isQrModeActive, uiState.pendingChange, addonUrlPendingDeletion) {
         if (!uiState.isQrModeActive && uiState.pendingChange == null && !isEditing && addonUrlPendingDeletion == null) {
             requestInputBarFocus()
         }
@@ -222,7 +223,7 @@ fun AddonManagerScreen(
         }
     }
 
-    DisposableEffect(lifecycleOwner, uiState.isQrModeActive, uiState.pendingChange, isEditing, addonUrlPendingDeletion) {
+    DisposableEffect(lifecycleOwner, uiState.isQrModeActive, uiState.pendingChange, addonUrlPendingDeletion) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME &&
                 !uiState.isQrModeActive &&
@@ -1438,7 +1439,9 @@ private fun AddonCardContent(
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
             Text(
                 text = addon.description ?: "",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    textDirection = (addon.description ?: "").contentTextDirection()
+                ),
                 color = NuvioTheme.colors.TextSecondary
             )
         }
@@ -1446,7 +1449,9 @@ private fun AddonCardContent(
         Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
         Text(
             text = addon.baseUrl,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.copy(
+                textDirection = addon.baseUrl.contentTextDirection()
+            ),
             color = NuvioTheme.colors.TextTertiary
         )
 

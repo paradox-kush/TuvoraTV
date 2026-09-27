@@ -23,7 +23,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
@@ -46,6 +49,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.model.CardDepthSurface
 import androidx.compose.ui.platform.LocalContext
 import com.nuvio.tv.ui.util.recompositionHighlighter
@@ -75,8 +79,17 @@ fun GridContentCard(
     val cardShape = remember(posterCardStyle.cornerRadius) { RoundedCornerShape(posterCardStyle.cornerRadius) }
     val cardDepthStyle = LocalCardDepthStyle.current
     val density = LocalDensity.current
+
+    // Derive card height from item's posterShape aspect ratio while keeping width from posterCardStyle.
+    // This ensures grids and rows display landscape/square shapes correctly.
+    val cardHeight = when (item.posterShape) {
+        PosterShape.POSTER -> posterCardStyle.height
+        PosterShape.LANDSCAPE -> posterCardStyle.width / PosterShape.LANDSCAPE.aspectRatio()
+        PosterShape.SQUARE -> posterCardStyle.width
+    }
+
     val requestWidthPx = remember(density, posterCardStyle.width) { with(density) { posterCardStyle.width.roundToPx() }.coerceAtLeast(1) }
-    val requestHeightPx = remember(density, posterCardStyle.height) { with(density) { posterCardStyle.height.roundToPx() }.coerceAtLeast(1) }
+    val requestHeightPx = remember(density, cardHeight) { with(density) { cardHeight.roundToPx() }.coerceAtLeast(1) }
     var isFocused by remember { mutableStateOf(false) }
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
@@ -97,7 +110,7 @@ fun GridContentCard(
             },
             modifier = Modifier
                 .width(posterCardStyle.width)
-                .height(posterCardStyle.height)
+                .height(cardHeight)
                 .then(
                     if (focusRequester != null) Modifier.focusRequester(focusRequester)
                     else Modifier
@@ -185,6 +198,12 @@ fun GridContentCard(
                     if (revalidationKey > 0) {
                         builder.placeholderMemoryCacheKey("${item.poster}_${requestWidthPx}x${requestHeightPx}_v${revalidationKey - 1}")
                     }
+                    val fallbackUrl = item.rawPosterUrl
+                    if (!fallbackUrl.isNullOrBlank() && fallbackUrl != item.poster) {
+                        builder.memoryCacheKeyExtras(
+                            mapOf(com.nuvio.tv.core.image.CustomPosterFallbackInterceptor.FALLBACK_URL_KEY to fallbackUrl)
+                        )
+                    }
                     builder.build()
                 }
                 if (item.poster.isNullOrBlank()) {
@@ -206,12 +225,16 @@ fun GridContentCard(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(posterCardStyle.height * 0.45f)
-                            .background(
-                                Brush.verticalGradient(
+                            .height(cardHeight * 0.45f)
+                            .graphicsLayer {
+                                compositingStrategy = CompositingStrategy.Offscreen
+                            }
+                            .drawWithCache {
+                                val gradient = Brush.verticalGradient(
                                     listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))
                                 )
-                            )
+                                onDrawBehind { drawRect(gradient) }
+                            }
                     )
                     val logoRequest = remember(item.logo) {
                         ImageRequest.Builder(context)
@@ -226,7 +249,7 @@ fun GridContentCard(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .heightIn(max = posterCardStyle.height * 0.35f)
+                            .heightIn(max = cardHeight * 0.35f)
                             .padding(horizontal = NuvioTheme.spacing.lg, vertical = 14.dp)
                     )
                 }

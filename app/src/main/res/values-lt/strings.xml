@@ -446,7 +446,7 @@
     <string name="layout_trailer_muted">Paleisti anonsą be garso</string>
     <string name="layout_trailer_muted_sub_preview">Nutildyti anonso garsą automatinio paleidimo peržiūros metu.</string>
     <string name="layout_trailer_muted_sub_expanded">Nutildyti anonso garsą išskleistose kortelėse.</string>
-    <string name="layout_section_card_style">Plakato kortelės stilius</string>
+    <string name="layout_section_card_style">Plakato kortelė</string>
     <string name="layout_section_card_style_desc">Reguliuoti kortelės plotį ir kampo spindulį.</string>
     <string name="layout_open">Atidaryta</string>
     <string name="layout_closed">Uždaryta</string>
@@ -867,11 +867,9 @@ Klaida: Bandomoji simuliuojama klaida — tai nėra tikras gedimas. Šaltinis gr
 
     <!-- AuthQrSignInScreen -->
     <string name="auth_qr_title">Prisijungti per telefoną</string>
-    <string name="auth_qr_account_login">Paskyros prisijungimas</string>
     <string name="auth_qr_finishing">Užbaigiama…</string>
     <string name="auth_qr_code_label">Skenuokite QR kodą</string>
-    <string name="auth_qr_expires">Kodas baigsis po %1$d s</string>
-    <string name="auth_qr_phone_hint">Naudokite savo telefoną sinchronizavimui</string>
+    <string name="auth_qr_expires">Kodas baigsis po %1$s</string>
     <string name="auth_qr_scan_instruction">Nukreipkite kamerą į kodą</string>
     <string name="auth_qr_code_display">QR kodo rodymas</string>
     <string name="auth_qr_refresh">Atnaujinti kodą</string>
@@ -1025,4 +1023,5 @@ Klaida: Bandomoji simuliuojama klaida — tai nėra tikras gedimas. Šaltinis gr
     <string name="watchlist_removed">Pašalinta iš žiūrėjimo sąrašo</string>
     <string name="playback_player_auto">Automatiškai (Geriausia turiniui)</string>
     <string name="playback_player_auto_desc">ExoPlayer filmams ir serialams · MPV animėms</string>
+    <string name="auth_qr_phone_hint">Naudokite savo telefoną sinchronizavimui</string>
 </resources>

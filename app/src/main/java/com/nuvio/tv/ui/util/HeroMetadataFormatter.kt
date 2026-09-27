@@ -1,16 +1,14 @@
 package com.nuvio.tv.ui.util
 
-private val HOURS_REGEX = "(\\d+)\\s*h".toRegex()
-private val MINUTES_REGEX = "(\\d+)\\s*m(?:in)?".toRegex()
+import com.nuvio.tv.core.util.parseRuntimeMinutes
 
 fun formatHeroRuntime(runtime: String?): String? {
     val normalized = runtime?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
-    val hours = HOURS_REGEX.find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull()
-    val minutes = MINUTES_REGEX.find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull()
-    val totalMinutes = when {
-        hours != null || minutes != null -> (hours ?: 0) * 60 + (minutes ?: 0)
-        else -> normalized.filter(Char::isDigit).toIntOrNull()
-    } ?: return runtime
+    val totalMinutes = parseRuntimeMinutes(normalized) ?: return runtime
+    // TMDB answers with runtime 0, not null, for a title whose length it does not know yet --
+    // common for anything newly added. Formatting that produced a literal "0m" next to the
+    // genre. No runtime is the honest reading of zero, and callers already drop a null.
+    if (totalMinutes <= 0) return null
 
     val wholeHours = totalMinutes / 60
     val remainingMinutes = totalMinutes % 60

@@ -12,7 +12,6 @@ import com.nuvio.tv.core.iptv.classifyPanelThrowable
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.data.remote.api.AniSkipApi
 import com.nuvio.tv.data.remote.api.AnimeSkipApi
-import com.nuvio.tv.data.remote.api.ArmApi
 import com.nuvio.tv.data.remote.api.AuthDiagnosticReportApi
 import com.nuvio.tv.data.remote.api.GitHubReleaseApi
 import com.nuvio.tv.data.remote.api.SupportersApi
@@ -110,22 +109,15 @@ object NetworkModule {
         .add(KotlinJsonAdapterFactory())
         .build()
 
-    /**
-     * Validating client for fixed first-party endpoints (TMDB, Trakt, the updater, sync backend,
-     * and our own metadata services). Performs platform certificate and hostname verification.
-     *
-     * Addon- and IPTV-provided URLs, which routinely point at self-hosted servers with self-signed
-     * certificates, must NOT ride this client — they use the `addonPermissive` client below. Keeping
-     * trust-all off the unnamed default is a security fix: first-party traffic previously inherited
-     * a trust-all `X509TrustManager` + always-true hostname verifier through this binding.
-     */
+    /** Validating client for fixed first-party endpoints. Addon URLs use `addonPermissive`. */
     @Provides
     @Singleton
     fun provideOkHttpClient(@ApplicationContext context: Context): OkHttpClient {
         return OkHttpClient.Builder()
             .dns(IPv4FirstDns())
             .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("API"))
-            .cache(Cache(File(context.cacheDir, "http_cache"), 50L * 1024 * 1024)) // 50 MB disk cache
+            // Keep separate from the old trust-all cache. Cached responses bypass a new TLS handshake.
+            .cache(Cache(File(context.cacheDir, "http_cache_v2"), 50L * 1024 * 1024)) // 50 MB disk cache
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .addInterceptor { chain ->
@@ -180,14 +172,10 @@ object NetworkModule {
     }
 
     /**
-     * Permissive client for addon- and IPTV-provided URLs, which commonly point at self-hosted
-     * servers with self-signed certificates. Do NOT use for first-party endpoints.
+     * Permissive client for addon-provided URLs, including self-hosted servers with self-signed
+     * certificates. Uses a separate cache from first-party traffic.
      *
-     * Derived from the validating default via [OkHttpClient.newBuilder] so it inherits the shared
-     * interceptor stack — including the whole Xtream panel lane (catalog disk-cache, stale fallback,
-     * and [PanelHostGuardInterceptor]) — then swaps in trust-all TLS. It uses its OWN cache dir so a
-     * response fetched without certificate validation can never be reused by a first-party request
-     * sharing the same cache key.
+     * Do not use for first-party endpoints.
      */
     @Provides
     @Singleton
@@ -563,21 +551,6 @@ object NetworkModule {
     @Singleton
     fun provideAniSkipApi(@Named("aniSkip") retrofit: Retrofit): AniSkipApi =
         retrofit.create(AniSkipApi::class.java)
-
-    @Provides
-    @Singleton
-    @Named("arm")
-    fun provideArmRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
-        Retrofit.Builder()
-            .baseUrl("https://arm.haglund.dev/api/v2/")
-            .client(okHttpClient)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-
-    @Provides
-    @Singleton
-    fun provideArmApi(@Named("arm") retrofit: Retrofit): ArmApi =
-        retrofit.create(ArmApi::class.java)
 
     @Provides
     @Singleton

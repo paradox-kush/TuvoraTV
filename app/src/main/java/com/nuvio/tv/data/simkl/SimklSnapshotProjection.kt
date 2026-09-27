@@ -175,13 +175,19 @@ internal fun SimklSyncSnapshot.toSimklNextUpSeeds(
 private fun SimklSyncSnapshot.simklWatchedMovieIds(progress: List<WatchProgress>): Set<String> {
     val watched = linkedSetOf<String>()
     entries.forEach { entry ->
-        if (entry.mediaType != SimklMediaType.MOVIES) return@forEach
+        if (!entry.isMovieEntry()) return@forEach
         if (entry.lastWatchedAt == null && entry.status != SimklListStatus.COMPLETED) return@forEach
         val media = entry.media ?: return@forEach
         media.canonicalContentId()?.let(watched::add)
         media.ids.idValue("imdb")?.takeIf(String::isNotBlank)?.let(watched::add)
         media.ids.idValue("tmdb")?.takeIf(String::isNotBlank)?.let { watched.add("tmdb:$it") }
         media.ids.idValue("tvdb")?.takeIf(String::isNotBlank)?.let { watched.add("tvdb:$it") }
+        if (entry.mediaType == SimklMediaType.ANIME) {
+            media.ids.idValue("mal")?.takeIf(String::isNotBlank)?.let { watched.add("mal:$it") }
+            media.ids.idValue("anidb")?.takeIf(String::isNotBlank)?.let { watched.add("anidb:$it") }
+            media.ids.idValue("anilist")?.takeIf(String::isNotBlank)?.let { watched.add("anilist:$it") }
+            media.ids.idValue("kitsu")?.takeIf(String::isNotBlank)?.let { watched.add("kitsu:$it") }
+        }
     }
     progress.filter { item ->
         item.contentType == "movie" && item.progressPercentage > 0f && !item.isCompleted()

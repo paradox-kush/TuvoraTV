@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -48,9 +49,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -78,6 +79,7 @@ import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_STRENGTH
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_SHEEN_STRENGTH
 import com.nuvio.tv.domain.model.DetailImdbRatingsVisibility
 import com.nuvio.tv.domain.model.DiscoverLocation
+import com.nuvio.tv.domain.model.EpisodeOptionsOverlayStyle
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
 import com.nuvio.tv.domain.model.HomeImdbRatingsVisibility
@@ -124,6 +126,7 @@ fun LayoutSettingsContent(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val streamBadgeUiState by viewModel.streamBadgeUiState.collectAsStateWithLifecycle()
+    val customPosterQrState by viewModel.customPosterQrState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var homeLayoutExpanded by rememberSaveable(essentialMode) { mutableStateOf(essentialMode) }
@@ -137,6 +140,7 @@ fun LayoutSettingsContent(
     var showCwSortModeDialog by rememberSaveable { mutableStateOf(false) }
     var showStreamBadgePositionDialog by rememberSaveable { mutableStateOf(false) }
     var showEpisodeRatingsDialog by rememberSaveable { mutableStateOf(false) }
+    var showEpisodeOptionsOverlayStyleDialog by rememberSaveable { mutableStateOf(false) }
 
     val defaultHomeLayoutHeaderFocus = remember { FocusRequester() }
     val homeContentHeaderFocus = remember { FocusRequester() }
@@ -222,8 +226,11 @@ fun LayoutSettingsContent(
                     focusRequester = homeLayoutHeaderFocus,
                     onFocused = { focusedSection = LayoutSettingsSection.HOME_LAYOUT }
                 ) {
+                    val firstHomeLayoutFocusRequester = remember { FocusRequester() }
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .settingsOptionRow(firstHomeLayoutFocusRequester),
                         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
                     ) {
                         LayoutCard(
@@ -235,7 +242,9 @@ fun LayoutSettingsContent(
                             onFocused = {
                                 focusedSection = LayoutSettingsSection.HOME_LAYOUT
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(firstHomeLayoutFocusRequester)
                         )
                         LayoutCard(
                             layout = HomeLayout.GRID,
@@ -316,21 +325,28 @@ fun LayoutSettingsContent(
                             style = MaterialTheme.typography.bodySmall,
                             color = NuvioTheme.colors.TextTertiary
                         )
+                        val firstHeroCatalogFocusRequester = remember { FocusRequester() }
                         LazyRow(
+                            modifier = Modifier.settingsOptionRow(firstHeroCatalogFocusRequester),
                             contentPadding = PaddingValues(end = NuvioTheme.spacing.sm),
                             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
                         ) {
-                            items(
+                            itemsIndexed(
                                 items = uiState.availableCatalogs,
-                                key = { it.key }
-                            ) { catalog ->
+                                key = { _, catalog -> catalog.key }
+                            ) { catalogIndex, catalog ->
                                 CatalogChip(
                                     catalogInfo = catalog,
                                     isSelected = catalog.key in uiState.heroCatalogKeys,
                                     onClick = {
                                         viewModel.onEvent(LayoutSettingsEvent.ToggleHeroCatalog(catalog.key))
                                     },
-                                    onFocused = { focusedSection = LayoutSettingsSection.HOME_LAYOUT }
+                                    onFocused = { focusedSection = LayoutSettingsSection.HOME_LAYOUT },
+                                    modifier = if (catalogIndex == 0) {
+                                        Modifier.focusRequester(firstHeroCatalogFocusRequester)
+                                    } else {
+                                        Modifier
+                                    }
                                 )
                             }
                         }
@@ -380,6 +396,19 @@ fun LayoutSettingsContent(
                             onToggle = {
                                 viewModel.onEvent(
                                     LayoutSettingsEvent.SetModernSidebarBlurEnabled(!uiState.modernSidebarBlurEnabled)
+                                )
+                            },
+                            onFocused = { focusedSection = LayoutSettingsSection.HOME_CONTENT }
+                        )
+                    }
+                    if (uiState.modernSidebarEnabled) {
+                        CompactToggleRow(
+                            title = stringResource(R.string.layout_hide_floating_pill),
+                            subtitle = stringResource(R.string.layout_hide_floating_pill_sub),
+                            checked = uiState.sidebarCollapsedByDefault,
+                            onToggle = {
+                                viewModel.onEvent(
+                                    LayoutSettingsEvent.SetSidebarCollapsed(!uiState.sidebarCollapsedByDefault)
                                 )
                             },
                             onFocused = { focusedSection = LayoutSettingsSection.HOME_CONTENT }
@@ -488,6 +517,14 @@ fun LayoutSettingsContent(
                     focusRequester = detailPageHeaderFocus,
                     onFocused = { focusedSection = LayoutSettingsSection.DETAIL_PAGE }
                 ) {
+                    SettingsActionRow(
+                        title = stringResource(R.string.layout_episode_options_overlay),
+                        subtitle = stringResource(R.string.layout_episode_options_overlay_sub),
+                        value = episodeOptionsOverlayStyleLabel(uiState.episodeOptionsOverlayStyle),
+                        onClick = { showEpisodeOptionsOverlayStyleDialog = true },
+                        onFocused = { focusedSection = LayoutSettingsSection.DETAIL_PAGE }
+                    )
+
                     CompactToggleRow(
                         title = stringResource(R.string.layout_blur_unwatched),
                         subtitle = stringResource(R.string.layout_blur_unwatched_sub),
@@ -906,6 +943,31 @@ fun LayoutSettingsContent(
                         },
                         onFocused = { focusedSection = LayoutSettingsSection.POSTER_CARD_STYLE }
                     )
+                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+                    CompactToggleRow(
+                        title = stringResource(R.string.layout_always_show_landscape_clearlogo),
+                        subtitle = stringResource(R.string.layout_always_show_landscape_clearlogo_sub),
+                        checked = uiState.alwaysShowLandscapeClearlogo,
+                        onToggle = {
+                            viewModel.onEvent(
+                                LayoutSettingsEvent.SetAlwaysShowLandscapeClearlogo(!uiState.alwaysShowLandscapeClearlogo)
+                            )
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.POSTER_CARD_STYLE }
+                    )
+                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+                    CustomPosterUrlControls(
+                        currentPattern = uiState.customPosterUrlPattern,
+                        enabledScreens = uiState.customPosterEnabledScreens,
+                        onClear = {
+                            viewModel.onEvent(LayoutSettingsEvent.ClearCustomPosterSettings)
+                        },
+                        onConfigureViaPhone = viewModel::startCustomPosterQrMode,
+                        onScreenToggled = { screen, enabled ->
+                            viewModel.onEvent(LayoutSettingsEvent.SetCustomPosterScreenEnabled(screen, enabled))
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.POSTER_CARD_STYLE }
+                    )
                     Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
                     Text(
                         text = stringResource(R.string.settings_card_depth_title),
@@ -976,6 +1038,17 @@ fun LayoutSettingsContent(
             )
         }
 
+        if (showEpisodeOptionsOverlayStyleDialog) {
+            EpisodeOptionsOverlayStyleDialog(
+                currentStyle = uiState.episodeOptionsOverlayStyle,
+                onStyleSelected = { style ->
+                    viewModel.onEvent(LayoutSettingsEvent.SetEpisodeOptionsOverlayStyle(style))
+                    showEpisodeOptionsOverlayStyleDialog = false
+                },
+                onDismiss = { showEpisodeOptionsOverlayStyleDialog = false }
+            )
+        }
+
         if (showCardDepthFineTuneDialog) {
             CardDepthFineTuneDialog(
                 style = uiState.cardDepthStyle,
@@ -1012,6 +1085,16 @@ fun LayoutSettingsContent(
                 qrSize = 168.dp
             )
         }
+
+        if (customPosterQrState.isActive) {
+            QrCodeOverlay(
+                qrBitmap = customPosterQrState.qrCodeBitmap,
+                serverUrl = customPosterQrState.serverUrl,
+                instruction = stringResource(R.string.custom_poster_qr_instruction),
+                onClose = viewModel::stopCustomPosterQrMode,
+                qrSize = 168.dp
+            )
+        }
     }
 }
 
@@ -1022,6 +1105,14 @@ private fun episodeRatingsVisibilityLabel(visibility: DetailImdbRatingsVisibilit
         DetailImdbRatingsVisibility.HIDE_UNWATCHED_EPISODES -> stringResource(R.string.layout_ratings_hide_unwatched)
         DetailImdbRatingsVisibility.HIDE_EPISODES,
         DetailImdbRatingsVisibility.HIDE_ALL -> stringResource(R.string.layout_ratings_hide)
+    }
+
+@Composable
+private fun episodeOptionsOverlayStyleLabel(style: EpisodeOptionsOverlayStyle): String =
+    when (style) {
+        EpisodeOptionsOverlayStyle.NONE -> stringResource(R.string.layout_episode_options_overlay_none)
+        EpisodeOptionsOverlayStyle.ARTWORK -> stringResource(R.string.layout_episode_options_overlay_artwork)
+        EpisodeOptionsOverlayStyle.BLUR -> stringResource(R.string.layout_episode_options_overlay_blur)
     }
 
 @Composable
@@ -1105,6 +1196,42 @@ private fun EpisodeRatingsDialog(
         onDismiss = onDismiss,
         width = 420.dp,
         maxHeight = 340.dp
+    )
+}
+
+@Composable
+private fun EpisodeOptionsOverlayStyleDialog(
+    currentStyle: EpisodeOptionsOverlayStyle,
+    onStyleSelected: (EpisodeOptionsOverlayStyle) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        SettingsPickerOption(
+            EpisodeOptionsOverlayStyle.BLUR,
+            stringResource(R.string.layout_episode_options_overlay_blur),
+            stringResource(R.string.layout_episode_options_overlay_blur_desc)
+        ),
+        SettingsPickerOption(
+            EpisodeOptionsOverlayStyle.ARTWORK,
+            stringResource(R.string.layout_episode_options_overlay_artwork),
+            stringResource(R.string.layout_episode_options_overlay_artwork_desc)
+        ),
+        SettingsPickerOption(
+            EpisodeOptionsOverlayStyle.NONE,
+            stringResource(R.string.layout_episode_options_overlay_none),
+            stringResource(R.string.layout_episode_options_overlay_none_desc)
+        )
+    )
+
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.layout_episode_options_overlay),
+        subtitle = stringResource(R.string.layout_episode_options_overlay_sub),
+        options = options,
+        selectedValue = currentStyle,
+        onOptionSelected = onStyleSelected,
+        onDismiss = onDismiss,
+        width = 460.dp,
+        maxHeight = 380.dp
     )
 }
 
@@ -1208,12 +1335,15 @@ private fun ModernTrailerPlaybackTargetRow(
         style = MaterialTheme.typography.bodySmall,
         color = NuvioTheme.colors.TextTertiary
     )
+    val firstTrailerTargetFocusRequester = remember { FocusRequester() }
     LazyRow(
+        modifier = Modifier.settingsOptionRow(firstTrailerTargetFocusRequester),
         contentPadding = PaddingValues(end = NuvioTheme.spacing.sm),
         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
     ) {
         item(key = "trailer_target_expanded_card") {
             SettingsChoiceChip(
+                modifier = Modifier.focusRequester(firstTrailerTargetFocusRequester),
                 label = stringResource(R.string.layout_trailer_expanded_card),
                 selected = selectedTarget == FocusedPosterTrailerPlaybackTarget.EXPANDED_CARD,
                 onClick = {
@@ -1507,9 +1637,11 @@ private fun CatalogChip(
     catalogInfo: CatalogInfo,
     isSelected: Boolean,
     onClick: () -> Unit,
-    onFocused: () -> Unit
+    onFocused: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     SettingsChoiceChip(
+        modifier = modifier,
         label = catalogInfo.name,
         selected = isSelected,
         onClick = onClick,
@@ -1861,19 +1993,26 @@ private fun OptionRow(
         color = NuvioTheme.colors.TextSecondary
     )
 
+    val firstOptionFocusRequester = remember { FocusRequester() }
     LazyRow(
+        modifier = Modifier.settingsOptionRow(firstOptionFocusRequester),
         contentPadding = PaddingValues(end = NuvioTheme.spacing.sm),
         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
     ) {
-        items(
+        itemsIndexed(
             items = options,
-            key = { it.value }
-        ) { option ->
+            key = { _, option -> option.value }
+        ) { optionIndex, option ->
             ValueChip(
                 label = option.label,
                 isSelected = option.value == selectedValue,
                 onClick = { onSelected(option.value) },
-                onFocused = onFocused
+                onFocused = onFocused,
+                modifier = if (optionIndex == 0) {
+                    Modifier.focusRequester(firstOptionFocusRequester)
+                } else {
+                    Modifier
+                }
             )
         }
     }
@@ -1884,9 +2023,11 @@ private fun ValueChip(
     label: String,
     isSelected: Boolean,
     onClick: () -> Unit,
-    onFocused: () -> Unit
+    onFocused: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     SettingsChoiceChip(
+        modifier = modifier,
         label = label,
         selected = isSelected,
         onClick = onClick,
@@ -1898,3 +2039,130 @@ private data class PresetOption(
     val label: String,
     val value: Int
 )
+
+@Composable
+private fun CustomPosterUrlControls(
+    currentPattern: String,
+    enabledScreens: Set<com.nuvio.tv.core.poster.CustomPosterScreen>,
+    onClear: () -> Unit,
+    onConfigureViaPhone: () -> Unit,
+    onScreenToggled: (com.nuvio.tv.core.poster.CustomPosterScreen, Boolean) -> Unit,
+    onFocused: () -> Unit
+) {
+    val isActive = currentPattern.isNotBlank()
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+    ) {
+        Text(
+            text = stringResource(R.string.layout_custom_poster_title),
+            style = MaterialTheme.typography.titleLarge,
+            color = NuvioTheme.colors.TextPrimary
+        )
+        Text(
+            text = stringResource(R.string.layout_custom_poster_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = NuvioTheme.colors.TextTertiary
+        )
+
+        if (isActive) {
+            Text(
+                text = currentPattern,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                ),
+                color = NuvioTheme.colors.TextSecondary,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NuvioTheme.colors.BackgroundElevated, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 14.dp, vertical = NuvioTheme.spacing.md)
+            )
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+        ) {
+            Button(
+                onClick = onConfigureViaPhone,
+                modifier = Modifier.onFocusChanged { if (it.isFocused) onFocused() },
+                shape = ButtonDefaults.shape(shape = RoundedCornerShape(SettingsPillRadius)),
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioTheme.colors.BackgroundElevated,
+                    focusedContainerColor = NuvioTheme.colors.BackgroundElevated
+                ),
+                border = ButtonDefaults.border(
+                    focusedBorder = Border(
+                        border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                        shape = RoundedCornerShape(SettingsPillRadius)
+                    )
+                )
+            ) {
+                Text(
+                    text = stringResource(R.string.layout_custom_poster_qr),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = NuvioTheme.colors.TextPrimary
+                )
+            }
+
+            if (isActive) {
+                Button(
+                    onClick = onClear,
+                    modifier = Modifier.onFocusChanged { if (it.isFocused) onFocused() },
+                    shape = ButtonDefaults.shape(shape = RoundedCornerShape(SettingsPillRadius)),
+                    colors = ButtonDefaults.colors(
+                        containerColor = NuvioTheme.colors.Background,
+                        focusedContainerColor = NuvioTheme.colors.Background
+                    ),
+                    border = ButtonDefaults.border(
+                        focusedBorder = Border(
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                            shape = RoundedCornerShape(SettingsPillRadius)
+                        )
+                    )
+                ) {
+                    Text(
+                        text = stringResource(R.string.layout_custom_poster_clear),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = NuvioTheme.colors.TextSecondary
+                    )
+                }
+            }
+        }
+
+        if (isActive) {
+            Text(
+                text = stringResource(R.string.layout_custom_poster_active),
+                style = MaterialTheme.typography.labelSmall,
+                color = NuvioTheme.colors.Primary
+            )
+
+            Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+            Text(
+                text = stringResource(R.string.layout_custom_poster_apply_to),
+                style = MaterialTheme.typography.titleMedium,
+                color = NuvioTheme.colors.TextPrimary
+            )
+
+            val screenEntries = listOf(
+                com.nuvio.tv.core.poster.CustomPosterScreen.HOME to stringResource(R.string.layout_custom_poster_screen_home),
+                com.nuvio.tv.core.poster.CustomPosterScreen.CONTINUE_WATCHING to stringResource(R.string.layout_custom_poster_screen_continue_watching),
+                com.nuvio.tv.core.poster.CustomPosterScreen.COLLECTIONS to stringResource(R.string.layout_custom_poster_screen_collections),
+                com.nuvio.tv.core.poster.CustomPosterScreen.LIBRARY to stringResource(R.string.layout_custom_poster_screen_library),
+                com.nuvio.tv.core.poster.CustomPosterScreen.SEARCH to stringResource(R.string.layout_custom_poster_screen_search),
+                com.nuvio.tv.core.poster.CustomPosterScreen.DETAILS to stringResource(R.string.layout_custom_poster_screen_details),
+            )
+            screenEntries.forEach { (screen, label) ->
+                CompactToggleRow(
+                    title = label,
+                    subtitle = null,
+                    checked = screen in enabledScreens,
+                    onToggle = { onScreenToggled(screen, screen !in enabledScreens) },
+                    onFocused = onFocused
+                )
+            }
+        }
+    }
+}

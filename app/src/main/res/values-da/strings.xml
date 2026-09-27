@@ -868,7 +868,7 @@
     <string name="layout_trailer_muted">Afspil trailer uden lyd</string>
     <string name="layout_trailer_muted_sub_preview">Slå trailer-lyd fra under automatisk afspilningsforhåndsvisning.</string>
     <string name="layout_trailer_muted_sub_expanded">Slå trailer-lyd fra i udvidede kort.</string>
-    <string name="layout_section_card_style">Posterkort-stil</string>
+    <string name="layout_section_card_style">Posterkort</string>
     <string name="layout_section_card_style_desc">Justér kortbredde og hjørneradius.</string>
     <string name="layout_open">Åben</string>
     <string name="layout_closed">Lukket</string>
@@ -1112,8 +1112,6 @@
     <string name="tmdb_basic_info_subtitle">Beskrivelse, genrer og bedømmelse fra TMDB</string>
     <string name="tmdb_details_title">Detaljer</string>
     <string name="tmdb_details_subtitle">Varighed, status, land og sprog fra TMDB</string>
-    <string name="tmdb_release_dates_title">Udgivelsesdatoer</string>
-    <string name="tmdb_release_dates_subtitle">Udgivelses- og sendedatoer fra TMDB</string>
     <string name="tmdb_credits_title">Credits</string>
     <string name="tmdb_credits_subtitle">Medvirkende med fotos, instruktør og manuskriptforfatter fra TMDB</string>
     <string name="tmdb_productions_title">Produktioner</string>
@@ -1730,11 +1728,9 @@
     <string name="auth_signin_qr_btn">Fortsæt med QR</string>
 
     <string name="auth_qr_title">Log ind med QR</string>
-    <string name="auth_qr_account_login">Kontologin</string>
     <string name="auth_qr_finishing">Afslutter login\u2026</string>
     <string name="auth_qr_code_label">Kode: %1$s</string>
     <string name="auth_qr_expires">Udløber om %1$s</string>
-    <string name="auth_qr_phone_hint">Brug din telefon til at logge ind med e-mail/adgangskode. TV bruger kun QR for hurtigere login.</string>
     <string name="auth_qr_scan_instruction">Scan QR, godkend i browseren, og vend tilbage hertil.</string>
     <string name="auth_qr_code_display">Kode: %1$s</string>
     <string name="auth_qr_refresh">Opdater QR</string>
@@ -2731,4 +2727,5 @@
     <string name="profile_default_name">Profil %1$d</string>
     <string name="detail_tmdb_fallback_title">TMDB %1$d</string>
     <string name="collections_editor_tmdb_collection_fallback">TMDB Collection %1$d</string>
+    <string name="auth_qr_phone_hint">Brug din telefon til at logge ind med e-mail/adgangskode. TV bruger kun QR for hurtigere login.</string>
 </resources>

@@ -25,6 +25,7 @@ import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_COVERAGE
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_STRENGTH
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_SHEEN_STRENGTH
 import com.nuvio.tv.domain.model.DiscoverLocation
+import com.nuvio.tv.domain.model.EpisodeOptionsOverlayStyle
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.DetailImdbRatingsVisibility
 import com.nuvio.tv.domain.model.HomeLayout
@@ -101,6 +102,9 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val cardDepthCastEnabledKey = booleanPreferencesKey("card_depth_cast_enabled")
     private val cardDepthTrailersEnabledKey = booleanPreferencesKey("card_depth_trailers_enabled")
     private val blurUnwatchedEpisodesKey = booleanPreferencesKey("blur_unwatched_episodes")
+    private val startupSplashEnabledKey = booleanPreferencesKey("startup_splash_enabled")
+    private val alwaysShowLandscapeClearlogoKey = booleanPreferencesKey("always_show_landscape_clearlogo")
+    private val episodeOptionsOverlayStyleKey = stringPreferencesKey("episode_options_overlay_style")
     private val homeImdbRatingsVisibilityKey = stringPreferencesKey("home_imdb_ratings_visibility")
     private val detailImdbRatingsVisibilityKey = stringPreferencesKey("detail_imdb_ratings_visibility")
     private val useEpisodeThumbnailsInCwKey = booleanPreferencesKey("use_episode_thumbnails_in_cw")
@@ -120,6 +124,9 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val fastHorizontalNavigationEnabledKey = booleanPreferencesKey("fast_horizontal_navigation_enabled")
     private val followAddonsOrderKey = booleanPreferencesKey("follow_addons_order")
     private val composeHighlighterEnabledKey = booleanPreferencesKey("compose_highlighter_enabled")
+
+    private val customPosterUrlPatternKey = stringPreferencesKey("custom_poster_url_pattern")
+    private val customPosterEnabledScreensKey = stringPreferencesKey("custom_poster_enabled_screens")
 
     private fun <T> profileFlow(extract: (prefs: androidx.datastore.preferences.core.Preferences) -> T): Flow<T> =
         profileManager.activeProfileId.flatMapLatest { pid ->
@@ -216,13 +223,7 @@ class LayoutPreferenceDataStore @Inject constructor(
     }
 
     val sidebarCollapsedByDefault: Flow<Boolean> = profileFlow { prefs ->
-        val modernSidebarEnabled =
-            prefs[modernSidebarEnabledKey] ?: prefs[legacyModernSidebarEnabledKey] ?: false
-        if (modernSidebarEnabled) {
-            false
-        } else {
-            prefs[sidebarCollapsedKey] ?: false
-        }
+        prefs[sidebarCollapsedKey] ?: false
     }
 
     val modernSidebarEnabled: Flow<Boolean> = profileFlow { prefs ->
@@ -336,6 +337,20 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[blurUnwatchedEpisodesKey] ?: false
     }
 
+    val startupSplashEnabled: Flow<Boolean> = profileFlow { prefs ->
+        prefs[startupSplashEnabledKey] ?: true
+    }
+
+    val alwaysShowLandscapeClearlogo: Flow<Boolean> = profileFlow { prefs ->
+        prefs[alwaysShowLandscapeClearlogoKey] ?: false
+    }
+
+    val episodeOptionsOverlayStyle: Flow<EpisodeOptionsOverlayStyle> = profileFlow { prefs ->
+        val stored = prefs[episodeOptionsOverlayStyleKey] ?: EpisodeOptionsOverlayStyle.BLUR.name
+        runCatching { EpisodeOptionsOverlayStyle.valueOf(stored) }
+            .getOrDefault(EpisodeOptionsOverlayStyle.BLUR)
+    }
+
     val homeImdbRatingsVisibility: Flow<HomeImdbRatingsVisibility> = profileFlow { prefs ->
         val stored = prefs[homeImdbRatingsVisibilityKey] ?: HomeImdbRatingsVisibility.SHOW_ALL.name
         runCatching { HomeImdbRatingsVisibility.valueOf(stored) }
@@ -407,6 +422,20 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[composeHighlighterEnabledKey] ?: false
     }
 
+    /** Custom poster URL pattern with `{placeholder}` tokens. Empty string means disabled. */
+    val customPosterUrlPattern: Flow<String> = profileFlow { prefs ->
+        prefs[customPosterUrlPatternKey] ?: ""
+    }
+
+    val customPosterEnabledScreens: Flow<Set<com.nuvio.tv.core.poster.CustomPosterScreen>> = profileFlow { prefs ->
+        val raw = prefs[customPosterEnabledScreensKey]
+        if (raw.isNullOrBlank()) {
+            com.nuvio.tv.core.poster.CustomPosterScreen.ALL
+        } else {
+            com.nuvio.tv.core.poster.CustomPosterScreen.fromKeys(raw.split(",").toSet())
+        }
+    }
+
     suspend fun setMemoryOnlyVerticalScroll(enabled: Boolean) {
         store().edit { prefs ->
             prefs[memoryOnlyVerticalScrollKey] = enabled
@@ -434,6 +463,34 @@ class LayoutPreferenceDataStore @Inject constructor(
     suspend fun setComposeHighlighterEnabled(enabled: Boolean) {
         store().edit { prefs ->
             prefs[composeHighlighterEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setCustomPosterUrlPattern(pattern: String) {
+        store().edit { prefs ->
+            if (pattern.isBlank()) {
+                prefs.remove(customPosterUrlPatternKey)
+            } else {
+                prefs[customPosterUrlPatternKey] = pattern.trim()
+            }
+        }
+    }
+
+    suspend fun clearCustomPosterSettings() {
+        store().edit { prefs ->
+            prefs.remove(customPosterUrlPatternKey)
+            prefs.remove(customPosterEnabledScreensKey)
+        }
+    }
+
+    suspend fun setCustomPosterEnabledScreens(screens: Set<com.nuvio.tv.core.poster.CustomPosterScreen>) {
+        store().edit { prefs ->
+            if (screens == com.nuvio.tv.core.poster.CustomPosterScreen.ALL) {
+                prefs.remove(customPosterEnabledScreensKey)
+            } else {
+                prefs[customPosterEnabledScreensKey] =
+                    com.nuvio.tv.core.poster.CustomPosterScreen.toKeys(screens).joinToString(",")
+            }
         }
     }
 
@@ -494,9 +551,7 @@ class LayoutPreferenceDataStore @Inject constructor(
 
     suspend fun setSidebarCollapsedByDefault(collapsed: Boolean) {
         store().edit { prefs ->
-            val modernSidebarEnabled =
-                prefs[modernSidebarEnabledKey] ?: prefs[legacyModernSidebarEnabledKey] ?: false
-            prefs[sidebarCollapsedKey] = if (modernSidebarEnabled) false else collapsed
+            prefs[sidebarCollapsedKey] = collapsed
         }
     }
 
@@ -504,9 +559,6 @@ class LayoutPreferenceDataStore @Inject constructor(
         store().edit { prefs ->
             prefs[modernSidebarEnabledKey] = enabled
             prefs.remove(legacyModernSidebarEnabledKey)
-            if (enabled) {
-                prefs[sidebarCollapsedKey] = false
-            }
         }
     }
 
@@ -680,6 +732,24 @@ class LayoutPreferenceDataStore @Inject constructor(
     suspend fun setBlurUnwatchedEpisodes(enabled: Boolean) {
         store().edit { prefs ->
             prefs[blurUnwatchedEpisodesKey] = enabled
+        }
+    }
+
+    suspend fun setStartupSplashEnabled(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[startupSplashEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setAlwaysShowLandscapeClearlogo(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[alwaysShowLandscapeClearlogoKey] = enabled
+        }
+    }
+
+    suspend fun setEpisodeOptionsOverlayStyle(style: EpisodeOptionsOverlayStyle) {
+        store().edit { prefs ->
+            prefs[episodeOptionsOverlayStyleKey] = style.name
         }
     }
 

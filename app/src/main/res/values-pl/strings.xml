@@ -397,6 +397,8 @@
     <string name="layout_section_content_desc">Kontroluj co pojawia się na stronie głównej i w wyszukiwarce.</string>
     <string name="layout_collapse_sidebar">Zwiń pasek boczny</string>
     <string name="layout_collapse_sidebar_sub">Ukryj pasek boczny domyślnie; pokaż po skupieniu.</string>
+    <string name="layout_hide_floating_pill">Ukryj pływający wskaźnik</string>
+    <string name="layout_hide_floating_pill_sub">Ukryj pływający wskaźnik nawigacji na ekranie głównym.</string>
     <string name="layout_modern_sidebar">Nowoczesny pasek boczny</string>
     <string name="layout_modern_sidebar_sub">Włącz pływającą nawigację boczną.</string>
     <string name="layout_modern_sidebar_blur">Rozmycie nowoczesnego paska bocznego</string>
@@ -453,7 +455,7 @@
     <string name="layout_trailer_muted">Odtwarzaj zwiastun bez dźwięku</string>
     <string name="layout_trailer_muted_sub_preview">Wycisz audio zwiastuna podczas podglądu auto-play.</string>
     <string name="layout_trailer_muted_sub_expanded">Wycisz audio zwiastuna w rozszerzonych kartach.</string>
-    <string name="layout_section_card_style">Styl karty plakatu</string>
+    <string name="layout_section_card_style">Karta plakatu</string>
     <string name="layout_section_card_style_desc">Dostosuj szerokość karty i promień narożnika.</string>
     <string name="layout_open">Otwarte</string>
     <string name="layout_closed">Zamknięte</string>
@@ -478,6 +480,43 @@
     <string name="layout_card_radius">Promień narożnika</string>
     <string name="layout_reset_default">Przywróć domyślne</string>
     <string name="layout_custom">Niestandardowy</string>
+
+    <!-- Custom Poster URL -->
+    <string name="layout_custom_poster_title">Niestandardowe źródło plakatów</string>
+    <string name="layout_custom_poster_description">Podaj wzorzec URL z zewnętrznego serwisu. Jeśli symbol zastępczy nie ma wartości dla danego tytułu, zostanie użyty oryginalny plakat.</string>
+    <string name="layout_custom_poster_clear">Wyczyść</string>
+    <string name="layout_custom_poster_active">✓ Niestandardowe źródło plakatów aktywne</string>
+    <string name="layout_custom_poster_qr">Skonfiguruj przez telefon</string>
+    <string name="custom_poster_qr_instruction">Zeskanuj kod QR telefonem, aby wkleić wzorzec URL plakatów</string>
+
+    <!-- Custom Poster URL - Screen Toggles -->
+    <string name="layout_custom_poster_apply_to">Stosuj niestandardowe plakaty w:</string>
+    <string name="layout_custom_poster_screen_home">Strona główna</string>
+    <string name="layout_custom_poster_screen_continue_watching">Kontynuuj oglądanie</string>
+    <string name="layout_custom_poster_screen_collections">Kolekcje</string>
+    <string name="layout_custom_poster_screen_library">Biblioteka</string>
+    <string name="layout_custom_poster_screen_search">Wyszukiwanie</string>
+    <string name="layout_custom_poster_screen_details">Strona szczegółów</string>
+
+    <!-- Custom Poster Web Page -->
+    <string name="layout_always_show_landscape_clearlogo">Zawsze pokazuj logo na plakatach poziomych</string>
+    <string name="layout_always_show_landscape_clearlogo_sub">Nakładaj logo nawet gdy dostępny jest poziomy plakat.</string>
+    <string name="web_custom_poster_title">Niestandardowe źródło plakatów</string>
+    <string name="web_custom_poster_subtitle">Wklej wzorzec URL poniżej i naciśnij Zapisz.</string>
+    <string name="web_custom_poster_label">Wzorzec URL</string>
+    <string name="web_custom_poster_placeholder">https://example.com/poster?id={id}&amp;id_type={id_type}&amp;type={type}</string>
+    <string name="web_custom_poster_save">Zapisz</string>
+    <string name="web_custom_poster_clear">Wyczyść</string>
+    <string name="web_custom_poster_saved">Zapisano!</string>
+    <string name="web_custom_poster_cleared">Wyczyszczono</string>
+    <string name="web_custom_poster_error_empty">Wpisz wzorzec URL</string>
+    <string name="web_custom_poster_error_save">Zapis nie powiódł się</string>
+    <string name="web_custom_poster_error_clear">Czyszczenie nie powiodło się</string>
+    <string name="web_custom_poster_error_connection">Błąd połączenia</string>
+    <string name="web_custom_poster_current">Aktualny:</string>
+    <string name="web_custom_poster_none">Brak wzorca</string>
+    <string name="web_custom_poster_loading">Ładowanie…</string>
+    <string name="web_custom_poster_placeholders_info">Symbole: {id} przekazuje wszystkie ID treści. {imdb_id}, {tmdb_id}, {tvdb_id}, {kitsu_id} celują w jeden typ ID - jeśli niedostępny, oryginalny plakat zostaje. {imdb_id|tmdb_id|kitsu_id} deklaruje wspierane typy ID - pasujący zostanie użyty, lub oryginalny plakat zostaje. Dodaj ? aby symbol był opcjonalny, rozwiązując do pustego zamiast pomijania: {imdb_id?}. Inne symbole: {id_type}, {typed_id}, {type}, {shape}.</string>
 
 
     <!-- MDBListSettingsScreen -->
@@ -534,8 +573,6 @@
     <string name="tmdb_basic_info_subtitle">Opis, gatunki i ocena z TMDB</string>
     <string name="tmdb_details_title">Szczegóły</string>
     <string name="tmdb_details_subtitle">Czas trwania, status, kraj i język z TMDB</string>
-    <string name="tmdb_release_dates_title">Daty premier</string>
-    <string name="tmdb_release_dates_subtitle">Daty premiery i emisji z TMDB</string>
     <string name="tmdb_credits_title">Obsada</string>
     <string name="tmdb_credits_subtitle">Obsada ze zdjęciami, reżyser i scenarzysta z TMDB</string>
     <string name="tmdb_productions_title">Produkcje</string>
@@ -751,6 +788,8 @@
     <string name="stream_info_resolution">Rozdzielczość</string>
     <string name="stream_info_frame_rate">Klatki/s</string>
     <string name="stream_info_bitrate">Bitrate</string>
+    <string name="stream_info_bitrate_file">Bitrate (plik)</string>
+    <string name="stream_info_hud">HUD</string>
     <string name="stream_info_channels">Kanały</string>
     <string name="stream_info_sample_rate">Próbkowanie</string>
     <string name="stream_info_language">Język</string>
@@ -845,6 +884,8 @@
     <string name="skip_ending">Pomiń zakończenie</string>
     <string name="skip_recap">Pomiń podsumowanie</string>
     <string name="skip_generic">Pomiń</string>
+    <string name="skip_movie_credits">Pomiń napisy końcowe</string>
+    <string name="skip_to_post_credits">Do sceny po napisach</string>
     <string name="display_mode_refresh">Odświeżanie</string>
     <string name="display_mode_resolution">Rozdzielczość</string>
 
@@ -912,12 +953,11 @@
 
     <!-- AuthQrSignInScreen -->
     <string name="auth_qr_title">Zaloguj przez QR</string>
-    <string name="auth_qr_account_login">Logowanie do konta</string>
     <string name="auth_qr_finishing">Kończenie logowania\u2026</string>
     <string name="auth_qr_code_label">Kod: %1$s</string>
     <string name="auth_qr_expires">Wygasa za %1$s</string>
-    <string name="auth_qr_phone_hint">Użyj telefonu, aby zalogować się e-mailem i hasłem. TV obsługuje tylko QR dla szybszego logowania.</string>
     <string name="auth_qr_scan_instruction">Zeskanuj QR, zatwierdź w przeglądarce, a następnie wróć tutaj.</string>
+    <string name="auth_qr_manual_instruction">Lub wejdź na %1$s i wpisz</string>
     <string name="auth_qr_code_display">Kod: %1$s</string>
     <string name="auth_qr_refresh">Odśwież QR</string>
     <string name="auth_qr_continue_without_account">Kontynuuj bez konta</string>
@@ -1214,6 +1254,7 @@
     <string name="trakt_more_like_this_source_dialog_subtitle">Wybierz źródło rekomendacji wyświetlanych na stronach szczegółów.</string>
     <string name="trakt_more_like_this_source_trakt">Trakt</string>
     <string name="trakt_more_like_this_source_tmdb">TMDB</string>
+    <string name="trakt_more_like_this_source_simkl">Simkl</string>
 
     <string name="network_speed_test_run">Uruchom test prędkości</string>
     <string name="network_speed_test_running">Trwa test prędkości</string>
@@ -1288,6 +1329,7 @@
 
     <string name="detail_more_like_this_powered_by_tmdb">Na podstawie danych TMDB</string>
     <string name="detail_more_like_this_powered_by_trakt">Na podstawie danych Trakt</string>
+    <string name="detail_more_like_this_powered_by_simkl">Na podstawie danych Simkl</string>
     <string name="library_filter_genre">Gatunek</string>
     <string name="library_filter_year">Rok</string>
     <string name="library_filter_watched">Obejrzane</string>
@@ -1355,6 +1397,7 @@
     <string name="cd_add">Dodaj</string>
     <string name="cd_refresh">Odśwież</string>
     <string name="cd_remove">Usuń</string>
+    <string name="cd_remove_recent_search">Usuń %1$s z ostatnich wyszukiwań</string>
     <string name="cd_preview">Podgląd</string>
     <string name="cd_test">Test</string>
     <string name="cd_unlink">Odłącz</string>
@@ -1662,10 +1705,30 @@
     <!-- Missing translations -->
     <string name="advanced_remember_last_profile">Zapamiętaj ostatni profil</string>
     <string name="advanced_remember_last_profile_subtitle">Zapamiętaj ostatnio wybrany profil przy uruchomieniu</string>
+    <string name="advanced_confirm_exit">Pełne zamknięcie aplikacji</string>
+    <string name="advanced_confirm_exit_subtitle">Całkowicie zamyka aplikację i zwalnia pamięć przy wyjściu. Wymaga dwukrotnego naciśnięcia wstecz w celu potwierdzenia.</string>
+    <string name="confirm_exit_toast">Naciśnij wstecz ponownie, aby wyjść</string>
     <string name="appearance_amoled_mode">Tryb AMOLED</string>
     <string name="appearance_amoled_mode_subtitle">Użyj czystej czerni jako tła aplikacji</string>
     <string name="appearance_amoled_surfaces_mode">Czysto czarne powierzchnie</string>
     <string name="appearance_amoled_surfaces_mode_subtitle">Karty, panele i kontenery również będą czysto czarne</string>
+    <string name="appearance_startup_splash">Ekran startowy</string>
+    <string name="appearance_startup_splash_subtitle">Pokaż logo i wskaźnik ładowania po wyborze profilu</string>
+    <string name="appearance_app_icon_and_banner">Ikona i baner aplikacji</string>
+    <string name="appearance_app_icon_and_banner_subtitle">Zmień ikonę i baner aplikacji</string>
+    <string name="appearance_app_icon_arctic_blue">Arctic Blue</string>
+    <string name="appearance_app_icon_change_failed">Nie udało się zmienić ikony i baneru. Spróbuj ponownie.</string>
+    <string name="appearance_app_icon_confirmation_message">Zmiana na %1$s zamknie Tuvora. Baner TV może wymagać restartu urządzenia. Wybierz OK, aby kontynuować.</string>
+    <string name="appearance_app_icon_confirmation_title">Zmienić ikonę aplikacji?</string>
+    <string name="appearance_app_icon_copper">Copper</string>
+    <string name="appearance_app_icon_emerald">Emerald</string>
+    <string name="appearance_app_icon_graphite">Graphite</string>
+    <string name="appearance_app_icon_original">Oryginał</string>
+    <string name="appearance_app_icon_picker_subtitle">Każdy styl zawiera pasującą ikonę kwadratową i baner TV</string>
+    <string name="appearance_app_icon_picker_title">Wybierz ikonę i baner</string>
+    <string name="appearance_app_icon_rose_gold">Rose Gold</string>
+    <string name="appearance_launcher_artwork">Grafika launchera</string>
+    <string name="appearance_launcher_artwork_subtitle">Wybierz jak Tuvora wygląda na ekranie głównym TV</string>
     <string name="theme_color_crimson">Karmazyn</string>
     <string name="theme_color_ocean">Ocean</string>
     <string name="theme_color_violet">Fiolet</string>
@@ -1767,6 +1830,8 @@
     <string name="auto_skip_outro_sub">Automatycznie pomijaj outra i endingi anime.</string>
     <string name="auto_skip_recap">Podsumowanie</string>
     <string name="auto_skip_recap_sub">Automatycznie pomijaj segmenty podsumowań.</string>
+    <string name="auto_skip_movie_credits">Napisy końcowe</string>
+    <string name="auto_skip_movie_credits_sub">Automatycznie pomijaj napisy końcowe filmów, zachowując sceny po napisach.</string>
     <string name="cast_error_load_details_for">Nie udało się załadować szczegółów dla %1$s</string>
     <string name="collection_editor_choice_both">Oba</string>
     <string name="collection_editor_folder_count_one">%1$d element</string>
@@ -2866,6 +2931,7 @@
     <string name="advanced_nuvio_performance_mode_subtitle">Włącza wysokowydajny natywny alokator, pamięć poza stertą i optymalizacje sieciowe dla płynniejszego odtwarzania</string>
     <string name="advanced_playback_issue_reports">Raporty problemów z odtwarzaniem</string>
     <string name="advanced_playback_issue_reports_subtitle">Pokaż przyciski zgłaszania problemów podczas odtwarzania, długiego ładowania i błędów odtwarzania</string>
+    <string name="advanced_player_stats_hud">Nakładka statystyk odtwarzania</string>
     <string name="advanced_sentry_reports">Raporty awarii Sentry</string>
     <string name="advanced_sentry_reports_subtitle">Wysyłaj raporty awarii i ANR z bezpiecznym kontekstem. Domyślnie włączone.</string>
 
@@ -3078,8 +3144,9 @@
     <string name="theme_color_gold">Złoty</string>
     <string name="theme_color_jade">Jadeit</string>
     <string name="theme_color_rose_gold">Różowe złoto</string>
-    <string name="theme_color_arctic_blue">Arktyczny błękit</string>
+    <string name="theme_color_arctic_blue">Arktyczny</string>
     <string name="theme_color_graphite">Grafit</string>
+    <string name="theme_color_custom">Własny</string>
 
     <string name="addon_delete_confirm_title">Usunąć dodatek?</string>
     <string name="addon_delete_confirm_message">Czy na pewno chcesz go usunąć?</string>
@@ -3134,4 +3201,112 @@
     <string name="debug_member_tier_none">Brak</string>
     <string name="debug_member_tier_one">Supporter</string>
     <string name="debug_member_tier_two">Supporter+</string>
+
+    <!-- Post-play recommendations -->
+    <string name="autoplay_post_play_recommendations">Rekomendacje po odtwarzaniu</string>
+    <string name="autoplay_post_play_recommendations_sub">Pokaż rekomendowane filmy i seriale po zakończeniu odtwarzania.</string>
+    <string name="autoplay_post_play_movie_threshold">Czas rekomendacji filmowych</string>
+    <string name="autoplay_post_play_movie_threshold_sub">Wybierz kiedy pojawiają się rekomendacje filmowe. Odcinki korzystają z ustawienia progu następnego odcinka.</string>
+    <string name="player_post_play_because">Ponieważ obejrzałeś %1$s</string>
+    <string name="player_post_play_next_recommendation">Następna rekomendacja</string>
+    <string name="player_post_play_play">Odtwórz</string>
+    <string name="player_post_play_previous_recommendation">Poprzednia rekomendacja</string>
+    <string name="player_post_play_recommended">Rekomendowane dla Ciebie</string>
+    <string name="player_post_play_return_to_player">Wróć do odtwarzacza</string>
+    <string name="player_post_play_trailer_countdown">Zwiastun za %1$d</string>
+    <string name="player_post_play_trailer_playing">Zwiastun jest odtwarzany</string>
+    <string name="player_post_play_trailer">Zwiastun</string>
+
+    <string name="layout_episode_options_overlay">Styl opcji odcinka</string>
+    <string name="layout_episode_options_overlay_sub">Wybierz wygląd ekranu po przytrzymaniu odcinka.</string>
+    <string name="layout_episode_options_overlay_artwork">Okładka</string>
+    <string name="layout_episode_options_overlay_artwork_desc">Pełnoekranowy widok z grafiką odcinka.</string>
+    <string name="layout_episode_options_overlay_blur">Rozmycie</string>
+    <string name="layout_episode_options_overlay_blur_desc">Pełnoekranowy widok z rozmytą grafiką odcinka.</string>
+    <string name="layout_episode_options_overlay_none">Brak</string>
+    <string name="layout_episode_options_overlay_none_desc">Pełnoekranowy gradient bez grafiki odcinka.</string>
+
+    <string name="genre_anime">Anime</string>
+    <string name="genre_biography">Biografia</string>
+    <string name="genre_children">Dla dzieci</string>
+    <string name="genre_donghua">Donghua</string>
+    <string name="genre_game_show">Teleturniej</string>
+    <string name="genre_holiday">Świąteczny</string>
+    <string name="genre_home_and_garden">Dom i ogród</string>
+    <string name="genre_mini_series">Miniserial</string>
+    <string name="genre_musical">Musical</string>
+    <string name="genre_none">Brak</string>
+    <string name="genre_short">Krótkometrażowy</string>
+    <string name="genre_special_interest">Specjalne zainteresowania</string>
+    <string name="genre_sporting_event">Wydarzenie sportowe</string>
+    <string name="genre_superhero">Superbohaterski</string>
+    <string name="genre_suspense">Suspens</string>
+
+    <!-- Player -->
+    <string name="player_live_watched">NA ŻYWO  %1$s</string>
+
+    <!-- Update channel -->
+    <string name="about_update_channel_title">Kanał aktualizacji</string>
+    <string name="about_update_channel_subtitle">Wybierz rodzaj aktualizacji aplikacji</string>
+    <string name="update_channel_stable">Stabilny</string>
+    <string name="update_channel_stable_description">Przeznaczony do codziennego użytku.</string>
+    <string name="update_channel_beta">Beta</string>
+    <string name="update_channel_beta_description">Wczesne aktualizacje, które mogą zawierać błędy, uszkadzać funkcje lub działać niestabilnie.</string>
+    <string name="update_channel_dialog_subtitle">Wybierz rodzaj aktualizacji, które chcesz otrzymywać</string>
+    <string name="update_waiting_for_stable">Otrzymasz następną stabilną wersję, gdy będzie dostępna</string>
+
+    <!-- Advanced settings -->
+    <string name="advanced_player_stats_hud_subtitle">Pokaż przycisk w informacjach o strumieniu, umożliwiający podgląd na żywo użycia CPU, pamięci, bufora, bitrate i temperatury podczas odtwarzania</string>
+    <string name="advanced_rgb565">Dekodowanie obrazu RGB565</string>
+    <string name="advanced_rgb565_subtitle">Użyj oszczędnego 16-bitowego koloru dla kwalifikujących się nieprzezroczystych obrazów. Zmiana wymaga restartu aplikacji.</string>
+
+    <!-- Audio / MPV -->
+    <string name="audio_mpv_hi10p_gnext_sw_title">Awaryjne dekodowanie Hi10P G-NEXT SW (tylko MPV)</string>
+    <string name="audio_mpv_hi10p_gnext_sw_subtitle">Użyj programowego dekodowania G-NEXT, gdy szczegóły strumienia wskazują H.264 Hi10P. Domyślnie wyłączone; włącz tylko jeśli odtwarzanie Hi10P się zawiesza lub nie działa.</string>
+
+    <!-- Profile copy settings -->
+    <string name="profile_create_error">Nie udało się utworzyć profilu. Spróbuj ponownie.</string>
+    <string name="profile_copy_settings_action">Kopiuj ustawienia</string>
+    <string name="profile_copy_settings_apply">Zastosuj</string>
+    <string name="profile_copy_settings_copying">Kopiowanie\u2026</string>
+    <string name="profile_copy_settings_create_fresh">Ustawienia: Zacznij od nowa</string>
+    <string name="profile_copy_settings_create_source">Ustawienia: %1$s</string>
+    <string name="profile_copy_settings_created_error">Profil utworzony, ale nie udało się skopiować ustawień. Możesz ponowić z opcji profilu.</string>
+    <string name="profile_copy_settings_created_success">Profil utworzony z ustawieniami z %1$s.</string>
+    <string name="profile_copy_settings_credentials_off">Klucze API: Nie kopiuj</string>
+    <string name="profile_copy_settings_credentials_on">Klucze API: Kopiuj brakujące klucze</string>
+    <string name="profile_copy_settings_details">Istniejące klucze API zostają zachowane. OAuth, dodatki, wtyczki, układ ekranu głównego, PIN, historia, biblioteka, pobrane i ustawienia urządzenia pozostają niezmienione.</string>
+    <string name="profile_copy_settings_error">Nie udało się skopiować ustawień. Sprawdź połączenie i spróbuj ponownie.</string>
+    <string name="profile_copy_settings_exclusions">OAuth, dodatki, wtyczki, układ ekranu głównego, PIN, historia, biblioteka, pobrane i ustawienia urządzenia pozostają niezmienione.</string>
+    <string name="profile_copy_settings_from">Kopiuj z</string>
+    <string name="profile_copy_settings_label">Kopiuj ustawienia</string>
+    <string name="profile_copy_settings_primary_source">%1$s (Główny)</string>
+    <string name="profile_copy_settings_setup_subtitle">Zacznij od nowa lub jednorazowo skopiuj ustawienia TV z innego profilu.</string>
+    <string name="profile_copy_settings_setup_title">Ustawienia profilu</string>
+    <string name="profile_copy_settings_start_fresh">Zacznij od nowa</string>
+    <string name="profile_copy_settings_subtitle">Wybierz profil źródłowy. Jego obsługiwane ustawienia TV jednorazowo zastąpią ustawienia tego profilu.</string>
+    <string name="profile_copy_settings_success">Ustawienia skopiowane z %1$s do %2$s.</string>
+    <string name="profile_copy_settings_title">Kopiuj ustawienia do %1$s</string>
+
+    <string name="custom_theme_title">Twój własny gradient</string>
+    <string name="custom_theme_subtitle">Wybierz trzy kolory dla motywu. Kliknij kolor, aby go edytować.</string>
+    <string name="custom_theme_solid_title">Twój własny kolor</string>
+    <string name="custom_theme_solid_subtitle">Wybierz kolor dla motywu.</string>
+    <string name="custom_theme_mode_gradient">Gradient</string>
+    <string name="custom_theme_mode_solid">Jeden kolor</string>
+    <string name="custom_theme_color_number">Kolor %1$d</string>
+    <string name="custom_theme_hue">Odcień</string>
+    <string name="custom_theme_saturation">Nasycenie</string>
+    <string name="custom_theme_brightness">Jasność</string>
+    <string name="custom_theme_enter_hex">Wprowadź kod hex</string>
+    <string name="custom_theme_hex_title">Kolor hex</string>
+    <string name="custom_theme_hex_hint">Wpisz sześć znaków (0–9, A–F). Pierwszy klawisz zastępuje bieżący kod.</string>
+    <string name="custom_theme_hex_clear">Wyczyść</string>
+    <string name="custom_theme_hex_delete">Usuń</string>
+    <string name="custom_theme_use_color">Użyj koloru</string>
+    <string name="custom_theme_save">Zapisz motyw</string>
+    <string name="custom_theme_remote_hint">← → Reguluj   ·   ↑ ↓ Przesuń   ·   Przytrzymaj, aby szybciej</string>
+    <string name="custom_theme_preview">PODGLĄD</string>
+    <string name="custom_theme_preview_ring">Wybrany element</string>
+    <string name="auth_qr_phone_hint">Użyj telefonu, aby zalogować się e-mailem i hasłem. TV obsługuje tylko QR dla szybszego logowania.</string>
 </resources>

@@ -816,7 +816,7 @@
     <string name="layout_trailer_muted">ஒலியின்றி டிரெய்லரை இயக்கு</string>
     <string name="layout_trailer_muted_sub_preview">தானியங்கி முன்னோட்டத்தின் போது டிரெய்லர் ஒலியை அமைதிப்படுத்து.</string>
     <string name="layout_trailer_muted_sub_expanded">விரிவாக்கப்பட்ட அட்டைகளில் டிரெய்லர் ஒலியை அமைதிப்படுத்து.</string>
-    <string name="layout_section_card_style">போஸ்டர் அட்டை நடை</string>
+    <string name="layout_section_card_style">போஸ்டர் அட்டை</string>
     <string name="layout_section_card_style_desc">அட்டையின் அகலம் மற்றும் மூலை வளைவை அமை.</string>
     <string name="layout_open">திறந்த</string>
     <string name="layout_closed">மூடிய</string>
@@ -900,8 +900,6 @@
     <string name="tmdb_basic_info_subtitle">விளக்கம், வகைகள் மற்றும் மதிப்பீடு டிஎம்டிபியிலிருந்து</string>
     <string name="tmdb_details_title">விவரங்கள்</string>
     <string name="tmdb_details_subtitle">இயக்க நேரம், நிலை, நாடு மற்றும் மொழி டிஎம்டிபியிலிருந்து</string>
-    <string name="tmdb_release_dates_title">வெளியீட்டு தேதிகள்</string>
-    <string name="tmdb_release_dates_subtitle">வெளியீட்டு மற்றும் ஒளிபரப்பு தேதிகள் டிஎம்டிபியிலிருந்து</string>
     <string name="tmdb_credits_title">பங்களிப்புகள்</string>
     <string name="tmdb_credits_subtitle">புகைப்படங்களுடன் நடிகர்கள், இயக்குநர் மற்றும் எழுத்தாளர் டிஎம்டிபியிலிருந்து</string>
     <string name="tmdb_productions_title">தயாரிப்புகள்</string>
@@ -1466,11 +1464,9 @@
 
     <!-- AuthQrSignInScreen -->
     <string name="auth_qr_title">க்யூஆர் மூலம் உள்நுழை</string>
-    <string name="auth_qr_account_login">கணக்கு உள்நுழைவு</string>
     <string name="auth_qr_finishing">உள்நுழைவு முடிக்கப்படுகிறது\u2026</string>
     <string name="auth_qr_code_label">குறியீடு: %1$s</string>
     <string name="auth_qr_expires">காலாவதி ஆகும் நேரம் %1$s</string>
-    <string name="auth_qr_phone_hint">மின்னஞ்சல்/கடவுச்சொல் மூலம் உள்நுழைய உங்கள் கைபேசியைப் பயன்படுத்தவும். வேகமான உள்நுழைவுக்காக தொலைக்காட்சி க்யூஆர் மட்டும் பயன்படுத்தும்.</string>
     <string name="auth_qr_scan_instruction">க்யூஆரை ஸ்கேன் செய்து, உலாவியில் ஒப்புதல் அளித்து, பின்னர் இங்கு திரும்பவும்.</string>
     <string name="auth_qr_code_display">குறியீடு: %1$s</string>
     <string name="auth_qr_refresh">க்யூஆர் புதுப்பி</string>
@@ -2290,4 +2286,5 @@
     <string name="trakt_comments_error_request_failed">ட்ராக்ட் கருத்துகள் கோரிக்கை தோல்வியடைந்தது</string>
     <string name="trakt_library_error_fetch_list_items">பட்டியல் உருப்படிகளைப் பெற முடியவில்லை</string>
 
+    <string name="auth_qr_phone_hint">மின்னஞ்சல்/கடவுச்சொல் மூலம் உள்நுழைய உங்கள் கைபேசியைப் பயன்படுத்தவும். வேகமான உள்நுழைவுக்காக தொலைக்காட்சி க்யூஆர் மட்டும் பயன்படுத்தும்.</string>
 </resources>

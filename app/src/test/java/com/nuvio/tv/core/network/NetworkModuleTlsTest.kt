@@ -59,7 +59,9 @@ class NetworkModuleTlsTest {
         )
         // Separate cache dirs: a response fetched without cert validation must never be reused for
         // a first-party request sharing the same cache key.
-        assertEquals("http_cache", default.cache?.directory?.name)
+        // Upstream moved the validating client to a fresh dir so responses cached under the old
+        // trust-all client can never be served without a TLS check.
+        assertEquals("http_cache_v2", default.cache?.directory?.name)
         assertEquals("addon_http_cache", permissive.cache?.directory?.name)
     }
 

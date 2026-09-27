@@ -61,7 +61,8 @@ class TrailerService(
         title: String,
         year: String? = null,
         tmdbId: String? = null,
-        type: String? = null
+        type: String? = null,
+        ignoreUseTrailersGate: Boolean = false
     ): TrailerPlaybackSource? = withContext(Dispatchers.IO) {
         // Read the TMDB settings once and reuse for both the "Disable Trailers"
         // gate and the trailer language lookup below. The gate respects the
@@ -69,12 +70,14 @@ class TrailerService(
         // below is the only trailer source surfaced through this function,
         // so when the toggle is off we return no trailer at all rather than
         // silently falling through to TMDB's /videos endpoint. See #1647.
+        // Post-play recommendations bypass this gate because they have no
+        // meta-addon trailer to fall back on.
         val tmdbSettings = runCatching { tmdbSettingsDataStore.settings.first() }.getOrNull()
-        if (tmdbSettings?.useTrailers != true) {
+        if (!ignoreUseTrailersGate && tmdbSettings?.useTrailers != true) {
             Log.d(TAG, "Trailers disabled in TMDB enrichment settings; skipping lookup")
             return@withContext null
         }
-        val tmdbLanguage = normalizeTmdbTrailerLanguage(tmdbSettings.language)
+        val tmdbLanguage = normalizeTmdbTrailerLanguage(tmdbSettings?.language)
 
         val cacheKey = "$title|$year|$tmdbId|$type"
 
@@ -107,6 +110,13 @@ class TrailerService(
                 cache[cacheKey] = NEGATIVE_CACHE
             }
             null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // The detail screen cancels the previous trailer job every time it starts a new
+            // one, so this is routine. Swallowing it returned null, which the caller cannot
+            // tell apart from "this title has no trailer" -- it wrote that null over a URL a
+            // later job had already resolved, and the NEGATIVE_CACHE line above pinned the
+            // miss for the rest of the process, so the trailer button stayed gone.
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching trailer for $title: ${e.message}", e)
             null
@@ -323,6 +333,8 @@ class TrailerService(
             } else {
                 response.body()?.results.orEmpty()
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "TMDB movie videos error ($tmdbId/$language): ${e.message}")
             emptyList()
@@ -342,6 +354,8 @@ class TrailerService(
             } else {
                 response.body()?.results.orEmpty()
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "TMDB tv videos error ($tmdbId/$language): ${e.message}")
             emptyList()
