@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.settings
 
+import androidx.compose.ui.platform.PlatformTextInputMethodRequest
+import androidx.compose.ui.platform.InterceptPlatformTextInput
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -74,6 +76,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.PlaylistFormSubmitPolicy
 import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.ui.components.NuvioDialog
@@ -999,7 +1002,7 @@ private fun XtreamAddDialog(
                         // pin a player UA the provider allows, e.g. VLC/3.0.20 LibVLC/3.0.20.
                         XtreamField(xtreamUserAgent, { xtreamUserAgent = it }, "User-Agent (optional)", onSubmit = submit)
                     } else {
-                        XtreamField(url, { url = it }, "http://host:port/get.php?username=…&password=…", firstFieldFocus, onSubmit = submit)
+                        XtreamField(url, { url = it }, "http://host:port/get.php?username=…&password=…", firstFieldFocus, onSubmit = submit, label = "Playlist URL")
                     }
                 }
                 XtreamAccount.SOURCE_URL -> UrlSourceFields(
@@ -1036,7 +1039,7 @@ private fun XtreamAddDialog(
 
             // --- EPG URL (shared) --------------------------------------------
             FormSectionLabel("EPG URL (optional)")
-            XtreamField(epgUrl, { epgUrl = it }, "http://host:port/xmltv.php?username=…&password=…", onSubmit = submit)
+            XtreamField(epgUrl, { epgUrl = it }, "http://host:port/xmltv.php?username=…&password=…", onSubmit = submit, label = "EPG URL")
 
             // --- DNS Provider (shared) ---------------------------------------
             FormSectionLabel("DNS Provider")
@@ -1063,12 +1066,12 @@ private fun XtreamAddDialog(
             XtreamAddButton(
                 isValidating = isValidating,
                 label = if (initial != null) "Save changes" else "Add Playlist",
-                enabled = when (sourceType) {
-                    XtreamAccount.SOURCE_XTREAM, XtreamAccount.SOURCE_URL -> true
-                    // File: only submittable once a document is actually picked.
-                    XtreamAccount.SOURCE_FILE -> pickedFileUri != null
-                    else -> false
-                },
+                enabled = PlaylistFormSubmitPolicy.canSubmit(
+                    sourceType = sourceType,
+                    filePicked = pickedFileUri != null,
+                    portalUrl = portalUrl,
+                    macAddress = mac,
+                ),
                 onClick = submit
             )
 
@@ -1342,7 +1345,7 @@ private fun randomStbMac(): String {
     return "00:1A:79:$tail"
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun XtreamField(
     value: String,
@@ -1357,15 +1360,37 @@ private fun XtreamField(
     // the EPG URL field after it) passes ImeAction.Next + a move-focus-down here so the on-screen
     // "Done" key does not submit the whole form before the later fields are reachable.
     onImeAction: () -> Unit = onSubmit,
+    // B58: a persistent name above the field (placeholders vanish once typed, and Edit mode is
+    // pre-filled so it showed no names at all). Defaults to the placeholder's name part —
+    // "Server URL  (portal, e.g. …)" -> "Server URL" — so the example stays as the in-field hint.
+    label: String = placeholder.substringBefore("  (").trim(),
 ) {
     var focused by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    // The label now names the field, so the in-field hint keeps only the example part (if any).
+    val hint = placeholder.removePrefix(label).trim()
+    Column(modifier = Modifier.fillMaxWidth().padding(top = NuvioTheme.spacing.md)) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        color = if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.TextSecondary
+    )
+    // The Fire TV / Android TV keyboard runs fullscreen (extract mode) over the app and shows the
+    // field name only from EditorInfo.hintText, which Compose never sets — pass the label through.
+    InterceptPlatformTextInput(
+        interceptor = { request, nextHandler ->
+            val labelledRequest = PlatformTextInputMethodRequest { outAttributes ->
+                request.createInputConnection(outAttributes).also { outAttributes.hintText = label }
+            }
+            nextHandler.startInputMethod(labelledRequest)
+        }
+    ) {
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = NuvioTheme.spacing.md)
+            .padding(top = NuvioTheme.spacing.xs)
             .background(NuvioTheme.colors.BackgroundElevated, RoundedCornerShape(10.dp))
             .border(
                 width = 1.dp,
@@ -1408,12 +1433,14 @@ private fun XtreamField(
         textStyle = MaterialTheme.typography.bodyMedium.copy(color = NuvioTheme.colors.TextPrimary),
         cursorBrush = SolidColor(if (focused) NuvioTheme.colors.Primary else Color.Transparent),
         decorationBox = { inner ->
-            if (value.isEmpty()) {
-                Text(placeholder, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextTertiary)
+            if (value.isEmpty() && hint.isNotEmpty()) {
+                Text(hint, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextTertiary)
             }
             inner()
         }
     )
+    }
+    }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
