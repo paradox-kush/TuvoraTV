@@ -685,8 +685,12 @@ private fun AuthTermsAcknowledgement() {
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // weight(fill = false): the sentence wraps inside the 460dp pane instead of taking the whole
+        // row and squeezing the "Terms" link out, which left it cut off at "…agreement to the".
         Text(
             text = stringResource(R.string.auth_qr_terms_prefix),
+            modifier = Modifier.weight(1f, fill = false),
+            textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium.copy(
                 color = AuthTextSecondary,
                 fontSize = 13.sp,

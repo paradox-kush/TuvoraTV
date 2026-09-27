@@ -77,4 +77,18 @@ class XmltvDerivedSourceTest {
         assertNull(xmltv.derivedXmltvUrl(acct(pass = "")))
         assertNull(xmltv.derivedXmltvUrl(acct(base = "")))
     }
+
+    @Test
+    fun `the guide request sends the playlist user agent never the xtream username`() {
+        // Regression (B10, 2026-09-27): the xmltv.php request sent the Xtream USERNAME as its
+        // User-Agent (an M3U-only convention), so UA-gated panels refused the guide.
+        val tivimate = acct(user = "alice").copy(userAgent = "TiviMate/5")
+        assertEquals("xtream uses its own UA", "TiviMate/5", XmltvClient.userAgentFor(tivimate))
+        assertNull("xtream without a UA sends the default, not the username", XmltvClient.userAgentFor(acct(user = "alice")))
+        assertEquals(
+            "m3u keeps its UA in the username slot",
+            "VLC/3",
+            XmltvClient.userAgentFor(acct(user = "VLC/3", pass = "", type = XtreamAccount.SOURCE_URL)),
+        )
+    }
 }

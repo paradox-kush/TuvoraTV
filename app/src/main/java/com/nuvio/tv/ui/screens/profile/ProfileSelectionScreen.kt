@@ -61,6 +61,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -1002,24 +1004,25 @@ private fun ProfileGrid(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
-            val defaultGridWidth = profileGridWidth(
+            val gridLayout = ProfileGridLayoutPolicy.layout(
                 itemCount = totalItems,
-                cardWidth = ProfileSelectionSpacing.CardWidth,
-                itemGap = ProfileSelectionSpacing.GridItemGap
+                maxWidth = maxWidth.value,
+                cardWidth = ProfileSelectionSpacing.CardWidth.value,
+                compactCardWidth = ProfileSelectionSpacing.CompactCardWidth.value,
+                gap = ProfileSelectionSpacing.GridItemGap.value,
+                compactGap = ProfileSelectionSpacing.CompactGridItemGap.value,
             )
-            val fullSizeTightGridWidth = profileGridWidth(
-                itemCount = totalItems,
-                cardWidth = ProfileSelectionSpacing.CardWidth,
-                itemGap = ProfileSelectionSpacing.CompactGridItemGap
-            )
-            val useCompactCards = defaultGridWidth > maxWidth && fullSizeTightGridWidth > maxWidth
-            val gridItemGap = if (defaultGridWidth > maxWidth) {
-                ProfileSelectionSpacing.CompactGridItemGap
-            } else {
-                ProfileSelectionSpacing.GridItemGap
-            }
+            val useCompactCards = gridLayout.compact
+            val gridItemGap = gridLayout.gap.dp
 
             Row(
+                // Overflowing rows scroll (D-pad focus brings the focused card into view) instead of
+                // squeezing later cards to nothing (B61).
+                modifier = if (gridLayout.scrollable) {
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                } else {
+                    Modifier
+                },
                 horizontalArrangement = Arrangement.spacedBy(gridItemGap),
                 verticalAlignment = Alignment.Top
             ) {
@@ -1047,16 +1050,6 @@ private fun ProfileGrid(
             }
         }
     }
-}
-
-private fun profileGridWidth(
-    itemCount: Int,
-    cardWidth: Dp,
-    itemGap: Dp
-): Dp {
-    if (itemCount <= 0) return 0.dp
-    val gapCount = itemCount - 1
-    return (cardWidth.value * itemCount + itemGap.value * gapCount).dp
 }
 
 @Composable

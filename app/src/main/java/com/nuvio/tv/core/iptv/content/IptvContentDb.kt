@@ -70,11 +70,12 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             // active_generation = the generation readers see (the last COMPLETE build's).
             db.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL, tvg_url TEXT, epg_built_at INTEGER, active_generation INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID")
             createEpgTable(db)
+            db.execSQL(EPG_META_DDL)
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             // Everything here is a rebuildable cache of the parsed playlist — drop + re-ingest.
-            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_channel_fetch")) {
+            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_channel_fetch", "epg_meta")) {
                 db.execSQL("DROP TABLE IF EXISTS $t")
             }
             onCreate(db)
@@ -89,7 +90,9 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
-    private val db: SQLiteDatabase by lazy { helper.writableDatabase }
+    // epg_meta is created lazily too, so existing v5 databases pick it up with no migration (a version
+    // bump would drop every cached catalog).
+    private val db: SQLiteDatabase by lazy { helper.writableDatabase.also { it.execSQL(EPG_META_DDL) } }
 
     /** The generation an in-flight ingest (ingest → writer → finish) is writing, per playlist. */
     private val pendingGeneration = HashMap<String, Long>()
@@ -129,9 +132,17 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
-    /** When this playlist's EPG was last fetched (null = never — refresh it). */
+    /**
+     * When this playlist's EPG was last fetched (null = never — refresh it). epg_meta holds the stamp
+     * for every playlist; ingest_meta's column is the pre-epg_meta stamp, read so an upgrade does not
+     * refetch every guide once.
+     */
     suspend fun epgBuiltAt(playlistId: String): Long? = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT epg_built_at FROM ingest_meta WHERE playlist_id = ?", arrayOf(playlistId)).use { c ->
+        db.rawQuery(
+            "SELECT COALESCE((SELECT epg_built_at FROM epg_meta WHERE playlist_id = ?), " +
+                "(SELECT epg_built_at FROM ingest_meta WHERE playlist_id = ?))",
+            arrayOf(playlistId, playlistId),
+        ).use { c ->
             if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
         }
     }
@@ -295,6 +306,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
                     "INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, tvg_url, epg_built_at, active_generation) VALUES(?,?,?,?,?,?,NULL,?)",
                     arrayOf<Any?>(playlistId, System.currentTimeMillis(), counts.live, counts.vod, counts.series, tvgUrl, generation)
                 )
+                // The guide freshness goes stale with the catalog (see the NULL above).
+                db.delete("epg_meta", "playlist_id = ?", arrayOf(playlistId))
                 for (t in catalogTables) db.delete(t, "playlist_id = ? AND generation <> ?", arrayOf(playlistId, generation.toString()))
             }
             pendingGeneration.remove(playlistId)
@@ -339,7 +352,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             // NOTE: epg_programmes is intentionally NOT cleared here. A catalog re-ingest resets the
             // meta's epg_built_at (finish writes NULL) so the EPG re-fetches, but the old programmes
             // stay readable until that fetch replaces them (via replaceEpg) — no now/next gap.
-            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta")) {
+            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_meta")) {
                 db.delete(t, "playlist_id = ?", arrayOf(playlistId))
             }
         }
@@ -665,8 +678,11 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
                 )
             }
             db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(playlistId))
-            // Stamp freshness last (row exists from the catalog ingest; UPDATE it) — even on an empty
-            // result, so a provider serving no guide right now doesn't refetch on every browse.
+            // Stamp freshness last — even on an empty result, so a provider serving no guide right now
+            // doesn't refetch on every browse. An upsert into epg_meta, because an Xtream playlist has
+            // no ingest_meta row (its lineup lives in XtreamMatchIndex): the old UPDATE matched nothing
+            // and every guide entry re-downloaded the whole xmltv.php.
+            db.execSQL("INSERT OR REPLACE INTO epg_meta(playlist_id, epg_built_at) VALUES(?, ?)", arrayOf<Any?>(playlistId, builtAtMs))
             db.execSQL("UPDATE ingest_meta SET epg_built_at = ? WHERE playlist_id = ?", arrayOf<Any?>(builtAtMs, playlistId))
         }
     }
@@ -868,6 +884,9 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
         /** Staging table for [replaceEpg]'s generation swap; holds only the in-flight refresh's rows. */
         private const val EPG_SHADOW = "epg_programmes_shadow"
+        /** Per-playlist guide freshness, for every source type (see [replaceEpg]). */
+        private const val EPG_META_DDL =
+            "CREATE TABLE IF NOT EXISTS epg_meta(playlist_id TEXT NOT NULL PRIMARY KEY, epg_built_at INTEGER NOT NULL) WITHOUT ROWID"
         private const val EPG_SHADOW_DDL =
             "CREATE TABLE IF NOT EXISTS $EPG_SHADOW(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, " +
                 "start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, " +

@@ -65,6 +65,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.annotation.StringRes
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -542,13 +543,36 @@ fun LiveGuide(
     }
 }
 
+@Composable
 private fun playbackErrorText(
     state: CleanLiveGuidePlaybackState,
     error: LivePlaybackUiErrorCode?,
-): String? = when {
-    error != null -> error.toString()
-    state is CleanLiveGuidePlaybackState.Rejected -> state.reason.name.lowercase().replace('_', ' ')
-    else -> null
+): String? = LiveGuidePreviewErrorPolicy.messageRes(state, error)?.let { stringResource(it) }
+
+/**
+ * The guide preview's playback notice, as the same translated sentence the full player shows. It used
+ * to print the raw error object (B50: Shield users saw "PreviewUnavailable(reasonCode=GUIDE_…)").
+ */
+internal object LiveGuidePreviewErrorPolicy {
+    @StringRes
+    fun messageRes(state: CleanLiveGuidePlaybackState, error: LivePlaybackUiErrorCode?): Int? = when {
+        error != null -> CleanLivePlayerUiPolicy.errorMessageRes(error)
+        state is CleanLiveGuidePlaybackState.Rejected -> rejectionMessageRes(state.reason)
+        else -> null
+    }
+
+    @StringRes
+    fun rejectionMessageRes(reason: CleanLiveGuideFailure): Int = when (reason) {
+        CleanLiveGuideFailure.SELECTION_UNAVAILABLE,
+        CleanLiveGuideFailure.INVALID_TARGET,
+        -> R.string.clean_live_error_stream_no_graph
+        CleanLiveGuideFailure.HOST_CREATION_FAILED -> R.string.clean_live_error_resources
+        CleanLiveGuideFailure.RELEASE_FAILED -> R.string.clean_live_error_release
+        CleanLiveGuideFailure.PROFILE_CHANGED,
+        CleanLiveGuideFailure.TUNE_FAILED,
+        CleanLiveGuideFailure.COMMAND_FAILED,
+        -> R.string.clean_live_error_unknown
+    }
 }
 
 /** Fullscreen live controls: bottom scrim with channel + now/next EPG and the play state. */
