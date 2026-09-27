@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.iptv.epg
 
 import android.util.Log
+import com.nuvio.tv.core.iptv.StreamUserAgentPolicy
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.content.IptvContentDb
 import kotlinx.coroutines.CoroutineScope
@@ -147,7 +148,7 @@ class XmltvClient @Inject constructor(
     private suspend fun fetchAndStore(acc: XtreamAccount, url: String, channelIds: Set<String>) {
         val request = Request.Builder()
             .url(url)
-            .apply { acc.username.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) } }
+            .apply { userAgentFor(acc)?.let { header("User-Agent", it) } }
             .build()
         // XMLTV fetch honours the playlist's DoH resolver (shares the ingest pool).
         playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
@@ -185,6 +186,13 @@ class XmltvClient @Inject constructor(
     }
 
     companion object {
+        /**
+         * The playlist's own User-Agent for the guide request, or null for the client default (what the
+         * Xtream API calls send). M3U playlists keep theirs in the username slot; an Xtream username is a
+         * credential and was wrongly sent as the UA, so UA-gated panels refused the guide.
+         */
+        internal fun userAgentFor(acc: XtreamAccount): String? = StreamUserAgentPolicy.resolve(acc)
+
         private const val TAG = "XmltvClient"
         private const val HEX = "0123456789ABCDEF"
         /** At most ~2×/day (spec) — served from the DB in between. */

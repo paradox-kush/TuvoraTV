@@ -320,15 +320,22 @@ internal fun GuideTimeHeaderWithDay(
     }
 }
 
-/** "Today" / "Yesterday" / "Sat 14 Aug", by calendar day rather than by elapsed hours. */
+/**
+ * "Today" / "Yesterday" / "Sat 14 Aug", by calendar day rather than by elapsed hours.
+ *
+ * A window that has the now-line on screen is labelled by now's day: just after midnight the live
+ * window opens one lookback slot back, on the previous day, and labelling it by its start read
+ * "Yesterday" over tonight's live schedule.
+ */
 internal fun guideDayLabel(windowStartMs: Long, nowMs: Long): String {
-    val days = calendarDaysBetween(windowStartMs, nowMs)
+    val anchorMs = if (GuideTimeTravel.containsNow(windowStartMs, nowMs)) nowMs else windowStartMs
+    val days = calendarDaysBetween(anchorMs, nowMs)
     return when (days) {
         0 -> "Today"
         1 -> "Yesterday"
         -1 -> "Tomorrow"
         else -> {
-            val c = Calendar.getInstance().apply { timeInMillis = windowStartMs }
+            val c = Calendar.getInstance().apply { timeInMillis = anchorMs }
             String.format(Locale.getDefault(), "%1\$ta %1\$te %1\$tb", c)
         }
     }

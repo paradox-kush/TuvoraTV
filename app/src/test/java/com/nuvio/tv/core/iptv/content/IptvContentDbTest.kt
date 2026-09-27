@@ -144,6 +144,25 @@ class IptvContentDbTest {
     }
 
     @Test
+    fun `replaceEpg stamps freshness for a playlist with no catalog ingest row`() = runTest {
+        // Regression (B10, 2026-09-27): an Xtream lineup lives in XtreamMatchIndex, so its playlist has
+        // no ingest_meta row. The stamp was an UPDATE of that row, matched nothing, and the playlist read
+        // as "never built" forever — every guide entry re-downloaded the whole xmltv.php.
+        val xtream = "xtream-acc"
+        db.replaceEpg(xtream, builtAtMs = 5_000L) { w -> w.add(EpgProgramme("bbc.uk", 1L, 2L, "P", null)) }
+        assertEquals("xtream playlist guide must be stamped", 5_000L, db.epgBuiltAt(xtream))
+        assertNull("stamping the guide must not fake a catalog build", db.builtAt(xtream))
+    }
+
+    @Test
+    fun `clearing a playlist resets its guide freshness`() = runTest {
+        ingestSample()
+        db.replaceEpg(pid, builtAtMs = 5_000L) { w -> w.add(EpgProgramme("bbc.uk", 1L, 2L, "P", null)) }
+        db.clear(pid)
+        assertNull(db.epgBuiltAt(pid))
+    }
+
+    @Test
     fun `epgNowNext returns the current programme plus the next`() = runTest {
         ingestSample()
         db.replaceEpg(pid, builtAtMs = 0L) { w ->
