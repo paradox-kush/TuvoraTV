@@ -55,6 +55,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -101,6 +103,9 @@ fun XtreamSettingsContent(
     var showRegionPicker by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
+    // B57: Remove used to delete on the first OK with no confirmation, from a row that was cut off
+    // the bottom of a non-scrolling dialog.
+    var removeConfirmFor by remember { mutableStateOf<XtreamAccount?>(null) }
     var correctionFor by remember { mutableStateOf<String?>(null) }
     var guideOffsetFor by remember { mutableStateOf<String?>(null) }
     var editFor by remember { mutableStateOf<XtreamAccount?>(null) }
@@ -293,7 +298,10 @@ fun XtreamSettingsContent(
                 needsReimport -> "Imported file not on this device — re-import to browse"
                 account.fileName != null -> account.fileName
                 else -> account.baseUrl
-            }
+            },
+            // Up to eight rows for an Xtream playlist: past the dialog height they were clipped and
+            // the last ones (Disable, Remove) D-pad-unreachable. Scrolling follows focus.
+            scrollable = true
         ) {
             // A file playlist with no local copy on this device (synced from elsewhere) can't browse
             // until it's re-imported here — offer that first, hide the dead browse entries.
@@ -379,13 +387,46 @@ fun XtreamSettingsContent(
                 }
             )
             SettingsActionRow(
-                title = "Remove account",
+                title = "Remove playlist",
                 subtitle = null,
                 onClick = {
-                    viewModel.remove(account.id)
                     actionsFor = null
+                    removeConfirmFor = account
                 }
             )
+        }
+    }
+
+    removeConfirmFor?.let { account ->
+        val cancelFocus = remember { FocusRequester() }
+        LaunchedEffect(account.id) { cancelFocus.requestFocus() }
+        NuvioDialog(
+            onDismiss = { removeConfirmFor = null },
+            title = "Remove \u201C${account.name}\u201D?",
+            subtitle = "Its favourites, Continue Watching entries and watch progress go with it, on all " +
+                "your devices. This can't be undone.",
+            width = 460.dp
+        ) {
+            Button(
+                onClick = {
+                    viewModel.remove(account.id)
+                    removeConfirmFor = null
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.colors(
+                    containerColor = Color(0xFF4A2323),
+                    contentColor = NuvioTheme.colors.TextPrimary
+                )
+            ) {
+                Text("Remove playlist")
+            }
+            // Focus starts on Cancel so a stray OK can't delete.
+            Button(
+                onClick = { removeConfirmFor = null },
+                modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus)
+            ) {
+                Text("Cancel")
+            }
         }
     }
 
