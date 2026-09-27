@@ -2038,7 +2038,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Učitavanje\u2026</string>
     <string name="account_sync_description">Sinhronizujte svoju biblioteku, napredak gledanja, dodatke i priključke na svim uređajima.</string>
-    <string name="account_sync_restart_note">Sinhronizacija se ne odvija u realnom vremenu na aktivnim uređajima. Ponovo pokrenite ovaj uređaj nakon prijavljivanja ili da biste preuzeli izmene napravljene na drugom mestu.</string>
     <string name="account_signin_qr_title">Prijavite se pomoću QR koda</string>
     <string name="account_signin_qr_subtitle">Skenirajte QR kod i završite prijavu putem e-pošte na telefonu</string>
     <string name="account_signin_email_title">Prijavite se</string>

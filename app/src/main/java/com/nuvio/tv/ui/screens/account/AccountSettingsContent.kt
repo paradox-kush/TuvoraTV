@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -98,9 +99,6 @@ fun AccountSettingsContent(
                         color = NuvioTheme.colors.TextSecondary
                     )
                 }
-                item(key = "account_sync_note_signed_out") {
-                    AccountInlineNote(text = stringResource(R.string.account_sync_restart_note))
-                }
                 item(key = "account_sign_in_qr") {
                     SettingsActionButton(
                         icon = Icons.Default.VpnKey,
@@ -151,8 +149,13 @@ private fun SignedInAccountSettingsContent(
             item(key = "account_status") {
                 StatusCard(label = stringResource(R.string.account_signed_in_label), value = authState.email)
             }
-            item(key = "account_sync_note_signed_in") {
-                AccountInlineNote(text = stringResource(R.string.account_sync_restart_note))
+            item(key = "account_sync_now") {
+                SettingsActionButton(
+                    icon = Icons.Default.Sync,
+                    title = stringResource(R.string.account_sync_now_title),
+                    subtitle = stringResource(R.string.account_sync_now_subtitle),
+                    onClick = viewModel::syncNow
+                )
             }
 
             val overview = uiState.syncOverview

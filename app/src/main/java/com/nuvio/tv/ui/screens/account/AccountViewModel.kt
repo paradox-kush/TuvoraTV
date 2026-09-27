@@ -74,6 +74,7 @@ class AccountViewModel @Inject constructor(
     private val syncBackendSwitchService: SyncBackendSwitchService,
     private val supabaseProvider: SyncBackendSupabaseProvider,
     private val profileManager: ProfileManager,
+    private val startupSyncService: com.nuvio.tv.core.sync.StartupSyncService,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
     private val postgrest
@@ -197,7 +198,8 @@ class AccountViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
             authManager.signUpWithEmail(email, password).fold(
                 onSuccess = {
-                    pushLocalDataToRemote()
+                    // D1: never flush another account's kept data into a brand-new account.
+                    if (authManager.signedInAccountOwnsLocalData()) pushLocalDataToRemote()
                     _uiState.update { it.copy(isLoading = false) }
                 },
                 onFailure = { e ->
@@ -212,7 +214,8 @@ class AccountViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
             authManager.signInWithEmail(email, password).fold(
                 onSuccess = {
-                    pullRemoteData().onFailure { e ->
+                    // D1: a different account over kept data waits for the account-switch prompt.
+                    if (authManager.signedInAccountOwnsLocalData()) pullRemoteData().onFailure { e ->
                         Log.e("AccountViewModel", "signIn: pullRemoteData failed, continuing signed-in flow", e)
                     }
                     loadConnectedStats()
@@ -275,12 +278,12 @@ class AccountViewModel @Inject constructor(
                         updateEffectiveOwnerId(_uiState.value.authState)
                         _uiState.update { it.copy(isLoading = false, syncClaimSuccess = true) }
                     } else {
-                        authManager.signOut(explicit = false)
+                        authManager.signOut(com.nuvio.tv.core.auth.SessionEndReason.SESSION_LOST)
                         _uiState.update { it.copy(isLoading = false, error = result.message) }
                     }
                 },
                 onFailure = { e ->
-                    authManager.signOut(explicit = false)
+                    authManager.signOut(com.nuvio.tv.core.auth.SessionEndReason.SESSION_LOST)
                     _uiState.update { it.copy(isLoading = false, error = userFriendlyError(e)) }
                 }
             )
@@ -398,7 +401,8 @@ class AccountViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null, qrLoginStatus = context.getString(R.string.qr_login_signing_in)) }
             authManager.exchangeTvLoginSession(code = code, deviceNonce = nonce).fold(
                 onSuccess = {
-                    pullRemoteData().onFailure { e ->
+                    // D1: a different account over kept data waits for the account-switch prompt.
+                    if (authManager.signedInAccountOwnsLocalData()) pullRemoteData().onFailure { e ->
                         Log.e("AccountViewModel", "exchangeQrLogin: pullRemoteData failed, continuing", e)
                     }
                     loadConnectedStats()
@@ -482,6 +486,15 @@ class AccountViewModel @Inject constructor(
             val name: String,
             val color: String
         )
+    }
+
+    /**
+     * "Sync now" on the Account screen (replaces the old "restart this device to pick up changes"
+     * note): a forced startup pull, which also pushes anything local that has not synced yet.
+     */
+    fun syncNow() {
+        startupSyncService.requestSyncNow()
+        loadSyncOverview()
     }
 
     fun loadSyncOverview() {

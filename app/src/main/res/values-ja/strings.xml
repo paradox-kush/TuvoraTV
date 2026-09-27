@@ -1711,7 +1711,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">読み込み中\u2026</string>
     <string name="account_sync_description">デバイス間でライブラリ、視聴進行状況、アドオン、プラグインを同期</string>
-    <string name="account_sync_restart_note">同期はリアルタイムではありません。サインイン後、または他のデバイスでの変更を反映するにはアプリを再起動してください</string>
     <string name="account_signin_qr_title">QRでサインイン</string>
     <string name="account_signin_qr_subtitle">QRコードをスキャンしてスマートフォンでメールログインを完了</string>
     <string name="account_signed_in_label">サインイン済み</string>

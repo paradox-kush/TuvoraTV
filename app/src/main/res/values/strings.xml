@@ -98,7 +98,14 @@
 
     <string name="home_no_addons">No addons installed. Add one to get started.</string>
     <string name="home_no_catalog_addons">No catalog addons installed. Install a catalog addon to see content.</string>
-    <string name="auth_notice_nuvio_logged_out">You have been signed out of Tuvora. Please sign in again.</string>
+    <string name="auth_notice_nuvio_logged_out">You were signed out of Tuvora. Everything on this TV was kept — sign in again to keep it syncing.</string>
+    <string name="account_switch_title">Different account</string>
+    <string name="account_switch_message">This TV still has data from %1$s, and some of it may not have synced. It won\'t be added to %2$s. Continue as %2$s and remove it from this TV, or keep it and sign back in as %1$s later.</string>
+    <string name="account_switch_confirm">Remove and continue</string>
+    <string name="account_switch_keep">Keep data</string>
+    <string name="account_switch_unknown_account">another account</string>
+    <string name="account_sync_now_title">Sync now</string>
+    <string name="account_sync_now_subtitle">Get the latest from your other devices and send anything that hasn\'t synced yet</string>
     <string name="auth_notice_trakt_logged_out">You have been signed out of Trakt. Please reconnect.</string>
     <string name="error_generic">An error occurred</string>
 
@@ -2106,7 +2113,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Loading\u2026</string>
     <string name="account_sync_description">Sync your library, watch progress, addons, and plugins across devices.</string>
-    <string name="account_sync_restart_note">Sync is not real-time across active devices. Restart this device after signing in or to pick up changes made elsewhere.</string>
     <string name="account_signin_qr_title">Sign In with QR</string>
     <string name="account_signin_qr_subtitle">Scan a QR code and complete email login on your phone</string>
     <string name="account_signin_email_title">Sign In</string>

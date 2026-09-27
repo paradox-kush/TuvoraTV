@@ -1842,7 +1842,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Duke ngarkuar\u2026</string>
     <string name="account_sync_description">Sinkronizo bibliotekën, progresin e shikimit, shtesat dhe shtojcat në të gjitha pajisjet.</string>
-    <string name="account_sync_restart_note">Sinkronizimi nuk është në kohë reale ndërmjet pajisjeve aktive. Rinis këtë pajisje pas hyrjes ose për të marrë ndryshimet e bëra diku tjetër.</string>
     <string name="account_signin_qr_title">Hyr me QR</string>
     <string name="account_signin_qr_subtitle">Skano një kod QR dhe përfundo hyrjen me email në telefon</string>
     <string name="account_signin_email_title">Hyr</string>

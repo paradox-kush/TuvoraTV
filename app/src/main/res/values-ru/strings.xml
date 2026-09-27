@@ -1336,7 +1336,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Загрузка\u2026</string>
     <string name="account_sync_description">Синхронизируйте вашу библиотеку, прогресс просмотра, аддоны и плагины между устройствами.</string>
-    <string name="account_sync_restart_note">Синхронизация не происходит в реальном времени на активных устройствах. Перезагрузите это устройство после входа в систему или чтобы получить изменения, сделанные в другом месте.</string>
     <string name="account_signin_qr_title">Вход по QR</string>
     <string name="account_signin_qr_subtitle">Отсканируйте QR-код и завершите вход через email на вашем телефоне</string>
     <string name="account_signin_email_title">Вход</string>

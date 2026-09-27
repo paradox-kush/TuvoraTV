@@ -850,7 +850,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">लोड हो रहा है\u2026</string>
     <string name="account_sync_description">अपनी लाइब्रेरी, वॉच प्रोग्रेस, ऐडऑन और प्लगइन को डिवाइसों के बीच सिंक करें।</string>
-    <string name="account_sync_restart_note">सिंक सक्रिय डिवाइसों के बीच रियल-टाइम नहीं है। साइन इन करने के बाद या अन्य जगह किए बदलाव लाने के लिए इस डिवाइस को रीस्टार्ट करें।</string>
     <string name="account_signin_qr_title">QR से साइन इन</string>
     <string name="account_signin_qr_subtitle">QR कोड स्कैन करें और अपने फोन पर ईमेल लॉगिन पूरा करें</string>
     <string name="account_signed_in_label">साइन इन</string>

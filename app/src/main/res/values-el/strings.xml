@@ -1879,7 +1879,6 @@
   <!-- AccountSettingsContent -->
   <string name="account_loading">Φόρτωση…</string>
   <string name="account_sync_description">Συγχρονίστε τη βιβλιοθήκη, την πρόοδο παρακολούθησης και τα πρόσθετά σας σε όλες τις συσκευές.</string>
-  <string name="account_sync_restart_note">Ο συγχρονισμός δεν είναι πραγματικού χρόνου σε ενεργές συσκευές. Επανεκκινήστε αυτή τη συσκευή μετά τη σύνδεση ή για να λάβετε αλλαγές που έγιναν αλλού.</string>
   <string name="account_signin_qr_title">Σύνδεση με QR</string>
   <string name="account_signin_qr_subtitle">Σαρώστε QR code και ολοκληρώστε τη σύνδεση με email στο κινητό σας</string>
   <string name="account_signin_email_title">Σύνδεση</string>

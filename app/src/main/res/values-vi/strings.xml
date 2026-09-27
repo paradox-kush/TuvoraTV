@@ -2104,7 +2104,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Đang tải\u2026</string>
     <string name="account_sync_description">Đồng bộ thư viện, tiến độ xem, tiện ích và trình mở rộng trên nhiều thiết bị.</string>
-    <string name="account_sync_restart_note">Đồng bộ không diễn ra theo thời gian thực trên các thiết bị đang hoạt động. Vui lòng khởi động lại thiết bị này sau khi đăng nhập hoặc để nhận các thay đổi được thực hiện trên thiết bị khác.</string>
     <string name="account_signin_qr_title">Đăng nhập bằng mã QR</string>
     <string name="account_signin_qr_subtitle">Quét mã QR và hoàn tất đăng nhập email trên điện thoại</string>
     <string name="account_signin_email_title">Đăng nhập</string>

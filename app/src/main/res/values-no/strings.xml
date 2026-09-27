@@ -967,7 +967,6 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Laster\u2026</string>
     <string name="account_sync_description">Synkroniser biblioteket, seeframgang, tillegg og programtillegg på tvers av enheter.</string>
-    <string name="account_sync_restart_note">Sync er ikke sanntid på tvers av aktive enheter. Start denne enheten på nytt etter pålogging eller for å hente endringer gjort andre steder.</string>
     <string name="account_signin_qr_title">Logg inn med QR</string>
     <string name="account_signin_qr_subtitle">Skann en QR-kode og fullfør e-postlogging på telefonen din</string>
     <string name="account_signed_in_label">Logget inn</string>

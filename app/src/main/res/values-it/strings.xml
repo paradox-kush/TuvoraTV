@@ -2004,7 +2004,6 @@
     <!-- AccountSettingsContent -->
 <string name="account_loading">Caricamento\u2026</string>
 <string name="account_sync_description">Sincronizza la tua libreria, l\'avanzamento della visione, gli addon e i plugin su tutti i tuoi dispositivi.</string>
-<string name="account_sync_restart_note">La sincronizzazione non è in tempo reale tra dispositivi attivi. Riavvia questo dispositivo dopo l\'accesso o per ricevere modifiche fatte altrove.</string>
 <string name="account_signin_qr_title">Accedi con QR</string>
 <string name="account_signin_qr_subtitle">Scansiona un codice QR e completa l\'accesso via email sul tuo telefono</string>
 <string name="account_signin_email_title">Accedi</string>

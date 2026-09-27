@@ -693,6 +693,15 @@ open class MainActivity : ComponentActivity() {
                     LocalStartupLoadingState provides startupLoadingState,
                     LocalStartupSplashEnabled provides startupSplashEnabled
                 ) {
+                // D1: a different account signed in over a lost session's kept data — ask, never merge.
+                val accountSwitchPrompt by authManager.accountSwitchPrompt.collectAsState()
+                accountSwitchPrompt?.let { prompt ->
+                    com.nuvio.tv.ui.screens.account.AccountSwitchPromptDialog(
+                        prompt = prompt,
+                        onConfirm = { lifecycleScope.launch { authManager.confirmAccountSwitch() } },
+                        onKeep = { lifecycleScope.launch { authManager.cancelAccountSwitch() } }
+                    )
+                }
                 val transparentPlayerBackdrop = PlayerWindowBackdrop.isTransparentRequested
                 Surface(
                     modifier = Modifier.fillMaxSize(),
