@@ -67,8 +67,14 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
         livePlayback.classifier.isLiveId(refreshId) &&
         !isCatchUpPlayback
     val paused = userPausedManually
-    // Engine-aware: mpv VOD keeps its position too, live always rejoins the live edge.
-    val savedPosition = if (isLive) 0L else (currentPlaybackPositionMs()?.takeIf { it > 0L } ?: 0L)
+    // Engine-aware: mpv VOD keeps its position too, live always rejoins the live edge. Before the
+    // first frame the player reads 0, so the request's resume target wins (B59).
+    val savedPosition = PlaybackStartPositionPolicy.targetAfterSourceSwap(
+        isLive = isLive,
+        firstFrameShown = hasRenderedFirstFrame,
+        currentPositionMs = currentPlaybackPositionMs(),
+        requestedStartMs = requestedStartPositionMs,
+    )
 
     // Mirrors loadSourceStreams' request derivation so the re-match hits the same catalog entry.
     val matchedType: String

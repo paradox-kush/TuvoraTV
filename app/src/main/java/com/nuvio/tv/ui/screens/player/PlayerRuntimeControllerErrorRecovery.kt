@@ -296,8 +296,14 @@ internal fun PlayerRuntimeController.attemptAutoRetry(
         "Auto-retry ${attempt + 1}/$MAX_AUTO_RETRIES after ${RETRY_DELAY_MS}ms for: $detailedError"
     )
 
-    // Capture the current position so we can resume after re-init.
-    val savedPosition = _exoPlayer?.currentPosition?.takeIf { it > 0L } ?: 0L
+    // Capture the position to resume at after re-init; before the first frame that is the
+    // request's resume target, not the player's 0 (B59).
+    val savedPosition = PlaybackStartPositionPolicy.targetAfterSourceSwap(
+        isLive = isLiveContent(),
+        firstFrameShown = hasRenderedFirstFrame,
+        currentPositionMs = _exoPlayer?.currentPosition,
+        requestedStartMs = requestedStartPositionMs,
+    )
     val isFirstAttempt = attempt == 0
 
     errorRetryJob?.cancel()

@@ -527,6 +527,9 @@ class PlayerRuntimeController(
     internal val subtitleDelayUs = AtomicLong(0L)
     internal var pendingPreviewSeekPosition: Long? = null
     internal var pendingResumeProgress: WatchProgress? = null
+    // The resume target of the current playback request; survives the first load consuming
+    // pendingResumeProgress so a pre-first-frame source swap can reopen there (B59).
+    internal var requestedStartPositionMs: Long = 0L
     internal var hasRetriedCurrentStreamAfter416: Boolean = false
     internal var isReleasingPlayer: Boolean = false
     internal var cachedDecoderPriority: Int = 1

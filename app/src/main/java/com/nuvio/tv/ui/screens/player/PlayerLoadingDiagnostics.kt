@@ -157,6 +157,7 @@ internal fun PlayerRuntimeController.scheduleStartOverOffer() {
 internal fun PlayerRuntimeController.startOverFromBeginning() {
     val url = currentStreamUrl ?: return
     pendingResumeProgress = null
+    requestedStartPositionMs = 0L
     startOverOfferJob?.cancel()
     _uiState.update { it.copy(pendingSeekPosition = null, startOverOfferPositionMs = null) }
     val view = mpvView
