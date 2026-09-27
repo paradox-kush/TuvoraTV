@@ -55,4 +55,37 @@ class IptvOverlayDbTest {
         assertEquals("Local", db.snapshot(1).channels["fp:v1:y"]?.rename)
         assertEquals(1, db.channelRowsForPush(1).size) // local edit still owed to the server
     }
+
+    // F02: a group hidden on the TV must reach the website and the other devices. Only channel rows
+    // were pushed, so a device category edit stayed dirty on the TV forever.
+    @Test
+    fun `a device category hide is pushed with its content type and an ack clears it`() {
+        db.setCategory(1, "pl", "movies", "c:v1:horror", CategoryOverlay(hidden = true), 100)
+        val pending = db.channelRowsForPush(1)
+        assertEquals("one row owed", 1, pending.size)
+        val row = pending.single()
+        assertEquals("kind", "category", row.kind)
+        assertEquals("okey", "c:v1:horror", row.okey)
+        assertEquals("playlist", "pl", row.playlistId)
+        assertTrue(row.valueJson, "\"content_type\":\"movies\"" in row.valueJson)
+        assertTrue(row.valueJson, "\"hidden\":true" in row.valueJson)
+        db.markChannelsPushed(1, pending)
+        assertTrue("nothing owed after the ack", db.channelRowsForPush(1).isEmpty())
+    }
+
+    @Test
+    fun `a pulled remote category edit is never pushed back`() {
+        db.setCategory(1, "pl", "live", "c:v1:uk", CategoryOverlay(hidden = true), 100, deletedOverride = false)
+        assertTrue("remote apply is not a local edit", db.channelRowsForPush(1).isEmpty())
+    }
+
+    @Test
+    fun `unhiding a device category is pushed as a delete`() {
+        db.setCategory(1, "pl", "live", "c:v1:uk", CategoryOverlay(hidden = true), 100)
+        db.markChannelsPushed(1, db.channelRowsForPush(1))
+        db.setCategory(1, "pl", "live", "c:v1:uk", CategoryOverlay(), 200)
+        val row = db.channelRowsForPush(1).single()
+        assertEquals("kind", "category", row.kind)
+        assertTrue("an unhide is a delete", row.deleted)
+    }
 }

@@ -154,22 +154,39 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
                 out.add(OverlayPushRow("channel", c.getString(0), if (c.isNull(1)) null else c.getString(1), v, c.getLong(6), c.getInt(7) != 0))
             }
         }
+        // Category edits made on this TV (F02 "Hide group"): same delta, in the website's value shape,
+        // which carries the content type the server's category row needs.
+        db.rawQuery("SELECT category_key, playlist_id, content_type, hidden, pinned, position, rename, updated_at, deleted FROM category_overlay WHERE profile_id=? AND dirty=1", arrayOf(profileId.toString())).use { c ->
+            while (c.moveToNext()) {
+                val v = buildString {
+                    append("{\"content_type\":\"").append(c.getString(2).jsonEscaped()).append("\"")
+                    append(",\"hidden\":").append(c.getInt(3) != 0).append(",\"pinned\":").append(c.getInt(4) != 0)
+                    if (!c.isNull(5)) append(",\"position\":").append(c.getInt(5))
+                    if (!c.isNull(6)) append(",\"rename\":\"").append(c.getString(6).jsonEscaped()).append("\"")
+                    append("}")
+                }
+                out.add(OverlayPushRow("category", c.getString(0), c.getString(1), v, c.getLong(7), c.getInt(8) != 0))
+            }
+        }
         return out
     }
 
+    private fun String.jsonEscaped() = replace("\\", "\\\\").replace("\"", "\\\"")
+
     /**
-     * Clear the dirty flag for exactly the channel rows the server just acked — matched by entity_id
+     * Clear the dirty flag for exactly the channel and category rows the server just acked — matched by entity_id
      * AND the pushed updated_at, so a row re-edited during the push (newer updated_at) stays dirty and
      * is re-sent next time instead of being dropped.
      */
     @Synchronized
     fun markChannelsPushed(profileId: Int, rows: List<OverlayPushRow>) {
         for (r in rows) {
-            if (r.kind != "channel") continue
-            db.execSQL(
-                "UPDATE channel_overlay SET dirty=0 WHERE profile_id=? AND entity_id=? AND updated_at=? AND dirty=1",
-                arrayOf<Any?>(profileId, r.okey, r.updatedAt),
-            )
+            val sql = when (r.kind) {
+                "channel" -> "UPDATE channel_overlay SET dirty=0 WHERE profile_id=? AND entity_id=? AND updated_at=? AND dirty=1"
+                "category" -> "UPDATE category_overlay SET dirty=0 WHERE profile_id=? AND category_key=? AND updated_at=? AND dirty=1"
+                else -> continue
+            }
+            db.execSQL(sql, arrayOf<Any?>(profileId, r.okey, r.updatedAt))
         }
     }
 }
