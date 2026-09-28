@@ -922,7 +922,18 @@ internal fun QrCodeOverlay(
 
             Surface(
                 onClick = onClose,
-                modifier = Modifier.focusRequester(focusRequester),
+                modifier = Modifier
+                    .focusRequester(focusRequester)
+                    // Close is the overlay's only focusable: pin D-pad focus to it so the cursor
+                    // can't slip onto the dimmed screen behind the overlay.
+                    .focusProperties {
+                        left = FocusRequester.Cancel
+                        right = FocusRequester.Cancel
+                        up = FocusRequester.Cancel
+                        down = FocusRequester.Cancel
+                        next = FocusRequester.Cancel
+                        previous = FocusRequester.Cancel
+                    },
                 colors = ClickableSurfaceDefaults.colors(
                     containerColor = NuvioTheme.colors.Surface,
                     focusedContainerColor = NuvioTheme.colors.FocusBackground

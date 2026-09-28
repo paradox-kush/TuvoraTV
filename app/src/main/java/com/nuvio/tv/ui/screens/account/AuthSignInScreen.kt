@@ -2,8 +2,6 @@
 
 package com.nuvio.tv.ui.screens.account
 
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,9 +25,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -45,6 +44,9 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.components.QrHandOffDialog
+import com.nuvio.tv.ui.components.RestoreFocusOnClose
+import com.nuvio.tv.ui.components.rememberExternalLinkOpener
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 @Composable
@@ -58,7 +60,19 @@ fun AuthSignInScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showSignUpEligibilityConfirmation by remember { mutableStateOf(false) }
-    val context = LocalContext.current
+    // Many Android TV devices ship no browser: links try it first and otherwise hand the page to
+    // the viewer's phone as a QR (in its own dialog window, above the sign-up dialog).
+    val openLink = rememberExternalLinkOpener()
+    var noBrowserQrUrl by remember { mutableStateOf<String?>(null) }
+    var noBrowserQrOrigin by remember { mutableStateOf<FocusRequester?>(null) }
+    val termsLinkFocusRequester = remember { FocusRequester() }
+    val privacyLinkFocusRequester = remember { FocusRequester() }
+    fun openLinkFrom(url: String, origin: FocusRequester) {
+        if (!openLink(url)) {
+            noBrowserQrOrigin = origin
+            noBrowserQrUrl = url
+        }
+    }
 
     BackHandler { onBackPress() }
 
@@ -180,22 +194,16 @@ fun AuthSignInScreen(
             suppressFirstKeyUp = false,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
-                Text(
+                AuthTextLink(
                     text = stringResource(R.string.auth_signup_view_terms),
-                    modifier = Modifier.clickable {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TUVORA_TERMS_URL)))
-                    },
+                    onClick = { openLinkFrom(TUVORA_TERMS_URL, termsLinkFocusRequester) },
+                    style = MaterialTheme.typography.bodyMedium,
                     color = NuvioTheme.colors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.focusRequester(termsLinkFocusRequester),
                 )
                 SignUpEmailNotice(
-                    onOpenPrivacy = {
-                        // Many Android TV devices ship no browser; the URL is also spelled out in
-                        // the copy, so a missing handler must not crash the sign-up dialog.
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TUVORA_PRIVACY_URL)))
-                        }
-                    },
+                    onOpenPrivacy = { openLinkFrom(TUVORA_PRIVACY_URL, privacyLinkFocusRequester) },
+                    modifier = Modifier.focusRequester(privacyLinkFocusRequester),
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -220,22 +228,33 @@ fun AuthSignInScreen(
             }
         }
     }
+
+    noBrowserQrUrl?.let { url ->
+        QrHandOffDialog(
+            url = url,
+            instruction = stringResource(R.string.link_qr_no_browser_instruction),
+            onClose = { noBrowserQrUrl = null },
+        )
+    }
+    noBrowserQrOrigin?.let { origin ->
+        RestoreFocusOnClose(open = noBrowserQrUrl != null, target = origin)
+    }
 }
 
 /**
  * Muted marketing/privacy notice shown only in the sign-up confirmation, directly under the
- * Terms link. The Privacy Policy is opened the same way the Terms link is (tap → ACTION_VIEW);
+ * Terms link. The Privacy Policy is opened the same way the Terms link is (browser, else QR);
  * because it is clickable it is focusable, so it carries a visible D-pad focus treatment.
  */
 @Composable
-private fun SignUpEmailNotice(onOpenPrivacy: () -> Unit) {
+private fun SignUpEmailNotice(onOpenPrivacy: () -> Unit, modifier: Modifier = Modifier) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(NuvioTheme.radii.md)
     Text(
         text = stringResource(R.string.auth_signup_email_notice),
         style = MaterialTheme.typography.bodySmall,
         color = if (isFocused) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .onFocusChanged { isFocused = it.isFocused }
             .then(

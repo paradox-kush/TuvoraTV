@@ -11,11 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -33,9 +29,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.core.announcements.AnnouncementPolicy
-import com.nuvio.tv.core.qr.QrCodeGenerator
 import com.nuvio.tv.domain.model.Announcement
-import com.nuvio.tv.ui.screens.addon.QrCodeOverlay
+import com.nuvio.tv.ui.components.QrHandOffDialog
+import com.nuvio.tv.ui.components.RestoreFocusOnClose
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 /**
@@ -43,7 +39,7 @@ import com.nuvio.tv.ui.theme.NuvioTheme
  * own initial focus on the first content row); it is reached with D-pad up.
  *
  * TV has no reliable browser, so the CTA hands the link to the viewer's phone as a QR code, the
- * same way About → Discord does ([QrCodeOverlay]).
+ * same way About → Discord does ([QrHandOffDialog]).
  */
 @Composable
 internal fun HomeAnnouncementCard(
@@ -130,16 +126,17 @@ private fun AnnouncementButton(
     }
 }
 
-/** Full-screen QR hand-off for an announcement CTA; restores focus to the CTA on close. */
+/**
+ * Full-screen QR hand-off for an announcement CTA. Hosted in its own dialog window so D-pad focus
+ * stays trapped in the overlay (it can't reach Home behind it) and Back closes it.
+ */
 @Composable
 internal fun HomeAnnouncementCtaQr(
     cta: AnnouncementPolicy.Cta,
     onClose: () -> Unit,
 ) {
-    val qr = remember(cta.url) { runCatching { QrCodeGenerator.generate(cta.url, 420) }.getOrNull() }
-    QrCodeOverlay(
-        qrBitmap = qr,
-        serverUrl = cta.url,
+    QrHandOffDialog(
+        url = cta.url,
         instruction = stringResource(R.string.home_announcement_qr_instruction),
         onClose = onClose,
     )
@@ -148,13 +145,5 @@ internal fun HomeAnnouncementCtaQr(
 /** Returns focus to the CTA after the QR overlay closes (the overlay's own button is gone). */
 @Composable
 internal fun RestoreAnnouncementCtaFocus(qrOpen: Boolean, ctaFocusRequester: FocusRequester) {
-    var wasOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(qrOpen) {
-        if (qrOpen) {
-            wasOpen = true
-        } else if (wasOpen) {
-            wasOpen = false
-            runCatching { ctaFocusRequester.requestFocus() }
-        }
-    }
+    RestoreFocusOnClose(open = qrOpen, target = ctaFocusRequester)
 }

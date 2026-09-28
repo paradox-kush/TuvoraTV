@@ -4,13 +4,10 @@ package com.nuvio.tv.ui.screens.account
 
 import com.nuvio.tv.ui.theme.NuvioTheme
 
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,7 +46,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -68,6 +64,9 @@ import com.nuvio.tv.R
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.ui.components.BrandWordmark
+import com.nuvio.tv.ui.components.QrHandOffDialog
+import com.nuvio.tv.ui.components.RestoreFocusOnClose
+import com.nuvio.tv.ui.components.rememberExternalLinkOpener
 import com.nuvio.tv.ui.components.SkeletonBar
 import com.nuvio.tv.ui.components.rememberShimmerBrush
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
@@ -679,7 +678,10 @@ private fun displayVerificationUri(value: String): String = value
 
 @Composable
 private fun AuthTermsAcknowledgement() {
-    val context = LocalContext.current
+    // Many Android TV devices ship no browser: try it, otherwise hand the page off as a QR.
+    val openLink = rememberExternalLinkOpener()
+    var showTermsQr by remember { mutableStateOf(false) }
+    val termsLinkFocusRequester = remember { FocusRequester() }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
@@ -698,19 +700,25 @@ private fun AuthTermsAcknowledgement() {
             )
         )
         Spacer(modifier = Modifier.width(4.dp))
-        Text(
+        AuthTextLink(
             text = stringResource(R.string.auth_qr_terms_link),
-            modifier = Modifier.clickable {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TUVORA_TERMS_URL)))
-            },
+            onClick = { if (!openLink(TUVORA_TERMS_URL)) showTermsQr = true },
             style = MaterialTheme.typography.bodyMedium.copy(
-                color = AuthTextPrimary,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            ),
+            color = AuthTextPrimary,
+            modifier = Modifier.focusRequester(termsLinkFocusRequester),
         )
     }
+    if (showTermsQr) {
+        QrHandOffDialog(
+            url = TUVORA_TERMS_URL,
+            instruction = stringResource(R.string.link_qr_no_browser_instruction),
+            onClose = { showTermsQr = false },
+        )
+    }
+    RestoreFocusOnClose(open = showTermsQr, target = termsLinkFocusRequester)
 }
 
 @Composable
