@@ -203,7 +203,10 @@ class AccountViewModel @Inject constructor(
                     _uiState.update { it.copy(isLoading = false) }
                 },
                 onFailure = { e ->
-                    _uiState.update { it.copy(isLoading = false, error = userFriendlyError(e)) }
+                    // The sign-up hook's own refusal ("We can't deliver email to …") is already
+                    // user-facing; userFriendlyError would collapse it to the generic fallback.
+                    val error = signUpRefusalMessage(e.message.orEmpty()) ?: userFriendlyError(e)
+                    _uiState.update { it.copy(isLoading = false, error = error) }
                 }
             )
         }
