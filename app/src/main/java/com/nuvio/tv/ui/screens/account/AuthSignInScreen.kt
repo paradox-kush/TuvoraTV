@@ -194,6 +194,19 @@ fun AuthSignInScreen(
             suppressFirstKeyUp = false,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+                // Catch a typo'd domain (gmail.con) before the server refuses it; selecting the
+                // suggestion fixes the address and hands focus to the next control.
+                EmailTypoSuggestion.suggestEmail(email)?.let { suggested ->
+                    AuthTextLink(
+                        text = stringResource(R.string.auth_signup_email_typo_suggestion, suggested),
+                        onClick = {
+                            email = suggested
+                            termsLinkFocusRequester.requestFocus()
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NuvioTheme.colors.Secondary,
+                    )
+                }
                 AuthTextLink(
                     text = stringResource(R.string.auth_signup_view_terms),
                     onClick = { openLinkFrom(TUVORA_TERMS_URL, termsLinkFocusRequester) },
