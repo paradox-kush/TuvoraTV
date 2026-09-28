@@ -3295,6 +3295,9 @@
     <string name="auth_signup_eligibility_title">Confirm account eligibility</string>
     <string name="auth_signup_eligibility_message">I confirm that I am at least 18 years old and agree to the Tuvora Terms of Service. No date of birth is collected.</string>
     <string name="auth_signup_view_terms">View Terms of Service</string>
+    <string name="auth_signup_email_notice">We\'ll email you about your account, plus occasional tips and updates. You can unsubscribe anytime. Privacy Policy: tuvora.co/privacy</string>
+    <string name="home_announcement_dismiss">Dismiss</string>
+    <string name="home_announcement_qr_instruction">Scan with your phone to open this link</string>
     <string name="auth_signup_confirm_create">I confirm — create account</string>
     <string name="profile_make_primary">Make Main Profile</string>
     <string name="profile_make_primary_confirm_title">Make this the main profile?</string>

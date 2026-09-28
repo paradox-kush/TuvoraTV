@@ -8,6 +8,7 @@ import com.nuvio.tv.data.remote.supabase.TvLoginExchangeResult
 import com.nuvio.tv.data.remote.supabase.TvLoginPollResult
 import com.nuvio.tv.data.remote.supabase.TvLoginStartResult
 import com.nuvio.tv.domain.model.AuthState
+import com.nuvio.tv.ui.screens.account.TUVORA_TERMS_VERSION
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.ktor.client.plugins.HttpRequestTimeoutException
@@ -251,7 +252,7 @@ class AuthManager @Inject constructor(
                 this.password = password
                 data = buildJsonObject {
                     put("adult_confirmed", true)
-                    put("terms_version", "2026-08-04")
+                    put("terms_version", TUVORA_TERMS_VERSION)
                 }
             }
             Result.success(Unit)
