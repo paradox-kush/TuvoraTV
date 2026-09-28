@@ -44,4 +44,34 @@ class ExternalLinkPolicyTest {
         val outcome = ExternalLinkPolicy.open(url, canResolve = true) { throw SecurityException("Permission Denial") }
         assertEquals("outcome", ExternalLinkPolicy.Outcome.ShowQr(url), outcome)
     }
+
+    @Test
+    fun `no resolvers means the link cannot open`() {
+        assertEquals("canOpen", false, ExternalLinkPolicy.canOpen(emptyList()))
+    }
+
+    @Test
+    fun `only the Android TV stub browser means the link cannot open`() {
+        // Android TV's frameworkpackagestubs BrowserStub resolves VIEW https but only toasts
+        // "You don't have an app that can do this" - it is not a browser.
+        assertEquals(
+            "canOpen",
+            false,
+            ExternalLinkPolicy.canOpen(listOf("com.android.tv.frameworkpackagestubs")),
+        )
+    }
+
+    @Test
+    fun `a real browser alongside the stub can open`() {
+        assertEquals(
+            "canOpen",
+            true,
+            ExternalLinkPolicy.canOpen(listOf("com.android.tv.frameworkpackagestubs", "com.android.chrome")),
+        )
+    }
+
+    @Test
+    fun `a real browser alone can open`() {
+        assertEquals("canOpen", true, ExternalLinkPolicy.canOpen(listOf("org.mozilla.firefox")))
+    }
 }

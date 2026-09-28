@@ -54,10 +54,13 @@ fun rememberExternalLinkOpener(): (String) -> Boolean {
     return remember(context) {
         { url ->
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+            // Android TV's stub "browser" resolves too (it only toasts), so filter known stubs.
             val canResolve = runCatching {
-                context.packageManager
-                    .queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
-                    .isNotEmpty()
+                ExternalLinkPolicy.canOpen(
+                    context.packageManager
+                        .queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                        .mapNotNull { it.activityInfo?.packageName }
+                )
             }.getOrDefault(false)
             ExternalLinkPolicy.open(url, canResolve) {
                 context.startActivity(intent)
