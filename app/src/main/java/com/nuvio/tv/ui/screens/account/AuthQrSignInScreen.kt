@@ -87,7 +87,9 @@ private val AuthSecondaryButtonBorder = Color.White.copy(alpha = 0.09f)
 fun AuthQrSignInScreen(
     onBackPress: () -> Unit = {},
     onContinue: (() -> Unit)? = null,
-    onNavigateToEmailSignIn: () -> Unit = {},
+    // Required (B71): a silent {} default left first-run "Sign in with email" dead. Null hides the
+    // button (self-hosted builds are QR-only).
+    onNavigateToEmailSignIn: (() -> Unit)?,
     viewModel: AccountViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -317,7 +319,7 @@ private fun AuthQrLoginPane(
     onSignIn: (String, String) -> Unit,
     onRefreshOrSignOut: () -> Unit,
     onBackOrContinue: () -> Unit,
-    onNavigateToEmailSignIn: () -> Unit
+    onNavigateToEmailSignIn: (() -> Unit)?
 ) {
     // Default focus to "Continue without account" during onboarding so it's reachable
     // immediately (otherwise focus lands on the inline "Terms" link and is awkward to escape).
@@ -430,7 +432,7 @@ private fun AuthQrLoginPane(
         }
         // Escape hatch to the email screen (Sign In + Create Account); QR stays primary.
         // Own full-width row; the pane now scrolls (verticalScroll) so this can't clip off-screen.
-        if (!isSignedIn) {
+        if (!isSignedIn && onNavigateToEmailSignIn != null) {
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
             Button(
                 onClick = onNavigateToEmailSignIn,
