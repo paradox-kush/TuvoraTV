@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.components
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,16 +44,23 @@ fun QrHandOffDialog(
 
 /**
  * Returns a function that tries to open a URL in a browser. It returns `false` — instead of
- * crashing — when the TV has no browser or the handler refuses ([ExternalLinkPolicy]); the caller
- * then shows a [QrHandOffDialog] so the page can still be read on a phone.
+ * crashing or handing the intent to a system "no app can do this" toast — when no activity
+ * resolves the link or the launch is refused ([ExternalLinkPolicy]); the caller then shows a
+ * [QrHandOffDialog] so the page can still be read on a phone.
  */
 @Composable
 fun rememberExternalLinkOpener(): (String) -> Boolean {
     val context = LocalContext.current
     return remember(context) {
         { url ->
-            ExternalLinkPolicy.open(url) {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it)))
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+            val canResolve = runCatching {
+                context.packageManager
+                    .queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                    .isNotEmpty()
+            }.getOrDefault(false)
+            ExternalLinkPolicy.open(url, canResolve) {
+                context.startActivity(intent)
             } == ExternalLinkPolicy.Outcome.Opened
         }
     }

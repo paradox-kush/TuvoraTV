@@ -8,6 +8,13 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- Lets ExternalLinkPolicy see installed browsers on Android 11+ (package visibility),
+             so a TV with no browser gets the QR hand-off instead of a dead-end system toast. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />
