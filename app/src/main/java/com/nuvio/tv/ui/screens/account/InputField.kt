@@ -16,6 +16,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -48,6 +52,7 @@ internal fun InputField(
 ) {
     val textFieldFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     var isEditing by remember { mutableStateOf(false) }
 
     LaunchedEffect(isEditing) {
@@ -84,6 +89,20 @@ internal fun InputField(
                 .fillMaxWidth()
                 .padding(horizontal = NuvioTheme.spacing.lg, vertical = 14.dp)
                 .focusRequester(textFieldFocusRequester)
+                // B69: while editing, the text field swallowed D-pad Up/Down, so the only way out
+                // of the password field to Sign In / Create account was Tab. Up/Down now end
+                // editing and move focus like any other control.
+                .onPreviewKeyEvent { event ->
+                    val direction = InputFieldKeys.exitDirection(
+                        isEditing = isEditing,
+                        isKeyDown = event.type == KeyEventType.KeyDown,
+                        keyCode = event.nativeKeyEvent.keyCode
+                    ) ?: return@onPreviewKeyEvent false
+                    isEditing = false
+                    keyboardController?.hide()
+                    focusManager.moveFocus(direction)
+                    true
+                }
                 .onFocusChanged {
                     if (!it.isFocused && isEditing) {
                         isEditing = false
