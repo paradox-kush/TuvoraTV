@@ -684,16 +684,14 @@ private fun AuthTermsAcknowledgement() {
     val openLink = rememberExternalLinkOpener()
     var showTermsQr by remember { mutableStateOf(false) }
     val termsLinkFocusRequester = remember { FocusRequester() }
-    Row(
+    // B72: the link goes directly under its sentence. As a Row sibling the wrapped sentence left
+    // "Terms" stranded in a column far to the right, reading "…agreement to the" + a stray word.
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // weight(fill = false): the sentence wraps inside the 460dp pane instead of taking the whole
-        // row and squeezing the "Terms" link out, which left it cut off at "…agreement to the".
         Text(
             text = stringResource(R.string.auth_qr_terms_prefix),
-            modifier = Modifier.weight(1f, fill = false),
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium.copy(
                 color = AuthTextSecondary,
@@ -701,7 +699,7 @@ private fun AuthTermsAcknowledgement() {
                 lineHeight = 18.sp
             )
         )
-        Spacer(modifier = Modifier.width(4.dp))
+        Spacer(modifier = Modifier.height(2.dp))
         AuthTextLink(
             text = stringResource(R.string.auth_qr_terms_link),
             onClick = { if (!openLink(TUVORA_TERMS_URL)) showTermsQr = true },

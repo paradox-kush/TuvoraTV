@@ -22,6 +22,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.BorderStroke
+import androidx.tv.material3.Border
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -163,12 +165,9 @@ fun AuthSignInScreen(
             Button(
                 onClick = { submit() },
                 enabled = canSubmit,
-                colors = ButtonDefaults.colors(
-                    containerColor = NuvioTheme.colors.Secondary,
-                    focusedContainerColor = NuvioTheme.colors.SecondaryVariant,
-                    contentColor = NuvioTheme.colors.OnSecondary,
-                    focusedContentColor = NuvioTheme.colors.OnSecondaryVariant
-                ),
+                colors = authButtonColors(),
+                border = authButtonBorder(primary = true),
+                scale = AUTH_BUTTON_SCALE,
                 shape = ButtonDefaults.shape(RoundedCornerShape(50)),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -183,12 +182,9 @@ fun AuthSignInScreen(
             Button(
                 onClick = { if (canSubmit) showSignUpEligibilityConfirmation = true },
                 enabled = canSubmit,
-                colors = ButtonDefaults.colors(
-                    containerColor = NuvioTheme.colors.BackgroundElevated,
-                    focusedContainerColor = NuvioTheme.colors.Secondary,
-                    contentColor = NuvioTheme.colors.TextSecondary,
-                    focusedContentColor = NuvioTheme.colors.OnSecondary
-                ),
+                colors = authButtonColors(),
+                border = authButtonBorder(primary = false),
+                scale = AUTH_BUTTON_SCALE,
                 shape = ButtonDefaults.shape(RoundedCornerShape(50)),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -297,3 +293,37 @@ private fun SignUpEmailNotice(onOpenPrivacy: () -> Unit, modifier: Modifier = Mo
             .padding(horizontal = NuvioTheme.spacing.sm, vertical = NuvioTheme.spacing.xs),
     )
 }
+
+// B70: only the focused button is filled (plus the focus ring), so focus is never ambiguous; the
+// primary action keeps an accent outline at rest instead of a solid white fill that read as focused.
+// B73: full-width buttons don't grow on focus, so they stay inside the card.
+private val AUTH_BUTTON_SCALE = ButtonDefaults.scale(focusedScale = 1f)
+
+@Composable
+private fun authButtonColors() = ButtonDefaults.colors(
+    containerColor = NuvioTheme.colors.BackgroundCard,
+    focusedContainerColor = NuvioTheme.colors.Secondary,
+    contentColor = NuvioTheme.colors.TextPrimary,
+    focusedContentColor = NuvioTheme.colors.OnSecondary,
+    disabledContainerColor = NuvioTheme.colors.BackgroundCard,
+    disabledContentColor = NuvioTheme.colors.TextTertiary
+)
+
+@Composable
+private fun authButtonBorder(primary: Boolean) = ButtonDefaults.border(
+    border = Border(
+        border = BorderStroke(
+            if (primary) 1.5.dp else NuvioTheme.spacing.hairline,
+            if (primary) NuvioTheme.colors.Secondary else NuvioTheme.colors.Border
+        ),
+        shape = RoundedCornerShape(50)
+    ),
+    focusedBorder = Border(
+        border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+        shape = RoundedCornerShape(50)
+    ),
+    disabledBorder = Border(
+        border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border),
+        shape = RoundedCornerShape(50)
+    )
+)
