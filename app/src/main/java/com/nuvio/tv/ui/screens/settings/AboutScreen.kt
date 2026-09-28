@@ -4,8 +4,6 @@ package com.nuvio.tv.ui.screens.settings
 
 import com.nuvio.tv.ui.theme.NuvioTheme
 
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -46,14 +44,19 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.R
 import com.nuvio.tv.core.build.AppFeaturePolicy
-import com.nuvio.tv.core.qr.QrCodeGenerator
-import com.nuvio.tv.ui.screens.addon.QrCodeOverlay
+import com.nuvio.tv.ui.components.QrHandOffDialog
+import com.nuvio.tv.ui.components.RestoreFocusOnClose
+import com.nuvio.tv.ui.components.rememberExternalLinkOpener
 import com.nuvio.tv.updater.UpdateViewModel
 
 // Permanent Discord invite. On TV this is never opened as a URL - most Android TV devices ship no
 // browser at all, so ACTION_VIEW would throw ActivityNotFoundException. It's rendered as a QR for
 // the viewer's phone instead, the same way the addon and donate flows hand a URL off the telly.
 private const val DISCORD_URL = "https://discord.gg/wFu9T2nS8X"
+private const val PRIVACY_URL = "https://tuvora.co/privacy"
+
+/** A URL currently shown as a QR hand-off. */
+private data class AboutQrLink(val url: String, val instructionRes: Int)
 
 @Composable
 fun AboutScreen(
@@ -81,10 +84,20 @@ fun AboutSettingsContent(
     initialFocusRequester: FocusRequester? = null
 ) {
     val context = LocalContext.current
-    var showDiscordQr by remember { mutableStateOf(false) }
-    val discordQr = remember { runCatching { QrCodeGenerator.generate(DISCORD_URL, 420) }.getOrNull() }
-
-    BackHandler(enabled = showDiscordQr) { showDiscordQr = false }
+    var qrLink by remember { mutableStateOf<AboutQrLink?>(null) }
+    var lastQrOrigin by remember { mutableStateOf<FocusRequester?>(null) }
+    val discordFocusRequester = remember { FocusRequester() }
+    val privacyFocusRequester = remember { FocusRequester() }
+    val donateFocusRequester = remember { FocusRequester() }
+    fun showQr(url: String, instructionRes: Int, origin: FocusRequester) {
+        lastQrOrigin = origin // focus returns to the row that opened the QR
+        qrLink = AboutQrLink(url, instructionRes)
+    }
+    // Links try the browser first; a TV without one gets the QR hand-off instead of a crash.
+    val openLink = rememberExternalLinkOpener()
+    fun openLinkFrom(url: String, origin: FocusRequester) {
+        if (!openLink(url)) showQr(url, R.string.link_qr_no_browser_instruction, origin)
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -169,7 +182,10 @@ fun AboutSettingsContent(
                     title = stringResource(R.string.about_discord),
                     subtitle = stringResource(R.string.about_discord_subtitle),
                     trailingIcon = Icons.Default.OpenInNew,
-                    onClick = { showDiscordQr = true }
+                    modifier = Modifier.focusRequester(discordFocusRequester),
+                    onClick = {
+                        showQr(DISCORD_URL, R.string.about_discord_qr_instruction, discordFocusRequester)
+                    }
                 )
 
                 SettingsActionRow(
@@ -180,14 +196,8 @@ fun AboutSettingsContent(
                         Modifier.focusRequester(initialFocusRequester)
                     } else {
                         Modifier
-                    },
-                    onClick = {
-                        val intent = Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("https://tuvora.co/privacy")
-                        )
-                        context.startActivity(intent)
-                    }
+                    }.focusRequester(privacyFocusRequester),
+                    onClick = { openLinkFrom(PRIVACY_URL, privacyFocusRequester) }
                 )
 
                 // Upstream's Supporters & Contributors screen fetches THEIR donation/contributor
@@ -199,11 +209,8 @@ fun AboutSettingsContent(
                         title = stringResource(R.string.supporters_contributors_donate_button),
                         subtitle = stringResource(R.string.settings_donate_description),
                         trailingIcon = Icons.Default.ChevronRight,
-                        onClick = {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(donateUrl))
-                            )
-                        }
+                        modifier = Modifier.focusRequester(donateFocusRequester),
+                        onClick = { openLinkFrom(donateUrl, donateFocusRequester) }
                     )
                 }
 
@@ -215,13 +222,15 @@ fun AboutSettingsContent(
                 )
             }
             SettingsVerticalScrollIndicators(state = aboutScrollState)
-            if (showDiscordQr) {
-                QrCodeOverlay(
-                    qrBitmap = discordQr,
-                    serverUrl = DISCORD_URL,
-                    instruction = stringResource(R.string.about_discord_qr_instruction),
-                    onClose = { showDiscordQr = false }
+            qrLink?.let { link ->
+                QrHandOffDialog(
+                    url = link.url,
+                    instruction = stringResource(link.instructionRes),
+                    onClose = { qrLink = null }
                 )
+            }
+            lastQrOrigin?.let { origin ->
+                RestoreFocusOnClose(open = qrLink != null, target = origin)
             }
             }
         }

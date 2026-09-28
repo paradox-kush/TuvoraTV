@@ -3298,6 +3298,7 @@
     <string name="auth_signup_email_notice">We\'ll email you about your account, plus occasional tips and updates. You can unsubscribe anytime. Privacy Policy: tuvora.co/privacy</string>
     <string name="home_announcement_dismiss">Dismiss</string>
     <string name="home_announcement_qr_instruction">Scan with your phone to open this link</string>
+    <string name="link_qr_no_browser_instruction">No web browser on this TV. Scan with your phone to open this page</string>
     <string name="auth_signup_confirm_create">I confirm — create account</string>
     <string name="profile_make_primary">Make Main Profile</string>
     <string name="profile_make_primary_confirm_title">Make this the main profile?</string>
