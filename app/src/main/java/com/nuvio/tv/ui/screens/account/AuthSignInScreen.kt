@@ -22,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +77,19 @@ fun AuthSignInScreen(
 
     BackHandler { onBackPress() }
 
+    // B74: land D-pad focus on Email so the screen opens with a visible focus ring, and start
+    // clean. On first launch this screen shares its AccountViewModel with the QR screen, whose
+    // error ("No internet connection.") would otherwise show under an empty form; clear again on
+    // the way out so ours doesn't leak back to QR.
+    val emailFocusRequester = remember { FocusRequester() }
+    DisposableEffect(Unit) {
+        viewModel.clearError()
+        onDispose { viewModel.clearError() }
+    }
+    LaunchedEffect(Unit) {
+        runCatching { emailFocusRequester.requestFocus() }
+    }
+
     // Sign-in / sign-up flips authState to FullAccount on success.
     LaunchedEffect(uiState.authState) {
         if (uiState.authState is AuthState.FullAccount) onSuccess()
@@ -113,7 +127,8 @@ fun AuthSignInScreen(
                 onValueChange = { email = it },
                 placeholder = "Email",
                 keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Next
+                imeAction = ImeAction.Next,
+                modifier = Modifier.focusRequester(emailFocusRequester)
             )
             Spacer(modifier = Modifier.height(12.dp))
             InputField(
