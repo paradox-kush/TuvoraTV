@@ -178,6 +178,9 @@ import com.nuvio.tv.ui.navigation.NuvioNavHost
 import com.nuvio.tv.ui.navigation.Screen
 import com.nuvio.tv.ui.membership.LocalMemberAccess
 import com.nuvio.tv.ui.screens.account.AuthQrSignInScreen
+import com.nuvio.tv.ui.screens.account.AuthSignInScreen
+import com.nuvio.tv.ui.screens.account.FirstRunAuthFlow
+import com.nuvio.tv.ui.screens.account.FirstRunAuthStep
 import com.nuvio.tv.ui.screens.addon.EssentialAddonSetupScreen
 import com.nuvio.tv.ui.screens.profile.ProfileSelectionScreen
 import com.nuvio.tv.ui.theme.NuvioComponents
@@ -395,6 +398,7 @@ open class MainActivity : ComponentActivity() {
             var focusedSplashTheme by remember { mutableStateOf<AppTheme?>(null) }
             var onboardingCompletedThisSession by remember { mutableStateOf(false) }
             var onboardingProfileSyncInProgress by remember { mutableStateOf(false) }
+            var firstRunAuthStep by remember { mutableStateOf(FirstRunAuthStep.QR) }
             val hasSeenAuthQrFlow = remember(appOnboardingDataStore) {
                 appOnboardingDataStore.hasSeenAuthQrOnFirstLaunch.map<Boolean, Boolean?> { it }
             }
@@ -731,8 +735,23 @@ open class MainActivity : ComponentActivity() {
                         !onboardingCompletedThisSession
                     ) {
                         startupDestination = StartupDestination.Setup
+                        if (firstRunAuthStep == FirstRunAuthStep.EMAIL) {
+                            // A successful sign-in flips authState to FullAccount, which ends this
+                            // gate and marks onboarding seen (LaunchedEffect above).
+                            AuthSignInScreen(
+                                onBackPress = { firstRunAuthStep = FirstRunAuthFlow.onEmailSignInClosed() },
+                                onNavigateToQrSignIn = { firstRunAuthStep = FirstRunAuthFlow.onEmailSignInClosed() }
+                            )
+                        } else {
                         AuthQrSignInScreen(
                             onBackPress = { finish() },
+                            onNavigateToEmailSignIn = if (FirstRunAuthFlow.emailSignInAvailable(BuildConfig.SELF_HOSTED)) {
+                                {
+                                    firstRunAuthStep = FirstRunAuthFlow.onEmailSignInRequested(
+                                        firstRunAuthStep, BuildConfig.SELF_HOSTED
+                                    )
+                                }
+                            } else null,
                             onContinue = {
                                 lifecycleScope.launch {
                                     val shouldRunRemoteOnboardingSync =
@@ -769,6 +788,7 @@ open class MainActivity : ComponentActivity() {
                                 }
                             }
                         )
+                        }
                     } else {
 
                     val shouldShowProfileSelection =

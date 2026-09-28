@@ -1550,7 +1550,8 @@ private fun PlaybackNavHost(
         composable(Screen.AuthSignIn.route) {
             if (BuildConfig.SELF_HOSTED) {
                 AuthQrSignInScreen(
-                    onBackPress = { navController.popBackStack() }
+                    onBackPress = { navController.popBackStack() },
+                    onNavigateToEmailSignIn = null
                 )
             } else {
                 AuthSignInScreen(
