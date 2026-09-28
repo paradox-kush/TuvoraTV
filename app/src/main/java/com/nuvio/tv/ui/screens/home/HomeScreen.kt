@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.home
 
+import com.nuvio.tv.core.announcements.AnnouncementPolicy
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.ui.theme.NuvioTheme
 
@@ -79,6 +80,7 @@ private const val HOME_STABLE_GATE_TIMEOUT_MS = 5_000L
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
+    announcementViewModel: HomeAnnouncementViewModel = hiltViewModel(),
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit = { item ->
         onNavigateToDetail(
@@ -107,11 +109,16 @@ fun HomeScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.refreshHomeCatalogsIfStale()
+                // Lifecycle-bound, not a timer: the policy allows at most one request per 6 h.
+                announcementViewModel.onHomeResumed()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    val announcement by announcementViewModel.announcement.collectAsStateWithLifecycle()
+    var announcementQrCta by remember { mutableStateOf<AnnouncementPolicy.Cta?>(null) }
+    val announcementCtaFocusRequester = remember { FocusRequester() }
     val modernPresentation by viewModel.modernHomePresentation.collectAsStateWithLifecycle()
     val initialCwResolved by viewModel.initialCwResolved.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
@@ -439,6 +446,26 @@ fun HomeScreen(
                 )
             }
         }
+
+        val currentAnnouncement = announcement
+        if (currentAnnouncement != null && !showStartupLoader) {
+            HomeAnnouncementCard(
+                announcement = currentAnnouncement,
+                onShowCta = { cta -> announcementQrCta = cta },
+                onDismiss = { announcementViewModel.dismiss(currentAnnouncement.id) },
+                ctaFocusRequester = announcementCtaFocusRequester,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl)
+            )
+        }
+        announcementQrCta?.let { cta ->
+            HomeAnnouncementCtaQr(cta = cta, onClose = { announcementQrCta = null })
+        }
+        RestoreAnnouncementCtaFocus(
+            qrOpen = announcementQrCta != null,
+            ctaFocusRequester = announcementCtaFocusRequester
+        )
     }
 
     val selectedPoster = posterOptionsTarget

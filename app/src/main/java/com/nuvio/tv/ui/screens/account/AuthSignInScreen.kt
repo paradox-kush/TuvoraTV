@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -186,6 +188,15 @@ fun AuthSignInScreen(
                     color = NuvioTheme.colors.TextPrimary,
                     fontWeight = FontWeight.SemiBold,
                 )
+                SignUpEmailNotice(
+                    onOpenPrivacy = {
+                        // Many Android TV devices ship no browser; the URL is also spelled out in
+                        // the copy, so a missing handler must not crash the sign-up dialog.
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TUVORA_PRIVACY_URL)))
+                        }
+                    },
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm, Alignment.End),
@@ -209,4 +220,33 @@ fun AuthSignInScreen(
             }
         }
     }
+}
+
+/**
+ * Muted marketing/privacy notice shown only in the sign-up confirmation, directly under the
+ * Terms link. The Privacy Policy is opened the same way the Terms link is (tap → ACTION_VIEW);
+ * because it is clickable it is focusable, so it carries a visible D-pad focus treatment.
+ */
+@Composable
+private fun SignUpEmailNotice(onOpenPrivacy: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(NuvioTheme.radii.md)
+    Text(
+        text = stringResource(R.string.auth_signup_email_notice),
+        style = MaterialTheme.typography.bodySmall,
+        color = if (isFocused) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier.border(NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs), shape)
+                else Modifier
+            )
+            .background(
+                color = if (isFocused) NuvioTheme.colors.FocusBackground else Color.Transparent,
+                shape = shape,
+            )
+            .clickable(onClick = onOpenPrivacy)
+            .padding(horizontal = NuvioTheme.spacing.sm, vertical = NuvioTheme.spacing.xs),
+    )
 }
