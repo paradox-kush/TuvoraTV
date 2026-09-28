@@ -206,6 +206,8 @@ class XtreamAccountSyncService @Inject constructor(
             newMutationId = { newPlaylistMutationId() },
             // "In sync" = the same server rows, compared on exactly what the push writes (B60).
             syncedKey = { playlistPushJson(it, sortOrder = 0) },
+            // The mutation id is bound to exactly what the push sends (B68).
+            wirePayload = { accounts -> buildJsonArray { accounts.forEachIndexed { i, acc -> add(playlistPushJson(acc, i)) } }.toString() },
         )
         v2Mutex.lock()
         val outcome = try {

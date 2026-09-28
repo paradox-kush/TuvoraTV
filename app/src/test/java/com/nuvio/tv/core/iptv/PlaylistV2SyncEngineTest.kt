@@ -32,7 +32,8 @@ class PlaylistV2SyncEngineTest {
             lastDeleteAll = deleteAll
             val hash = payload.joinToString(",") { it.id } + "|" + deleteAll
             if (mutationId == lastMutationId) {
-                if (hash != lastMutationHash) return PlaylistPushResponse.Rejected("reuse")
+                // The real RPC RAISES (SQLSTATE 22023), so the client sees a thrown error, not a status.
+                if (hash != lastMutationHash) throw RuntimeException("iptv_playlists: mutation id $mutationId reused with a different payload")
                 return PlaylistPushResponse.Ok(revision, deduped = true)
             }
             // Order mirrors the backend RPC: dedup, then stale_generation, then profile_deleted.
@@ -104,6 +105,36 @@ class PlaylistV2SyncEngineTest {
         assertEquals(PlaylistSyncOutcome.SYNCED, dev2.engine().sync(1))
         assertEquals("no phantom revision", 2L, server.revision)
         assertTrue(server.rows.map { it.id }.containsAll(listOf("A", "B")))
+    }
+
+    @Test
+    fun `a lost commit response followed by a new edit does not wedge the sync on the reused mutation id`() = runBlocking {
+        val server = FakeServer(rows = listOf(acc("A")), revision = 1)
+        val dev = Device(server, local = listOf(acc("A")))
+        dev.recordAdd(acc("B"))
+        server.dropNextResponse = true
+        assertEquals(PlaylistSyncOutcome.PUSH_FAILED, dev.engine().sync(1)) // rev 2 committed, response lost
+
+        // The user edits again before the retry, so the next payload differs from the committed one.
+        dev.recordAdd(acc("D"))
+        assertEquals("a different payload must not be sent under the committed id",
+            PlaylistSyncOutcome.SYNCED, dev.engine().sync(1))
+        assertEquals(listOf("A", "B", "D"), server.rows.map { it.id }.sorted())
+        assertEquals("settled afterwards", PlaylistSyncOutcome.UP_TO_DATE, dev.engine().sync(1))
+    }
+
+    @Test
+    fun `a mutation id persisted by an older build without its payload fingerprint cannot wedge the sync`() = runBlocking {
+        val server = FakeServer(rows = listOf(acc("A"), acc("B")), revision = 2)
+        server.lastMutationId = "legacy-id"
+        server.lastMutationHash = "A,B|false"
+        val dev = Device(server, local = listOf(acc("A"), acc("B")))
+        // State written by a build that stored the id alone, still holding the id of its lost commit.
+        dev.stateStore[1] = encodePlaylistSyncState(gson, PlaylistSyncState(revision = 1, mutationId = "legacy-id"))
+        dev.recordAdd(acc("C"))
+
+        assertEquals(PlaylistSyncOutcome.SYNCED, dev.engine().sync(1))
+        assertEquals(listOf("A", "B", "C"), server.rows.map { it.id }.sorted())
     }
 
     @Test
