@@ -149,6 +149,15 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         }
 
         /**
+         * B78: the delta-pull cursor for tmdb_map (MatchMapPullPolicy). Lives beside the rows it
+         * describes and is written in the same transaction, so anything that drops or purges
+         * tmdb_map must drop/purge this too — a mirror without its rows must re-bootstrap.
+         */
+        fun createCursorTable(db: SQLiteDatabase) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS tmdb_map_cursor(owner TEXT NOT NULL, provider TEXT NOT NULL, mark INTEGER NOT NULL, pulled_at INTEGER NOT NULL, full_at INTEGER NOT NULL, PRIMARY KEY(owner, provider)) WITHOUT ROWID")
+        }
+
+        /**
          * The FIRST identity each live sid was ever seen carrying (INSERT OR IGNORE, never
          * overwritten): a favourite saved as `live:{sid}` meant THAT channel, even if the panel later
          * hands the number to another one. Survives index rebuilds; purged only with the account.
@@ -161,6 +170,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
             createIndexTables(db)
             db.execSQL("CREATE TABLE tmdb_map(provider TEXT NOT NULL, kind TEXT NOT NULL, tmdb INTEGER NOT NULL, sid INTEGER, matched_name TEXT, updated_at INTEGER NOT NULL, synced INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, tmdb)) WITHOUT ROWID")
             createHistoryTable(db)
+            createCursorTable(db)
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -190,6 +200,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
             // pre-v4: index tables are rebuildable caches; mappings re-pull from Supabase
             db.execSQL("DROP TABLE IF EXISTS items"); db.execSQL("DROP TABLE IF EXISTS keys")
             db.execSQL("DROP TABLE IF EXISTS idx_meta"); db.execSQL("DROP TABLE IF EXISTS tmdb_map")
+            db.execSQL("DROP TABLE IF EXISTS tmdb_map_cursor")
             db.execSQL("DROP TABLE IF EXISTS cats")
             onCreate(db)
         }
@@ -228,6 +239,9 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
             // re-pull from Supabase), so a torn write costs the rebuild that is already the
             // recovery path. StreamVault sets its journal mode explicitly for the same reason.
             runCatching { it.execSQL("PRAGMA synchronous = NORMAL") }
+            // Additive and IF NOT EXISTS, so no schema-version bump: a bump would re-run the
+            // v6 negative purge in onUpgrade on every device for no reason.
+            helper.createCursorTable(it)
         }
     }
 
@@ -238,7 +252,7 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
     suspend fun purge(provider: String) = withContext(Dispatchers.IO) {
         db.beginTransaction()
         try {
-            for (t in listOf("items", "keys", "idx_meta", "tmdb_map", "cats", "live_sid_history")) {
+            for (t in listOf("items", "keys", "idx_meta", "tmdb_map", "tmdb_map_cursor", "cats", "live_sid_history")) {
                 db.delete(t, "provider = ?", arrayOf(provider))
             }
             db.setTransactionSuccessful()
@@ -891,6 +905,45 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
             "INSERT OR REPLACE INTO tmdb_map(provider, kind, tmdb, sid, matched_name, updated_at, synced) VALUES(?,?,?,?,?,?,?)",
             arrayOf<Any?>(provider, kind.slug, tmdb, sid, matchedName, updatedAtMs, if (synced) 1 else 0)
         )
+    }
+
+    /** B78: this account's delta-pull cursor for [provider] (null = never pulled / wiped / purged). */
+    suspend fun readPullCursor(owner: String, provider: String): MatchMapCursor? = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT mark, pulled_at, full_at FROM tmdb_map_cursor WHERE owner = ? AND provider = ?", arrayOf(owner, provider)).use { c ->
+            if (c.moveToFirst()) MatchMapCursor(markMs = c.getLong(0), lastPullAtMs = c.getLong(1), lastFullPullAtMs = c.getLong(2)) else null
+        }
+    }
+
+    /**
+     * B78: applies one pulled page (last-write-wins per [MatchMapPullPolicy.shouldApply]) and stores
+     * [cursor] in the SAME transaction, so the mark can never claim rows the mirror does not hold.
+     * Framework SQLite on the oldest supported TVs predates UPSERT, hence read-then-replace.
+     */
+    suspend fun applyPulledPage(owner: String, provider: String, rows: List<RemoteMapping>, cursor: MatchMapCursor): Int = withContext(Dispatchers.IO) {
+        var applied = 0
+        db.beginTransaction()
+        try {
+            for (row in rows) {
+                val local = db.rawQuery(
+                    "SELECT updated_at FROM tmdb_map WHERE provider = ? AND kind = ? AND tmdb = ?",
+                    arrayOf(provider, row.kind.slug, row.tmdb.toString())
+                ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+                if (!MatchMapPullPolicy.shouldApply(row.updatedAtMs, local)) continue
+                db.execSQL(
+                    "INSERT OR REPLACE INTO tmdb_map(provider, kind, tmdb, sid, matched_name, updated_at, synced) VALUES(?,?,?,?,?,?,1)",
+                    arrayOf<Any?>(provider, row.kind.slug, row.tmdb, row.sid, row.matchedName, row.updatedAtMs)
+                )
+                applied++
+            }
+            db.execSQL(
+                "INSERT OR REPLACE INTO tmdb_map_cursor(owner, provider, mark, pulled_at, full_at) VALUES(?,?,?,?,?)",
+                arrayOf<Any?>(owner, provider, cursor.markMs, cursor.lastPullAtMs, cursor.lastFullPullAtMs)
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        applied
     }
 
     /** Rows not yet pushed to Supabase. */
