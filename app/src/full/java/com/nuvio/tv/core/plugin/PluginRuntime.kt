@@ -3,13 +3,17 @@ package com.nuvio.tv.core.plugin
 import android.util.Log
 import com.dokar.quickjs.binding.define
 import com.dokar.quickjs.binding.function
-import com.dokar.quickjs.quickJs
+import com.dokar.quickjs.QuickJs
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.domain.model.LocalScraperResult
 import com.nuvio.tv.domain.model.Subtitle
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.ContinuationInterceptor
@@ -42,6 +46,9 @@ private const val PLUGIN_TIMEOUT_MS = 60_000L
 private const val MAX_FETCH_RESPONSE_BYTES = 1024 * 1024
 private const val MAX_FETCH_BODY_CHARS = 1024 * 1024
 @Singleton
+/** Process-wide: engines from every PluginRuntime share the library's JNI globals. */
+private val quickJsLifecycleLock = Mutex()
+
 class PluginRuntime @Inject constructor() {
 
     private val gson: Gson = GsonBuilder().create()
@@ -258,7 +265,14 @@ class PluginRuntime @Inject constructor() {
             (coroutineContext[ContinuationInterceptor] as? CoroutineDispatcher) ?: Dispatchers.IO
 
         try {
-            quickJs(parentDispatcher) {
+            // Engines are created and closed one at a time; only evaluation runs concurrently.
+            // quickjs-kt shares refcounted JNI globals across engines; a close racing another
+            // engine's create left stale shared references (NPE inside evaluate, or a lost result
+            // callback hanging to the timeout). Reproduced on NuvioDesktop with 32 concurrent
+            // plugins (PluginRuntimeConcurrencyTest); same wrapper shape here on the patched AAR.
+            val qjs = quickJsLifecycleLock.withLock { QuickJs.create(parentDispatcher) }
+            try {
+            with(qjs) {
                 qjsInstance = this
                 // Define console object - must return null to avoid quickjs conversion issues
                 define("console") {
@@ -490,6 +504,9 @@ class PluginRuntime @Inject constructor() {
 
                 val callBytecode = getCompiledCallBytecode(this)
                 evaluate<Any?>(callBytecode)
+            }
+            } finally {
+                withContext(NonCancellable) { quickJsLifecycleLock.withLock { qjs.close() } }
             }
 
             return parseJsonResults(resultJson)
