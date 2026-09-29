@@ -406,9 +406,7 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                     }
                 }
                 val inProgressOnly = buildList {
-                    val liveInProgress = deduplicateInProgress(
-                        recentItems.filter { shouldTreatAsInProgressForContinueWatching(it) }
-                    )
+                    val liveInProgress = continueWatchingInProgressRepresentatives(recentItems)
                     if (liveInProgress.isNotEmpty()) {
                         liveInProgress.forEach { progress ->
                             val cached = cachedEnrichmentFromInProgress[progress.contentId]
@@ -1206,6 +1204,25 @@ internal fun deduplicateInProgress(items: List<WatchProgress>): List<WatchProgre
     return (nonSeries + latestPerShow).sortedByDescending { it.lastWatched }
 }
 
+/**
+ * B55: the in-progress Continue Watching rows, one per show, chosen among ALL of the show's
+ * in-progress AND completed rows. A show whose newest row is a finished episode has no resume card:
+ * an unfinished earlier episode (stopped before the credits, so below the completion threshold) must
+ * not resurface as "the" show once a later episode was finished after it — next-up takes over.
+ *
+ * Filtering to in-progress rows BEFORE picking the newest per show did exactly that whenever the
+ * list was not already collapsed per show (a tracking provider's projection merges provider and
+ * retained local rows episode by episode). Mirrors Mobile/Desktop `continueWatchingEntries`
+ * (newest per series across in-progress + completed, then drop completed).
+ */
+internal fun continueWatchingInProgressRepresentatives(rows: List<WatchProgress>): List<WatchProgress> {
+    val candidates = rows.filter { progress ->
+        shouldTreatAsInProgressForContinueWatching(progress) ||
+            (isSeriesTypeCW(progress.contentType) && !isLiveProgress(progress) && progress.isCompleted())
+    }
+    return deduplicateInProgress(candidates).filter(::shouldTreatAsInProgressForContinueWatching)
+}
+
 /** Recency first, then a deterministic season/episode tiebreak (missing values sort as 0). */
 private val inProgressRecencyComparator: Comparator<WatchProgress> =
     compareBy<WatchProgress> { it.lastWatched }
@@ -1756,19 +1773,32 @@ internal fun mergeContinueWatchingItems(
     nextUpItems: List<ContinueWatchingItem.NextUp>,
     mode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT
 ): List<ContinueWatchingItem> {
-    val allInProgressIds = inProgressItems
+    // B55: one card per show, and the FRESHER of its resume row and its next-up wins. Dropping every
+    // next-up whose show had any in-progress row let a stale, earlier unfinished episode beat the
+    // next-up of a later finished one. Next-up seeds newer than an active resume are already
+    // suppressed upstream, so this only decides stale-resume vs newer-completion.
+    val inProgressAtBySeries = inProgressItems
         .asSequence()
         .map { it.progress }
-        .filter { isSeriesTypeCW(it.contentType) }
-        .map { it.contentId }
-        .filter { it.isNotBlank() }
-        .toSet()
+        .filter { isSeriesTypeCW(it.contentType) && it.contentId.isNotBlank() }
+        .groupBy { it.contentId }
+        .mapValues { (_, rows) -> rows.maxOf { it.lastWatched } }
 
     val filteredNextUpItems = nextUpItems.filter { item ->
-        item.info.contentId !in allInProgressIds
+        val inProgressAt = inProgressAtBySeries[item.info.contentId] ?: return@filter true
+        ContinueWatchingSeriesRecencyPolicy.nextUpSupersedesResume(
+            resumeLastWatched = inProgressAt,
+            nextUpSeedLastWatched = item.info.lastWatched
+        )
+    }
+    val supersededResumeIds = filteredNextUpItems.mapTo(mutableSetOf()) { it.info.contentId }
+        .filter { it in inProgressAtBySeries }
+        .toSet()
+    val keptInProgressItems = inProgressItems.filterNot { item ->
+        isSeriesTypeCW(item.progress.contentType) && item.progress.contentId in supersededResumeIds
     }
 
-    val combined = inProgressItems + filteredNextUpItems
+    val combined = keptInProgressItems + filteredNextUpItems
 
     val seen = mutableSetOf<String>()
     val deduplicated = combined.filter { item ->
