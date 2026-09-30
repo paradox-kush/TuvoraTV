@@ -46,6 +46,16 @@ class XtreamHubSelectionStore @Inject constructor(
         }
     }
 
+    /**
+     * Forget the remembered provider when [shouldForget] says so for it (keeps the section tab). The
+     * caller owns the decision — a removed playlist's purge passes its pure policy check.
+     */
+    suspend fun forgetAccountIf(shouldForget: (rememberedAccountId: String?) -> Boolean) {
+        store().edit { prefs ->
+            if (shouldForget(prefs[accountKey])) prefs.remove(accountKey)
+        }
+    }
+
     companion object {
         private const val FEATURE = "xtream_accounts"   // reuse the IPTV datastore file
     }

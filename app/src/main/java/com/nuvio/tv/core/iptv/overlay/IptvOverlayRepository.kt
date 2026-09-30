@@ -98,6 +98,13 @@ class IptvOverlayRepository @Inject constructor(
         }
     }
 
+    /** After a playlist is removed, drop its channel/category overlay (twin of Mobile's onPlaylistRemoved). */
+    suspend fun onPlaylistRemoved(playlistId: String) {
+        val p = profile()
+        kotlinx.coroutines.withContext(Dispatchers.IO) { db.purgePlaylist(p, playlistId) }
+        _uiState.value = kotlinx.coroutines.withContext(Dispatchers.IO) { db.snapshot(p) }
+    }
+
     @Serializable
     private data class DeltaRow(
         @SerialName("event_id") val eventId: Long,

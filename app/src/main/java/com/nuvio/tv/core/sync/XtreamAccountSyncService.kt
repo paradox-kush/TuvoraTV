@@ -309,10 +309,10 @@ class XtreamAccountSyncService @Inject constructor(
         val before = runCatching { accountStore.accounts.first() }.getOrDefault(emptyList())
         accountStore.replaceAll(accounts)
         isSyncingFromRemote = false
-        // Playlists removed on another device: drop their local caches (indexes, ingested
-        // catalog, session caches). Saved user data is untouched — see IptvAccountPurge.
-        val remaining = accounts.map { it.id }.toSet()
-        before.filter { it.id !in remaining }.forEach { runCatching { purge.purgeCaches(it.id) } }
+        // Playlists removed on another device: the same cache purge as a local delete. Saved user
+        // data is untouched — a pull can be transient (see PlaylistRemovalOrigin.SyncPull).
+        com.nuvio.tv.core.iptv.PlaylistRemovalCleanup.removedIds(before.map { it.id }, accounts.map { it.id })
+            .forEach { runCatching { purge.purge(it, com.nuvio.tv.core.iptv.PlaylistRemovalOrigin.SyncPull) } }
         // Playlists added on another device: index them now, not on first play.
         resolver.warmUp(accounts)
     }
