@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import com.nuvio.tv.core.auth.AuthManager
+import com.nuvio.tv.core.sync.AddonSyncMerge
 import com.nuvio.tv.core.sync.AddonSyncService
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -359,14 +360,7 @@ class AddonRepositoryImpl(
         val remoteSet = normalizedRemote.map { normalizeUrl(it) }.toSet()
 
         val initialLocalUrls = preferences.installedAddonUrls.first()
-        val initialLocalSet = initialLocalUrls.map { normalizeUrl(it) }.toSet()
-        // Honor removal even when the server list is empty. Callers fetch with getOrElse { throw }
-        // and only reconcile on success, so an empty remote here is a genuine "server has no addons"
-        // (e.g. the user deleted them all) — the old preserve-on-empty path resurrected deleted
-        // addons on the next pull. (parity with upstream 1854dfc3c)
-        val shouldRemoveMissingLocal = removeMissingLocal
 
-     
         val localByNormalized = linkedMapOf<String, String>()
         initialLocalUrls.forEach { url ->
             localByNormalized.putIfAbsent(normalizeUrl(url), canonicalizeUrl(url))
@@ -376,30 +370,54 @@ class AddonRepositoryImpl(
             localByNormalized[normalizeUrl(remote)] ?: remote
         }
 
-        val finalList = if (shouldRemoveMissingLocal) {
-            remoteOrdered
-        } else {
+        val readsPrimaryAddons = preferences.readsPrimaryAddons()
+        // Honor removal even when the server list is empty — deleting every addon on another
+        // device must stick (parity with upstream 1854dfc3c). What the server has never seen is
+        // different: an edit whose push was skipped (no session) or failed is merged up rather
+        // than overwritten, which is what lost a user's whole addon set between desktop and TV.
+        val merge = when {
+            !removeMissingLocal -> null
+            readsPrimaryAddons -> AddonSyncMerge.Outcome(urls = remoteOrdered, pushNeeded = false)
+            else -> AddonSyncMerge.merge(
+                local = initialLocalUrls.map { canonicalizeUrl(it) },
+                remote = remoteOrdered,
+                lastSynced = preferences.getSyncedAddonUrlsOrDefaults().map { canonicalizeUrl(it) },
+                key = ::normalizeUrl,
+            )
+        }
+
+        val finalList = merge?.urls ?: run {
             val extras = initialLocalUrls
                 .map { canonicalizeUrl(it) }
                 .filter { normalizeUrl(it) !in remoteSet }
             remoteOrdered + extras
         }
+        val finalSet = finalList.map { normalizeUrl(it) }.toSet()
 
-        if (shouldRemoveMissingLocal) {
-            val removedAny = initialLocalUrls
-                .filter { normalizeUrl(it) !in remoteSet }
-                .map { canonicalizeUrl(it) }
-                .fold(false) { removed, url -> removeCachedManifest(url) || removed }
-            if (removedAny) {
-                persistManifestCacheToDisk()
-                bumpManifestCacheRevision()
-            }
+        val removedAny = initialLocalUrls
+            .filter { normalizeUrl(it) !in finalSet }
+            .map { canonicalizeUrl(it) }
+            .fold(false) { removed, url -> removeCachedManifest(url) || removed }
+        if (removedAny) {
+            persistManifestCacheToDisk()
+            bumpManifestCacheRevision()
         }
-
 
         val currentCanonical = initialLocalUrls.map { canonicalizeUrl(it) }
         if (finalList != currentCanonical) {
             preferences.setAddonOrder(finalList)
+        }
+
+        when {
+            merge == null -> Unit
+            merge.pushNeeded -> {
+                // Direct push: triggerRemoteSync() is suppressed while the caller holds
+                // isSyncingFromRemote. On failure the last-synced list stays as it was, so the
+                // next pull merges these again instead of dropping them.
+                Log.i(TAG, "reconcile: local addon changes never reached the server; merging them up")
+                addonSyncService.pushToRemote()
+            }
+            !readsPrimaryAddons -> preferences.setSyncedAddonUrls(finalList)
         }
     }
 

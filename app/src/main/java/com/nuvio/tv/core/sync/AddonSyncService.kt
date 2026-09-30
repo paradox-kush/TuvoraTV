@@ -78,6 +78,7 @@ class AddonSyncService @Inject constructor(
                 postgrest.rpc("sync_push_addons", params)
             }
 
+            addonPreferences.setSyncedAddonUrls(localUrls)
             Log.d(TAG, "Pushed ${localUrls.size} addons to remote for profile $profileId")
             Result.success(Unit)
         } catch (e: Exception) {

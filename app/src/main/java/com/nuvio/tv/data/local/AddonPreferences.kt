@@ -48,6 +48,7 @@ class AddonPreferences @Inject constructor(
     private val legacyUrlsKey = stringSetPreferencesKey("installed_addon_urls")
     private val userSetNamesKey = stringPreferencesKey("addon_user_set_names")
     private val addonEnabledStatesKey = stringPreferencesKey("installed_addon_enabled_states")
+    private val syncedUrlsKey = stringPreferencesKey("synced_addon_urls")
     private val manifestSuffix = "/manifest.json"
 
     private fun canonicalizeUrl(url: String): String {
@@ -176,6 +177,33 @@ class AddonPreferences @Inject constructor(
             preferences[addonEnabledStatesKey] = gson.toJson(
                 states.mapKeys { (url, _) -> canonicalizeUrl(url) }
             )
+        }
+    }
+
+    /** True for a secondary profile that shows (and can't edit) the primary profile's addons. */
+    fun readsPrimaryAddons(): Boolean {
+        val active = profileManager.activeProfile
+        return active != null && !active.isPrimary && active.usesPrimaryAddons
+    }
+
+    /**
+     * The list this device and the server last agreed on (see AddonSyncMerge). Never having synced
+     * falls back to the factory defaults: that is the list a fresh install started from, so the
+     * defaults it still has are not mistaken for the user's own additions.
+     */
+    suspend fun getSyncedAddonUrlsOrDefaults(): List<String> {
+        val json = store().data.first()[syncedUrlsKey] ?: return getDefaultAddons().toList()
+        return try {
+            val type = object : TypeToken<List<String>>() {}.type
+            gson.fromJson<List<String>>(json, type) ?: getDefaultAddons().toList()
+        } catch (e: Exception) {
+            getDefaultAddons().toList()
+        }
+    }
+
+    suspend fun setSyncedAddonUrls(urls: List<String>) {
+        store().edit { preferences ->
+            preferences[syncedUrlsKey] = gson.toJson(urls.map(::canonicalizeUrl))
         }
     }
 
