@@ -113,6 +113,18 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
         )
     }
 
+    /**
+     * Drop a removed playlist's channel + category overlay for one profile (custom groups may span
+     * playlists — left alone). A hard local delete, not a tombstone: nothing is pushed, so the server
+     * copy survives for the user's other devices. Twin of NuvioMobile's IptvOverlayStore.purgePlaylist.
+     */
+    @Synchronized
+    fun purgePlaylist(profileId: Int, playlistId: String) {
+        val args = arrayOf(profileId.toString(), playlistId)
+        db.delete("channel_overlay", "profile_id = ? AND playlist_id = ?", args)
+        db.delete("category_overlay", "profile_id = ? AND playlist_id = ?", args)
+    }
+
     @Synchronized fun getCursor(profileId: Int): Long =
         db.rawQuery("SELECT cursor FROM overlay_cursor WHERE profile_id=?", arrayOf(profileId.toString())).use { if (it.moveToFirst()) it.getLong(0) else 0L }
 

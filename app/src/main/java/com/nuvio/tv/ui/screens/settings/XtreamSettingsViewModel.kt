@@ -576,16 +576,10 @@ class XtreamSettingsViewModel @Inject constructor(
         _uiState.update { it.copy(saveWarnings = it.saveWarnings - id) }
         viewModelScope.launch {
             store.remove(id)
-            // Caches/indexes keyed by this id (match db, M3U catalog+EPG, session caches,
-            // file copy, refresh timestamp) — otherwise they leak on disk forever.
-            purge.purgeCaches(id)
-            // Explicit delete also drops the playlist's saved refs — they'd be dead ids
-            // (phantom favorites / continue-watching rows) otherwise.
-            val prefix = XtreamItemRegistry.accountPrefix(id)
-            libraryPreferences.migrateIdPrefix(prefix, null)
-            watchProgressPreferences.migrateIdPrefix(prefix, null)
-            watchedItemsPreferences.migrateIdPrefix(prefix, null)
-            liveStore.migrateAccount(prefix, null)
+            // Everything keyed by this id — caches/indexes that would leak on disk forever, and the
+            // saved refs that would be dead ids (phantom favorites / continue-watching rows). What
+            // goes is decided by PlaylistRemovalCleanup; IptvAccountPurge executes it.
+            purge.purge(id, com.nuvio.tv.core.iptv.PlaylistRemovalOrigin.UserDelete)
             syncService.triggerRemoteSync()
         }
     }

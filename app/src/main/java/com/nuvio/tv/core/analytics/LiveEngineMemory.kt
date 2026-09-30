@@ -47,6 +47,13 @@ internal object LiveEngineMemory {
         channelId?.takeIf { it.isNotBlank() }?.let { if (learned.remove(key(it, lane)) != null) onChange?.invoke() }
     }
 
+    /** Forget every learned engine whose channel id starts with [contentIdPrefix] — a removed
+     *  playlist's `xtream:{accountId}:` channels (both lanes). Fires [onChange] once, only on a change. */
+    internal fun forgetPrefix(contentIdPrefix: String) {
+        if (contentIdPrefix.isBlank()) return
+        if (learned.keys.removeAll { it.startsWith(contentIdPrefix) }) onChange?.invoke()
+    }
+
     // ── Persistence bridge (design §3.7: DataStore-persisted so learnings survive restarts) ──
     // The pure cache stays here; the platform storage effect lives behind [onChange]/[restore], set by
     // the DI-bound store at app start. Keys are already "channelId|LANE"; only MPV entries are ever

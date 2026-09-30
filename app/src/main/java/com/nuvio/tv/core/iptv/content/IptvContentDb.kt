@@ -370,13 +370,19 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
-    /** Full removal (playlist deleted): [clear] plus its EPG rows — nothing left on disk. */
+    /**
+     * Full removal (playlist deleted): [clear] plus its EPG rows — nothing left on disk, including the
+     * shadow rows of a guide refresh that died mid-fill (otherwise they sit there until the same id is
+     * re-added and [replaceEpg] runs for it again).
+     */
     suspend fun purge(playlistId: String) {
         clear(playlistId)
         withContext(Dispatchers.IO) {
+            db.execSQL(EPG_SHADOW_DDL) // lazily created (see replaceEpg) — may not exist yet
             inTx {
                 db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
                 db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
+                db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(playlistId))
             }
         }
     }
