@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.plugin
 
+import com.nuvio.tv.core.sync.AddonSyncMerge
 import android.util.Log
 import com.nuvio.tv.core.plugin.cloudstream.toNuvioType
 import com.nuvio.tv.core.plugin.cloudstream.tvTypeFromString
@@ -498,23 +499,35 @@ class PluginManager @Inject constructor(
 
         val initialLocalRepos = dataStore.repositories.first()
         val initialLocalByNormalizedUrl = initialLocalRepos.associateBy { normalizeUrl(it.url) }
-        // Honor removal even when the server list is empty. Callers fetch with getOrElse { throw }
-        // and only reconcile on success, so an empty remote here is a genuine "server has no repos"
-        // (e.g. the user removed them all) — the old preserve-on-empty path resurrected deleted
-        // plugin repos on the next pull. (parity with upstream 1854dfc3c)
-        val shouldRemoveMissingLocal = removeMissingLocal
+        // Honor removal even when the server list is empty — removing every repo on another device
+        // must stick (parity with upstream 1854dfc3c). What the server never saw is different: a
+        // repo added or removed while its push couldn't land (signed out, a token gap, offline) is
+        // merged up instead of overwritten — see AddonSyncMerge (B79).
+        val readsPrimary = dataStore.readsPrimaryPlugins()
+        val merge = when {
+            !removeMissingLocal -> null
+            readsPrimary -> AddonSyncMerge.Outcome(urls = normalizedRemote.map { it.url }, pushNeeded = false)
+            else -> AddonSyncMerge.merge(
+                local = initialLocalRepos.map { canonicalizeRepoUrl(it.url) },
+                remote = normalizedRemote.map { it.url },
+                lastSynced = dataStore.getSyncedRepositoryUrls()?.map { canonicalizeRepoUrl(it) },
+                key = ::normalizeUrl,
+            )
+        }
+        val keptUrlSet = merge?.urls?.map { normalizeUrl(it) }?.toSet()
 
-        if (shouldRemoveMissingLocal) {
+        if (keptUrlSet != null) {
             initialLocalRepos
-                .filter { normalizeUrl(it.url) !in remoteUrlSet }
+                .filter { normalizeUrl(it.url) !in keptUrlSet }
                 .forEach { repo ->
-                    Log.d(TAG, "reconcile: removing local repo not in remote: ${repo.name} (${repo.url})")
+                    Log.d(TAG, "reconcile: removing local repo: ${repo.name} (${repo.url})")
                     removeRepository(repo.id)
                 }
         }
 
         normalizedRemote.forEach { remotePlugin ->
-            if (initialLocalByNormalizedUrl[normalizeUrl(remotePlugin.url)] == null) {
+            val key = normalizeUrl(remotePlugin.url)
+            if (initialLocalByNormalizedUrl[key] == null && (keptUrlSet == null || key in keptUrlSet)) {
                 val typeHint = remotePlugin.repoType?.let {
                     try { RepositoryType.valueOf(it) } catch (_: Exception) { null }
                 }
@@ -527,14 +540,25 @@ class PluginManager @Inject constructor(
 
         val currentRepos = dataStore.repositories.first()
         val currentByNormalizedUrl = currentRepos.associateBy { normalizeUrl(it.url) }
-        val remoteOrderedRepos = normalizedRemote
-            .mapNotNull { currentByNormalizedUrl[normalizeUrl(it.url)] }
-        val extras = currentRepos
-            .filter { normalizeUrl(it.url) !in remoteUrlSet }
-
-        val reordered = if (shouldRemoveMissingLocal) remoteOrderedRepos else remoteOrderedRepos + extras
+        val reordered = if (merge != null) {
+            merge.urls.mapNotNull { currentByNormalizedUrl[normalizeUrl(it)] }
+        } else {
+            normalizedRemote.mapNotNull { currentByNormalizedUrl[normalizeUrl(it.url)] } +
+                currentRepos.filter { normalizeUrl(it.url) !in remoteUrlSet }
+        }
         if (reordered.map { it.id } != currentRepos.map { it.id }) {
             dataStore.saveRepositories(reordered)
+        }
+
+        when {
+            merge == null || readsPrimary -> Unit
+            merge.pushNeeded -> {
+                // Pushed by the caller's flushPendingSync() once isSyncingFromRemote is cleared; a
+                // failed push leaves the last-synced list as it was, so the next pull merges again.
+                Log.i(TAG, "reconcile: local plugin repo edits never reached the server; pushing the merged list")
+                pendingPushAfterSync = true
+            }
+            else -> dataStore.setSyncedRepositoryUrls(merge.urls)
         }
     }
 

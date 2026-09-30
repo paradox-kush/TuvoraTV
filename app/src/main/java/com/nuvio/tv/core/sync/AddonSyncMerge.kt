@@ -20,7 +20,7 @@ package com.nuvio.tv.core.sync
  *    the server's list plus the device's extras — never a loss.
  *
  * The server's order is kept; local additions go at the end. [key] identifies the same addon
- * across URL spellings.
+ * across URL spellings. Plugin repositories sync the same way and reuse this merge.
  */
 object AddonSyncMerge {
 

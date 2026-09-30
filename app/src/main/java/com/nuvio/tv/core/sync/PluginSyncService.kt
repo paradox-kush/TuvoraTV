@@ -74,6 +74,7 @@ class PluginSyncService @Inject constructor(
                 postgrest.rpc("sync_push_plugins", params)
             }
 
+            pluginDataStore.setSyncedRepositoryUrls(localRepos.map { it.url })
             Log.d(TAG, "Pushed ${localRepos.size} plugin repos to remote for profile $profileId")
             Result.success(Unit)
         } catch (e: Exception) {

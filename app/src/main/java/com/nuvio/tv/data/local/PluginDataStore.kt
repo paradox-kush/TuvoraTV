@@ -55,6 +55,7 @@ class PluginDataStore @Inject constructor(
     private val pluginsEnabledKey = booleanPreferencesKey("plugins_enabled")
     private val groupStreamsByRepositoryKey = booleanPreferencesKey(GROUP_STREAMS_BY_REPOSITORY)
     private val scraperSettingsKey = stringPreferencesKey("scraper_settings")
+    private val syncedRepoUrlsKey = stringPreferencesKey("synced_repository_urls")
 
     private val repoListType = Types.newParameterizedType(List::class.java, PluginRepository::class.java)
     private val scraperListType = Types.newParameterizedType(List::class.java, ScraperInfo::class.java)
@@ -87,6 +88,20 @@ class PluginDataStore @Inject constructor(
                 }
             } ?: emptyList()
         }
+    }
+
+    /** True for a secondary profile that shows the primary profile's plugins and can't edit them. */
+    fun readsPrimaryPlugins(): Boolean {
+        val active = profileManager.activeProfile
+        return active != null && !active.isPrimary && active.usesPrimaryPlugins
+    }
+
+    /** The repo URLs this device and the server last agreed on, or null if it never synced (AddonSyncMerge). */
+    suspend fun getSyncedRepositoryUrls(): List<String>? =
+        store().data.first()[syncedRepoUrlsKey]?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }
+
+    suspend fun setSyncedRepositoryUrls(urls: List<String>) {
+        store().edit { prefs -> prefs[syncedRepoUrlsKey] = urls.joinToString(separator = "\n") }
     }
 
     suspend fun saveRepositories(repos: List<PluginRepository>) {
