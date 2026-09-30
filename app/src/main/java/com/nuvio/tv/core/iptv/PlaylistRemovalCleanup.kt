@@ -26,8 +26,12 @@ enum class PlaylistRemovalTarget(val userData: Boolean) {
     EpgMirror(false),
     /** Auto-refresh "last checked" stamp. */
     RefreshStamp(false),
-    /** The saved local copy of a file playlist (no-op for any other source). */
-    M3uFileCopy(false),
+    /**
+     * The saved local copy of a file playlist (no-op for any other source). User data: its bytes came
+     * from a document the user picked, which may no longer exist anywhere else, so it cannot rebuild.
+     * A pull keeps it — if the playlist comes back, it re-ingests from this copy (decision 2026-09-30).
+     */
+    M3uFileCopy(true),
     /** Learned catch-up facts (winner dialect / panel clock + formats). */
     CatchUp(false),
     /** In-memory browse/search/registry caches. */

@@ -62,6 +62,7 @@ class IptvAccountPurgeTest {
     private val mirrorDb = EpgMirrorDb(context)
     private val refreshStore = IptvRefreshStore(context)
     private val winners = CatchUpWinnerStore(CatchUpWinnerPrefs(context))
+    private val fileStore = M3UFileStore(context)
 
     private val doomed = "http://doomed.example.com|u"
     private val keeper = "http://keeper.example.com|u"
@@ -81,7 +82,7 @@ class IptvAccountPurgeTest {
         matchIndex = matchIndex,
         contentDb = contentDb,
         refreshStore = refreshStore,
-        fileStore = mockk<M3UFileStore>(relaxed = true),
+        fileStore = fileStore,
         epgMirror = EpgMirrorRepository(mirrorDb, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)),
         stalkerClient = mockk<StalkerClient>(relaxed = true),
         catchUpWinners = winners,
@@ -109,6 +110,8 @@ class IptvAccountPurgeTest {
         winners.remember(id, CatchUpDialectWalk.StoredWinner("sig", CatchUpDialectWalk.Dialect.entries.first()))
         // Learned playback engine for one of the playlist's channels (persisted per content id).
         LiveEngineMemory.remember("${XtreamItemRegistry.accountPrefix(id)}live:1", LiveEngineMemory.Lane.LIVE, LiveRecoveryCoordinator.Engine.MPV)
+        // The saved local copy of a file playlist (user data: the picked original may be gone).
+        fileStore.fileFor(id).writeText("#EXTM3U\n")
         // Personalization overlay (user data).
         overlayDb.setChannel(PROFILE, "chan:$id", id, ChannelOverlay(hidden = true), 1L)
         overlayDb.setCategory(PROFILE, id, "live", "cat:$id", CategoryOverlay(hidden = true), 1L)
@@ -165,6 +168,8 @@ class IptvAccountPurgeTest {
         assertCachesIntact(keeper)
         assertFalse("an explicit delete drops the playlist's overlay", overlayHas(doomed))
         assertTrue("survivor keeps its overlay", overlayHas(keeper))
+        assertFalse("an explicit delete removes the M3U file copy", fileStore.exists(doomed))
+        assertTrue("survivor keeps its M3U file copy", fileStore.exists(keeper))
         val prefix = XtreamItemRegistry.accountPrefix(doomed)
         coVerify { hubSelection.forgetAccountIf(any()) }
         coVerify { liveStore.migrateAccount(prefix, null) }
@@ -183,6 +188,9 @@ class IptvAccountPurgeTest {
         assertCachesIntact(keeper)
         // A pull can be transient (B24): the user's own data is never dropped on its say-so.
         assertTrue("a pull removal leaves the overlay alone", overlayHas(doomed))
+        // The file copy holds bytes the user picked; if the playlist comes back it re-ingests from it.
+        assertTrue("a pull removal keeps the M3U file copy", fileStore.exists(doomed))
+        assertTrue("survivor keeps its M3U file copy", fileStore.exists(keeper))
         coVerify { hubSelection.forgetAccountIf(any()) }
         coVerify(exactly = 0) { liveStore.migrateAccount(any(), any()) }
         coVerify(exactly = 0) { library.migrateIdPrefix(any(), any()) }

@@ -25,8 +25,8 @@ import org.junit.Test
  */
 class PlaylistRemovalCleanupTest {
 
-    private val caches = setOf(ContentDb, MatchIndex, EpgMirror, RefreshStamp, M3uFileCopy, CatchUp, SessionCaches, HubSelection)
-    private val userData = setOf(Overlay, LiveChannels, SavedRefs)
+    private val caches = setOf(ContentDb, MatchIndex, EpgMirror, RefreshStamp, CatchUp, SessionCaches, HubSelection)
+    private val userData = setOf(Overlay, LiveChannels, SavedRefs, M3uFileCopy)
 
     @Test
     fun `a user delete clears every store keyed by the playlist`() {
@@ -52,6 +52,15 @@ class PlaylistRemovalCleanupTest {
         // Xtream playlists fill the per-playlist EPG tables too (xmltv store lane + catch-up refills).
         assertTrue("delete purges content db", ContentDb in PlaylistRemovalCleanup.plan(UserDelete))
         assertTrue("pull purges content db", ContentDb in PlaylistRemovalCleanup.plan(SyncPull))
+    }
+
+    @Test
+    fun `a sync pull keeps the saved copy of a file playlist and only a user delete removes it`() {
+        // The copy holds bytes from a document the user picked — the original may be gone, so it cannot
+        // rebuild. A transient pull (B24) must not destroy it; if the playlist comes back, it re-ingests.
+        assertTrue("the M3U file copy is user data", M3uFileCopy.userData)
+        assertFalse("a sync pull keeps the file copy", M3uFileCopy in PlaylistRemovalCleanup.plan(SyncPull))
+        assertTrue("a user delete removes the file copy", M3uFileCopy in PlaylistRemovalCleanup.plan(UserDelete))
     }
 
     @Test

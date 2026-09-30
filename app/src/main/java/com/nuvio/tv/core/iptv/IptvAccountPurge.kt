@@ -23,8 +23,9 @@ import javax.inject.Singleton
  * Executes [PlaylistRemovalCleanup]'s plan for a playlist that went away — an explicit user delete
  * ([PlaylistRemovalOrigin.UserDelete]) or a remote sync that no longer lists it
  * ([PlaylistRemovalOrigin.SyncPull]). The plan decides WHAT goes (caches always; the user's own data —
- * overlay, live favorites/recents, library/progress/watched — only on an explicit delete, because a
- * pull can be transient); this class only maps each target onto the TV's stores.
+ * overlay, live favorites/recents, library/progress/watched, a file playlist's saved copy — only on
+ * an explicit delete, because a pull can be transient); this class only maps each target onto the
+ * TV's stores.
  *
  * Every step is isolated: one store failing never stops the rest.
  */
