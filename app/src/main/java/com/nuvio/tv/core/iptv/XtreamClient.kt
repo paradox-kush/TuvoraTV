@@ -641,6 +641,11 @@ class XtreamClient @Inject constructor(
      * [panel] for a body streamed into a caller's sink: fails over only until the first body bytes
      * reached [parse] — rows already in the sink can't be taken back, so a body that dies part-way
      * surfaces as the failure it is instead of splicing two servers' rows.
+     *
+     * A stale stand-in for a dead host ([ServedFrom.STALE_FALLBACK]) is held UNPARSED while the walk
+     * tries the other servers: parsing it first would put its rows in the sink and end the walk, so
+     * last week's lineup would win over a backup that answers live. It is parsed only if it ends up
+     * the last resort; every held copy is closed either way.
      */
     private suspend fun <T> streamedPanel(
         acc: XtreamAccount,
@@ -648,17 +653,37 @@ class XtreamClient @Inject constructor(
         parse: (okio.BufferedSource) -> T,
     ): T {
         var delivered = false
-        return failover.run(acc, canRetry = { !delivered }, evidence = { it.second }) { a ->
-            val response = fetch(apiFor(a), a)
-            val parsed = response.requireBody().use { body ->
-                val flagged = object : okio.ForwardingSource(body.source()) {
-                    override fun read(sink: okio.Buffer, byteCount: Long): Long =
-                        super.read(sink, byteCount).also { if (it > 0) delivered = true }
+        val held = mutableListOf<okhttp3.ResponseBody>()
+        try {
+            val outcome = failover.run(acc, canRetry = { !delivered }, evidence = { it.second }) { a ->
+                val response = fetch(apiFor(a), a)
+                val servedFrom = response.servedFrom()
+                if (servedFrom == ServedFrom.STALE_FALLBACK) {
+                    StreamedAttempt.Stale(response.requireBody().also { held += it }) to servedFrom
+                } else {
+                    val parsed = response.requireBody().use { body ->
+                        val flagged = object : okio.ForwardingSource(body.source()) {
+                            override fun read(sink: okio.Buffer, byteCount: Long): Long =
+                                super.read(sink, byteCount).also { if (it > 0) delivered = true }
+                        }
+                        parse(flagged.buffer())
+                    }
+                    StreamedAttempt.Parsed(parsed) to servedFrom
                 }
-                parse(flagged.buffer())
+            }.first
+            return when (outcome) {
+                is StreamedAttempt.Parsed -> outcome.value
+                is StreamedAttempt.Stale -> outcome.body.use { parse(it.source()) }
             }
-            parsed to response.servedFrom()
-        }.first
+        } finally {
+            held.forEach { runCatching { it.close() } }
+        }
+    }
+
+    /** One [streamedPanel] attempt: rows already parsed into the sink, or a stale body not yet read. */
+    private sealed interface StreamedAttempt<out T> {
+        class Parsed<T>(val value: T) : StreamedAttempt<T>
+        class Stale(val body: okhttp3.ResponseBody) : StreamedAttempt<Nothing>
     }
 
     /** Where OkHttp got this answer from (see [ServedFrom]): stale fallback, plain cache hit, or the host. */

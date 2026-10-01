@@ -87,17 +87,17 @@ class StalkerClient @Inject constructor(
 
     /**
      * One fail-over-able portal call (Step 0.3): handshake / get_profile / browse, walked across the
-     * playlist's portal URLs by [com.nuvio.tv.core.iptv.PlaylistServerFailover]. The session is per
-     * playlist and keyed by a fingerprint that includes the portal, so landing on another portal swaps
-     * the session — the old one's watchdog stops, nothing keeps pinging a dead main. create_link NEVER
-     * comes through here: it is a playback request and goes to the active portal only ([playbackSession]).
+     * playlist's portal URLs by [com.nuvio.tv.core.iptv.PlaylistServerFailover]. Each portal keeps its
+     * own session ([StalkerSessionManager.sessionFor]), so walking between them never throws an
+     * authenticated session away or re-handshakes it. create_link NEVER comes through here: it is a
+     * playback request and goes to the active portal only ([playbackSession]).
      */
     private suspend fun browse(acc: XtreamAccount, params: Map<String, String>): JsonElement =
-        failover.run(acc) { a -> sessions.sessionFor(a).request(params) }
+        failover.run(acc) { a -> sessions.sessionFor(acc, a).request(params) }
 
     /** The session on the playlist's ACTIVE portal — for create_link, which never fails over. */
     private fun playbackSession(acc: XtreamAccount): StalkerSession =
-        sessions.sessionFor(failover.activeAccount(acc))
+        sessions.sessionFor(acc, failover.activeAccount(acc))
 
     /** Verify = handshake succeeds (session authenticates) + account_info is reachable. */
     suspend fun verify(acc: XtreamAccount): Result<Unit> = runCatching {
@@ -470,7 +470,7 @@ class StalkerClient @Inject constructor(
                         // Fails over (Step 0.3) only until the first chunk reached the parser.
                         var delivered = false
                         val gotBytes = failover.run(acc, canRetry = { !delivered }) { a ->
-                            sessions.sessionFor(a).requestStreamOnce(params) {
+                            sessions.sessionFor(acc, a).requestStreamOnce(params) {
                                 delivered = true
                                 parser.feed(it)
                             }

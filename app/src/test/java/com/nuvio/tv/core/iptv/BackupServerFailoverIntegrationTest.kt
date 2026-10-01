@@ -159,6 +159,88 @@ class BackupServerFailoverIntegrationTest {
         )
     }
 
+    /** A panel whose live lineup names the port that served it ("Ch@<port>"). */
+    private fun lineupServer(port: Int = 0): MockWebServer = MockWebServer().also { server ->
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val p = request.url.port
+                val action = request.url.queryParameter("action")
+                requests += "$p $action"
+                val body = when (action) {
+                    null -> """{"user_info":{"auth":1,"status":"Active"},"server_info":{}}"""
+                    "get_live_streams" -> """[{"stream_id":7,"name":"Ch@$p","category_id":"1"}]"""
+                    else -> "[]"
+                }
+                return MockResponse.Builder().code(200).body(body).build()
+            }
+        }
+        server.start(port)
+        servers += server
+    }
+
+    /**
+     * [xtreamClient] over the production catalog-cache stack: a disk cache plus
+     * [com.nuvio.tv.core.di.XtreamCatalogFallbackInterceptor] (the 7-day stale stand-in for a failed
+     * panel). max-age=0 instead of production's 1 h so the second call goes to the network — the stale
+     * copy is then only ever the FALLBACK, which is the path under test.
+     */
+    private fun cachingXtreamClient(): XtreamClient {
+        val moshi = com.nuvio.tv.core.di.NetworkModule.provideMoshi()
+        val cacheDir = java.nio.file.Files.createTempDirectory("xtream-cache").toFile()
+        val http = OkHttpClient.Builder()
+            .cache(okhttp3.Cache(cacheDir, 10L * 1024 * 1024))
+            .addNetworkInterceptor { chain ->
+                val response = chain.proceed(chain.request())
+                if (response.isSuccessful && com.nuvio.tv.core.di.NetworkModule.isXtreamCatalogUrl(chain.request().url)) {
+                    response.newBuilder().removeHeader("Pragma").header("Cache-Control", "public, max-age=0").build()
+                } else response
+            }
+            .addInterceptor(com.nuvio.tv.core.di.XtreamCatalogFallbackInterceptor())
+            .build()
+        val api = Retrofit.Builder()
+            .baseUrl("https://placeholder.nuvio.tv/")
+            .client(http)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(XtreamApi::class.java)
+        return XtreamClient(api, http, moshi, PlaylistDns(), failover)
+    }
+
+    @Test
+    fun `a streamed catalog never settles for main's stale cached copy while a backup answers`() = runBlocking {
+        // Review regression: the streamed (P7 index) catalog parsed the stale stand-in into the
+        // caller's sink BEFORE the walk saw it was stale — rows delivered, so the walk could not move
+        // on: last week's main lineup was served, the backup never asked, the active server never moved.
+        val main = lineupServer()
+        val backup = lineupServer()
+        val acc = XtreamAccount(
+            id = "${base(main.port)}|u", name = "P", baseUrl = base(main.port), username = "u", password = "p",
+            backupUrls = listOf(base(backup.port)),
+        )
+        val client = cachingXtreamClient()
+        val rows = mutableListOf<String>()
+
+        client.liveIndexItemsInto(acc) { rows += it.name }.getOrThrow()
+        assertEquals(listOf("Ch@${main.port}"), rows)
+        assertEquals(0, failover.activeIndex(acc))
+
+        // Main dies; its catalog sits in the disk cache.
+        main.close()
+        rows.clear()
+        requests.clear()
+        client.liveIndexItemsInto(acc) { rows += it.name }.getOrThrow()
+        assertEquals("the backup's live lineup, not main's stale copy", listOf("Ch@${backup.port}"), rows)
+        assertTrue("the backup was asked: $requests", requests.contains("${backup.port} get_live_streams"))
+        assertEquals(1, failover.activeIndex(acc))
+
+        // Every server down: a stale copy is still the last resort (and the state is kept).
+        backup.close()
+        rows.clear()
+        client.liveIndexItemsInto(acc) { rows += it.name }.getOrThrow()
+        assertEquals(listOf("Ch@${backup.port}"), rows)
+        assertEquals(1, failover.activeIndex(acc))
+    }
+
     @Test
     fun `building a stream url never makes a request or moves the active server`() {
         val acc = XtreamAccount(
@@ -225,6 +307,35 @@ class BackupServerFailoverIntegrationTest {
         requests.clear()
         val url = client.resolveStreamUrl(acc, "live", 1, forceFresh = true)
         assertEquals("${base(backup.port)}/live/1.ts?token=x", url)
+        assertEquals(listOf("${backup.port} create_link"), requests.toList())
+    }
+
+    @Test
+    fun `re-walking a dead main after the window keeps the backup portal's session - no extra handshake`() = runBlocking {
+        // Review regression: one session per playlist, keyed by a fingerprint that includes the
+        // portal, so every walk that touched another portal SWAPPED the session — the backup's
+        // authenticated session was thrown away and re-handshaked (rotating the MAC token, and with
+        // concurrent walkers defeating the single-flight reauth). One session per portal fixes it.
+        val mainPort = deadPort()
+        val backup = startServer()
+        val acc = stalker(mainPort, backup.port)
+        val client = stalkerClient()
+        assertTrue(client.verify(acc).isSuccess)
+        assertEquals(1, failover.activeIndex(acc))
+        client.liveChannels(acc, null).getOrThrow()
+
+        // The window ran out: main is tried first again (still dead), then the backup answers.
+        now += ServerFailoverPolicy.MAIN_RETRY_WINDOW_MS
+        requests.clear()
+        assertTrue(client.verify(acc).isSuccess)
+        assertEquals(1, failover.activeIndex(acc))
+        assertTrue(
+            "the backup portal's authenticated session survives the walk: $requests",
+            requests.none { it == "${backup.port} handshake" },
+        )
+
+        requests.clear()
+        assertEquals("${base(backup.port)}/live/1.ts?token=x", client.resolveStreamUrl(acc, "live", 1, forceFresh = true))
         assertEquals(listOf("${backup.port} create_link"), requests.toList())
     }
 
