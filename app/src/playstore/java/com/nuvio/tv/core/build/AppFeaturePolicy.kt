@@ -18,5 +18,8 @@ object AppFeaturePolicy {
     // Store builds hide Debrid (torrent-cache services) like P2P above. Saved keys still
     // sync untouched; only the capability is compiled off (DebridSettings.featureAvailable).
     val debridEnabled: Boolean = false
+    // Store builds keep add-ons for discovery (catalogs, metadata, subtitles) but never as playback
+    // sources: add-ons sync in from tuvora.co / full builds (AddonSourcePolicy).
+    val addonStreamSourcesEnabled: Boolean = false
     val debugBackendSwitcherEnabled: Boolean = BuildConfig.IS_DEBUG_BUILD
 }

@@ -6,6 +6,9 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
+import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.streams.AddonSourcePolicy
+import com.nuvio.tv.core.streams.PlaybackAvailability
 import com.nuvio.tv.core.debrid.DebridStreamPresentation
 import com.nuvio.tv.core.debrid.DirectDebridResolveResult
 import com.nuvio.tv.core.debrid.DirectDebridResolver
@@ -406,10 +409,17 @@ class StreamScreenViewModel @Inject constructor(
             }
 
             if (!autoPlayHandledForSession && playerSettings.streamReuseLastLinkEnabled && !skipLinkCache) {
+                // Store builds never replay a cached add-on link: entries carry no source identity,
+                // so only IPTV content is trusted and legacy add-on entries fail closed.
                 val cached = streamLinkCacheDataStore.getValid(
                     contentKey = streamCacheKey,
                     maxAgeMs = playerSettings.streamReuseLastLinkCacheHours * 60L * 60L * 1000L
-                )
+                )?.takeIf {
+                    AddonSourcePolicy.cachedLinkUsable(
+                        streamSourcesEnabled = AppFeaturePolicy.addonStreamSourcesEnabled,
+                        isIptv = isIptvContent()
+                    )
+                }
                 if (cached != null) {
                     autoPlayHandledForSession = true
                     resolvedAutoPlayTarget = true
@@ -1026,15 +1036,23 @@ class StreamScreenViewModel @Inject constructor(
         }
     }
 
+    private fun isIptvContent(): Boolean =
+        PlaybackAvailability.isIptvId(videoId) || contentId?.let(PlaybackAvailability::isIptvId) == true
+
     private suspend fun getEmbeddedStreamsFromMeta(): AddonStreams? {
         val metaId = contentId?.takeIf { it.isNotBlank() } ?: return null
         val result = metaRepository.getMetaFromAllAddons(type = contentType, id = metaId)
             .first { it !is NetworkResult.Loading }
         val meta = (result as? NetworkResult.Success)?.data ?: return null
         val video = meta.videos.firstOrNull { it.id == videoId } ?: return null
-        if (video.streams.isEmpty()) return null
+        val playableStreams = AddonSourcePolicy.embeddedStreamsForBuild(
+            streams = video.streams,
+            streamSourcesEnabled = AppFeaturePolicy.addonStreamSourcesEnabled,
+            isIptv = isIptvContent()
+        )
+        if (playableStreams.isEmpty()) return null
 
-        val streams = video.streams.map { stream ->
+        val streams = playableStreams.map { stream ->
             stream.copy(
                 name = stream.name ?: stream.title ?: stream.description ?: embeddedStreamFallbackName,
                 addonName = embeddedStreamGroupName,

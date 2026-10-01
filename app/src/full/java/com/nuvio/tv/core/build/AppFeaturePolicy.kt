@@ -13,5 +13,6 @@ object AppFeaturePolicy {
     val imdbRatingLogoEnabled: Boolean = true
     val p2pEnabled: Boolean = true
     val debridEnabled: Boolean = true
+    val addonStreamSourcesEnabled: Boolean = true
     val debugBackendSwitcherEnabled: Boolean = BuildConfig.IS_DEBUG_BUILD
 }
