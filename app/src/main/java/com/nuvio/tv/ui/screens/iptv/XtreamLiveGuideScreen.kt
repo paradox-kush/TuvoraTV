@@ -402,7 +402,13 @@ fun LiveGuide(
                         height = 280.dp
                     )
                     uiState.channels.isEmpty() -> EmptyScreenState(
-                        title = stringResource(R.string.iptv_guide_no_channels),
+                        // UX13: an empty Favorites view says how to fill it.
+                        title = when (GuideEmptyStatePolicy.kind(
+                            uiState.categories.firstOrNull { it.id == uiState.selectedCategoryId }?.special
+                        )) {
+                            GuideEmptyStatePolicy.Kind.FAVORITES_HINT -> stringResource(R.string.iptv_guide_favorites_empty)
+                            GuideEmptyStatePolicy.Kind.NO_CHANNELS -> stringResource(R.string.iptv_guide_no_channels)
+                        },
                         height = 280.dp
                     )
                     else -> LazyColumn(
