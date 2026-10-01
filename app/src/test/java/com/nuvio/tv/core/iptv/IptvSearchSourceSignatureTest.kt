@@ -46,6 +46,22 @@ class IptvSearchSourceSignatureTest {
     }
 
     @Test
+    fun `hiding or unhiding a group or channel changes the signature`() {
+        // Search drops hidden groups (withoutHiddenGroups), so a hide must refresh shown results
+        // like a category selection does — Mobile's twin fingerprints the hidden set too.
+        val acc = a
+        val plain = XtreamIptvSearchProvider.signatureOf(listOf(acc))
+        val hidden = XtreamIptvSearchProvider.signatureOf(listOf(acc), setOf("cat:acc1|movies|12"))
+        assertNotEquals("hiding a group must change the signature", plain, hidden)
+        assertEquals(
+            "hidden-key order is irrelevant",
+            XtreamIptvSearchProvider.signatureOf(listOf(acc), setOf("a", "b")),
+            XtreamIptvSearchProvider.signatureOf(listOf(acc), setOf("b", "a")),
+        )
+        assertNull("no enabled playlist still means no signature", XtreamIptvSearchProvider.signatureOf(emptyList(), setOf("a")))
+    }
+
+    @Test
     fun `the signature never carries the password`() {
         val s = sig(a.copy(password = "s3cret-pass"))!!
         assertEquals("no password text", false, s.contains("s3cret-pass"))
