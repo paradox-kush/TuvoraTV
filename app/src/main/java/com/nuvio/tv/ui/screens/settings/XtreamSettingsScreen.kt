@@ -11,7 +11,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,8 +46,11 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +92,7 @@ import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.screens.account.InputFieldKeys
 import com.nuvio.tv.ui.theme.NuvioTheme
+import kotlinx.coroutines.launch
 
 /**
  * Xtream IPTV accounts settings (inline section, like Debrid). Single paste field:
@@ -127,17 +134,22 @@ fun XtreamSettingsContent(
     val accountRowFocus = remember { mutableMapOf<String, FocusRequester>() }
     val context = LocalContext.current
     val playlistRemovedText = stringResource(R.string.iptv_playlist_removed)
+    // The focus hand-off runs in this scope, not in the effect below: clearing pendingRemoval (one
+    // of the effect's own keys) restarts the effect on the next frame, which cancelled the old
+    // coroutine inside requestFocusAfterFrames' frame wait — the toast showed but the request never
+    // ran, and focus stayed wherever the removed row's loss had dropped it (the side menu).
+    val removalFocusScope = rememberCoroutineScope()
     LaunchedEffect(pendingRemoval, uiState.accounts) {
         val (removedId, removedIndex) = pendingRemoval ?: return@LaunchedEffect
         if (uiState.accounts.any { it.id == removedId }) return@LaunchedEffect
-        pendingRemoval = null
         accountRowFocus.remove(removedId)
-        android.widget.Toast.makeText(context, playlistRemovedText, android.widget.Toast.LENGTH_SHORT).show()
         val target = PlaylistRemovalUiPolicy.focusIndexAfterRemoval(removedIndex, uiState.accounts.size)
             ?.let { uiState.accounts.getOrNull(it) }
             ?.let { accountRowFocus[it.id] }
             ?: addRowFocus
-        target.requestFocusAfterFrames()
+        pendingRemoval = null
+        android.widget.Toast.makeText(context, playlistRemovedText, android.widget.Toast.LENGTH_SHORT).show()
+        removalFocusScope.launch { target.requestFocusAfterFrames() }
     }
 
     Column(
@@ -939,7 +951,7 @@ private val DNS_OPTIONS = listOf(
 
 private fun autoRefreshLabel(hours: Int): String = if (hours == 0) "Off" else "${hours}h"
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun XtreamAddDialog(
     isValidating: Boolean,
@@ -1033,7 +1045,13 @@ private fun XtreamAddDialog(
             userAgent = xtreamUserAgent.trim().ifEmpty { null }
         )
     }
+    // The status line ("Verifying…" / the save error) sits under the Save button at the foot of a
+    // scrolling form, so it was often below the fold and a failed save looked like nothing
+    // happened. Each submit and each new status scrolls it into view; focus stays on the button.
+    val statusReveal = remember { BringIntoViewRequester() }
+    var submitTick by remember { mutableIntStateOf(0) }
     val submit = {
+        if (!isValidating) submitTick++
         if (!isValidating) when (sourceType) {
             XtreamAccount.SOURCE_XTREAM -> {
                 if (manualMode) {
@@ -1209,11 +1227,18 @@ private fun XtreamAddDialog(
                 error != null -> error
                 else -> null
             }
+            LaunchedEffect(status, submitTick) {
+                if (status == null) return@LaunchedEffect
+                // One frame so the line is laid out before the form scrolls to it.
+                withFrameNanos { }
+                runCatching { statusReveal.bringIntoView() }
+            }
             if (status != null) {
                 Text(
                     text = status,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (error != null && !isValidating) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary
+                    color = if (error != null && !isValidating) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary,
+                    modifier = Modifier.bringIntoViewRequester(statusReveal)
                 )
             }
         }
