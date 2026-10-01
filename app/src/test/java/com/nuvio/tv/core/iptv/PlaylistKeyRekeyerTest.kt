@@ -40,7 +40,7 @@ class PlaylistKeyRekeyerTest {
     private val watched = mockk<WatchedItemsPreferences>(relaxed = true)
     private val liveStore = mockk<XtreamLiveStore>(relaxed = true)
     private val purge = mockk<IptvAccountPurge>(relaxed = true)
-    private val rekeyer = PlaylistKeyRekeyer(accountStore, library, progress, watched, liveStore, fileStore, purge)
+    private val rekeyer = PlaylistKeyRekeyer(accountStore, library, progress, watched, liveStore, fileStore, purge, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
 
     private val oldId = "file:0b8f6c1e-uuid"
     private val newId = "m3u_file|tv.m3u|synced"
@@ -63,12 +63,12 @@ class PlaylistKeyRekeyerTest {
         coVerify(exactly = 1) { accountStore.renameIds(1, listOf(PlaylistKeyAdoption.Rekey(oldId, newId))) }
         coVerify(exactly = 1) { library.migrateIdPrefix(oldPrefix, newPrefix) }
         coVerify(exactly = 1) { progress.migrateIdPrefix(oldPrefix, newPrefix, 1) }
-        coVerify(exactly = 1) { watched.migrateIdPrefix(oldPrefix, newPrefix) }
+        coVerify(exactly = 1) { watched.migrateIdPrefix(oldPrefix, newPrefix, 1) }
         coVerify(exactly = 1) { liveStore.migrateAccount(oldPrefix, any()) }
         // A null new prefix is a DROP — adoption must never ask any store for one.
         coVerify(exactly = 0) { library.migrateIdPrefix(any(), null) }
         coVerify(exactly = 0) { progress.migrateIdPrefix(any(), null, any()) }
-        coVerify(exactly = 0) { watched.migrateIdPrefix(any(), null) }
+        coVerify(exactly = 0) { watched.migrateIdPrefix(any(), null, any()) }
         coVerify(exactly = 0) { liveStore.migrateAccount(any(), null) }
         coVerify(exactly = 1) { purge.purge(oldId, PlaylistRemovalOrigin.SyncPull) }
         coVerify(exactly = 0) { purge.purge(any(), PlaylistRemovalOrigin.UserDelete) }

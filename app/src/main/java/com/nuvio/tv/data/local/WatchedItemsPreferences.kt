@@ -290,8 +290,12 @@ class WatchedItemsPreferences @Inject constructor(
      * Rewrite (or, with [newPrefix] null, drop) watched items whose contentId starts with
      * [oldPrefix] — keeps an edited IPTV playlist's watched state attached to its new id prefix.
      */
-    suspend fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
-        store().edit { preferences ->
+    suspend fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) =
+        migrateIdPrefix(oldPrefix, newPrefix, profileManager.activeProfileId.value)
+
+    /** [migrateIdPrefix] for an explicit profile (a pull-time key adoption names its profile). */
+    suspend fun migrateIdPrefix(oldPrefix: String, newPrefix: String?, profileId: Int) {
+        store(profileId).edit { preferences ->
             val current = preferences[watchedItemsKey] ?: return@edit
             val updated = current.mapNotNull { json ->
                 val item = runCatching { gson.fromJson(json, WatchedItem::class.java) }.getOrNull()

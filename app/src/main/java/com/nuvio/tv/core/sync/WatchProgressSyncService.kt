@@ -32,6 +32,11 @@ private const val WATCH_PROGRESS_DELTA_PAGE_SIZE = 900
 private const val WATCH_PROGRESS_EVENT_UPSERT = "upsert"
 private const val WATCH_PROGRESS_EVENT_DELETE = "delete"
 
+/** Live channels have no meaningful resume position — keep them out of remote sync. */
+internal fun isLiveWatchProgress(progress: WatchProgress): Boolean =
+    progress.contentType.equals("live", ignoreCase = true) ||
+        XtreamItemRegistry.isLiveContentId(progress.contentId)
+
 data class WatchProgressRemoteSyncResult(
     val upsertedEntries: Int,
     val deletedEntries: Int,
@@ -638,10 +643,7 @@ class WatchProgressSyncService @Inject constructor(
         )
     }
 
-    /** Live channels have no meaningful resume position — keep them out of remote sync. */
-    private fun isLiveProgress(progress: WatchProgress): Boolean =
-        progress.contentType.equals("live", ignoreCase = true) ||
-            XtreamItemRegistry.isLiveContentId(progress.contentId)
+    private fun isLiveProgress(progress: WatchProgress): Boolean = isLiveWatchProgress(progress)
 
     /** Push payload for one entry, including card metadata so other devices don't render blank CW cards. */
     private fun JsonObjectBuilder.putProgressEntry(key: String, progress: WatchProgress) {
