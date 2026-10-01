@@ -34,6 +34,8 @@ enum class PlaylistRemovalTarget(val userData: Boolean) {
     M3uFileCopy(true),
     /** Learned catch-up facts (winner dialect / panel clock + formats). */
     CatchUp(false),
+    /** Step 0.3: which server (main / backup N) answered last on this device, and its retry window. */
+    ServerFailover(false),
     /** In-memory browse/search/registry caches. */
     SessionCaches(false),
     /** The hub's remembered provider, when it points at the removed playlist. */

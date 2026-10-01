@@ -44,6 +44,7 @@ class IptvAccountPurge @Inject constructor(
     private val liveStore: XtreamLiveStore,
     private val libraryPreferences: LibraryPreferences,
     private val profileManager: ProfileManager,
+    private val serverFailover: PlaylistServerFailover,
     private val watchState: WatchStatePrefixMover,
 ) {
     suspend fun purge(accountId: String, origin: PlaylistRemovalOrigin) {
@@ -69,6 +70,7 @@ class IptvAccountPurge @Inject constructor(
             PlaylistRemovalTarget.RefreshStamp -> refreshStore.clear(accountId)
             PlaylistRemovalTarget.M3uFileCopy -> fileStore.delete(accountId)   // no-op when absent
             PlaylistRemovalTarget.CatchUp -> catchUpWinners.forget(accountId)
+            PlaylistRemovalTarget.ServerFailover -> serverFailover.forget(profileManager.activeProfileId.value, accountId)
             PlaylistRemovalTarget.SessionCaches -> {
                 registry.clear() // global in-memory map; rebuilds lazily on next browse
                 searchIndex.evict(accountId)

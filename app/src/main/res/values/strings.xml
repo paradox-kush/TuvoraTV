@@ -3377,4 +3377,29 @@
     <string name="clean_live_ingress_unavailable">This Live TV channel is currently unavailable.</string>
     <string name="clean_live_ingress_profile_changed">Your profile changed. Select the channel again.</string>
     <string name="auth_qr_phone_hint">Use your phone to sign in with email/password. TV stays QR-only for faster login.</string>
+    <!-- Step 0.3: backup servers (Add/Edit playlist form + the playlist row). -->
+    <string name="iptv_backup_servers_title">Backup servers</string>
+    <string name="iptv_backup_servers_helper">Used automatically if the main server doesn\'t respond.</string>
+    <string name="iptv_backup_server_row">Backup server %1$d</string>
+    <string name="iptv_backup_server_not_set">Not set — press OK to enter an address</string>
+    <string name="iptv_backup_server_add">Add backup server</string>
+    <string name="iptv_backup_server_add_subtitle">Another address for the same playlist (up to %1$d)</string>
+    <string name="iptv_backup_server_address">Server address</string>
+    <string name="iptv_backup_server_hint_base">http://other-host:port</string>
+    <string name="iptv_backup_server_hint_m3u">http://other-host/playlist.m3u</string>
+    <string name="iptv_backup_server_move_up">Move up</string>
+    <string name="iptv_backup_server_move_up_subtitle">Try this server earlier</string>
+    <string name="iptv_backup_server_move_down">Move down</string>
+    <string name="iptv_backup_server_move_down_subtitle">Try this server later</string>
+    <string name="iptv_backup_server_remove">Remove backup server</string>
+    <string name="iptv_backup_server_remove_confirm_title">Remove backup server %1$d?</string>
+    <string name="iptv_backup_server_remove_confirm_subtitle">%1$s won\'t be tried if the main server stops responding.</string>
+    <string name="iptv_backup_server_done">Done</string>
+    <string name="iptv_backup_server_problem_invalid">Not a valid address</string>
+    <string name="iptv_backup_server_problem_not_http">Only http:// and https:// addresses work</string>
+    <string name="iptv_backup_server_problem_same_as_main">Same as the main server</string>
+    <string name="iptv_backup_server_problem_duplicate">Already in the list</string>
+    <string name="iptv_backup_server_problem_too_many">At most %1$d backup servers</string>
+    <string name="iptv_using_backup_server">Using backup server %1$d</string>
+    <string name="iptv_using_backup_server_host">Using backup server %1$d (%2$s)</string>
 </resources>

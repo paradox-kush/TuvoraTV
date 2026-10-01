@@ -39,6 +39,8 @@ import javax.inject.Singleton
 class StalkerClient @Inject constructor(
     private val sessions: StalkerSessionManager,
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
+    /** Step 0.3: browse walks the playlist's backup portals; create_link uses the ACTIVE one only. */
+    private val failover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
 ) : IptvClient {
 
     // Browse-time rows keyed accountId:type:id — see [row]. This is what keeps play/detail from
@@ -83,18 +85,30 @@ class StalkerClient @Inject constructor(
         linkFlags.keys.removeAll { it.startsWith("$accountId:") }
     }
 
+    /**
+     * One fail-over-able portal call (Step 0.3): handshake / get_profile / browse, walked across the
+     * playlist's portal URLs by [com.nuvio.tv.core.iptv.PlaylistServerFailover]. Each portal keeps its
+     * own session ([StalkerSessionManager.sessionFor]), so walking between them never throws an
+     * authenticated session away or re-handshakes it. create_link NEVER comes through here: it is a
+     * playback request and goes to the active portal only ([playbackSession]).
+     */
+    private suspend fun browse(acc: XtreamAccount, params: Map<String, String>): JsonElement =
+        failover.run(acc, probe = { a -> sessions.sessionFor(acc, a).probe() }) { a -> sessions.sessionFor(acc, a).request(params) }
+
+    /** The session on the playlist's ACTIVE portal — for create_link, which never fails over. */
+    private fun playbackSession(acc: XtreamAccount): StalkerSession =
+        sessions.sessionFor(acc, failover.activeAccount(acc))
+
     /** Verify = handshake succeeds (session authenticates) + account_info is reachable. */
     suspend fun verify(acc: XtreamAccount): Result<Unit> = runCatching {
-        val session = sessions.sessionFor(acc)
         // A successful get_genres proves the full handshake+get_profile+authorised-browse chain.
-        session.request(mapOf("type" to "itv", "action" to "get_genres"))
+        browse(acc, mapOf("type" to "itv", "action" to "get_genres"))
         Unit
     }
 
     /** Account status for the settings row. Stalker returns expiry as free text in `phone`. */
     override suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = runCatching {
-        val js = sessions.sessionFor(acc)
-            .request(mapOf("type" to "account_info", "action" to "get_main_info"))
+        val js = browse(acc, mapOf("type" to "account_info", "action" to "get_main_info"))
         val obj = js as? JsonObject ?: JsonObject()
         // `phone` is free text like "February 20, 2027" — surface it verbatim as the status.
         val expiry = obj.str("phone")?.takeIf { it.isNotBlank() }
@@ -177,7 +191,7 @@ class StalkerClient @Inject constructor(
             }
             val cats = runCatching { categories(acc, "itv", "get_genres").getOrThrow() }.getOrNull()
             val js = runCatching {
-                sessions.sessionFor(acc).request(mapOf("type" to "itv", "action" to "get_all_channels"))
+                browse(acc, mapOf("type" to "itv", "action" to "get_all_channels"))
             }.getOrNull()
             val arr = (js as? JsonObject)?.get("data") as? com.google.gson.JsonArray
                 ?: js as? com.google.gson.JsonArray
@@ -402,8 +416,9 @@ class StalkerClient @Inject constructor(
         // per-channel request per visible tile — the next ensure retries. Only a portal that
         // GENUINELY lacks get_epg_info takes the per-channel path.
         if (acc.id !in epgUnsupported) return@runCatching emptyList()
-        val js = sessions.sessionFor(acc).request(
-            mapOf("type" to "itv", "action" to "get_short_epg", "ch_id" to streamId.toString(), "size" to limit.toString())
+        val js = browse(
+            acc,
+            mapOf("type" to "itv", "action" to "get_short_epg", "ch_id" to streamId.toString(), "size" to limit.toString()),
         )
         val list = js as? com.google.gson.JsonArray
             ?: (js as? JsonObject)?.get("data") as? com.google.gson.JsonArray
@@ -452,7 +467,14 @@ class StalkerClient @Inject constructor(
                                 )
                             )
                         }
-                        val gotBytes = sessions.sessionFor(acc).requestStreamOnce(params) { parser.feed(it) }
+                        // Fails over (Step 0.3) only until the first chunk reached the parser.
+                        var delivered = false
+                        val gotBytes = failover.run(acc, canRetry = { !delivered }, probe = { a -> sessions.sessionFor(acc, a).probe() }) { a ->
+                            sessions.sessionFor(acc, a).requestStreamOnce(params) {
+                                delivered = true
+                                parser.feed(it)
+                            }
+                        }
                         if (!gotBytes) throw StalkerAuthException("empty bulk-EPG body for ${acc.name}")
                         sawData = parser.sawData
                         count = parser.programmeCount
@@ -461,7 +483,7 @@ class StalkerClient @Inject constructor(
                 if (result.isSuccess) { streamed = true; break }
                 val cause = result.exceptionOrNull()
                 if (cause is StalkerAuthException && attempt == 1) {
-                    sessions.sessionFor(acc).invalidate()   // one re-handshake, then one retry
+                    playbackSession(acc).invalidate()   // one re-handshake (active portal), then one retry
                     continue
                 }
                 Log.w(TAG, "bulk EPG ingest failed for ${acc.name}", cause)
@@ -499,7 +521,8 @@ class StalkerClient @Inject constructor(
      * verdict so a static play that died still gets exactly one fresh create_link.
      */
     override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String? {
-        val session = sessions.sessionFor(acc)
+        // Playback: the ACTIVE portal only — a create_link failure never walks to a backup (Step 0.3).
+        val session = playbackSession(acc)
         return when {
             kind == "live" -> {
                 val cmd = liveCmd(acc, streamId) ?: return null
@@ -564,7 +587,7 @@ class StalkerClient @Inject constructor(
             ?: seasonsOf(acc, seriesId)
                 .let { se -> (season?.let { n -> se.firstOrNull { it.number == n } } ?: se.firstOrNull())?.cmd }
             ?: return null
-        return createLink(sessions.sessionFor(acc), "vod", cmd, extraParams = mapOf("series" to episodeNum.toString()))
+        return createLink(playbackSession(acc), "vod", cmd, extraParams = mapOf("series" to episodeNum.toString()))
     }
 
     private class StalkerSeason(val number: Int, val cmd: String, val episodeNums: List<Int>)
@@ -577,9 +600,10 @@ class StalkerClient @Inject constructor(
         seasonMutex.withLock {
             seasonCache["${acc.id}:$seriesId"]?.let { return@withLock it }
             val js = runCatching {
-                sessions.sessionFor(acc).request(
+                browse(
+                    acc,
                     mapOf("type" to "series", "action" to "get_ordered_list",
-                        "movie_id" to seriesId.toString(), "p" to "1")
+                        "movie_id" to seriesId.toString(), "p" to "1"),
                 )
             }.getOrNull()
             val rows = ((js as? JsonObject)?.get("data") as? com.google.gson.JsonArray)
@@ -743,7 +767,7 @@ class StalkerClient @Inject constructor(
     // --- request helpers ------------------------------------------------------
 
     private suspend fun categories(acc: XtreamAccount, type: String, action: String): Result<List<XtreamCategory>> = runCatching {
-        val js = sessions.sessionFor(acc).request(mapOf("type" to type, "action" to action))
+        val js = browse(acc, mapOf("type" to type, "action" to action))
         val arr = js as? com.google.gson.JsonArray ?: return@runCatching emptyList()
         arr.mapNotNull { it as? JsonObject }
             .mapNotNull { obj ->
@@ -766,7 +790,6 @@ class StalkerClient @Inject constructor(
         maxItems: Int = MAX_ITEMS,
         stopWhen: ((JsonObject) -> Boolean)? = null,
     ): List<JsonObject> {
-        val session = sessions.sessionFor(acc)
         val out = ArrayList<JsonObject>()
         var page = 1
         var total = Int.MAX_VALUE
@@ -781,7 +804,7 @@ class StalkerClient @Inject constructor(
                 put("sortby", "number")
                 put("JsHttpRequest", "1-xml")
             }.filterKeys { it != "JsHttpRequest" }
-            val js = runCatching { session.request(params) }.getOrNull() ?: break
+            val js = runCatching { browse(acc, params) }.getOrNull() ?: break
             val obj = js as? JsonObject ?: break
             total = obj.int("total_items") ?: obj.int("max_page_items")?.let { it * MAX_PAGES } ?: out.size
             val data = obj.get("data") as? com.google.gson.JsonArray ?: break
@@ -799,7 +822,7 @@ class StalkerClient @Inject constructor(
     /** Portal logos/screenshots may be relative — resolve against the portal base. */
     private fun absolutize(acc: XtreamAccount, path: String): String {
         if (path.startsWith("http://") || path.startsWith("https://")) return path
-        val base = acc.portalUrl.trimEnd('/')
+        val base = failover.activeAccount(acc).portalUrl.trimEnd('/')
         return if (path.startsWith("/")) "$base$path" else "$base/$path"
     }
 
