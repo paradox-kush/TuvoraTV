@@ -3377,4 +3377,6 @@
     <string name="clean_live_ingress_unavailable">This Live TV channel is currently unavailable.</string>
     <string name="clean_live_ingress_profile_changed">Your profile changed. Select the channel again.</string>
     <string name="auth_qr_phone_hint">Use your phone to sign in with email/password. TV stays QR-only for faster login.</string>
+    <!-- wave1 x1 -->
+    <string name="addon_not_synced_yet">Not synced yet</string>
 </resources>

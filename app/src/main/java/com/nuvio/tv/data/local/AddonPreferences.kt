@@ -76,6 +76,22 @@ class AddonPreferences @Inject constructor(
         }
     }
 
+    /**
+     * Reactive [getSyncedAddonUrlsOrDefaults] for the Addons screen's "Not synced yet" marker (UX71): the list this
+     * device and the server last agreed on, falling back to the factory defaults before the first sync.
+     */
+    val syncedAddonUrlsOrDefaults: Flow<List<String>> = effectiveProfileIdFlow.flatMapLatest { pid ->
+        factory.get(pid, FEATURE).data.map { preferences ->
+            val json = preferences[syncedUrlsKey] ?: return@map getDefaultAddons().toList()
+            try {
+                val type = object : TypeToken<List<String>>() {}.type
+                gson.fromJson<List<String>>(json, type) ?: getDefaultAddons().toList()
+            } catch (e: Exception) {
+                getDefaultAddons().toList()
+            }
+        }
+    }
+
     val addonEnabledStates: Flow<Map<String, Boolean>> = effectiveProfileIdFlow.flatMapLatest { pid ->
         factory.get(pid, FEATURE).data.map { preferences ->
             preferences[addonEnabledStatesKey]
