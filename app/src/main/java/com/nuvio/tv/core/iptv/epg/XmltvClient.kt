@@ -4,6 +4,8 @@ import android.util.Log
 import com.nuvio.tv.core.iptv.StreamUserAgentPolicy
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.content.IptvContentDb
+import com.nuvio.tv.core.iptv.executeCancellable
+import com.nuvio.tv.core.iptv.forFailoverAttempt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -43,6 +45,12 @@ class XmltvClient @Inject constructor(
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     /** Step 0.3: the panel's own derived xmltv.php is a catalog call and walks the backup servers. */
     private val failover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
+    /**
+     * Step 0.3b: the failover race validates a backup with the Xtream login probe before the guide is
+     * downloaded from it (null only in hand-built test graphs without an Xtream client: the walk is then
+     * sequential).
+     */
+    private val xtream: com.nuvio.tv.core.iptv.XtreamClient? = null,
 ) {
 
     /**
@@ -152,7 +160,7 @@ class XmltvClient @Inject constructor(
             // The panel's own xmltv.php is an EPG catalog call: it fails over with the playlist's
             // servers (Step 0.3) — until the first bytes reached the parser, never mid-guide.
             var delivered = false
-            failover.run(acc, canRetry = { !delivered }) { a ->
+            failover.run(acc, canRetry = { !delivered }, probe = xtream?.let { x -> { a -> x.failoverProbe(a) } }) { a ->
                 fetchAndStoreFrom(acc, derivedXmltvUrl(a) ?: url, channelIds) { delivered = true }
             }
         } else {
@@ -167,7 +175,8 @@ class XmltvClient @Inject constructor(
             .apply { userAgentFor(acc)?.let { header("User-Agent", it) } }
             .build()
         // XMLTV fetch honours the playlist's DoH resolver (shares the ingest pool).
-        playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
+        // Step 0.3b: inside a failover race — 8 s connect timeout, header signal, cancel closes the socket.
+        playlistDns.clientFor(http, acc.dnsProvider).forFailoverAttempt().newCall(request).executeCancellable { resp ->
             // Typed (message unchanged) so the failover walk can tell a dead panel (5xx/404) from a refusal.
             if (!resp.isSuccessful) throw com.nuvio.tv.core.iptv.HttpStatusException(resp.code, "HTTP ${resp.code}")
             // charStream() decodes the (possibly gunzipped) body incrementally — never fully buffered.

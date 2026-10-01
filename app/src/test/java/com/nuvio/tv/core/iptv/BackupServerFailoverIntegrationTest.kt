@@ -133,7 +133,8 @@ class BackupServerFailoverIntegrationTest {
         val verified = client.verify(acc)
         assertTrue("login fails over to the backup: ${verified.exceptionOrNull()}", verified.isSuccess)
         assertEquals(1, failover.activeIndex(acc))
-        assertEquals(ServerFailoverState(1, 1_000L + ServerFailoverPolicy.MAIN_RETRY_WINDOW_MS), store.read(1, acc.id))
+        assertEquals(ServerFailoverState(1, 1_000L + ServerFailoverPolicy.MAIN_RETRY_WINDOW_MS), store.read(1, acc.id).copy(stats = emptyMap()))
+        assertTrue("the refused main is remembered as failed (stagger hint)", store.read(1, acc.id).stats[0]?.lastFailAtMs != null)
 
         requests.clear()
         assertEquals(listOf("News"), client.liveCategories(acc).getOrThrow().map { it.name })
@@ -354,6 +355,6 @@ class BackupServerFailoverIntegrationTest {
         assertTrue("no backup request: $requests", requests.none { it.startsWith("${backup.port} ") })
         assertTrue("create_link went to main: $requests", requests.any { it == "${main.port} create_link" })
         assertEquals(0, failover.activeIndex(acc))
-        assertEquals(ServerFailoverState(), store.read(1, acc.id))
+        assertEquals(ServerFailoverState(), store.read(1, acc.id).copy(stats = emptyMap()))
     }
 }

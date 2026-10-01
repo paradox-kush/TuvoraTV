@@ -1,9 +1,7 @@
 package com.nuvio.tv.core.iptv
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -28,15 +26,6 @@ class ServerFailoverPolicyTest {
                 assertEquals("$label: state", step.expectedState, state)
             }
         }
-    }
-
-    @Test
-    fun `golden walk budget`() {
-        for ((timeout, servers, expected) in ServerFailoverGolden.budgetCases) {
-            assertEquals("budget $timeout x $servers", expected, ServerFailoverPolicy.walkBudgetMs(timeout, servers))
-        }
-        assertTrue(ServerFailoverPolicy.mayStartNextAttempt(119_999, 120_000))
-        assertFalse(ServerFailoverPolicy.mayStartNextAttempt(120_000, 120_000))
     }
 
     @Test

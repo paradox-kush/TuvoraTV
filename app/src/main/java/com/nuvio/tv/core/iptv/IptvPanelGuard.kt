@@ -29,24 +29,34 @@ object IptvPanelGuard {
     val guard: PanelHostGuard = PanelHostGuard { start.elapsedNow().inWholeMilliseconds }
 
     /**
-     * User-driven Retry/refresh for [acc]: clears the breaker for the account's panel origin so the
-     * retry is never met with a fast-fail. Call BEFORE the affordance's first request. No-op for
-     * M3U playlists (no panel API to guard). Automatic retries and first-loads must NOT call this.
+     * User-driven Retry/refresh for [acc]: clears the breaker for EVERY host the playlist can use — the
+     * main server and each configured backup (Step 0.3b: a Retry that left a backup's breaker open
+     * would fast-fail the very server the failover race is about to try). Call BEFORE the affordance's
+     * first request. No-op for M3U playlists (no panel API to guard). Automatic retries and first-loads
+     * must NOT call this.
      */
     fun resetForAccount(acc: XtreamAccount) {
-        panelOriginUrlOf(acc)?.let { guard.reset(it) }
+        panelOriginUrlsOf(acc).forEach { guard.reset(it) }
     }
 
     /**
      * The URL whose origin keys [acc]'s breaker record — the SAME base the transports admit with:
      * Xtream requests start with [XtreamAccount.baseUrl]; Stalker requests start with the
      * normalized portal base (the session normalizes before building URLs, so reset must too).
+     * [serverUrl] names which of the playlist's servers (default: the main one).
      */
-    internal fun panelOriginUrlOf(acc: XtreamAccount): String? = when (acc.sourceType) {
-        XtreamAccount.SOURCE_XTREAM -> acc.baseUrl
-        XtreamAccount.SOURCE_STALKER -> StalkerProtocol.normalizePortalBase(acc.portalUrl)
+    internal fun panelOriginUrlOf(
+        acc: XtreamAccount,
+        serverUrl: String = PlaylistServerFailover.mainServer(acc),
+    ): String? = when (acc.sourceType) {
+        XtreamAccount.SOURCE_XTREAM -> serverUrl
+        XtreamAccount.SOURCE_STALKER -> StalkerProtocol.normalizePortalBase(serverUrl)
         else -> null   // M3U url/file playlists have no panel API
     }
+
+    /** [panelOriginUrlOf] for the main server and every backup, in priority order. */
+    internal fun panelOriginUrlsOf(acc: XtreamAccount): List<String> =
+        PlaylistServerFailover.serversOf(acc).mapNotNull { panelOriginUrlOf(acc, it) }
 }
 
 /**

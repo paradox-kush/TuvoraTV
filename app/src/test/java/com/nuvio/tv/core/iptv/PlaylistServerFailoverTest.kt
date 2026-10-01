@@ -123,7 +123,8 @@ class PlaylistServerFailoverTest {
         }
         assertSame(mainErr, thrown)
         assertEquals(3, tried.size)
-        assertEquals(ServerFailoverState(), store.read(1, acc.id))
+        assertEquals("active server and window untouched", ServerFailoverState(), store.read(1, acc.id).copy(stats = emptyMap()))
+        assertEquals("each server that failed is remembered (stagger hint only)", setOf(0, 1, 2), store.read(1, acc.id).stats.keys)
     }
 
     @Test
@@ -156,22 +157,6 @@ class PlaylistServerFailoverTest {
         assertEquals(listOf("http://main.test"), tried)
         assertEquals(0, failover.activeIndex(acc))
         assertEquals("http://main.test/live/u/p/7.ts", failover.rebaseStreamUrl(acc, "http://b1.test/live/u/p/7.ts"))
-    }
-
-    @Test
-    fun `the walk stops once the time budget is spent`() = runBlocking {
-        val tried = mutableListOf<String>()
-        val thrown = assertThrows<HttpStatusException> {
-            runBlocking {
-                failover.run(acc) { a ->
-                    tried += a.baseUrl
-                    now += PlaylistServerFailover.SINGLE_REQUEST_TIMEOUT_MS * 3   // one slow failure eats the whole budget
-                    throw HttpStatusException(504, a.baseUrl)
-                }
-            }
-        }
-        assertEquals(listOf("http://main.test"), tried)
-        assertEquals("http://main.test", thrown.message)
     }
 
     @Test
@@ -249,7 +234,8 @@ class PlaylistServerFailoverTest {
         }
         assertEquals("stale-main", served)
         assertEquals(3, tried.size)
-        assertEquals(ServerFailoverState(), store.read(1, acc.id))
+        assertEquals("active server and window untouched", ServerFailoverState(), store.read(1, acc.id).copy(stats = emptyMap()))
+        assertEquals("every host failed, the stale stand-in's included (stagger hint only)", setOf(0, 1, 2), store.read(1, acc.id).stats.keys)
     }
 
     @Test

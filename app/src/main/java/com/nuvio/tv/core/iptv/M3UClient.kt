@@ -125,13 +125,15 @@ class M3UClient @Inject constructor(
         // body bytes reached the parser: rows already chunk-inserted can't be taken back, so a body
         // that dies part-way surfaces as the failure it is instead of splicing two hosts.
         var delivered = false
-        failover.run(acc, canRetry = { !delivered }) { a ->
+        failover.run(acc, canRetry = { !delivered }, probe = ::failoverProbe) { a ->
             val request = Request.Builder()
                 .url(a.baseUrl)
                 .apply { acc.username.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) } }
                 .build()
             // Fetch through the playlist's DoH resolver when it opts into one (shares the ingest pool).
-            playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
+            // Step 0.3b: inside a failover race the client carries the 8 s connect timeout + header
+            // signal, and cancelling the attempt closes the socket (a blocking read never would).
+            playlistDns.clientFor(http, acc.dnsProvider).forFailoverAttempt().newCall(request).executeCancellable { resp ->
                 if (!resp.isSuccessful) throw HttpStatusException(resp.code, "HTTP ${resp.code}")
                 // charStream() decodes the (possibly gunzipped) source incrementally — no full buffer.
                 // checkNotNull: body is nullable on OkHttp 4 (playstore flavor) but not on 5 (full).
@@ -142,6 +144,32 @@ class M3UClient @Inject constructor(
                 Log.i(TAG, "ingested M3U (url) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
             }
         }
+    }
+
+    /**
+     * The failover race's validation probe (Step 0.3b): `GET` with `Range: bytes=0-1023` (same UA and
+     * resolver as the download), at most [M3U_PROBE_BYTES] read, then the call is CANCELLED — the socket
+     * closes even if the server ignored Range and is streaming the whole 190 MB playlist (closing an
+     * unfinished body would otherwise try to drain it). VALID = the first non-BOM/whitespace bytes are
+     * `#EXTM3U`; anything else (HTML from a parked domain, a JSON error, nothing) is
+     * [FailoverInvalidResponseException] and fails over.
+     */
+    internal suspend fun failoverProbe(a: XtreamAccount) {
+        val prefix = withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(a.baseUrl)
+                .header("Range", "bytes=0-${M3U_PROBE_BYTES - 1}")
+                .apply { a.username.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) } }
+                .build()
+            val call = playlistDns.clientFor(http, a.dnsProvider).forFailoverAttempt().newCall(request)
+            call.executeCancellable { resp ->
+                if (!resp.isSuccessful) throw HttpStatusException(resp.code, "HTTP ${resp.code}")
+                val bytes = readAtMost(resp.body?.source(), M3U_PROBE_BYTES.toLong())
+                call.cancel()   // before close(): never drain the rest of a body we will not read
+                bytes
+            }
+        }
+        FailoverProbePolicy.toFailure(FailoverProbePolicy.m3uPrefix(prefix), "M3U probe")?.let { throw it }
     }
 
     /**
@@ -296,6 +324,8 @@ class M3UClient @Inject constructor(
     companion object {
         private const val TAG = "M3UClient"
         private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
+        /** The M3U validation probe reads at most this much (Step 0.3b). */
+        internal const val M3U_PROBE_BYTES = 1024
     }
 }
 

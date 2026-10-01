@@ -114,6 +114,8 @@ class XtreamHubViewModel @Inject constructor(
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val posterEnricher: com.nuvio.tv.core.iptv.match.PosterEnricher,
+    /** Step 0.3b: which of a playlist's servers failed last — the host the error card names. */
+    private val failover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
     layoutPreferenceDataStore: LayoutPreferenceDataStore,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -324,7 +326,12 @@ class XtreamHubViewModel @Inject constructor(
                     // The raw message used to land on screen verbatim: a provider's Cloudflare block
                     // read as "HTTP 403", which explains nothing and looks like a portal outage.
                     // Classify it, then append the breadcrumb so a photo of the TV is debuggable.
-                    val failure = IptvLoadFailurePolicy.classify(e, IptvPanelGuard.panelOriginUrlOf(acc))
+                    // The server that actually failed last (Step 0.3b) — with backups that is not always the main one.
+                    val failedHost = failover.lastFailedServerUrl(acc)
+                    val failure = IptvLoadFailurePolicy.classify(
+                        e,
+                        if (failedHost != null) IptvPanelGuard.panelOriginUrlOf(acc, failedHost) else IptvPanelGuard.panelOriginUrlOf(acc),
+                    )
                     val text = when (failure.kind) {
                         IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER ->
                             context.getString(R.string.iptv_hub_error_blocked, failure.status ?: 0)

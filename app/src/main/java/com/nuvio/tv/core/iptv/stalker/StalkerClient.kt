@@ -93,7 +93,7 @@ class StalkerClient @Inject constructor(
      * playback request and goes to the active portal only ([playbackSession]).
      */
     private suspend fun browse(acc: XtreamAccount, params: Map<String, String>): JsonElement =
-        failover.run(acc) { a -> sessions.sessionFor(acc, a).request(params) }
+        failover.run(acc, probe = { a -> sessions.sessionFor(acc, a).probe() }) { a -> sessions.sessionFor(acc, a).request(params) }
 
     /** The session on the playlist's ACTIVE portal — for create_link, which never fails over. */
     private fun playbackSession(acc: XtreamAccount): StalkerSession =
@@ -469,7 +469,7 @@ class StalkerClient @Inject constructor(
                         }
                         // Fails over (Step 0.3) only until the first chunk reached the parser.
                         var delivered = false
-                        val gotBytes = failover.run(acc, canRetry = { !delivered }) { a ->
+                        val gotBytes = failover.run(acc, canRetry = { !delivered }, probe = { a -> sessions.sessionFor(acc, a).probe() }) { a ->
                             sessions.sessionFor(acc, a).requestStreamOnce(params) {
                                 delivered = true
                                 parser.feed(it)

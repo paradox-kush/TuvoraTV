@@ -6,7 +6,11 @@ import com.nuvio.tv.core.iptv.match.XtreamCatalogIndexParser
 import com.nuvio.tv.data.remote.api.XtreamApi
 import com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto
 import com.squareup.moshi.Moshi
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
+import okhttp3.Request
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -324,6 +328,47 @@ class XtreamClient @Inject constructor(
                 .create(XtreamApi::class.java)
         }
     }
+    /** The OkHttp client [acc]'s panel requests ride: [baseClient], through the playlist's DoH resolver if it uses one. */
+    private fun clientFor(acc: XtreamAccount): OkHttpClient = playlistDns.clientFor(baseClient, acc.dnsProvider)
+
+    /**
+     * The [XtreamApi] for one request. Outside a failover race this is [apiFor] unchanged. Inside one
+     * (Step 0.3b) it is a Retrofit on [failoverCallFactory] — the 8 s failover connect timeout, OkHttp's
+     * dispatcher queue reported as a local wait, and, for the racing real request, the response-headers
+     * signal — so a loser is parked at its
+     * headers and cancelled before Retrofit reads a byte of its body. Retrofit's suspend call cancels
+     * the OkHttp call when the coroutine is cancelled (`awaitResponse` → `invokeOnCancellation { cancel() }`).
+     */
+    private suspend fun apiForRequest(acc: XtreamAccount): XtreamApi {
+        val signal = coroutineContext[HttpAttemptSignal] ?: return apiFor(acc)
+        return Retrofit.Builder()
+            .baseUrl("https://placeholder.nuvio.tv/")
+            .callFactory(clientFor(acc).failoverCallFactory(signal))
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(XtreamApi::class.java)
+    }
+
+    /**
+     * The failover race's validation probe (Step 0.3b): the no-action `player_api.php` login on server [a].
+     * Returns normally only for a VALID answer — JSON with `user_info` and `server_info` and auth=1 on a
+     * live account. A 200 that is not the panel (parked domain, CDN error page, blank body) throws
+     * [FailoverInvalidResponseException] (fails over); auth=0 / Expired / Banned / Disabled throws
+     * [FailoverAuthRejectedException] (the same on every server: surfaced, never failed over). Goes
+     * through the same client (UA, DoH, breaker) as every panel request; read on IO, at most
+     * [PROBE_MAX_BYTES], and the call is cancelled with the attempt.
+     */
+    internal suspend fun failoverProbe(a: XtreamAccount) {
+        val body = withContext(Dispatchers.IO) {
+            val request = Request.Builder().url(playerApi(a)).build()
+            clientFor(a).forFailoverAttempt().newCall(request).executeCancellable { resp ->
+                if (!resp.isSuccessful) throw HttpStatusException(resp.code, "HTTP ${resp.code}: ${resp.message}")
+                readAtMost(resp.body?.source(), PROBE_MAX_BYTES)
+            }
+        }
+        FailoverProbePolicy.toFailure(FailoverProbePolicy.xtreamLogin(body), "Xtream login probe")?.let { throw it }
+    }
+
     /** Verifies credentials. Success only when the panel reports auth=1 and an active status. */
     suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
         // The login call fails over (Step 0.3); auth=0 is an ANSWER, checked below on whichever
@@ -632,8 +677,8 @@ class XtreamClient @Inject constructor(
         acc: XtreamAccount,
         fetch: suspend (XtreamApi, XtreamAccount) -> Response<R>,
         map: (XtreamAccount, R) -> T,
-    ): T = failover.run(acc, evidence = { it.second }) { a ->
-        val response = fetch(apiFor(a), a)
+    ): T = failover.run(acc, evidence = { it.second }, probe = ::failoverProbe) { a ->
+        val response = fetch(apiForRequest(a), a)
         map(a, response.requireBody()) to response.servedFrom()
     }.first
 
@@ -655,8 +700,8 @@ class XtreamClient @Inject constructor(
         var delivered = false
         val held = mutableListOf<okhttp3.ResponseBody>()
         try {
-            val outcome = failover.run(acc, canRetry = { !delivered }, evidence = { it.second }) { a ->
-                val response = fetch(apiFor(a), a)
+            val outcome = failover.run(acc, canRetry = { !delivered }, evidence = { it.second }, probe = ::failoverProbe) { a ->
+                val response = fetch(apiForRequest(a), a)
                 val servedFrom = response.servedFrom()
                 if (servedFrom == ServedFrom.STALE_FALLBACK) {
                     StreamedAttempt.Stale(response.requireBody().also { held += it }) to servedFrom
@@ -794,6 +839,9 @@ class XtreamClient @Inject constructor(
  * down, here is last week's list" from a live answer.
  */
 internal const val STALE_FALLBACK_HEADER = "X-Tuvora-Stale-Fallback"
+
+/** A login body is a few hundred bytes; anything past this is not one (and is never buffered whole). */
+private const val PROBE_MAX_BYTES = 64L * 1024
 
 internal fun XtreamEpgEntryDto.toProgram(offsetMs: Long = 0L): XtreamProgram = XtreamProgram(
     title = decodeXtreamBase64(title),

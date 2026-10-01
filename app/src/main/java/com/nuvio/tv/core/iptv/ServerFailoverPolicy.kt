@@ -1,14 +1,19 @@
 package com.nuvio.tv.core.iptv
 
+import kotlinx.serialization.Serializable
+
 /**
  * Step 0.3 — a playlist's device-local server choice (never synced).
  *
  * [activeIndex] 0 = the main server; i > 0 = `backupUrls[i - 1]`. [mainRetryAfterMs] is the epoch ms
  * after which the main server is tried first again (null = no window running).
  */
+@Serializable
 data class ServerFailoverState(
     val activeIndex: Int = 0,
     val mainRetryAfterMs: Long? = null,
+    /** Step 0.3b — per server index: what this device learned about its latency/health. Defaults keep 0.3 states loading. */
+    val stats: Map<Int, ServerLatencyStats> = emptyMap(),
 )
 
 /**
@@ -25,9 +30,6 @@ object ServerFailoverPolicy {
 
     /** How long a playlist stays on a backup before the main server is tried first again. */
     const val MAIN_RETRY_WINDOW_MS: Long = 30L * 60 * 1000
-
-    /** The walk budget multiplies the single-request timeout by at most this many servers. */
-    const val MAX_BUDGETED_SERVERS: Int = 3
 
     /** [state] with an index that no longer exists (the list shrank) reset to the main server. */
     fun clamp(state: ServerFailoverState, serverCount: Int): ServerFailoverState =
@@ -50,11 +52,11 @@ object ServerFailoverPolicy {
 
     /** The state after server [index] served a fail-over-able request at [nowMs]. */
     fun onSuccess(state: ServerFailoverState, index: Int, nowMs: Long, serverCount: Int): ServerFailoverState {
-        if (index <= 0) return ServerFailoverState()
         val s = clamp(state, serverCount)
+        if (index <= 0) return s.copy(activeIndex = 0, mainRetryAfterMs = null)
         val retryAfter = s.mainRetryAfterMs
         val windowRunning = s.activeIndex > 0 && retryAfter != null && nowMs < retryAfter
-        return ServerFailoverState(
+        return s.copy(
             activeIndex = index,
             // A fresh move off main (or a window that already ran out) starts a new window; moving
             // between backups inside a running window keeps it — main is not retried any later.
@@ -64,13 +66,6 @@ object ServerFailoverPolicy {
 
     /** Every server failed: the state is kept (the caller surfaces the MAIN server's error). */
     fun onAllFailed(state: ServerFailoverState): ServerFailoverState = state
-
-    /** The whole walk's time budget: the existing single-request timeout × min(servers, 3). */
-    fun walkBudgetMs(singleRequestTimeoutMs: Long, serverCount: Int): Long =
-        singleRequestTimeoutMs * serverCount.coerceIn(1, MAX_BUDGETED_SERVERS)
-
-    /** Whether another server may still be tried [elapsedMs] into a walk with [budgetMs]. */
-    fun mayStartNextAttempt(elapsedMs: Long, budgetMs: Long): Boolean = elapsedMs < budgetMs
 
     /** The settings-row note for [activeIndex] ("Using backup server N"), or null on the main server. */
     fun backupLabel(activeIndex: Int): String? =
@@ -91,8 +86,14 @@ enum class FailoverFailureKind {
     HOST_UNAVAILABLE,
     /** A non-2xx status — the code decides. */
     HTTP_STATUS,
-    /** 2xx with an auth=0 / expired body — the same answer on every server. */
+    /** 2xx with an auth=0 / expired / banned body — the same answer on every server. */
     AUTH_REJECTED,
+    /**
+     * Step 0.3b — a 2xx that is not what the probe expects (HTML from a parked domain, a Cloudflare
+     * error page served as 200, an empty body, JSON without `user_info`): this server is not the
+     * playlist's panel, another one may be.
+     */
+    INVALID_RESPONSE,
     CANCELLED,
     /** Anything else (reset mid-body, parse errors, …) — proves nothing about the host. */
     OTHER,
@@ -115,6 +116,7 @@ object FailoverFailureClassifier {
         FailoverFailureKind.CONNECT_TIMEOUT,
         FailoverFailureKind.READ_TIMEOUT,
         FailoverFailureKind.TLS_HANDSHAKE,
+        FailoverFailureKind.INVALID_RESPONSE,
         FailoverFailureKind.HOST_UNAVAILABLE -> true
         FailoverFailureKind.HTTP_STATUS -> failure.httpStatus?.let(::statusFailsOver) ?: false
         FailoverFailureKind.AUTH_REJECTED,

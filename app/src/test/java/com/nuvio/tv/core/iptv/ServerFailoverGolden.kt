@@ -70,14 +70,6 @@ object ServerFailoverGolden {
         )),
     )
 
-    /** (singleRequestTimeoutMs, serverCount) -> walk budget. */
-    val budgetCases: List<Triple<Long, Int, Long>> = listOf(
-        Triple(60_000L, 1, 60_000L),
-        Triple(60_000L, 2, 120_000L),
-        Triple(60_000L, 3, 180_000L),
-        Triple(60_000L, 6, 180_000L),
-    )
-
     /** (kind, httpStatus, shouldFailOver). */
     val classifierCases: List<Triple<FailoverFailureKind, Int?, Boolean>> = listOf(
         Triple(FailoverFailureKind.DNS, null, true),
@@ -103,6 +95,7 @@ object ServerFailoverGolden {
         Triple(FailoverFailureKind.HTTP_STATUS, 302, false),
         Triple(FailoverFailureKind.HTTP_STATUS, null, false),
         Triple(FailoverFailureKind.AUTH_REJECTED, null, false),
+        Triple(FailoverFailureKind.INVALID_RESPONSE, null, true),
         Triple(FailoverFailureKind.CANCELLED, null, false),
         Triple(FailoverFailureKind.OTHER, null, false),
     )

@@ -779,7 +779,9 @@ internal class PanelHostGuardInterceptor(
         val response = try {
             chain.proceed(request)
         } catch (t: Throwable) {
-            guard.report(admission, classifyPanelThrowable(t))
+            // A cancelled call (a failover-race loser, a left screen) proves nothing about the host —
+            // whatever the socket close surfaced as (Step 0.3b: losers never touch the breaker).
+            guard.report(admission, if (chain.call().isCanceled()) PanelRequestOutcome.CONNECTION_RESET else classifyPanelThrowable(t))
             throw t
         }
         guard.report(
@@ -818,6 +820,7 @@ internal class XtreamCatalogFallbackInterceptor : okhttp3.Interceptor {
         val networkResponse: Response = try {
             chain.proceed(request)
         } catch (e: java.io.IOException) {
+            if (chain.call().isCanceled()) throw e   // a cancelled loser needs no stand-in (Step 0.3b)
             val cached = chain.proceed(staleRequest)
             if (cached.isSuccessful) return cached.markedStale(hostDown = failsOver(classifyFailoverThrowable(e)))
             cached.close()
