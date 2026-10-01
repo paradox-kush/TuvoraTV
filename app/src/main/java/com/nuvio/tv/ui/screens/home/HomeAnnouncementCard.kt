@@ -36,7 +36,9 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 
 /**
  * Dismissible announcement card for the top of Home. It never requests focus itself (the layouts
- * own initial focus on the first content row); it is reached with D-pad up.
+ * own initial focus on the first content row); it is reached with D-pad up, which HomeScreen routes
+ * to [ctaFocusRequester] when Up has nowhere else to go (UX80). That requester sits on the CTA, or on
+ * Dismiss when there is no CTA.
  *
  * TV has no reliable browser, so the CTA hands the link to the viewer's phone as a QR code, the
  * same way About → Discord does ([QrHandOffDialog]).
@@ -88,6 +90,7 @@ internal fun HomeAnnouncementCard(
             }
             AnnouncementButton(
                 text = stringResource(R.string.home_announcement_dismiss),
+                modifier = if (cta == null) Modifier.focusRequester(ctaFocusRequester) else Modifier,
                 onClick = {
                     // Hand focus to the content below before this card leaves the tree, so the
                     // D-pad never ends up on a removed node.

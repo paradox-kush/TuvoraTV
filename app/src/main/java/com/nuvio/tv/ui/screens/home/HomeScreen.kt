@@ -34,8 +34,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.style.TextOverflow
@@ -262,8 +270,30 @@ fun HomeScreen(
         }
     }
 
+    val announcementVisible = announcement != null && !showStartupLoader
+    var announcementCardHasFocus by remember { mutableStateOf(false) }
+    val homeFocusManager = LocalFocusManager.current
     Box(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            // UX80: the card floats over the rows' top-right corner, so geometric search often found
+            // nothing "above" and the card was unreachable. Up that no row handled and that moves
+            // focus nowhere lands on the card.
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionUp) return@onKeyEvent false
+                if (!announcementVisible || announcementCardHasFocus) return@onKeyEvent false
+                val moved = homeFocusManager.moveFocus(FocusDirection.Up)
+                if (
+                    HomeAnnouncementFocusPolicy.focusCardOnUp(
+                        cardVisible = announcementVisible,
+                        cardHasFocus = announcementCardHasFocus,
+                        movedUp = moved,
+                    )
+                ) {
+                    runCatching { announcementCtaFocusRequester.requestFocus() }
+                }
+                true
+            }
     ) {
         when {
             !uiState.layoutPreferencesReady -> {
@@ -448,7 +478,7 @@ fun HomeScreen(
         }
 
         val currentAnnouncement = announcement
-        if (currentAnnouncement != null && !showStartupLoader) {
+        if (currentAnnouncement != null && announcementVisible) {
             HomeAnnouncementCard(
                 announcement = currentAnnouncement,
                 onShowCta = { cta -> announcementQrCta = cta },
@@ -457,6 +487,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl)
+                    .onFocusChanged { announcementCardHasFocus = it.hasFocus }
             )
         }
         announcementQrCta?.let { cta ->
