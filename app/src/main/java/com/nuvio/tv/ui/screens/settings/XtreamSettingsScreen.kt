@@ -436,6 +436,18 @@ fun XtreamSettingsContent(
 
     hiddenFor?.let { account ->
         val items = uiState.hiddenItems
+        // UX34: start on the first hidden item (Done only when there is nothing to unhide); re-aimed
+        // when the list changes so unhiding the focused row doesn't strand focus.
+        val firstHiddenFocus = remember { FocusRequester() }
+        val hiddenDoneFocus = remember { FocusRequester() }
+        val hiddenFocusTarget = HiddenItemsDialogFocusPolicy.initialFocus(items?.size)
+        LaunchedEffect(account.id, hiddenFocusTarget, items?.size) {
+            when (hiddenFocusTarget) {
+                HiddenItemsDialogFocusPolicy.Target.FIRST_ROW -> runCatching { firstHiddenFocus.requestFocus() }
+                HiddenItemsDialogFocusPolicy.Target.DONE -> runCatching { hiddenDoneFocus.requestFocus() }
+                HiddenItemsDialogFocusPolicy.Target.NONE -> Unit
+            }
+        }
         NuvioDialog(
             onDismiss = { hiddenFor = null },
             title = "Hidden in ${account.name}",
@@ -448,17 +460,20 @@ fun XtreamSettingsContent(
             width = 520.dp,
             scrollable = true
         ) {
-            items.orEmpty().forEach { item ->
+            items.orEmpty().forEachIndexed { index, item ->
                 SettingsActionRow(
                     title = item.name,
                     subtitle = hiddenItemKindLabel(item),
                     value = "Unhide",
-                    onClick = { viewModel.unhide(account, item) }
+                    onClick = { viewModel.unhide(account, item) },
+                    modifier = if (index == 0) Modifier.focusRequester(firstHiddenFocus) else Modifier
                 )
             }
             Button(
                 onClick = { hiddenFor = null },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().focusRequester(hiddenDoneFocus),
+                // Full-width: a focus scale would overhang the dialog padding (UX32).
+                scale = ButtonDefaults.scale(focusedScale = 1f)
             ) { Text("Done") }
         }
     }
@@ -485,14 +500,18 @@ fun XtreamSettingsContent(
                 colors = ButtonDefaults.colors(
                     containerColor = Color(0xFF4A2323),
                     contentColor = NuvioTheme.colors.TextPrimary
-                )
+                ),
+                // UX32: full-width buttons stay inside the dialog padding when focused; focus shows
+                // by the container colour flip instead of growing past the edge.
+                scale = ButtonDefaults.scale(focusedScale = 1f)
             ) {
                 Text("Remove playlist")
             }
             // Focus starts on Cancel so a stray OK can't delete.
             Button(
                 onClick = { removeConfirmFor = null },
-                modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus)
+                modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus),
+                scale = ButtonDefaults.scale(focusedScale = 1f)
             ) {
                 Text("Cancel")
             }
