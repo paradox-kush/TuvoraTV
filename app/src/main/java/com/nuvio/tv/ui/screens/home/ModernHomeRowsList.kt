@@ -253,6 +253,7 @@ internal fun ModernHomeRowsList(
     }
 
     val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
+    val announcementFocus = LocalHomeAnnouncementFocus.current
 
     // Only run the shared shimmer while a row on screen actually draws it: rememberInfiniteTransition
     // keeps waking the Compose frame clock on every frame for as long as it is composed, even when
@@ -299,7 +300,18 @@ internal fun ModernHomeRowsList(
                         effectiveExpandEnabled &&
                         expandedCatalogFocusKey.value != null &&
                         activeRowKey.value == firstRowKey
-                    ) return@onPreviewKeyEvent true
+                    ) {
+                        // Still consumed (#2328: no geometric search from here), but a showing
+                        // announcement card is focused directly instead of Up doing nothing (UX80).
+                        val focusAnnouncement = announcementFocus
+                        if (
+                            HomeAnnouncementFocusPolicy.upFromExpandedTopRow(cardVisible = focusAnnouncement != null) ==
+                            HomeAnnouncementFocusPolicy.ExpandedTopRowUp.FOCUS_CARD
+                        ) {
+                            focusAnnouncement?.invoke()
+                        }
+                        return@onPreviewKeyEvent true
+                    }
                     if (event.type == KeyEventType.KeyDown &&
                         event.key == Key.DirectionDown &&
                         effectiveExpandEnabled &&

@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -273,6 +274,13 @@ fun HomeScreen(
     val announcementVisible = announcement != null && !showStartupLoader
     var announcementCardHasFocus by remember { mutableStateOf(false) }
     val homeFocusManager = LocalFocusManager.current
+    val focusAnnouncementCard = remember(announcementCtaFocusRequester) {
+        { runCatching { announcementCtaFocusRequester.requestFocus() }.getOrDefault(false) }
+    }
+    // UX80: lets a layout that consumes Up itself (Modern's expanded first row) still hand it to the card.
+    CompositionLocalProvider(
+        LocalHomeAnnouncementFocus provides if (announcementVisible) focusAnnouncementCard else null
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -498,6 +506,7 @@ fun HomeScreen(
             ctaFocusRequester = announcementCtaFocusRequester
         )
     }
+    } // CompositionLocalProvider(LocalHomeAnnouncementFocus) — body left unindented to keep the diff small
 
     val selectedPoster = posterOptionsTarget
     if (selectedPoster != null) {

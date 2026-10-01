@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
@@ -33,6 +34,13 @@ import com.nuvio.tv.domain.model.Announcement
 import com.nuvio.tv.ui.components.QrHandOffDialog
 import com.nuvio.tv.ui.components.RestoreFocusOnClose
 import com.nuvio.tv.ui.theme.NuvioTheme
+
+/**
+ * Focuses the announcement card's first button; null while no card is showing. Provided by
+ * HomeScreen for layouts that consume Up themselves before HomeScreen's fallback can see it
+ * (Modern's expanded first-row card, UX80).
+ */
+internal val LocalHomeAnnouncementFocus = compositionLocalOf<(() -> Boolean)?> { null }
 
 /**
  * Dismissible announcement card for the top of Home. It never requests focus itself (the layouts

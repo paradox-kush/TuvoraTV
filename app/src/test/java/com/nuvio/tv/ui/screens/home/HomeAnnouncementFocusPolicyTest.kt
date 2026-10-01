@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.home
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,5 +26,25 @@ class HomeAnnouncementFocusPolicyTest {
     fun `no card or already on the card does nothing`() {
         assertFalse("no card", HomeAnnouncementFocusPolicy.focusCardOnUp(cardVisible = false, cardHasFocus = false, movedUp = false))
         assertFalse("on card", HomeAnnouncementFocusPolicy.focusCardOnUp(cardVisible = true, cardHasFocus = true, movedUp = false))
+    }
+
+    // On device (Modern layout, expanded first card) Up was swallowed by the rows list before the
+    // fallback above ever ran, so the card stayed unreachable.
+    @Test
+    fun `up from an expanded first-row card reaches a visible card`() {
+        assertEquals(
+            "card showing",
+            HomeAnnouncementFocusPolicy.ExpandedTopRowUp.FOCUS_CARD,
+            HomeAnnouncementFocusPolicy.upFromExpandedTopRow(cardVisible = true),
+        )
+    }
+
+    @Test
+    fun `up from an expanded first-row card stays put without a card`() {
+        assertEquals(
+            "no card",
+            HomeAnnouncementFocusPolicy.ExpandedTopRowUp.STAY,
+            HomeAnnouncementFocusPolicy.upFromExpandedTopRow(cardVisible = false),
+        )
     }
 }
