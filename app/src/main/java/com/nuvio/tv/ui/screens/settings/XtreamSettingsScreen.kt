@@ -11,7 +11,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,7 +46,9 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -946,7 +951,7 @@ private val DNS_OPTIONS = listOf(
 
 private fun autoRefreshLabel(hours: Int): String = if (hours == 0) "Off" else "${hours}h"
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun XtreamAddDialog(
     isValidating: Boolean,
@@ -1040,7 +1045,13 @@ private fun XtreamAddDialog(
             userAgent = xtreamUserAgent.trim().ifEmpty { null }
         )
     }
+    // The status line ("Verifying…" / the save error) sits under the Save button at the foot of a
+    // scrolling form, so it was often below the fold and a failed save looked like nothing
+    // happened. Each submit and each new status scrolls it into view; focus stays on the button.
+    val statusReveal = remember { BringIntoViewRequester() }
+    var submitTick by remember { mutableIntStateOf(0) }
     val submit = {
+        if (!isValidating) submitTick++
         if (!isValidating) when (sourceType) {
             XtreamAccount.SOURCE_XTREAM -> {
                 if (manualMode) {
@@ -1216,11 +1227,18 @@ private fun XtreamAddDialog(
                 error != null -> error
                 else -> null
             }
+            LaunchedEffect(status, submitTick) {
+                if (status == null) return@LaunchedEffect
+                // One frame so the line is laid out before the form scrolls to it.
+                withFrameNanos { }
+                runCatching { statusReveal.bringIntoView() }
+            }
             if (status != null) {
                 Text(
                     text = status,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (error != null && !isValidating) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary
+                    color = if (error != null && !isValidating) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary,
+                    modifier = Modifier.bringIntoViewRequester(statusReveal)
                 )
             }
         }
