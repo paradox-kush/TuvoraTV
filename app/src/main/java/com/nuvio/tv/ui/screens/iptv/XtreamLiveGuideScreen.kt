@@ -587,7 +587,7 @@ fun LiveGuide(
                 onDismiss = { hideCategoryAsk = null },
                 title = "Hide \u201C${cat.name}\u201D?",
                 subtitle = "Its channels leave the guide on all your devices. Bring it back any time in " +
-                    "Settings \u2192 Integrations \u2192 IPTV \u2192 this playlist \u2192 Hidden channels & groups.",
+                    "Settings \u2192 Integrations \u2192 IPTV playlists \u2192 this playlist \u2192 Hidden channels & groups.",
                 width = 460.dp
             ) {
                 Button(
