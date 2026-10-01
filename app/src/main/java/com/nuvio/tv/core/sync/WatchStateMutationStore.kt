@@ -67,6 +67,47 @@ class WatchStateMutationStore @Inject constructor(
         }
     }
 
+    /**
+     * Step 0 — queues a playlist re-key's whole sync ([WatchStateRekeyPlan]) in ONE atomic edit:
+     * the upserts under the new id and the deletes under the old id land together or not at all, so
+     * the outbox can never hold an old-id delete without its new-id replacement. (The push then sends
+     * deletes before upserts; a delete acknowledged before a failed upsert leaves the upsert queued,
+     * and a pull keeps pending-upsert keys locally — nothing is lost, it is only retried.)
+     */
+    suspend fun queueRekey(
+        progressUpserts: Map<String, WatchProgress>,
+        progressDeletes: Collection<String>,
+        watchedUpserts: Collection<WatchedItem>,
+        watchedDeletes: Collection<WatchedMutationKey>,
+        profileId: Int
+    ) {
+        if (progressUpserts.isEmpty() && progressDeletes.isEmpty() &&
+            watchedUpserts.isEmpty() && watchedDeletes.isEmpty()
+        ) return
+        val progressDeleteKeys = progressDeletes.map(String::trim).filter(String::isNotEmpty).toSet()
+        val watchedUpsertKeys = watchedUpserts.mapTo(mutableSetOf(), WatchedItem::mutationKey)
+        val watchedDeleteKeys = watchedDeletes.toSet()
+        store(profileId).edit { preferences ->
+            // Same supersede rules as the single-kind queue calls: a key is either upserted or deleted.
+            val progress = (parseProgressUpserts(preferences[progressUpsertsKey]) - progressDeleteKeys).toMutableMap()
+            progress.putAll(progressUpserts)
+            preferences[progressUpsertsKey] = progress.map { (key, value) ->
+                gson.toJson(PendingProgressUpsert(key, value))
+            }.toSet()
+            preferences[progressDeletesKey] =
+                preferences[progressDeletesKey].orEmpty() - progressUpserts.keys + progressDeleteKeys
+
+            val watched = (parseWatchedUpserts(preferences[watchedUpsertsKey]) - watchedDeleteKeys).toMutableMap()
+            watchedUpserts.forEach { item -> watched[item.mutationKey()] = item }
+            preferences[watchedUpsertsKey] = watched.map { (key, item) ->
+                gson.toJson(PendingWatchedUpsert(key, item))
+            }.toSet()
+            preferences[watchedDeletesKey] = (parseWatchedDeletes(preferences[watchedDeletesKey]) - watchedUpsertKeys + watchedDeleteKeys)
+                .map(gson::toJson)
+                .toSet()
+        }
+    }
+
     suspend fun pendingProgressUpserts(profileId: Int): Map<String, WatchProgress> {
         val preferences = store(profileId).data.first()
         return parseProgressUpserts(preferences[progressUpsertsKey])

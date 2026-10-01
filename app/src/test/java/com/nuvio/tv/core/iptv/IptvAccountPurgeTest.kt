@@ -90,9 +90,15 @@ class IptvAccountPurgeTest {
         overlay = overlay,
         liveStore = liveStore,
         libraryPreferences = library,
-        watchProgressPreferences = progress,
-        watchedItemsPreferences = watched,
         profileManager = profileManager,
+        watchState = com.nuvio.tv.core.sync.WatchStatePrefixMover(
+            authManager = mockk(relaxed = true), // not a full account: local drops only
+            mutationStore = mockk(relaxed = true),
+            watchProgressPreferences = progress,
+            watchedItemsPreferences = watched,
+            watchProgressSyncService = mockk(relaxed = true),
+            watchedItemsSyncService = mockk(relaxed = true),
+        ),
     )
 
     private fun programme(start: Long) = EpgProgramme("bbc.uk", start, start + 1_000L, "Show $start", null)
@@ -175,7 +181,7 @@ class IptvAccountPurgeTest {
         coVerify { liveStore.migrateAccount(prefix, null) }
         coVerify { library.migrateIdPrefix(prefix, null) }
         coVerify { progress.migrateIdPrefix(prefix, null, PROFILE) }
-        coVerify { watched.migrateIdPrefix(prefix, null) }
+        coVerify { watched.migrateIdPrefix(prefix, null, PROFILE) }
     }
 
     @Test
@@ -195,7 +201,7 @@ class IptvAccountPurgeTest {
         coVerify(exactly = 0) { liveStore.migrateAccount(any(), any()) }
         coVerify(exactly = 0) { library.migrateIdPrefix(any(), any()) }
         coVerify(exactly = 0) { progress.migrateIdPrefix(any(), any(), any()) }
-        coVerify(exactly = 0) { watched.migrateIdPrefix(any(), any()) }
+        coVerify(exactly = 0) { watched.migrateIdPrefix(any(), any(), any()) }
     }
 
     private companion object {

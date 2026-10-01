@@ -586,7 +586,8 @@ class WatchProgressPreferences @Inject constructor(
     /**
      * Rewrite (or, with [newPrefix] null, drop) every entry whose contentId/videoId starts with
      * [oldPrefix]. Used when an IPTV playlist URL is edited so its saved progress follows the new
-     * id prefix instead of being orphaned. Works across both storage buckets.
+     * id prefix instead of being orphaned. Works across both storage buckets. Local only — a
+     * caller that must sync the move queues [com.nuvio.tv.core.sync.WatchStateRekeyPlan] first.
      */
     suspend fun migrateIdPrefix(
         oldPrefix: String,
@@ -597,30 +598,13 @@ class WatchProgressPreferences @Inject constructor(
             ensureStorageLocked(profileId)
             val current = readBucketsLocked(profileId)
             val map = mergeWatchProgressBuckets(current.recent, current.archive)
-            val affected = { p: WatchProgress ->
-                p.contentId.startsWith(oldPrefix) || p.videoId.startsWith(oldPrefix)
-            }
-            if (map.keys.none { it.startsWith(oldPrefix) } && map.values.none(affected)) return@withLock
-            val migrated = mutableMapOf<String, WatchProgress>()
-            map.forEach { (key, progress) ->
-                when {
-                    !key.startsWith(oldPrefix) && !affected(progress) -> migrated[key] = progress
-                    newPrefix == null -> Unit
-                    else -> {
-                        val moved = progress.copy(
-                            contentId = progress.contentId.rewriteIdPrefix(oldPrefix, newPrefix),
-                            videoId = progress.videoId.rewriteIdPrefix(oldPrefix, newPrefix),
-                        )
-                        migrated[createKey(moved)] = moved
-                    }
-                }
-            }
-            writeBucketsLocked(profileId, current, splitWatchProgressEntries(migrated))
+            // One shared rewrite with the adoption's sync plan (WatchStateRekeyPlan), so what is
+            // queued for upsert is exactly what this store ends up holding.
+            val rekeyed = com.nuvio.tv.core.sync.rekeyProgressEntries(map, oldPrefix, newPrefix)
+            if (rekeyed.removedKeys.isEmpty()) return@withLock
+            writeBucketsLocked(profileId, current, splitWatchProgressEntries(rekeyed.entries))
         }
     }
-
-    private fun String.rewriteIdPrefix(oldPrefix: String, newPrefix: String): String =
-        if (startsWith(oldPrefix)) newPrefix + removePrefix(oldPrefix) else this
 
     /**
      * Clear all watch progress

@@ -121,7 +121,14 @@ data class XtreamAccount(
      * sent to the panel for a replay (a different lie with a different fix); this one shifts what
      * the guide believes about when programmes air.
      */
-    val guideEpgCorrectionMinutes: Int = 0
+    val guideEpgCorrectionMinutes: Int = 0,
+    /**
+     * Step 0 — the playlist's alternate server addresses in failover order (max 5); null = none.
+     * Client-owned and synced (`iptv_playlists.backup_urls`); this build only round-trips it (no UI
+     * yet). Nullable rather than an empty-list default because Gson (Unsafe, no constructor) decodes
+     * every JSON written before this field existed — accounts and pending-op logs alike — with null.
+     */
+    val backupUrls: List<String>? = null
 ) {
     /** The correction as the panel-offset [XtreamCatchUp.candidateUrls] takes; null = unset (UTC). */
     val catchUpOffsetMs: Long? get() = catchUpCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }

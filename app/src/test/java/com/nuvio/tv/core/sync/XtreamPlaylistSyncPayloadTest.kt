@@ -50,7 +50,7 @@ class XtreamPlaylistSyncPayloadTest {
         // category_selections omitted (all three null)
         assertEquals(
             setOf(
-                "source_type", "enabled", "sort_order", "base_url", "username", "password",
+                "playlist_key", "backup_urls", "source_type", "enabled", "sort_order", "base_url", "username", "password",
                 "dns_provider", "auto_refresh_hours", "content_types"
             ),
             json.keys
@@ -83,7 +83,7 @@ class XtreamPlaylistSyncPayloadTest {
 
         assertEquals(
             setOf(
-                "source_type", "name", "enabled", "sort_order", "base_url", "username", "password",
+                "playlist_key", "backup_urls", "source_type", "name", "enabled", "sort_order", "base_url", "username", "password",
                 "epg_url", "dns_provider", "auto_refresh_hours", "content_types", "category_selections"
             ),
             json.keys
@@ -195,18 +195,17 @@ class XtreamPlaylistSyncPayloadTest {
     }
 
     @Test
-    fun `reconcile keeps the local file playlist id so its local copy survives a pull`() {
+    fun `an unkeyed pull keeps the local file playlist id so its local copy survives`() {
         val local = XtreamAccount(
             id = "file:1234-uuid", name = "tv", baseUrl = "", username = "", password = "",
             sourceType = XtreamAccount.SOURCE_FILE, fileName = "tv.m3u"
         )
-        val pulled = SupabaseIptvPlaylist(sourceType = "m3u_file", fileName = "tv.m3u", dnsProvider = "quad9")
-            .toXtreamAccountOrNull()!!
-        val reconciled = reconcileLocalIds(listOf(pulled), listOf(local)).single()
+        val pulled = pulledPlaylists(listOf(SupabaseIptvPlaylist(sourceType = "m3u_file", fileName = "tv.m3u", dnsProvider = "quad9")))
+        val reconciled = com.nuvio.tv.core.iptv.PlaylistKeyAdoption.resolve(pulled, listOf(local)).accounts.single()
         assertEquals("file:1234-uuid", reconciled.id)          // local copy + content keys survive
         assertEquals("quad9", reconciled.dnsProvider)          // remote option edits still apply
         // no local match -> deterministic synced id kept
-        assertEquals("file:synced-tv.m3u", reconcileLocalIds(listOf(pulled), emptyList()).single().id)
+        assertEquals("file:synced-tv.m3u", com.nuvio.tv.core.iptv.PlaylistKeyAdoption.resolve(pulled, emptyList()).accounts.single().id)
     }
 
     @Test

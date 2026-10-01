@@ -110,11 +110,22 @@ internal interface PlaylistSyncTransport {
     ): PlaylistPushResponse
 }
 
-data class PlaylistPullResponse(val revision: Long, val accounts: List<XtreamAccount>, val generation: Long = 0)
+data class PlaylistPullResponse(
+    val revision: Long,
+    val accounts: List<XtreamAccount>,
+    val generation: Long = 0,
+    /** Step 0: ids of [accounts] that are the server's stored `playlist_key` (not a local derivation). */
+    val keyedIds: Set<String> = emptySet(),
+)
 
 sealed interface PlaylistPushResponse {
     data class Ok(val revision: Long, val deduped: Boolean = false) : PlaylistPushResponse
-    data class Conflict(val currentRevision: Long, val currentRows: List<XtreamAccount>) : PlaylistPushResponse
+    data class Conflict(
+        val currentRevision: Long,
+        val currentRows: List<XtreamAccount>,
+        /** Step 0: ids of [currentRows] that are the server's stored `playlist_key`. */
+        val currentKeyedIds: Set<String> = emptySet(),
+    ) : PlaylistPushResponse
     data class Rejected(val reason: String) : PlaylistPushResponse
 }
 
@@ -167,10 +178,19 @@ internal class PlaylistV2SyncEngine(
     /** The push body for [accounts], for the mutation-id fingerprint (B68). The production service
      *  passes the wire mapping; the default (every field) is a safe superset of it. */
     private val wirePayload: (List<XtreamAccount>) -> String = { it.toString() },
+    /**
+     * Step 0 — reconciles this device's playlist ids with a pulled set BEFORE anything compares or
+     * reconciles against it ([PlaylistKeyAdoption]): re-keys local ids onto server keys (moving their
+     * prefix-keyed data, once) and returns the pulled rows as they should be applied. Runs before the
+     * sync state is loaded, so pending ops it rewrites are the ones this sync replays.
+     */
+    private val adoptKeys: suspend (profileId: Int, pulled: List<XtreamAccount>, keyedIds: Set<String>) -> PlaylistKeyAdoption.Result =
+        { _, pulled, _ -> PlaylistKeyAdoption.Result(pulled, emptyList()) },
 ) {
     suspend fun sync(profileId: Int): PlaylistSyncOutcome {
-        val pull = runCatching { transport.pull(profileId) }.getOrNull() ?: return PlaylistSyncOutcome.PULL_FAILED
+        val rawPull = runCatching { transport.pull(profileId) }.getOrNull() ?: return PlaylistSyncOutcome.PULL_FAILED
         if (!stillActive(profileId)) return PlaylistSyncOutcome.PULL_FAILED
+        val pull = rawPull.copy(accounts = adoptKeys(profileId, rawPull.accounts, rawPull.keyedIds).accounts)
 
         var state = loadState(profileId)
         // Generation reset (B24 profile-recreation safety): if the server reports a newer generation
@@ -189,9 +209,9 @@ internal class PlaylistV2SyncEngine(
         val recorded = state.pending.toOps()
         // The pending entries this sync will push; on commit we remove ONLY these so a newer edit
         // recorded during the push is preserved (B24 §3).
-        val ackedPending: List<PendingOpDto> = state.pending
+        var ackedPending: List<PendingOpDto> = state.pending
 
-        val pending: List<PendingPlaylistOp>
+        var pending: List<PendingPlaylistOp>
         var expected: Long?
         when {
             recorded.isNotEmpty() -> { pending = recorded; expected = pull.revision }
@@ -254,7 +274,14 @@ internal class PlaylistV2SyncEngine(
                         saveState(profileId, state.copy(revision = resp.currentRevision))
                         return PlaylistSyncOutcome.CONFLICT_EXHAUSTED
                     }
-                    baseRows = resp.currentRows
+                    val adopted = adoptKeys(profileId, resp.currentRows, resp.currentKeyedIds)
+                    baseRows = adopted.accounts
+                    // A re-key here also rewrote the durable pending log; replay (and later ack) the
+                    // same rewritten entries, or an edit recorded under the old id would be dropped.
+                    if (adopted.rekeys.isNotEmpty()) {
+                        pending = PlaylistKeyAdoption.rewriteOps(pending, adopted.rekeys)
+                        ackedPending = PlaylistKeyAdoption.rewritePending(ackedPending, adopted.rekeys)
+                    }
                     expected = resp.currentRevision
                     baselineRevision = resp.currentRevision
                     state = state.copy(revision = expected!!)

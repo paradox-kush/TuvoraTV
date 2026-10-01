@@ -46,6 +46,10 @@ data class SupabaseAddon(
 @Serializable
 data class SupabaseIptvPlaylist(
     val id: String? = null,
+    /** Step 0: the playlist's permanent id. Absent (null) until the server is migrated. */
+    @SerialName("playlist_key") val playlistKey: String? = null,
+    /** Step 0: alternate server addresses (client-owned; round-tripped, no UI yet). */
+    @SerialName("backup_urls") val backupUrls: List<String>? = null,
     @SerialName("user_id") val userId: String? = null,
     @SerialName("source_type") val sourceType: String = "xtream",
     val name: String? = null,

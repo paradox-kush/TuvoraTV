@@ -57,6 +57,18 @@ class M3UFileStore @Inject constructor(
         Unit
     }
 
+    /**
+     * Step 0 — moves [oldId]'s local copy to [newId]'s path (a playlist re-keyed onto its server key
+     * keeps its bytes). No-op when [oldId] has no copy; an existing copy at [newId] is replaced.
+     */
+    suspend fun move(oldId: String, newId: String) = withContext(Dispatchers.IO) {
+        val from = fileFor(oldId)
+        if (!from.exists()) return@withContext
+        val to = fileFor(newId)
+        if (to.exists()) to.delete()
+        check(from.renameTo(to)) { "Could not move the playlist file" }
+    }
+
     private fun fileName(playlistId: String): String {
         // A stable, filesystem-safe name derived from the id. SHA-256 hex is always valid.
         val digest = java.security.MessageDigest.getInstance("SHA-256")

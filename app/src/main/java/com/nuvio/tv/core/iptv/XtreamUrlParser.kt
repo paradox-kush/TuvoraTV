@@ -23,7 +23,8 @@ fun parseXtreamAccount(input: String, name: String? = null): XtreamAccount? {
         if (url.port != defaultPort) append(":").append(url.port)
     }
     return XtreamAccount(
-        id = "$base|$user",
+        // Step 0: the permanent id comes from the shared builder (lowercased host, default port dropped).
+        id = PlaylistKey.xtream(base, user) ?: return null,
         name = name?.trim()?.takeIf { it.isNotEmpty() } ?: url.host,
         baseUrl = base,
         username = user,
@@ -57,7 +58,7 @@ fun xtreamAccountFromFields(serverUrl: String, username: String, password: Strin
     if (user.isEmpty() || pass.isEmpty()) return null
     val raw = serverUrl.trim()
     if (raw.isEmpty()) return null
-    val withScheme = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
+    val withScheme = PlaylistKey.withHttpScheme(raw)   // case-insensitive: "HTTP://host" is not "http://HTTP://host"
     val url = withScheme.toHttpUrlOrNull() ?: return null
     val defaultPort = if (url.scheme == "https") 443 else 80
     val base = buildString {
@@ -65,7 +66,8 @@ fun xtreamAccountFromFields(serverUrl: String, username: String, password: Strin
         if (url.port != defaultPort) append(":").append(url.port)
     }
     return XtreamAccount(
-        id = "$base|$user",
+        // Step 0: the permanent id comes from the shared builder (lowercased host, default port dropped).
+        id = PlaylistKey.xtream(base, user) ?: return null,
         name = name?.trim()?.takeIf { it.isNotEmpty() } ?: url.host,
         baseUrl = base,
         username = user,

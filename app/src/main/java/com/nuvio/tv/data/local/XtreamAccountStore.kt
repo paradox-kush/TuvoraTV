@@ -113,6 +113,28 @@ class XtreamAccountStore @Inject constructor(
             ?.let { updated -> recordPending { it.recordUpdate(updated, base = before) } }   // B24 v2: durable field-edit intent
     }
 
+    /**
+     * Step 0 — renames playlist ids in [profileId]'s stored list (and in its durable v2 pending log)
+     * per [rekeys], in place: every other field — including keys this build does not know — is kept
+     * byte-for-byte. Records NO pending op: adopting the server's key is not a user edit.
+     */
+    suspend fun renameIds(profileId: Int, rekeys: List<com.nuvio.tv.core.iptv.PlaylistKeyAdoption.Rekey>) {
+        if (rekeys.isEmpty()) return
+        factory.get(profileId, FEATURE).edit { prefs ->
+            prefs[accountsKey]?.let { raw -> renameStoredAccountIds(raw, rekeys)?.let { prefs[accountsKey] = it } }
+        }
+        val state = com.nuvio.tv.core.iptv.decodePlaylistSyncState(gson, loadPlaylistSyncStateRaw(profileId))
+        if (state.pending.isNotEmpty()) {
+            savePlaylistSyncStateRaw(
+                profileId,
+                com.nuvio.tv.core.iptv.encodePlaylistSyncState(
+                    gson,
+                    state.copy(pending = com.nuvio.tv.core.iptv.PlaylistKeyAdoption.rewritePending(state.pending, rekeys)),
+                ),
+            )
+        }
+    }
+
     /** Replace all accounts for the active profile (used when applying a remote pull). */
     suspend fun replaceAll(accounts: List<XtreamAccount>) {
         store().edit { prefs -> prefs[accountsKey] = gson.toJson(accounts) }
@@ -178,6 +200,19 @@ class XtreamAccountStore @Inject constructor(
         private const val FEATURE = "xtream_accounts"
         private const val SYNC_STATE_FEATURE = "xtream_sync_state"
     }
+}
+
+/** The stored account array with each row's `id` renamed per [rekeys] (all other keys untouched);
+ *  null when [raw] is not an array (leave a damaged blob alone). */
+internal fun renameStoredAccountIds(raw: String, rekeys: List<com.nuvio.tv.core.iptv.PlaylistKeyAdoption.Rekey>): String? {
+    val map = rekeys.associate { it.oldId to it.newId }
+    val array = runCatching { JsonParser.parseString(raw).asJsonArray }.getOrNull() ?: return null
+    array.forEach { el ->
+        val obj = runCatching { el.asJsonObject }.getOrNull() ?: return@forEach
+        val id = obj.get("id")?.takeIf { it.isJsonPrimitive }?.asString ?: return@forEach
+        map[id]?.let { obj.addProperty("id", it) }
+    }
+    return array.toString()
 }
 
 /** [XtreamAccountStore.update]'s transform application against the LATEST persisted JSON.
@@ -356,5 +391,6 @@ private fun XtreamAccount.withDecodeDefaults(
     preferM3u8CatchUp = if (hadPreferM3u8CatchUp) preferM3u8CatchUp else false,
     catchUpCorrectionMinutes = if (hadCatchUpCorrection) catchUpCorrectionMinutes else 0,
     // Guide EPG offset (fix 2): missing = 0 = auto-detect, the default every stored playlist gets.
-    guideEpgCorrectionMinutes = if (hadGuideEpgCorrection) guideEpgCorrectionMinutes else 0
+    guideEpgCorrectionMinutes = if (hadGuideEpgCorrection) guideEpgCorrectionMinutes else 0,
+    backupUrls = backupUrls?.takeIf { it.isNotEmpty() }   // nullable; missing in older JSON -> null
 )

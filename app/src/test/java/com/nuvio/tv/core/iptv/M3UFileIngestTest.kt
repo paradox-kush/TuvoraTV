@@ -51,7 +51,7 @@ class M3UFileIngestTest {
         http://h/series/u/p/11.mkv
     """.trimIndent()
 
-    private fun fileAccount(id: String = newM3UFilePlaylistId()) =
+    private fun fileAccount(id: String = newM3UFilePlaylistId("myplaylist.m3u")) =
         m3uAccountFromFile(id, fileName = "myplaylist.m3u", name = "My File")
 
     /** Simulate the user picking a file: copy source bytes into the store via a file:// uri. */

@@ -91,7 +91,8 @@ fun pairingPayloadToXtreamAccount(payload: JsonElement?): XtreamAccount? {
             val username = obj.stringField("username")?.takeIf { it.isNotBlank() } ?: return null
             val password = obj.stringField("password") ?: return null
             XtreamAccount(
-                id = "$baseUrl|$username",
+                // Step 0: the shared builder — the id a hand-added (or web-added) playlist would get.
+                id = PlaylistKey.xtream(baseUrl, username) ?: return null,
                 name = name?.ifBlank { null } ?: baseUrl,
                 baseUrl = baseUrl,
                 username = username,
@@ -121,7 +122,7 @@ fun pairingPayloadToXtreamAccount(payload: JsonElement?): XtreamAccount? {
             val portal = if (portalRaw.startsWith("http")) portalRaw else "http://$portalRaw"
             val mac = obj.stringField("mac_address")?.takeIf { it.isNotBlank() } ?: return null
             XtreamAccount(
-                id = "stalker|$portal|$mac",
+                id = PlaylistKey.stalker(portal, mac) ?: return null,   // Step 0 shared builder
                 name = name?.ifBlank { null } ?: portal,
                 baseUrl = portal,
                 username = "",
@@ -152,6 +153,9 @@ fun pairingPayloadToXtreamAccount(payload: JsonElement?): XtreamAccount? {
     }
 
     return base.copy(
+        // Step 0: a key the pairing form already minted (same shared builder) is taken as-is.
+        id = obj.stringField("playlist_key")?.takeIf { it.isNotBlank() } ?: base.id,
+        backupUrls = obj.stringListField("backup_urls")?.takeIf { it.isNotEmpty() },
         enabled = enabled,
         epgUrl = obj.stringField("epg_url")?.takeIf { it.isNotBlank() } ?: base.epgUrl,
         dnsProvider = obj.stringField("dns_provider")?.takeIf { it.isNotBlank() } ?: base.dnsProvider,

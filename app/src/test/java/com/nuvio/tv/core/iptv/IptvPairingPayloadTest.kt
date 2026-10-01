@@ -85,7 +85,7 @@ class IptvPairingPayloadTest {
         assertEquals("My M3U", account.name)
         // Full URL is preserved verbatim in baseUrl (M3UClient fetches it as-is).
         assertEquals("http://host:9000/get.php?username=x&password=y&type=m3u_plus", account.baseUrl)
-        assertTrue("m3u id derived from scheme+host+port+path", account.id.startsWith("m3u:"))
+        assertEquals("m3u id = the shared Step 0 key", "m3u|http://host:9000/get.php?username=x&password=y&type=m3u_plus", account.id)
     }
 
     @Test
@@ -130,7 +130,7 @@ class IptvPairingPayloadTest {
         // (NOT stashed in baseUrl/username), and the id must match the form builder's format.
         assertEquals("http://portal.example/c/", account.portalUrl)
         assertEquals("00:1A:79:AA:BB:CC", account.macAddress)
-        assertEquals("stalker|http://portal.example/c/|00:1A:79:AA:BB:CC", account.id)
+        assertEquals("stalker|http://portal.example|00:1A:79:AA:BB:CC", account.id)   // Step 0 shared key: portal origin + MAC
         assertEquals(true, account.sendDeviceId)
 
         // A MAC-less stalker payload can never authenticate — dropped, not saved broken.
