@@ -1,15 +1,9 @@
 package com.nuvio.tv.core.iptv
 
 import android.util.Log
-import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.iptv.content.M3UFileStore
-import com.nuvio.tv.core.sync.WatchProgressSyncService
-import com.nuvio.tv.core.sync.WatchStateMutationStore
-import com.nuvio.tv.core.sync.WatchStateRekeyPlan
-import com.nuvio.tv.core.sync.WatchedItemsSyncService
+import com.nuvio.tv.core.sync.WatchStatePrefixMover
 import com.nuvio.tv.data.local.LibraryPreferences
-import com.nuvio.tv.data.local.WatchProgressPreferences
-import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.data.local.XtreamLiveStore
 import kotlinx.coroutines.CancellationException
@@ -38,15 +32,10 @@ import javax.inject.Singleton
 class PlaylistKeyRekeyer @Inject constructor(
     private val accountStore: XtreamAccountStore,
     private val libraryPreferences: LibraryPreferences,
-    private val watchProgressPreferences: WatchProgressPreferences,
-    private val watchedItemsPreferences: WatchedItemsPreferences,
     private val liveStore: XtreamLiveStore,
     private val fileStore: M3UFileStore,
     private val purge: IptvAccountPurge,
-    private val authManager: AuthManager,
-    private val mutationStore: WatchStateMutationStore,
-    private val watchProgressSyncService: WatchProgressSyncService,
-    private val watchedItemsSyncService: WatchedItemsSyncService,
+    private val watchState: WatchStatePrefixMover,
 ) {
     /** Resolves [pulled] against [profileId]'s stored playlists and executes every re-key it decides. */
     suspend fun adoptFromPull(profileId: Int, pulled: List<PulledPlaylist>): PlaylistKeyAdoption.Result {
@@ -65,12 +54,7 @@ class PlaylistKeyRekeyer @Inject constructor(
             step("file copy") { fileStore.move(rekey.oldId, rekey.newId) }
             step("cache purge") { purge.purge(rekey.oldId, PlaylistRemovalOrigin.SyncPull) }
         }
-        // Send the queued watch-state moves now (Mobile pushes them at once too). A failure or a
-        // lapsed session only defers: the outbox is durable and the next sync cycle pushes it.
-        if (queuedWatchSync && authManager.canSync) {
-            step("watch progress push") { watchProgressSyncService.pushToRemote(profileId) }
-            step("watched push") { watchedItemsSyncService.pushToRemote(profileId) }
-        }
+        if (queuedWatchSync) watchState.pushQueued(profileId)
     }
 
     /** Re-keys every prefix store; true when it queued watch-state sync ops. */
@@ -78,32 +62,8 @@ class PlaylistKeyRekeyer @Inject constructor(
         val oldPrefix = XtreamItemRegistry.accountPrefix(rekey.oldId)
         val newPrefix = XtreamItemRegistry.accountPrefix(rekey.newId)
         libraryPreferences.migrateIdPrefix(oldPrefix, newPrefix)
-        // Watch state: the sync ops are queued (one atomic outbox edit) BEFORE the local stores move.
-        // Dying in between leaves the outbox holding the moved copies (they still reach the server)
-        // and the server rows under the old id doomed; the reverse order could leave the local stores
-        // moved with nothing queued — the old-id rows would then come back on the next pull as ghosts.
-        val plan = WatchStateRekeyPlan.build(
-            progress = watchProgressPreferences.getAllRawEntries(profileId),
-            watched = watchedItemsPreferences.getAllItems(profileId),
-            oldPrefix = oldPrefix,
-            newPrefix = newPrefix,
-            // Signed-out / non-full-account devices re-key locally only (nothing to queue for).
-            fullAccount = authManager.isAuthenticated,
-        )
-        var queued = false
-        if (!plan.isEmpty) step("watch-state sync queue") {
-            mutationStore.queueRekey(
-                progressUpserts = plan.progressUpserts,
-                progressDeletes = plan.progressDeletes,
-                watchedUpserts = plan.watchedUpserts,
-                watchedDeletes = plan.watchedDeletes,
-                profileId = profileId,
-            )
-            queued = true
-        }
-        // Even if queueing failed the local move still happens: the user keeps seeing their data.
-        watchProgressPreferences.migrateIdPrefix(oldPrefix, newPrefix, profileId)
-        watchedItemsPreferences.migrateIdPrefix(oldPrefix, newPrefix, profileId)
+        // Progress + watched: sync ops queued atomically BEFORE the local move (see WatchStatePrefixMover).
+        val queued = watchState.move(profileId, oldPrefix, newPrefix)
         liveStore.migrateAccount(oldPrefix) { ref -> ref.copy(id = newPrefix + ref.id.removePrefix(oldPrefix)) }
         return queued
     }

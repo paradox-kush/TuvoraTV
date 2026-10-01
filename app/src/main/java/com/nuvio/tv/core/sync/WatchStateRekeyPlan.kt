@@ -7,11 +7,13 @@ import com.nuvio.tv.domain.model.mutationKey
 
 /**
  * Step 0 — the synced half of moving a playlist's watch state from one id prefix to another
- * (`xtream:{oldId}:` → `xtream:{newId}:`), as a pure decision. Behavioural twin of Mobile's
+ * (`xtream:{oldId}:` → `xtream:{newId}:`), or dropping it, as a pure decision. Behavioural twin of Mobile's
  * `WatchProgressRepository.migrateIdPrefix` / `WatchedRepository.migrateIdPrefix`: every entry under
  * the old prefix is deleted remotely and its moved copy upserted under the new one, so the server
  * never keeps rows under an id that no longer exists (a later pull would resurrect them as ghost
  * Continue Watching / watched entries).
+ *
+ * A null new prefix is a DROP (an explicit user delete of the playlist): deletes only, no upserts.
  *
  * Rules: live progress is local-only on TV (never pushed, so never deleted either); a device that
  * is not a full account syncs nothing ([EMPTY]) — the local stores still move.
@@ -33,7 +35,7 @@ data class WatchStateRekeyPlan(
             progress: Map<String, WatchProgress>,
             watched: Collection<WatchedItem>,
             oldPrefix: String,
-            newPrefix: String,
+            newPrefix: String?,
             fullAccount: Boolean,
         ): WatchStateRekeyPlan {
             if (!fullAccount) return EMPTY
@@ -46,7 +48,8 @@ data class WatchStateRekeyPlan(
             return WatchStateRekeyPlan(
                 progressUpserts = progressUpserts,
                 progressDeletes = progressDeletes,
-                watchedUpserts = affectedWatched.map { rekeyWatchedItem(it, oldPrefix, newPrefix) },
+                watchedUpserts = if (newPrefix == null) emptyList()
+                else affectedWatched.map { rekeyWatchedItem(it, oldPrefix, newPrefix) },
                 watchedDeletes = affectedWatched.mapTo(mutableSetOf()) { it.mutationKey() },
             )
         }

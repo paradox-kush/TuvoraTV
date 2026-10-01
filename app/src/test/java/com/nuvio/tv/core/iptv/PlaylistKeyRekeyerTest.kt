@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.iptv
 
 import com.nuvio.tv.core.iptv.content.M3UFileStore
+import com.nuvio.tv.core.sync.WatchStatePrefixMover
 import com.nuvio.tv.data.local.LibraryPreferences
 import com.nuvio.tv.data.local.WatchProgressPreferences
 import com.nuvio.tv.data.local.WatchedItemsPreferences
@@ -40,7 +41,15 @@ class PlaylistKeyRekeyerTest {
     private val watched = mockk<WatchedItemsPreferences>(relaxed = true)
     private val liveStore = mockk<XtreamLiveStore>(relaxed = true)
     private val purge = mockk<IptvAccountPurge>(relaxed = true)
-    private val rekeyer = PlaylistKeyRekeyer(accountStore, library, progress, watched, liveStore, fileStore, purge, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
+    private val watchState = WatchStatePrefixMover(
+        authManager = mockk(relaxed = true), // not a full account: local moves only
+        mutationStore = mockk(relaxed = true),
+        watchProgressPreferences = progress,
+        watchedItemsPreferences = watched,
+        watchProgressSyncService = mockk(relaxed = true),
+        watchedItemsSyncService = mockk(relaxed = true),
+    )
+    private val rekeyer = PlaylistKeyRekeyer(accountStore, library, liveStore, fileStore, purge, watchState)
 
     private val oldId = "file:0b8f6c1e-uuid"
     private val newId = "m3u_file|tv.m3u|synced"

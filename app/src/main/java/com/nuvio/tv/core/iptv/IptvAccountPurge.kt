@@ -10,9 +10,8 @@ import com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository
 import com.nuvio.tv.core.iptv.refresh.IptvRefreshStore
 import com.nuvio.tv.core.iptv.stalker.StalkerClient
 import com.nuvio.tv.core.profile.ProfileManager
+import com.nuvio.tv.core.sync.WatchStatePrefixMover
 import com.nuvio.tv.data.local.LibraryPreferences
-import com.nuvio.tv.data.local.WatchProgressPreferences
-import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.local.XtreamHubSelectionStore
 import com.nuvio.tv.data.local.XtreamLiveStore
 import kotlinx.coroutines.CancellationException
@@ -44,9 +43,8 @@ class IptvAccountPurge @Inject constructor(
     private val overlay: IptvOverlayRepository,
     private val liveStore: XtreamLiveStore,
     private val libraryPreferences: LibraryPreferences,
-    private val watchProgressPreferences: WatchProgressPreferences,
-    private val watchedItemsPreferences: WatchedItemsPreferences,
     private val profileManager: ProfileManager,
+    private val watchState: WatchStatePrefixMover,
 ) {
     suspend fun purge(accountId: String, origin: PlaylistRemovalOrigin) {
         val prefix = XtreamItemRegistry.accountPrefix(accountId)
@@ -83,10 +81,14 @@ class IptvAccountPurge @Inject constructor(
                 hubSelection.forgetAccountIf { PlaylistRemovalCleanup.dropsHubSelection(it, accountId) }
             PlaylistRemovalTarget.Overlay -> overlay.onPlaylistRemoved(accountId)
             PlaylistRemovalTarget.LiveChannels -> liveStore.migrateAccount(prefix, null)
+            // Only on a user delete (SavedRefs is user data — a sync pull never drops it). Synced like
+            // Mobile: the library reducer queues its deletes; progress + watched queue their server
+            // deletes (non-live; full account only) in one atomic outbox edit BEFORE the local drop,
+            // then push — so a later pull cannot resurrect them as ghosts.
             PlaylistRemovalTarget.SavedRefs -> {
+                val profileId = profileManager.activeProfileId.value
                 libraryPreferences.migrateIdPrefix(prefix, null)
-                watchProgressPreferences.migrateIdPrefix(prefix, null, profileManager.activeProfileId.value)
-                watchedItemsPreferences.migrateIdPrefix(prefix, null)
+                if (watchState.move(profileId, prefix, null)) watchState.pushQueued(profileId)
             }
         }
     }

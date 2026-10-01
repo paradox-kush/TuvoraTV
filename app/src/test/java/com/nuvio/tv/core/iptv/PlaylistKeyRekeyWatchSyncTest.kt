@@ -8,6 +8,7 @@ import com.nuvio.tv.core.iptv.content.M3UFileStore
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.sync.WatchProgressSyncService
 import com.nuvio.tv.core.sync.WatchStateMutationStore
+import com.nuvio.tv.core.sync.WatchStatePrefixMover
 import com.nuvio.tv.core.sync.WatchedItemsSyncService
 import com.nuvio.tv.data.local.LibraryPreferences
 import com.nuvio.tv.data.local.ProfileDataStoreFactory
@@ -217,15 +218,10 @@ class PlaylistKeyRekeyWatchSyncTest {
         val rekeyer = PlaylistKeyRekeyer(
             accountStore = accountStore,
             libraryPreferences = mockk<LibraryPreferences>(relaxed = true),
-            watchProgressPreferences = progress,
-            watchedItemsPreferences = watched,
             liveStore = mockk<XtreamLiveStore>(relaxed = true),
             fileStore = mockk<M3UFileStore>(relaxed = true),
             purge = mockk<IptvAccountPurge>(relaxed = true),
-            authManager = auth,
-            mutationStore = mutations,
-            watchProgressSyncService = progressSync,
-            watchedItemsSyncService = watchedSync,
+            watchState = WatchStatePrefixMover(auth, mutations, progress, watched, progressSync, watchedSync),
         )
         return Harness(rekeyer, progress, watched, mutations, progressSync, watchedSync)
     }
