@@ -618,6 +618,14 @@ fun ClassicHomeContent(
 
         if (uiState.continueWatchingEnabled && uiState.continueWatchingItems.isNotEmpty()) {
             item(key = "continue_watching", contentType = "continue_watching") {
+                SnapContinueWatchingToNewLeader(
+                    rowKey = MODERN_CONTINUE_WATCHING_ROW_KEY,
+                    itemKeys = uiState.continueWatchingItems.map(::continueWatchingItemKey),
+                    listState = cwListState,
+                    rowHasFocus = {
+                        contentHasFocus.value && activeRowKeyState.value == "continue_watching"
+                    },
+                )
                 LaunchedEffect(cwPendingScrollToStart.intValue) {
                     if (cwPendingScrollToStart.intValue > 0) {
                         cwListState.scrollToItem(0, 0)
