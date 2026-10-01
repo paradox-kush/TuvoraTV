@@ -45,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +87,7 @@ import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.screens.account.InputFieldKeys
 import com.nuvio.tv.ui.theme.NuvioTheme
+import kotlinx.coroutines.launch
 
 /**
  * Xtream IPTV accounts settings (inline section, like Debrid). Single paste field:
@@ -127,17 +129,22 @@ fun XtreamSettingsContent(
     val accountRowFocus = remember { mutableMapOf<String, FocusRequester>() }
     val context = LocalContext.current
     val playlistRemovedText = stringResource(R.string.iptv_playlist_removed)
+    // The focus hand-off runs in this scope, not in the effect below: clearing pendingRemoval (one
+    // of the effect's own keys) restarts the effect on the next frame, which cancelled the old
+    // coroutine inside requestFocusAfterFrames' frame wait — the toast showed but the request never
+    // ran, and focus stayed wherever the removed row's loss had dropped it (the side menu).
+    val removalFocusScope = rememberCoroutineScope()
     LaunchedEffect(pendingRemoval, uiState.accounts) {
         val (removedId, removedIndex) = pendingRemoval ?: return@LaunchedEffect
         if (uiState.accounts.any { it.id == removedId }) return@LaunchedEffect
-        pendingRemoval = null
         accountRowFocus.remove(removedId)
-        android.widget.Toast.makeText(context, playlistRemovedText, android.widget.Toast.LENGTH_SHORT).show()
         val target = PlaylistRemovalUiPolicy.focusIndexAfterRemoval(removedIndex, uiState.accounts.size)
             ?.let { uiState.accounts.getOrNull(it) }
             ?.let { accountRowFocus[it.id] }
             ?: addRowFocus
-        target.requestFocusAfterFrames()
+        pendingRemoval = null
+        android.widget.Toast.makeText(context, playlistRemovedText, android.widget.Toast.LENGTH_SHORT).show()
+        removalFocusScope.launch { target.requestFocusAfterFrames() }
     }
 
     Column(
