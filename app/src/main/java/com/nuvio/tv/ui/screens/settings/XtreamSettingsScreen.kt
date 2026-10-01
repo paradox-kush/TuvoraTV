@@ -1315,7 +1315,7 @@ private fun BackupServersSection(
 }
 
 /**
- * Step 0.3 — edit one backup row: its address, move up / down (priority), remove. The address is a
+ * Step 0.3 — edit one backup row: its address, move up / down (priority), remove (confirmed). The address is a
  * row until OK is pressed on it — only then does the text field (and the keyboard) appear, so moving
  * or removing a server never opens the keyboard. A freshly added row starts in the field: the user
  * pressed OK on "Add backup server" to type one.
@@ -1336,9 +1336,22 @@ private fun BackupServerEditorDialog(
     onDismiss: () -> Unit,
 ) {
     var typing by remember(index) { mutableStateOf(startTyping) }
+    var confirmingRemove by remember(index) { mutableStateOf(false) }
     val fieldFocus = remember { FocusRequester() }
     val addressRowFocus = remember { FocusRequester() }
     val addressLabel = stringResource(R.string.iptv_backup_server_address)
+    if (confirmingRemove) {
+        BackupServerRemoveConfirmDialog(
+            index = index,
+            value = value,
+            onConfirm = {
+                confirmingRemove = false
+                onRemove()
+            },
+            onCancel = { confirmingRemove = false },
+        )
+        return
+    }
     LaunchedEffect(typing, index) {
         if (typing) fieldFocus.requestFocusAfterFrames() else addressRowFocus.requestFocusAfterFrames()
     }
@@ -1373,29 +1386,70 @@ private fun BackupServerEditorDialog(
                 color = NuvioTheme.colors.Error,
             )
         }
-        if (count > 1) {
-            SettingsActionRow(
-                title = stringResource(R.string.iptv_backup_server_move_up),
-                subtitle = stringResource(R.string.iptv_backup_server_move_up_subtitle),
-                enabled = index > 0,
-                onClick = onMoveUp,
-            )
-            SettingsActionRow(
-                title = stringResource(R.string.iptv_backup_server_move_down),
-                subtitle = stringResource(R.string.iptv_backup_server_move_down_subtitle),
-                enabled = index < count - 1,
-                onClick = onMoveDown,
-            )
+        // UX100: only the moves that can act (no disabled rows for focus to skip over), and Remove
+        // confirms before it drops the row.
+        com.nuvio.tv.core.iptv.BackupServerListEdits.rowActions(index, count).forEach { action ->
+            when (action) {
+                com.nuvio.tv.core.iptv.BackupServerListEdits.RowAction.MOVE_UP -> SettingsActionRow(
+                    title = stringResource(R.string.iptv_backup_server_move_up),
+                    subtitle = stringResource(R.string.iptv_backup_server_move_up_subtitle),
+                    onClick = onMoveUp,
+                )
+                com.nuvio.tv.core.iptv.BackupServerListEdits.RowAction.MOVE_DOWN -> SettingsActionRow(
+                    title = stringResource(R.string.iptv_backup_server_move_down),
+                    subtitle = stringResource(R.string.iptv_backup_server_move_down_subtitle),
+                    onClick = onMoveDown,
+                )
+                com.nuvio.tv.core.iptv.BackupServerListEdits.RowAction.REMOVE -> SettingsActionRow(
+                    title = stringResource(R.string.iptv_backup_server_remove),
+                    subtitle = null,
+                    onClick = { if (action.needsConfirmation) confirmingRemove = true else onRemove() },
+                )
+            }
         }
-        SettingsActionRow(
-            title = stringResource(R.string.iptv_backup_server_remove),
-            subtitle = null,
-            onClick = onRemove,
-        )
         Button(
             onClick = onDismiss,
             modifier = Modifier.fillMaxWidth(),
         ) { Text(stringResource(R.string.iptv_backup_server_done)) }
+    }
+}
+
+/**
+ * UX100 — "Remove backup server N?", the same shape as the Remove-playlist confirm: a danger-tinted
+ * Remove button over Cancel, with focus starting on Cancel so a stray OK can't delete.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun BackupServerRemoveConfirmDialog(
+    index: Int,
+    value: String,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val cancelFocus = remember { FocusRequester() }
+    LaunchedEffect(index) { cancelFocus.requestFocusAfterFrames() }
+    NuvioDialog(
+        onDismiss = onCancel,
+        title = stringResource(R.string.iptv_backup_server_remove_confirm_title, index + 1),
+        subtitle = value.ifBlank { null }?.let { stringResource(R.string.iptv_backup_server_remove_confirm_subtitle, it) },
+        width = 460.dp,
+    ) {
+        Button(
+            onClick = onConfirm,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.colors(
+                containerColor = Color(0xFF4A2323),
+                contentColor = NuvioTheme.colors.TextPrimary
+            )
+        ) {
+            Text(stringResource(R.string.iptv_backup_server_remove))
+        }
+        Button(
+            onClick = onCancel,
+            modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus)
+        ) {
+            Text(stringResource(R.string.action_cancel))
+        }
     }
 }
 

@@ -3392,6 +3392,8 @@
     <string name="iptv_backup_server_move_down">Move down</string>
     <string name="iptv_backup_server_move_down_subtitle">Try this server later</string>
     <string name="iptv_backup_server_remove">Remove backup server</string>
+    <string name="iptv_backup_server_remove_confirm_title">Remove backup server %1$d?</string>
+    <string name="iptv_backup_server_remove_confirm_subtitle">%1$s won\'t be tried if the main server stops responding.</string>
     <string name="iptv_backup_server_done">Done</string>
     <string name="iptv_backup_server_problem_invalid">Not a valid address</string>
     <string name="iptv_backup_server_problem_not_http">Only http:// and https:// addresses work</string>

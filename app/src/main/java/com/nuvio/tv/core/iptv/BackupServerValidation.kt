@@ -134,6 +134,20 @@ object BackupServerListEdits {
 
     fun moveDown(rows: List<String>, index: Int): List<String> = swap(rows, index, index + 1)
 
+    /** An action the per-row editor sheet offers. Remove is destructive, so it confirms first (UX100). */
+    enum class RowAction(val needsConfirmation: Boolean) { MOVE_UP(false), MOVE_DOWN(false), REMOVE(true) }
+
+    /**
+     * The actions the editor sheet shows for row [index] of [count], top to bottom (UX100). A move
+     * that can't act is left out rather than shown disabled: D-pad focus skips a disabled row, which
+     * once carried DOWN-DOWN from the address straight onto Remove.
+     */
+    fun rowActions(index: Int, count: Int): List<RowAction> = buildList {
+        if (index > 0) add(RowAction.MOVE_UP)
+        if (index < count - 1) add(RowAction.MOVE_DOWN)
+        add(RowAction.REMOVE)
+    }
+
     private fun swap(rows: List<String>, a: Int, b: Int): List<String> {
         if (a !in rows.indices || b !in rows.indices) return rows
         val out = rows.toMutableList()

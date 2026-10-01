@@ -56,6 +56,27 @@ class BackupServerListEditsTest {
         assertEquals(rows, BackupServerListEdits.moveDown(rows, 2))
     }
 
+    // UX100: a disabled "Move down" on the last row was skipped by D-pad focus, so DOWN-DOWN from the
+    // address landed on "Remove backup server", which deleted the row on the first OK.
+    @Test
+    fun `row actions hide moves that cannot act`() {
+        val up = BackupServerListEdits.RowAction.MOVE_UP
+        val down = BackupServerListEdits.RowAction.MOVE_DOWN
+        val remove = BackupServerListEdits.RowAction.REMOVE
+        assertEquals("single row: no moves", listOf(remove), BackupServerListEdits.rowActions(0, 1))
+        assertEquals("first of three: no move up", listOf(down, remove), BackupServerListEdits.rowActions(0, 3))
+        assertEquals("middle of three: both moves", listOf(up, down, remove), BackupServerListEdits.rowActions(1, 3))
+        assertEquals("last of three: no move down", listOf(up, remove), BackupServerListEdits.rowActions(2, 3))
+        assertEquals("last of two: no move down", listOf(up, remove), BackupServerListEdits.rowActions(1, 2))
+    }
+
+    @Test
+    fun `remove asks for confirmation and moves do not`() {
+        assertTrue("remove confirms", BackupServerListEdits.RowAction.REMOVE.needsConfirmation)
+        assertFalse("move up is instant", BackupServerListEdits.RowAction.MOVE_UP.needsConfirmation)
+        assertFalse("move down is instant", BackupServerListEdits.RowAction.MOVE_DOWN.needsConfirmation)
+    }
+
     @Test
     fun `remove and update touch only their row`() {
         val rows = listOf("a", "b", "c")
