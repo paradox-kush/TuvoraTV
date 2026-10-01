@@ -82,6 +82,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.cloud.CloudLibraryFile
 import com.nuvio.tv.core.cloud.CloudLibraryItem
 import com.nuvio.tv.core.cloud.CloudLibraryItemType
@@ -136,7 +137,11 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
     var showDeleteConfirm by remember(uiState.showManageDialog) { mutableStateOf(false) }
     var expandedPicker by remember { mutableStateOf<String?>(null) }
-    var viewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Saved) }
+    // Store builds compile Debrid out, so there is no Cloud view: the Saved/Cloud switch is not
+    // rendered and the library stays on Saved.
+    val cloudViewAvailable = AppFeaturePolicy.debridEnabled
+    var selectedViewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Saved) }
+    val viewMode = if (cloudViewAvailable) selectedViewMode else LibraryViewMode.Saved
     var activeCloudItem by remember { mutableStateOf<CloudLibraryItem?>(null) }
     var pendingCloudPlayback by remember { mutableStateOf<CloudLibraryPlaybackInfo?>(null) }
     var showCloudPlayerChoice by remember { mutableStateOf(false) }
@@ -330,12 +335,12 @@ fun LibraryScreen(
             }
         }
 
-        item(span = { GridItemSpan(maxLineSpan) }) {
+        if (cloudViewAvailable) item(span = { GridItemSpan(maxLineSpan) }) {
             LibraryViewModeRow(
                 selectedMode = viewMode,
                 primaryFocusRequester = primaryFocusRequester,
                 onSelected = { mode ->
-                    viewMode = mode
+                    selectedViewMode = mode
                     expandedPicker = null
                 },
                 // Refresh belongs to the cloud view only, pinned right in line with the tabs.
@@ -379,8 +384,10 @@ fun LibraryScreen(
                     selectedGenre = uiState.selectedGenre,
                     selectedYear = uiState.selectedYear,
                     selectedWatchedFilter = uiState.selectedWatchedFilter,
-                    primaryFocusRequester = selectorFocusRequester,
-                    upFocusRequester = primaryFocusRequester,
+                    // Without the Saved/Cloud switch the selectors are the top row, so they own
+                    // primary focus and have nothing above them to move up to.
+                    primaryFocusRequester = if (cloudViewAvailable) selectorFocusRequester else primaryFocusRequester,
+                    upFocusRequester = if (cloudViewAvailable) primaryFocusRequester else null,
                     expandedPicker = expandedPicker,
                     onExpandedChange = { picker, shouldExpand ->
                         expandedPicker = if (shouldExpand) picker else null
@@ -1104,7 +1111,7 @@ private fun LibrarySelectorsRow(
     selectedYear: String?,
     selectedWatchedFilter: LibraryWatchedFilter,
     primaryFocusRequester: FocusRequester,
-    upFocusRequester: FocusRequester,
+    upFocusRequester: FocusRequester?,
     expandedPicker: String?,
     onExpandedChange: (String, Boolean) -> Unit,
     onSelectList: (String) -> Unit,

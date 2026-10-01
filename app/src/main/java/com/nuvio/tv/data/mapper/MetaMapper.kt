@@ -1,5 +1,8 @@
 package com.nuvio.tv.data.mapper
 
+import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.streams.AddonSourcePolicy
+import com.nuvio.tv.core.streams.PlaybackAvailability
 import com.nuvio.tv.data.remote.dto.MetaDto
 import com.nuvio.tv.data.remote.dto.MetaLinkDto
 import com.nuvio.tv.data.remote.dto.VideoDto
@@ -75,7 +78,11 @@ fun VideoDto.toDomain(episodeLabel: String = "Episode"): Video {
         title = name ?: title ?: "$episodeLabel ${episode ?: number ?: 0}",
         released = released,
         thumbnail = thumbnail,
-        streams = streams?.map { it.toDomain(addonName = "Embedded Streams", addonLogo = null) } ?: emptyList(),
+        streams = AddonSourcePolicy.embeddedStreamsForBuild(
+            streams = streams?.map { it.toDomain(addonName = "Embedded Streams", addonLogo = null) } ?: emptyList(),
+            streamSourcesEnabled = AppFeaturePolicy.addonStreamSourcesEnabled,
+            isIptv = PlaybackAvailability.isIptvId(id)
+        ),
         season = season,
         episode = episode ?: number,
         overview = overview ?: description,

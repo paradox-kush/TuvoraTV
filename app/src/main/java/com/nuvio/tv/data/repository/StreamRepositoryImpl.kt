@@ -6,6 +6,9 @@ import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
+import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.streams.AddonSourcePolicy
+import com.nuvio.tv.core.streams.PlaybackAvailability
 import com.nuvio.tv.core.debrid.DebridStreamPresentation
 import com.nuvio.tv.core.debrid.LocalDebridAvailabilityService
 import com.nuvio.tv.core.plugin.PluginManager
@@ -712,9 +715,13 @@ class StreamRepositoryImpl @Inject constructor(
                 is NetworkResult.Success -> {
                     val metaDto = result.data.meta ?: return emptyList()
                     val matchingVideo = metaDto.videos?.firstOrNull { it.id == videoId }
-                    val streams = matchingVideo?.streams
-                        ?.mapNotNull { it.toDomain(addon.displayName, addon.logo) }
-                        ?: emptyList()
+                    val streams = AddonSourcePolicy.embeddedStreamsForBuild(
+                        streams = matchingVideo?.streams
+                            ?.mapNotNull { it.toDomain(addon.displayName, addon.logo) }
+                            ?: emptyList(),
+                        streamSourcesEnabled = AppFeaturePolicy.addonStreamSourcesEnabled,
+                        isIptv = PlaybackAvailability.isIptvId(videoId)
+                    )
                     Log.d(TAG, "Inline streams from meta: addon=${addon.displayName} videoId=$videoId found=${streams.size}")
                     streams
                 }
