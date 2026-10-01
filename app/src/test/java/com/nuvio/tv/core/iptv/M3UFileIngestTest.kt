@@ -38,8 +38,8 @@ class M3UFileIngestTest {
     // The Xtream match index is only consulted for Xtream playlists; these are m3u_file, so it is
     // constructed but never queried.
     private val matchIndex = com.nuvio.tv.core.iptv.match.XtreamMatchIndex(app)
-    private val xmltv = XmltvClient(db, OkHttpClient(), dns, matchIndex)
-    private val client = M3UClient(db, OkHttpClient(), fileStore, xmltv, dns)
+    private val xmltv = XmltvClient(db, OkHttpClient(), dns, matchIndex, PlaylistServerFailover.detached())
+    private val client = M3UClient(db, OkHttpClient(), fileStore, xmltv, dns, PlaylistServerFailover.detached())
 
     private val SAMPLE = """
         #EXTM3U

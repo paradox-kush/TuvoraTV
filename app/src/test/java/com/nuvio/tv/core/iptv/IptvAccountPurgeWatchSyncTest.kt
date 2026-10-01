@@ -198,6 +198,7 @@ class IptvAccountPurgeWatchSyncTest {
             liveStore = mockk(relaxed = true),
             libraryPreferences = mockk(relaxed = true),
             profileManager = profileManager,
+            serverFailover = mockk(relaxed = true),
             watchState = WatchStatePrefixMover(auth, mutations, progress, watched, progressSync, watchedSync),
         )
         return Harness(purge, progress, watched, mutations, progressSync, watchedSync)

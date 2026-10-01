@@ -41,6 +41,8 @@ class XmltvClient @Inject constructor(
     // Xtream lineups live here, not in IptvContentDb — the whole-guide allow-set needs whichever
     // store owns the account (see channelIdsFor).
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
+    /** Step 0.3: the panel's own derived xmltv.php is a catalog call and walks the backup servers. */
+    private val failover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
 ) {
 
     /**
@@ -146,16 +148,33 @@ class XmltvClient @Inject constructor(
 
     /** Fetch the XMLTV document and stream-parse it (filtered to [channelIds]) into the DB. */
     private suspend fun fetchAndStore(acc: XtreamAccount, url: String, channelIds: Set<String>) {
+        if (url == derivedXmltvUrl(acc)) {
+            // The panel's own xmltv.php is an EPG catalog call: it fails over with the playlist's
+            // servers (Step 0.3) — until the first bytes reached the parser, never mid-guide.
+            var delivered = false
+            failover.run(acc, canRetry = { !delivered }) { a ->
+                fetchAndStoreFrom(acc, derivedXmltvUrl(a) ?: url, channelIds) { delivered = true }
+            }
+        } else {
+            // A custom EPG URL or the playlist's url-tvg lives on its own host — nothing to fail over to.
+            fetchAndStoreFrom(acc, url, channelIds) {}
+        }
+    }
+
+    private suspend fun fetchAndStoreFrom(acc: XtreamAccount, url: String, channelIds: Set<String>, onFirstBytes: () -> Unit) {
         val request = Request.Builder()
             .url(url)
             .apply { userAgentFor(acc)?.let { header("User-Agent", it) } }
             .build()
         // XMLTV fetch honours the playlist's DoH resolver (shares the ingest pool).
         playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
-            check(resp.isSuccessful) { "HTTP ${resp.code}" }
+            // Typed (message unchanged) so the failover walk can tell a dead panel (5xx/404) from a refusal.
+            if (!resp.isSuccessful) throw com.nuvio.tv.core.iptv.HttpStatusException(resp.code, "HTTP ${resp.code}")
             // charStream() decodes the (possibly gunzipped) body incrementally — never fully buffered.
             // checkNotNull: body is nullable on OkHttp 4 (playstore flavor) but not on 5 (full).
-            val reader = checkNotNull(resp.body) { "empty response body" }.charStream().buffered()
+            val reader = com.nuvio.tv.core.iptv.FirstReadFlagReader(
+                checkNotNull(resp.body) { "empty response body" }.charStream(), onFirstBytes,
+            ).buffered()
             val parser = android.util.Xml.newPullParser().apply {
                 setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
                 setInput(reader)

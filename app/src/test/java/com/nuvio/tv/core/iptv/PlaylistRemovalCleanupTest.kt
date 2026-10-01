@@ -12,6 +12,7 @@ import com.nuvio.tv.core.iptv.PlaylistRemovalTarget.MatchIndex
 import com.nuvio.tv.core.iptv.PlaylistRemovalTarget.Overlay
 import com.nuvio.tv.core.iptv.PlaylistRemovalTarget.RefreshStamp
 import com.nuvio.tv.core.iptv.PlaylistRemovalTarget.SavedRefs
+import com.nuvio.tv.core.iptv.PlaylistRemovalTarget.ServerFailover
 import com.nuvio.tv.core.iptv.PlaylistRemovalTarget.SessionCaches
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,7 +26,7 @@ import org.junit.Test
  */
 class PlaylistRemovalCleanupTest {
 
-    private val caches = setOf(ContentDb, MatchIndex, EpgMirror, RefreshStamp, CatchUp, SessionCaches, HubSelection)
+    private val caches = setOf(ContentDb, MatchIndex, EpgMirror, RefreshStamp, CatchUp, ServerFailover, SessionCaches, HubSelection)
     private val userData = setOf(Overlay, LiveChannels, SavedRefs, M3uFileCopy)
 
     @Test

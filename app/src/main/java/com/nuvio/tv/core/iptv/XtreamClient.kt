@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
+import okio.buffer
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -300,6 +301,8 @@ class XtreamClient @Inject constructor(
     @param:Named("addonPermissive") private val baseClient: OkHttpClient,
     private val moshi: Moshi,
     private val playlistDns: PlaylistDns,
+    /** Step 0.3: walks the playlist's backup servers for fail-over-able calls; knows the ACTIVE one. */
+    private val failover: PlaylistServerFailover,
 ) : IptvClient {
 
     /** Per-provider [XtreamApi] cache. Built lazily off a DoH-derived client that shares [baseClient]'s pool. */
@@ -323,7 +326,9 @@ class XtreamClient @Inject constructor(
     }
     /** Verifies credentials. Success only when the panel reports auth=1 and an active status. */
     suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
-        val body = apiFor(acc).getAccount(playerApi(acc)).requireBody()
+        // The login call fails over (Step 0.3); auth=0 is an ANSWER, checked below on whichever
+        // server gave it — the same on every server, so it never walks.
+        val body = loginBody(acc)
         rememberClockPair(acc.id, body.serverInfo)
         val info = body.userInfo
         check(info?.auth == 1) { "Authentication failed" }
@@ -333,7 +338,7 @@ class XtreamClient @Inject constructor(
 
     /** Account status (expiry/connections) for the settings row. Same endpoint as [verify]. */
     override suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo> = call {
-        val body = apiFor(acc).getAccount(playerApi(acc)).requireBody()
+        val body = loginBody(acc)
         rememberClockPair(acc.id, body.serverInfo)
         val info = body.userInfo
         XtreamAccountInfo(
@@ -374,9 +379,7 @@ class XtreamClient @Inject constructor(
         if (acc.id in measuredClockOffsets) return null   // attempted, junk
         clockFetchGate.withLock {
             if (acc.id in measuredClockOffsets) return measuredClockOffsets[acc.id]
-            val serverInfo = runCatching {
-                apiFor(acc).getAccount(playerApi(acc)).requireBody().serverInfo
-            }.getOrNull()
+            val serverInfo = runCatching { loginBody(acc).serverInfo }.getOrNull()
             rememberClockPair(acc.id, serverInfo)
             return measuredClockOffsets[acc.id]
         }
@@ -392,7 +395,8 @@ class XtreamClient @Inject constructor(
         categories(acc, "get_series_categories")
 
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = call {
-        apiFor(acc).getLiveStreams(playerApi(acc, "get_live_streams", categoryId)).requireBody().mapNotNull { dto ->
+        // Fails over (Step 0.3); the stream URLs are built on the server that served THIS list.
+        panel(acc, { api, a -> api.getLiveStreams(playerApi(a, "get_live_streams", categoryId)) }) { a, body -> body.mapNotNull { dto ->
             val id = dto.streamId ?: return@mapNotNull null
             XtreamChannel(
                 streamId = id,
@@ -402,13 +406,13 @@ class XtreamClient @Inject constructor(
                 categoryId = dto.categoryId,
                 hasArchive = (dto.tvArchive ?: 0) > 0,
                 catchUpDays = (dto.tvArchiveDuration ?: 0).coerceAtLeast(0),
-                streamUrl = streamUrl(acc, "live", id, "ts")
+                streamUrl = streamUrl(a, "live", id, "ts")
             )
-        }
+        } }
     }
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = call {
-        apiFor(acc).getVodStreams(playerApi(acc, "get_vod_streams", categoryId)).requireBody().mapNotNull { dto ->
+        panel(acc, { api, a -> api.getVodStreams(playerApi(a, "get_vod_streams", categoryId)) }) { a, body -> body.mapNotNull { dto ->
             val id = dto.streamId ?: return@mapNotNull null
             XtreamMovie(
                 streamId = id,
@@ -416,22 +420,22 @@ class XtreamClient @Inject constructor(
                 poster = dto.streamIcon?.takeIf { it.isNotBlank() },
                 categoryId = dto.categoryId,
                 rating = dto.rating,
-                streamUrl = streamUrl(acc, "movie", id, dto.containerExtension?.takeIf { it.isNotBlank() } ?: "mp4"),
+                streamUrl = streamUrl(a, "movie", id, dto.containerExtension?.takeIf { it.isNotBlank() } ?: "mp4"),
                 tmdb = dto.tmdb?.takeIf { it > 0 },
                 containerExtension = dto.containerExtension?.takeIf { it.isNotBlank() }
             )
-        }
+        } }
     }
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = call {
-        apiFor(acc).getSeries(playerApi(acc, "get_series", categoryId)).requireBody().mapNotNull { dto ->
+        panel(acc, { api, a -> api.getSeries(playerApi(a, "get_series", categoryId)) }) { _, body -> body.mapNotNull { dto ->
             val id = dto.seriesId ?: return@mapNotNull null
             XtreamSeriesItem(
                 id, dto.name.orEmpty(), dto.cover?.takeIf { it.isNotBlank() }, dto.categoryId, dto.plot, dto.rating,
                 tmdb = dto.tmdb?.takeIf { it > 0 },
                 year = (dto.releaseDate ?: dto.releaseDateAlt)?.trim()?.take(4)?.toIntOrNull()
             )
-        }
+        } }
     }
 
     /**
@@ -444,15 +448,16 @@ class XtreamClient @Inject constructor(
      * right after a playlist was added.
      */
     suspend fun vodIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
-        apiFor(acc).getRawCatalog(playerApi(acc, "get_vod_streams")).requireBody().use { body ->
-            XtreamCatalogIndexParser.parseVod(body.source())
+        // A fresh parse per server, so a body that died part-way is safely fetched whole elsewhere.
+        panel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_vod_streams")) }) { _, body ->
+            body.use { XtreamCatalogIndexParser.parseVod(it.source()) }
         }
     }
 
     /** Series half of [vodIndexItems]. */
     suspend fun seriesIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
-        apiFor(acc).getRawCatalog(playerApi(acc, "get_series")).requireBody().use { body ->
-            XtreamCatalogIndexParser.parseSeries(body.source())
+        panel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_series")) }) { _, body ->
+            body.use { XtreamCatalogIndexParser.parseSeries(it.source()) }
         }
     }
 
@@ -462,33 +467,37 @@ class XtreamClient @Inject constructor(
      * list variant) on a truncated body, so a partial catalog can't finalize a sync.
      */
     suspend fun vodIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        apiFor(acc).getRawCatalog(playerApi(acc, "get_vod_streams")).requireBody().use { body ->
-            XtreamCatalogIndexParser.parseVodInto(body.source(), onItem)
+        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_vod_streams")) }) { source ->
+            XtreamCatalogIndexParser.parseVodInto(source, onItem)
         }
     }
 
     /** Series half of [vodIndexItemsInto]. */
     suspend fun seriesIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        apiFor(acc).getRawCatalog(playerApi(acc, "get_series")).requireBody().use { body ->
-            XtreamCatalogIndexParser.parseSeriesInto(body.source(), onItem)
+        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_series")) }) { source ->
+            XtreamCatalogIndexParser.parseSeriesInto(source, onItem)
         }
     }
 
     /** Live half of [vodIndexItemsInto] (P7: the index doubles as the browse catalog). */
     suspend fun liveIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        apiFor(acc).getRawCatalog(playerApi(acc, "get_live_streams")).requireBody().use { body ->
-            XtreamCatalogIndexParser.parseLiveInto(body.source(), onItem)
+        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_live_streams")) }) { source ->
+            XtreamCatalogIndexParser.parseLiveInto(source, onItem)
         }
     }
 
     /** Now + next few programs for a channel (cheap, one call). Full XMLTV grid is the upgrade path. */
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
-        val url = playerApi(acc, "get_short_epg").toHttpUrl().newBuilder()
-            .addQueryParameter("stream_id", streamId.toString())
-            .addQueryParameter("limit", limit.toString())
-            .build().toString()
+        val listings = panel(acc, { api, a ->
+            api.getShortEpg(
+                playerApi(a, "get_short_epg").toHttpUrl().newBuilder()
+                    .addQueryParameter("stream_id", streamId.toString())
+                    .addQueryParameter("limit", limit.toString())
+                    .build().toString()
+            )
+        }) { _, body -> body.listings.orEmpty() }
         correctShortEpgListings(
-            apiFor(acc).getShortEpg(url).requireBody().listings.orEmpty(),
+            listings,
             manualOffsetMs = acc.guideEpgOffsetMs,
         ) { measuredClockOffsetMs(acc) }
     }
@@ -509,27 +518,30 @@ class XtreamClient @Inject constructor(
         catchUpDays: Int,
         sink: (com.nuvio.tv.core.iptv.content.EpgProgramme) -> Unit,
     ): Result<Int> = call {
-        val url = playerApi(acc, "get_simple_data_table").toHttpUrl().newBuilder()
-            .addQueryParameter("stream_id", streamId.toString())
-            .build().toString()
         // The stream parse can't suspend mid-body, so the clock pair is resolved up front when
         // auto-detection could need it (manual unset). Session-memoized — usually already seeded
         // by verify/accountInfo or a liar short-EPG response, so this is normally free.
         val manualOffsetMs = acc.guideEpgOffsetMs
         val clockPairOffsetMs = if (manualOffsetMs == null) measuredClockOffsetMs(acc) else null
-        apiFor(acc).getRawEpgTable(url).requireBody().use { body ->
+        // Fails over (Step 0.3) only until the first body bytes reached the parser — rows already
+        // handed to [sink] must never be spliced with another server's.
+        streamedPanel(acc, { api, a ->
+            api.getRawEpgTable(
+                playerApi(a, "get_simple_data_table").toHttpUrl().newBuilder()
+                    .addQueryParameter("stream_id", streamId.toString())
+                    .build().toString()
+            )
+        }) { source ->
             XtreamSimpleDataTable.parseInto(
-                body.source(), channelId, nowMs, catchUpDays, manualOffsetMs, clockPairOffsetMs, sink,
+                source, channelId, nowMs, catchUpDays, manualOffsetMs, clockPairOffsetMs, sink,
             )
         }
     }
 
     /** Full episode list (across seasons) for a series, each with its built stream URL. */
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail> = call {
-        val url = playerApi(acc, "get_series_info").toHttpUrl().newBuilder()
-            .addQueryParameter("series_id", seriesId.toString())
-            .build().toString()
-        val resp = apiFor(acc).getSeriesInfo(url).requireBody()
+        // Fails over (Step 0.3); episode URLs are built on the server that served the list.
+        val (served, resp) = panel(acc, { api, a -> api.getSeriesInfo(seriesInfoUrl(a, seriesId)) }) { a, body -> a to body }
         val episodes = resp.episodes.orEmpty().flatMap { (seasonKey, list) ->
             list.mapNotNull { e ->
                 val epId = e.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
@@ -541,7 +553,7 @@ class XtreamClient @Inject constructor(
                     title = e.title.orEmpty().ifBlank { "Episode" },
                     plot = e.info?.plot,
                     still = e.info?.movieImage?.takeIf { it.isNotBlank() },
-                    streamUrl = seriesEpisodeUrl(acc, epId, ext)
+                    streamUrl = seriesEpisodeUrl(served, epId, ext)
                 )
             }
         }.sortedWith(compareBy({ it.season }, { it.episodeNum }))
@@ -563,10 +575,7 @@ class XtreamClient @Inject constructor(
 
     /** Fetches a VOD item's TMDB id (for native art/metadata enrichment). null if the panel doesn't provide one. */
     suspend fun vodTmdbId(acc: XtreamAccount, vodId: Int): Result<Int?> = call {
-        val url = playerApi(acc, "get_vod_info").toHttpUrl().newBuilder()
-            .addQueryParameter("vod_id", vodId.toString())
-            .build().toString()
-        apiFor(acc).getVodInfo(url).requireBody().info?.tmdbId?.takeIf { it > 0 }
+        vodInfo(acc, vodId).info?.tmdbId?.takeIf { it > 0 }
     }
 
     /**
@@ -574,31 +583,92 @@ class XtreamClient @Inject constructor(
      * list ships empty stream_icons. null = the panel has no art for it either.
      */
     suspend fun vodArtwork(acc: XtreamAccount, vodId: Int): Result<String?> = call {
-        val url = playerApi(acc, "get_vod_info").toHttpUrl().newBuilder()
-            .addQueryParameter("vod_id", vodId.toString())
-            .build().toString()
-        val info = apiFor(acc).getVodInfo(url).requireBody().info
+        val info = vodInfo(acc, vodId).info
         info?.movieImage?.takeIf { it.isNotBlank() } ?: info?.coverBig?.takeIf { it.isNotBlank() }
     }
 
     /** Series half of [vodArtwork] (get_series_info `info.cover`). */
     suspend fun seriesArtwork(acc: XtreamAccount, seriesId: Int): Result<String?> = call {
-        val url = playerApi(acc, "get_series_info").toHttpUrl().newBuilder()
-            .addQueryParameter("series_id", seriesId.toString())
-            .build().toString()
-        apiFor(acc).getSeriesInfo(url).requireBody().info?.cover?.takeIf { it.isNotBlank() }
+        panel(acc, { api, a -> api.getSeriesInfo(seriesInfoUrl(a, seriesId)) }) { _, body -> body }
+            .info?.cover?.takeIf { it.isNotBlank() }
     }
 
     /** What get_vod_info can confirm about a candidate during TMDB->stream matching. */
     suspend fun vodMatchSignal(acc: XtreamAccount, vodId: Int): Result<XtreamVodSignal> = call {
-        val url = playerApi(acc, "get_vod_info").toHttpUrl().newBuilder()
-            .addQueryParameter("vod_id", vodId.toString())
-            .build().toString()
-        val info = apiFor(acc).getVodInfo(url).requireBody().info
+        val info = vodInfo(acc, vodId).info
         XtreamVodSignal(
             tmdbId = info?.tmdbId?.takeIf { it > 0 },
             year = (info?.releaseDate ?: info?.releaseDateAlt)?.trim()?.take(4)?.toIntOrNull()
         )
+    }
+
+    // --- Step 0.3: fail-over-able panel requests ---------------------------------
+
+    /** The no-action player_api call (the login/account call) — fails over to a backup server. */
+    private suspend fun loginBody(acc: XtreamAccount) =
+        panel(acc, { api, a -> api.getAccount(playerApi(a)) }) { _, body -> body }
+
+    private suspend fun vodInfo(acc: XtreamAccount, vodId: Int) =
+        panel(acc, { api, a ->
+            api.getVodInfo(
+                playerApi(a, "get_vod_info").toHttpUrl().newBuilder()
+                    .addQueryParameter("vod_id", vodId.toString())
+                    .build().toString()
+            )
+        }) { _, body -> body }
+
+    private fun seriesInfoUrl(a: XtreamAccount, seriesId: Int): String =
+        playerApi(a, "get_series_info").toHttpUrl().newBuilder()
+            .addQueryParameter("series_id", seriesId.toString())
+            .build().toString()
+
+    /**
+     * One whole-body fail-over-able panel request (Step 0.3): [fetch] rebuilds the URL for each server
+     * the [PlaylistServerFailover] walk tries (same path on that server), and [map] gets the server
+     * that answered, so URLs built from the body point at it. A body that dies part-way is simply
+     * fetched whole from the next server — nothing has been handed to anyone yet.
+     */
+    private suspend fun <R, T> panel(
+        acc: XtreamAccount,
+        fetch: suspend (XtreamApi, XtreamAccount) -> Response<R>,
+        map: (XtreamAccount, R) -> T,
+    ): T = failover.run(acc, evidence = { it.second }) { a ->
+        val response = fetch(apiFor(a), a)
+        map(a, response.requireBody()) to response.servedFrom()
+    }.first
+
+    /**
+     * [panel] for a body streamed into a caller's sink: fails over only until the first body bytes
+     * reached [parse] — rows already in the sink can't be taken back, so a body that dies part-way
+     * surfaces as the failure it is instead of splicing two servers' rows.
+     */
+    private suspend fun <T> streamedPanel(
+        acc: XtreamAccount,
+        fetch: suspend (XtreamApi, XtreamAccount) -> Response<okhttp3.ResponseBody>,
+        parse: (okio.BufferedSource) -> T,
+    ): T {
+        var delivered = false
+        return failover.run(acc, canRetry = { !delivered }, evidence = { it.second }) { a ->
+            val response = fetch(apiFor(a), a)
+            val parsed = response.requireBody().use { body ->
+                val flagged = object : okio.ForwardingSource(body.source()) {
+                    override fun read(sink: okio.Buffer, byteCount: Long): Long =
+                        super.read(sink, byteCount).also { if (it > 0) delivered = true }
+                }
+                parse(flagged.buffer())
+            }
+            parsed to response.servedFrom()
+        }.first
+    }
+
+    /** Where OkHttp got this answer from (see [ServedFrom]): stale fallback, plain cache hit, or the host. */
+    private fun Response<*>.servedFrom(): ServedFrom {
+        val raw = raw()
+        return when {
+            raw.header(STALE_FALLBACK_HEADER) != null -> ServedFrom.STALE_FALLBACK
+            raw.networkResponse == null && raw.cacheResponse != null -> ServedFrom.CACHE
+            else -> ServedFrom.NETWORK
+        }
     }
 
     // --- URL building --------------------------------------------------------
@@ -620,7 +690,9 @@ class XtreamClient @Inject constructor(
      * VOD container extension isn't known here, so it falls back to "mp4" like [vodMovies].
      */
     fun buildStreamUrl(acc: XtreamAccount, kind: String, id: Int, ext: String = "mp4"): String =
-        streamUrl(acc, kind, id, if (kind == "live") "ts" else ext)
+        // Built on the playlist's ACTIVE server (Step 0.3) and never failing over itself: a playback
+        // failure says nothing about which server should serve the catalog.
+        streamUrl(failover.activeAccount(acc), kind, id, if (kind == "live") "ts" else ext)
 
     /** [IptvClient] stream-URL resolution — Xtream derives it by formula (always succeeds;
      *  [forceFresh] is meaningless for a stable formula URL). */
@@ -650,7 +722,8 @@ class XtreamClient @Inject constructor(
         durationMinutes: Int,
         containerExtension: String? = null,
     ): List<String> = XtreamCatchUp.candidateUrls(
-        baseUrl = acc.baseUrl,
+        // Catch-up never fails over itself — it replays from the playlist's ACTIVE server (Step 0.3).
+        baseUrl = failover.activeAccount(acc).baseUrl,
         username = acc.username,
         password = acc.password,
         streamId = streamId,
@@ -669,9 +742,11 @@ class XtreamClient @Inject constructor(
             .build().toString()
 
     private suspend fun categories(acc: XtreamAccount, action: String): Result<List<XtreamCategory>> = call {
-        apiFor(acc).getCategories(playerApi(acc, action)).requireBody().mapNotNull { dto ->
-            val id = dto.categoryId ?: return@mapNotNull null
-            XtreamCategory(id, dto.categoryName.orEmpty())
+        panel(acc, { api, a -> api.getCategories(playerApi(a, action)) }) { _, body ->
+            body.mapNotNull { dto ->
+                val id = dto.categoryId ?: return@mapNotNull null
+                XtreamCategory(id, dto.categoryName.orEmpty())
+            }
         }
     }
 
@@ -687,6 +762,13 @@ class XtreamClient @Inject constructor(
         return body() ?: error("Empty response")
     }
 }
+
+/**
+ * Response header [com.nuvio.tv.core.di.XtreamCatalogFallbackInterceptor] stamps on a stale cached
+ * copy it served because the panel FAILED — so the failover walk (Step 0.3) can tell "the host is
+ * down, here is last week's list" from a live answer.
+ */
+internal const val STALE_FALLBACK_HEADER = "X-Tuvora-Stale-Fallback"
 
 internal fun XtreamEpgEntryDto.toProgram(offsetMs: Long = 0L): XtreamProgram = XtreamProgram(
     title = decodeXtreamBase64(title),

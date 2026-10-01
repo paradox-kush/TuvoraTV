@@ -31,6 +31,7 @@ class XmltvDerivedSourceTest {
         OkHttpClient(),
         com.nuvio.tv.core.iptv.dns.PlaylistDns(),
         XtreamMatchIndex(app),
+        PlaylistServerFailover.detached(),
     )
 
     private fun acct(

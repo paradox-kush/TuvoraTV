@@ -49,6 +49,8 @@ class M3UClient @Inject constructor(
     private val fileStore: M3UFileStore,
     private val xmltv: XmltvClient,
     private val playlistDns: com.nuvio.tv.core.iptv.dns.PlaylistDns,
+    /** Step 0.3: the playlist download walks the playlist's backup URLs. */
+    private val failover: PlaylistServerFailover,
 ) : IptvClient {
 
     private val ingestLock = Mutex()
@@ -119,18 +121,26 @@ class M3UClient @Inject constructor(
      * default; a per-account User-Agent (stored in acc.username) is applied when set.
      */
     private suspend fun ingestFromUrl(acc: XtreamAccount) {
-        val request = Request.Builder()
-            .url(acc.baseUrl)
-            .apply { acc.username.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) } }
-            .build()
-        // Fetch through the playlist's DoH resolver when it opts into one (shares the ingest pool).
-        playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
-            if (!resp.isSuccessful) throw HttpStatusException(resp.code, "HTTP ${resp.code}")
-            // charStream() decodes the (possibly gunzipped) source incrementally — no full buffer.
-            // checkNotNull: body is nullable on OkHttp 4 (playstore flavor) but not on 5 (full).
-            val reader = checkNotNull(resp.body) { "empty response body" }.charStream().buffered()
-            val writer = db.ingest(acc.id) { w -> parseInto(reader, w) }
-            Log.i(TAG, "ingested M3U (url) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
+        // Step 0.3: the download fails over to the playlist's backup URLs — but only until the first
+        // body bytes reached the parser: rows already chunk-inserted can't be taken back, so a body
+        // that dies part-way surfaces as the failure it is instead of splicing two hosts.
+        var delivered = false
+        failover.run(acc, canRetry = { !delivered }) { a ->
+            val request = Request.Builder()
+                .url(a.baseUrl)
+                .apply { acc.username.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) } }
+                .build()
+            // Fetch through the playlist's DoH resolver when it opts into one (shares the ingest pool).
+            playlistDns.clientFor(http, acc.dnsProvider).newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) throw HttpStatusException(resp.code, "HTTP ${resp.code}")
+                // charStream() decodes the (possibly gunzipped) source incrementally — no full buffer.
+                // checkNotNull: body is nullable on OkHttp 4 (playstore flavor) but not on 5 (full).
+                val reader = FirstReadFlagReader(checkNotNull(resp.body) { "empty response body" }.charStream()) {
+                    delivered = true
+                }.buffered()
+                val writer = db.ingest(acc.id) { w -> parseInto(reader, w) }
+                Log.i(TAG, "ingested M3U (url) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
+            }
         }
     }
 
@@ -296,4 +306,27 @@ private fun IptvContentDb.IngestWriter.addEpisodeFrom(entry: com.nuvio.tv.core.i
     val season = se?.second ?: 1
     val episodeNum = se?.third ?: 0
     addEpisode(entry.group, series, season, episodeNum, entry.name, entry.logo, entry.url, entry.ext)
+}
+
+/**
+ * Step 0.3: a [java.io.Reader] that calls [onFirstRead] the first time real characters come through —
+ * the "has anything reached the parser yet" signal a streamed fail-over-able download needs.
+ */
+internal class FirstReadFlagReader(
+    reader: java.io.Reader,
+    private val onFirstRead: () -> Unit,
+) : java.io.FilterReader(reader) {
+    private var seen = false
+
+    override fun read(): Int = super.read().also { if (it >= 0) noteRead() }
+
+    override fun read(cbuf: CharArray, off: Int, len: Int): Int =
+        super.read(cbuf, off, len).also { if (it > 0) noteRead() }
+
+    private fun noteRead() {
+        if (!seen) {
+            seen = true
+            onFirstRead()
+        }
+    }
 }

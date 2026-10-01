@@ -55,6 +55,7 @@ class XtreamAccountSyncService @Inject constructor(
     private val purge: com.nuvio.tv.core.iptv.IptvAccountPurge,
     private val resolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver,
     private val rekeyer: com.nuvio.tv.core.iptv.PlaylistKeyRekeyer,
+    private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
 ) {
     private val postgrest get() = supabaseProvider.postgrest
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -326,6 +327,8 @@ class XtreamAccountSyncService @Inject constructor(
         val before = runCatching { accountStore.accounts.first() }.getOrDefault(emptyList())
         accountStore.replaceAll(accounts)
         isSyncingFromRemote = false
+        // Step 0.3: a server list changed on another device restarts this device on the main server.
+        serverFailover.onPulled(before, accounts)
         // Playlists removed on another device: the same cache purge as a local delete. Saved user
         // data is untouched — a pull can be transient (see PlaylistRemovalOrigin.SyncPull).
         com.nuvio.tv.core.iptv.PlaylistRemovalCleanup.removedIds(before.map { it.id }, accounts.map { it.id })

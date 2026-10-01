@@ -19,6 +19,8 @@ import javax.inject.Singleton
 @Singleton
 class CatchUpPlaybackCoordinator @Inject constructor(
     private val winners: CatchUpWinnerStore,
+    /** Step 0.3: replays are built on the playlist's ACTIVE server and never fail over themselves. */
+    private val serverFailover: PlaylistServerFailover = PlaylistServerFailover.detached(),
 ) {
     private val walk = CatchUpDialectWalk(winners)
 
@@ -74,7 +76,7 @@ class CatchUpPlaybackCoordinator @Inject constructor(
 
         val request = CatchUpDialectWalk.Request(
             accountId = account.id,
-            baseUrl = account.baseUrl,
+            baseUrl = serverFailover.activeAccount(account).baseUrl,
             username = account.username,
             password = account.password,
             streamId = streamId,
