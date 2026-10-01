@@ -989,9 +989,9 @@ private fun XtreamAddDialog(
         if (!isValidating) when (sourceType) {
             XtreamAccount.SOURCE_XTREAM -> {
                 if (manualMode) {
-                    if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
-                        onSubmitManual(server.trim(), user.trim(), pass.trim(), name.trim().ifEmpty { null }, options())
-                    }
+                    // The ViewModel names the problem (empty fields vs an invalid address) — this
+                    // used to be a silent no-op on any blank field.
+                    onSubmitManual(server.trim(), user.trim(), pass.trim(), name.trim().ifEmpty { null }, options())
                 } else if (url.isNotBlank()) {
                     onSubmitUrl(url.trim(), options())
                 }

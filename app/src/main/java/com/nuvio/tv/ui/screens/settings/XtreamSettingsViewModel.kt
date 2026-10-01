@@ -7,6 +7,8 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.PlaylistEditVerifyPolicy
+import com.nuvio.tv.core.iptv.PlaylistSaveError
+import com.nuvio.tv.core.iptv.PlaylistSaveErrorPolicy
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
 import com.nuvio.tv.core.iptv.XtreamCategory
@@ -232,7 +234,7 @@ class XtreamSettingsViewModel @Inject constructor(
     ) {
         verifyAndSave(
             xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options),
-            "Enter a server URL, username and password",
+            manualFormError(serverUrl, username, password),
             onSuccess
         )
     }
@@ -388,7 +390,8 @@ class XtreamSettingsViewModel @Inject constructor(
                     onSuccess()
                 }
             }.onFailure { e ->
-                _uiState.update { it.copy(error = e.message ?: "Could not reach the panel") }
+                // UX20: a mapped sentence (unreachable vs wrong credentials vs TLS), never e.message.
+                _uiState.update { it.copy(error = PlaylistSaveErrorPolicy.messageFor(e)) }
             }
         }
     }
@@ -411,10 +414,19 @@ class XtreamSettingsViewModel @Inject constructor(
         verifyAndReplace(
             old,
             xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options),
-            "Enter a server URL, username and password",
+            manualFormError(serverUrl, username, password),
             onSuccess
         )
     }
+
+    /**
+     * UX21: the sentence for a manual Xtream form that didn't build an account — empty fields keep
+     * "Enter a server URL…", a filled form with an unparseable address (bad port) says so instead.
+     */
+    private fun manualFormError(serverUrl: String, username: String, password: String): String =
+        PlaylistSaveErrorPolicy.message(
+            PlaylistSaveErrorPolicy.formError(serverUrl, username, password) ?: PlaylistSaveError.INVALID_ADDRESS
+        )
 
     /**
      * Verifies the edited credentials live, then swaps the account in place (keeping its

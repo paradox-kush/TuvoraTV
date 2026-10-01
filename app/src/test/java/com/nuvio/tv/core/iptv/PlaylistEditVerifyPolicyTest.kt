@@ -23,10 +23,12 @@ class PlaylistEditVerifyPolicyTest {
 
     @Test
     fun `a failed provider check on a URL edit still saves - with a warning`() {
-        val outcome = PlaylistEditVerifyPolicy.outcome(Result.failure(RuntimeException("Could not reach the panel")))
+        val outcome = PlaylistEditVerifyPolicy.outcome(Result.failure(java.net.ConnectException("Failed to connect to /10.0.2.2:8999")))
         assertTrue("what the user typed is never discarded", outcome.save)
         assertNotNull("the failure is surfaced, not swallowed", outcome.warning)
-        assertTrue(outcome.warning!!, outcome.warning!!.contains("Could not reach the panel"))
+        // UX11: the reason is the mapped plain sentence, never the raw exception text.
+        assertTrue(outcome.warning!!, outcome.warning!!.contains("Couldn't reach the server \u2014 check the address"))
+        assertFalse(outcome.warning!!, outcome.warning!!.contains("10.0.2.2"))
     }
 
     @Test
