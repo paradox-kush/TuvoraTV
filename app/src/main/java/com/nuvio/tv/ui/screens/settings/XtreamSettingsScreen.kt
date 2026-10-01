@@ -122,7 +122,7 @@ fun XtreamSettingsContent(
             .padding(NuvioTheme.spacing.xl)
     ) {
         Text(
-            text = "IPTV (Xtream Codes)",
+            text = stringResource(R.string.iptv_settings_title),
             style = MaterialTheme.typography.titleLarge,
             color = NuvioTheme.colors.TextPrimary
         )
