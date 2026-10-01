@@ -6,6 +6,9 @@ import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
+import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.streams.AddonSourcePolicy
+import com.nuvio.tv.core.streams.PlaybackAvailability
 import com.nuvio.tv.core.debrid.DebridStreamPresentation
 import com.nuvio.tv.core.debrid.LocalDebridAvailabilityService
 import com.nuvio.tv.core.plugin.PluginManager
@@ -53,7 +56,10 @@ class StreamRepositoryImpl @Inject constructor(
     private val xtreamRegistry: com.nuvio.tv.core.iptv.XtreamItemRegistry,
     private val iptvClientFactory: com.nuvio.tv.core.iptv.IptvClientFactory,
     private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
-    private val xtreamStreamSource: com.nuvio.tv.core.iptv.match.XtreamStreamSource
+    private val xtreamStreamSource: com.nuvio.tv.core.iptv.match.XtreamStreamSource,
+    /** Step 0.3: moves a registered Xtream stream URL onto the playlist's ACTIVE server at play time. */
+    private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover =
+        com.nuvio.tv.core.iptv.PlaylistServerFailover.detached(),
 ) : StreamRepository {
     // When paused, local (installed-plugin) stream search is skipped so an IPTV/direct play
     // does not also fire a redundant addon scrape. Fork-appropriate one-shot gate (checked at
@@ -86,7 +92,14 @@ class StreamRepositoryImpl @Inject constructor(
         videoId: String,
         item: com.nuvio.tv.core.iptv.XtreamResolvedItem
     ): List<AddonStreams> {
-        if (item.streamUrl.isNotBlank()) return item.toAddonStreams()
+        if (item.streamUrl.isNotBlank()) {
+            // Step 0.3: a registered item keeps the URL of the server that served its catalog at the
+            // time; play from the playlist's ACTIVE server now (no-op without backups, M3U, Stalker).
+            val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == item.accountId }
+                ?: return item.toAddonStreams()
+            val rebased = serverFailover.rebaseStreamUrl(account, item.streamUrl)
+            return (if (rebased == item.streamUrl) item else item.copy(streamUrl = rebased)).toAddonStreams()
+        }
         val freshUrl = refreshIptvStreamUrl(videoId) ?: return emptyList()
         return item.copy(streamUrl = freshUrl).toAddonStreams()
     }
@@ -721,9 +734,13 @@ class StreamRepositoryImpl @Inject constructor(
                 is NetworkResult.Success -> {
                     val metaDto = result.data.meta ?: return emptyList()
                     val matchingVideo = metaDto.videos?.firstOrNull { it.id == videoId }
-                    val streams = matchingVideo?.streams
-                        ?.mapNotNull { it.toDomain(addon.displayName, addon.logo) }
-                        ?: emptyList()
+                    val streams = AddonSourcePolicy.embeddedStreamsForBuild(
+                        streams = matchingVideo?.streams
+                            ?.mapNotNull { it.toDomain(addon.displayName, addon.logo) }
+                            ?: emptyList(),
+                        streamSourcesEnabled = AppFeaturePolicy.addonStreamSourcesEnabled,
+                        isIptv = PlaybackAvailability.isIptvId(videoId)
+                    )
                     Log.d(TAG, "Inline streams from meta: addon=${addon.displayName} videoId=$videoId found=${streams.size}")
                     streams
                 }

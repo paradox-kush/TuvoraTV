@@ -81,6 +81,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.player.ExternalPlayerLauncher
 import com.nuvio.tv.core.streams.StreamBadgePlacement
 import com.nuvio.tv.core.streams.StreamBadgeSettings
@@ -973,7 +974,12 @@ private fun EmptyState() {
         Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
 
         Text(
-            text = stringResource(R.string.stream_no_streams_hint),
+            // Store builds never use add-ons as stream sources, so "install more addons" would be a
+            // dead end there; point at IPTV instead.
+            text = stringResource(
+                if (AppFeaturePolicy.addonStreamSourcesEnabled) R.string.stream_no_streams_hint
+                else R.string.stream_no_streams_hint_iptv
+            ),
             style = MaterialTheme.typography.bodyMedium,
             color = NuvioTheme.extendedColors.textSecondary,
             textAlign = TextAlign.Center

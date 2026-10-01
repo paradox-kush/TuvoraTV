@@ -1006,7 +1006,7 @@ private fun SettingsDetailPane(
             )
         }
         SettingsCategory.INTEGRATION -> IntegrationSettingsContent(
-            selectedSection = integrationSection,
+            requestedSection = integrationSection,
             onSelectSection = onSelectIntegrationSection,
             initialFocusRequester = if (allowDetailAutofocus) {
                 contentFocusRequesters[SettingsCategory.INTEGRATION]
@@ -1197,7 +1197,7 @@ private fun AccountSettingsInline(
 
 @Composable
 private fun IntegrationSettingsContent(
-    selectedSection: IntegrationSettingsSection,
+    requestedSection: IntegrationSettingsSection,
     onSelectSection: (IntegrationSettingsSection) -> Unit,
     initialFocusRequester: FocusRequester?,
     hubFocusRequester: FocusRequester,
@@ -1209,6 +1209,14 @@ private fun IntegrationSettingsContent(
     onNavigateToIptvPairing: () -> Unit,
     autoFocusEnabled: Boolean
 ) {
+    // Store builds compile Debrid out: its hub row is not rendered, and a stale Debrid selection
+    // falls back to the hub so no focus requester ever points at the removed row.
+    val debridAvailable = AppFeaturePolicy.debridEnabled
+    val selectedSection = if (!debridAvailable && requestedSection == IntegrationSettingsSection.Debrid) {
+        IntegrationSettingsSection.Hub
+    } else {
+        requestedSection
+    }
     BackHandler(enabled = selectedSection != IntegrationSettingsSection.Hub) {
         onSelectSection(IntegrationSettingsSection.Hub)
     }
@@ -1249,19 +1257,27 @@ private fun IntegrationSettingsContent(
                             state = integrationHubState,
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            item(key = "integration_hub_debrid") {
-                                SettingsActionRow(
-                                    title = stringResource(R.string.debrid_title),
-                                    subtitle = stringResource(R.string.settings_debrid_subtitle),
-                                    onClick = { onSelectSection(IntegrationSettingsSection.Debrid) },
-                                    modifier = Modifier.focusRequester(hubEntryFocusRequester)
-                                )
+                            if (debridAvailable) {
+                                item(key = "integration_hub_debrid") {
+                                    SettingsActionRow(
+                                        title = stringResource(R.string.debrid_title),
+                                        subtitle = stringResource(R.string.settings_debrid_subtitle),
+                                        onClick = { onSelectSection(IntegrationSettingsSection.Debrid) },
+                                        modifier = Modifier.focusRequester(hubEntryFocusRequester)
+                                    )
+                                }
                             }
                             item(key = "integration_hub_tmdb") {
                                 SettingsActionRow(
                                     title = "TMDB",
                                     subtitle = stringResource(R.string.settings_tmdb_subtitle),
-                                    onClick = { onSelectSection(IntegrationSettingsSection.Tmdb) }
+                                    onClick = { onSelectSection(IntegrationSettingsSection.Tmdb) },
+                                    // With Debrid compiled out, TMDB is the first row and owns hub entry focus.
+                                    modifier = if (debridAvailable) {
+                                        Modifier
+                                    } else {
+                                        Modifier.focusRequester(hubEntryFocusRequester)
+                                    }
                                 )
                             }
                             item(key = "integration_hub_mdblist") {

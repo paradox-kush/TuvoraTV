@@ -40,6 +40,7 @@ class XtreamClientTest {
             okhttp3.OkHttpClient(),
             Moshi.Builder().add(FlexIntAdapter).add(KotlinJsonAdapterFactory()).build(),
             com.nuvio.tv.core.iptv.dns.PlaylistDns(),
+            PlaylistServerFailover.detached(),
         ).liveChannels(acc).getOrThrow()
 
         // request URL: encoded creds, player_api.php, correct action

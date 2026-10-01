@@ -63,6 +63,9 @@ class IptvAccountPurgeTest {
     private val refreshStore = IptvRefreshStore(context)
     private val winners = CatchUpWinnerStore(CatchUpWinnerPrefs(context))
     private val fileStore = M3UFileStore(context)
+    // Step 0.3: the real SharedPreferences-backed failover store, so the purge is proven on disk.
+    private val failoverStore = PrefsServerFailoverStateStore(context)
+    private val serverFailover = PlaylistServerFailover(failoverStore, clock = { 1_000L }, profileId = { PROFILE })
 
     private val doomed = "http://doomed.example.com|u"
     private val keeper = "http://keeper.example.com|u"
@@ -91,6 +94,7 @@ class IptvAccountPurgeTest {
         liveStore = liveStore,
         libraryPreferences = library,
         profileManager = profileManager,
+        serverFailover = serverFailover,
         watchState = com.nuvio.tv.core.sync.WatchStatePrefixMover(
             authManager = mockk(relaxed = true), // not a full account: local drops only
             mutationStore = mockk(relaxed = true),
@@ -121,6 +125,8 @@ class IptvAccountPurgeTest {
         // Personalization overlay (user data).
         overlayDb.setChannel(PROFILE, "chan:$id", id, ChannelOverlay(hidden = true), 1L)
         overlayDb.setCategory(PROFILE, id, "live", "cat:$id", CategoryOverlay(hidden = true), 1L)
+        // Step 0.3: this device is on the playlist's backup server (device-local cache).
+        failoverStore.write(PROFILE, id, ServerFailoverState(activeIndex = 1, mainRetryAfterMs = 99_000L))
     }
 
     private fun overlayHas(id: String): Boolean {
@@ -149,6 +155,7 @@ class IptvAccountPurgeTest {
         val w = freshWinners().also { it.useAccountPreference(id, false) }
         assertNull("catch-up winner purged", w.recall(id))
         assertNull("learned live engine purged", LiveEngineMemory.preferredEngine("${XtreamItemRegistry.accountPrefix(id)}live:1", LiveEngineMemory.Lane.LIVE))
+        assertEquals("server failover state purged (on disk)", ServerFailoverState(), PrefsServerFailoverStateStore(context).read(PROFILE, id))
     }
 
     private suspend fun assertCachesIntact(id: String) {
@@ -162,6 +169,8 @@ class IptvAccountPurgeTest {
         assertNotNull("survivor keeps its catch-up winner", w.recall(id))
         assertEquals("survivor keeps its learned live engine", LiveRecoveryCoordinator.Engine.MPV,
             LiveEngineMemory.preferredEngine("${XtreamItemRegistry.accountPrefix(id)}live:1", LiveEngineMemory.Lane.LIVE))
+        assertEquals("survivor keeps its server failover state", ServerFailoverState(1, 99_000L),
+            PrefsServerFailoverStateStore(context).read(PROFILE, id))
     }
 
     @Test

@@ -1717,6 +1717,7 @@
     <string name="stream_retry">Retry</string>
     <string name="stream_no_streams">No streams found</string>
     <string name="stream_no_streams_hint">Try installing more addons to find streams</string>
+    <string name="stream_no_streams_hint_iptv">Add your IPTV playlist in Settings to play titles from your provider</string>
     <string name="stream_finding_source">Finding stream source</string>
     <string name="debrid_resolving_stream">Resolving debrid stream</string>
     <string name="debrid_stale_stream">This Debrid result expired. Refreshing streams.</string>
@@ -3394,4 +3395,29 @@
     <string name="iptv_guide_hidden_notice_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → your playlist → Hidden channels &amp; groups.</string>
     <string name="iptv_guide_hidden_undo">Undo</string>
     <!-- /wave2 t4 -->
+    <!-- Step 0.3: backup servers (Add/Edit playlist form + the playlist row). -->
+    <string name="iptv_backup_servers_title">Backup servers</string>
+    <string name="iptv_backup_servers_helper">Used automatically if the main server doesn\'t respond.</string>
+    <string name="iptv_backup_server_row">Backup server %1$d</string>
+    <string name="iptv_backup_server_not_set">Not set — press OK to enter an address</string>
+    <string name="iptv_backup_server_add">Add backup server</string>
+    <string name="iptv_backup_server_add_subtitle">Another address for the same playlist (up to %1$d)</string>
+    <string name="iptv_backup_server_address">Server address</string>
+    <string name="iptv_backup_server_hint_base">http://other-host:port</string>
+    <string name="iptv_backup_server_hint_m3u">http://other-host/playlist.m3u</string>
+    <string name="iptv_backup_server_move_up">Move up</string>
+    <string name="iptv_backup_server_move_up_subtitle">Try this server earlier</string>
+    <string name="iptv_backup_server_move_down">Move down</string>
+    <string name="iptv_backup_server_move_down_subtitle">Try this server later</string>
+    <string name="iptv_backup_server_remove">Remove backup server</string>
+    <string name="iptv_backup_server_remove_confirm_title">Remove backup server %1$d?</string>
+    <string name="iptv_backup_server_remove_confirm_subtitle">%1$s won\'t be tried if the main server stops responding.</string>
+    <string name="iptv_backup_server_done">Done</string>
+    <string name="iptv_backup_server_problem_invalid">Not a valid address</string>
+    <string name="iptv_backup_server_problem_not_http">Only http:// and https:// addresses work</string>
+    <string name="iptv_backup_server_problem_same_as_main">Same as the main server</string>
+    <string name="iptv_backup_server_problem_duplicate">Already in the list</string>
+    <string name="iptv_backup_server_problem_too_many">At most %1$d backup servers</string>
+    <string name="iptv_using_backup_server">Using backup server %1$d</string>
+    <string name="iptv_using_backup_server_host">Using backup server %1$d (%2$s)</string>
 </resources>

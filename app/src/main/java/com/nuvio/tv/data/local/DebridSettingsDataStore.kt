@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.gson.Gson
+import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.debrid.DebridProviders
 import com.nuvio.tv.core.debrid.DebridStreamFormatterDefaults
 import com.nuvio.tv.core.profile.ProfileManager
@@ -76,6 +77,7 @@ class DebridSettingsDataStore @Inject constructor(
                 )
             val streamSortMode = legacyModeForSortCriteria(streamPreferences.sortCriteria)
             DebridSettings(
+                featureAvailable = AppFeaturePolicy.debridEnabled,
                 enabled = prefs[enabledKey] ?: false,
                 cloudLibraryEnabled = prefs[cloudLibraryEnabledKey] ?: true,
                 torboxApiKey = prefs[torboxApiKeyKey] ?: "",

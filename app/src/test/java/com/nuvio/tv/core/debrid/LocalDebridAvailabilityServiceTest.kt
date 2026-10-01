@@ -7,6 +7,7 @@ import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.StreamBehaviorHints
 import com.nuvio.tv.domain.model.StreamDebridCacheState
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -66,12 +67,31 @@ class LocalDebridAvailabilityServiceTest {
         assertEquals(DebridProviders.TORBOX_ID, status?.providerId)
     }
 
+    @Test
+    fun `store build with a synced key never marks or checks streams`() = runTest {
+        val localDebridService = mockk<LocalDebridService>(relaxed = true)
+        val service = service(localDebridService, featureAvailable = false)
+        val groups = listOf(group(listOf(stream(infoHash = "ABC123"))))
+
+        val marked = service.markChecking(groups)
+        val annotated = service.annotateCachedAvailability(groups)
+        val single = service.isCached("abc123")
+
+        assertEquals(groups, marked)
+        assertEquals(groups, annotated)
+        assertNull(single)
+        coVerify(exactly = 0) { localDebridService.checkCached(any(), any()) }
+        coVerify(exactly = 0) { localDebridService.isCached(any(), any()) }
+    }
+
     private fun service(
-        localDebridService: LocalDebridService = mockk(relaxed = true)
+        localDebridService: LocalDebridService = mockk(relaxed = true),
+        featureAvailable: Boolean = true
     ): LocalDebridAvailabilityService {
         val dataStore = mockk<DebridSettingsDataStore>()
         every { dataStore.settings } returns flowOf(
             DebridSettings(
+                featureAvailable = featureAvailable,
                 enabled = true,
                 torboxApiKey = "tb_token"
             )

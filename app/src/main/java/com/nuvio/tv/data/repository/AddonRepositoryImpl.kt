@@ -7,6 +7,8 @@ import com.google.gson.reflect.TypeToken
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
 import com.nuvio.tv.data.local.AddonPreferences
+import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.streams.AddonSourcePolicy
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
@@ -201,7 +203,13 @@ class AddonRepositoryImpl(
             }
             val json = prefs.getString(MANIFEST_CACHE_KEY, null) ?: return@withContext
             val type = object : TypeToken<Map<String, Addon>>() {}.type
-            val cached: Map<String, Addon> = gson.fromJson(json, type) ?: return@withContext
+            val cached: Map<String, Addon> = gson.fromJson<Map<String, Addon>>(json, type)
+                ?.mapValues { (_, addon) ->
+                    // A manifest persisted before the store gate (or by an older build) may still carry
+                    // a stream resource; the disk cache is a parse point too.
+                    AddonSourcePolicy.manifestForBuild(addon, AppFeaturePolicy.addonStreamSourcesEnabled)
+                }
+                ?: return@withContext
             synchronized(manifestCacheLock) {
                 manifestCache.putAll(cached)
             }
@@ -305,7 +313,10 @@ class AddonRepositoryImpl(
 
         return when (val result = safeApiCall(context) { api.getManifest(manifestUrl) }) {
             is NetworkResult.Success -> {
-                val addon = result.data.toDomain(cleanBaseUrl)
+                val addon = AddonSourcePolicy.manifestForBuild(
+                    result.data.toDomain(cleanBaseUrl),
+                    AppFeaturePolicy.addonStreamSourcesEnabled
+                )
                 if (putCachedManifestIfChanged(cleanBaseUrl, addon)) {
                     Log.d(TAG, "Updated addon manifest cache url=$cleanBaseUrl version=${addon.version} configVersion=${addon.configVersion}")
                 }

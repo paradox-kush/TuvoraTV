@@ -110,6 +110,8 @@ fun XtreamSettingsContent(
     val indexProgress by viewModel.indexProgress.collectAsStateWithLifecycle()
     val epgRegions by viewModel.epgRegions.collectAsStateWithLifecycle()
     val selectedEpgRegions by viewModel.selectedEpgRegions.collectAsStateWithLifecycle()
+    // Step 0.3: playlists currently served by a backup server ("Using backup server N").
+    val activeServers by viewModel.activeServers.collectAsStateWithLifecycle()
     var showRegionPicker by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
@@ -205,7 +207,9 @@ fun XtreamSettingsContent(
             SettingsActionRow(
                 title = account.name,
                 subtitle = listOfNotNull(
-                    account.baseUrl,
+                    // Step 0.3: say which server is actually answering when it isn't the main one.
+                    activeServers[account.id]?.let { stringResource(R.string.iptv_using_backup_server, it) }
+                        ?: account.baseUrl,
                     // B60: an edit saved although the provider check failed says so on its row.
                     uiState.saveWarnings[account.id],
                     com.nuvio.tv.core.iptv.match.indexingStatusLine(
@@ -336,7 +340,15 @@ fun XtreamSettingsContent(
             subtitle = when {
                 needsReimport -> "Imported file not on this device — re-import to browse"
                 account.fileName != null -> account.fileName
-                else -> account.baseUrl
+                else -> listOfNotNull(
+                    account.baseUrl,
+                    // Step 0.3: the playlist details name the backup that is actually answering.
+                    activeServers[account.id]?.let { n ->
+                        account.backupUrls?.getOrNull(n - 1)
+                            ?.let { host -> stringResource(R.string.iptv_using_backup_server_host, n, host) }
+                            ?: stringResource(R.string.iptv_using_backup_server, n)
+                    },
+                ).joinToString("\n")
             },
             // Up to eight rows for an Xtream playlist: past the dialog height they were clipped and
             // the last ones (Disable, Remove) D-pad-unreachable. Scrolling follows focus.
@@ -1017,6 +1029,19 @@ private fun XtreamAddDialog(
     var deviceId by remember { mutableStateOf(initial?.deviceId ?: "") }
     var sendDeviceId by remember { mutableStateOf(initial?.sendDeviceId ?: true) }
 
+    // Step 0.3: backup server rows as typed, priority order (validated live; hidden for M3U files).
+    var backupRows by remember { mutableStateOf(initial?.backupUrls.orEmpty()) }
+    // The row open in the editor (index into backupRows), and whether it was just added.
+    var editingBackup by remember { mutableStateOf<Int?>(null) }
+    var editingBackupIsNew by remember { mutableStateOf(false) }
+    val showsBackups = com.nuvio.tv.core.iptv.BackupServerValidation.supportsBackups(sourceType)
+    val backupMain = when (sourceType) {
+        XtreamAccount.SOURCE_URL -> m3uUrl
+        XtreamAccount.SOURCE_STALKER -> portalUrl
+        else -> if (manualMode) server else parseXtreamAccount(url)?.baseUrl ?: url
+    }
+    val backupCheck = com.nuvio.tv.core.iptv.BackupServerValidation.validate(sourceType, backupMain, backupRows)
+
     // Shared options (all source types).
     var epgUrl by remember { mutableStateOf(initial?.epgUrl ?: "") }
     var dnsProvider by remember { mutableStateOf(initial?.dnsProvider ?: XtreamAccount.DNS_SYSTEM) }
@@ -1042,7 +1067,9 @@ private fun XtreamAddDialog(
             dnsProvider = dnsProvider,
             autoRefreshHours = autoRefreshHours,
             // Only the Xtream form exposes this field; blank (every other source) => no override.
-            userAgent = xtreamUserAgent.trim().ifEmpty { null }
+            userAgent = xtreamUserAgent.trim().ifEmpty { null },
+            // Step 0.3: null for an M3U file (no backups — an edit keeps whatever it has).
+            backupUrls = if (showsBackups) backupRows else null,
         )
     }
     // The status line ("Verifying…" / the save error) sits under the Save button at the foot of a
@@ -1052,7 +1079,7 @@ private fun XtreamAddDialog(
     var submitTick by remember { mutableIntStateOf(0) }
     val submit = {
         if (!isValidating) submitTick++
-        if (!isValidating) when (sourceType) {
+        if (!isValidating && (!showsBackups || backupCheck.ok)) when (sourceType) {
             XtreamAccount.SOURCE_XTREAM -> {
                 if (manualMode) {
                     // The ViewModel names the problem (empty fields vs an invalid address) — this
@@ -1184,6 +1211,23 @@ private fun XtreamAddDialog(
                 )
             }
 
+            // --- Backup servers (Step 0.3; Xtream / M3U link / Stalker) --------
+            if (showsBackups) {
+                BackupServersSection(
+                    rows = backupRows,
+                    problems = backupCheck.problems.associate { it.index to it.problem },
+                    onEdit = { index ->
+                        editingBackupIsNew = false
+                        editingBackup = index
+                    },
+                    onAdd = {
+                        backupRows = com.nuvio.tv.core.iptv.BackupServerListEdits.add(backupRows)
+                        editingBackupIsNew = true
+                        editingBackup = backupRows.lastIndex
+                    },
+                )
+            }
+
             // --- EPG URL (shared) --------------------------------------------
             FormSectionLabel("EPG URL (optional)")
             XtreamField(epgUrl, { epgUrl = it }, "http://host:port/xmltv.php?username=…&password=…", onSubmit = submit, label = "EPG URL")
@@ -1218,7 +1262,7 @@ private fun XtreamAddDialog(
                     filePicked = pickedFileUri != null,
                     portalUrl = portalUrl,
                     macAddress = mac,
-                ),
+                ) && (!showsBackups || backupCheck.ok),
                 onClick = submit
             )
 
@@ -1244,6 +1288,44 @@ private fun XtreamAddDialog(
         }
     }
 
+    editingBackup?.let { index ->
+        if (index !in backupRows.indices) {
+            editingBackup = null
+        } else {
+            BackupServerEditorDialog(
+                index = index,
+                count = backupRows.size,
+                value = backupRows[index],
+                problem = backupCheck.problems.firstOrNull { it.index == index }?.problem,
+                hint = stringResource(
+                    if (sourceType == XtreamAccount.SOURCE_URL) R.string.iptv_backup_server_hint_m3u
+                    else R.string.iptv_backup_server_hint_base
+                ),
+                startTyping = editingBackupIsNew,
+                onValueChange = { backupRows = com.nuvio.tv.core.iptv.BackupServerListEdits.update(backupRows, index, it) },
+                onMoveUp = {
+                    backupRows = com.nuvio.tv.core.iptv.BackupServerListEdits.moveUp(backupRows, index)
+                    editingBackup = index - 1
+                },
+                onMoveDown = {
+                    backupRows = com.nuvio.tv.core.iptv.BackupServerListEdits.moveDown(backupRows, index)
+                    editingBackup = index + 1
+                },
+                onRemove = {
+                    backupRows = com.nuvio.tv.core.iptv.BackupServerListEdits.remove(backupRows, index)
+                    editingBackup = null
+                },
+                onDismiss = {
+                    // A row left blank is no server at all — drop it instead of keeping a "Not set" row.
+                    if (backupRows.getOrNull(index)?.isBlank() == true) {
+                        backupRows = com.nuvio.tv.core.iptv.BackupServerListEdits.remove(backupRows, index)
+                    }
+                    editingBackup = null
+                },
+            )
+        }
+    }
+
     if (showRefreshPicker) {
         SettingsSingleChoiceDialog(
             title = "Auto-Refresh",
@@ -1259,6 +1341,190 @@ private fun XtreamAddDialog(
 
 /** Max height for the scrollable form body inside the dialog (dialog itself is height-capped too). */
 private val PlaylistFormMaxHeight = 460.dp
+
+/** Step 0.3: the inline message for a backup row with [problem] (string resources). */
+@Composable
+private fun backupProblemText(problem: com.nuvio.tv.core.iptv.BackupServerValidation.Problem): String = when (problem) {
+    com.nuvio.tv.core.iptv.BackupServerValidation.Problem.INVALID_URL -> stringResource(R.string.iptv_backup_server_problem_invalid)
+    com.nuvio.tv.core.iptv.BackupServerValidation.Problem.NOT_HTTP -> stringResource(R.string.iptv_backup_server_problem_not_http)
+    com.nuvio.tv.core.iptv.BackupServerValidation.Problem.DUPLICATE_OF_MAIN -> stringResource(R.string.iptv_backup_server_problem_same_as_main)
+    com.nuvio.tv.core.iptv.BackupServerValidation.Problem.DUPLICATE -> stringResource(R.string.iptv_backup_server_problem_duplicate)
+    com.nuvio.tv.core.iptv.BackupServerValidation.Problem.TOO_MANY ->
+        stringResource(R.string.iptv_backup_server_problem_too_many, com.nuvio.tv.core.iptv.BackupServerValidation.MAX_BACKUPS)
+}
+
+/**
+ * Step 0.3 — "Backup servers": an ordered list of alternate addresses (priority = order). Each row
+ * is a [SettingsActionRow] (the settings focus vocabulary) that opens [BackupServerEditorDialog] on
+ * OK — no text field lives in the form itself, so D-pad travel through the section never pops the
+ * keyboard (UX76). A row's validation problem shows as its value, in the error colour.
+ */
+@Composable
+private fun BackupServersSection(
+    rows: List<String>,
+    problems: Map<Int, com.nuvio.tv.core.iptv.BackupServerValidation.Problem>,
+    onEdit: (Int) -> Unit,
+    onAdd: () -> Unit,
+) {
+    FormSectionLabel(stringResource(R.string.iptv_backup_servers_title))
+    FormHelperText(stringResource(R.string.iptv_backup_servers_helper))
+    rows.forEachIndexed { index, value ->
+        SettingsActionRow(
+            title = stringResource(R.string.iptv_backup_server_row, index + 1),
+            subtitle = value.ifBlank { stringResource(R.string.iptv_backup_server_not_set) },
+            value = problems[index]?.let { backupProblemText(it) },
+            valueColor = NuvioTheme.colors.Error,
+            onClick = { onEdit(index) },
+        )
+    }
+    if (com.nuvio.tv.core.iptv.BackupServerListEdits.canAdd(rows)) {
+        SettingsActionRow(
+            title = stringResource(R.string.iptv_backup_server_add),
+            subtitle = stringResource(R.string.iptv_backup_server_add_subtitle, com.nuvio.tv.core.iptv.BackupServerValidation.MAX_BACKUPS),
+            leadingIcon = Icons.Default.Add,
+            onClick = onAdd,
+        )
+    }
+}
+
+/**
+ * Step 0.3 — edit one backup row: its address, move up / down (priority), remove (confirmed). The address is a
+ * row until OK is pressed on it — only then does the text field (and the keyboard) appear, so moving
+ * or removing a server never opens the keyboard. A freshly added row starts in the field: the user
+ * pressed OK on "Add backup server" to type one.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun BackupServerEditorDialog(
+    index: Int,
+    count: Int,
+    value: String,
+    problem: com.nuvio.tv.core.iptv.BackupServerValidation.Problem?,
+    hint: String,
+    startTyping: Boolean,
+    onValueChange: (String) -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var typing by remember(index) { mutableStateOf(startTyping) }
+    var confirmingRemove by remember(index) { mutableStateOf(false) }
+    val fieldFocus = remember { FocusRequester() }
+    val addressRowFocus = remember { FocusRequester() }
+    val addressLabel = stringResource(R.string.iptv_backup_server_address)
+    if (confirmingRemove) {
+        BackupServerRemoveConfirmDialog(
+            index = index,
+            value = value,
+            onConfirm = {
+                confirmingRemove = false
+                onRemove()
+            },
+            onCancel = { confirmingRemove = false },
+        )
+        return
+    }
+    LaunchedEffect(typing, index) {
+        if (typing) fieldFocus.requestFocusAfterFrames() else addressRowFocus.requestFocusAfterFrames()
+    }
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = stringResource(R.string.iptv_backup_server_row, index + 1),
+        subtitle = stringResource(R.string.iptv_backup_servers_helper),
+        width = 560.dp,
+        suppressFirstKeyUp = false,
+        scrollable = true,
+    ) {
+        if (typing) {
+            XtreamField(
+                value = value,
+                onValueChange = onValueChange,
+                placeholder = "$addressLabel  ($hint)",
+                focusRequester = fieldFocus,
+                onSubmit = { typing = false },
+            )
+        } else {
+            SettingsActionRow(
+                title = addressLabel,
+                subtitle = value.ifBlank { stringResource(R.string.iptv_backup_server_not_set) },
+                onClick = { typing = true },
+                modifier = Modifier.focusRequester(addressRowFocus),
+            )
+        }
+        problem?.let {
+            Text(
+                text = backupProblemText(it),
+                style = MaterialTheme.typography.bodySmall,
+                color = NuvioTheme.colors.Error,
+            )
+        }
+        // UX100: only the moves that can act (no disabled rows for focus to skip over), and Remove
+        // confirms before it drops the row.
+        com.nuvio.tv.core.iptv.BackupServerListEdits.rowActions(index, count).forEach { action ->
+            when (action) {
+                com.nuvio.tv.core.iptv.BackupServerListEdits.RowAction.MOVE_UP -> SettingsActionRow(
+                    title = stringResource(R.string.iptv_backup_server_move_up),
+                    subtitle = stringResource(R.string.iptv_backup_server_move_up_subtitle),
+                    onClick = onMoveUp,
+                )
+                com.nuvio.tv.core.iptv.BackupServerListEdits.RowAction.MOVE_DOWN -> SettingsActionRow(
+                    title = stringResource(R.string.iptv_backup_server_move_down),
+                    subtitle = stringResource(R.string.iptv_backup_server_move_down_subtitle),
+                    onClick = onMoveDown,
+                )
+                com.nuvio.tv.core.iptv.BackupServerListEdits.RowAction.REMOVE -> SettingsActionRow(
+                    title = stringResource(R.string.iptv_backup_server_remove),
+                    subtitle = null,
+                    onClick = { if (action.needsConfirmation) confirmingRemove = true else onRemove() },
+                )
+            }
+        }
+        Button(
+            onClick = onDismiss,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(stringResource(R.string.iptv_backup_server_done)) }
+    }
+}
+
+/**
+ * UX100 — "Remove backup server N?", the same shape as the Remove-playlist confirm: a danger-tinted
+ * Remove button over Cancel, with focus starting on Cancel so a stray OK can't delete.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun BackupServerRemoveConfirmDialog(
+    index: Int,
+    value: String,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val cancelFocus = remember { FocusRequester() }
+    LaunchedEffect(index) { cancelFocus.requestFocusAfterFrames() }
+    NuvioDialog(
+        onDismiss = onCancel,
+        title = stringResource(R.string.iptv_backup_server_remove_confirm_title, index + 1),
+        subtitle = value.ifBlank { null }?.let { stringResource(R.string.iptv_backup_server_remove_confirm_subtitle, it) },
+        width = 460.dp,
+    ) {
+        Button(
+            onClick = onConfirm,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.colors(
+                containerColor = Color(0xFF4A2323),
+                contentColor = NuvioTheme.colors.TextPrimary
+            )
+        ) {
+            Text(stringResource(R.string.iptv_backup_server_remove))
+        }
+        Button(
+            onClick = onCancel,
+            modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus)
+        ) {
+            Text(stringResource(R.string.action_cancel))
+        }
+    }
+}
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable

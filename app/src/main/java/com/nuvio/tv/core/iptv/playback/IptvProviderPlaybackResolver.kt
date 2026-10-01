@@ -75,6 +75,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
     private val accountLookups: ProviderAccountLookupFactory,
     private val links: ProviderLinkSource,
     private val winnerMemory: CatchUpDialectWalk.WinnerMemory,
+    private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
 ) : ProviderPlaybackResolverFactory {
 
     @Inject
@@ -82,6 +83,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
         accountStore: XtreamAccountStore,
         clientFactory: IptvClientFactory,
         winnerStore: CatchUpWinnerStore,
+        serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
     ) : this(
         accountLookups = ProviderAccountLookupFactory { profileId ->
             val persistedProfileId = profileId.value.toIntOrNull()?.takeIf { it > 0 }
@@ -104,6 +106,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
             }
         },
         winnerMemory = winnerStore,
+        activeServer = serverFailover::activeAccount,
     )
 
     override fun create(profileId: PlaybackProfileId): ProviderPlaybackResolver =
@@ -111,6 +114,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
             accounts = accountLookups.create(profileId),
             links = links,
             winnerMemory = winnerMemory,
+            activeServer = activeServer,
         )
 }
 
@@ -125,6 +129,8 @@ class IptvProviderPlaybackResolver internal constructor(
     private val accounts: ProviderAccountLookup,
     private val links: ProviderLinkSource,
     winnerMemory: CatchUpDialectWalk.WinnerMemory,
+    /** Step 0.3: the playlist on its ACTIVE server — catch-up replays from there, never failing over. */
+    private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
 ) : ProviderPlaybackResolver {
 
     private val mapper = PlaybackRequestMapper()
@@ -193,7 +199,7 @@ class IptvProviderPlaybackResolver internal constructor(
         val window = selection.catchUpWindow ?: return unavailable(deterministic = true)
         val request = CatchUpDialectWalk.Request(
             accountId = account.id,
-            baseUrl = account.baseUrl,
+            baseUrl = activeServer(account).baseUrl,
             username = account.username,
             password = account.password,
             streamId = streamId,

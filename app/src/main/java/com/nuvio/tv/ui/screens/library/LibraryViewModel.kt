@@ -767,7 +767,7 @@ class LibraryViewModel @Inject constructor(
             debridSettingsDataStore.settings
                 .map { settings ->
                     CloudLibrarySettingsSnapshot(
-                        enabled = settings.cloudLibraryEnabled,
+                        enabled = settings.cloudLibraryActive,
                         connectionKeys = DebridProviders.configuredServices(settings)
                             .filter { credential -> credential.provider.supports(DebridProviderCapability.CloudLibrary) }
                             .map { credential -> "${credential.provider.id}:${credential.apiKey}" }

@@ -9,6 +9,10 @@ import com.nuvio.tv.core.iptv.PanelHostFastFailIOException
 import com.nuvio.tv.core.iptv.PanelHostGuard
 import com.nuvio.tv.core.iptv.PanelRequestOutcome
 import com.nuvio.tv.core.iptv.classifyPanelThrowable
+import com.nuvio.tv.core.iptv.FailoverFailure
+import com.nuvio.tv.core.iptv.FailoverFailureClassifier
+import com.nuvio.tv.core.iptv.STALE_FALLBACK_HEADER
+import com.nuvio.tv.core.iptv.classifyFailoverThrowable
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.data.remote.api.AniSkipApi
 import com.nuvio.tv.data.remote.api.AnimeSkipApi
@@ -775,7 +779,9 @@ internal class PanelHostGuardInterceptor(
         val response = try {
             chain.proceed(request)
         } catch (t: Throwable) {
-            guard.report(admission, classifyPanelThrowable(t))
+            // A cancelled call (a failover-race loser, a left screen) proves nothing about the host —
+            // whatever the socket close surfaced as (Step 0.3b: losers never touch the breaker).
+            guard.report(admission, if (chain.call().isCanceled()) PanelRequestOutcome.CONNECTION_RESET else classifyPanelThrowable(t))
             throw t
         }
         guard.report(
@@ -788,6 +794,18 @@ internal class PanelHostGuardInterceptor(
 }
 
 internal class XtreamCatalogFallbackInterceptor : okhttp3.Interceptor {
+
+    private fun failsOver(failure: FailoverFailure) = FailoverFailureClassifier.shouldFailOver(failure)
+
+    /**
+     * Step 0.3: a stale copy standing in for a host that is DOWN (a failure the failover walk moves
+     * on from) says so in [STALE_FALLBACK_HEADER], so a playlist with backup servers tries them
+     * before settling for last week's list. A stand-in for an answer every server would repeat
+     * (401/403/456, a reset) stays unmarked — it reads as a plain cache hit and never walks.
+     */
+    private fun Response.markedStale(hostDown: Boolean): Response =
+        if (hostDown) newBuilder().header(STALE_FALLBACK_HEADER, "1").build() else this
+
     override fun intercept(chain: okhttp3.Interceptor.Chain): Response {
         val request = chain.request()
         if (!NetworkModule.isXtreamCatalogUrl(request.url)) return chain.proceed(request)
@@ -802,8 +820,9 @@ internal class XtreamCatalogFallbackInterceptor : okhttp3.Interceptor {
         val networkResponse: Response = try {
             chain.proceed(request)
         } catch (e: java.io.IOException) {
+            if (chain.call().isCanceled()) throw e   // a cancelled loser needs no stand-in (Step 0.3b)
             val cached = chain.proceed(staleRequest)
-            if (cached.isSuccessful) return cached
+            if (cached.isSuccessful) return cached.markedStale(hostDown = failsOver(classifyFailoverThrowable(e)))
             cached.close()
             throw e
         }
@@ -813,7 +832,7 @@ internal class XtreamCatalogFallbackInterceptor : okhttp3.Interceptor {
         networkResponse.close()
         val cached = chain.proceed(staleRequest)
         return if (cached.isSuccessful) {
-            cached
+            cached.markedStale(hostDown = FailoverFailureClassifier.statusFailsOver(networkResponse.code))
         } else {
             cached.close()
             networkResponse.newBuilder()

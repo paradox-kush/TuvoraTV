@@ -23,7 +23,7 @@ class CloudLibraryRepository @Inject constructor(
 
     suspend fun refresh(): CloudLibraryUiState {
         val settings = dataStore.settings.first()
-        if (!settings.cloudLibraryEnabled) {
+        if (!settings.cloudLibraryActive) {
             return CloudLibraryUiState(isLoaded = true, isEnabled = false)
         }
 
@@ -73,7 +73,7 @@ class CloudLibraryRepository @Inject constructor(
     ): CloudLibraryPlaybackResult {
         if (!file.playable) return CloudLibraryPlaybackResult.NotPlayable
         val settings = dataStore.settings.first()
-        if (!settings.cloudLibraryEnabled) {
+        if (!settings.cloudLibraryActive) {
             return CloudLibraryPlaybackResult.Failed(
                 context.getString(R.string.cloud_library_error_disabled)
             )
@@ -93,7 +93,7 @@ class CloudLibraryRepository @Inject constructor(
     suspend fun connectedCloudCredentials(): List<DebridServiceCredential> {
         val settings = dataStore.settings.first()
         return settings
-            .takeIf { it.cloudLibraryEnabled }
+            .takeIf { it.cloudLibraryActive }
             ?.let(DebridProviders::configuredServices)
             .orEmpty()
             .filter { credential -> credential.provider.supports(DebridProviderCapability.CloudLibrary) }

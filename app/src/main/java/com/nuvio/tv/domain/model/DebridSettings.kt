@@ -5,6 +5,12 @@ import com.nuvio.tv.core.debrid.DebridStreamFormatterDefaults
 import com.nuvio.tv.core.debrid.supports
 
 data class DebridSettings(
+    /**
+     * Build capability, not a user preference: false in store flavors
+     * (AppFeaturePolicy.debridEnabled). Gates every debrid capability below while leaving the
+     * saved keys and toggles untouched, so they keep syncing and are never wiped by a store build.
+     */
+    val featureAvailable: Boolean = true,
     val enabled: Boolean = false,
     val cloudLibraryEnabled: Boolean = true,
     val torboxApiKey: String = "",
@@ -38,14 +44,17 @@ data class DebridSettings(
         get() = activeResolverCredential != null
 
     val canResolvePlayableLinks: Boolean
-        get() = enabled && hasResolverProvider
+        get() = featureAvailable && enabled && hasResolverProvider
 
     val hasCloudLibraryProvider: Boolean
         get() = DebridProviders.configuredServices(this)
             .any { credential -> credential.provider.supports(com.nuvio.tv.core.debrid.DebridProviderCapability.CloudLibrary) }
 
+    val cloudLibraryActive: Boolean
+        get() = featureAvailable && cloudLibraryEnabled
+
     val canUseCloudLibrary: Boolean
-        get() = cloudLibraryEnabled && hasCloudLibraryProvider
+        get() = cloudLibraryActive && hasCloudLibraryProvider
 
     fun apiKeyFor(providerId: String?): String {
         return when (DebridProviders.byId(providerId)?.id ?: providerId?.trim()?.lowercase()) {

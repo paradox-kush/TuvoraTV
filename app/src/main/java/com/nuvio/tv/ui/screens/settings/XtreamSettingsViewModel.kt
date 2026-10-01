@@ -36,6 +36,7 @@ import com.nuvio.tv.data.local.XtreamLiveStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
@@ -84,6 +85,7 @@ class XtreamSettingsViewModel @Inject constructor(
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
     private val authManager: com.nuvio.tv.core.auth.AuthManager,
+    private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
 ) : ViewModel() {
 
     /** UX74: whether this TV is signed in — a remove only reaches other devices when it syncs. */
@@ -127,6 +129,14 @@ class XtreamSettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Step 0.3: playlist id -> active backup index, for playlists NOT on their main server (drives the
+     * "Using backup server N" row note). Re-read when the accounts or any failover state change.
+     */
+    val activeServers: StateFlow<Map<String, Int>> =
+        combine(store.accounts, serverFailover.version) { accounts, _ -> serverFailover.activeIndexes(accounts) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
     init {
         viewModelScope.launch {
             store.accounts.collectLatest { accounts ->
@@ -142,7 +152,13 @@ class XtreamSettingsViewModel @Inject constructor(
         val dnsProvider: String = XtreamAccount.DNS_SYSTEM,
         val autoRefreshHours: Int = XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS,
         /** Optional per-playlist stream UA for Xtream/Stalker (M3U keeps its UA in username). */
-        val userAgent: String? = null
+        val userAgent: String? = null,
+        /**
+         * Step 0.3: the form's backup-server rows as typed, in priority order — validated and
+         * normalized by [com.nuvio.tv.core.iptv.BackupServerValidation] when the account is built.
+         * Null = the form did not show the list (an edit then keeps the playlist's current one).
+         */
+        val backupUrls: List<String>? = null,
     )
 
     /** Stalker portal form fields collected by the Add/Edit Playlist dialog. */
@@ -181,7 +197,7 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /** Add a Stalker portal playlist: persist + sync. Content loads live via the portal session on browse. */
     fun addStalker(fields: StalkerFields, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {
-        val account = stalkerAccountFrom(fields, name)?.withOptions(options)
+        val account = stalkerAccountFrom(fields, name)?.withOptions(options)?.withBackups(options)
         if (account == null) {
             _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
             return
@@ -201,7 +217,9 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
             return
         }
-        val account = candidate.asEditOf(old)   // Step 0: an edit never changes the playlist id
+        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        // Step 0.3: an edited server list (portal or backups) starts over on the main portal.
+        serverFailover.onPlaylistEdited(old, account)
         viewModelScope.launch {
             if (persistOrError { store.replace(old.id, account) }) {
                 registry.clear()
@@ -223,10 +241,23 @@ class XtreamSettingsViewModel @Inject constructor(
     private fun XtreamAccount.toOptions(): PlaylistOptions =
         PlaylistOptions(epgUrl = epgUrl, dnsProvider = dnsProvider, autoRefreshHours = autoRefreshHours, userAgent = userAgent)
 
+    /**
+     * Step 0.3: the form's backup rows, validated + normalized against THIS account's source type and
+     * main server (rows with a problem are dropped — the form refuses to save while any has one). A
+     * pasted Xtream panel saved as Xtream therefore reduces its rows to those hosts' base URLs.
+     * No rows shown ([PlaylistOptions.backupUrls] null) keeps the account's current list.
+     */
+    private fun XtreamAccount.withBackups(options: PlaylistOptions): XtreamAccount {
+        val rows = options.backupUrls ?: return this
+        val urls = com.nuvio.tv.core.iptv.BackupServerValidation
+            .validate(sourceType, com.nuvio.tv.core.iptv.PlaylistServerFailover.mainServer(this), rows).urls
+        return copy(backupUrls = urls.takeIf { it.isNotEmpty() })
+    }
+
     /** Parse a pasted portal/M3U URL, verify the credentials live, then persist (with form options). */
     fun addFromUrl(input: String, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {
         verifyAndSave(
-            parseXtreamAccount(input, name)?.withOptions(options),
+            parseXtreamAccount(input, name)?.withOptions(options)?.withBackups(options),
             "Couldn't read a username & password from that URL",
             onSuccess
         )
@@ -242,7 +273,7 @@ class XtreamSettingsViewModel @Inject constructor(
         onSuccess: () -> Unit
     ) {
         verifyAndSave(
-            xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options),
+            xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options)?.withBackups(options),
             manualFormError(serverUrl, username, password),
             onSuccess
         )
@@ -259,7 +290,7 @@ class XtreamSettingsViewModel @Inject constructor(
         // metadata, search index) — at ADD time only: m3uAccountFromUrl itself is untouched, so
         // edit, pairing and sync keep every existing `m3u:…` id. If the panel API refuses the
         // credentials the paste still works as a plain M3U playlist, so fall back to that lane.
-        val panel = xtreamPanelInM3uUrl(playlistUrl, userAgent, name)?.let { p -> p.withOptions(options).copy(userAgent = p.userAgent) }
+        val panel = xtreamPanelInM3uUrl(playlistUrl, userAgent, name)?.let { p -> p.withOptions(options).copy(userAgent = p.userAgent).withBackups(options) }
         if (panel != null) {
             viewModelScope.launch {
                 _uiState.update { it.copy(isValidating = true, error = null) }
@@ -272,12 +303,12 @@ class XtreamSettingsViewModel @Inject constructor(
                         onSuccess()
                     }
                 } else {
-                    saveM3UUrl(m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options), onSuccess)
+                    saveM3UUrl(m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options)?.withBackups(options), onSuccess)
                 }
             }
             return
         }
-        saveM3UUrl(m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options), onSuccess)
+        saveM3UUrl(m3uAccountFromUrl(playlistUrl, userAgent, name)?.withOptions(options)?.withBackups(options), onSuccess)
     }
 
     /** Persist a built M3U URL account and kick off its ingest (see [addM3UUrl]). */
@@ -303,7 +334,9 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
             return
         }
-        val account = candidate.asEditOf(old)   // Step 0: an edit never changes the playlist id
+        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        // Step 0.3: an edited server list (URL or backups) starts over on the main URL.
+        serverFailover.onPlaylistEdited(old, account)
         viewModelScope.launch {
             if (persistOrError { store.replace(old.id, account) }) {
                 registry.clear()
@@ -407,7 +440,7 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /** Re-verify + replace an existing account from a pasted portal/M3U URL (playlist edit). */
     fun editFromUrl(old: XtreamAccount, input: String, options: PlaylistOptions = old.toOptions(), onSuccess: () -> Unit) {
-        verifyAndReplace(old, parseXtreamAccount(input, old.name)?.withOptions(options), "Couldn't read a username & password from that URL", onSuccess)
+        verifyAndReplace(old, parseXtreamAccount(input, old.name)?.withOptions(options), options, "Couldn't read a username & password from that URL", onSuccess)
     }
 
     /** Re-verify + replace an existing account from manually-edited fields (playlist edit). */
@@ -423,6 +456,7 @@ class XtreamSettingsViewModel @Inject constructor(
         verifyAndReplace(
             old,
             xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options),
+            options,
             manualFormError(serverUrl, username, password),
             onSuccess
         )
@@ -446,7 +480,13 @@ class XtreamSettingsViewModel @Inject constructor(
      * channel keys all hang off. Re-deriving it from the new address (the old behaviour) orphaned all
      * of it when a provider moved domains.
      */
-    private fun verifyAndReplace(old: XtreamAccount, candidate: XtreamAccount?, parseError: String, onSuccess: () -> Unit) {
+    private fun verifyAndReplace(
+        old: XtreamAccount,
+        candidate: XtreamAccount?,
+        options: PlaylistOptions,
+        parseError: String,
+        onSuccess: () -> Unit,
+    ) {
         if (candidate == null) {
             _uiState.update { it.copy(error = parseError) }
             return
@@ -454,7 +494,11 @@ class XtreamSettingsViewModel @Inject constructor(
         // Credential/URL edits keep the content selections (toggles, category picks) — those aren't
         // in this form. The shared options (epg/dns/refresh) already ride on `candidate` from the
         // form (withOptions), so DON'T overwrite them from `old`, or an edit couldn't change them.
-        val account = candidate.asEditOf(old)   // Step 0: an edit never changes the playlist id
+        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        // Step 0.3: an edited server list (main or backups) starts over on the main server — the old
+        // active index may now name a different server or none. Before the verify below, which
+        // itself may legitimately land on a backup.
+        serverFailover.onPlaylistEdited(old, account)
         viewModelScope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             // Options-only edit (name/EPG/DNS/refresh) — nothing about how we reach the provider
