@@ -3389,4 +3389,9 @@
     <string name="auth_qr_phone_hint_scan_or_email">Scan the code with your phone, or sign in with email on this TV.</string>
     <string name="auth_qr_phone_hint_scan_only">Scan the code with your phone to sign in.</string>
     <string name="auth_qr_scan_only_instruction">Scan the QR code with your phone\'s camera.</string>
+    <!-- wave2 t4 -->
+    <string name="iptv_guide_hidden_notice">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV → %2$s → Hidden channels &amp; groups.</string>
+    <string name="iptv_guide_hidden_notice_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV → your playlist → Hidden channels &amp; groups.</string>
+    <string name="iptv_guide_hidden_undo">Undo</string>
+    <!-- /wave2 t4 -->
 </resources>
