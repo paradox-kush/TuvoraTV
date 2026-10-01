@@ -26,7 +26,8 @@ class XtreamIptvSearchProvider @Inject constructor(
         )
 
         private fun row(catalogId: String, name: String, rawType: String, hits: List<XtreamSearchIndex.Hit>): IptvSearchRow? =
-            hits.takeIf { it.isNotEmpty() }?.let {
+            // UX44: heading rows never surface as hits, in any row.
+            IptvSearchRowFilter.withoutDividers(hits) { it.name }.takeIf { it.isNotEmpty() }?.let {
                 IptvSearchRow(
                     catalogId = catalogId,
                     name = name,
