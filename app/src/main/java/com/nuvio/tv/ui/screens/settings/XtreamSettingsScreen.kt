@@ -51,9 +51,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
@@ -82,6 +84,7 @@ import com.nuvio.tv.core.iptv.PlaylistFormSubmitPolicy
 import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.screens.account.InputFieldKeys
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 /**
@@ -1224,17 +1227,16 @@ private fun SourceTypeTile(
     Card(
         onClick = onClick,
         modifier = focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier,
+        // UX29 (house TV focus rule): selected = FILLED, focused = RING. Both used to draw the same
+        // hairline ring, so a focused selected tile looked exactly like an unfocused one.
         colors = CardDefaults.colors(
-            containerColor = if (selected) NuvioTheme.colors.FocusRing.copy(alpha = 0.2f) else NuvioTheme.colors.Background,
-            focusedContainerColor = if (selected) NuvioTheme.colors.FocusRing.copy(alpha = 0.2f) else NuvioTheme.colors.Background
+            containerColor = if (selected) NuvioTheme.colors.FocusRing.copy(alpha = 0.3f) else NuvioTheme.colors.Background,
+            focusedContainerColor = if (selected) NuvioTheme.colors.FocusRing.copy(alpha = 0.3f) else NuvioTheme.colors.Background
         ),
         border = CardDefaults.border(
-            border = if (selected) Border(
-                border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
-                shape = RoundedCornerShape(SettingsPillRadius)
-            ) else Border.None,
+            border = Border.None,
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = RoundedCornerShape(SettingsPillRadius)
             )
         ),
@@ -1446,16 +1448,60 @@ private fun XtreamField(
     // "Server URL  (portal, e.g. …)" -> "Server URL" — so the example stays as the in-field hint.
     label: String = placeholder.substringBefore("  (").trim(),
 ) {
-    var focused by remember { mutableStateOf(false) }
+    // UX30 / UX76: the field is a ROW until OK is pressed on it (the account InputField pattern).
+    // A legacy BasicTextField opens the keyboard the moment it gains focus, so D-padding down the
+    // form popped the keyboard on every field and each one needed a BACK to pass. Now the row is
+    // the D-pad focus target and the text field can only take focus while [editing]; OK/ENTER on
+    // the row starts editing (and so the keyboard), UP/DOWN while editing leave it, and BACK while
+    // editing returns to the row instead of closing the dialog. Decisions: [InputFieldKeys].
+    var editing by remember { mutableStateOf(false) }
+    var rowFocused by remember { mutableStateOf(false) }
+    var fieldFocused by remember { mutableStateOf(false) }
+    val ownRowFocus = remember { FocusRequester() }
+    val rowFocus = focusRequester ?: ownRowFocus
+    val fieldFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(editing) {
+        if (editing && fieldFocus.requestFocusAfterFrames(frames = 1)) keyboard?.show()
+    }
+    val shape = RoundedCornerShape(10.dp)
+    val active = rowFocused || fieldFocused
     // The label now names the field, so the in-field hint keeps only the example part (if any).
     val hint = placeholder.removePrefix(label).trim()
     Column(modifier = Modifier.fillMaxWidth().padding(top = NuvioTheme.spacing.md)) {
     Text(
         text = label,
         style = MaterialTheme.typography.labelMedium,
-        color = if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.TextSecondary
+        color = if (active) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
     )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = NuvioTheme.spacing.xs)
+            .focusRequester(rowFocus)
+            .onFocusChanged { rowFocused = it.isFocused }
+            .onKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                if (InputFieldKeys.startsEditing(editing, native.action == KeyEvent.ACTION_DOWN && native.repeatCount == 0, native.keyCode)) {
+                    editing = true
+                    true
+                } else false
+            }
+            .focusable()
+            .background(NuvioTheme.colors.BackgroundElevated, shape)
+            // House TV focus rule: the D-pad-focused row shows the theme focus ring (2dp); while
+            // typing the ring stays, thinner; idle rows keep the plain hairline border.
+            .border(
+                when {
+                    rowFocused -> NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs)
+                    fieldFocused -> NuvioTheme.focusRing.border(NuvioTheme.spacing.hairline)
+                    else -> BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border)
+                },
+                shape
+            )
+            .padding(horizontal = 14.dp, vertical = NuvioTheme.spacing.md)
+    ) {
     // The Fire TV / Android TV keyboard runs fullscreen (extract mode) over the app and shows the
     // field name only from EditorInfo.hintText, which Compose never sets — pass the label through.
     InterceptPlatformTextInput(
@@ -1471,32 +1517,35 @@ private fun XtreamField(
         onValueChange = onValueChange,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = NuvioTheme.spacing.xs)
-            .background(NuvioTheme.colors.BackgroundElevated, RoundedCornerShape(10.dp))
-            .border(
-                width = 1.dp,
-                color = if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border,
-                shape = RoundedCornerShape(10.dp)
-            )
-            .padding(horizontal = 14.dp, vertical = NuvioTheme.spacing.md)
-            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .focusRequester(fieldFocus)
+            .focusProperties { canFocus = editing }
+            .onFocusChanged {
+                val nowFocused = it.isFocused || it.hasFocus
+                if (fieldFocused && !nowFocused) editing = false
+                fieldFocused = nowFocused
+            }
             // A focused (IME-dismissed) BasicTextField swallows D-pad UP/DOWN — it re-shows the
-            // keyboard instead of letting focus advance — so on a remote the multi-field Xtream
-            // form was a trap: DOWN never reached Username/Password and everything typed piled into
-            // Server URL. Intercept UP/DOWN in the tunneling (preview) pass, BEFORE the field's own
-            // key handling, and drive the focus manager so DOWN steps to the next field and UP to
-            // the previous one (and out to the mode toggle / DNS tiles at the ends). We always
-            // consume the key so the field can never grab it back to pop the IME. LEFT/RIGHT
-            // (cursor) and CENTER/ENTER fall through to the field untouched.
+            // keyboard instead of letting focus advance. Intercept UP/DOWN in the tunneling
+            // (preview) pass, BEFORE the field's own key handling, and drive the focus manager so
+            // DOWN steps to the next row and UP to the previous one; leaving ends editing.
+            // LEFT/RIGHT (cursor) and CENTER (re-show the keyboard) fall through to the field.
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
-                if (native.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
-                when (native.keyCode) {
-                    KeyEvent.KEYCODE_DPAD_DOWN -> { focusManager.moveFocus(FocusDirection.Down); true }
-                    KeyEvent.KEYCODE_DPAD_UP -> { focusManager.moveFocus(FocusDirection.Up); true }
-                    else -> false
+                if (InputFieldKeys.stopsEditingOnBack(editing, native.keyCode)) {
+                    if (native.action == KeyEvent.ACTION_UP) {
+                        keyboard?.hide()
+                        runCatching { rowFocus.requestFocus() }
+                    }
+                    return@onPreviewKeyEvent true
                 }
+                val direction = InputFieldKeys.exitDirection(
+                    isEditing = editing,
+                    isKeyDown = native.action == KeyEvent.ACTION_DOWN,
+                    keyCode = native.keyCode
+                ) ?: return@onPreviewKeyEvent false
+                keyboard?.hide()
+                focusManager.moveFocus(direction)
+                true
             }
             .onKeyEvent { event ->
                 val native = event.nativeKeyEvent
@@ -1512,7 +1561,7 @@ private fun XtreamField(
         keyboardActions = KeyboardActions(onDone = { onImeAction() }, onNext = { onImeAction() }),
         visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
         textStyle = MaterialTheme.typography.bodyMedium.copy(color = NuvioTheme.colors.TextPrimary),
-        cursorBrush = SolidColor(if (focused) NuvioTheme.colors.Primary else Color.Transparent),
+        cursorBrush = SolidColor(if (fieldFocused) NuvioTheme.colors.TextPrimary else Color.Transparent),
         decorationBox = { inner ->
             if (value.isEmpty() && hint.isNotEmpty()) {
                 Text(hint, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextTertiary)
@@ -1534,13 +1583,21 @@ private fun XtreamAddButton(
 ) {
     var focused by remember { mutableStateOf(false) }
     val contentAlpha = if (enabled) 1f else 0.4f
+    val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = NuvioTheme.spacing.md)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.BackgroundElevated)
-            .border(1.dp, if (focused) NuvioTheme.colors.Primary else NuvioTheme.colors.Border, RoundedCornerShape(10.dp))
+            .clip(shape)
+            // UX29: Primary is a neutral grey in the theme, so the old "focused = Primary fill" was
+            // nearly invisible against the dialog. Focus now shows the theme focus ring (2dp) over
+            // a tinted fill — the same vocabulary as every other TV focusable.
+            .background(if (focused) NuvioTheme.colors.FocusRing.copy(alpha = 0.25f) else NuvioTheme.colors.BackgroundCard)
+            .border(
+                if (focused) NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs)
+                else BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border),
+                shape
+            )
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .onKeyEvent {
@@ -1558,6 +1615,7 @@ private fun XtreamAddButton(
             style = MaterialTheme.typography.bodyMedium,
             color = NuvioTheme.colors.TextPrimary.copy(alpha = contentAlpha)
         )
+    }
     }
 }
 
