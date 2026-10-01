@@ -41,8 +41,17 @@ class PlaylistSaveErrorPolicyTest {
     fun `a credential rejection is wrong username or password - not a connection failure`() {
         assertEquals("auth != 1", PlaylistSaveError.WRONG_CREDENTIALS, PlaylistSaveErrorPolicy.classify(XtreamAuthRejectedException()))
         assertEquals("http 401", PlaylistSaveError.WRONG_CREDENTIALS, PlaylistSaveErrorPolicy.classify(HttpStatusException(401, "HTTP 401: Unauthorized")))
-        assertEquals("http 403", PlaylistSaveError.WRONG_CREDENTIALS, PlaylistSaveErrorPolicy.classify(HttpStatusException(403, "HTTP 403: Forbidden")))
         assertEquals("approved wording", "Wrong username or password", msg(XtreamAuthRejectedException()))
+    }
+
+    @Test
+    fun `a provider firewall status is a block - not a username or password problem`() {
+        // 403/419/429/451/456 are the provider's edge (WAF/Cloudflare) turning the device away while
+        // the server is up — IptvLoadFailurePolicy's BLOCKED_BY_PROVIDER. Never "wrong password".
+        for (status in listOf(403, 419, 429, 451, 456)) {
+            assertEquals("http $status", PlaylistSaveError.PROVIDER_BLOCKED, PlaylistSaveErrorPolicy.classify(HttpStatusException(status, "HTTP $status")))
+        }
+        assertEquals("message", "This provider is blocking us", PlaylistSaveErrorPolicy.messageFor(HttpStatusException(403, "HTTP 403: Forbidden")))
     }
 
     @Test

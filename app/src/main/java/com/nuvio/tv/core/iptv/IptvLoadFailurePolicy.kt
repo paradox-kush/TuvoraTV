@@ -102,5 +102,8 @@ object IptvLoadFailurePolicy {
      */
     private val BLOCKING_STATUSES = setOf(403, 419, 429, 451, 456)
 
+    /** True when [status] is the provider's edge turning a device away (shared with the playlist form). */
+    fun isBlockingStatus(status: Int): Boolean = status in BLOCKING_STATUSES
+
     private const val UNKNOWN_REASON = "unknown error"
 }

@@ -15,8 +15,11 @@ enum class PlaylistSaveError {
     /** DNS, timeout, connection refused — or a server that answered with something that isn't a panel. */
     UNREACHABLE,
 
-    /** The panel answered and refused the credentials (Xtream auth != 1, HTTP 401/403). */
+    /** The panel answered and refused the credentials (Xtream auth != 1, HTTP 401). */
     WRONG_CREDENTIALS,
+
+    /** The provider's firewall turned this device away (HTTP 403/419/429/451/456); the server is up. */
+    PROVIDER_BLOCKED,
 
     /** The HTTPS/TLS handshake or certificate check failed (B23 class). */
     SECURE_CONNECTION_FAILED,
@@ -50,6 +53,8 @@ object PlaylistSaveErrorPolicy {
     const val INVALID_ADDRESS_MESSAGE = "That server address isn't valid"
     const val UNREACHABLE_MESSAGE = "Couldn't reach the server — check the address"
     const val WRONG_CREDENTIALS_MESSAGE = "Wrong username or password"
+    /** Same first sentence as the hub's shipped iptv_hub_error_blocked. */
+    const val PROVIDER_BLOCKED_MESSAGE = "This provider is blocking us"
     const val SECURE_CONNECTION_MESSAGE = "Secure connection failed — try http:// or check the certificate"
 
     /**
@@ -69,7 +74,9 @@ object PlaylistSaveErrorPolicy {
         chain.firstOrNull { it is XtreamAuthRejectedException }?.let { return PlaylistSaveError.WRONG_CREDENTIALS }
         chain.firstOrNull { it is XtreamAccountInactiveException }?.let { return PlaylistSaveError.ACCOUNT_INACTIVE }
         chain.filterIsInstance<HttpStatusException>().firstOrNull()?.let { http ->
-            if (http.status == 401 || http.status == 403) return PlaylistSaveError.WRONG_CREDENTIALS
+            // The provider's edge turned us away (server up): not a password problem.
+            if (IptvLoadFailurePolicy.isBlockingStatus(http.status)) return PlaylistSaveError.PROVIDER_BLOCKED
+            if (http.status == 401) return PlaylistSaveError.WRONG_CREDENTIALS
         }
         if (chain.any { it is SSLException || it is CertificateException }) return PlaylistSaveError.SECURE_CONNECTION_FAILED
         if (chain.any { it is IOException }) return PlaylistSaveError.UNREACHABLE
@@ -84,6 +91,7 @@ object PlaylistSaveErrorPolicy {
         PlaylistSaveError.INVALID_ADDRESS -> INVALID_ADDRESS_MESSAGE
         PlaylistSaveError.UNREACHABLE -> UNREACHABLE_MESSAGE
         PlaylistSaveError.WRONG_CREDENTIALS -> WRONG_CREDENTIALS_MESSAGE
+        PlaylistSaveError.PROVIDER_BLOCKED -> PROVIDER_BLOCKED_MESSAGE
         PlaylistSaveError.SECURE_CONNECTION_FAILED -> SECURE_CONNECTION_MESSAGE
         PlaylistSaveError.ACCOUNT_INACTIVE -> {
             val status = generateSequence(cause) { it.cause.takeIf { c -> c !== it } }.take(MAX_CAUSE_DEPTH)
