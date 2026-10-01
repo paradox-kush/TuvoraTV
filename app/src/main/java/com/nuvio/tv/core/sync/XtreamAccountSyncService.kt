@@ -4,7 +4,9 @@ import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.iptv.CategorySelections
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.PulledPlaylist
 import com.nuvio.tv.core.iptv.m3uAccountFromUrl
+import com.nuvio.tv.core.iptv.tvLegacyM3uId
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.XtreamAccountStore
@@ -52,6 +54,7 @@ class XtreamAccountSyncService @Inject constructor(
     private val profileManager: ProfileManager,
     private val purge: com.nuvio.tv.core.iptv.IptvAccountPurge,
     private val resolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver,
+    private val rekeyer: com.nuvio.tv.core.iptv.PlaylistKeyRekeyer,
 ) {
     private val postgrest get() = supabaseProvider.postgrest
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -140,7 +143,8 @@ class XtreamAccountSyncService @Inject constructor(
             val rows = (result["playlists"] as? JsonArray ?: JsonArray(emptyList())).mapNotNull { el ->
                 runCatching { pullJson.decodeFromJsonElement(SupabaseIptvPlaylist.serializer(), el) }.getOrNull()
             }
-            return com.nuvio.tv.core.iptv.PlaylistPullResponse(revision, rows.mapNotNull { it.toXtreamAccountOrNull() }, generation)
+            val pulled = pulledPlaylists(rows)
+            return com.nuvio.tv.core.iptv.PlaylistPullResponse(revision, pulled.map { it.account }, generation, pulled.keyedIds())
         }
 
         override suspend fun push(
@@ -167,9 +171,11 @@ class XtreamAccountSyncService @Inject constructor(
                 "conflict" -> {
                     val curRows = (result["current_rows"] as? JsonArray ?: JsonArray(emptyList()))
                         .mapNotNull { el -> runCatching { pullJson.decodeFromJsonElement(SupabaseIptvPlaylist.serializer(), el) }.getOrNull() }
+                    val pulled = pulledPlaylists(curRows)
                     com.nuvio.tv.core.iptv.PlaylistPushResponse.Conflict(
                         currentRevision = (result["current_revision"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
-                        currentRows = curRows.mapNotNull { it.toXtreamAccountOrNull() },
+                        currentRows = pulled.map { it.account },
+                        currentKeyedIds = pulled.keyedIds(),
                     )
                 }
                 else -> com.nuvio.tv.core.iptv.PlaylistPushResponse.Rejected(result.toString())
@@ -189,8 +195,9 @@ class XtreamAccountSyncService @Inject constructor(
 
     suspend fun runV2Sync(): Result<Unit> = withContext(Dispatchers.IO) {
         val profileId = profileManager.activeProfileId.value
-        // Capture the initial local snapshot synchronously-enough (before the engine mutates it).
-        val startAccounts = runCatching { accountStore.accountsForProfile(profileId) }.getOrDefault(emptyList())
+        // Capture the initial local snapshot synchronously-enough (before the engine mutates it). A
+        // Step 0 key adoption renames ids in it (and nothing else), so it is re-read after one.
+        var startAccounts = runCatching { accountStore.accountsForProfile(profileId) }.getOrDefault(emptyList())
         val startCanPush = runCatching { accountStore.canPushFullReplace(profileId) }.getOrDefault(false)
         val engine = com.nuvio.tv.core.iptv.PlaylistV2SyncEngine(
             transport = v2Transport,
@@ -208,6 +215,14 @@ class XtreamAccountSyncService @Inject constructor(
             syncedKey = { playlistPushJson(it, sortOrder = 0) },
             // The mutation id is bound to exactly what the push sends (B68).
             wirePayload = { accounts -> buildJsonArray { accounts.forEachIndexed { i, acc -> add(playlistPushJson(acc, i)) } }.toString() },
+            // Step 0: adopt server playlist keys (re-keys local ids + their saved data, once).
+            adoptKeys = { p, pulled, keyed ->
+                rekeyer.adoptFromPull(p, pulled.map { PulledPlaylist(it, it.id in keyed) }).also { r ->
+                    if (r.rekeys.isNotEmpty()) {
+                        startAccounts = runCatching { accountStore.accountsForProfile(p) }.getOrDefault(startAccounts)
+                    }
+                }
+            },
         )
         v2Mutex.lock()
         val outcome = try {
@@ -257,10 +272,12 @@ class XtreamAccountSyncService @Inject constructor(
             // Emptiness is decided AFTER filtering to rows this client understands: a table
             // holding only foreign source types (a future client's) must behave exactly like an
             // empty remote — applying an empty list would wipe local state.
-            val remoteAccounts = rows.sortedBy { it.sortOrder }.mapNotNull { it.toXtreamAccountOrNull() }
-            if (remoteAccounts.isNotEmpty()) {
+            val pulled = pulledPlaylists(rows.sortedBy { it.sortOrder })
+            if (pulled.isNotEmpty()) {
+                // Step 0: adopt server playlist keys first (re-keys local ids + their saved data, once).
+                val remoteAccounts = rekeyer.adoptFromPull(profileId, pulled).accounts
                 val local = accountStore.accounts.first()
-                applyRemote(preserveDeviceLocalPrefs(reconcileLocalIds(remoteAccounts, local), local))
+                applyRemote(preserveDeviceLocalPrefs(remoteAccounts, local))
                 Log.d(TAG, "Pulled ${remoteAccounts.size} iptv playlists for profile $profileId")
                 return@withContext Result.success(Unit)
             }
@@ -349,11 +366,29 @@ internal fun wireSourceType(internalType: String): String = when (internalType) 
 /**
  * Maps a sync row to a local account for every source type this client understands; null for
  * malformed rows and unknown (future) source types — those stay remote-only, and the push scope
- * (p_source_types) guarantees we never delete them. Ids are re-derived with the same builders
- * the settings form uses, so a pulled playlist matches a hand-added one. The internal "url"/"file"
- * spellings are accepted as aliases beside the canonical wire names (defensive).
+ * (p_source_types) guarantees we never delete them. The internal "url"/"file" spellings are
+ * accepted as aliases beside the canonical wire names (defensive).
+ *
+ * Step 0: the id is the row's `playlist_key` when the server has one. Without it (an un-migrated
+ * server) it is TV's pre-Step-0 derivation from the address — and [PlaylistKeyAdoption] then keeps
+ * the local id of the same playlist, so a frozen id is never re-derived away.
  */
 internal fun SupabaseIptvPlaylist.toXtreamAccountOrNull(): XtreamAccount? {
+    val acc = toDerivedAccountOrNull() ?: return null
+    return acc.copy(
+        id = playlistKey?.takeIf { it.isNotBlank() } ?: acc.id,
+        backupUrls = backupUrls?.takeIf { it.isNotEmpty() },
+    )
+}
+
+/** The pull's view of [rows]: each usable row's account and whether its id is the server's key. */
+internal fun pulledPlaylists(rows: List<SupabaseIptvPlaylist>): List<PulledPlaylist> =
+    rows.mapNotNull { row -> row.toXtreamAccountOrNull()?.let { PulledPlaylist(it, serverKeyed = !row.playlistKey.isNullOrBlank()) } }
+
+internal fun List<PulledPlaylist>.keyedIds(): Set<String> = filter { it.serverKeyed }.map { it.account.id }.toSet()
+
+/** The pre-Step-0 id derivation from a row's address (the fallback while the server has no key). */
+private fun SupabaseIptvPlaylist.toDerivedAccountOrNull(): XtreamAccount? {
     val base: XtreamAccount = when (sourceType) {
         XtreamAccount.SOURCE_XTREAM -> {
             val baseUrl = baseUrl ?: return null
@@ -378,12 +413,12 @@ internal fun SupabaseIptvPlaylist.toXtreamAccountOrNull(): XtreamAccount? {
                 playlistUrl,
                 userAgent = (userAgent ?: username)?.takeIf { it.isNotBlank() },
                 name = name
-            )?.copy(enabled = enabled) ?: return null
+            )?.let { it.copy(id = tvLegacyM3uId(playlistUrl) ?: it.id, enabled = enabled) } ?: return null
         }
         WIRE_M3U_FILE, XtreamAccount.SOURCE_FILE -> {
             // File BYTES are never synced — this lands as a re-import ghost. Deterministic id so
-            // repeated pulls are stable; reconcileLocalIds keeps the local id (and with it the
-            // local file copy) when this device already has the playlist.
+            // repeated pulls are stable; PlaylistKeyAdoption matches it to this device's real file
+            // copy by file name.
             val fn = (fileName ?: name)?.takeIf { it.isNotBlank() } ?: "Playlist"
             XtreamAccount(
                 id = "file:synced-$fn",
@@ -454,20 +489,6 @@ internal fun preserveDeviceLocalPrefs(
     )
 }
 
-/**
- * Keeps this device's account id when a pulled account is the same playlist under a different id.
- * Only file playlists need it: their locally-minted id is a random `file:{uuid}` (the local copy
- * lives at `{id}.m3u`), while a pulled ghost has the deterministic `file:synced-` id — matching by
- * fileName preserves the local copy + saved content keys. Every other source type derives ids
- * deterministically, so pulled == local already.
- */
-internal fun reconcileLocalIds(pulled: List<XtreamAccount>, local: List<XtreamAccount>): List<XtreamAccount> =
-    pulled.map { acc ->
-        if (acc.sourceType != XtreamAccount.SOURCE_FILE) return@map acc
-        val match = local.firstOrNull { it.sourceType == XtreamAccount.SOURCE_FILE && it.fileName == acc.fileName }
-        if (match != null) acc.copy(id = match.id) else acc
-    }
-
 /** The wire source types this client fully understands — the push's full-replace scope. Unknown
  *  (future) types stay outside the scope, so they can never be deleted by this client. */
 internal val SYNCED_SOURCE_TYPES = listOf(
@@ -497,6 +518,9 @@ internal fun playlistPushParams(accounts: List<XtreamAccount>, profileId: Int, o
  * blank, epg_url when null, category_selections when all-null — the RPC's coalesce defaults apply.
  */
 internal fun playlistPushJson(acc: XtreamAccount, sortOrder: Int): JsonObject = buildJsonObject {
+    // Step 0: the permanent id + the client-owned backup list ride every push.
+    put("playlist_key", acc.id)
+    put("backup_urls", buildJsonArray { acc.backupUrls.orEmpty().forEach { add(it) } })
     put("source_type", wireSourceType(acc.sourceType))
     if (acc.name.isNotBlank()) put("name", acc.name)
     put("enabled", acc.enabled)
@@ -550,10 +574,10 @@ internal fun decodeCategorySelections(element: JsonElement?): CategorySelections
 }
 
 /**
- * What a v2 sync applies locally for a pulled/reconciled set: this device's file-playlist ids kept
- * ([reconcileLocalIds]) and its local-only catch-up / guide preferences carried across
- * ([preserveDeviceLocalPrefs]) — the treatment the v1 pull always gave them (B60 part c). Without it
- * every v2 apply reset those preferences and re-keyed file playlists away from their local copy.
+ * What a v2 sync applies locally for a pulled/reconciled set: this device's local-only catch-up /
+ * guide preferences carried across ([preserveDeviceLocalPrefs]) — the treatment the v1 pull always
+ * gave them (B60 part c). Ids were already reconciled with this device's by [PlaylistKeyAdoption]
+ * when the set was pulled (Step 0).
  */
 internal fun v2ApplyLocal(pulled: List<XtreamAccount>, local: List<XtreamAccount>): List<XtreamAccount> =
-    preserveDeviceLocalPrefs(reconcileLocalIds(pulled, local), local)
+    preserveDeviceLocalPrefs(pulled, local)

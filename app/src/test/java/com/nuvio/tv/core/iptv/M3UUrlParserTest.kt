@@ -18,10 +18,10 @@ class M3UUrlParserTest {
     }
 
     @Test
-    fun `id derives from scheme host port path and excludes query and UA`() {
+    fun `id is the shared Step 0 key of the link and ignores the UA`() {
         val a = m3uAccountFromUrl("http://host.example.com:8080/get.php?username=u1&password=p1", userAgent = "VLC/3.0")!!
-        // creds (query) MUST NOT leak into the id; UA MUST NOT change it (stored separately)
-        assertEquals("m3u:http://host.example.com:8080/get.php", a.id)
+        // Step 0: the id is the shared `m3u|<url>` key (the same a phone or the web mints); UA MUST NOT change it
+        assertEquals("m3u|http://host.example.com:8080/get.php?username=u1&password=p1", a.id)
         val b = m3uAccountFromUrl("http://host.example.com:8080/get.php?username=u1&password=p1", userAgent = "Different/UA")!!
         assertEquals(a.id, b.id)  // same playlist, different UA -> same id (stable across UA edits)
     }
@@ -39,7 +39,9 @@ class M3UUrlParserTest {
     fun `bare host gets http scheme and default port is omitted from id`() {
         val a = m3uAccountFromUrl("host.example.net/playlist.m3u")!!
         assertEquals("http://host.example.net/playlist.m3u", a.baseUrl)
-        assertEquals("m3u:http://host.example.net/playlist.m3u", a.id)
+        assertEquals("m3u|http://host.example.net/playlist.m3u", a.id)
+        // TV's pre-Step-0 form survives only as the keyless-pull fallback
+        assertEquals("m3u:http://host.example.net/playlist.m3u", tvLegacyM3uId("host.example.net:80/playlist.m3u?x=1"))
     }
 
     @Test

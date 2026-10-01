@@ -9,9 +9,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  *    NOT a stripped scheme+host (M3UClient fetches it as-is).
  *  - the optional User-Agent is stored in [XtreamAccount.username] (no dedicated field in the
  *    model; password stays empty). M3UClient reads it back as the request UA.
- *  - [XtreamAccount.id] is derived from the URL's scheme+host+port+path (query stripped) so it's
- *    stable across UA edits and distinct per playlist. Query params (creds) are excluded from the
- *    id to avoid leaking them into content ids while still separating different playlists on a host.
+ *  - [XtreamAccount.id] is the shared Step 0 key `m3u|<url>` ([PlaylistKey.m3uUrl]) — the same id
+ *    a phone or the web mints for the same link. (TV used to derive `m3u:` + scheme/host/port/path
+ *    with the query stripped; that form survives only as [tvLegacyM3uId], the pull fallback for a
+ *    server row without a key. An edit never re-derives the id — the caller keeps the old one.)
  *
  * Pure so the field->account mapping is unit-testable. Returns null on an unparseable URL.
  */
@@ -20,20 +21,32 @@ fun m3uAccountFromUrl(playlistUrl: String, userAgent: String? = null, name: Stri
     if (raw.isEmpty()) return null
     val withScheme = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
     val url = withScheme.toHttpUrlOrNull() ?: return null
-    val defaultPort = if (url.scheme == "https") 443 else 80
-    val idBase = buildString {
-        append(url.scheme).append("://").append(url.host)
-        if (url.port != defaultPort) append(":").append(url.port)
-        append(url.encodedPath)
-    }
     return XtreamAccount(
-        id = "m3u:$idBase",
+        id = PlaylistKey.m3uUrl(raw) ?: return null,
         name = name?.trim()?.takeIf { it.isNotEmpty() } ?: url.host,
         baseUrl = withScheme,
         username = userAgent?.trim().orEmpty(),
         password = "",
         sourceType = XtreamAccount.SOURCE_URL
     )
+}
+
+/**
+ * TV's pre-Step-0 M3U id: `m3u:` + scheme://host[:port] + path, query stripped. Only the pull's
+ * fallback for a server row that carries no `playlist_key` yet (today's derivation, per the Step 0
+ * contract) — never minted for a new playlist.
+ */
+fun tvLegacyM3uId(playlistUrl: String): String? {
+    val raw = playlistUrl.trim()
+    if (raw.isEmpty()) return null
+    val withScheme = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
+    val url = withScheme.toHttpUrlOrNull() ?: return null
+    val defaultPort = if (url.scheme == "https") 443 else 80
+    return buildString {
+        append("m3u:").append(url.scheme).append("://").append(url.host)
+        if (url.port != defaultPort) append(":").append(url.port)
+        append(url.encodedPath)
+    }
 }
 
 /**
@@ -63,7 +76,7 @@ fun xtreamPanelInM3uUrl(playlistUrl: String, userAgent: String? = null, name: St
  * The picked file is copied into app storage (see M3UFileStore) so the original can disappear; the
  * account only carries a stable [playlistId] and the [fileName] for display + re-import prompts.
  *
- *  - [XtreamAccount.id] is the supplied [playlistId] (a fresh `file:{uuid}` minted once when the
+ *  - [XtreamAccount.id] is the supplied [playlistId] (minted once by [newM3UFilePlaylistId] when the
  *    user picks a file, so re-editing the same playlist keeps its id and its saved content ids).
  *  - [XtreamAccount.baseUrl] is empty — there is no URL; the source is the local copy at
  *    `files/playlists/{id-hash}.m3u`. [XtreamAccount.username] (the M3U UA slot) stays empty too.
@@ -82,8 +95,13 @@ fun m3uAccountFromFile(playlistId: String, fileName: String, name: String? = nul
     fileName = fileName
 )
 
-/** A fresh, filesystem-safe, stable playlist id for a newly-picked file. */
-fun newM3UFilePlaylistId(): String = "file:" + java.util.UUID.randomUUID().toString()
+/**
+ * Step 0 — the permanent id for a newly-picked file: the shared `m3u_file|<name>|<creation ms>` key
+ * (the same shape a phone mints). Older TV builds minted `file:{uuid}`; those ids keep working (the
+ * file store hashes any id) and are adopted onto the server's key on pull.
+ */
+fun newM3UFilePlaylistId(fileName: String, nowMs: Long = System.currentTimeMillis()): String =
+    PlaylistKey.m3uFile(fileName, nowMs) ?: ("m3u_file|Playlist|$nowMs")
 
 /** True for an account whose content comes from a parsed M3U URL rather than an Xtream API. */
 fun XtreamAccount.isM3U(): Boolean = sourceType == XtreamAccount.SOURCE_URL

@@ -19,6 +19,7 @@ import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
 import com.nuvio.tv.core.iptv.m3uAccountFromFile
 import com.nuvio.tv.core.iptv.m3uAccountFromUrl
+import com.nuvio.tv.core.iptv.asEditOf
 import com.nuvio.tv.core.iptv.newM3UFilePlaylistId
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.core.iptv.withPlaylistOptions
@@ -144,14 +145,14 @@ class XtreamSettingsViewModel @Inject constructor(
         val sendDeviceId: Boolean = true
     )
 
-    /** Build a Stalker XtreamAccount from the form fields (id is stable: stalker|portal|mac). */
+    /** Build a Stalker XtreamAccount from the form fields (id = the shared Step 0 key stalker|portal|MAC). */
     private fun stalkerAccountFrom(fields: StalkerFields, name: String?): XtreamAccount? {
         val portal = fields.portalUrl.trim().let { if (it.startsWith("http")) it else "http://$it" }
         val mac = fields.macAddress.trim()
         if (portal.length <= "http://".length || mac.isBlank()) return null
         val host = runCatching { java.net.URI(portal).host }.getOrNull()?.takeIf { it.isNotBlank() } ?: portal
         return XtreamAccount(
-            id = "stalker|$portal|$mac",
+            id = com.nuvio.tv.core.iptv.PlaylistKey.stalker(portal, mac) ?: return null,
             name = name?.takeIf { it.isNotBlank() } ?: host,
             baseUrl = portal,
             username = "",
@@ -189,16 +190,11 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
             return
         }
-        val account = candidate.copy(
-            enabled = old.enabled,
-            contentTypes = old.contentTypes,
-            categorySelections = old.categorySelections
-        )
+        val account = candidate.asEditOf(old)   // Step 0: an edit never changes the playlist id
         viewModelScope.launch {
             if (persistOrError { store.replace(old.id, account) }) {
-                if (account.id != old.id) migrateSavedData(old, account)
                 registry.clear()
-                evictAccountCaches(old.id, account.id)
+                evictAccountCaches(old.id)
                 syncService.triggerRemoteSync()
                 onSuccess()
             }
@@ -289,25 +285,21 @@ class XtreamSettingsViewModel @Inject constructor(
         }
     }
 
-    /** Re-save an edited M3U URL playlist: swap in place, migrate saved ids, force a re-ingest. */
+    /** Re-save an edited M3U URL playlist: swap in place (same id — Step 0), force a re-ingest. */
     fun editM3UUrl(old: XtreamAccount, playlistUrl: String, userAgent: String?, options: PlaylistOptions = old.toOptions(), onSuccess: () -> Unit) {
         val candidate = m3uAccountFromUrl(playlistUrl, userAgent, old.name)?.withOptions(options)
         if (candidate == null) {
             _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
             return
         }
-        val account = candidate.copy(
-            enabled = old.enabled,
-            contentTypes = old.contentTypes,
-            categorySelections = old.categorySelections
-        )
+        val account = candidate.asEditOf(old)   // Step 0: an edit never changes the playlist id
         viewModelScope.launch {
             if (persistOrError { store.replace(old.id, account) }) {
-                if (account.id != old.id) migrateSavedData(old, account)
                 registry.clear()
-                evictAccountCaches(old.id, account.id)
+                evictAccountCaches(old.id)
                 syncService.triggerRemoteSync()
                 onSuccess()
+                // Same id, possibly another URL: the forced re-ingest replaces the old catalog rows.
                 runCatching { clientFactory.m3u().ensureIngested(account, force = true) }
             }
         }
@@ -322,7 +314,7 @@ class XtreamSettingsViewModel @Inject constructor(
      * keeping its id + saved content.
      */
     fun addM3UFile(uri: Uri, fileName: String, name: String?, options: PlaylistOptions = PlaylistOptions(), reimportFor: XtreamAccount? = null, onSuccess: () -> Unit) {
-        val playlistId = reimportFor?.id ?: newM3UFilePlaylistId()
+        val playlistId = reimportFor?.id ?: newM3UFilePlaylistId(fileName)
         val displayName = reimportFor?.name ?: name
         val account = m3uAccountFromFile(playlistId, fileName, displayName).withOptions(
             // A re-import keeps the existing account's options; a fresh add takes the form's.
@@ -426,9 +418,12 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /**
      * Verifies the edited credentials live, then swaps the account in place (keeping its
-     * position + enabled flag) and re-runs the discovery cycle. Saved items (library,
-     * watch progress, watched marks, live favorites/recents) follow the account when it's
-     * still the same playlist; a completely different playlist purges them instead.
+     * position + enabled flag) and re-runs the discovery cycle.
+     *
+     * Step 0: the playlist KEEPS ITS ID whatever was edited — the id is the permanent key the user's
+     * library, progress, watched marks, live favourites/recents and the overlay's hashed hidden/pinned
+     * channel keys all hang off. Re-deriving it from the new address (the old behaviour) orphaned all
+     * of it when a provider moved domains.
      */
     private fun verifyAndReplace(old: XtreamAccount, candidate: XtreamAccount?, parseError: String, onSuccess: () -> Unit) {
         if (candidate == null) {
@@ -438,11 +433,7 @@ class XtreamSettingsViewModel @Inject constructor(
         // Credential/URL edits keep the content selections (toggles, category picks) — those aren't
         // in this form. The shared options (epg/dns/refresh) already ride on `candidate` from the
         // form (withOptions), so DON'T overwrite them from `old`, or an edit couldn't change them.
-        val account = candidate.copy(
-            enabled = old.enabled,
-            contentTypes = old.contentTypes,
-            categorySelections = old.categorySelections
-        )
+        val account = candidate.asEditOf(old)   // Step 0: an edit never changes the playlist id
         viewModelScope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             // Options-only edit (name/EPG/DNS/refresh) — nothing about how we reach the provider
@@ -454,15 +445,16 @@ class XtreamSettingsViewModel @Inject constructor(
             // the edit that fails a check is usually a provider moving domains, the one users must keep.
             val outcome = PlaylistEditVerifyPolicy.outcome(result)
             if (persistOrError { store.replace(old.id, account) }) {
-                if (account.id != old.id) migrateSavedData(old, account)
+                // Live favourites/recents store a display stream URL built with the old server/creds.
+                if (!old.sameConnectionAs(account)) refreshLiveStreamUrls(account)
                 // Cached stream URLs embed the old server/creds; rebuild lazily on demand.
                 registry.clear()
                 // A renewed/edited account must not keep showing a stale "Expired" status or
-                // category lists fetched under the old creds — evict both ids' caches.
-                evictAccountCaches(old.id, account.id)
+                // category lists fetched under the old creds — evict its caches.
+                evictAccountCaches(old.id)
                 _uiState.update { st ->
                     st.copy(
-                        saveWarnings = (st.saveWarnings - old.id - account.id) +
+                        saveWarnings = (st.saveWarnings - old.id) +
                             (outcome.warning?.let { mapOf(account.id to it) } ?: emptyMap())
                     )
                 }
@@ -474,34 +466,18 @@ class XtreamSettingsViewModel @Inject constructor(
     }
 
     /**
-     * Same playlist (same server or same username, e.g. a panel that moved domains or
-     * rotated creds) -> rewrite saved xtream content ids to the new account id. A completely
-     * different playlist -> the old ids point at content that no longer exists, so drop them.
+     * Rebuilds the display stream URL of every live favourite/recent under this playlist for its new
+     * server/creds (same id, same content ids). Only Xtream URLs are formula-derivable; M3U refs keep
+     * theirs (the forced re-ingest refreshes the catalog) and Stalker refs resolve via create_link.
+     * Playback resolves from the content id either way — this only keeps the stored ref honest.
      */
-    private suspend fun migrateSavedData(old: XtreamAccount, new: XtreamAccount) {
-        val samePlaylist = old.username == new.username || old.baseUrl == new.baseUrl
-        val oldPrefix = XtreamItemRegistry.accountPrefix(old.id)
-        val newPrefix = if (samePlaylist) XtreamItemRegistry.accountPrefix(new.id) else null
-        libraryPreferences.migrateIdPrefix(oldPrefix, newPrefix)
-        watchProgressPreferences.migrateIdPrefix(oldPrefix, newPrefix)
-        watchedItemsPreferences.migrateIdPrefix(oldPrefix, newPrefix)
-        liveStore.migrateAccount(
-            oldPrefix,
-            transform = if (newPrefix == null) null else { ref ->
-                // Xtream live URLs are formula-derivable, so rebuild them for the new creds/host.
-                // M3U live URLs aren't (arbitrary provider URLs); keep the old one — the forced
-                // re-ingest refreshes the catalog and replay re-resolves via resolveStreamUrl.
-                val streamId = ref.id.substringAfterLast(':').toIntOrNull()
-                ref.copy(
-                    id = newPrefix + ref.id.removePrefix(oldPrefix),
-                    // Only Xtream URLs are formula-derivable. M3U keeps the stored URL (re-ingest
-                    // refreshes it); Stalker refs resolve via create_link at play time — rebuilding
-                    // either with the player_api formula would write garbage URLs.
-                    streamUrl = if (!new.isXtream()) ref.streamUrl
-                    else streamId?.let { client.buildStreamUrl(new, "live", it) } ?: ref.streamUrl
-                )
-            }
-        )
+    private suspend fun refreshLiveStreamUrls(account: XtreamAccount) {
+        if (!account.isXtream()) return
+        val prefix = XtreamItemRegistry.accountPrefix(account.id)
+        liveStore.migrateAccount(prefix) { ref ->
+            val streamId = ref.id.substringAfterLast(':').toIntOrNull()
+            ref.copy(streamUrl = streamId?.let { client.buildStreamUrl(account, "live", it) } ?: ref.streamUrl)
+        }
     }
 
     /** Distrust every "not on this provider" verdict for this playlist (see XtreamMatchIndex). */
