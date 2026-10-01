@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.contracts
 
+import kotlinx.coroutines.flow.Flow
+
 /**
  * Neutral IPTV search port (search firewall). Upstream-aligned search code reads IPTV results through
  * this instead of naming the fork's XtreamSearchIndex, so an upstream merge of SearchViewModel cannot
@@ -15,6 +17,14 @@ interface IptvSearchProvider {
 
     /** IPTV result rows in display order (channels, movies, series). Rows without hits are omitted. */
     suspend fun search(query: String): List<IptvSearchRow>
+
+    /**
+     * UX15: an opaque fingerprint of everything that changes what [search] can return (which
+     * playlists are enabled, their content types and category selections). Emits the current value
+     * on collection and again on every change; null while no enabled playlist exists. Equal values
+     * mean equal results, so a shown search is refreshed only when this changes.
+     */
+    fun sourceSignature(): Flow<String?>
 }
 
 /**
