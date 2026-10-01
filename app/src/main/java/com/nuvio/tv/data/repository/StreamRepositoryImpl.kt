@@ -241,6 +241,16 @@ class StreamRepositoryImpl @Inject constructor(
                     xtreamMatchTargets.size
                 val completedJobs = java.util.concurrent.atomic.AtomicInteger(0)
 
+                // B63: the IPTV jobs wait past their budget only while these (addon + plugin)
+                // sources are still loading — see IptvSourceWaitPolicy.
+                val nonIptvJobs = totalJobs - xtreamMatchTargets.size
+                val nonIptvDone = java.util.concurrent.atomic.AtomicInteger(0)
+                val othersSettled = kotlinx.coroutines.Job()
+                if (nonIptvJobs == 0) othersSettled.complete()
+                fun markNonIptvDone() {
+                    if (nonIptvDone.incrementAndGet() >= nonIptvJobs) othersSettled.complete()
+                }
+
                 // Launch addon jobs
                 streamAddons.forEach { addon ->
                     launch {
@@ -292,6 +302,7 @@ class StreamRepositoryImpl @Inject constructor(
                                 detail = e.message ?: context.getString(com.nuvio.tv.R.string.stream_error_detail_addon_request_failed)
                             )
                         } finally {
+                            markNonIptvDone()
                             if (completedJobs.incrementAndGet() >= totalJobs) {
                                 resultChannel.close()
                             }
@@ -303,7 +314,13 @@ class StreamRepositoryImpl @Inject constructor(
                 xtreamMatchTargets.forEach { acc ->
                     launch {
                         try {
-                            val streams = xtreamStreamSource.streamsFor(acc, type, videoId, season, episode)
+                            // B63: a dead playlist can no longer hold the whole list open for its
+                            // connect timeout — it is cut at the budget once nothing else is loading.
+                            val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
+                                xtreamStreamSource.streamsFor(acc, type, videoId, season, episode)
+                            } ?: emptyList<Stream>().also {
+                                Log.w(TAG, "Xtream match for ${acc.name} cut after ${com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.PLAYLIST_BUDGET_MS} ms (playlist not answering)")
+                            }
                             if (streams.isNotEmpty()) {
                                 resultChannel.send(
                                     AddonStreams(
@@ -337,6 +354,7 @@ class StreamRepositoryImpl @Inject constructor(
                                 episode = episode,
                                 resultChannel = resultChannel
                             ) {
+                                markNonIptvDone()
                                 if (completedJobs.incrementAndGet() >= totalJobs) {
                                     resultChannel.close()
                                 }
@@ -344,6 +362,7 @@ class StreamRepositoryImpl @Inject constructor(
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             Log.e(TAG, "Plugin execution failed: ${e.message}")
+                            markNonIptvDone()
                             if (completedJobs.incrementAndGet() >= totalJobs) {
                                 resultChannel.close()
                             }
