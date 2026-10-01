@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
+import com.nuvio.tv.core.auth.AuthManager
+import com.nuvio.tv.core.sync.AddonSyncStatus
+import com.nuvio.tv.core.sync.AddonSyncStatusPolicy
 import com.nuvio.tv.core.sync.CollectionSyncService
 import com.nuvio.tv.core.sync.HomeCatalogSettingsSyncService
 import com.nuvio.tv.core.sync.StartupSyncService
@@ -34,10 +37,12 @@ import com.nuvio.tv.core.server.TraktSourceSearchResultInfo
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.tmdb.TmdbCollectionSourceResolver
 import com.nuvio.tv.core.trakt.TraktPublicListSourceResolver
+import com.nuvio.tv.data.local.AddonPreferences
 import com.nuvio.tv.data.local.CollectionsDataStore
 import com.nuvio.tv.data.local.ExperienceModeDataStore
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.domain.model.Addon
+import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.AddonCatalogCollectionSource
@@ -50,11 +55,17 @@ import com.nuvio.tv.domain.repository.AddonRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,12 +85,40 @@ class AddonManagerViewModel @Inject constructor(
     private val profileManager: ProfileManager,
     private val tmdbCollectionSourceResolver: TmdbCollectionSourceResolver,
     private val traktPublicListSourceResolver: TraktPublicListSourceResolver,
+    private val addonPreferences: AddonPreferences,
+    private val authManager: AuthManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddonManagerUiState())
     val uiState: StateFlow<AddonManagerUiState> = _uiState.asStateFlow()
     val experienceMode = experienceModeDataStore.mode
+
+    /**
+     * UX71: whether local addon edits have reached the account. A mismatch must outlast [NOT_SYNCED_GRACE_MS]
+     * before it shows, so the normal debounced push after an edit doesn't flash the marker.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val addonSyncStatus: StateFlow<AddonSyncStatus> = combine(
+        addonPreferences.installedAddonUrls,
+        addonPreferences.syncedAddonUrlsOrDefaults,
+        authManager.authState
+    ) { local, synced, auth ->
+        AddonSyncStatusPolicy.status(
+            local = local,
+            lastSynced = synced,
+            hasAccount = auth is AuthState.FullAccount,
+            followsPrimaryProfile = addonPreferences.readsPrimaryAddons(),
+            syncInFlight = false,
+            key = ::addonSyncKey
+        )
+    }
+        .distinctUntilChanged()
+        .mapLatest { status ->
+            if (status == AddonSyncStatus.NotSynced) delay(NOT_SYNCED_GRACE_MS)
+            status
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AddonSyncStatus.NotApplicable)
 
     val isReadOnly: Boolean
         get() {
@@ -898,4 +937,20 @@ class AddonManagerViewModel @Inject constructor(
         val typeLabel: String,
         val isDisabled: Boolean = false
     )
+}
+
+private const val NOT_SYNCED_GRACE_MS = 3_000L
+
+/** Same addon across URL spellings (trailing slash, `/manifest.json`, case) — matches AddonRepositoryImpl.normalizeUrl. */
+private fun addonSyncKey(url: String): String {
+    val trimmed = url.trim().trimEnd('/')
+    val queryStart = trimmed.indexOf('?')
+    val path = if (queryStart >= 0) trimmed.substring(0, queryStart) else trimmed
+    val query = if (queryStart >= 0) trimmed.substring(queryStart) else ""
+    val cleanPath = if (path.endsWith("/manifest.json", ignoreCase = true)) {
+        path.dropLast("/manifest.json".length).trimEnd('/')
+    } else {
+        path.trimEnd('/')
+    }
+    return (cleanPath + query).lowercase()
 }

@@ -3383,4 +3383,6 @@
     <string name="iptv_remove_playlist_message_if_you_sync">Its favourites, Continue Watching entries and watch progress go with it. If you sync, it is removed from your other devices too. This can\'t be undone.</string>
     <string name="iptv_playlist_removed">Playlist removed</string>
     <string name="iptv_guide_favorites_empty">Hold OK on a channel to add it to Favorites</string>
+    <!-- wave1 x1 -->
+    <string name="addon_not_synced_yet">Not synced yet</string>
 </resources>

@@ -94,14 +94,19 @@ class ProviderCredentialSyncService @Inject constructor(
             try {
                 val credentialScope = currentScope(profileId) ?: return@withLock Result.success(false)
                 val localSnapshot = currentSnapshot(profileId)
-                val shouldPush = synchronized(stateLock) {
-                    val baseline = baselineSnapshots.getOrPut(credentialScope) {
+                val baseline = synchronized(stateLock) {
+                    baselineSnapshots.getOrPut(credentialScope) {
                         observedSnapshots[profileId] ?: localSnapshot
                     }
+                }
+                val shouldPush = synchronized(stateLock) {
                     credentialScope in pendingScopes || baseline != localSnapshot
                 }
                 if (shouldPush) {
-                    pushSnapshot(localSnapshot)
+                    // Only what changed since the last sync (B82): a full snapshot would upsert this TV's stale
+                    // blank placeholders over keys set on another device.
+                    val changed = localSnapshot.changedSince(baseline)
+                    if (changed.values.isNotEmpty()) pushSnapshot(changed)
                     synchronized(stateLock) {
                         pendingScopes.remove(credentialScope)
                         baselineSnapshots[credentialScope] = localSnapshot
@@ -328,7 +333,8 @@ class ProviderCredentialSyncService @Inject constructor(
             if (baseline == snapshot) return
 
             try {
-                pushSnapshot(snapshot)
+                val changed = snapshot.changedSince(baseline)
+                if (changed.values.isNotEmpty()) pushSnapshot(changed)
                 synchronized(stateLock) {
                     baselineSnapshots[credentialScope] = snapshot
                     pendingScopes.remove(credentialScope)

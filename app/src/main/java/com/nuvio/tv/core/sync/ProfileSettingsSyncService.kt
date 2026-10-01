@@ -167,6 +167,16 @@ internal fun shouldExcludePreferenceFromProfileSettingsSync(feature: String, key
     }
 }
 
+/**
+ * Local keys a remote settings-blob import must carry over: the blob never contains them, and the import clears the
+ * feature's DataStore before writing the remote values, so anything not listed here is erased (B82).
+ */
+internal fun profileSettingsKeysKeptOnImport(feature: String): Set<String> = when (feature) {
+    "layout_settings" -> catalogKeysExcludedFromProfileSettingsBlob + localOnlyLayoutProfileSettingsKeys
+    PLAYER_SETTINGS_FEATURE -> localOnlyPlayerProfileSettingsKeys
+    else -> credentialProfileSettingsKeys[feature].orEmpty()
+}
+
 @Singleton
 class ProfileSettingsSyncService @Inject constructor(
     private val authManager: AuthManager,
@@ -670,11 +680,7 @@ class ProfileSettingsSyncService @Inject constructor(
         feature: String,
         mutablePrefs: MutablePreferences
     ): Map<Preferences.Key<*>, Any> {
-        val keyNames = when (feature) {
-            "layout_settings" -> catalogKeysExcludedFromProfileSettingsBlob + localOnlyLayoutProfileSettingsKeys
-            PLAYER_SETTINGS_FEATURE -> localOnlyPlayerProfileSettingsKeys
-            else -> emptySet()
-        }
+        val keyNames = profileSettingsKeysKeptOnImport(feature)
         if (keyNames.isEmpty()) return emptyMap()
         val entries = mutableMapOf<Preferences.Key<*>, Any>()
         keyNames.forEach { keyName ->

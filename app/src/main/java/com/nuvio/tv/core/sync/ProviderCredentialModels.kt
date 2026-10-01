@@ -31,6 +31,16 @@ internal data class ProviderCredentialSnapshot(
         require(values.map(ProviderCredentialValue::provider).distinct().size == values.size)
     }
 
+    /**
+     * The values to push after a local edit: only providers whose value differs from the last-synced [baseline].
+     * B82 — pushing the whole snapshot upserted this device's stale blank placeholders over keys set elsewhere.
+     */
+    fun changedSince(baseline: ProviderCredentialSnapshot?): ProviderCredentialSnapshot {
+        if (baseline == null) return this
+        val baselineByProvider = baseline.values.associateBy { it.provider.lowercase() }
+        return copy(values = values.filter { baselineByProvider[it.provider.lowercase()] != it })
+    }
+
     fun mergeRemote(rows: List<SupabaseProviderCredential>): ProviderCredentialSnapshot {
         val remoteByProvider = rows.associateBy { it.provider.lowercase() }
         return copy(
