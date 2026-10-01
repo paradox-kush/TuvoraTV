@@ -4,7 +4,10 @@ import com.nuvio.tv.core.contracts.IptvSearchHit
 import com.nuvio.tv.core.contracts.IptvSearchProvider
 import com.nuvio.tv.core.contracts.IptvSearchRow
 import com.nuvio.tv.data.local.XtreamAccountStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
 /** Fork implementation of [IptvSearchProvider]: the active profile's IPTV playlists via [XtreamSearchIndex]. */
@@ -17,7 +20,29 @@ class XtreamIptvSearchProvider @Inject constructor(
 
     override suspend fun search(query: String): List<IptvSearchRow> = rowsOf(searchIndex.search(query))
 
+    override fun sourceSignature(): Flow<String?> =
+        accountStore.accounts.map { signatureOf(it) }.distinctUntilChanged()
+
     companion object {
+        /**
+         * UX15: fingerprint of what search reads from the enabled playlists — which playlists, what
+         * they point at, their content types and category selections. Null with no enabled
+         * playlist. Order-insensitive; display-only settings (name, EPG, catch-up, user agent) and
+         * the password are left out, so editing those never re-runs a search.
+         */
+        fun signatureOf(accounts: List<XtreamAccount>): String? {
+            val enabled = accounts.filter { it.enabled }
+            if (enabled.isEmpty()) return null
+            fun sel(list: List<String>?) = list?.sorted()?.joinToString(",", "[", "]") ?: "all"
+            return enabled.map { acc ->
+                listOf(
+                    acc.id, acc.sourceType, acc.baseUrl, acc.username, acc.portalUrl, acc.macAddress,
+                    acc.contentTypes.sorted().joinToString(","),
+                    sel(acc.categorySelections.live), sel(acc.categorySelections.movies), sel(acc.categorySelections.series),
+                ).joinToString("\u0001")
+            }.sorted().joinToString("\u0002")
+        }
+
         /** Channels, movies, series, in that order, as on Mobile and the pre-merge TV screen. Empty rows are dropped. */
         fun rowsOf(results: XtreamSearchIndex.Results): List<IptvSearchRow> = listOfNotNull(
             row("xtream_channels", "IPTV Channels", "tv", results.channels),

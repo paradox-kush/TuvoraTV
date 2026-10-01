@@ -40,7 +40,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -96,6 +98,12 @@ class SearchViewModel @Inject constructor(
     private var liveSearchJob: Job? = null
     private var lastRequestKey: String? = null
     private var lastCompletedRequestKey: String? = null
+
+    /** UX15: the search on screen and the IPTV source signature it ran with. */
+    private var shownSearch: IptvSearchRefreshPolicy.ShownSearch? = null
+
+    /** The IPTV lane of the shown search (the run's own, or a UX15 refresh that replaced it). */
+    private var iptvLaneJob: Job? = null
     private var hasRenderedFirstCatalog = false
     private var pendingCatalogResponses = 0
     private var revealBatchAfterNextDiscoverFetch = false
@@ -113,6 +121,9 @@ class SearchViewModel @Inject constructor(
         const val LIVE_SEARCH_DEBOUNCE_MS = 350L
 
         const val MAX_SUGGESTIONS = 8
+
+        /** UX15: coalesces a burst of playlist-setting toggles into one IPTV refresh. */
+        const val IPTV_SOURCE_CHANGE_DEBOUNCE_MS = 500L
         /** Splits titles and queries into words. */
         private val WORD_SEPARATOR = Regex("[^\\p{L}\\p{N}]+")
         const val MAX_RECENT_SEARCHES = 8
@@ -127,6 +138,15 @@ class SearchViewModel @Inject constructor(
 
     init {
         posterOptions.bind(viewModelScope)
+        // UX15: a playlist's content settings changed while results are on screen — refresh them.
+        viewModelScope.launch {
+            @OptIn(kotlinx.coroutines.FlowPreview::class)
+            iptvSearchProvider.sourceSignature()
+                .distinctUntilChanged()
+                .debounce(IPTV_SOURCE_CHANGE_DEBOUNCE_MS)
+                .catch { /* the source set is unreadable: keep what is shown */ }
+                .collect { signature -> onIptvSourcesChanged(signature) }
+        }
         viewModelScope.launch {
             watchProgressRepository.observeWatchedMovieIds()
                 .collect { ids -> _watchedMovieIds.value = ids }
@@ -557,6 +577,7 @@ class SearchViewModel @Inject constructor(
             resetCatalogAccumulator()
             lastRequestKey = null
             lastCompletedRequestKey = null
+            shownSearch = null
             _uiState.update {
                 it.copy(
                     isSearching = false,
@@ -598,6 +619,14 @@ class SearchViewModel @Inject constructor(
             } catch (_: Exception) {
                 false
             }
+            // UX15: recorded with the run so a later settings change can tell this result is stale.
+            val iptvSignature = try {
+                iptvSearchProvider.sourceSignature().first()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             if (generation != searchGeneration || activeSearchQuery != query) return@launch
 
             // Same query against the same catalogs, and that run either finished or is still
@@ -620,6 +649,7 @@ class SearchViewModel @Inject constructor(
                 return@launch
             }
             lastRequestKey = requestKey
+            shownSearch = IptvSearchRefreshPolicy.ShownSearch(query, iptvSignature)
 
             // Committed to a new run: drop the previous query's work and accumulated rows.
             activeSearchJobs.forEach { it.cancel() }
@@ -714,6 +744,7 @@ class SearchViewModel @Inject constructor(
             }
             // The IPTV lane belongs to this run: cancelled with it and joined before the run settles.
             val iptvJob = if (iptvEnabled) launch { loadIptvResults(query, generation) } else null
+            iptvLaneJob = iptvJob
             val jobs = addonJobs + listOfNotNull(iptvJob)
             pendingCatalogResponses = addonJobs.size
             activeSearchJobs = jobs
@@ -799,7 +830,7 @@ class SearchViewModel @Inject constructor(
      * [catalogOrder] after the addon keys, which the run registers before launching any job, so the
      * IPTV rows always follow the addon rows (as on Mobile) whichever lane answers first.
      */
-    private suspend fun loadIptvResults(query: String, generation: Long) {
+    private suspend fun loadIptvResults(query: String, generation: Long, replace: Boolean = false) {
         val rows = try {
             iptvSearchProvider.search(query)
         } catch (e: CancellationException) {
@@ -808,12 +839,40 @@ class SearchViewModel @Inject constructor(
             return
         }
         if (!isCurrentSearch(generation, query)) return
+        if (replace) {
+            // UX15: the new source set answers for the whole IPTV lane — rows it no longer
+            // returns must go, not linger from the old settings.
+            val stale = catalogsMap.filterValues { it.addonId == IPTV_ROW_ADDON_ID }.keys
+            stale.forEach { catalogsMap.remove(it) }
+            catalogOrder.removeAll(stale)
+        }
         rows.filter { it.hits.isNotEmpty() }.forEach { row ->
             val key = catalogKey(addonId = IPTV_ROW_ADDON_ID, addonBaseUrl = "", type = row.rawType, catalogId = row.catalogId)
             if (key !in catalogOrder) catalogOrder.add(key)
             catalogsMap[key] = row.toCatalogRow()
         }
         scheduleCatalogRowsUpdate()
+    }
+
+    /** UX15: the IPTV source set changed (a playlist's content settings, or one enabled/disabled). */
+    private fun onIptvSourcesChanged(signature: String?) {
+        val shown = shownSearch
+        when (IptvSearchRefreshPolicy.onSourcesChanged(shown, uiState.value.submittedQuery, signature)) {
+            IptvSearchRefreshPolicy.Action.NONE -> Unit
+            IptvSearchRefreshPolicy.Action.REFRESH_IPTV_ROWS -> {
+                val query = shown?.query ?: return
+                shownSearch = shown.copy(iptvSignature = signature)
+                val generation = searchGeneration
+                iptvLaneJob?.cancel()
+                iptvLaneJob = viewModelScope.launch { loadIptvResults(query, generation, replace = true) }
+            }
+            IptvSearchRefreshPolicy.Action.RERUN_SEARCH -> {
+                // The lane appeared or vanished: the request key changes, so this is a real rerun.
+                val raw = uiState.value.query.takeIf { it.trim() == shown?.query } ?: shown?.query ?: return
+                cancelSearchRun()
+                performSearch(raw, keepSuggestions = true)
+            }
+        }
     }
 
     private fun IptvSearchRow.toCatalogRow(): CatalogRow {

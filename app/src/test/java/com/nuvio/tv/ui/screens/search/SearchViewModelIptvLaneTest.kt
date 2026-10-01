@@ -131,6 +131,78 @@ class SearchViewModelIptvLaneTest {
         assertEquals("only the newer query's IPTV hit is shown", listOf("Deep Cover"), items)
     }
 
+    @Test
+    fun `changed IPTV content settings refresh the shown IPTV rows without refetching addons`() = runTest {
+        val iptv = FakeIptvSearch(rowsFor = { query -> listOf(moviesRow("xtream:acc:vod:1", "$query (old)")) })
+        val catalogs = EchoCatalogRepository()
+        val viewModel = newViewModel(addons = listOf(searchableAddon()), iptv = iptv, catalogs = catalogs)
+
+        viewModel.onEvent(SearchEvent.QueryChanged("Matrix"))
+        viewModel.onEvent(SearchEvent.SubmitSearch)
+        advanceUntilIdle()
+        assertEquals("first run shows the old IPTV hit", listOf("Matrix (old)"), iptvItemNames(viewModel))
+
+        // The viewer changes a playlist's content settings (e.g. switches Movies categories).
+        iptv.rowsFor = { query -> listOf(moviesRow("xtream:acc:vod:2", "$query (new)")) }
+        iptv.signature.value = "sig-B"
+        advanceUntilIdle()
+
+        assertEquals("IPTV rows follow the new settings", listOf("Matrix (new)"), iptvItemNames(viewModel))
+        assertEquals("IPTV lane re-ran for the shown query", listOf("Matrix", "Matrix"), iptv.queries)
+        assertEquals("addon catalogs were not refetched", 1, catalogs.calls)
+        assertEquals("addon row kept, IPTV row after it", listOf("addon", "xtream"), viewModel.uiState.value.catalogRows.map { it.addonId })
+    }
+
+    @Test
+    fun `settings that leave no IPTV hit remove the stale IPTV row`() = runTest {
+        val iptv = FakeIptvSearch(rowsFor = { query -> listOf(moviesRow("xtream:acc:vod:1", query)) })
+        val viewModel = newViewModel(addons = listOf(searchableAddon()), iptv = iptv)
+
+        viewModel.onEvent(SearchEvent.QueryChanged("Matrix"))
+        viewModel.onEvent(SearchEvent.SubmitSearch)
+        advanceUntilIdle()
+        iptv.rowsFor = { emptyList() }
+        iptv.signature.value = "sig-B"
+        advanceUntilIdle()
+
+        assertEquals("only the addon row is left", listOf("addon"), viewModel.uiState.value.catalogRows.map { it.addonId })
+    }
+
+    @Test
+    fun `enabling the first playlist reruns the shown search with the IPTV lane`() = runTest {
+        val iptv = FakeIptvSearch(hasSources = false, rowsFor = { query -> listOf(moviesRow("xtream:acc:vod:1", query)) })
+        val viewModel = newViewModel(addons = listOf(searchableAddon()), iptv = iptv)
+
+        viewModel.onEvent(SearchEvent.QueryChanged("Matrix"))
+        viewModel.onEvent(SearchEvent.SubmitSearch)
+        advanceUntilIdle()
+        assertTrue("no IPTV yet", iptv.queries.isEmpty())
+
+        iptv.signature.value = "sig-A"
+        advanceUntilIdle()
+
+        assertEquals("IPTV row appears", listOf("addon", "xtream"), viewModel.uiState.value.catalogRows.map { it.addonId })
+    }
+
+    @Test
+    fun `an unchanged IPTV source set never re-runs the search`() = runTest {
+        val iptv = FakeIptvSearch(rowsFor = { query -> listOf(moviesRow("xtream:acc:vod:1", query)) })
+        val catalogs = EchoCatalogRepository()
+        val viewModel = newViewModel(addons = listOf(searchableAddon()), iptv = iptv, catalogs = catalogs)
+
+        viewModel.onEvent(SearchEvent.QueryChanged("Matrix"))
+        viewModel.onEvent(SearchEvent.SubmitSearch)
+        advanceUntilIdle()
+        iptv.signature.value = "sig-A"
+        advanceUntilIdle()
+
+        assertEquals("one IPTV query", listOf("Matrix"), iptv.queries)
+        assertEquals("one addon fetch", 1, catalogs.calls)
+    }
+
+    private fun iptvItemNames(viewModel: SearchViewModel): List<String> =
+        viewModel.uiState.value.catalogRows.filter { it.addonId == "xtream" }.flatMap { row -> row.items.map { it.name } }
+
     private fun moviesRow(id: String, name: String) = IptvSearchRow(
         catalogId = "xtream_movies",
         name = "IPTV Movies",
@@ -139,20 +211,27 @@ class SearchViewModelIptvLaneTest {
     )
 
     private class FakeIptvSearch(
-        private val hasSources: Boolean = true,
-        private val rowsFor: (String) -> List<IptvSearchRow>,
+        hasSources: Boolean = true,
+        var rowsFor: (String) -> List<IptvSearchRow>,
         private val gateFor: (String) -> CompletableDeferred<Unit>? = { null },
     ) : IptvSearchProvider {
         val queries = mutableListOf<String>()
-        override suspend fun hasSearchableSources(): Boolean = hasSources
+        /** The playlists' settings fingerprint; null = no enabled playlist. */
+        val signature = MutableStateFlow<String?>(if (hasSources) "sig-A" else null)
+        override suspend fun hasSearchableSources(): Boolean = signature.value != null
         override suspend fun search(query: String): List<IptvSearchRow> {
             queries += query
             gateFor(query)?.await()
             return rowsFor(query)
         }
+        override fun sourceSignature(): Flow<String?> = signature
     }
 
-    private fun newViewModel(addons: List<Addon>, iptv: IptvSearchProvider): SearchViewModel {
+    private fun newViewModel(
+        addons: List<Addon>,
+        iptv: IptvSearchProvider,
+        catalogs: EchoCatalogRepository = EchoCatalogRepository(),
+    ): SearchViewModel {
         val layoutPreferences = mockk<LayoutPreferenceDataStore>()
         every { layoutPreferences.discoverLocation } returns flowOf(DiscoverLocation.OFF)
         every { layoutPreferences.posterCardWidthDp } returns flowOf(126)
@@ -174,7 +253,7 @@ class SearchViewModelIptvLaneTest {
 
         return SearchViewModel(
             addonRepository = FixedAddonRepository(addons),
-            catalogRepository = EchoCatalogRepository(),
+            catalogRepository = catalogs,
             metaRepository = mockk(relaxed = true),
             discoverSelectionDataStore = mockk(relaxed = true),
             layoutPreferenceDataStore = layoutPreferences,
@@ -197,6 +276,7 @@ class SearchViewModelIptvLaneTest {
     }
 
     private class EchoCatalogRepository : CatalogRepository {
+        var calls = 0
         override fun getCatalog(
             addonBaseUrl: String,
             addonId: String,
@@ -210,6 +290,7 @@ class SearchViewModelIptvLaneTest {
             supportsSkip: Boolean,
             posterScreen: com.nuvio.tv.core.poster.CustomPosterScreen
         ): Flow<NetworkResult<CatalogRow>> = flow {
+            calls++
             val query = extraArgs.getValue("search")
             emit(
                 NetworkResult.Success(
@@ -252,4 +333,5 @@ class SearchViewModelIptvLaneTest {
 internal object NoIptvSearch : IptvSearchProvider {
     override suspend fun hasSearchableSources(): Boolean = false
     override suspend fun search(query: String): List<IptvSearchRow> = emptyList()
+    override fun sourceSignature(): Flow<String?> = flowOf(null)
 }
