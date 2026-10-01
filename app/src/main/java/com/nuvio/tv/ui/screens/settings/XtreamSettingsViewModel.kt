@@ -35,6 +35,9 @@ import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.data.local.XtreamLiveStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -80,7 +83,13 @@ class XtreamSettingsViewModel @Inject constructor(
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
+    private val authManager: com.nuvio.tv.core.auth.AuthManager,
 ) : ViewModel() {
+
+    /** UX74: whether this TV is signed in — a remove only reaches other devices when it syncs. */
+    val signedIn: StateFlow<Boolean> = authManager.authState
+        .map { it is com.nuvio.tv.domain.model.AuthState.FullAccount }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), authManager.isAuthenticated)
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
     val uiState: StateFlow<XtreamSettingsUiState> = _uiState.asStateFlow()

@@ -117,6 +117,28 @@ fun XtreamSettingsContent(
     // freshest account from the store after each toggle.
     var contentForId by remember { mutableStateOf<String?>(null) }
     var checklistType by remember { mutableStateOf<String?>(null) }
+    // UX74: the remove confirm only promises an all-devices delete when this TV syncs.
+    val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
+    // UX79: a confirmed remove (id + its row index) until the row is gone — then say so and keep
+    // focus in the list (the removed row's focus used to fall out to the side menu).
+    var pendingRemoval by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    val ownAddRowFocus = remember { FocusRequester() }
+    val addRowFocus = initialFocusRequester ?: ownAddRowFocus
+    val accountRowFocus = remember { mutableMapOf<String, FocusRequester>() }
+    val context = LocalContext.current
+    val playlistRemovedText = stringResource(R.string.iptv_playlist_removed)
+    LaunchedEffect(pendingRemoval, uiState.accounts) {
+        val (removedId, removedIndex) = pendingRemoval ?: return@LaunchedEffect
+        if (uiState.accounts.any { it.id == removedId }) return@LaunchedEffect
+        pendingRemoval = null
+        accountRowFocus.remove(removedId)
+        android.widget.Toast.makeText(context, playlistRemovedText, android.widget.Toast.LENGTH_SHORT).show()
+        val target = PlaylistRemovalUiPolicy.focusIndexAfterRemoval(removedIndex, uiState.accounts.size)
+            ?.let { uiState.accounts.getOrNull(it) }
+            ?.let { accountRowFocus[it.id] }
+            ?: addRowFocus
+        target.requestFocusAfterFrames()
+    }
 
     Column(
         modifier = Modifier
@@ -141,7 +163,7 @@ fun XtreamSettingsContent(
             subtitle = "Paste a portal / M3U URL",
             onClick = { showAddDialog = true },
             leadingIcon = Icons.Default.Add,
-            modifier = initialFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier
+            modifier = Modifier.focusRequester(addRowFocus)
         )
 
         // Pair from a phone: typing on a TV remote is painful (and the TV may not be signed in),
@@ -182,7 +204,8 @@ fun XtreamSettingsContent(
                     uiState.guideEpgCoverage[account.id]
                 ).joinToString("\n"),
                 value = if (account.enabled) "On" else "Off",
-                onClick = { actionsFor = account }
+                onClick = { actionsFor = account },
+                modifier = Modifier.focusRequester(accountRowFocus.getOrPut(account.id) { FocusRequester() })
             )
         }
     }
@@ -446,12 +469,15 @@ fun XtreamSettingsContent(
         NuvioDialog(
             onDismiss = { removeConfirmFor = null },
             title = "Remove \u201C${account.name}\u201D?",
-            subtitle = "Its favourites, Continue Watching entries and watch progress go with it, on all " +
-                "your devices. This can't be undone.",
+            subtitle = when (PlaylistRemovalUiPolicy.confirmWording(signedIn)) {
+                PlaylistRemovalUiPolicy.ConfirmWording.ALL_DEVICES -> stringResource(R.string.iptv_remove_playlist_message_all_devices)
+                PlaylistRemovalUiPolicy.ConfirmWording.IF_YOU_SYNC -> stringResource(R.string.iptv_remove_playlist_message_if_you_sync)
+            },
             width = 460.dp
         ) {
             Button(
                 onClick = {
+                    pendingRemoval = account.id to uiState.accounts.indexOfFirst { it.id == account.id }.coerceAtLeast(0)
                     viewModel.remove(account.id)
                     removeConfirmFor = null
                 },
@@ -1571,6 +1597,7 @@ private fun XtreamField(
     )
     }
     }
+    }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -1615,7 +1642,6 @@ private fun XtreamAddButton(
             style = MaterialTheme.typography.bodyMedium,
             color = NuvioTheme.colors.TextPrimary.copy(alpha = contentAlpha)
         )
-    }
     }
 }
 
