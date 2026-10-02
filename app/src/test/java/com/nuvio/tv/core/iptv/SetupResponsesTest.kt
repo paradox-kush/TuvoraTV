@@ -2,6 +2,7 @@ package com.nuvio.tv.core.iptv
 
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -62,14 +63,52 @@ class SetupResponsesTest {
     }
 
     @Test
-    fun `transport failures are Network and raised server codes are mapped`() {
+    fun `the raised code is the whole first line, never a substring`() {
+        assertEquals(SetupCodeOutcome.NeedsSignIn, SetupResponses.rpcFailure(400, "anonymous_not_allowed"))
+        assertEquals(SetupCodeOutcome.NeedsSignIn, SetupResponses.rpcFailure(400, "not_authenticated\n\nDescription: x"))
+        assertEquals(SetupCodeOutcome.Expired(null), SetupResponses.rpcFailure(400, "expired"))
+        assertEquals(SetupCodeOutcome.ProfileNotFound, SetupResponses.rpcFailure(400, "profile_not_found"))
+        // "refused" contains "used", "caused" contains "used": a substring match would call these unusable.
+        assertEquals(SetupCodeOutcome.Unusable, SetupResponses.rpcFailure(400, "something else entirely"))
+        assertEquals("a refused connection is not a code verdict", SetupCodeOutcome.Network, SetupResponses.rpcFailure(null, "connection refused"))
+        assertEquals(SetupCodeOutcome.Network, SetupResponses.rpcFailure(null, "unused"))
+        assertEquals(SetupCodeOutcome.Unusable, SetupResponses.rpcFailure(400, "unused")) // an unknown raised code is neutral
+        assertEquals("a wrapped raised message is read by whole token", SetupCodeOutcome.NeedsSignIn, SetupResponses.rpcFailure(400, "P0001: anonymous_not_allowed (details)"))
+        assertEquals("refused is not used", SetupCodeOutcome.Unusable, SetupResponses.rpcFailure(400, "connection refused by peer"))
+    }
+
+    @Test
+    fun `a stale session reads as sign-in needed, not as an expired code`() {
+        assertEquals(SetupCodeOutcome.NeedsSignIn, SetupResponses.rpcFailure(401, "JWT expired"))
+        assertEquals(SetupCodeOutcome.NeedsSignIn, SetupResponses.rpcFailure(401, "{\"message\":\"JWT expired\"}"))
+        assertEquals(SetupCodeOutcome.NeedsSignIn, SetupResponses.rpcFailure(403, "permission denied"))
+    }
+
+    @Test
+    fun `a server or transport failure on redeem is Network so the code is kept`() {
+        assertEquals(SetupCodeOutcome.Network, SetupResponses.rpcFailure(500, "internal error"))
+        assertEquals(SetupCodeOutcome.Network, SetupResponses.rpcFailure(503, ""))
         assertEquals(SetupCodeOutcome.Network, SetupResponses.forThrowable(UnknownHostException("x")))
         assertEquals(SetupCodeOutcome.Network, SetupResponses.forThrowable(SocketTimeoutException()))
         assertEquals(SetupCodeOutcome.Network, SetupResponses.forThrowable(IOException("boom")))
-        assertEquals(SetupCodeOutcome.Network, SetupResponses.forThrowable(RuntimeException("Unable to resolve host \"x\"")))
-        assertEquals(SetupCodeOutcome.NeedsSignIn, SetupResponses.forThrowable(RuntimeException("anonymous_not_allowed")))
-        assertEquals(SetupCodeOutcome.NeedsSignIn, SetupResponses.forThrowable(RuntimeException("P0001: not_authenticated")))
-        assertEquals(SetupCodeOutcome.Unusable, SetupResponses.forThrowable(RuntimeException("something else entirely")))
+        assertEquals("an unreadable failure is no verdict on the code", SetupCodeOutcome.Network, SetupResponses.forThrowable(RuntimeException("who knows")))
+    }
+
+    @Test
+    fun `a redirect is not an answer`() {
+        assertEquals(SetupCodeOutcome.Unusable, SetupResponses.parsePreview(302, "", null))
+        assertEquals(SetupCodeOutcome.Unusable, SetupCodeOutcome.forPreviewHttp(301, "expired"))
+        assertEquals(SetupCodeOutcome.Unusable, SetupCodeOutcome.forPreviewHttp(307, null))
+    }
+
+    @Test
+    fun `the preview body is read only up to 64 KB`() {
+        fun src(n: Int) = okio.Buffer().writeUtf8("x".repeat(n))
+        assertEquals(100, SetupResponses.readCapped(src(100))?.length)
+        assertEquals(64 * 1024, SetupResponses.readCapped(src(64 * 1024))?.length)
+        assertNull("one byte over", SetupResponses.readCapped(src(64 * 1024 + 1)))
+        assertNull(SetupResponses.readCapped(src(5_000_000)))
+        assertNull(SetupResponses.readCapped(null))
     }
 
     @Test
@@ -98,7 +137,7 @@ class SetupResponsesTest {
         assertEquals(RedeemResultPolicy.Kind.ADDED, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":1,"updated":0,"unchanged":0,"playlists":[{"playlist_key":"k","name":"L","action":"added"}]}""")))
         assertEquals(RedeemResultPolicy.Kind.ADDED, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":0,"updated":1,"unchanged":0,"playlists":[{"playlist_key":"k","name":"L","action":"updated"}]}""")))
         assertEquals(RedeemResultPolicy.Kind.ALREADY_SET_UP, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"already_redeemed","added":0,"updated":0,"unchanged":0,"playlists":[]}""")))
-        assertEquals(RedeemResultPolicy.Kind.ALREADY_SET_UP, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":0,"updated":0,"unchanged":1,"playlists":[{"playlist_key":"k","name":"L","action":"unchanged"}]}""")))
+        assertEquals("a second code of the same package: same as Mobile, it reads as added (and opens)", RedeemResultPolicy.Kind.ADDED, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":0,"updated":0,"unchanged":1,"playlists":[{"playlist_key":"k","name":"L","action":"unchanged"}]}""")))
         assertEquals(RedeemResultPolicy.Kind.NOTHING, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":0,"updated":0,"unchanged":0,"playlists":[]}""")))
     }
 }

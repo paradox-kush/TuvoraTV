@@ -17,8 +17,8 @@ class ProviderSetupModelsTest {
         val s = support("""{"whatsapp":"+44 7700 900123","telegram":"@acme_tv","email":"help@acme.tv","website":"https://acme.tv/help"}""")
         assertEquals(
             listOf(
-                ProviderContact(ProviderContact.Kind.WHATSAPP, "+447700900123", "https://wa.me/447700900123"),
                 ProviderContact(ProviderContact.Kind.TELEGRAM, "@acme_tv", "https://t.me/acme_tv"),
+                ProviderContact(ProviderContact.Kind.WHATSAPP, "+447700900123", "https://wa.me/447700900123"),
                 ProviderContact(ProviderContact.Kind.EMAIL, "help@acme.tv", "mailto:help@acme.tv"),
                 ProviderContact(ProviderContact.Kind.WEBSITE, "acme.tv", "https://acme.tv/help"),
             ),
@@ -40,7 +40,8 @@ class ProviderSetupModelsTest {
         assertNull("no credentials in a link", ProviderSupport.normalizeWebsite("https://user:pw@acme.tv"))
         assertNull(ProviderSupport.normalizeWebsite("https://localhost"))
         assertNull(ProviderSupport.normalizeWebsite("https://acme.tv/a b"))
-        assertEquals("http://acme.tv", ProviderSupport.normalizeWebsite("http://acme.tv"))
+        assertNull("https only", ProviderSupport.normalizeWebsite("http://acme.tv"))
+        assertEquals("https://acme.tv", ProviderSupport.normalizeWebsite("https://acme.tv"))
     }
 
     @Test
@@ -75,5 +76,41 @@ class ProviderSetupModelsTest {
         assertEquals("2026-10-01T10:00:00Z", list[1].serviceUpdatedAt)
         assertNull(list[1].serviceName)
         assertFalse(list[0].support.isEmpty)
+    }
+
+    @Test
+    fun `provider text loses bidi and format characters and is capped`() {
+        assertEquals("Acme TV", ProviderText.clean("\u202EAcme\u200B TV\u2066"))
+        assertEquals("a b", ProviderText.clean("a\u0000\n\t b"))
+        assertEquals("", ProviderText.clean("\u202E\u200F\uFEFF"))
+        assertEquals(80, ProviderText.clean("x".repeat(200)).length)
+        assertEquals("a emoji \uD83D\uDE00 stays", ProviderText.clean("a emoji \uD83D\uDE00 stays"))
+    }
+
+    @Test
+    fun `a preview is sanitised and capped`() {
+        val many = (1..50).joinToString(",") { """{"name":"P$it","source_type":"xtream"}""" }
+        val adds = (1..50).joinToString(",") { "\"Addon$it\"" }
+        val p = SetupPreview.fromJson(Json.parseToJsonElement("""{"preview":{"provider_name":"\u202EStar\u200BShare","package_name":"G\u202Eold",
+            "playlists":[$many,{"source_type":"m3u_url"}],"addons":[$adds,"https://evil.example/manifest.json"]}}"""))!!
+        assertEquals("StarShare", p.providerName)
+        assertEquals("Gold", p.packageName)
+        assertEquals(20, p.playlists.size)
+        assertEquals(20, p.addons.size)
+        assertTrue(p.addons.none { "://" in it })
+        val nameless = SetupPreview.fromJson(Json.parseToJsonElement("""{"preview":{"provider_name":"A","playlists":[{"source_type":"xtream"}]}}"""))!!
+        assertEquals("Playlist", nameless.playlists.single().name)
+    }
+
+    @Test
+    fun `a provider name that is only invisible characters is no preview`() {
+        assertNull(SetupPreview.fromJson(Json.parseToJsonElement("""{"preview":{"provider_name":"\u202E\u200B"}}""")))
+    }
+
+    @Test
+    fun `managed provider names are sanitised too`() {
+        val l = ManagedPlaylistInfo.listFromJson(Json.parseToJsonElement("""[{"playlist_key":"k","provider_name":"\u202EAcme","service_name":"M\u200Bain","support":{}}]"""))
+        assertEquals("Acme", l.single().providerName)
+        assertEquals("Main", l.single().serviceName)
     }
 }

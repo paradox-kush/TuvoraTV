@@ -13,6 +13,34 @@ import kotlinx.serialization.json.JsonPrimitive
  * server addresses or URLs of the playlists themselves.
  */
 
+/**
+ * Provider-controlled text (names) as it is shown: Unicode control and format characters (bidi overrides
+ * U+202A-202E / U+2066-2069, zero-width, BOM, line and paragraph separators) removed so a name cannot reorder or
+ * hide the text around it, whitespace collapsed, trimmed, capped at [MAX_NAME] characters.
+ */
+object ProviderText {
+    const val MAX_NAME = 80
+    const val MAX_LIST = 20
+
+    private val STRIPPED = setOf(
+        Character.FORMAT, Character.CONTROL, Character.LINE_SEPARATOR, Character.PARAGRAPH_SEPARATOR, Character.PRIVATE_USE,
+    ).map { it.toInt() }.toSet()
+
+    fun clean(raw: String?, max: Int = MAX_NAME): String {
+        val sb = StringBuilder()
+        var lastSpace = true // no leading space
+        for (c in raw.orEmpty()) {
+            val whitespace = c.isWhitespace() // tab / newline are controls: they count as a space, not as nothing
+            if (whitespace) {
+                if (!lastSpace) { sb.append(' '); lastSpace = true }
+            } else if (Character.getType(c) !in STRIPPED) {
+                sb.append(c); lastSpace = false
+            }
+        }
+        return sb.toString().trim().take(max).trim()
+    }
+}
+
 /** A support channel a provider chose to show customers. */
 data class ProviderContact(val kind: Kind, val text: String, val url: String) {
     enum class Kind { WHATSAPP, TELEGRAM, EMAIL, WEBSITE }
@@ -34,8 +62,9 @@ data class ProviderSupport(
 
     /** The contacts in the web's order, each with its display text and link. */
     fun contacts(): List<ProviderContact> = buildList {
-        whatsapp?.let { add(ProviderContact(ProviderContact.Kind.WHATSAPP, "+$it", "https://wa.me/$it")) }
+        // Same order as Mobile / Apple TV.
         telegram?.let { add(ProviderContact(ProviderContact.Kind.TELEGRAM, "@$it", "https://t.me/$it")) }
+        whatsapp?.let { add(ProviderContact(ProviderContact.Kind.WHATSAPP, "+$it", "https://wa.me/$it")) }
         email?.let { add(ProviderContact(ProviderContact.Kind.EMAIL, it, "mailto:$it")) }
         website?.let { add(ProviderContact(ProviderContact.Kind.WEBSITE, websiteHost(it), it)) }
     }
@@ -64,24 +93,14 @@ data class ProviderSupport(
             return s.takeIf { it.length <= 254 && EMAIL_RE.matches(it) }
         }
 
-        /** A public http(s) address with a dotted host, no credentials, no whitespace or control chars. */
-        fun normalizeWebsite(v: String?): String? {
-            val s = v.orEmpty().trim()
-            if (s.isEmpty() || s.any { it.isWhitespace() || it.code < 0x20 || it.code == 0x7f }) return null
-            val lower = s.lowercase()
-            val rest = when {
-                lower.startsWith("https://") -> s.substring(8)
-                lower.startsWith("http://") -> s.substring(7)
-                else -> return null
-            }
-            val authority = rest.substringBefore('/').substringBefore('?').substringBefore('#')
-            if ('@' in authority) return null
-            val host = authority.substringBefore(':')
-            return s.takeIf { host.contains('.') && host.all { c -> c.isLetterOrDigit() || c == '.' || c == '-' } && !host.startsWith('.') }
-        }
+        /**
+         * An https address with a registered-looking host (see [com.nuvio.tv.core.links.ExternalLinkPolicy]): no IP
+         * literal, no single-label host, no credentials; an IDN host is stored in its punycode form.
+         */
+        fun normalizeWebsite(v: String?): String? = com.nuvio.tv.core.links.ExternalLinkPolicy.safeHttpsUrl(v.orEmpty())
 
         private fun websiteHost(url: String): String =
-            url.substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#')
+            com.nuvio.tv.core.links.ExternalLinkPolicy.displayHost(url) ?: url.substringAfter("://").substringBefore('/')
 
         /** Defensive parse of the `support` object a provider RPC / the preview route returns. */
         fun fromJson(element: JsonElement?): ProviderSupport {
@@ -115,19 +134,21 @@ data class SetupPreview(
         fun fromJson(root: JsonElement?): SetupPreview? {
             val o = ((root as? JsonObject)?.get("preview") as? JsonObject) ?: return null
             fun str(el: JsonElement?): String? = (el as? JsonPrimitive)?.takeIf { it !is JsonNull && it.isString }?.content
-            val provider = str(o["provider_name"])?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-            val playlists = (o["playlists"] as? JsonArray).orEmpty().mapNotNull { el ->
+            val provider = ProviderText.clean(str(o["provider_name"])).takeIf { it.isNotEmpty() } ?: return null
+            val playlists = (o["playlists"] as? JsonArray).orEmpty().take(ProviderText.MAX_LIST).mapNotNull { el ->
                 val p = el as? JsonObject ?: return@mapNotNull null
-                val name = str(p["name"])?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                PreviewPlaylist(name, str(p["source_type"]).orEmpty())
+                PreviewPlaylist(
+                    ProviderText.clean(str(p["name"])).ifEmpty { "Playlist" },
+                    ProviderText.clean(str(p["source_type"]), 20),
+                )
             }
-            val addons = (o["addons"] as? JsonArray).orEmpty().mapNotNull { el ->
-                str(el) ?: str((el as? JsonObject)?.get("name"))
-            }.filter { it.isNotBlank() }
+            val addons = (o["addons"] as? JsonArray).orEmpty().take(ProviderText.MAX_LIST).mapNotNull { el ->
+                (str(el) ?: str((el as? JsonObject)?.get("name")))?.let { ProviderText.clean(it) }
+            }.filter { it.isNotEmpty() && "://" !in it }
             return SetupPreview(
                 providerName = provider,
                 support = ProviderSupport.fromJson(o["support"]),
-                packageName = str(o["package_name"])?.takeIf { it.isNotBlank() },
+                packageName = ProviderText.clean(str(o["package_name"])).takeIf { it.isNotEmpty() },
                 playlists = playlists,
                 addons = addons,
                 status = str(o["status"]),
@@ -147,16 +168,19 @@ data class ManagedPlaylistInfo(
     val serviceUpdatedAt: String? = null,
 ) {
     companion object {
+        /** A profile holds a handful of playlists; this only bounds a hostile or corrupt answer. */
+        const val MAX_MANAGED = 200
+
         fun listFromJson(root: JsonElement?): List<ManagedPlaylistInfo> =
-            (root as? JsonArray).orEmpty().mapNotNull { el ->
+            (root as? JsonArray).orEmpty().take(MAX_MANAGED).mapNotNull { el ->
                 val o = el as? JsonObject ?: return@mapNotNull null
                 fun str(key: String): String? = (o[key] as? JsonPrimitive)?.takeIf { it !is JsonNull && it.isString }?.content
                 val key = str("playlist_key")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val provider = str("provider_name")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val provider = ProviderText.clean(str("provider_name")).takeIf { it.isNotEmpty() } ?: return@mapNotNull null
                 ManagedPlaylistInfo(
                     playlistKey = key,
                     providerName = provider,
-                    serviceName = str("service_name")?.takeIf { it.isNotBlank() },
+                    serviceName = ProviderText.clean(str("service_name")).takeIf { it.isNotEmpty() },
                     support = ProviderSupport.fromJson(o["support"]),
                     serviceUpdatedAt = str("service_updated_at")?.takeIf { it.isNotBlank() },
                 )
@@ -189,8 +213,9 @@ object RedeemResultPolicy {
     fun classify(r: RedeemResult): Kind = when {
         r.added + r.updated > 0 -> Kind.ADDED
         r.status == "already_redeemed" -> Kind.ALREADY_SET_UP
-        // `unchanged` = the playlist was already linked to this setup: it is in the account.
-        r.unchanged > 0 -> Kind.ALREADY_SET_UP
+        // `unchanged` = the playlist was already linked to this setup (a second code of the same package for this
+        // account): it is in the account. Same as Mobile: that reads as added (and opens it), not as "nothing".
+        r.unchanged > 0 -> Kind.ADDED
         r.skippedReasons.any { it != "invalid_url" } -> Kind.NOTHING_NO_LOGIN
         r.skippedReasons.isNotEmpty() -> Kind.NOTHING_BAD_ADDRESS
         else -> Kind.NOTHING

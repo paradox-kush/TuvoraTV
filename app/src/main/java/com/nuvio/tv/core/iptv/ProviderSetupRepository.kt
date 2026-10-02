@@ -1,6 +1,10 @@
 package com.nuvio.tv.core.iptv
 
+import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.auth.AuthManager
+import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.network.SYNC_BACKEND_HOSTED_ID
+import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.sync.XtreamAccountSyncService
 import com.nuvio.tv.domain.model.AuthState
@@ -27,6 +31,7 @@ class ProviderSetupRepository @Inject constructor(
     private val profileManager: ProfileManager,
     private val syncService: XtreamAccountSyncService,
     private val holder: SetupCodeHolder,
+    private val backends: SyncBackendSupabaseProvider,
 ) {
     /** True for a real (non-anonymous) account. TV's `FullAccount` is exactly that. */
     val isSignedIn: Boolean get() = authManager.authState.value is AuthState.FullAccount
@@ -46,7 +51,10 @@ class ProviderSetupRepository @Inject constructor(
             holder.set(code)
             return SetupCodeOutcome.NeedsSignIn.also { capturePreview(it) }
         }
-        val token = runCatching { authManager.currentAccessToken() }.getOrNull()
+        // The access token goes only to the hosted backend's own web host (security L4).
+        val token = if (ProviderSetupConfig.sendsToken(backends.selectedBackend.id == SYNC_BACKEND_HOSTED_ID, ProviderSetupConfig.BASE_URL, BuildConfig.IS_DEBUG_BUILD)) {
+            runCatching { authManager.currentAccessToken() }.getOrNull()
+        } else null
         return api.preview(code, token).also { capturePreview(it) }
     }
 
@@ -57,23 +65,23 @@ class ProviderSetupRepository @Inject constructor(
      */
     suspend fun redeem(typed: String, profileIndex: Int): RedeemFlowResult {
         val code = SetupCode.parse(typed) ?: return RedeemFlowResult.Failed(SetupCodeOutcome.Problem(SetupCode.Problem.WRONG_LENGTH))
-        return when (val r = api.redeem(code, profileIndex)) {
+        return when (val r = api.redeem(code, profileIndex, RedeemAddonsPolicy.skipAddons(AppFeaturePolicy.addonsEnabled))) {
             is RedeemOutcome.Failed -> {
                 captureRedeem(0, 0, r.outcome)
                 RedeemFlowResult.Failed(r.outcome)
             }
             is RedeemOutcome.Done -> {
+                // The code is spent now, whatever the result says.
                 holder.clear()
                 val kind = RedeemResultPolicy.classify(r.result)
-                if (kind != RedeemResultPolicy.Kind.ADDED) {
-                    captureRedeem(0, 0, null)
-                    return RedeemFlowResult.NothingAdded(kind)
-                }
                 val inActive = profileManager.activeProfileId.value == profileIndex
-                if (inActive) runCatching { syncService.pullAndApply() }
+                // Same as Mobile: even "already in your account" pulls once, so a playlist this device has not
+                // fetched yet shows up.
+                if (inActive && kind in PULLS) runCatching { syncService.pullAndApply() }
+                captureRedeem(r.result.added, r.result.updated, null)
+                if (kind != RedeemResultPolicy.Kind.ADDED) return RedeemFlowResult.NothingAdded(kind)
                 val infos = if (inActive) refresher.infosNow(profileIndex) else emptyMap()
                 val key = r.result.playlistKeys.firstOrNull()
-                captureRedeem(r.result.added, r.result.updated, null)
                 RedeemFlowResult.Added(infos[key]?.providerName, key, inActive, r.result)
             }
         }
@@ -86,6 +94,10 @@ class ProviderSetupRepository @Inject constructor(
         if (profileManager.activeProfileId.value == profileId) runCatching { syncService.pullAndApply() }
         runCatching { PostHog.capture(event = "playlist_detached", properties = emptyMap()) }
         return detached
+    }
+
+    private companion object {
+        val PULLS = setOf(RedeemResultPolicy.Kind.ADDED, RedeemResultPolicy.Kind.ALREADY_SET_UP)
     }
 
     fun clearCode() = holder.clear()

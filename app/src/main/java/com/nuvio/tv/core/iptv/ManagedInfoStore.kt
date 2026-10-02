@@ -30,7 +30,7 @@ import javax.inject.Singleton
  * playlists), never on a timer; the entry for another user is never visible (keyed by user id).
  */
 @Singleton
-class ManagedInfoStore(private val persistence: Persistence) {
+class ManagedInfoStore(private val persistence: Persistence) : com.nuvio.tv.core.profile.ProfileScopedCredentialStore {
 
     interface Persistence {
         fun read(): String?
@@ -65,6 +65,32 @@ class ManagedInfoStore(private val persistence: Persistence) {
     @Synchronized
     fun replace(userId: String, profileId: Int, list: List<ManagedPlaylistInfo>, revision: Long?, nowMs: Long = System.currentTimeMillis()) {
         val next = state.value + (slot(userId, profileId) to Entry(list.associateBy { it.playlistKey }, revision, nowMs))
+        state.value = next
+        persistence.write(encode(next))
+    }
+
+    // --- ProfileScopedCredentialStore: sign-out wipes it, profile delete / swap keep it in step ------------------
+
+    override fun removeProfile(profileId: Int) = dropProfile(profileId)
+    override fun clearAllProfiles() = clearAll()
+
+    @Synchronized
+    override fun swapProfiles(a: Int, b: Int) {
+        fun swap(key: String): String = when {
+            key.endsWith(":$a") -> key.removeSuffix(":$a") + ":$b"
+            key.endsWith(":$b") -> key.removeSuffix(":$b") + ":$a"
+            else -> key
+        }
+        val next = state.value.mapKeys { swap(it.key) }
+        state.value = next
+        persistence.write(encode(next))
+    }
+
+    /** A deleted profile's cached map goes with it (every user's slot for that profile id). */
+    @Synchronized
+    fun dropProfile(profileId: Int) {
+        val next = state.value.filterKeys { !it.endsWith(":$profileId") }
+        if (next.size == state.value.size) return
         state.value = next
         persistence.write(encode(next))
     }
@@ -136,7 +162,10 @@ object ManagedRefreshPolicy {
         playlistCount < 1 -> false
         !hasCache -> true
         cacheAgeMs >= MAX_AGE_MS -> true
-        revision == null || cachedRevision == null -> true
+        // The legacy (non-v2) pull has no revision: an existing cache then ages out (24 h) instead of being re-read
+        // on every pull.
+        revision == null -> false
+        cachedRevision == null -> true
         else -> revision != cachedRevision
     }
 

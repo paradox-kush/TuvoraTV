@@ -74,4 +74,31 @@ class ExternalLinkPolicyTest {
     fun `a real browser alone can open`() {
         assertEquals("canOpen", true, ExternalLinkPolicy.canOpen(listOf("org.mozilla.firefox")))
     }
+
+    @Test
+    fun `only https and mailto links are opened`() {
+        listOf("https://tuvora.co/terms", "https://t.me/acme_tv", "https://wa.me/447700900123", "mailto:help@acme.tv").forEach {
+            assertEquals(it, true, ExternalLinkPolicy.isAllowed(it))
+        }
+        listOf(
+            "http://acme.tv", "javascript:alert(1)", "intent://x#Intent;end", "file:///etc/passwd", "tel:123", "market://details?id=x",
+            "mailto:a@b.co?cc=x@y.z", "https://user:pw@acme.tv", "https://localhost", "https://intranet", "https://192.168.0.1",
+            "https://127.0.0.1/", "https://2130706433", "https://[::1]/", "https://acme.tv/a b", "https://acme..tv",
+        ).forEach { assertEquals(it, false, ExternalLinkPolicy.isAllowed(it)) }
+    }
+
+    @Test
+    fun `a refused link launches nothing and shows no QR`() {
+        val launched = mutableListOf<String>()
+        assertEquals(ExternalLinkPolicy.Outcome.Refused, ExternalLinkPolicy.open("http://acme.tv", canResolve = true) { launched += it })
+        assertEquals(ExternalLinkPolicy.Outcome.Refused, ExternalLinkPolicy.open("intent://x", canResolve = false) { launched += it })
+        assertEquals(emptyList<String>(), launched)
+    }
+
+    @Test
+    fun `an IDN host is shown as punycode`() {
+        assertEquals("xn--bcher-kva.example", ExternalLinkPolicy.displayHost("https://b\u00FCcher.example/x"))
+        assertEquals("https://xn--bcher-kva.example/x", ExternalLinkPolicy.safeHttpsUrl("https://b\u00FCcher.example/x"))
+        assertEquals("acme.tv", ExternalLinkPolicy.displayHost("https://ACME.tv:8443/a?b#c"))
+    }
 }

@@ -66,12 +66,49 @@ class ManagedInfoStoreTest {
     fun `an unchanged revision is not read again but a changed one is`() {
         assertFalse(should(rev = 5, cachedRev = 5))
         assertTrue(should(rev = 6, cachedRev = 5))
-        assertTrue("unknown revision reads", should(rev = null, cachedRev = 5))
+        assertFalse("the legacy pull has no revision: a fresh cache is not re-read on every pull", should(rev = null, cachedRev = 5))
+        assertTrue("but an old one is", should(rev = null, cachedRev = 5, age = ManagedRefreshPolicy.MAX_AGE_MS))
     }
 
     @Test
     fun `a cache a day old is read again at the next pull`() {
         assertFalse(should(age = ManagedRefreshPolicy.MAX_AGE_MS - 1))
         assertTrue(should(age = ManagedRefreshPolicy.MAX_AGE_MS))
+    }
+
+    // --- account data: sign-out, profile delete, profile swap ----------------------------------
+
+    @Test
+    fun `it is part of the profile-scoped store set so sign-out wipes it`() {
+        val store = ManagedInfoStore(MemoryPersistence().also { })
+        val set: Set<com.nuvio.tv.core.profile.ProfileScopedCredentialStore> = setOf(store)
+        store.replace("u1", 1, listOf(info), 1)
+        store.replace("u2", 2, listOf(info), 1)
+        set.forEach(com.nuvio.tv.core.profile.ProfileScopedCredentialStore::clearAllProfiles)
+        assertTrue(store.entries.value.isEmpty())
+    }
+
+    @Test
+    fun `a deleted profile's slot goes for every user, others stay`() {
+        val disk = MemoryPersistence()
+        val store = ManagedInfoStore(disk)
+        store.replace("u1", 2, listOf(info), 1)
+        store.replace("u2", 2, listOf(info), 1)
+        store.replace("u1", 3, listOf(info), 1)
+        store.removeProfile(2)
+        assertNull(store.entry("u1", 2)); assertNull(store.entry("u2", 2))
+        assertEquals(setOf("k1"), store.infos("u1", 3).keys)
+        assertNull("and it is gone from disk", ManagedInfoStore(disk).entry("u1", 2))
+    }
+
+    @Test
+    fun `promoting a profile swaps the cached maps with it`() {
+        val store = ManagedInfoStore(MemoryPersistence())
+        val other = info.copy(playlistKey = "k2")
+        store.replace("u1", 1, listOf(info), 1)
+        store.replace("u1", 2, listOf(other), 1)
+        store.swapProfiles(1, 2)
+        assertEquals(setOf("k2"), store.infos("u1", 1).keys)
+        assertEquals(setOf("k1"), store.infos("u1", 2).keys)
     }
 }

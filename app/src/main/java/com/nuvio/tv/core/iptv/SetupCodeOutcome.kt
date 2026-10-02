@@ -64,6 +64,8 @@ sealed interface SetupCodeOutcome {
         fun forPreviewHttp(status: Int, code: String?, retryAfterSec: Int? = null): SetupCodeOutcome = when {
             status == 429 || code == "rate_limited" -> RateLimited(retryAfterSec)
             status in 200..299 -> Unusable // a 2xx that did not parse is no preview
+            // The preview is fetched with redirects OFF; the route never redirects, so any 3xx is not an answer.
+            status in 300..399 -> Unusable
             code != null -> forServerCode(code, retryAfterSec = retryAfterSec)
             // A 5xx with no code at all is a gateway/proxy failure, not an answer about the code: "try again".
             status in 500..599 -> Network

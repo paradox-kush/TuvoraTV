@@ -36,7 +36,8 @@ sealed interface RedeemOutcome {
 interface ProviderSetupApi {
     /** [code] is the normalized 12 characters. [accessToken] gives the signed-in per-account rate-limit bucket. */
     suspend fun preview(code: String, accessToken: String?): SetupCodeOutcome
-    suspend fun redeem(code: String, profileIndex: Int): RedeemOutcome
+    /** [skipAddons]: store flavours must not install the package's add-ons (see [RedeemAddonsPolicy]). */
+    suspend fun redeem(code: String, profileIndex: Int, skipAddons: Boolean = false): RedeemOutcome
     suspend fun managedPlaylists(profileId: Int): Result<List<ManagedPlaylistInfo>>
     suspend fun detach(profileId: Int, playlistKey: String): Result<Boolean>
 }
@@ -56,19 +57,52 @@ object SetupResponses {
         return SetupCodeOutcome.forPreviewHttp(status, code, retry)
     }
 
-    private val KNOWN_CODES = listOf(
+    /** The preview route's answer is a few hundred bytes; anything over this is not it. */
+    const val MAX_PREVIEW_BYTES = 64L * 1024
+
+    /** The body as text, or null when it is longer than [maxBytes] (read no further than one byte past it). */
+    fun readCapped(source: okio.BufferedSource?, maxBytes: Long = MAX_PREVIEW_BYTES): String? {
+        if (source == null) return null
+        if (!source.request(maxBytes + 1)) return source.readUtf8() // fewer bytes than the cap + 1: all of it
+        return null
+    }
+
+    /** The server's raised error codes (the whole first line of a PostgREST message is exactly one of these). */
+    private val KNOWN_CODES = setOf(
         "anonymous_not_allowed", "not_authenticated", "profile_not_found", "rate_limited", "expired",
         "already_used", "invalid_code", "not_found", "unavailable", "suspended", "revoked", "used",
     )
 
-    /** A raised RPC error or a transport failure -> outcome. Transport failures are [SetupCodeOutcome.Network]. */
+    /**
+     * A failed RPC -> outcome. The raised code is the WHOLE first line of the message (`[a-z_]+`), never a
+     * substring (a "refused" would contain "used"). A session the server no longer accepts (401/403, "JWT
+     * expired") needs sign-in; it is not an expired CODE. A 5xx, a transport failure or anything we cannot read is
+     * [SetupCodeOutcome.Network]: no verdict on the code, so it is kept and can be retried.
+     */
+    fun rpcFailure(status: Int?, message: String?): SetupCodeOutcome {
+        val first = message.orEmpty().trim().lineSequence().firstOrNull().orEmpty().trim().lowercase()
+        val code = first.takeIf { it.isNotEmpty() && it.all { c -> c in 'a'..'z' || c == '_' } }
+        if (code != null && code in KNOWN_CODES) return SetupCodeOutcome.forServerCode(code)
+        // A raised exception is an HTTP 400. If the code is not the bare first line (a wrapped message), take it
+        // only as a WHOLE token ("refused" is not "used"; this is never tried for a 401 "JWT expired").
+        if (status == 400) {
+            val token = message.orEmpty().lowercase().split(Regex("[^a-z_]+")).firstOrNull { it in KNOWN_CODES }
+            if (token != null) return SetupCodeOutcome.forServerCode(token)
+        }
+        return when {
+            status == 401 || status == 403 -> SetupCodeOutcome.NeedsSignIn
+            status != null && status in 500..599 -> SetupCodeOutcome.Network
+            status == null -> SetupCodeOutcome.Network
+            code != null -> SetupCodeOutcome.forServerCode(code) // an unknown raised code: one neutral answer
+            else -> SetupCodeOutcome.Unusable
+        }
+    }
+
+    /** A thrown exception -> outcome: transport failures are [SetupCodeOutcome.Network]; Rest errors use [rpcFailure]. */
     fun forThrowable(e: Throwable): SetupCodeOutcome {
         if (e is IOException) return SetupCodeOutcome.Network
-        val msg = e.message.orEmpty().lowercase()
-        val code = KNOWN_CODES.firstOrNull { it in msg }
-        if (code != null) return SetupCodeOutcome.forServerCode(code)
-        val transport = listOf("unable to resolve host", "timeout", "timed out", "connect", "network", "socket")
-        return if (transport.any { it in msg }) SetupCodeOutcome.Network else SetupCodeOutcome.Unusable
+        if (e is io.github.jan.supabase.exceptions.RestException) return rpcFailure(e.statusCode, e.message)
+        return SetupCodeOutcome.Network
     }
 
     fun parseRedeem(body: JsonElement?): RedeemOutcome {
@@ -110,6 +144,9 @@ class SupabaseProviderSetupApi @Inject constructor(
             // Default (true): a stale pooled keep-alive connection is retried transparently. The preview is an idempotent
             // GET whose request never reached the server in that case, so it cannot cost a rate-limit strike.
             .retryOnConnectionFailure(true)
+            // The route never redirects. A redirect could carry the code (query) and the bearer token elsewhere.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
     }
 
@@ -120,7 +157,9 @@ class SupabaseProviderSetupApi @Inject constructor(
                 .apply { accessToken?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") } }
                 .build()
             previewClient.newCall(request).execute().use { response ->
-                SetupResponses.parsePreview(response.code, response.body?.string(), response.header("Retry-After"))
+                val text = SetupResponses.readCapped(response.body?.source())
+                if (text == null && response.code in 200..299) SetupCodeOutcome.Unusable
+                else SetupResponses.parsePreview(response.code, text, response.header("Retry-After"))
             }
         } catch (e: IOException) {
             SetupCodeOutcome.Network
@@ -133,11 +172,13 @@ class SupabaseProviderSetupApi @Inject constructor(
         }
     }
 
-    override suspend fun redeem(code: String, profileIndex: Int): RedeemOutcome = withContext(Dispatchers.IO) {
+    override suspend fun redeem(code: String, profileIndex: Int, skipAddons: Boolean): RedeemOutcome = withContext(Dispatchers.IO) {
         try {
             val params = buildJsonObject {
                 put("p_code", code)
                 put("p_profile_index", profileIndex)
+                // Sent only when true: an older backend without the argument keeps working for the full flavour.
+                if (skipAddons) put("p_skip_addons", true)
             }
             val body: JsonElement = postgrest.rpc("redeem_setup", params).decodeAs<JsonElement>()
             SetupResponses.parseRedeem(body)
@@ -174,14 +215,38 @@ class SupabaseProviderSetupApi @Inject constructor(
 
 /** The web hosts in ONE place (contract section 2: "make the base URL a single constant"). */
 object ProviderSetupConfig {
+    const val PRODUCTION_BASE = "https://tuvora.co"
+
+    /**
+     * The override (`PROVIDER_SETUP_BASE_URL`, a local-testing aid) is honoured ONLY in a debug build
+     * (`IS_DEBUG_BUILD`: TV debug has `BuildConfig.DEBUG == false`). A release build always uses [PRODUCTION_BASE]
+     * (https), so a stray `local.properties` value can never redirect the code or the token.
+     */
+    fun resolveBase(override: String, isDebug: Boolean): String {
+        val o = override.trim().trimEnd('/')
+        return if (isDebug && o.isNotEmpty()) o else PRODUCTION_BASE
+    }
+
     /** The apex that serves the claim page and the preview route. */
-    val BASE_URL: String get() = BuildConfig.PROVIDER_SETUP_BASE_URL.trimEnd('/')
+    val BASE_URL: String get() = resolveBase(BuildConfig.PROVIDER_SETUP_BASE_URL, BuildConfig.IS_DEBUG_BUILD)
 
     /** Where the code screen's QR points: the claim page's entry. */
     val CLAIM_ENTRY_URL: String get() = "$BASE_URL/s"
+
+    /** The access token goes only to the hosted backend's own web (https; plain http only in a debug build). */
+    fun sendsToken(backendIsHosted: Boolean, baseUrl: String, isDebug: Boolean): Boolean =
+        backendIsHosted && (baseUrl.startsWith("https://") || (isDebug && baseUrl.startsWith("http://")))
 
     fun previewUrl(code: String, base: String = BASE_URL) = base.trimEnd('/').toHttpUrl().newBuilder()
         .addPathSegments("api/s/preview")
         .addQueryParameter("code", SetupCode.format(code))
         .build()
+}
+
+/**
+ * Store flavours (add-ons hidden: `AppFeaturePolicy.addonsEnabled == false`) must not receive the package's
+ * add-ons from a redeem: the person cannot see or consent to them. Decision 6.5 / security M6.
+ */
+object RedeemAddonsPolicy {
+    fun skipAddons(addonsEnabled: Boolean): Boolean = !addonsEnabled
 }
