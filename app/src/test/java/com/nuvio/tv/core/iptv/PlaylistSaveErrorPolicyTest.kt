@@ -45,6 +45,14 @@ class PlaylistSaveErrorPolicyTest {
     }
 
     @Test
+    fun `a login every backup server refused is wrong username or password`() {
+        // Step 0.3 failover: a definitive refusal from the validation probe surfaces as FailoverAuthRejectedException.
+        val refused = FailoverAuthRejectedException("Xtream login probe: the account was refused")
+        assertEquals("failover refusal", PlaylistSaveError.WRONG_CREDENTIALS, PlaylistSaveErrorPolicy.classify(refused))
+        assertEquals("wrapped", PlaylistSaveError.WRONG_CREDENTIALS, PlaylistSaveErrorPolicy.classify(RuntimeException("walk", refused)))
+    }
+
+    @Test
     fun `a provider firewall status is a block - not a username or password problem`() {
         // 403/419/429/451/456 are the provider's edge (WAF/Cloudflare) turning the device away while
         // the server is up — IptvLoadFailurePolicy's BLOCKED_BY_PROVIDER. Never "wrong password".

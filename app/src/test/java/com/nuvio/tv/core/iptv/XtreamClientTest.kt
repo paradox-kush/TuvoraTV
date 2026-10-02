@@ -309,6 +309,7 @@ class XtreamClientTest {
         okhttp3.OkHttpClient(),
         Moshi.Builder().add(FlexIntAdapter).add(KotlinJsonAdapterFactory()).build(),
         com.nuvio.tv.core.iptv.dns.PlaylistDns(),
+        PlaylistServerFailover.detached(),
     )
 
     private fun userInfo(auth: Int?, status: String?) = com.nuvio.tv.data.remote.dto.XtreamUserInfoDto(

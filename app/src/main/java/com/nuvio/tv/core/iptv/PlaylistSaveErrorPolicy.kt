@@ -72,6 +72,8 @@ object PlaylistSaveErrorPolicy {
         val chain = generateSequence(error) { it.cause.takeIf { c -> c !== it } }.take(MAX_CAUSE_DEPTH).toList()
         // Order matters: SSLException IS an IOException, and a 401 is not "unreachable".
         chain.firstOrNull { it is XtreamAuthRejectedException }?.let { return PlaylistSaveError.WRONG_CREDENTIALS }
+        // Step 0.3: the failover probe's definitive refusal (auth=0 / banned) is the same answer on every server.
+        chain.firstOrNull { it is FailoverAuthRejectedException }?.let { return PlaylistSaveError.WRONG_CREDENTIALS }
         chain.firstOrNull { it is XtreamAccountInactiveException }?.let { return PlaylistSaveError.ACCOUNT_INACTIVE }
         chain.filterIsInstance<HttpStatusException>().firstOrNull()?.let { http ->
             // The provider's edge turned us away (server up): not a password problem.
