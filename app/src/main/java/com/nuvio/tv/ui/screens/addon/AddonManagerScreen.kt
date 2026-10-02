@@ -109,6 +109,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
+import com.nuvio.tv.core.sync.AddonSyncStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.map
 
@@ -127,6 +128,7 @@ fun AddonManagerScreen(
     onNavigateToCollections: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val addonSyncStatus by viewModel.addonSyncStatus.collectAsState()
     val firstAddonToggleFocusRequester = remember { FocusRequester() }
     val experienceModeState by remember(viewModel) {
         viewModel.experienceMode.map<ExperienceMode?, AddonExperienceModeState> {
@@ -426,7 +428,15 @@ fun AddonManagerScreen(
 
             item {
                 RefreshAddonsEntryCard(
-                    subtitle = refreshAddonsSubtitle,
+                    // UX71: the card doubles as the retry while local edits haven't reached the account.
+                    subtitle = if (
+                        addonSyncStatus == AddonSyncStatus.NotSynced &&
+                        refreshAddonsSubtitle == defaultRefreshAddonsSubtitle
+                    ) {
+                        stringResource(R.string.addon_not_synced_yet)
+                    } else {
+                        refreshAddonsSubtitle
+                    },
                     onClick = {
                         viewModel.requestAddonSyncNow()
                         refreshAddonsSubtitle = refreshedAddonsSubtitle

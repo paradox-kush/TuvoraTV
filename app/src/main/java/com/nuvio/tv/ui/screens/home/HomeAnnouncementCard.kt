@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
@@ -35,8 +36,17 @@ import com.nuvio.tv.ui.components.RestoreFocusOnClose
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 /**
+ * Focuses the announcement card's first button; null while no card is showing. Provided by
+ * HomeScreen for layouts that consume Up themselves before HomeScreen's fallback can see it
+ * (Modern's expanded first-row card, UX80).
+ */
+internal val LocalHomeAnnouncementFocus = compositionLocalOf<(() -> Boolean)?> { null }
+
+/**
  * Dismissible announcement card for the top of Home. It never requests focus itself (the layouts
- * own initial focus on the first content row); it is reached with D-pad up.
+ * own initial focus on the first content row); it is reached with D-pad up, which HomeScreen routes
+ * to [ctaFocusRequester] when Up has nowhere else to go (UX80). That requester sits on the CTA, or on
+ * Dismiss when there is no CTA.
  *
  * TV has no reliable browser, so the CTA hands the link to the viewer's phone as a QR code, the
  * same way About → Discord does ([QrHandOffDialog]).
@@ -88,6 +98,7 @@ internal fun HomeAnnouncementCard(
             }
             AnnouncementButton(
                 text = stringResource(R.string.home_announcement_dismiss),
+                modifier = if (cta == null) Modifier.focusRequester(ctaFocusRequester) else Modifier,
                 onClick = {
                     // Hand focus to the content below before this card leaves the tree, so the
                     // D-pad never ends up on a removed node.

@@ -1189,12 +1189,12 @@ internal fun SettingsChoiceChip(
             containerColor = when {
                 zen && selected -> NuvioTheme.colors.Secondary.copy(alpha = 0.18f)
                 zen -> Color.Transparent
-                selected -> NuvioTheme.colors.FocusRing.copy(alpha = 0.2f)
+                selected -> NuvioTheme.colors.FocusRing.copy(alpha = 0.3f)
                 else -> NuvioTheme.colors.Background
             },
             focusedContainerColor = when {
                 zen -> settingsFocusFillColor()
-                selected -> NuvioTheme.colors.FocusRing.copy(alpha = 0.2f)
+                selected -> NuvioTheme.colors.FocusRing.copy(alpha = 0.3f)
                 else -> NuvioTheme.colors.Background
             }
         ),
@@ -1210,13 +1210,13 @@ internal fun SettingsChoiceChip(
                 ) else Border.None
             )
         } else {
+            // UX29 (house TV focus rule): selected = FILLED (containerColor above), focused = RING.
+            // Selected and focused used to draw the same hairline ring, so D-pad focus on a selected
+            // chip was invisible.
             CardDefaults.border(
-                border = if (selected) Border(
-                    border = NuvioTheme.focusRing.border(NuvioTheme.spacing.hairline),
-                    shape = RoundedCornerShape(SettingsPillRadius)
-                ) else Border.None,
+                border = Border.None,
                 focusedBorder = Border(
-                    border = NuvioTheme.focusRing.border(NuvioTheme.spacing.hairline),
+                    border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                     shape = RoundedCornerShape(SettingsPillRadius)
                 )
             )

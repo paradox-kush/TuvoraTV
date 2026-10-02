@@ -57,16 +57,6 @@ class IptvOverlayRepository @Inject constructor(
     suspend fun freshSnapshot(): OverlaySnapshot =
         kotlinx.coroutines.withContext(Dispatchers.IO) { db.snapshot(profile()) }
 
-    fun toggleChannelHidden(entityId: String, playlistId: String?) {
-        val p = profile()
-        val cur = _uiState.value.channels[entityId] ?: ChannelOverlay()
-        launchSafely("toggleChannelHidden") {
-            db.setChannel(p, entityId, playlistId, cur.copy(hidden = !cur.hidden), now())
-            _uiState.value = db.snapshot(p)
-            push(p)
-        }
-    }
-
     fun setChannelHidden(entityId: String, playlistId: String?, hidden: Boolean) {
         val p = profile()
         val cur = _uiState.value.channels[entityId] ?: ChannelOverlay()

@@ -113,7 +113,9 @@ data class LiveGuideUiState(
      */
     val catchUpSupported: Boolean = false,
     /** Set when a replay is ready to launch; the screen consumes it and navigates. */
-    val replayLaunch: ReplayLaunch? = null
+    val replayLaunch: ReplayLaunch? = null,
+    /** UX36/UX73: the confirmation (with Undo) for the hide just made; null when none is showing. */
+    val hideNotice: GuideHideUndoPolicy.Notice? = null,
 ) {
     val focusedChannel: GuideChannel? get() = channels.firstOrNull { it.contentId == focusedChannelId }
 }
@@ -423,19 +425,56 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (category.special != null) return
         val acc = account ?: return
         val raw = categoriesCache[acc.id]?.firstOrNull { it.id == category.id } ?: return
-        overlayRepository.setCategoryHidden(
+        val target = GuideHideUndoPolicy.Target.Group(
             playlistId = acc.id,
             contentType = XtreamAccount.TYPE_LIVE,
             categoryKey = com.nuvio.tv.core.iptv.identity.IptvIdentity.categoryKey(acc.id, XtreamAccount.TYPE_LIVE, raw.name),
-            hidden = true,
         )
+        // UX73: confirmed with a notice naming where to unhide it, with Undo. The label is the one the
+        // viewer saw (a renamed group keeps its new name), the key the provider's own name.
+        val notice = GuideHideUndoPolicy.onGroupHidden(target, name = category.name, playlistName = acc.name.takeIf { it.isNotBlank() })
+        applyHideWrite(GuideHideUndoPolicy.hideWrite(notice))
+        _uiState.update { it.copy(hideNotice = notice) }
         if (_uiState.value.selectedCategoryId == category.id) selectCategory(ALL_ID)
     }
 
-    /** D-pad "hide"/"unhide" this channel — writes the overlay (local + synced to the web/other devices). */
-    fun toggleChannelHidden(channel: GuideChannel) {
-        val acc = com.nuvio.tv.core.iptv.XtreamItemRegistry.parseId(channel.contentId)?.accountId ?: lastOverlayAccountId
-        overlayRepository.toggleChannelHidden(channel.entityId, acc)
+    /**
+     * UX36/UX73: MENU on the fullscreen channel hides it — an explicit hide (it used to toggle, so a
+     * second press or an already-hidden channel silently un-hid it) confirmed with a notice + Undo.
+     * Writes the overlay (local + synced to the web/other devices). No-op on a row with no identity.
+     */
+    fun hideChannel(channel: GuideChannel) {
+        val playlistId = com.nuvio.tv.core.iptv.XtreamItemRegistry.parseId(channel.contentId)?.accountId ?: lastOverlayAccountId
+        val notice = GuideHideUndoPolicy.onChannelMenu(
+            entityId = channel.entityId,
+            playlistId = playlistId,
+            alreadyHidden = overlayRepository.uiState.value.channels[channel.entityId]?.hidden == true,
+            name = channel.name,
+            playlistName = GuideHideUndoPolicy.playlistName(playlistId, account?.id, account?.name),
+        ) ?: return
+        applyHideWrite(GuideHideUndoPolicy.hideWrite(notice))
+        _uiState.update { it.copy(hideNotice = notice) }
+    }
+
+    /** Undo on the hide notice: the same channel or group back to shown, through the same store. */
+    fun undoHide() {
+        val notice = _uiState.value.hideNotice ?: return
+        applyHideWrite(GuideHideUndoPolicy.undoWrite(notice))
+        _uiState.update { it.copy(hideNotice = null) }
+    }
+
+    /** The notice timed out or the viewer moved on; the hide stands. */
+    fun dismissHideNotice(notice: GuideHideUndoPolicy.Notice) {
+        _uiState.update { if (it.hideNotice == notice) it.copy(hideNotice = null) else it }
+    }
+
+    private fun applyHideWrite(write: GuideHideUndoPolicy.Write) {
+        when (val t = write.target) {
+            is GuideHideUndoPolicy.Target.Channel ->
+                overlayRepository.setChannelHidden(t.entityId, t.playlistId, hidden = write.hidden)
+            is GuideHideUndoPolicy.Target.Group ->
+                overlayRepository.setCategoryHidden(t.playlistId, t.contentType, t.categoryKey, hidden = write.hidden)
+        }
     }
 
     /** Called by the screen when the hub's selected account changes (or its options change —

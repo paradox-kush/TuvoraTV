@@ -83,6 +83,7 @@ import com.nuvio.tv.core.iptv.XtreamProgram
 import com.nuvio.tv.ui.components.EmptyScreenState
 import com.nuvio.tv.ui.components.ErrorState
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.components.NuvioUndoToast
 import com.nuvio.tv.ui.components.placeholderCardShimmer
 import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
 import androidx.compose.ui.platform.LocalContext
@@ -292,7 +293,8 @@ fun LiveGuide(
             // arrive there — intercept them in the preview phase before the row's clickable.
             // BACK is NOT consumed (BackHandler collapses). UP/DOWN zap channels.
             .onPreviewKeyEvent { event ->
-                if (!fullscreen) return@onPreviewKeyEvent false
+                // While a hide notice is up its Undo holds focus; its keys are its own.
+                if (!fullscreen || uiState.hideNotice != null) return@onPreviewKeyEvent false
                 val handled = when (event.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
                     Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause,
@@ -305,8 +307,9 @@ fun LiveGuide(
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> togglePause()
                         Key.MediaPlay -> if (playbackUi?.isPaused == true) togglePause() else showControls()
                         Key.MediaPause -> if (playbackUi?.isPaused != true) togglePause() else showControls()
-                        // MENU on the aimed channel toggles hide (personalization overlay; syncs to web + other devices).
-                        Key.Menu -> uiState.focusedChannel?.let { viewModel.toggleChannelHidden(it) }
+                        // MENU on the aimed channel hides it (personalization overlay; syncs to web + other
+                        // devices) and confirms with a notice + Undo (UX36/UX73 — it used to toggle silently).
+                        Key.Menu -> uiState.focusedChannel?.let { viewModel.hideChannel(it) }
                         // The live-TV remote split: UP/DOWN are the channel keys. Every press
                         // surfaces the overlay naming the AIMED channel immediately (each press
                         // restarts the 4s auto-hide), so a settled zap is never a blind walk.
@@ -402,7 +405,13 @@ fun LiveGuide(
                         height = 280.dp
                     )
                     uiState.channels.isEmpty() -> EmptyScreenState(
-                        title = stringResource(R.string.iptv_guide_no_channels),
+                        // UX13: an empty Favorites view says how to fill it.
+                        title = when (GuideEmptyStatePolicy.kind(
+                            uiState.categories.firstOrNull { it.id == uiState.selectedCategoryId }?.special
+                        )) {
+                            GuideEmptyStatePolicy.Kind.FAVORITES_HINT -> stringResource(R.string.iptv_guide_favorites_empty)
+                            GuideEmptyStatePolicy.Kind.NO_CHANNELS -> stringResource(R.string.iptv_guide_no_channels)
+                        },
                         height = 280.dp
                     )
                     else -> LazyColumn(
@@ -578,7 +587,7 @@ fun LiveGuide(
                 onDismiss = { hideCategoryAsk = null },
                 title = "Hide \u201C${cat.name}\u201D?",
                 subtitle = "Its channels leave the guide on all your devices. Bring it back any time in " +
-                    "Settings \u2192 Integrations \u2192 IPTV \u2192 this playlist \u2192 Hidden channels & groups.",
+                    "Settings \u2192 Integrations \u2192 IPTV playlists \u2192 this playlist \u2192 Hidden channels & groups.",
                 width = 460.dp
             ) {
                 Button(
@@ -594,6 +603,43 @@ fun LiveGuide(
                     modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus)
                 ) { Text("Cancel") }
             }
+        }
+
+        // UX36/UX73: a hide is confirmed with where to unhide it, and Undo. Undo takes focus (the row
+        // that had it just left the list); leaving the notice puts focus back in the guide.
+        uiState.hideNotice?.let { notice ->
+            fun restoreGuideFocus() {
+                when (notice.target) {
+                    is GuideHideUndoPolicy.Target.Channel ->
+                        if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
+                            runCatching { channelListFocus.requestFocus() }
+                        }
+                    is GuideHideUndoPolicy.Target.Group -> runCatching { categoryListFocus.requestFocus() }
+                }
+            }
+            NuvioUndoToast(
+                message = when (notice.sentence) {
+                    GuideHideUndoPolicy.Sentence.WITH_PLAYLIST ->
+                        stringResource(R.string.iptv_guide_hidden_notice, notice.name, notice.playlistName.orEmpty())
+                    GuideHideUndoPolicy.Sentence.GENERIC ->
+                        stringResource(R.string.iptv_guide_hidden_notice_generic, notice.name)
+                },
+                actionLabel = stringResource(R.string.iptv_guide_hidden_undo),
+                onAction = {
+                    restoreGuideFocus()
+                    viewModel.undoHide()
+                },
+                onDismiss = {
+                    restoreGuideFocus()
+                    viewModel.dismissHideNotice(notice)
+                },
+                durationMillis = GuideHideUndoPolicy.UNDO_WINDOW_MS,
+                key = notice,
+                // Fullscreen keeps the bottom for the channel/EPG overlay.
+                modifier = Modifier
+                    .align(if (fullscreen) Alignment.TopCenter else Alignment.BottomCenter)
+                    .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.xl),
+            )
         }
     }
 }

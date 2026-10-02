@@ -7,6 +7,8 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.PlaylistEditVerifyPolicy
+import com.nuvio.tv.core.iptv.PlaylistSaveError
+import com.nuvio.tv.core.iptv.PlaylistSaveErrorPolicy
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
 import com.nuvio.tv.core.iptv.XtreamCategory
@@ -35,6 +37,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,8 +84,14 @@ class XtreamSettingsViewModel @Inject constructor(
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val epgMirror: com.nuvio.tv.core.epg.EpgMirrorRepository,
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
+    private val authManager: com.nuvio.tv.core.auth.AuthManager,
     private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
 ) : ViewModel() {
+
+    /** UX74: whether this TV is signed in — a remove only reaches other devices when it syncs. */
+    val signedIn: StateFlow<Boolean> = authManager.authState
+        .map { it is com.nuvio.tv.domain.model.AuthState.FullAccount }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), authManager.isAuthenticated)
 
     private val _uiState = MutableStateFlow(XtreamSettingsUiState())
     val uiState: StateFlow<XtreamSettingsUiState> = _uiState.asStateFlow()
@@ -265,7 +274,7 @@ class XtreamSettingsViewModel @Inject constructor(
     ) {
         verifyAndSave(
             xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options)?.withBackups(options),
-            "Enter a server URL, username and password",
+            manualFormError(serverUrl, username, password),
             onSuccess
         )
     }
@@ -423,7 +432,8 @@ class XtreamSettingsViewModel @Inject constructor(
                     onSuccess()
                 }
             }.onFailure { e ->
-                _uiState.update { it.copy(error = e.message ?: "Could not reach the panel") }
+                // UX20: a mapped sentence (unreachable vs wrong credentials vs TLS), never e.message.
+                _uiState.update { it.copy(error = PlaylistSaveErrorPolicy.messageFor(e)) }
             }
         }
     }
@@ -447,10 +457,19 @@ class XtreamSettingsViewModel @Inject constructor(
             old,
             xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options),
             options,
-            "Enter a server URL, username and password",
+            manualFormError(serverUrl, username, password),
             onSuccess
         )
     }
+
+    /**
+     * UX21: the sentence for a manual Xtream form that didn't build an account — empty fields keep
+     * "Enter a server URL…", a filled form with an unparseable address (bad port) says so instead.
+     */
+    private fun manualFormError(serverUrl: String, username: String, password: String): String =
+        PlaylistSaveErrorPolicy.message(
+            PlaylistSaveErrorPolicy.formError(serverUrl, username, password) ?: PlaylistSaveError.INVALID_ADDRESS
+        )
 
     /**
      * Verifies the edited credentials live, then swaps the account in place (keeping its

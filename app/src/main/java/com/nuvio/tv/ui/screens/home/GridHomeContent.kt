@@ -515,6 +515,14 @@ fun GridHomeContent(
                     span = { GridItemSpan(maxLineSpan) },
                     contentType = "continue_watching"
                 ) {
+                    SnapContinueWatchingToNewLeader(
+                        rowKey = MODERN_CONTINUE_WATCHING_ROW_KEY,
+                        itemKeys = continueWatchingItems.map(::continueWatchingItemKey),
+                        listState = cwListState,
+                        rowHasFocus = {
+                            contentHasFocus.value && activeCwRowKey.value == "continue_watching"
+                        },
+                    )
                     LaunchedEffect(cwPendingScrollToStart.intValue) {
                         if (cwPendingScrollToStart.intValue > 0) {
                             cwListState.scrollToItem(0, 0)

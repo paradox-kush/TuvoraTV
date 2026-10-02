@@ -193,7 +193,8 @@ fun AuthQrSignInScreen(
                     .padding(start = 56.dp, end = 56.dp),
                 isSignedIn = isSignedIn,
                 fullAccount = fullAccount,
-                selfHosted = BuildConfig.SELF_HOSTED
+                selfHosted = BuildConfig.SELF_HOSTED,
+                emailSignInAvailable = onNavigateToEmailSignIn != null
             )
 
             AuthQrLoginPane(
@@ -250,7 +251,8 @@ private fun AuthQrBrandPanel(
     modifier: Modifier,
     isSignedIn: Boolean,
     fullAccount: AuthState.FullAccount?,
-    selfHosted: Boolean
+    selfHosted: Boolean,
+    emailSignInAvailable: Boolean
 ) {
     Column(
         modifier = modifier,
@@ -281,7 +283,11 @@ private fun AuthQrBrandPanel(
             } else if (selfHosted) {
                 stringResource(R.string.auth_email_hint)
             } else {
-                stringResource(R.string.auth_qr_phone_hint)
+                // UX81: never "QR-only" next to a "Sign in with email" button.
+                when (AuthQrCopyPolicy.phoneHint(emailSignInAvailable)) {
+                    AuthQrCopyPolicy.PhoneHint.SCAN_OR_EMAIL -> stringResource(R.string.auth_qr_phone_hint_scan_or_email)
+                    AuthQrCopyPolicy.PhoneHint.SCAN_ONLY -> stringResource(R.string.auth_qr_phone_hint_scan_only)
+                }
             },
             modifier = Modifier.widthIn(max = 400.dp),
             style = MaterialTheme.typography.bodyLarge.copy(
@@ -342,7 +348,15 @@ private fun AuthQrLoginPane(
             } else if (selfHosted) {
                 stringResource(R.string.auth_email_instruction)
             } else {
-                stringResource(R.string.auth_qr_scan_instruction)
+                // UX86: "enter the short code" only when a short code is actually shown.
+                when (
+                    AuthQrCopyPolicy.instruction(
+                        AuthQrCopyPolicy.manualCode(uiState.qrLoginVerificationUri, uiState.qrLoginUserCode)
+                    )
+                ) {
+                    AuthQrCopyPolicy.Instruction.SCAN_OR_ENTER_CODE -> stringResource(R.string.auth_qr_scan_instruction)
+                    AuthQrCopyPolicy.Instruction.SCAN_ONLY -> stringResource(R.string.auth_qr_scan_only_instruction)
+                }
             },
             style = MaterialTheme.typography.bodyLarge.copy(
                 color = AuthTextSecondary,
@@ -563,9 +577,11 @@ private fun AuthQrCodeBlock(
         }
     }
 
+    // UX86: only a short user_code is typeable; the long session code is never offered.
+    val manualCode = AuthQrCopyPolicy.manualCode(uiState.qrLoginVerificationUri, uiState.qrLoginUserCode)
     AuthQrManualCodeDetails(
-        verificationUri = uiState.qrLoginVerificationUri,
-        qrLoginCode = uiState.qrLoginUserCode ?: uiState.qrLoginCode,
+        verificationUri = manualCode?.verificationUri,
+        qrLoginCode = manualCode?.code,
         expiresAtMillis = uiState.qrLoginExpiresAtMillis,
         remainingMillis = remainingMillis,
         isLoading = uiState.isLoading

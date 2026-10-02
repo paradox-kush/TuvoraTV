@@ -40,7 +40,8 @@ object IptvChannelSearchPolicy {
         if (words.isEmpty()) return emptyList()
         val phrase = words.joinToString(" ")
         val first = words.first()
-        return items
+        // UX44: provider heading rows ("==== Sky Germany ====") match words but are not channels.
+        return IptvSearchRowFilter.withoutDividers(items, nameOf)
             .mapNotNull { item ->
                 val n = normalize(nameOf(item))
                 if (!words.all { it in n }) return@mapNotNull null

@@ -230,21 +230,28 @@ private fun PairingCodeColumn(uiState: IptvPairingUiState, remainingMillis: Long
                 .border(1.dp, NuvioTheme.colors.Primary.copy(alpha = 0.5f), RoundedCornerShape(NuvioTheme.radii.md))
                 .padding(horizontal = 20.dp, vertical = 14.dp)
         ) {
-            Text(
+            val codeStyle = MaterialTheme.typography.displaySmall.copy(
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 4.sp,
+                color = NuvioTheme.colors.Primary
+            )
+            androidx.compose.foundation.text.BasicText(
                 text = uiState.code,
-                style = MaterialTheme.typography.displaySmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 4.sp
-                ),
-                color = NuvioTheme.colors.Primary,
+                style = codeStyle,
                 // The code is the whole point of this screen: never wrap it. With softWrap on, a
                 // container a few dp too narrow pushed the last character onto a second line that
                 // maxLines then dropped — the code read as 5 characters and pairing failed.
                 softWrap = false,
                 maxLines = 1,
+                // UX10: on a narrow layout the single line still ran past the box and the last
+                // character was clipped. Shrink the font until the whole code fits instead.
+                autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
+                    minFontSize = 18.sp,
+                    maxFontSize = if (codeStyle.fontSize.isSp) codeStyle.fontSize else 36.sp,
+                ),
                 // Compose does not reserve the trailing letterSpacing, so the last glyph lands on
                 // the measured edge and loses its right side to the clip. Hand that width back.
-                modifier = Modifier.padding(end = 4.dp)
+                modifier = Modifier.padding(end = 8.dp)
             )
         }
 

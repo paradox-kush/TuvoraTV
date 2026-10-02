@@ -300,4 +300,50 @@ class XtreamClientTest {
         assertEquals("the empty row keeps its zero start", 0L, programs.last().startMs)
         assertEquals("and its zero end", 0L, programs.last().endMs)
     }
+
+    // UX20: a refused login and an unreachable server used to read the same ("Authentication
+    // failed" / raw socket text). verify() now throws typed failures the save-error policy maps.
+
+    private fun clientWith(api: XtreamApi) = XtreamClient(
+        api,
+        okhttp3.OkHttpClient(),
+        Moshi.Builder().add(FlexIntAdapter).add(KotlinJsonAdapterFactory()).build(),
+        com.nuvio.tv.core.iptv.dns.PlaylistDns(),
+        PlaylistServerFailover.detached(),
+    )
+
+    private fun userInfo(auth: Int?, status: String?) = com.nuvio.tv.data.remote.dto.XtreamUserInfoDto(
+        username = "u", password = "p", auth = auth, status = status, expDate = null,
+        activeConnections = null, maxConnections = null,
+    )
+
+    @Test
+    fun `verify reports a refused login as wrong credentials`() = runTest {
+        val api = mockk<XtreamApi>()
+        coEvery { api.getAccount(any()) } returns Response.success(
+            com.nuvio.tv.data.remote.dto.XtreamAccountDto(userInfo = userInfo(auth = 0, status = null), serverInfo = null)
+        )
+        val failure = clientWith(api).verify(acc).exceptionOrNull()
+        assertTrue("typed: $failure", failure is XtreamAuthRejectedException)
+        assertEquals("mapped", PlaylistSaveError.WRONG_CREDENTIALS, PlaylistSaveErrorPolicy.classify(failure!!))
+    }
+
+    @Test
+    fun `verify reports an expired account with its status`() = runTest {
+        val api = mockk<XtreamApi>()
+        coEvery { api.getAccount(any()) } returns Response.success(
+            com.nuvio.tv.data.remote.dto.XtreamAccountDto(userInfo = userInfo(auth = 1, status = "Expired"), serverInfo = null)
+        )
+        val failure = clientWith(api).verify(acc).exceptionOrNull()
+        assertTrue("typed: $failure", failure is XtreamAccountInactiveException)
+        assertEquals("mapped", "Account status: Expired", PlaylistSaveErrorPolicy.messageFor(failure!!))
+    }
+
+    @Test
+    fun `verify reports an unreachable server as unreachable`() = runTest {
+        val api = mockk<XtreamApi>()
+        coEvery { api.getAccount(any()) } throws java.net.ConnectException("Failed to connect to /10.0.2.2:8999")
+        val failure = clientWith(api).verify(acc).exceptionOrNull()
+        assertEquals("mapped", PlaylistSaveError.UNREACHABLE, PlaylistSaveErrorPolicy.classify(failure!!))
+    }
 }

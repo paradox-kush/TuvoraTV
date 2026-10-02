@@ -3362,7 +3362,7 @@
     <string name="iptv_guide_no_information">No information</string>
     <string name="iptv_guide_min_left">%1$d min left</string>
     <string name="iptv_guide_next_programme">Next: %1$s · %2$s</string>
-    <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK to add/remove favorite · ▶ guide</string>
+    <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK favorite · MENU hide · ▶ guide</string>
     <string name="iptv_guide_fullscreen_hint">OK play/pause · ▲▼ channel · BACK exit fullscreen</string>
     <string name="iptv_guide_paused">Paused</string>
     <string name="iptv_guide_live">Live</string>
@@ -3378,6 +3378,23 @@
     <string name="clean_live_ingress_unavailable">This Live TV channel is currently unavailable.</string>
     <string name="clean_live_ingress_profile_changed">Your profile changed. Select the channel again.</string>
     <string name="auth_qr_phone_hint">Use your phone to sign in with email/password. TV stays QR-only for faster login.</string>
+    <!-- wave1 t1 -->
+    <string name="iptv_settings_title">IPTV playlists</string>
+    <string name="iptv_remove_playlist_message_all_devices">Its favourites, Continue Watching entries and watch progress go with it, on all your devices. This can\'t be undone.</string>
+    <string name="iptv_remove_playlist_message_if_you_sync">Its favourites, Continue Watching entries and watch progress go with it. If you sync, it is removed from your other devices too. This can\'t be undone.</string>
+    <string name="iptv_playlist_removed">Playlist removed</string>
+    <string name="iptv_guide_favorites_empty">Hold OK on a channel to add it to Favorites</string>
+    <!-- wave1 x1 -->
+    <string name="addon_not_synced_yet">Not synced yet</string>
+    <!-- wave2 t3 -->
+    <string name="auth_qr_phone_hint_scan_or_email">Scan the code with your phone, or sign in with email on this TV.</string>
+    <string name="auth_qr_phone_hint_scan_only">Scan the code with your phone to sign in.</string>
+    <string name="auth_qr_scan_only_instruction">Scan the QR code with your phone\'s camera.</string>
+    <!-- wave2 t4 -->
+    <string name="iptv_guide_hidden_notice">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → %2$s → Hidden channels &amp; groups.</string>
+    <string name="iptv_guide_hidden_notice_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → your playlist → Hidden channels &amp; groups.</string>
+    <string name="iptv_guide_hidden_undo">Undo</string>
+    <!-- /wave2 t4 -->
     <!-- Step 0.3: backup servers (Add/Edit playlist form + the playlist row). -->
     <string name="iptv_backup_servers_title">Backup servers</string>
     <string name="iptv_backup_servers_helper">Used automatically if the main server doesn\'t respond.</string>

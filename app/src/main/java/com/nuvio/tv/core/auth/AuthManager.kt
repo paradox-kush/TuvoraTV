@@ -33,6 +33,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
+import com.nuvio.tv.core.announcements.AnnouncementAccountRecord
+import com.nuvio.tv.core.announcements.AnnouncementVisibilityPolicy
 import kotlin.time.Duration.Companion.seconds
 import java.io.IOException
 import java.net.ConnectException
@@ -273,6 +275,19 @@ class AuthManager @Inject constructor(
             Log.e(TAG, "Sign in failed", e)
             Result.failure(e)
         }
+    }
+
+    /**
+     * UX84: the session user's creation time and accepted terms version, for announcement
+     * visibility. Read from the cached session only (no network); null when there is no user.
+     */
+    fun currentAnnouncementAccountRecord(): AnnouncementAccountRecord? {
+        val user = runCatching { auth.currentUserOrNull() }.getOrNull() ?: return null
+        return AnnouncementAccountRecord(
+            userId = user.id,
+            createdAtMs = runCatching { user.createdAt?.toEpochMilliseconds() }.getOrNull(),
+            acceptedTermsVersion = AnnouncementVisibilityPolicy.termsVersionFrom(user.userMetadata),
+        )
     }
 
     /**

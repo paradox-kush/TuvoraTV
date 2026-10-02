@@ -18,7 +18,8 @@ internal object PlaylistEditVerifyPolicy {
 
     fun outcome(verifyResult: Result<Unit>): PlaylistEditOutcome {
         val failure = verifyResult.exceptionOrNull() ?: return PlaylistEditOutcome(save = true, warning = null)
-        val reason = failure.message?.trim()?.takeIf { it.isNotEmpty() } ?: "no response"
+        // UX11: the plain mapped sentence, never the raw exception text ("Failed to connect to /10.0.2.2…").
+        val reason = PlaylistSaveErrorPolicy.messageFor(failure)
         return PlaylistEditOutcome(save = true, warning = "Saved, but the provider couldn't be checked: $reason")
     }
 }

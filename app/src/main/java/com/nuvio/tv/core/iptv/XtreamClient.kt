@@ -376,9 +376,11 @@ class XtreamClient @Inject constructor(
         val body = loginBody(acc)
         rememberClockPair(acc.id, body.serverInfo)
         val info = body.userInfo
-        check(info?.auth == 1) { "Authentication failed" }
+        // Typed (UX20) so the form can tell a refused login from an unreachable server — see
+        // PlaylistSaveErrorPolicy. Messages unchanged for any log/catch site.
+        if (info == null || info.auth != 1) throw XtreamAuthRejectedException()
         val status = info.status?.lowercase().orEmpty()
-        check(status.isEmpty() || status == "active") { "Account status: ${info.status}" }
+        if (!(status.isEmpty() || status == "active")) throw XtreamAccountInactiveException(info.status)
     }
 
     /** Account status (expiry/connections) for the settings row. Same endpoint as [verify]. */

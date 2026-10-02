@@ -1296,7 +1296,7 @@ private fun IntegrationSettingsContent(
                             }
                             item(key = "integration_hub_iptv") {
                                 SettingsActionRow(
-                                    title = "IPTV (Xtream Codes)",
+                                    title = stringResource(R.string.iptv_settings_title),
                                     subtitle = "Add a live TV / VOD provider by URL",
                                     onClick = { onSelectSection(IntegrationSettingsSection.Iptv) }
                                 )

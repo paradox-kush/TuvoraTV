@@ -549,10 +549,13 @@ internal fun ModernRowSection(
 
         val rowListState = rowListStates.getOrPut(row.key) {
             // Resolved when the row is built, so a refresh that already moved the card is seen.
-            val restoredIndex = focusStateCatalogRowScrollAnchor
-                ?.let { anchor -> row.items.list.indexOfFirst { it.key == anchor } }
-                ?.takeIf { it >= 0 }
-                ?: focusStateCatalogRowScrollIndex
+            // Continue Watching opens at its start when a title was started meanwhile (UX12).
+            val restoredIndex = ContinueWatchingRowWindowPolicy.restoredFirstIndex(
+                rowKey = row.key,
+                itemKeys = row.items.list.map { it.key },
+                anchorKey = focusStateCatalogRowScrollAnchor,
+                savedIndex = focusStateCatalogRowScrollIndex,
+            )
             LazyListState(
                 firstVisibleItemIndex = restoredIndex,
                 prefetchStrategy = LazyListPrefetchStrategy(nestedPrefetchItemCount = NESTED_PREFETCH_COUNT)
@@ -615,6 +618,15 @@ internal fun ModernRowSection(
             }
 
         val firstItemKey = row.items.list.firstOrNull()?.key
+
+        if (row.key == MODERN_CONTINUE_WATCHING_ROW_KEY) {
+            SnapContinueWatchingToNewLeader(
+                rowKey = row.key,
+                itemKeys = row.items.list.map { it.key },
+                listState = rowListState,
+                rowHasFocus = isActiveRow,
+            )
+        }
 
         // When placeholder items are replaced by real data and this row
         // is the active row, re-request focus on the first real item.
