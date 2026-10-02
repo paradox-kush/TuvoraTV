@@ -264,6 +264,7 @@ fun SettingsScreen(
     onNavigateToSupportersContributors: () -> Unit = {},
     onNavigateToLicensesAttributions: () -> Unit = {},
     onNavigateToIptvPairing: () -> Unit = {},
+    onNavigateToIptvSetupCode: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
     experienceModeViewModel: ExperienceModeSettingsViewModel = hiltViewModel()
 ) {
@@ -728,7 +729,8 @@ fun SettingsScreen(
                                 onNavigateToAuthQrSignIn = onNavigateToAuthQrSignIn,
                                 onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                                 onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
-                                onNavigateToIptvPairing = onNavigateToIptvPairing
+                                onNavigateToIptvPairing = onNavigateToIptvPairing,
+                                onNavigateToIptvSetupCode = onNavigateToIptvSetupCode
                             )
                         }
                     }
@@ -905,7 +907,8 @@ fun SettingsScreen(
                         onNavigateToAuthQrSignIn = onNavigateToAuthQrSignIn,
                         onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                         onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
-                        onNavigateToIptvPairing = onNavigateToIptvPairing
+                        onNavigateToIptvPairing = onNavigateToIptvPairing,
+                        onNavigateToIptvSetupCode = onNavigateToIptvSetupCode
                     )
                 }
             }
@@ -935,7 +938,8 @@ private fun SettingsDetailPane(
     onNavigateToAuthQrSignIn: () -> Unit,
     onNavigateToSupportersContributors: () -> Unit,
     onNavigateToLicensesAttributions: () -> Unit,
-    onNavigateToIptvPairing: () -> Unit
+    onNavigateToIptvPairing: () -> Unit,
+    onNavigateToIptvSetupCode: () -> Unit
 ) {
     when (selectedCategory) {
         SettingsCategory.EXPERIENCE -> EssentialAdvancedSettingsContent(
@@ -1020,6 +1024,7 @@ private fun SettingsDetailPane(
             animeSkipFocusRequester = integrationAnimeSkipFocusRequester,
             iptvFocusRequester = integrationIptvFocusRequester,
             onNavigateToIptvPairing = onNavigateToIptvPairing,
+            onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
             autoFocusEnabled = allowDetailAutofocus
         )
         SettingsCategory.ABOUT -> AboutSettingsContent(
@@ -1207,6 +1212,7 @@ private fun IntegrationSettingsContent(
     animeSkipFocusRequester: FocusRequester,
     iptvFocusRequester: FocusRequester,
     onNavigateToIptvPairing: () -> Unit,
+    onNavigateToIptvSetupCode: () -> Unit,
     autoFocusEnabled: Boolean
 ) {
     // Store builds compile Debrid out: its hub row is not rendered, and a stale Debrid selection
@@ -1335,6 +1341,7 @@ private fun IntegrationSettingsContent(
         IntegrationSettingsSection.Iptv -> {
             XtreamSettingsContent(
                 onPairFromPhone = onNavigateToIptvPairing,
+                onEnterSetupCode = onNavigateToIptvSetupCode,
                 initialFocusRequester = iptvFocusRequester
             )
         }

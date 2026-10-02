@@ -171,6 +171,8 @@ sealed class Screen(val route: String) {
     // closer than the root of Settings.
     data object IptvSettings : Screen("iptv_settings")
     data object IptvPairing : Screen("iptv_pairing")
+    /** Step 2: type (or wait for a phone to redeem) a provider's setup code. Carries no argument: the code is never in a route. */
+    data object IptvSetupCode : Screen("iptv_setup_code")
     data object SportsHub : Screen("sports_hub")
     data object CatalogOrder : Screen("catalog_order")
     data object Plugins : Screen("plugins")
