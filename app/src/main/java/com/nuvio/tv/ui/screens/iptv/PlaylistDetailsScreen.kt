@@ -80,6 +80,8 @@ data class PlaylistDetailsState(
     val backupLine: String?,
     /** Set right after a redeem: "<provider> added this playlist" until the page is closed. */
     val justAddedBy: String?,
+    /** Set after a Detach: "Detached from <provider>" stays until the page is closed (no fading message). */
+    val detachedFrom: String? = null,
     /** The re-match card flips to "started" once pressed. */
     val rematchStarted: Boolean,
     val nowEpochSec: Long,
@@ -171,6 +173,21 @@ private fun FactsPane(state: PlaylistDetailsState, facts: ManagedDetailsModel.Fa
                 Spacer(Modifier.width(10.dp))
                 Text(
                     stringResource(R.string.iptv_details_added_banner, provider),
+                    fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextPrimary,
+                )
+            }
+        }
+        state.detachedFrom?.takeIf { state.managed == null }?.let { provider ->
+            Row(
+                modifier = Modifier
+                    .background(NuvioTheme.colors.Secondary.copy(alpha = 0.16f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.LinkOff, contentDescription = null, tint = NuvioTheme.colors.Secondary, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    stringResource(R.string.iptv_details_detached_banner, provider),
                     fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextPrimary,
                 )
             }

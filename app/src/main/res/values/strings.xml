@@ -3436,6 +3436,7 @@
     <!-- Step 2: playlist details page (two panes, three shelves) -->
     <string name="iptv_details_managed_by">Managed by %1$s</string>
     <string name="iptv_details_managed_by_updated">Managed by %1$s \u00B7 updated %2$s</string>
+    <string name="iptv_details_detached_banner">Detached from %1$s</string>
     <string name="iptv_details_added_banner">%1$s added this playlist</string>
     <plurals name="iptv_details_days_left">
         <item quantity="one">%d day left</item>
@@ -3484,7 +3485,8 @@
     <string name="iptv_remove_managed_extra">You may need a new code from %1$s to get it back.</string>
     <string name="iptv_hold_to_detach">Hold OK to detach</string>
     <string name="iptv_hold_to_remove">Hold OK to remove</string>
-    <string name="iptv_hold_hint">Press and hold OK for 2 seconds</string>
+    <string name="iptv_hold_hint">Hold OK for 2 seconds</string>
+    <string name="iptv_hold_hint_short">Not long enough \u2014 keep OK held for 2 seconds</string>
     <string name="iptv_cancel">Cancel</string>
     <string name="iptv_managed_row_line">Managed by %1$s</string>
     <string name="iptv_managed_row_line_days">Managed by %1$s \u00B7 %2$s</string>

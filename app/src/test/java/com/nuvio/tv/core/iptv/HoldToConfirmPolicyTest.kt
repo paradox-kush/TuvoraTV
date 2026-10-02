@@ -28,4 +28,12 @@ class HoldToConfirmPolicyTest {
     fun `the default hold is two seconds`() {
         assertEquals(2_000L, HoldToConfirmPolicy.DEFAULT_HOLD_MS)
     }
+
+    @Test
+    fun `releasing early explains itself, a fresh or finished hold does not`() {
+        assertEquals(HoldToConfirmPolicy.Hint.TOO_SHORT, policy.hintAfterRelease(90))
+        assertEquals(HoldToConfirmPolicy.Hint.TOO_SHORT, policy.hintAfterRelease(1999))
+        assertEquals(HoldToConfirmPolicy.Hint.HOLD, policy.hintAfterRelease(0))
+        assertEquals(HoldToConfirmPolicy.Hint.HOLD, policy.hintAfterRelease(2000))
+    }
 }

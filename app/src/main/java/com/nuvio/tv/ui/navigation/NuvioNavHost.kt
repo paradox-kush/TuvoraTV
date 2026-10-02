@@ -1355,6 +1355,7 @@ private fun PlaybackNavHost(
                 },
                 onAddProvider = { navController.navigate(Screen.IptvSettings.route) },
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
+                onEnterSetupCode = { navController.navigate(Screen.IptvSetupCode.route) },
                 // Catch-up takes the same proven live route (contentType="live" keeps the live DoH
                 // and engine handling, and routes BACK to this hub), plus the isCatchUp flag that
                 // turns off the three behaviours a recording must not have.

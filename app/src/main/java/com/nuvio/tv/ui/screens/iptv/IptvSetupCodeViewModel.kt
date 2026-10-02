@@ -10,6 +10,7 @@ import com.nuvio.tv.core.iptv.ProviderSupport
 import com.nuvio.tv.core.iptv.RedeemFlowResult
 import com.nuvio.tv.core.iptv.SetupCode
 import com.nuvio.tv.core.iptv.SetupCodeOutcome
+import com.nuvio.tv.core.iptv.SetupEntryPolicy
 import com.nuvio.tv.core.iptv.SetupMessage
 import com.nuvio.tv.core.iptv.SetupPreview
 import com.nuvio.tv.core.iptv.SetupWaitPolicy
@@ -44,8 +45,16 @@ data class SetupCodeUiState(
     /** Set after a redeem into a profile that is not the active one. */
     val addedProviderName: String? = null,
     val addedProfileName: String? = null,
+    /** The shown code was refused by the server: Continue stays off until it is edited. */
+    val rejected: Boolean = false,
+    /** Bumped when focus should move to the Delete key (after a rejection). */
+    val deleteFocusTick: Int = 0,
+    /** Bumped when focus should move to Continue (a retryable failure). */
+    val continueFocusTick: Int = 0,
 ) {
     val isComplete: Boolean get() = SetupCode.isComplete(typed)
+    val continueEnabled: Boolean
+        get() = SetupEntryPolicy.continueEnabled(isComplete, phase == SetupPhase.CHECKING, rejected)
 }
 
 sealed interface SetupCodeEvent {
@@ -113,17 +122,18 @@ class IptvSetupCodeViewModel @Inject constructor(
         val ch = c.uppercaseChar()
         if (ch !in SetupCode.ALPHABET || s.typed.length >= SetupCode.LENGTH) return
         typedOnTv = true
-        _ui.update { it.copy(typed = it.typed + ch, message = null, expiredSupport = null) }
+        _ui.update { it.copy(typed = it.typed + ch, message = null, expiredSupport = null, rejected = false) }
     }
 
     fun backspace() {
         if (_ui.value.phase != SetupPhase.ENTRY) return
-        _ui.update { it.copy(typed = it.typed.dropLast(1), message = null, expiredSupport = null) }
+        _ui.update { it.copy(typed = it.typed.dropLast(1), message = null, expiredSupport = null, rejected = false) }
     }
 
     fun continueTapped() {
         val s = _ui.value
-        if (!s.isComplete || s.phase == SetupPhase.CHECKING || s.phase == SetupPhase.ADDING) return
+        if (s.phase != SetupPhase.ENTRY && s.phase != SetupPhase.NEEDS_SIGN_IN) return
+        if (!s.continueEnabled) return
         _ui.update { it.copy(phase = SetupPhase.CHECKING, message = null) }
         viewModelScope.launch { handlePreview(repository.preview(_ui.value.typed)) }
     }
@@ -137,8 +147,14 @@ class IptvSetupCodeViewModel @Inject constructor(
                     chosenProfileId = profileManager.activeProfileId.value,
                 )
                 SetupCodeOutcome.NeedsSignIn -> s.copy(phase = SetupPhase.NEEDS_SIGN_IN, message = null)
-                is SetupCodeOutcome.Expired -> s.copy(phase = SetupPhase.ENTRY, message = outcome.message, expiredSupport = outcome.support)
-                else -> s.copy(phase = SetupPhase.ENTRY, message = outcome.message)
+                else -> s.copy(
+                    phase = SetupPhase.ENTRY,
+                    message = outcome.message,
+                    expiredSupport = (outcome as? SetupCodeOutcome.Expired)?.support,
+                    rejected = SetupEntryPolicy.isRejection(outcome),
+                    deleteFocusTick = s.deleteFocusTick + if (SetupEntryPolicy.focusAfter(outcome) == SetupEntryPolicy.FocusTarget.DELETE) 1 else 0,
+                    continueFocusTick = s.continueFocusTick + if (SetupEntryPolicy.focusAfter(outcome) == SetupEntryPolicy.FocusTarget.CONTINUE) 1 else 0,
+                )
             }
         }
     }

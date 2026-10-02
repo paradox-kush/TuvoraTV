@@ -146,11 +146,6 @@ fun HoldConfirmDialog(
             scale = ButtonDefaults.scale(focusedScale = 1f),
         ) { Text(stringResource(R.string.iptv_cancel), fontSize = 18.sp) }
         HoldToConfirmButton(label = holdLabel, onConfirmed = onConfirmed, modifier = Modifier.fillMaxWidth())
-        Text(
-            stringResource(R.string.iptv_hold_hint),
-            fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
@@ -189,8 +184,11 @@ fun HoldToConfirmButton(
 
     val progress = policy.progress(heldMs)
     val shape = RoundedCornerShape(50)
+    var hint by remember { mutableStateOf(HoldToConfirmPolicy.Hint.HOLD) }
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Row(
-        modifier = modifier
+        modifier = Modifier
+            .fillMaxWidth()
             .height(56.dp)
             .clip(shape)
             .background(DestructiveFill)
@@ -212,8 +210,13 @@ fun HoldToConfirmButton(
                 when (native.action) {
                     AndroidKeyEvent.ACTION_DOWN -> if (native.repeatCount == 0 && holdStartedAt < 0) {
                         holdStartedAt = SystemClock.uptimeMillis()
+                        hint = HoldToConfirmPolicy.Hint.HOLD
                     }
-                    AndroidKeyEvent.ACTION_UP -> holdStartedAt = -1L
+                    AndroidKeyEvent.ACTION_UP -> {
+                        // A release before the hold completed is explained, not silently ignored.
+                        if (holdStartedAt >= 0) hint = policy.hintAfterRelease(SystemClock.uptimeMillis() - holdStartedAt)
+                        holdStartedAt = -1L
+                    }
                 }
                 true
             }
@@ -230,5 +233,13 @@ fun HoldToConfirmButton(
         }
         Spacer(Modifier.width(12.dp))
         Text(label, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextPrimary)
+    }
+    Text(
+        stringResource(if (hint == HoldToConfirmPolicy.Hint.TOO_SHORT) R.string.iptv_hold_hint_short else R.string.iptv_hold_hint),
+        fontSize = 16.sp,
+        color = if (hint == HoldToConfirmPolicy.Hint.TOO_SHORT) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary,
+        fontWeight = if (hint == HoldToConfirmPolicy.Hint.TOO_SHORT) FontWeight.SemiBold else FontWeight.Normal,
+        textAlign = TextAlign.Center,
+    )
     }
 }

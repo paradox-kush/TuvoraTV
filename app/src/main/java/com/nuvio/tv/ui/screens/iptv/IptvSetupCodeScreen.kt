@@ -170,32 +170,40 @@ private fun InfoPane(accountLabel: String?, modifier: Modifier) {
 private fun EntryPane(ui: SetupCodeUiState, vm: IptvSetupCodeViewModel) {
     val firstKeyFocus = remember { FocusRequester() }
     val continueFocus = remember { FocusRequester() }
+    val deleteFocus = remember { FocusRequester() }
     val checking = ui.phase == SetupPhase.CHECKING
     LaunchedEffect(Unit) { firstKeyFocus.requestFocusAfterFrames() }
     // The 12th character moves focus straight to Continue: no hunt for it below the keypad.
-    LaunchedEffect(ui.isComplete) { if (ui.isComplete && !checking) continueFocus.requestFocusAfterFrames() }
+    LaunchedEffect(ui.continueEnabled) { if (ui.continueEnabled) continueFocus.requestFocusAfterFrames() }
+    // After a rejected code focus goes to Delete (Continue is off until the code changes).
+    LaunchedEffect(ui.deleteFocusTick) { if (ui.deleteFocusTick > 0) deleteFocus.requestFocusAfterFrames() }
+    LaunchedEffect(ui.continueFocusTick) { if (ui.continueFocusTick > 0) continueFocus.requestFocusAfterFrames() }
 
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CodeBoxes(ui.typed)
-        val message = ui.message
-        if (message != null) {
-            Text(setupMessageText(message), fontSize = 18.sp, color = NuvioTheme.colors.Error)
-        } else if (checking) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = NuvioTheme.colors.Primary, strokeWidth = 2.dp)
-                Spacer(Modifier.width(10.dp))
-                Text(stringResource(R.string.iptv_setup_checking), fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary)
+        // Room for the longest message (three lines at this width) is always reserved, so an error never shifts the keypad.
+        Box(modifier = Modifier.fillMaxWidth().height(72.dp)) {
+            val message = ui.message
+            if (message != null) {
+                Text(setupMessageText(message), fontSize = 18.sp, color = NuvioTheme.colors.Error, maxLines = 3)
+            } else if (checking) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = NuvioTheme.colors.Primary, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(stringResource(R.string.iptv_setup_checking), fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary)
+                }
             }
         }
         Keypad(
             enabled = !checking,
             firstKeyFocus = firstKeyFocus,
+            deleteFocus = deleteFocus,
             onChar = vm::type,
             onDelete = vm::backspace,
         )
         Button(
             onClick = vm::continueTapped,
-            enabled = ui.isComplete && !checking,
+            enabled = ui.continueEnabled,
             modifier = Modifier.width(220.dp).focusRequester(continueFocus),
             colors = ButtonDefaults.colors(
                 containerColor = NuvioTheme.colors.Secondary,
@@ -257,7 +265,7 @@ private fun CodeBoxes(typed: String) {
 }
 
 @Composable
-private fun Keypad(enabled: Boolean, firstKeyFocus: FocusRequester, onChar: (Char) -> Unit, onDelete: () -> Unit) {
+private fun Keypad(enabled: Boolean, firstKeyFocus: FocusRequester, deleteFocus: FocusRequester, onChar: (Char) -> Unit, onDelete: () -> Unit) {
     // 31 characters + a Delete key = 32 keys, four rows of eight.
     val keys: List<Char?> = KEYPAD_CHARS + listOf(null)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -269,7 +277,11 @@ private fun Keypad(enabled: Boolean, firstKeyFocus: FocusRequester, onChar: (Cha
                         label = key?.toString() ?: stringResource(R.string.iptv_setup_key_delete),
                         wide = key == null,
                         enabled = enabled,
-                        modifier = if (first) Modifier.focusRequester(firstKeyFocus) else Modifier,
+                        modifier = when {
+                            first -> Modifier.focusRequester(firstKeyFocus)
+                            key == null -> Modifier.focusRequester(deleteFocus)
+                            else -> Modifier
+                        },
                         onClick = { if (key == null) onDelete() else onChar(key) },
                     )
                 }

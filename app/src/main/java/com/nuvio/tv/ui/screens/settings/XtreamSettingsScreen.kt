@@ -129,6 +129,8 @@ fun XtreamSettingsContent(
     var justAddedBy by remember { mutableStateOf<String?>(null) }
     var contactFor by remember { mutableStateOf<String?>(null) }
     var detachFor by remember { mutableStateOf<String?>(null) }
+    // Step 2: after a Detach, "Detached from <provider>" on that playlist's page until the page is closed.
+    var detachedFrom by remember { mutableStateOf<Pair<String, String>?>(null) }
     var catchUpFor by remember { mutableStateOf<String?>(null) }
     var rematchStarted by remember { mutableStateOf(setOf<String>()) }
     // B57: Remove used to delete on the first OK with no confirmation, from a row that was cut off
@@ -403,6 +405,7 @@ fun XtreamSettingsContent(
                             ?: stringResource(R.string.iptv_using_backup_server, n)
                     },
                     justAddedBy = justAddedBy,
+                    detachedFrom = detachedFrom?.takeIf { it.first == id }?.second,
                     rematchStarted = id in rematchStarted,
                     nowEpochSec = System.currentTimeMillis() / 1000,
                 ),
@@ -430,6 +433,7 @@ fun XtreamSettingsContent(
                 onClose = {
                     actionsForId = null
                     justAddedBy = null
+                    detachedFrom = null
                 },
             )
         }
@@ -451,7 +455,8 @@ fun XtreamSettingsContent(
                 message = stringResource(R.string.iptv_detach_message, managed.providerName),
                 holdLabel = stringResource(R.string.iptv_hold_to_detach),
                 onConfirmed = {
-                    viewModel.detach(id)
+                    val provider = managed.providerName
+                    viewModel.detach(id) { ok -> if (ok) detachedFrom = id to provider }
                     detachFor = null
                 },
                 onDismiss = { detachFor = null },

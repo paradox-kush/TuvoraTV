@@ -11,6 +11,11 @@ class HoldToConfirmPolicy(private val holdMs: Long = DEFAULT_HOLD_MS) {
 
     fun isConfirmed(heldMs: Long): Boolean = heldMs >= holdMs
 
+    enum class Hint { HOLD, TOO_SHORT }
+
+    /** After OK was released: a press that did not last long enough is explained, not silently ignored. */
+    fun hintAfterRelease(heldMs: Long): Hint = if (heldMs > 0 && !isConfirmed(heldMs)) Hint.TOO_SHORT else Hint.HOLD
+
     companion object {
         const val DEFAULT_HOLD_MS = 2_000L
     }
