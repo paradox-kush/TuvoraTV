@@ -51,7 +51,9 @@ object ManagedDetailsModel {
         zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
         locale: java.util.Locale = java.util.Locale.getDefault(),
     ): String? {
-        val instant = runCatching { java.time.Instant.parse(iso ?: return null) }.getOrNull() ?: return null
+        // The server serialises timestamptz as "2026-10-02T07:04:50.515368+00:00": an offset, not "Z", which
+        // Instant.parse does not take on Android's desugared java.time (found on the emulator).
+        val instant = runCatching { java.time.OffsetDateTime.parse(iso ?: return null).toInstant() }.getOrNull() ?: return null
         return java.time.format.DateTimeFormatter.ofPattern("d MMM", locale).withZone(zone).format(instant)
     }
 

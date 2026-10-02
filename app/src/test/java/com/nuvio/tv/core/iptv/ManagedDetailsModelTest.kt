@@ -105,6 +105,8 @@ class ManagedDetailsModelTest {
     fun `the provider's last edit reads as day and month and an unknown date is omitted`() {
         val utc = java.time.ZoneOffset.UTC
         assertEquals("1 Oct", ManagedDetailsModel.updatedLabel("2026-10-01T10:00:00Z", utc, java.util.Locale.ENGLISH))
+        assertEquals("PostgREST's offset form", "2 Oct", ManagedDetailsModel.updatedLabel("2026-10-02T07:04:50.515368+00:00", utc, java.util.Locale.ENGLISH))
+        assertEquals("2 Oct", ManagedDetailsModel.updatedLabel("2026-10-02T09:04:50+02:00", java.time.ZoneOffset.UTC, java.util.Locale.ENGLISH))
         assertNull(ManagedDetailsModel.updatedLabel(null, utc, java.util.Locale.ENGLISH))
         assertNull(ManagedDetailsModel.updatedLabel("not a date", utc, java.util.Locale.ENGLISH))
     }
