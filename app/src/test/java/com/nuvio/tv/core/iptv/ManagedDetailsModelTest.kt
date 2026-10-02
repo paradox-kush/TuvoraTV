@@ -31,13 +31,19 @@ class ManagedDetailsModelTest {
     @Test
     fun `expiry shows days and a bar when the provider reports one`() {
         assertEquals(Expiry.Days(12, 0.4f), ManagedDetailsModel.expiry(info(now + 12 * day), now))
-        assertEquals("the bar is full from 30 days", Expiry.Days(200, 1f), ManagedDetailsModel.expiry(info(now + 200 * day), now))
+        assertEquals("30 days: the bar is full", Expiry.Days(30, 1f), ManagedDetailsModel.expiry(info(now + 30 * day), now))
+        assertEquals("the last day still shows a sliver", Expiry.Days(1, ManagedDetailsModel.BAR_MIN_FRACTION), ManagedDetailsModel.expiry(info(now + 1), now))
+    }
+
+    @Test
+    fun `above 30 days it is text only, no bar`() {
+        assertEquals(Expiry.Days(31, null), ManagedDetailsModel.expiry(info(now + 31 * day), now))
+        assertEquals(Expiry.Days(200, null), ManagedDetailsModel.expiry(info(now + 200 * day), now))
     }
 
     @Test
     fun `no expiry reported means no bar`() {
         assertEquals(Expiry.NotReported, ManagedDetailsModel.expiry(info(null), now))
-        assertEquals(Expiry.NotReported, ManagedDetailsModel.expiry(null, now))
         assertEquals("a zero exp_date means it never ends: no bar", Expiry.NeverExpires, ManagedDetailsModel.expiry(info(0), now))
     }
 
@@ -109,5 +115,22 @@ class ManagedDetailsModelTest {
         assertEquals("2 Oct", ManagedDetailsModel.updatedLabel("2026-10-02T09:04:50+02:00", java.time.ZoneOffset.UTC, java.util.Locale.ENGLISH))
         assertNull(ManagedDetailsModel.updatedLabel(null, utc, java.util.Locale.ENGLISH))
         assertNull(ManagedDetailsModel.updatedLabel("not a date", utc, java.util.Locale.ENGLISH))
+    }
+
+    @Test
+    fun `expiry says nothing while loading and says the check failed after a failed check`() {
+        assertEquals("not asked yet: no claim about the provider", Expiry.Unknown, ManagedDetailsModel.expiry(null, now))
+        assertEquals(Expiry.CheckFailed, ManagedDetailsModel.expiry(null, now, checkFailed = true))
+        assertEquals("a real answer beats an old failure", Expiry.Days(5, 5f / 30), ManagedDetailsModel.expiry(info(now + 5 * day), now, checkFailed = true))
+        assertEquals(Expiry.Unknown, ManagedDetailsModel.facts(xtream(), null, null, null, now).expiry)
+        assertEquals(Expiry.CheckFailed, ManagedDetailsModel.facts(xtream(), null, null, null, now, checkFailed = true).expiry)
+    }
+
+    @Test
+    fun `counts of zero are hidden until the catalog is known`() {
+        assertEquals(emptyList<String>(), CatalogCountsPolicy.parts(0, 0, 0))
+        assertEquals(emptyList<String>(), CatalogCountsPolicy.parts(null, null, null))
+        assertEquals(listOf("12000 channels", "5 movies"), CatalogCountsPolicy.parts(12000, 5, 0))
+        assertEquals(listOf("3 series"), CatalogCountsPolicy.parts(null, null, 3))
     }
 }

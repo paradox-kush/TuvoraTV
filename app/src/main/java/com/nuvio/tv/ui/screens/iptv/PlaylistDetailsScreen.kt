@@ -84,6 +84,8 @@ data class PlaylistDetailsState(
     val detachedFrom: String? = null,
     /** The re-match card flips to "started" once pressed. */
     val rematchStarted: Boolean,
+    /** The panel was asked for the account info and did not answer. */
+    val expiryCheckFailed: Boolean = false,
     val nowEpochSec: Long,
 )
 
@@ -112,7 +114,7 @@ fun PlaylistDetailsScreen(
     val shelves = remember(state.account.id, state.account.sourceType, state.managed, state.needsReimport) {
         ManagedDetailsModel.shelves(state.account, state.managed, state.needsReimport)
     }
-    val facts = ManagedDetailsModel.facts(state.account, state.managed, state.info, state.catalogLine, state.nowEpochSec)
+    val facts = ManagedDetailsModel.facts(state.account, state.managed, state.info, state.catalogLine, state.nowEpochSec, state.expiryCheckFailed)
     val firstCardFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstCardFocus.requestFocusAfterFrames() }
 
@@ -251,19 +253,21 @@ private fun ExpiryBlock(expiry: Expiry) {
                 pluralStringResource(R.plurals.iptv_details_days_left, expiry.daysLeft, expiry.daysLeft),
                 fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextPrimary,
             )
-            // A thin bar, only because the provider reports an expiry.
-            Box(
-                Modifier
-                    .fillMaxWidth(0.8f)
-                    .height(6.dp)
-                    .background(NuvioTheme.colors.Border, RoundedCornerShape(3.dp)),
-            ) {
+            // A thin bar only for the last 30 days (the model gives a fraction only then).
+            expiry.fraction?.let { fraction ->
                 Box(
                     Modifier
-                        .fillMaxWidth(expiry.fraction.coerceAtLeast(0.03f))
+                        .fillMaxWidth(0.8f)
                         .height(6.dp)
-                        .background(NuvioTheme.colors.Secondary, RoundedCornerShape(3.dp)),
-                )
+                        .background(NuvioTheme.colors.Border, RoundedCornerShape(3.dp)),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(fraction)
+                            .height(6.dp)
+                            .background(NuvioTheme.colors.Secondary, RoundedCornerShape(3.dp)),
+                    )
+                }
             }
         }
         Expiry.Expired -> Text(
@@ -278,6 +282,11 @@ private fun ExpiryBlock(expiry: Expiry) {
             stringResource(R.string.iptv_details_never_expires),
             fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextPrimary,
         )
+        Expiry.CheckFailed -> Text(
+            stringResource(R.string.iptv_details_expiry_check_failed),
+            fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary,
+        )
+        Expiry.Unknown -> Unit // not asked yet: say nothing rather than "not reported"
         Expiry.NotReported -> Text(
             stringResource(R.string.iptv_details_expiry_unknown),
             fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary,

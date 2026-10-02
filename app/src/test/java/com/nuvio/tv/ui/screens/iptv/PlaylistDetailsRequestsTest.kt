@@ -38,4 +38,15 @@ class PlaylistDetailsRequestsTest {
         assertEquals("a.m3u", hostLine(acc("").copy(sourceType = XtreamAccount.SOURCE_FILE, fileName = "a.m3u")))
         assertEquals("portal.example.com", hostLine(acc("").copy(sourceType = XtreamAccount.SOURCE_STALKER, portalUrl = "http://portal.example.com/c")))
     }
+
+    @Test
+    fun `a stale request is dropped even when its playlist finally arrives`() {
+        val req = PlaylistDetailsRequests.Request("k1", "Acme", createdAtMs = 0)
+        assertEquals(PlaylistDetailsRequests.Decision.OPEN, PlaylistDetailsRequests.decide(req, hasPlaylist = true, nowMs = 1_000))
+        assertEquals(PlaylistDetailsRequests.Decision.WAIT, PlaylistDetailsRequests.decide(req, hasPlaylist = false, nowMs = 1_000))
+        val late = PlaylistDetailsRequests.MAX_AGE_MS + 1
+        assertEquals("a playlist that arrives minutes later must not open a page unprompted",
+            PlaylistDetailsRequests.Decision.DROP, PlaylistDetailsRequests.decide(req, hasPlaylist = true, nowMs = late))
+        assertEquals(PlaylistDetailsRequests.Decision.DROP, PlaylistDetailsRequests.decide(req, hasPlaylist = false, nowMs = late))
+    }
 }

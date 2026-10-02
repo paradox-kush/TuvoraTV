@@ -27,6 +27,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -117,7 +119,7 @@ fun IptvSetupCodeScreen(
             },
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
-            InfoPane(accountLabel = ui.accountLabel, modifier = Modifier.weight(0.38f).fillMaxHeight())
+            InfoPane(ui = ui, modifier = Modifier.weight(0.38f).fillMaxHeight())
             Spacer(Modifier.width(40.dp))
             Box(modifier = Modifier.weight(0.62f).fillMaxHeight()) {
                 when (ui.phase) {
@@ -137,7 +139,8 @@ fun IptvSetupCodeScreen(
 // --- left: QR + steps (read-only) -------------------------------------------------------------
 
 @Composable
-private fun InfoPane(accountLabel: String?, modifier: Modifier) {
+private fun InfoPane(ui: SetupCodeUiState, modifier: Modifier) {
+    val accountLabel = ui.accountLabel
     val url = ProviderSetupConfig.CLAIM_ENTRY_URL
     val qr = remember(url) { runCatching { QrCodeGenerator.generate(url, 480, margin = 1) }.getOrNull() }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -160,6 +163,14 @@ private fun InfoPane(accountLabel: String?, modifier: Modifier) {
                 stringResource(R.string.iptv_setup_adding_to, it),
                 fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Secondary, maxLines = 2,
             )
+        }
+        // The phone-redeem wait watches ONE profile (the active one): say which, and say when it gave up.
+        if (ui.signedIn && ui.phase == SetupPhase.ENTRY && ui.typed.isEmpty()) {
+            if (ui.waitTimedOut) {
+                Text(stringResource(R.string.iptv_setup_wait_timed_out), fontSize = 16.sp, color = NuvioTheme.colors.Warning)
+            } else ui.watchedProfileName?.let {
+                Text(stringResource(R.string.iptv_setup_watching_profile, it), fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary)
+            }
         }
     }
 }
@@ -214,6 +225,23 @@ private fun EntryPane(ui: SetupCodeUiState, vm: IptvSetupCodeViewModel) {
             border = ButtonDefaults.border(focusedBorder = Border(BorderStroke(3.dp, KeyOutline))),
             scale = ButtonDefaults.scale(focusedScale = 1.03f),
         ) { Text(stringResource(R.string.iptv_setup_continue), fontSize = 20.sp, fontWeight = FontWeight.SemiBold) }
+        // An expired code: the provider's contacts (QR dialog), when the preview knew them.
+        var showContact by remember { mutableStateOf(false) }
+        val support = ui.expiredSupport
+        if (support != null && !support.isEmpty && ui.message == SetupMessage.EXPIRED) {
+            Button(
+                onClick = { showContact = true },
+                modifier = Modifier.width(220.dp),
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioTheme.colors.BackgroundCard, contentColor = NuvioTheme.colors.TextPrimary,
+                    focusedContainerColor = NuvioTheme.colors.FocusBackground, focusedContentColor = NuvioTheme.colors.TextPrimary,
+                ),
+                border = ButtonDefaults.border(focusedBorder = Border(BorderStroke(3.dp, KeyOutline))),
+            ) { Text(stringResource(R.string.iptv_setup_contact_provider, ui.expiredProvider ?: ""), fontSize = 18.sp, maxLines = 1) }
+        }
+        if (showContact && support != null) {
+            ContactDialog(providerName = ui.expiredProvider.orEmpty(), support = support, onDismiss = { showContact = false })
+        }
     }
 }
 
@@ -359,7 +387,7 @@ private fun PreviewPane(ui: SetupCodeUiState, vm: IptvSetupCodeViewModel) {
         Text(stringResource(R.string.iptv_setup_will_add).uppercase(), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp, color = NuvioTheme.colors.TextSecondary)
         preview.playlists.take(5).forEach { Text(it.name, fontSize = 20.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 1) }
         if (preview.playlists.size > 5) {
-            Text("+${preview.playlists.size - 5}", fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary)
+            Text(stringResource(R.string.iptv_setup_more_playlists, preview.playlists.size - 5), fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary)
         }
         // Store builds hide add-ons: the preview must not name any (decision 6.5).
         if (AppFeaturePolicy.addonsEnabled && preview.addons.isNotEmpty()) {

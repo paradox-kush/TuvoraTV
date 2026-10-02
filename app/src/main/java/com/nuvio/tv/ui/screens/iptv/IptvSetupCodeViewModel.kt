@@ -9,6 +9,7 @@ import com.nuvio.tv.core.iptv.ProviderSetupRepository
 import com.nuvio.tv.core.iptv.ProviderSupport
 import com.nuvio.tv.core.iptv.RedeemFlowResult
 import com.nuvio.tv.core.iptv.SetupCode
+import com.nuvio.tv.core.iptv.SetupCodeHolder
 import com.nuvio.tv.core.iptv.SetupCodeOutcome
 import com.nuvio.tv.core.iptv.SetupEntryPolicy
 import com.nuvio.tv.core.iptv.SetupMessage
@@ -25,6 +26,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -51,7 +54,17 @@ data class SetupCodeUiState(
     val deleteFocusTick: Int = 0,
     /** Bumped when focus should move to Continue (a retryable failure). */
     val continueFocusTick: Int = 0,
+    /** Redeem-time `expired`: the provider's contacts (from the preview) and name, to offer "Contact <provider>". */
+    val expiredProvider: String? = null,
+    /** The phone-redeem wait ended without a result (cap reached). */
+    val waitTimedOut: Boolean = false,
+    /** The profile the phone-redeem wait watches (the active one). */
+    val watchedProfileName: String? = null,
 ) {
+    /** Never prints the code (a logged state would leak it). */
+    override fun toString(): String =
+        "SetupCodeUiState(phase=$phase, typedLength=${typed.length}, signedIn=$signedIn, rejected=$rejected)"
+
     val isComplete: Boolean get() = SetupCode.isComplete(typed)
     val continueEnabled: Boolean
         get() = SetupEntryPolicy.continueEnabled(isComplete, phase == SetupPhase.CHECKING, rejected)
@@ -84,6 +97,7 @@ class IptvSetupCodeViewModel @Inject constructor(
         SetupCodeUiState(
             profiles = profileManager.profiles.value,
             chosenProfileId = profileManager.activeProfileId.value,
+            watchedProfileName = profileManager.profiles.value.firstOrNull { it.id == profileManager.activeProfileId.value }?.name,
         )
     )
     val ui: StateFlow<SetupCodeUiState> = _ui.asStateFlow()
@@ -94,6 +108,25 @@ class IptvSetupCodeViewModel @Inject constructor(
     /** Latched once a character is typed on the TV: the phone-wait is over for this visit. */
     @Volatile var typedOnTv: Boolean = false
         private set
+
+    /** The code lives at most [SetupCodeHolder.TTL_MS] after the last character typed (the holder's own bound). */
+    private var expiryJob: Job? = null
+
+    private fun armExpiry() {
+        expiryJob?.cancel()
+        expiryJob = viewModelScope.launch {
+            delay(SetupCodeHolder.TTL_MS)
+            expireCode()
+        }
+    }
+
+    /** The in-memory code expired: forget it everywhere (state, holder), exactly as when the holder clears. */
+    internal fun expireCode() {
+        val phase = _ui.value.phase
+        if (phase == SetupPhase.CHECKING || phase == SetupPhase.ADDING) return
+        repository.clearCode()
+        _ui.update { it.copy(typed = "", phase = SetupPhase.ENTRY, preview = null, message = null, rejected = false) }
+    }
 
     private var waitStartedAt: Long = -1L
     private var snapshot: Set<String>? = null
@@ -122,7 +155,8 @@ class IptvSetupCodeViewModel @Inject constructor(
         val ch = c.uppercaseChar()
         if (ch !in SetupCode.ALPHABET || s.typed.length >= SetupCode.LENGTH) return
         typedOnTv = true
-        _ui.update { it.copy(typed = it.typed + ch, message = null, expiredSupport = null, rejected = false) }
+        _ui.update { it.copy(typed = it.typed + ch, message = null, expiredSupport = null, expiredProvider = null, rejected = false) }
+        armExpiry()
     }
 
     fun backspace() {
@@ -196,14 +230,23 @@ class IptvSetupCodeViewModel @Inject constructor(
                     )
                 }
                 is RedeemFlowResult.Failed -> _ui.update { st ->
-                    when (r.outcome) {
+                    val outcome = (r.outcome as? SetupCodeOutcome.Expired)
+                        ?.let { SetupCodeOutcome.Expired(it.support ?: st.preview?.support) } ?: r.outcome
+                    when (outcome) {
                         SetupCodeOutcome.ProfileNotFound -> st.copy(
-                            phase = SetupPhase.PREVIEW, message = r.outcome.message,
+                            phase = SetupPhase.PREVIEW, message = outcome.message,
                             profiles = profileManager.profiles.value,
                             chosenProfileId = profileManager.activeProfileId.value,
                         )
                         SetupCodeOutcome.NeedsSignIn -> st.copy(phase = SetupPhase.NEEDS_SIGN_IN)
-                        else -> st.copy(phase = SetupPhase.ENTRY, message = r.outcome.message, typed = if (r.outcome is SetupCodeOutcome.Network || r.outcome is SetupCodeOutcome.RateLimited) st.typed else "")
+                        else -> st.copy(
+                            phase = SetupPhase.ENTRY, message = outcome.message,
+                            typed = if (outcome is SetupCodeOutcome.Network || outcome is SetupCodeOutcome.RateLimited) st.typed else "",
+                            expiredSupport = (outcome as? SetupCodeOutcome.Expired)?.support?.takeUnless { it.isEmpty },
+                            expiredProvider = if (outcome is SetupCodeOutcome.Expired) st.preview?.providerName else null,
+                            rejected = SetupEntryPolicy.isRejection(outcome),
+                            deleteFocusTick = st.deleteFocusTick + if (SetupEntryPolicy.focusAfter(outcome) == SetupEntryPolicy.FocusTarget.DELETE) 1 else 0,
+                        )
                     }
                 }
             }
@@ -231,22 +274,28 @@ class IptvSetupCodeViewModel @Inject constructor(
             snapshot = snapshot,
             startedAtMs = waitStartedAt,
             now = { SystemClock.elapsedRealtime() },
+            onBaseline = { snapshot = it; snapshotTaken = true },
             poll = { refresher.fetchKeys(profileId) },
         )
-        if (outcome is SetupWaitPolicy.Outcome.Found) {
-            // One pull, then straight to the new playlist's details.
-            runCatching { syncService.pullAndApply() }
-            val key = outcome.newKeys.first()
-            val provider = refresher.infosNow(profileId)[key]?.providerName
-            detailsRequests.open(key, provider)
-            repository.clearCode()
-            _events.send(SetupCodeEvent.Finished)
+        when (outcome) {
+            is SetupWaitPolicy.Outcome.Found -> {
+                // One pull, then straight to the new playlist's details.
+                runCatching { syncService.pullAndApply() }
+                val key = outcome.newKeys.first()
+                val provider = refresher.infosNow(profileId)[key]?.providerName
+                detailsRequests.open(key, provider)
+                repository.clearCode()
+                _events.send(SetupCodeEvent.Finished)
+            }
+            // The cap ended the wait with nothing: say so instead of leaving a screen that looks alive.
+            SetupWaitPolicy.Outcome.TimedOut -> _ui.update { it.copy(waitTimedOut = true) }
         }
     }
 
     override fun onCleared() {
         // Leaving the screen without a success clears the code (Cancel / Back).
         repository.clearCode()
+        expiryJob?.cancel()
         super.onCleared()
     }
 }

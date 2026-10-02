@@ -27,8 +27,8 @@ object SetupWaitPolicy {
     const val SLOW_AFTER_FAILURES = 3
 
     sealed interface Outcome {
-        /** [newKeys] appeared since the snapshot. */
-        data class Found(val newKeys: Set<String>) : Outcome
+        /** [newKeys] (sorted) appeared since the snapshot. */
+        data class Found(val newKeys: List<String>) : Outcome
         data object TimedOut : Outcome
     }
 
@@ -50,6 +50,8 @@ object SetupWaitPolicy {
         snapshot: Set<String>?,
         startedAtMs: Long,
         now: () -> Long,
+        /** Called when the first answer becomes the baseline (the opening snapshot failed), so a re-resume keeps it. */
+        onBaseline: (Set<String>) -> Unit = {},
         poll: suspend () -> Result<Set<String>>,
     ): Outcome {
         var baseline = snapshot
@@ -76,10 +78,11 @@ object SetupWaitPolicy {
             val base = baseline
             if (base == null) {
                 baseline = keys
+                onBaseline(keys)
                 continue
             }
             val fresh = newKeys(base, keys)
-            if (fresh.isNotEmpty()) return Outcome.Found(fresh)
+            if (fresh.isNotEmpty()) return Outcome.Found(fresh.sorted())
         }
     }
 }

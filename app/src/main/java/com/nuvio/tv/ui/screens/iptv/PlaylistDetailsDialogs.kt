@@ -46,6 +46,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -110,12 +113,14 @@ private fun ContactColumn(contact: ProviderContact, modifier: Modifier = Modifie
             )
         }
         Text(
-            when (contact.kind) {
-                ProviderContact.Kind.WHATSAPP -> "WhatsApp"
-                ProviderContact.Kind.TELEGRAM -> "Telegram"
-                ProviderContact.Kind.EMAIL -> "Email"
-                ProviderContact.Kind.WEBSITE -> "Website"
-            },
+            stringResource(
+                when (contact.kind) {
+                    ProviderContact.Kind.WHATSAPP -> R.string.iptv_contact_whatsapp
+                    ProviderContact.Kind.TELEGRAM -> R.string.iptv_contact_telegram
+                    ProviderContact.Kind.EMAIL -> R.string.iptv_contact_email
+                    ProviderContact.Kind.WEBSITE -> R.string.iptv_contact_website
+                }
+            ),
             fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextPrimary,
         )
         Text(contact.text, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, textAlign = TextAlign.Center, maxLines = 2)
@@ -220,6 +225,7 @@ fun HoldToConfirmButton(
                 }
                 true
             }
+            .semantics(mergeDescendants = true) { role = androidx.compose.ui.semantics.Role.Button; contentDescription = label }
             .focusable(),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,

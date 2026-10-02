@@ -157,7 +157,7 @@ class IptvPairingViewModel @Inject constructor(
         )
     }
 
-    private suspend fun savePairedAccount(account: XtreamAccount) {
+    internal suspend fun savePairedAccount(account: XtreamAccount) {
         _uiState.update { it.copy(status = IptvPairingStatus.SAVING) }
         runCatching {
             // Step 2: pairing the provider's own server+login again must not rewrite a managed playlist.

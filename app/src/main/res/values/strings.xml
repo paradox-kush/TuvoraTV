@@ -3443,6 +3443,7 @@
         <item quantity="other">%d days left</item>
     </plurals>
     <string name="iptv_details_expired">Expired</string>
+    <string name="iptv_details_expiry_check_failed">Couldn\'t check expiry</string>
     <string name="iptv_details_expiry_unknown">Expiry not reported by this provider</string>
     <string name="iptv_details_never_expires">Never expires</string>
     <string name="iptv_details_expires_text">Expires %1$s</string>
@@ -3478,6 +3479,12 @@
     <string name="iptv_card_remove_sub">Delete this playlist</string>
     <string name="iptv_contact_title">Contact %1$s</string>
     <string name="iptv_contact_subtitle">Scan a code with your phone to open the chat.</string>
+    <string name="iptv_remove_title">Remove \u201C%1$s\u201D?</string>
+    <string name="iptv_contact_whatsapp">WhatsApp</string>
+    <string name="iptv_contact_telegram">Telegram</string>
+    <string name="iptv_contact_email">Email</string>
+    <string name="iptv_contact_website">Website</string>
+    <string name="iptv_setup_more_playlists">+%1$d more</string>
     <string name="iptv_contact_close">Close</string>
     <string name="iptv_catchup_dialog_title">Catch-up &amp; guide</string>
     <string name="iptv_detach_title">Detach from %1$s?</string>
@@ -3511,6 +3518,8 @@
     <string name="iptv_setup_adding">Adding\u2026</string>
     <string name="iptv_setup_back">Use a different code</string>
     <string name="iptv_setup_added_other_profile">%1$s was added to profile %2$s. Switch to that profile to see it.</string>
+    <string name="iptv_setup_watching_profile">Watching for your code on %1$s</string>
+    <string name="iptv_setup_wait_timed_out">Still waiting? Type the code here, or scan the code again.</string>
     <string name="iptv_setup_done">Done</string>
     <string name="iptv_setup_contact_provider">Contact %1$s</string>
     <string name="cd_iptv_setup_qr">QR code that opens the setup page on your phone</string>

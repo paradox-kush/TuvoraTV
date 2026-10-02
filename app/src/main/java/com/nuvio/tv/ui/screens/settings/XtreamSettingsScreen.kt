@@ -176,12 +176,14 @@ fun XtreamSettingsContent(
     LaunchedEffect(pendingDetails, uiState.accounts) {
         val request = pendingDetails ?: return@LaunchedEffect
         val target = uiState.accounts.firstOrNull { it.id == request.playlistKey }
-        if (target != null) {
-            actionsForId = target.id
-            justAddedBy = request.addedBy
-            viewModel.consumePendingDetails()
-        } else if (request.isStale(System.currentTimeMillis())) {
-            viewModel.consumePendingDetails()
+        when (com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests.decide(request, target != null, System.currentTimeMillis())) {
+            com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests.Decision.OPEN -> {
+                actionsForId = target?.id
+                justAddedBy = request.addedBy
+                viewModel.consumePendingDetails()
+            }
+            com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests.Decision.DROP -> viewModel.consumePendingDetails()
+            com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests.Decision.WAIT -> Unit
         }
     }
 
@@ -407,6 +409,7 @@ fun XtreamSettingsContent(
                     justAddedBy = justAddedBy,
                     detachedFrom = detachedFrom?.takeIf { it.first == id }?.second,
                     rematchStarted = id in rematchStarted,
+                    expiryCheckFailed = id in uiState.accountInfoFailed,
                     nowEpochSec = System.currentTimeMillis() / 1000,
                 ),
                 onAction = { action ->
@@ -553,7 +556,7 @@ fun XtreamSettingsContent(
         // stray press can never delete a playlist. For a managed playlist the owner is named.
         val providerName = managedInfos[account.id]?.providerName
         HoldConfirmDialog(
-            title = "Remove \u201C${account.name}\u201D?",
+            title = stringResource(R.string.iptv_remove_title, account.name),
             message = when (PlaylistRemovalUiPolicy.confirmWording(signedIn)) {
                 PlaylistRemovalUiPolicy.ConfirmWording.ALL_DEVICES -> stringResource(R.string.iptv_remove_playlist_message_all_devices)
                 PlaylistRemovalUiPolicy.ConfirmWording.IF_YOU_SYNC -> stringResource(R.string.iptv_remove_playlist_message_if_you_sync)

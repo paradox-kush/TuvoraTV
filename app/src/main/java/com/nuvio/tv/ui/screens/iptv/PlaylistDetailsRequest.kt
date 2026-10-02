@@ -18,6 +18,8 @@ class PlaylistDetailsRequests @Inject constructor() {
         fun isStale(nowMs: Long): Boolean = nowMs - createdAtMs > MAX_AGE_MS
     }
 
+    enum class Decision { OPEN, WAIT, DROP }
+
     private val _pending = MutableStateFlow<Request?>(null)
     val pending: StateFlow<Request?> = _pending.asStateFlow()
 
@@ -31,5 +33,12 @@ class PlaylistDetailsRequests @Inject constructor() {
 
     companion object {
         const val MAX_AGE_MS = 120_000L
+
+        /** Staleness FIRST: a playlist that only arrives long after the redeem must not open a page unprompted. */
+        fun decide(request: Request, hasPlaylist: Boolean, nowMs: Long): Decision = when {
+            request.isStale(nowMs) -> Decision.DROP
+            hasPlaylist -> Decision.OPEN
+            else -> Decision.WAIT
+        }
     }
 }

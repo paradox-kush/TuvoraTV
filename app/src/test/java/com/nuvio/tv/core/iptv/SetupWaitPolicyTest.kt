@@ -49,7 +49,7 @@ class SetupWaitPolicyTest {
             calls++
             Result.success(if (calls < 3) setOf("a") else setOf("a", "k2"))
         }
-        assertEquals(SetupWaitPolicy.Outcome.Found(setOf("k2")), outcome)
+        assertEquals(SetupWaitPolicy.Outcome.Found(listOf("k2")), outcome)
         assertEquals(3, calls)
         assertEquals("3 s + 6 s + 6 s", 15_000L, currentTime)
     }
@@ -144,7 +144,7 @@ class SetupWaitPolicyTest {
                 else -> Result.success(setOf("old", "new"))
             }
         }
-        assertEquals(SetupWaitPolicy.Outcome.Found(setOf("new")), outcome)
+        assertEquals(SetupWaitPolicy.Outcome.Found(listOf("new")), outcome)
         assertEquals(3, calls)
     }
 
@@ -156,5 +156,28 @@ class SetupWaitPolicyTest {
         val outcome = SetupWaitPolicy.run(setOf("a"), startedAt, { currentTime }) { calls++; Result.success(setOf("a")) }
         assertEquals(SetupWaitPolicy.Outcome.TimedOut, outcome)
         assertEquals("3 s then 9 s fits, 15 s does not", 2, calls)
+    }
+
+    @Test
+    fun `found keys come back sorted and a baseline taken from the first answer is reported`() = runTest {
+        var baseline: Set<String>? = null
+        var calls = 0
+        val outcome = SetupWaitPolicy.run(null, currentTime, { currentTime }, onBaseline = { baseline = it }) {
+            calls++
+            when (calls) { 1 -> Result.success(setOf("old")); else -> Result.success(setOf("old", "z", "b")) }
+        }
+        assertEquals(setOf("old"), baseline)
+        assertEquals(SetupWaitPolicy.Outcome.Found(listOf("b", "z")), outcome)
+    }
+
+    @Test
+    fun `nothing is returned after the wait was cancelled`() = runTest {
+        var result: SetupWaitPolicy.Outcome? = null
+        val job = launch {
+            result = SetupWaitPolicy.run(setOf("a"), currentTime, { currentTime }) { Result.success(setOf("a", "new")) }
+        }
+        job.cancel() // the screen left before the first call
+        advanceTimeBy(600_000)
+        assertEquals(null, result)
     }
 }

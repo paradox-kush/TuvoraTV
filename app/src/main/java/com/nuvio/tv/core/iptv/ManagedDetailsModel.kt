@@ -19,15 +19,22 @@ object ManagedDetailsModel {
     data class Shelf(val group: ShelfGroup, val cards: List<DetailsAction>)
 
     sealed interface Expiry {
-        /** [fraction] fills the thin bar: 1.0 at [BAR_FULL_DAYS] or more days left, shrinking toward 0. */
-        data class Days(val daysLeft: Int, val fraction: Float) : Expiry
+        /**
+         * [daysLeft] whole days left. [fraction] fills the thin bar: shown ONLY for the last [BAR_FULL_DAYS] days
+         * (full at 30, shrinking to the end date); null above 30 days = "N days left" as text, no bar.
+         */
+        data class Days(val daysLeft: Int, val fraction: Float?) : Expiry
         data object Expired : Expiry
         /** The panel reports `exp_date` 0: the subscription does not end. No bar. */
         data object NeverExpires : Expiry
         /** A source that gives free text instead of an epoch (a Stalker portal): shown verbatim, no bar. */
         data class Text(val text: String) : Expiry
-        /** The provider reports no expiry: "Expiry not reported by this provider" and NO bar. */
+        /** The panel answered and reported no expiry: "Expiry not reported by this provider". No bar. */
         data object NotReported : Expiry
+        /** The panel was asked and did not answer: "Couldn't check expiry". Never "not reported". */
+        data object CheckFailed : Expiry
+        /** Not asked yet (or a source with no account endpoint): nothing is said about expiry. */
+        data object Unknown : Expiry
     }
 
     data class Connections(val active: Int?, val max: Int)
@@ -66,15 +73,22 @@ object ManagedDetailsModel {
         return ((remaining + DAY_SEC - 1) / DAY_SEC).toInt()
     }
 
-    fun expiry(info: XtreamAccountInfo?, nowEpochSec: Long): Expiry {
-        val epoch = info?.expiresAtEpochSec
+    /** The smallest visible bar (a fraction), so the last day still shows something. */
+    const val BAR_MIN_FRACTION = 0.04f
+
+    fun expiry(info: XtreamAccountInfo?, nowEpochSec: Long, checkFailed: Boolean = false): Expiry {
+        if (info == null) return if (checkFailed) Expiry.CheckFailed else Expiry.Unknown
+        val epoch = info.expiresAtEpochSec
         return when {
-            !info?.expiresText.isNullOrBlank() -> Expiry.Text(info!!.expiresText!!)
+            !info.expiresText.isNullOrBlank() -> Expiry.Text(info.expiresText)
             epoch == 0L -> Expiry.NeverExpires
             epoch != null && epoch > 0 -> {
                 val days = daysLeft(epoch, nowEpochSec)
-                if (days == 0) Expiry.Expired
-                else Expiry.Days(days, (days.toFloat() / BAR_FULL_DAYS).coerceIn(0f, 1f))
+                when {
+                    days == 0 -> Expiry.Expired
+                    days > BAR_FULL_DAYS -> Expiry.Days(days, null)
+                    else -> Expiry.Days(days, (days.toFloat() / BAR_FULL_DAYS).coerceIn(BAR_MIN_FRACTION, 1f))
+                }
             }
             else -> Expiry.NotReported
         }
@@ -86,10 +100,11 @@ object ManagedDetailsModel {
         info: XtreamAccountInfo?,
         catalogLine: String?,
         nowEpochSec: Long,
+        checkFailed: Boolean = false,
     ): Facts = Facts(
         name = account.name,
         managedBy = managed?.providerName,
-        expiry = expiry(info, nowEpochSec),
+        expiry = expiry(info, nowEpochSec, checkFailed),
         connections = info?.maxConnections?.takeIf { it > 0 }?.let { Connections(info.activeConnections, it) },
         catalogLine = catalogLine?.takeIf { it.isNotBlank() },
         serverLoginLocked = managed != null,
@@ -133,5 +148,17 @@ object ManagedDetailsModel {
                 )
             )
         }
+    }
+}
+
+/**
+ * The catalog counts line ("12,000 channels"): a count is shown only when the index/ingest has produced it and it is
+ * above zero. A zero reads as "this provider has none", which is a claim we cannot make until the catalog is known.
+ */
+object CatalogCountsPolicy {
+    fun parts(channels: Int?, movies: Int?, series: Int?): List<String> = buildList {
+        channels?.takeIf { it > 0 }?.let { add("$it channels") }
+        movies?.takeIf { it > 0 }?.let { add("$it movies") }
+        series?.takeIf { it > 0 }?.let { add("$it series") }
     }
 }

@@ -56,6 +56,8 @@ data class XtreamSettingsUiState(
     val categoryLists: Map<String, List<XtreamCategory>> = emptyMap(),
     /** accountId -> "Active · 0/1 connections · Expires 2027-01-11" (lazily fetched, silent on failure). */
     val accountStatus: Map<String, String> = emptyMap(),
+    /** accountIds whose panel account check failed (the details page says "Couldn't check expiry", not "not reported"). */
+    val accountInfoFailed: Set<String> = emptySet(),
     /** accountId -> local catalog counts ("12,000 channels"), for the details page. */
     val catalogCounts: Map<String, String> = emptyMap(),
     /** accountId -> the panel's structured account info (days left, connections) for the details page. */
@@ -702,6 +704,7 @@ class XtreamSettingsViewModel @Inject constructor(
                 accountStatus = it.accountStatus - ids,
                 accountInfo = it.accountInfo - ids,
                 catalogCounts = it.catalogCounts - ids,
+                accountInfoFailed = it.accountInfoFailed - ids,
                 categoryLists = it.categoryLists - typeKeys,
                 guideEpgCoverage = it.guideEpgCoverage - ids,
             )
@@ -867,30 +870,28 @@ class XtreamSettingsViewModel @Inject constructor(
             if (account.isM3UBacked()) return@launch
             clientFactory.clientFor(account).accountInfo(account)
                 .onSuccess { info ->
-                    _uiState.update { it.copy(accountInfo = it.accountInfo + (account.id to info)) }
+                    _uiState.update { it.copy(accountInfo = it.accountInfo + (account.id to info), accountInfoFailed = it.accountInfoFailed - account.id) }
                     info.toStatusLine()?.let { line ->
                         val full = (counts + line).joinToString(" · ")
                         _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to full)) }
                     }
                 }
-                .onFailure { if (counts.isEmpty()) statusRequests.remove(account.id) }   // silent; retry later
+                .onFailure {
+                    _uiState.update { st -> st.copy(accountInfoFailed = st.accountInfoFailed + account.id) }
+                    if (counts.isEmpty()) statusRequests.remove(account.id)   // silent; retry later
+                }
         }
     }
 
     /** "12,000 channels" / "Movies 60000" style parts, from the local stores only. */
     private suspend fun localCatalogCounts(account: XtreamAccount): List<String> = when {
-        account.isM3UBacked() -> buildList {
-            val live = contentDb.liveCount(account.id)
-            if (live > 0) add("$live channels")
-        }
-        account.sourceType == XtreamAccount.SOURCE_STALKER -> buildList {
-            val live = contentDb.liveCount(account.id)
-            if (live > 0) add("$live channels")
-        }
-        else -> buildList {
-            matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.MOVIE)?.let { add("$it movies") }
-            matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.SERIES)?.let { add("$it series") }
-        }
+        account.isM3UBacked() || account.sourceType == XtreamAccount.SOURCE_STALKER ->
+            com.nuvio.tv.core.iptv.CatalogCountsPolicy.parts(channels = contentDb.liveCount(account.id), movies = null, series = null)
+        else -> com.nuvio.tv.core.iptv.CatalogCountsPolicy.parts(
+            channels = null,
+            movies = matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.MOVIE),
+            series = matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.SERIES),
+        )
     }
 
     private fun XtreamAccountInfo.toStatusLine(): String? {
