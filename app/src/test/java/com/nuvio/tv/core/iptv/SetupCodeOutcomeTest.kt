@@ -65,8 +65,11 @@ class SetupCodeOutcomeTest {
         assertEquals(SetupCodeOutcome.RateLimited(12), SetupCodeOutcome.forPreviewHttp(429, "rate_limited", 12))
         assertEquals("a 429 is rate limiting even without a body code", SetupCodeOutcome.RateLimited(null), SetupCodeOutcome.forPreviewHttp(429, null))
         assertEquals("404 without a code = feature off", SetupCodeOutcome.Unusable, SetupCodeOutcome.forPreviewHttp(404, null))
-        assertEquals(SetupCodeOutcome.Unusable, SetupCodeOutcome.forPreviewHttp(503, null))
+        assertEquals("503 not configured carries code=unknown", SetupCodeOutcome.Unusable, SetupCodeOutcome.forPreviewHttp(503, "unknown"))
         assertEquals(SetupCodeOutcome.Unusable, SetupCodeOutcome.forPreviewHttp(502, "boom"))
+        assertEquals("a gateway failure with no code is not a verdict on the code", SetupCodeOutcome.Network, SetupCodeOutcome.forPreviewHttp(502, null))
+        assertEquals(SetupCodeOutcome.Network, SetupCodeOutcome.forPreviewHttp(503, null))
+        assertEquals("a rate_limited code wins whatever the status", SetupCodeOutcome.RateLimited(5), SetupCodeOutcome.forPreviewHttp(400, "rate_limited", 5))
     }
 
     /** The shipped strings must be the contract's sentences (this pins strings.xml to [SetupMessage]). */
@@ -82,6 +85,10 @@ class SetupCodeOutcomeTest {
             SetupMessage.NETWORK to "setup_code_msg_network",
             SetupMessage.UNUSABLE to "setup_code_msg_unusable",
             SetupMessage.PROFILE_NOT_FOUND to "setup_code_msg_profile_not_found",
+            SetupMessage.NOTHING_NO_LOGIN to "setup_code_msg_nothing_no_login",
+            SetupMessage.NOTHING_BAD_ADDRESS to "setup_code_msg_nothing_bad_address",
+            SetupMessage.ALREADY_SET_UP to "setup_code_msg_already_set_up",
+            SetupMessage.NOTHING_ADDED to "setup_code_msg_nothing_added",
         )
         assertEquals("every message has a resource", SetupMessage.values().toSet(), names.keys)
         names.forEach { (message, name) ->

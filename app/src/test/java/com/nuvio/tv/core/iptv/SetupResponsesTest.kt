@@ -32,7 +32,7 @@ class SetupResponsesTest {
         assertEquals(SetupCodeOutcome.RateLimited(17), SetupResponses.parsePreview(429, """{"error":"rate_limited","code":"rate_limited"}""", "17"))
         assertEquals("a garbage Retry-After is unknown", SetupCodeOutcome.RateLimited(null), SetupResponses.parsePreview(429, "{}", "soon"))
         assertEquals("feature off: 404 with no code", SetupCodeOutcome.Unusable, SetupResponses.parsePreview(404, """{"error":"Not found"}"""))
-        assertEquals(SetupCodeOutcome.Unusable, SetupResponses.parsePreview(502, "not json"))
+        assertEquals("a proxy error page is a gateway failure", SetupCodeOutcome.Network, SetupResponses.parsePreview(502, "not json"))
     }
 
     @Test
@@ -78,5 +78,27 @@ class SetupResponsesTest {
         assertEquals("https://tuvora.co/api/s/preview?code=TUV-ABCD-EFGH-JKMN", url.toString())
         assertEquals("http://10.0.2.2:3000/api/s/preview?code=TUV-ABCD-EFGH-JKMN",
             ProviderSetupConfig.previewUrl("ABCDEFGHJKMN", base = "http://10.0.2.2:3000/").toString())
+    }
+
+    private fun redeem(json: String) = (SetupResponses.parseRedeem(Json.parseToJsonElement(json)) as RedeemOutcome.Done).result
+
+    @Test
+    fun `a redeem that skipped every service added nothing and says why`() {
+        val noLogin = redeem("""{"ok":true,"status":"redeemed","profile_index":1,"added":0,"updated":0,"unchanged":0,
+            "playlists":[{"playlist_key":null,"name":"Live","action":"skipped","reason":"missing_login"}]}""")
+        assertEquals(listOf("missing_login"), noLogin.skippedReasons)
+        assertEquals(RedeemResultPolicy.Kind.NOTHING_NO_LOGIN, RedeemResultPolicy.classify(noLogin))
+        val badUrl = redeem("""{"ok":true,"status":"redeemed","added":0,"updated":0,"unchanged":0,
+            "playlists":[{"playlist_key":null,"name":"Live","action":"skipped","reason":"invalid_url"}]}""")
+        assertEquals(RedeemResultPolicy.Kind.NOTHING_BAD_ADDRESS, RedeemResultPolicy.classify(badUrl))
+    }
+
+    @Test
+    fun `added updated and already-set-up redeems are classified`() {
+        assertEquals(RedeemResultPolicy.Kind.ADDED, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":1,"updated":0,"unchanged":0,"playlists":[{"playlist_key":"k","name":"L","action":"added"}]}""")))
+        assertEquals(RedeemResultPolicy.Kind.ADDED, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":0,"updated":1,"unchanged":0,"playlists":[{"playlist_key":"k","name":"L","action":"updated"}]}""")))
+        assertEquals(RedeemResultPolicy.Kind.ALREADY_SET_UP, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"already_redeemed","added":0,"updated":0,"unchanged":0,"playlists":[]}""")))
+        assertEquals(RedeemResultPolicy.Kind.ALREADY_SET_UP, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":0,"updated":0,"unchanged":1,"playlists":[{"playlist_key":"k","name":"L","action":"unchanged"}]}""")))
+        assertEquals(RedeemResultPolicy.Kind.NOTHING, RedeemResultPolicy.classify(redeem("""{"ok":true,"status":"redeemed","added":0,"updated":0,"unchanged":0,"playlists":[]}""")))
     }
 }

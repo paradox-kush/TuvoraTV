@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -90,6 +91,10 @@ import com.nuvio.tv.core.iptv.PlaylistFormSubmitPolicy
 import com.nuvio.tv.core.iptv.isXtream
 import com.nuvio.tv.core.iptv.parseXtreamAccount
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.screens.iptv.ContactDialog
+import com.nuvio.tv.ui.screens.iptv.HoldConfirmDialog
+import com.nuvio.tv.ui.screens.iptv.PlaylistDetailsScreen
+import com.nuvio.tv.ui.screens.iptv.PlaylistDetailsState
 import com.nuvio.tv.ui.screens.account.InputFieldKeys
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.launch
@@ -103,6 +108,7 @@ import kotlinx.coroutines.launch
 fun XtreamSettingsContent(
     viewModel: XtreamSettingsViewModel = hiltViewModel(),
     onPairFromPhone: () -> Unit = {},
+    onEnterSetupCode: () -> Unit = {},
     initialFocusRequester: FocusRequester? = null
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -112,9 +118,19 @@ fun XtreamSettingsContent(
     val selectedEpgRegions by viewModel.selectedEpgRegions.collectAsStateWithLifecycle()
     // Step 0.3: playlists currently served by a backup server ("Using backup server N").
     val activeServers by viewModel.activeServers.collectAsStateWithLifecycle()
+    // Step 2: provider-managed playlists, by key.
+    val managedInfos by viewModel.managedInfos.collectAsStateWithLifecycle()
+    val pendingDetails by viewModel.pendingDetails.collectAsStateWithLifecycle()
     var showRegionPicker by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
-    var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
+    // Step 2: the details PAGE is open for this playlist id (looked up live, so toggles re-render it).
+    var actionsForId by remember { mutableStateOf<String?>(null) }
+    // Step 2: "<provider> added this playlist", shown on the page until it is closed (after a redeem).
+    var justAddedBy by remember { mutableStateOf<String?>(null) }
+    var contactFor by remember { mutableStateOf<String?>(null) }
+    var detachFor by remember { mutableStateOf<String?>(null) }
+    var catchUpFor by remember { mutableStateOf<String?>(null) }
+    var rematchStarted by remember { mutableStateOf(setOf<String>()) }
     // B57: Remove used to delete on the first OK with no confirmation, from a row that was cut off
     // the bottom of a non-scrolling dialog.
     var removeConfirmFor by remember { mutableStateOf<XtreamAccount?>(null) }
@@ -154,6 +170,19 @@ fun XtreamSettingsContent(
         removalFocusScope.launch { target.requestFocusAfterFrames() }
     }
 
+    // Step 2: a setup code just added a playlist: open its details page (once the pull has applied it).
+    LaunchedEffect(pendingDetails, uiState.accounts) {
+        val request = pendingDetails ?: return@LaunchedEffect
+        val target = uiState.accounts.firstOrNull { it.id == request.playlistKey }
+        if (target != null) {
+            actionsForId = target.id
+            justAddedBy = request.addedBy
+            viewModel.consumePendingDetails()
+        } else if (request.isStale(System.currentTimeMillis())) {
+            viewModel.consumePendingDetails()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -189,6 +218,14 @@ fun XtreamSettingsContent(
             leadingIcon = Icons.Default.PhoneAndroid
         )
 
+        // Step 2: a provider's setup code, typed here or redeemed on a phone.
+        SettingsActionRow(
+            title = stringResource(R.string.iptv_setup_entry_title),
+            subtitle = stringResource(R.string.iptv_setup_entry_subtitle),
+            onClick = onEnterSetupCode,
+            leadingIcon = Icons.Default.VpnKey
+        )
+
         SettingsActionRow(
             title = "Guide regions",
             subtitle = "Choose which countries' EPG this device keeps",
@@ -204,9 +241,20 @@ fun XtreamSettingsContent(
                 viewModel.ensureAccountStatus(account)
                 viewModel.ensureGuideEpgCoverage(account)
             }
+            // Step 2: "Managed by <provider> · N days left" (the days only when the provider reports an expiry).
+            val managedLine = managedInfos[account.id]?.let { m ->
+                val expiry = com.nuvio.tv.core.iptv.ManagedDetailsModel.expiry(uiState.accountInfo[account.id], System.currentTimeMillis() / 1000)
+                if (expiry is com.nuvio.tv.core.iptv.ManagedDetailsModel.Expiry.Days) {
+                    stringResource(
+                        R.string.iptv_managed_row_line_days, m.providerName,
+                        androidx.compose.ui.res.pluralStringResource(R.plurals.iptv_details_days_left, expiry.daysLeft, expiry.daysLeft),
+                    )
+                } else stringResource(R.string.iptv_managed_row_line, m.providerName)
+            }
             SettingsActionRow(
                 title = account.name,
                 subtitle = listOfNotNull(
+                    managedLine,
                     // Step 0.3: say which server is actually answering when it isn't the main one.
                     activeServers[account.id]?.let { stringResource(R.string.iptv_using_backup_server, it) }
                         ?: account.baseUrl,
@@ -220,7 +268,7 @@ fun XtreamSettingsContent(
                     uiState.guideEpgCoverage[account.id]
                 ).joinToString("\n"),
                 value = if (account.enabled) "On" else "Off",
-                onClick = { actionsFor = account },
+                onClick = { actionsForId = account.id },
                 modifier = Modifier.focusRequester(accountRowFocus.getOrPut(account.id) { FocusRequester() })
             )
         }
@@ -332,82 +380,102 @@ fun XtreamSettingsContent(
         }
     }
 
-    actionsFor?.let { account ->
-        val needsReimport = viewModel.needsReimport(account)
-        NuvioDialog(
-            onDismiss = { actionsFor = null },
-            title = account.name,
-            subtitle = when {
-                needsReimport -> "Imported file not on this device — re-import to browse"
-                account.fileName != null -> account.fileName
-                else -> listOfNotNull(
-                    account.baseUrl,
-                    // Step 0.3: the playlist details name the backup that is actually answering.
-                    activeServers[account.id]?.let { n ->
+    // Step 2: the playlist DETAILS page (full screen, two panes, three shelves) — for every playlist.
+    // Dialogs opened from it stack on top; Back returns to the page.
+    actionsForId?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) {
+            actionsForId = null
+            justAddedBy = null
+        } else {
+            val managed = managedInfos[id]
+            val needsReimport = viewModel.needsReimport(account)
+            PlaylistDetailsScreen(
+                state = PlaylistDetailsState(
+                    account = account,
+                    managed = managed,
+                    info = uiState.accountInfo[id],
+                    catalogLine = uiState.catalogCounts[id],
+                    needsReimport = needsReimport,
+                    backupLine = activeServers[id]?.let { n ->
                         account.backupUrls?.getOrNull(n - 1)
                             ?.let { host -> stringResource(R.string.iptv_using_backup_server_host, n, host) }
                             ?: stringResource(R.string.iptv_using_backup_server, n)
                     },
-                ).joinToString("\n")
-            },
-            // Up to eight rows for an Xtream playlist: past the dialog height they were clipped and
-            // the last ones (Disable, Remove) D-pad-unreachable. Scrolling follows focus.
-            scrollable = true
-        ) {
-            // A file playlist with no local copy on this device (synced from elsewhere) can't browse
-            // until it's re-imported here — offer that first, hide the dead browse entries.
-            if (needsReimport) {
-                SettingsActionRow(
-                    title = "Re-import file",
-                    subtitle = "Pick the playlist file again on this device",
-                    leadingIcon = Icons.Default.Add,
-                    onClick = {
-                        actionsFor = null
-                        editFor = account
+                    justAddedBy = justAddedBy,
+                    rematchStarted = id in rematchStarted,
+                    nowEpochSec = System.currentTimeMillis() / 1000,
+                ),
+                onAction = { action ->
+                    when (action) {
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.CONTACT -> contactFor = id
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.CONTENT -> contentForId = id
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.HIDDEN -> {
+                            hiddenFor = account
+                            viewModel.loadHiddenItems(account)
+                        }
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.REMATCH -> {
+                            viewModel.rematchCatalog(id)
+                            rematchStarted = rematchStarted + id
+                        }
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.CATCHUP -> catchUpFor = id
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.EDIT,
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.REIMPORT -> editFor = account
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.TOGGLE_ENABLED ->
+                            viewModel.setEnabled(id, !account.enabled)
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.DETACH -> detachFor = id
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.REMOVE -> removeConfirmFor = account
                     }
-                )
-            }
-            SettingsActionRow(
-                title = "Content & Categories",
-                subtitle = "Choose which content types and categories to show",
-                onClick = {
-                    val id = account.id
-                    actionsFor = null
-                    contentForId = id
-                }
+                },
+                onClose = {
+                    actionsForId = null
+                    justAddedBy = null
+                },
             )
-            // F02: hides made on any device or the website are undone here.
-            SettingsActionRow(
-                title = "Hidden channels & groups",
-                subtitle = "Bring back what you hid",
-                onClick = {
-                    actionsFor = null
-                    hiddenFor = account
-                    viewModel.loadHiddenItems(account)
-                }
+        }
+    }
+
+    contactFor?.let { id ->
+        val managed = managedInfos[id]
+        if (managed == null) contactFor = null
+        else ContactDialog(providerName = managed.providerName, support = managed.support, onDismiss = { contactFor = null })
+    }
+
+    detachFor?.let { id ->
+        val managed = managedInfos[id]
+        if (managed == null) {
+            detachFor = null
+        } else {
+            HoldConfirmDialog(
+                title = stringResource(R.string.iptv_detach_title, managed.providerName),
+                message = stringResource(R.string.iptv_detach_message, managed.providerName),
+                holdLabel = stringResource(R.string.iptv_hold_to_detach),
+                onConfirmed = {
+                    viewModel.detach(id)
+                    detachFor = null
+                },
+                onDismiss = { detachFor = null },
             )
-            // File playlists have no URL/creds to edit — re-picking the file IS the edit. Only show
-            // the plain "Edit" entry when the file is present (a missing file shows Re-import above).
-            if (!(account.fileName != null && needsReimport)) {
-                SettingsActionRow(
-                    title = if (account.fileName != null) "Change / re-import file" else "Edit URL / credentials",
-                    subtitle = null,
-                    onClick = {
-                        actionsFor = null
-                        editFor = account
-                    }
-                )
-            }
-            if (account.isXtream()) {
-                // Catch-up is Xtream-only: a Stalker portal builds its archive URLs server-side and
-                // an M3U playlist has no panel to ask, so neither has a container to choose.
+        }
+    }
+
+    // Catch-up / guide tuning (Xtream only): the three rows the old details dialog carried.
+    catchUpFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) {
+            catchUpFor = null
+        } else {
+            NuvioDialog(
+                onDismiss = { catchUpFor = null },
+                title = stringResource(R.string.iptv_catchup_dialog_title),
+                subtitle = account.name,
+                scrollable = true
+            ) {
                 SettingsActionRow(
                     title = "Catch-up container",
                     subtitle = "m3u8 enables the scrub bar; TS is more widely served",
                     value = if (account.preferM3u8CatchUp) "Prefer m3u8" else "Prefer TS",
-                    onClick = {
-                        viewModel.setPreferM3u8CatchUp(account.id, !account.preferM3u8CatchUp)
-                    }
+                    onClick = { viewModel.setPreferM3u8CatchUp(account.id, !account.preferM3u8CatchUp) }
                 )
                 SettingsActionRow(
                     title = "Catch-up time correction",
@@ -415,7 +483,7 @@ fun XtreamSettingsContent(
                     value = catchUpCorrectionLabel(account.catchUpCorrectionMinutes),
                     onClick = {
                         correctionFor = account.id
-                        actionsFor = null
+                        catchUpFor = null
                     }
                 )
                 SettingsActionRow(
@@ -424,37 +492,10 @@ fun XtreamSettingsContent(
                     value = guideEpgOffsetLabel(account.guideEpgCorrectionMinutes),
                     onClick = {
                         guideOffsetFor = account.id
-                        actionsFor = null
-                    }
-                )
-                // Stale "not on this provider" verdicts hide titles the panel added AFTER the
-                // verdict (they sync across devices and live up to 7 days). Catalog syncs that
-                // ADD items reset them automatically; this is the do-it-now button.
-                SettingsActionRow(
-                    title = "Re-match catalog",
-                    subtitle = "Re-check titles this playlist was thought not to have",
-                    onClick = {
-                        viewModel.rematchCatalog(account.id)
-                        actionsFor = null
+                        catchUpFor = null
                     }
                 )
             }
-            SettingsActionRow(
-                title = if (account.enabled) "Disable" else "Enable",
-                subtitle = null,
-                onClick = {
-                    viewModel.setEnabled(account.id, !account.enabled)
-                    actionsFor = null
-                }
-            )
-            SettingsActionRow(
-                title = "Remove playlist",
-                subtitle = null,
-                onClick = {
-                    actionsFor = null
-                    removeConfirmFor = account
-                }
-            )
         }
     }
 
@@ -503,43 +544,24 @@ fun XtreamSettingsContent(
     }
 
     removeConfirmFor?.let { account ->
-        val cancelFocus = remember { FocusRequester() }
-        LaunchedEffect(account.id) { cancelFocus.requestFocus() }
-        NuvioDialog(
-            onDismiss = { removeConfirmFor = null },
+        // Step 2: Remove confirms by HOLDING OK 2 s (Cancel focused first) — no typing on a remote, and a
+        // stray press can never delete a playlist. For a managed playlist the owner is named.
+        val providerName = managedInfos[account.id]?.providerName
+        HoldConfirmDialog(
             title = "Remove \u201C${account.name}\u201D?",
-            subtitle = when (PlaylistRemovalUiPolicy.confirmWording(signedIn)) {
+            message = when (PlaylistRemovalUiPolicy.confirmWording(signedIn)) {
                 PlaylistRemovalUiPolicy.ConfirmWording.ALL_DEVICES -> stringResource(R.string.iptv_remove_playlist_message_all_devices)
                 PlaylistRemovalUiPolicy.ConfirmWording.IF_YOU_SYNC -> stringResource(R.string.iptv_remove_playlist_message_if_you_sync)
             },
-            width = 460.dp
-        ) {
-            Button(
-                onClick = {
-                    pendingRemoval = account.id to uiState.accounts.indexOfFirst { it.id == account.id }.coerceAtLeast(0)
-                    viewModel.remove(account.id)
-                    removeConfirmFor = null
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.colors(
-                    containerColor = Color(0xFF4A2323),
-                    contentColor = NuvioTheme.colors.TextPrimary
-                ),
-                // UX32: full-width buttons stay inside the dialog padding when focused; focus shows
-                // by the container colour flip instead of growing past the edge.
-                scale = ButtonDefaults.scale(focusedScale = 1f)
-            ) {
-                Text("Remove playlist")
-            }
-            // Focus starts on Cancel so a stray OK can't delete.
-            Button(
-                onClick = { removeConfirmFor = null },
-                modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus),
-                scale = ButtonDefaults.scale(focusedScale = 1f)
-            ) {
-                Text("Cancel")
-            }
-        }
+            extraMessage = providerName?.let { stringResource(R.string.iptv_remove_managed_extra, it) },
+            holdLabel = stringResource(R.string.iptv_hold_to_remove),
+            onConfirmed = {
+                pendingRemoval = account.id to uiState.accounts.indexOfFirst { it.id == account.id }.coerceAtLeast(0)
+                viewModel.remove(account.id)
+                removeConfirmFor = null
+            },
+            onDismiss = { removeConfirmFor = null },
+        )
     }
 
     // Content & Categories: content-type toggles + per-type category checklist.
@@ -1056,7 +1078,13 @@ private fun XtreamAddDialog(
     // Only after the user actively picks a type (or toggles Enter details / Paste link) do we drop
     // focus into the fields so they're ready to type.
     var sourceTypePicked by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { sourceTypeFocus.requestFocusAfterFrames() }
+    val editFocusManager = LocalFocusManager.current
+    LaunchedEffect(Unit) {
+        if (initial == null) sourceTypeFocus.requestFocusAfterFrames()
+        // An edit has no type tiles: start on the first field (a file playlist has none: first focusable).
+        else if (initial.sourceType != XtreamAccount.SOURCE_FILE) firstFieldFocus.requestFocusAfterFrames()
+        else { withFrameNanos { }; editFocusManager.moveFocus(FocusDirection.Enter) }
+    }
     LaunchedEffect(manualMode, sourceType) {
         if (sourceTypePicked) runCatching { firstFieldFocus.requestFocus() }
     }
@@ -1136,21 +1164,31 @@ private fun XtreamAddDialog(
         ) {
             // --- Source Type -------------------------------------------------
             FormSectionLabel("Source Type")
-            Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
-                PLAYLIST_SOURCES.forEach { source ->
-                    SourceTypeTile(
-                        source = source,
-                        selected = sourceType == source.id,
-                        // The selected tile carries the requester so the dialog opens focused on it.
-                        focusRequester = if (sourceType == source.id) sourceTypeFocus else null,
-                        onClick = {
-                            if (source.enabled) {
-                                sourceTypePicked = true
-                                sourceType = source.id
+            if (initial == null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
+                    PLAYLIST_SOURCES.forEach { source ->
+                        SourceTypeTile(
+                            source = source,
+                            selected = sourceType == source.id,
+                            // The selected tile carries the requester so the dialog opens focused on it.
+                            focusRequester = if (sourceType == source.id) sourceTypeFocus else null,
+                            onClick = {
+                                if (source.enabled) {
+                                    sourceTypePicked = true
+                                    sourceType = source.id
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
+            } else {
+                // Step 2: the source type is chosen when a playlist is ADDED and never changes in an edit
+                // (switching it rebuilt the playlist as another kind under the old id). Read-only text, not a focus stop.
+                Text(
+                    text = PLAYLIST_SOURCES.firstOrNull { it.id == sourceType }?.label.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioTheme.colors.TextSecondary
+                )
             }
 
             when (sourceType) {

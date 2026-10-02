@@ -37,6 +37,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
@@ -55,6 +56,10 @@ data class XtreamSettingsUiState(
     val categoryLists: Map<String, List<XtreamCategory>> = emptyMap(),
     /** accountId -> "Active · 0/1 connections · Expires 2027-01-11" (lazily fetched, silent on failure). */
     val accountStatus: Map<String, String> = emptyMap(),
+    /** accountId -> local catalog counts ("12,000 channels"), for the details page. */
+    val catalogCounts: Map<String, String> = emptyMap(),
+    /** accountId -> the panel's structured account info (days left, connections) for the details page. */
+    val accountInfo: Map<String, XtreamAccountInfo> = emptyMap(),
     /** accountId -> the guide's EPG-source coverage line (mirror mapping + session tally; read-only). */
     val guideEpgCoverage: Map<String, String> = emptyMap(),
     /** accountId -> a note about a saved edit (B60: the provider check failed, but the edit was kept). */
@@ -88,7 +93,31 @@ class XtreamSettingsViewModel @Inject constructor(
     private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
     private val managedRefresher: com.nuvio.tv.core.iptv.ManagedInfoRefresher,
     private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
+    private val providerSetup: com.nuvio.tv.core.iptv.ProviderSetupRepository,
+    private val detailsRequests: com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests,
 ) : ViewModel() {
+
+    /** Step 2: a setup code just added a playlist; the screen opens its details page once it has arrived. */
+    val pendingDetails: StateFlow<com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests.Request?> = detailsRequests.pending
+    fun consumePendingDetails() = detailsRequests.consume()
+
+    /** Step 2: the active profile's managed playlists by key (owner, days-left row, contacts, locked edit). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val managedInfos: StateFlow<Map<String, com.nuvio.tv.core.iptv.ManagedPlaylistInfo>> =
+        profileManager.activeProfileId
+            .flatMapLatest { managedRefresher.infosFlow(it) }
+            .stateIn(
+                viewModelScope, SharingStarted.WhileSubscribed(5_000),
+                managedRefresher.infosNow(profileManager.activeProfileId.value),
+            )
+
+    /** Step 2: detach a managed playlist from its provider (then the map is refreshed and one pull runs). */
+    fun detach(playlistKey: String, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val ok = providerSetup.detach(profileManager.activeProfileId.value, playlistKey)
+            onResult(ok)
+        }
+    }
 
     /**
      * Step 2: is this playlist managed by a provider? Read from the persisted managed map (it holds
@@ -671,6 +700,8 @@ class XtreamSettingsViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 accountStatus = it.accountStatus - ids,
+                accountInfo = it.accountInfo - ids,
+                catalogCounts = it.catalogCounts - ids,
                 categoryLists = it.categoryLists - typeKeys,
                 guideEpgCoverage = it.guideEpgCoverage - ids,
             )
@@ -825,12 +856,18 @@ class XtreamSettingsViewModel @Inject constructor(
             // "Movies: 60000"). Prepended so even an unreachable panel still shows its sizes.
             val counts = runCatching { localCatalogCounts(account) }.getOrDefault(emptyList())
             if (counts.isNotEmpty()) {
-                _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to counts.joinToString(" · "))) }
+                _uiState.update {
+                    it.copy(
+                        accountStatus = it.accountStatus + (account.id to counts.joinToString(" · ")),
+                        catalogCounts = it.catalogCounts + (account.id to counts.joinToString(" · ")),
+                    )
+                }
             }
             // M3U playlists have no account endpoint at all — don't burn a doomed request per row.
             if (account.isM3UBacked()) return@launch
             clientFactory.clientFor(account).accountInfo(account)
                 .onSuccess { info ->
+                    _uiState.update { it.copy(accountInfo = it.accountInfo + (account.id to info)) }
                     info.toStatusLine()?.let { line ->
                         val full = (counts + line).joinToString(" · ")
                         _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to full)) }

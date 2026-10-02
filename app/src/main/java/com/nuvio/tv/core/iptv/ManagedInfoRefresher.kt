@@ -29,6 +29,11 @@ class ManagedInfoRefresher @Inject constructor(
     suspend fun afterPull(profileId: Int, pullSucceeded: Boolean, playlistCount: Int, revision: Long?) {
         val uid = userId() ?: return
         val cached = store.entry(uid, profileId)
+        // A profile with no playlists has nothing managed: forget the old map (no request).
+        if (pullSucceeded && playlistCount < 1) {
+            if (cached != null && cached.infos.isNotEmpty()) store.replace(uid, profileId, emptyList(), revision)
+            return
+        }
         val now = System.currentTimeMillis()
         val should = ManagedRefreshPolicy.shouldRefresh(
             pullSucceeded = pullSucceeded,

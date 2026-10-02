@@ -58,13 +58,34 @@ class SetupCodeTest {
     }
 
     @Test
-    fun `liveFormat groups what has been typed so far`() {
+    fun `live format groups what has been typed so far`() {
         assertEquals("", SetupCode.liveFormat(""))
-        assertEquals("TUV-AB", SetupCode.liveFormat("ab"))
-        assertEquals("TUV-ABCD", SetupCode.liveFormat("ABCD"))
+        assertEquals("", SetupCode.liveFormat("  - "))
+        assertEquals("TUV-A", SetupCode.liveFormat("a"))
+        assertEquals("TUV-ABCD", SetupCode.liveFormat("abcd"))
         assertEquals("TUV-ABCD-E", SetupCode.liveFormat("abcde"))
-        assertEquals("TUV-ABCD-EFGH-JKMN", SetupCode.liveFormat("ABCDEFGHJKMN"))
-        assertEquals("a pasted full code is not double-prefixed", "TUV-ABCD-EFGH-JKMN", SetupCode.liveFormat("TUV-ABCD-EFGH-JKMN"))
+        assertEquals("TUV-ABCD-EFGH-JKMN", SetupCode.liveFormat("abcdefghjkmn"))
+    }
+
+    @Test
+    fun `live format never doubles a typed or pasted prefix`() {
+        assertEquals("TUV-ABCD-EFGH-JKMN", SetupCode.liveFormat("TUV-ABCD-EFGH-JKMN"))
+        assertEquals("TUV-AB", SetupCode.liveFormat("tuv-ab"))
+        assertEquals("TUV-AB", SetupCode.liveFormat("TUV ab"))
+        assertEquals("TUV-ABCD-EFGH-JKMN", SetupCode.liveFormat("TUVABCDEFGHJKMN"))
+    }
+
+    @Test
+    fun `live format keeps a bare TUV start as code characters and caps at twelve`() {
+        assertEquals("TUV-TUVW", SetupCode.liveFormat("TUVW"))
+        assertEquals("TUV-TUVW-XYZ2-3456", SetupCode.liveFormat("TUVWXYZ23456"))
+        assertEquals("TUV-ABCD-EFGH-JKMN", SetupCode.liveFormat("abcdefghjkmnpqrst"))
+    }
+
+    @Test
+    fun `live format keeps a bad character so the person sees what they typed`() {
+        assertEquals("TUV-AB0D", SetupCode.liveFormat("ab0d"))
+        assertFalse(SetupCode.isComplete("ab0d"))
     }
 
     @Test

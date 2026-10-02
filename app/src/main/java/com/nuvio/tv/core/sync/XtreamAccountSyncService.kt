@@ -236,10 +236,12 @@ class XtreamAccountSyncService @Inject constructor(
             v2Mutex.unlock()
         }
         Log.i(TAG, "runV2Sync(profile $profileId) — $outcome")
-        // Step 2: a pull ran (SYNCED / UP_TO_DATE) -> the managed-playlist map may need a read, but only
+        // Step 2: a pull ran (SYNCED / UP_TO_DATE / WITHHELD) -> the managed-playlist map may need a read, but only
         // per ManagedRefreshPolicy (>= 1 playlist; revision changed / no cache / cache stale). Never a timer.
+        // WITHHELD is a pull that was applied while the local store could not push (a fresh install) — still a pull.
         val pulled = outcome == com.nuvio.tv.core.iptv.PlaylistSyncOutcome.SYNCED ||
-            outcome == com.nuvio.tv.core.iptv.PlaylistSyncOutcome.UP_TO_DATE
+            outcome == com.nuvio.tv.core.iptv.PlaylistSyncOutcome.UP_TO_DATE ||
+            outcome == com.nuvio.tv.core.iptv.PlaylistSyncOutcome.WITHHELD
         if (pulled) {
             runCatching {
                 val revision = com.nuvio.tv.core.iptv.decodePlaylistSyncState(gson, accountStore.loadPlaylistSyncStateRaw(profileId)).revision

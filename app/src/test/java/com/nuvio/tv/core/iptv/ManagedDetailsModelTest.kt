@@ -38,7 +38,7 @@ class ManagedDetailsModelTest {
     fun `no expiry reported means no bar`() {
         assertEquals(Expiry.NotReported, ManagedDetailsModel.expiry(info(null), now))
         assertEquals(Expiry.NotReported, ManagedDetailsModel.expiry(null, now))
-        assertEquals("a zero epoch is unlimited", Expiry.NotReported, ManagedDetailsModel.expiry(info(0), now))
+        assertEquals("a zero exp_date means it never ends: no bar", Expiry.NeverExpires, ManagedDetailsModel.expiry(info(0), now))
     }
 
     @Test
@@ -99,5 +99,13 @@ class ManagedDetailsModelTest {
         val m3u = ManagedDetailsModel.shelves(xtream().copy(sourceType = XtreamAccount.SOURCE_URL), null, false)
             .first { it.group == ShelfGroup.LIBRARY }.cards
         assertFalse(DetailsAction.CATCHUP in m3u || DetailsAction.REMATCH in m3u)
+    }
+
+    @Test
+    fun `the provider's last edit reads as day and month and an unknown date is omitted`() {
+        val utc = java.time.ZoneOffset.UTC
+        assertEquals("1 Oct", ManagedDetailsModel.updatedLabel("2026-10-01T10:00:00Z", utc, java.util.Locale.ENGLISH))
+        assertNull(ManagedDetailsModel.updatedLabel(null, utc, java.util.Locale.ENGLISH))
+        assertNull(ManagedDetailsModel.updatedLabel("not a date", utc, java.util.Locale.ENGLISH))
     }
 }

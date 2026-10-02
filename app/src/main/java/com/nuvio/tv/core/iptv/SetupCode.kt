@@ -49,14 +49,22 @@ object SetupCode {
     }
 
     /**
-     * The entry field's text while typing: the characters so far, uppercase, grouped as
-     * `TUV-XXXX-XXXX-XXXX` ("" while nothing is typed). A pasted full code keeps its prefix handling.
+     * The entry field's text while typing: the characters typed so far, uppercase, grouped as
+     * `TUV-XXXX-XXXX-XXXX`, with the `TUV-` lead shown as soon as anything is typed. A leading `TUV`
+     * followed by a separator ("TUV-AB...", "tuv ab...") or making a 15-character run is the prefix and is
+     * not doubled; a bare "TUVW..." is code characters. Characters outside [ALPHABET] are KEPT (so the
+     * person sees what they typed and [normalize] names the problem), and the field never holds more than
+     * [LENGTH] code characters. (Same behaviour as the Mobile/Desktop reference.)
      */
     fun liveFormat(typing: String): String {
-        var s = clean(typing)
-        if (s.length == LENGTH + PREFIX.length && s.startsWith(PREFIX)) s = s.drop(PREFIX.length)
+        val upper = typing.uppercase().trimStart()
+        var s = clean(upper)
+        val hasSeparatedPrefix = upper.startsWith(PREFIX) && upper.length > PREFIX.length &&
+            (upper[PREFIX.length].isWhitespace() || upper[PREFIX.length] == '-')
+        if (hasSeparatedPrefix || (s.length == LENGTH + PREFIX.length && s.startsWith(PREFIX))) s = s.drop(PREFIX.length)
+        s = s.take(LENGTH)
         if (s.isEmpty()) return ""
-        return (listOf(PREFIX) + s.take(LENGTH).chunked(4)).joinToString("-")
+        return (listOf(PREFIX) + s.chunked(4)).joinToString("-")
     }
 
     fun isComplete(typing: String): Boolean = normalize(typing) is Normalized.Valid

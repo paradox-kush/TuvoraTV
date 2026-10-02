@@ -174,4 +174,25 @@ data class RedeemResult(
     /** The keys of the playlists it added or updated, in the provider's order. */
     val playlistKeys: List<String>,
     val playlistNames: List<String>,
+    /** Why services were skipped (`missing_login`, `invalid_url`), one entry per skipped playlist. */
+    val skippedReasons: List<String> = emptyList(),
 )
+
+/**
+ * What a redeem actually did, pure so the screen holds no logic. A redeem can succeed (the code is spent)
+ * and still add NOTHING: the provider has not filled in this customer's login yet, or its server address
+ * failed the URL rules. That is not an "added" screen.
+ */
+object RedeemResultPolicy {
+    enum class Kind { ADDED, ALREADY_SET_UP, NOTHING_NO_LOGIN, NOTHING_BAD_ADDRESS, NOTHING }
+
+    fun classify(r: RedeemResult): Kind = when {
+        r.added + r.updated > 0 -> Kind.ADDED
+        r.status == "already_redeemed" -> Kind.ALREADY_SET_UP
+        // `unchanged` = the playlist was already linked to this setup: it is in the account.
+        r.unchanged > 0 -> Kind.ALREADY_SET_UP
+        r.skippedReasons.any { it != "invalid_url" } -> Kind.NOTHING_NO_LOGIN
+        r.skippedReasons.isNotEmpty() -> Kind.NOTHING_BAD_ADDRESS
+        else -> Kind.NOTHING
+    }
+}

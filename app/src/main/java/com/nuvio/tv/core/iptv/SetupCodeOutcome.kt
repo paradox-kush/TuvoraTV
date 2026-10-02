@@ -58,12 +58,16 @@ sealed interface SetupCodeOutcome {
         /**
          * The preview route's non-200 answers: 400 invalid_code | 404 not_found | 409 used |
          * 410 expired|revoked|suspended|unavailable | 429 rate_limited (+ Retry-After) | 503 not configured |
-         * 502 other. A 404 `{error:"Not found"}` WITHOUT a `code` means the feature is off: neutral text.
+         * 502 other. A 404 `{error:"Not found"}` WITHOUT a `code` means the feature is off: neutral text. A 5xx
+         * WITHOUT a code is a gateway failure, not a verdict on the code: [Network] (same as the Mobile reference).
          */
         fun forPreviewHttp(status: Int, code: String?, retryAfterSec: Int? = null): SetupCodeOutcome = when {
-            status == 429 -> RateLimited(retryAfterSec)
+            status == 429 || code == "rate_limited" -> RateLimited(retryAfterSec)
             status in 200..299 -> Unusable // a 2xx that did not parse is no preview
-            else -> forServerCode(code, retryAfterSec = retryAfterSec)
+            code != null -> forServerCode(code, retryAfterSec = retryAfterSec)
+            // A 5xx with no code at all is a gateway/proxy failure, not an answer about the code: "try again".
+            status in 500..599 -> Network
+            else -> Unusable
         }
     }
 }
@@ -84,4 +88,11 @@ enum class SetupMessage(val english: String) {
             "Otherwise ask your provider for a new code."
     ),
     PROFILE_NOT_FOUND("That profile no longer exists. Pick another."),
+
+    // Beyond the contract's table: what a redeem that SUCCEEDED but added nothing says (the wording follows
+    // the web claim page, nuvio-web `summaryLines`).
+    NOTHING_NO_LOGIN("Your provider hasn't filled in your login yet. Ask them to update it."),
+    NOTHING_BAD_ADDRESS("Your provider's server address isn't valid. Ask your provider to check it."),
+    ALREADY_SET_UP("This code was already used with this account, so there was nothing new to add."),
+    NOTHING_ADDED("Nothing was added. Ask your provider to check your setup."),
 }

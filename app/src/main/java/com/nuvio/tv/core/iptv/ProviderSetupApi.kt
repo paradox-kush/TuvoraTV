@@ -87,6 +87,8 @@ object SetupResponses {
                 added = int("added"), updated = int("updated"), unchanged = int("unchanged"),
                 playlistKeys = playlists.mapNotNull { (it["playlist_key"] as? JsonPrimitive)?.takeIf { p -> p.isString }?.content },
                 playlistNames = playlists.mapNotNull { (it["name"] as? JsonPrimitive)?.takeIf { p -> p.isString }?.content },
+                skippedReasons = playlists.filter { (it["action"] as? JsonPrimitive)?.content == "skipped" }
+                    .map { (it["reason"] as? JsonPrimitive)?.takeIf { p -> p.isString }?.content ?: "missing_login" },
             )
         )
     }
@@ -105,7 +107,9 @@ class SupabaseProviderSetupApi @Inject constructor(
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .callTimeout(15, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
+            // Default (true): a stale pooled keep-alive connection is retried transparently. The preview is an idempotent
+            // GET whose request never reached the server in that case, so it cannot cost a rate-limit strike.
+            .retryOnConnectionFailure(true)
             .build()
     }
 

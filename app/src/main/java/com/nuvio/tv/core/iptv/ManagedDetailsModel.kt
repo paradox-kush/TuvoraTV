@@ -22,6 +22,8 @@ object ManagedDetailsModel {
         /** [fraction] fills the thin bar: 1.0 at [BAR_FULL_DAYS] or more days left, shrinking toward 0. */
         data class Days(val daysLeft: Int, val fraction: Float) : Expiry
         data object Expired : Expiry
+        /** The panel reports `exp_date` 0: the subscription does not end. No bar. */
+        data object NeverExpires : Expiry
         /** A source that gives free text instead of an epoch (a Stalker portal): shown verbatim, no bar. */
         data class Text(val text: String) : Expiry
         /** The provider reports no expiry: "Expiry not reported by this provider" and NO bar. */
@@ -43,6 +45,16 @@ object ManagedDetailsModel {
         val serverLoginLocked: Boolean,
     )
 
+    /** "1 Oct" for the provider's last edit; null when the server does not say (omit "updated <date>"). */
+    fun updatedLabel(
+        iso: String?,
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+        locale: java.util.Locale = java.util.Locale.getDefault(),
+    ): String? {
+        val instant = runCatching { java.time.Instant.parse(iso ?: return null) }.getOrNull() ?: return null
+        return java.time.format.DateTimeFormatter.ofPattern("d MMM", locale).withZone(zone).format(instant)
+    }
+
     const val BAR_FULL_DAYS = 30
     private const val DAY_SEC = 86_400L
 
@@ -55,12 +67,13 @@ object ManagedDetailsModel {
     fun expiry(info: XtreamAccountInfo?, nowEpochSec: Long): Expiry {
         val epoch = info?.expiresAtEpochSec
         return when {
+            !info?.expiresText.isNullOrBlank() -> Expiry.Text(info!!.expiresText!!)
+            epoch == 0L -> Expiry.NeverExpires
             epoch != null && epoch > 0 -> {
                 val days = daysLeft(epoch, nowEpochSec)
                 if (days == 0) Expiry.Expired
                 else Expiry.Days(days, (days.toFloat() / BAR_FULL_DAYS).coerceIn(0f, 1f))
             }
-            !info?.expiresText.isNullOrBlank() -> Expiry.Text(info!!.expiresText!!)
             else -> Expiry.NotReported
         }
     }
