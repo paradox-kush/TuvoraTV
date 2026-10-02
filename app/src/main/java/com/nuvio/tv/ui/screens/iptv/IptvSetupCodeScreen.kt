@@ -121,8 +121,9 @@ fun IptvSetupCodeScreen(
             Spacer(Modifier.width(40.dp))
             Box(modifier = Modifier.weight(0.62f).fillMaxHeight()) {
                 when (ui.phase) {
-                    SetupPhase.ENTRY, SetupPhase.CHECKING ->
-                        if (!ui.signedIn) SignInPane(onSignIn) else EntryPane(ui, viewModel)
+                    // Signed out people can still type: Continue then asks them to sign in (decision 6.1) and
+                    // the code stays in memory meanwhile.
+                    SetupPhase.ENTRY, SetupPhase.CHECKING -> EntryPane(ui, viewModel)
                     SetupPhase.NEEDS_SIGN_IN -> SignInPane(onSignIn)
                     SetupPhase.PREVIEW, SetupPhase.ADDING -> PreviewPane(ui, viewModel)
                     SetupPhase.ADDED_OTHER_PROFILE -> AddedElsewherePane(ui, onBack)

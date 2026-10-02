@@ -87,7 +87,7 @@ fun ContactDialog(providerName: String, support: ProviderSupport, onDismiss: () 
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            contacts.forEach { ContactColumn(it) }
+            contacts.forEach { ContactColumn(it, Modifier.weight(1f)) }
         }
         Button(
             onClick = onDismiss,
@@ -98,9 +98,9 @@ fun ContactDialog(providerName: String, support: ProviderSupport, onDismiss: () 
 }
 
 @Composable
-private fun ContactColumn(contact: ProviderContact) {
+private fun ContactColumn(contact: ProviderContact, modifier: Modifier = Modifier) {
     val qr = remember(contact.url) { runCatching { QrCodeGenerator.generate(contact.url, 360, margin = 1) }.getOrNull() }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (qr != null) {
             Image(
                 bitmap = qr.asImageBitmap(),

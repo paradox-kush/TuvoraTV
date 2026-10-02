@@ -3496,7 +3496,7 @@
     <string name="iptv_setup_open_url">Or open %1$s on any device</string>
     <string name="iptv_setup_adding_to">Adding to %1$s</string>
     <string name="iptv_setup_signed_out_title">Sign in to add a setup code</string>
-    <string name="iptv_setup_signed_out_body">A setup code adds playlists to your Tuvora account, so sign in first. Your code stays on this screen.</string>
+    <string name="iptv_setup_signed_out_body">A setup code adds playlists to your Tuvora account, so sign in first. Your code stays on this screen and carries on afterwards.</string>
     <string name="iptv_setup_sign_in">Sign in</string>
     <string name="iptv_setup_key_delete">Delete</string>
     <string name="iptv_setup_continue">Continue</string>
