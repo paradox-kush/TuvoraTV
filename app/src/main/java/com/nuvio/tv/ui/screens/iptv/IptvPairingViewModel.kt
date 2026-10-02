@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -50,6 +51,8 @@ class IptvPairingViewModel @Inject constructor(
     private val accountStore: XtreamAccountStore,
     private val syncService: XtreamAccountSyncService,
     private val resolver: XtreamTmdbResolver,
+    private val managedRefresher: com.nuvio.tv.core.iptv.ManagedInfoRefresher,
+    private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(IptvPairingUiState())
@@ -157,7 +160,14 @@ class IptvPairingViewModel @Inject constructor(
     private suspend fun savePairedAccount(account: XtreamAccount) {
         _uiState.update { it.copy(status = IptvPairingStatus.SAVING) }
         runCatching {
-            accountStore.upsert(account)
+            // Step 2: pairing the provider's own server+login again must not rewrite a managed playlist.
+            val existing = accountStore.accounts.first().firstOrNull { it.id == account.id }
+            val managed = com.nuvio.tv.core.iptv.ManagedPlaylistPolicy.isManaged(
+                account.id, managedRefresher.infosNow(profileManager.activeProfileId.value),
+            )
+            accountStore.upsert(
+                if (existing != null) com.nuvio.tv.core.iptv.ManagedEditPolicy.applyEdit(existing, account, managed) else account
+            )
             // Start the catalog index now, not on first play — minutes on budget boxes.
             resolver.warmUp(listOf(account))
             syncService.triggerRemoteSync()

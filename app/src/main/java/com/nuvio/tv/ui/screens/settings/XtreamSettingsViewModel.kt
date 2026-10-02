@@ -86,7 +86,31 @@ class XtreamSettingsViewModel @Inject constructor(
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
     private val authManager: com.nuvio.tv.core.auth.AuthManager,
     private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
+    private val managedRefresher: com.nuvio.tv.core.iptv.ManagedInfoRefresher,
+    private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
 ) : ViewModel() {
+
+    /**
+     * Step 2: is this playlist managed by a provider? Read from the persisted managed map (it holds
+     * offline and right after a cold start). An edit of a managed playlist must keep every
+     * provider-owned field byte-identical or the server silently detaches it — see [ManagedEditPolicy].
+     */
+    private fun isManaged(id: String): Boolean =
+        com.nuvio.tv.core.iptv.ManagedPlaylistPolicy.isManaged(id, managedRefresher.infosNow(profileManager.activeProfileId.value))
+
+    /**
+     * Step 2: ADDING a playlist whose key is already a managed one (the customer typed the provider's own
+     * server and login again) must not rewrite it — an upsert would replace the provider-owned fields with
+     * the form's re-normalized copy and silently detach it. Same guard as an edit.
+     */
+    private suspend fun accountToStore(account: XtreamAccount): XtreamAccount {
+        val existing = store.accounts.first().firstOrNull { it.id == account.id } ?: return account
+        return com.nuvio.tv.core.iptv.ManagedEditPolicy.applyEdit(existing, account, isManaged(account.id))
+    }
+
+    /** The one place an edit's saved account is decided: the form's candidate, over the old identity, guarded. */
+    private fun editedAccount(old: XtreamAccount, candidate: XtreamAccount, options: PlaylistOptions): XtreamAccount =
+        com.nuvio.tv.core.iptv.ManagedEditPolicy.applyEdit(old, candidate.asEditOf(old).withBackups(options), isManaged(old.id))
 
     /** UX74: whether this TV is signed in — a remove only reaches other devices when it syncs. */
     val signedIn: StateFlow<Boolean> = authManager.authState
@@ -203,7 +227,7 @@ class XtreamSettingsViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            if (persistOrError { store.upsert(account) }) {
+            if (persistOrError { store.upsert(accountToStore(account)) }) {
                 syncService.triggerRemoteSync()
                 onSuccess()
             }
@@ -217,7 +241,7 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
             return
         }
-        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        val account = editedAccount(old, candidate, options)   // Step 0: an edit never changes the playlist id
         // Step 0.3: an edited server list (portal or backups) starts over on the main portal.
         serverFailover.onPlaylistEdited(old, account)
         viewModelScope.launch {
@@ -297,7 +321,7 @@ class XtreamSettingsViewModel @Inject constructor(
                 val verified = client.verify(panel).isSuccess
                 _uiState.update { it.copy(isValidating = false) }
                 if (verified) {
-                    if (persistOrError { store.upsert(panel) }) {
+                    if (persistOrError { store.upsert(accountToStore(panel)) }) {
                         resolver.warmUp(listOf(panel))
                         syncService.triggerRemoteSync()
                         onSuccess()
@@ -318,7 +342,7 @@ class XtreamSettingsViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            if (persistOrError { store.upsert(account) }) {
+            if (persistOrError { store.upsert(accountToStore(account)) }) {
                 syncService.triggerRemoteSync()
                 onSuccess()
                 // Ingest in the background (M3UClient is single-flight + self-scoped, survives this scope).
@@ -334,7 +358,7 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
             return
         }
-        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        val account = editedAccount(old, candidate, options)   // Step 0: an edit never changes the playlist id
         // Step 0.3: an edited server list (URL or backups) starts over on the main URL.
         serverFailover.onPlaylistEdited(old, account)
         viewModelScope.launch {
@@ -377,7 +401,7 @@ class XtreamSettingsViewModel @Inject constructor(
                 return@launch
             }
             // upsert also covers the re-import case (same id -> replace).
-            if (persistOrError { store.upsert(account) }) {
+            if (persistOrError { store.upsert(accountToStore(account)) }) {
                 // File playlists aren't synced (contents can't travel), but push keeps the account
                 // list consistent; the sync filters non-xtream rows out anyway.
                 syncService.triggerRemoteSync()
@@ -425,7 +449,7 @@ class XtreamSettingsViewModel @Inject constructor(
             val result = client.verify(account)
             _uiState.update { it.copy(isValidating = false) }
             result.onSuccess {
-                if (persistOrError { store.upsert(account) }) {
+                if (persistOrError { store.upsert(accountToStore(account)) }) {
                     // Start the catalog index now, not on first play — minutes on budget boxes.
                     resolver.warmUp(listOf(account))
                     syncService.triggerRemoteSync()
@@ -494,7 +518,7 @@ class XtreamSettingsViewModel @Inject constructor(
         // Credential/URL edits keep the content selections (toggles, category picks) — those aren't
         // in this form. The shared options (epg/dns/refresh) already ride on `candidate` from the
         // form (withOptions), so DON'T overwrite them from `old`, or an edit couldn't change them.
-        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        val account = editedAccount(old, candidate, options)   // Step 0: an edit never changes the playlist id
         // Step 0.3: an edited server list (main or backups) starts over on the main server — the old
         // active index may now name a different server or none. Before the verify below, which
         // itself may legitimately land on a backup.

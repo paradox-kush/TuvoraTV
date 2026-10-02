@@ -3420,4 +3420,13 @@
     <string name="iptv_backup_server_problem_too_many">At most %1$d backup servers</string>
     <string name="iptv_using_backup_server">Using backup server %1$d</string>
     <string name="iptv_using_backup_server_host">Using backup server %1$d (%2$s)</string>
+    <!-- Step 2: provider setup codes. These sentences are pinned to SetupMessage by SetupCodeOutcomeTest. -->
+    <string name="setup_code_msg_empty">Enter the setup code your provider gave you.</string>
+    <string name="setup_code_msg_bad_characters">That doesn\'t look like a setup code. Codes use letters and the numbers 2-9 only.</string>
+    <string name="setup_code_msg_wrong_length">A code has 12 characters. Check it against the one your provider sent.</string>
+    <string name="setup_code_msg_expired">This code has expired. Ask your provider for a new one.</string>
+    <string name="setup_code_msg_rate_limited">Too many tries. Wait a little while and try again.</string>
+    <string name="setup_code_msg_network">We couldn\'t reach Tuvora. Check your connection and try again.</string>
+    <string name="setup_code_msg_unusable">This code can\'t be used. If you\'ve already used it, the playlist is in your account. Otherwise ask your provider for a new code.</string>
+    <string name="setup_code_msg_profile_not_found">That profile no longer exists. Pick another.</string>
 </resources>

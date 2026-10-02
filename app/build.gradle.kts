@@ -172,6 +172,7 @@ android {
         // serves THEIR backend).
         buildConfigField("String", "TV_LOGIN_WEB_BASE_URL", "\"${localProperties.getProperty("TV_LOGIN_WEB_BASE_URL", "https://qsonncwknzdixurjyqap.functions.supabase.co/tv-login-approve")}\"")
         buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${localProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://tuvora.co/iptv-pairing/")}\"")
+        buildConfigField("String", "PROVIDER_SETUP_BASE_URL", "\"${localProperties.getProperty("PROVIDER_SETUP_BASE_URL", "https://tuvora.co")}\"")
         buildConfigField("String", "MDBLIST_CLIENT_ID", buildConfigString(resolveProperty(devProperties, localProperties, "MDBLIST_CLIENT_ID")))
         // Upstream custom-server device-link page (nuvio.tv). The fork keeps custom-server
         // connections off, so this stays empty unless explicitly configured.
@@ -266,6 +267,7 @@ android {
             buildConfigField("String", "NUVIO_AVATAR_PUBLIC_BASE_URL", "\"${resolveProperty(devProperties, localProperties, "NUVIO_AVATAR_PUBLIC_BASE_URL")}\"")
             buildConfigField("String", "TV_LOGIN_WEB_BASE_URL", "\"${devProperties.getProperty("TV_LOGIN_WEB_BASE_URL", "https://qsonncwknzdixurjyqap.functions.supabase.co/tv-login-approve")}\"")
             buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${devProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://tuvora.co/iptv-pairing/")}\"")
+            buildConfigField("String", "PROVIDER_SETUP_BASE_URL", "\"${devProperties.getProperty("PROVIDER_SETUP_BASE_URL", "https://tuvora.co")}\"")
             buildConfigField("String", "DEVICE_LOGIN_WEB_BASE_URL", "\"${devProperties.getProperty("DEVICE_LOGIN_WEB_BASE_URL", "")}\"")
             buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${devProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
             buildConfigField("String", "INTRODB_API_URL", "\"${devProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -307,6 +309,7 @@ android {
             buildConfigField("String", "NUVIO_AVATAR_PUBLIC_BASE_URL", "\"${resolveLocalProperty(localProperties, "NUVIO_AVATAR_PUBLIC_BASE_URL")}\"")
             buildConfigField("String", "TV_LOGIN_WEB_BASE_URL", "\"${localProperties.getProperty("TV_LOGIN_WEB_BASE_URL", "https://qsonncwknzdixurjyqap.functions.supabase.co/tv-login-approve")}\"")
             buildConfigField("String", "IPTV_PAIRING_WEB_BASE_URL", "\"${localProperties.getProperty("IPTV_PAIRING_WEB_BASE_URL", "https://tuvora.co/iptv-pairing/")}\"")
+            buildConfigField("String", "PROVIDER_SETUP_BASE_URL", "\"${localProperties.getProperty("PROVIDER_SETUP_BASE_URL", "https://tuvora.co")}\"")
             buildConfigField("String", "DEVICE_LOGIN_WEB_BASE_URL", "\"${localProperties.getProperty("DEVICE_LOGIN_WEB_BASE_URL", "")}\"")
             buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
             buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
