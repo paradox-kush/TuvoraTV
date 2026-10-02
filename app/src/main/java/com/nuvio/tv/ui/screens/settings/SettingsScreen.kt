@@ -264,6 +264,7 @@ fun SettingsScreen(
     onNavigateToSupportersContributors: () -> Unit = {},
     onNavigateToLicensesAttributions: () -> Unit = {},
     onNavigateToIptvPairing: () -> Unit = {},
+    onNavigateToIptvSetupCode: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
     experienceModeViewModel: ExperienceModeSettingsViewModel = hiltViewModel()
 ) {
@@ -336,7 +337,9 @@ fun SettingsScreen(
     val integrationMdbListFocusRequester = remember { FocusRequester() }
     val integrationAnimeSkipFocusRequester = remember { FocusRequester() }
     val integrationIptvFocusRequester = remember { FocusRequester() }
-    var integrationSection by remember { mutableStateOf(IntegrationSettingsSection.Hub) }
+    // Saved, so coming back from a screen opened inside a section (the setup-code screen) lands in that section
+    // (the IPTV list), not on the Integrations root.
+    var integrationSection by rememberSaveable { mutableStateOf(IntegrationSettingsSection.Hub) }
     var pendingContentFocusCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var pendingContentFocusRequestId by remember { mutableLongStateOf(0L) }
     // Saveable so it survives a trip out to one of the screens a category opens. The pane bounces
@@ -728,7 +731,8 @@ fun SettingsScreen(
                                 onNavigateToAuthQrSignIn = onNavigateToAuthQrSignIn,
                                 onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                                 onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
-                                onNavigateToIptvPairing = onNavigateToIptvPairing
+                                onNavigateToIptvPairing = onNavigateToIptvPairing,
+                                onNavigateToIptvSetupCode = onNavigateToIptvSetupCode
                             )
                         }
                     }
@@ -905,7 +909,8 @@ fun SettingsScreen(
                         onNavigateToAuthQrSignIn = onNavigateToAuthQrSignIn,
                         onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                         onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
-                        onNavigateToIptvPairing = onNavigateToIptvPairing
+                        onNavigateToIptvPairing = onNavigateToIptvPairing,
+                        onNavigateToIptvSetupCode = onNavigateToIptvSetupCode
                     )
                 }
             }
@@ -935,7 +940,8 @@ private fun SettingsDetailPane(
     onNavigateToAuthQrSignIn: () -> Unit,
     onNavigateToSupportersContributors: () -> Unit,
     onNavigateToLicensesAttributions: () -> Unit,
-    onNavigateToIptvPairing: () -> Unit
+    onNavigateToIptvPairing: () -> Unit,
+    onNavigateToIptvSetupCode: () -> Unit
 ) {
     when (selectedCategory) {
         SettingsCategory.EXPERIENCE -> EssentialAdvancedSettingsContent(
@@ -1020,6 +1026,7 @@ private fun SettingsDetailPane(
             animeSkipFocusRequester = integrationAnimeSkipFocusRequester,
             iptvFocusRequester = integrationIptvFocusRequester,
             onNavigateToIptvPairing = onNavigateToIptvPairing,
+            onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
             autoFocusEnabled = allowDetailAutofocus
         )
         SettingsCategory.ABOUT -> AboutSettingsContent(
@@ -1207,6 +1214,7 @@ private fun IntegrationSettingsContent(
     animeSkipFocusRequester: FocusRequester,
     iptvFocusRequester: FocusRequester,
     onNavigateToIptvPairing: () -> Unit,
+    onNavigateToIptvSetupCode: () -> Unit,
     autoFocusEnabled: Boolean
 ) {
     // Store builds compile Debrid out: its hub row is not rendered, and a stale Debrid selection
@@ -1335,6 +1343,7 @@ private fun IntegrationSettingsContent(
         IntegrationSettingsSection.Iptv -> {
             XtreamSettingsContent(
                 onPairFromPhone = onNavigateToIptvPairing,
+                onEnterSetupCode = onNavigateToIptvSetupCode,
                 initialFocusRequester = iptvFocusRequester
             )
         }

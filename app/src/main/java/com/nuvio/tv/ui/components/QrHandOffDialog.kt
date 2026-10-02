@@ -64,7 +64,7 @@ fun rememberExternalLinkOpener(): (String) -> Boolean {
             }.getOrDefault(false)
             ExternalLinkPolicy.open(url, canResolve) {
                 context.startActivity(intent)
-            } == ExternalLinkPolicy.Outcome.Opened
+            }.let { it !is ExternalLinkPolicy.Outcome.ShowQr } // a refused link shows nothing, not a QR of it
         }
     }
 }

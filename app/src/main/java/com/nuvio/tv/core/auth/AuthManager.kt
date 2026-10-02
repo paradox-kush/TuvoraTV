@@ -188,6 +188,9 @@ class AuthManager @Inject constructor(
     val canSync: Boolean
         get() = isAuthenticated && auth.currentAccessTokenOrNull() != null
 
+    /** The current access token, or null when there is no session (used to key a server rate-limit bucket). */
+    fun currentAccessToken(): String? = auth.currentAccessTokenOrNull()
+
     val currentUserId: String?
         get() = when (val state = _authState.value) {
             is AuthState.FullAccount -> state.userId

@@ -99,6 +99,7 @@ fun XtreamHubScreen(
     onOpenDetail: (contentId: String, type: String) -> Unit,
     onAddProvider: () -> Unit,
     onPairFromPhone: () -> Unit = {},
+    onEnterSetupCode: () -> Unit = {},
     /** Opens a catch-up replay in the full player — see LiveGuide's parameter of the same name. */
     onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit =
         { _, _, _, _, _ -> },
@@ -153,7 +154,8 @@ fun XtreamHubScreen(
         HubNoProviderState(
             firstFocus = firstFocus,
             onAddProvider = onAddProvider,
-            onPairFromPhone = onPairFromPhone
+            onPairFromPhone = onPairFromPhone,
+            onEnterSetupCode = onEnterSetupCode
         )
         return
     }
@@ -678,7 +680,8 @@ private fun HubSkeletonRows(cardStyle: PosterCardStyle) {
 private fun HubNoProviderState(
     firstFocus: FocusRequester,
     onAddProvider: () -> Unit,
-    onPairFromPhone: () -> Unit
+    onPairFromPhone: () -> Unit,
+    onEnterSetupCode: () -> Unit
 ) {
     LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
     Column(
@@ -704,6 +707,11 @@ private fun HubNoProviderState(
             HubActionButton(
                 text = stringResource(R.string.iptv_pairing_entry_title),
                 onClick = onPairFromPhone
+            )
+            // Step 2: a provider's setup code, right on the empty state.
+            HubActionButton(
+                text = stringResource(R.string.iptv_setup_entry_title),
+                onClick = onEnterSetupCode
             )
         }
     }

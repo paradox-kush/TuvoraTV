@@ -37,6 +37,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
@@ -55,6 +56,12 @@ data class XtreamSettingsUiState(
     val categoryLists: Map<String, List<XtreamCategory>> = emptyMap(),
     /** accountId -> "Active · 0/1 connections · Expires 2027-01-11" (lazily fetched, silent on failure). */
     val accountStatus: Map<String, String> = emptyMap(),
+    /** accountIds whose panel account check failed (the details page says "Couldn't check expiry", not "not reported"). */
+    val accountInfoFailed: Set<String> = emptySet(),
+    /** accountId -> local catalog counts ("12,000 channels"), for the details page. */
+    val catalogCounts: Map<String, String> = emptyMap(),
+    /** accountId -> the panel's structured account info (days left, connections) for the details page. */
+    val accountInfo: Map<String, XtreamAccountInfo> = emptyMap(),
     /** accountId -> the guide's EPG-source coverage line (mirror mapping + session tally; read-only). */
     val guideEpgCoverage: Map<String, String> = emptyMap(),
     /** accountId -> a note about a saved edit (B60: the provider check failed, but the edit was kept). */
@@ -86,7 +93,55 @@ class XtreamSettingsViewModel @Inject constructor(
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
     private val authManager: com.nuvio.tv.core.auth.AuthManager,
     private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
+    private val managedRefresher: com.nuvio.tv.core.iptv.ManagedInfoRefresher,
+    private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
+    private val providerSetup: com.nuvio.tv.core.iptv.ProviderSetupRepository,
+    private val detailsRequests: com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests,
 ) : ViewModel() {
+
+    /** Step 2: a setup code just added a playlist; the screen opens its details page once it has arrived. */
+    val pendingDetails: StateFlow<com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests.Request?> = detailsRequests.pending
+    fun consumePendingDetails() = detailsRequests.consume()
+
+    /** Step 2: the active profile's managed playlists by key (owner, days-left row, contacts, locked edit). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val managedInfos: StateFlow<Map<String, com.nuvio.tv.core.iptv.ManagedPlaylistInfo>> =
+        profileManager.activeProfileId
+            .flatMapLatest { managedRefresher.infosFlow(it) }
+            .stateIn(
+                viewModelScope, SharingStarted.WhileSubscribed(5_000),
+                managedRefresher.infosNow(profileManager.activeProfileId.value),
+            )
+
+    /** Step 2: detach a managed playlist from its provider (then the map is refreshed and one pull runs). */
+    fun detach(playlistKey: String, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val ok = providerSetup.detach(profileManager.activeProfileId.value, playlistKey)
+            onResult(ok)
+        }
+    }
+
+    /**
+     * Step 2: is this playlist managed by a provider? Read from the persisted managed map (it holds
+     * offline and right after a cold start). An edit of a managed playlist must keep every
+     * provider-owned field byte-identical or the server silently detaches it — see [ManagedEditPolicy].
+     */
+    private fun isManaged(id: String): Boolean =
+        com.nuvio.tv.core.iptv.ManagedPlaylistPolicy.isManaged(id, managedRefresher.infosNow(profileManager.activeProfileId.value))
+
+    /**
+     * Step 2: ADDING a playlist whose key is already a managed one (the customer typed the provider's own
+     * server and login again) must not rewrite it — an upsert would replace the provider-owned fields with
+     * the form's re-normalized copy and silently detach it. Same guard as an edit.
+     */
+    private suspend fun accountToStore(account: XtreamAccount): XtreamAccount {
+        val existing = store.accounts.first().firstOrNull { it.id == account.id } ?: return account
+        return com.nuvio.tv.core.iptv.ManagedEditPolicy.applyEdit(existing, account, isManaged(account.id))
+    }
+
+    /** The one place an edit's saved account is decided: the form's candidate, over the old identity, guarded. */
+    private fun editedAccount(old: XtreamAccount, candidate: XtreamAccount, options: PlaylistOptions): XtreamAccount =
+        com.nuvio.tv.core.iptv.ManagedEditPolicy.applyEdit(old, candidate.asEditOf(old).withBackups(options), isManaged(old.id))
 
     /** UX74: whether this TV is signed in — a remove only reaches other devices when it syncs. */
     val signedIn: StateFlow<Boolean> = authManager.authState
@@ -203,7 +258,7 @@ class XtreamSettingsViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            if (persistOrError { store.upsert(account) }) {
+            if (persistOrError { store.upsert(accountToStore(account)) }) {
                 syncService.triggerRemoteSync()
                 onSuccess()
             }
@@ -217,7 +272,7 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
             return
         }
-        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        val account = editedAccount(old, candidate, options)   // Step 0: an edit never changes the playlist id
         // Step 0.3: an edited server list (portal or backups) starts over on the main portal.
         serverFailover.onPlaylistEdited(old, account)
         viewModelScope.launch {
@@ -297,7 +352,7 @@ class XtreamSettingsViewModel @Inject constructor(
                 val verified = client.verify(panel).isSuccess
                 _uiState.update { it.copy(isValidating = false) }
                 if (verified) {
-                    if (persistOrError { store.upsert(panel) }) {
+                    if (persistOrError { store.upsert(accountToStore(panel)) }) {
                         resolver.warmUp(listOf(panel))
                         syncService.triggerRemoteSync()
                         onSuccess()
@@ -318,7 +373,7 @@ class XtreamSettingsViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            if (persistOrError { store.upsert(account) }) {
+            if (persistOrError { store.upsert(accountToStore(account)) }) {
                 syncService.triggerRemoteSync()
                 onSuccess()
                 // Ingest in the background (M3UClient is single-flight + self-scoped, survives this scope).
@@ -334,7 +389,7 @@ class XtreamSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
             return
         }
-        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        val account = editedAccount(old, candidate, options)   // Step 0: an edit never changes the playlist id
         // Step 0.3: an edited server list (URL or backups) starts over on the main URL.
         serverFailover.onPlaylistEdited(old, account)
         viewModelScope.launch {
@@ -377,7 +432,7 @@ class XtreamSettingsViewModel @Inject constructor(
                 return@launch
             }
             // upsert also covers the re-import case (same id -> replace).
-            if (persistOrError { store.upsert(account) }) {
+            if (persistOrError { store.upsert(accountToStore(account)) }) {
                 // File playlists aren't synced (contents can't travel), but push keeps the account
                 // list consistent; the sync filters non-xtream rows out anyway.
                 syncService.triggerRemoteSync()
@@ -425,7 +480,7 @@ class XtreamSettingsViewModel @Inject constructor(
             val result = client.verify(account)
             _uiState.update { it.copy(isValidating = false) }
             result.onSuccess {
-                if (persistOrError { store.upsert(account) }) {
+                if (persistOrError { store.upsert(accountToStore(account)) }) {
                     // Start the catalog index now, not on first play — minutes on budget boxes.
                     resolver.warmUp(listOf(account))
                     syncService.triggerRemoteSync()
@@ -494,7 +549,7 @@ class XtreamSettingsViewModel @Inject constructor(
         // Credential/URL edits keep the content selections (toggles, category picks) — those aren't
         // in this form. The shared options (epg/dns/refresh) already ride on `candidate` from the
         // form (withOptions), so DON'T overwrite them from `old`, or an edit couldn't change them.
-        val account = candidate.asEditOf(old).withBackups(options)   // Step 0: an edit never changes the playlist id
+        val account = editedAccount(old, candidate, options)   // Step 0: an edit never changes the playlist id
         // Step 0.3: an edited server list (main or backups) starts over on the main server — the old
         // active index may now name a different server or none. Before the verify below, which
         // itself may legitimately land on a backup.
@@ -647,6 +702,9 @@ class XtreamSettingsViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 accountStatus = it.accountStatus - ids,
+                accountInfo = it.accountInfo - ids,
+                catalogCounts = it.catalogCounts - ids,
+                accountInfoFailed = it.accountInfoFailed - ids,
                 categoryLists = it.categoryLists - typeKeys,
                 guideEpgCoverage = it.guideEpgCoverage - ids,
             )
@@ -801,35 +859,39 @@ class XtreamSettingsViewModel @Inject constructor(
             // "Movies: 60000"). Prepended so even an unreachable panel still shows its sizes.
             val counts = runCatching { localCatalogCounts(account) }.getOrDefault(emptyList())
             if (counts.isNotEmpty()) {
-                _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to counts.joinToString(" · "))) }
+                _uiState.update {
+                    it.copy(
+                        accountStatus = it.accountStatus + (account.id to counts.joinToString(" · ")),
+                        catalogCounts = it.catalogCounts + (account.id to counts.joinToString(" · ")),
+                    )
+                }
             }
             // M3U playlists have no account endpoint at all — don't burn a doomed request per row.
             if (account.isM3UBacked()) return@launch
             clientFactory.clientFor(account).accountInfo(account)
                 .onSuccess { info ->
+                    _uiState.update { it.copy(accountInfo = it.accountInfo + (account.id to info), accountInfoFailed = it.accountInfoFailed - account.id) }
                     info.toStatusLine()?.let { line ->
                         val full = (counts + line).joinToString(" · ")
                         _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to full)) }
                     }
                 }
-                .onFailure { if (counts.isEmpty()) statusRequests.remove(account.id) }   // silent; retry later
+                .onFailure {
+                    _uiState.update { st -> st.copy(accountInfoFailed = st.accountInfoFailed + account.id) }
+                    if (counts.isEmpty()) statusRequests.remove(account.id)   // silent; retry later
+                }
         }
     }
 
     /** "12,000 channels" / "Movies 60000" style parts, from the local stores only. */
     private suspend fun localCatalogCounts(account: XtreamAccount): List<String> = when {
-        account.isM3UBacked() -> buildList {
-            val live = contentDb.liveCount(account.id)
-            if (live > 0) add("$live channels")
-        }
-        account.sourceType == XtreamAccount.SOURCE_STALKER -> buildList {
-            val live = contentDb.liveCount(account.id)
-            if (live > 0) add("$live channels")
-        }
-        else -> buildList {
-            matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.MOVIE)?.let { add("$it movies") }
-            matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.SERIES)?.let { add("$it series") }
-        }
+        account.isM3UBacked() || account.sourceType == XtreamAccount.SOURCE_STALKER ->
+            com.nuvio.tv.core.iptv.CatalogCountsPolicy.parts(channels = contentDb.liveCount(account.id), movies = null, series = null)
+        else -> com.nuvio.tv.core.iptv.CatalogCountsPolicy.parts(
+            channels = null,
+            movies = matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.MOVIE),
+            series = matchIndex.indexedCount(account.id, com.nuvio.tv.core.iptv.match.MatchKind.SERIES),
+        )
     }
 
     private fun XtreamAccountInfo.toStatusLine(): String? {

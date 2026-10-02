@@ -1308,7 +1308,8 @@ private fun PlaybackNavHost(
 
         composable(Screen.IptvSettings.route) {
             com.nuvio.tv.ui.screens.settings.XtreamSettingsContent(
-                onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) }
+                onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
+                onEnterSetupCode = { navController.navigate(Screen.IptvSetupCode.route) }
             )
         }
 
@@ -1326,7 +1327,24 @@ private fun PlaybackNavHost(
                 onNavigateToLicensesAttributions = {
                     navController.navigate(Screen.LicensesAttributions.route)
                 },
-                onNavigateToIptvPairing = { navController.navigate(Screen.IptvPairing.route) }
+                onNavigateToIptvPairing = { navController.navigate(Screen.IptvPairing.route) },
+                onNavigateToIptvSetupCode = { navController.navigate(Screen.IptvSetupCode.route) }
+            )
+        }
+
+        composable(Screen.IptvSetupCode.route) {
+            com.nuvio.tv.ui.screens.iptv.IptvSetupCodeScreen(
+                onBack = { navController.popBackStack() },
+                // Signed out: the code stays in memory while the user signs in, then returns here.
+                onSignIn = { navController.navigate(Screen.AuthQrSignIn.route) },
+                // A playlist arrived: land on the IPTV settings page, which opens its details page. (A plain
+                // back would return to the Settings root, where nothing is composed to open it.)
+                onFinished = {
+                    navController.navigate(Screen.IptvSettings.route) {
+                        popUpTo(Screen.IptvSetupCode.route) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
             )
         }
 
@@ -1337,6 +1355,7 @@ private fun PlaybackNavHost(
                 },
                 onAddProvider = { navController.navigate(Screen.IptvSettings.route) },
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
+                onEnterSetupCode = { navController.navigate(Screen.IptvSetupCode.route) },
                 // Catch-up takes the same proven live route (contentType="live" keeps the live DoH
                 // and engine handling, and routes BACK to this hub), plus the isCatchUp flag that
                 // turns off the three behaviours a recording must not have.

@@ -56,6 +56,7 @@ class XtreamAccountSyncService @Inject constructor(
     private val resolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver,
     private val rekeyer: com.nuvio.tv.core.iptv.PlaylistKeyRekeyer,
     private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
+    private val managedRefresher: com.nuvio.tv.core.iptv.ManagedInfoRefresher,
 ) {
     private val postgrest get() = supabaseProvider.postgrest
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -235,6 +236,18 @@ class XtreamAccountSyncService @Inject constructor(
             v2Mutex.unlock()
         }
         Log.i(TAG, "runV2Sync(profile $profileId) — $outcome")
+        // Step 2: a pull ran (SYNCED / UP_TO_DATE / WITHHELD) -> the managed-playlist map may need a read, but only
+        // per ManagedRefreshPolicy (>= 1 playlist; revision changed / no cache / cache stale). Never a timer.
+        // WITHHELD is a pull that was applied while the local store could not push (a fresh install) — still a pull.
+        val pulled = outcome == com.nuvio.tv.core.iptv.PlaylistSyncOutcome.SYNCED ||
+            outcome == com.nuvio.tv.core.iptv.PlaylistSyncOutcome.UP_TO_DATE ||
+            outcome == com.nuvio.tv.core.iptv.PlaylistSyncOutcome.WITHHELD
+        if (pulled) {
+            runCatching {
+                val revision = com.nuvio.tv.core.iptv.decodePlaylistSyncState(gson, accountStore.loadPlaylistSyncStateRaw(profileId)).revision
+                managedRefresher.afterPull(profileId, pullSucceeded = true, playlistCount = accountStore.accountsForProfile(profileId).size, revision = revision)
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+        }
         Result.success(Unit)
     }
 
@@ -280,6 +293,9 @@ class XtreamAccountSyncService @Inject constructor(
                 val local = accountStore.accounts.first()
                 applyRemote(preserveDeviceLocalPrefs(remoteAccounts, local))
                 Log.d(TAG, "Pulled ${remoteAccounts.size} iptv playlists for profile $profileId")
+                // Step 2: legacy (non-v2) pull that returned playlists -> same managed-map rule (no revision known).
+                runCatching { managedRefresher.afterPull(profileId, pullSucceeded = true, playlistCount = remoteAccounts.size, revision = null) }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
                 return@withContext Result.success(Unit)
             }
 
