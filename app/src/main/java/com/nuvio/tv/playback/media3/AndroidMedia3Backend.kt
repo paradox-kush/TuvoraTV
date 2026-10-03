@@ -561,6 +561,17 @@ private class AndroidMedia3Backend(
             )
             publishTrackCatalog(tracks)
             restoreTrackSelectionIfReady()
+            if (!terminalSuppressed) {
+                media3UnsupportedTracksFailure(
+                    groups.filter { it.length > 0 }.map { group ->
+                        Media3TrackGroupSupport(
+                            isVideo = group.type == C.TRACK_TYPE_VIDEO,
+                            isAudio = group.type == C.TRACK_TYPE_AUDIO,
+                            anyPlayable = group.isSupported(/* allowExceedsCapabilities= */ true),
+                        )
+                    },
+                )?.let { _events.tryEmit(Media3BackendEvent.Failed(it)) }
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {

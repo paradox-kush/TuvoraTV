@@ -575,7 +575,16 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
         }
         val hasDrm = input.requestSummary.hasDrm || input.evidence.drmScheme != null
         val drmEligible = if (hasDrm) setOf(EngineType.MEDIA3) else EngineType.entries.toSet()
-        var eligible = input.environment.eligibleEngines.intersect(surfaceEligible).intersect(drmEligible)
+        // No Media3 RTMP data source in the build, and Media3 only speaks RTP inside RTSP.
+        val schemeEligible = if (input.requestSummary.scheme.lowercase() in MEDIA3_UNSUPPORTED_SCHEMES) {
+            setOf(EngineType.LIBMPV)
+        } else {
+            EngineType.entries.toSet()
+        }
+        var eligible = input.environment.eligibleEngines
+            .intersect(surfaceEligible)
+            .intersect(drmEligible)
+            .intersect(schemeEligible)
         val explicit = when (input.effectivePreferences.engine) {
             EnginePreference.AUTO -> null
             EnginePreference.MEDIA3 -> EngineType.MEDIA3
@@ -741,3 +750,6 @@ object PlaybackRequirementsDiffClassifier {
         RequirementsField.AUDIO_PIPELINE,
     )
 }
+
+/** URL schemes Media3 cannot open in this build; such links go to libmpv up front. */
+private val MEDIA3_UNSUPPORTED_SCHEMES = setOf("rtmp", "rtmps", "rtmpe", "rtmpt", "rtmpte", "rtp")

@@ -448,6 +448,19 @@ class PlaybackRequirementsResolverTest {
     }
 
     @Test
+    fun `RTMP and raw RTP links never go to Media3`() = runTest {
+        // The build has no Media3 RTMP data source and Media3 only speaks RTP inside RTSP: such a
+        // link could only fail on Media3, then hand off. Route it to libmpv up front.
+        listOf("rtmp", "rtmps", "rtp").forEach { scheme ->
+            val resolved = resolve(input(summary = requestSummary().copy(scheme = scheme)))
+            assertFalse("$scheme must not be eligible for Media3", EngineType.MEDIA3 in resolved.eligibleEngines)
+            assertTrue(EngineType.LIBMPV in resolved.eligibleEngines)
+        }
+        val http = resolve(input(summary = requestSummary().copy(scheme = "http")))
+        assertTrue(EngineType.MEDIA3 in http.eligibleEngines)
+    }
+
+    @Test
     fun `Media3 ranks after libmpv when audio processing it cannot apply is requested`() = runTest {
         // Field (2026-10-02, onn + SWTV): every Media3 attempt failed AUDIO_OUTPUT_FAILED at
         // ENGINE_START because the user had an audio delay / downmix / normalization set, which

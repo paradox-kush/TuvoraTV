@@ -380,3 +380,35 @@ internal object Media3FailureMapper {
 
     private fun Throwable.causeChain(): Sequence<Throwable> = generateSequence(this) { it.cause }
 }
+
+/** One Media3 track group: its kind and whether any of its tracks has a decoder on this device. */
+internal data class Media3TrackGroupSupport(val isVideo: Boolean, val isAudio: Boolean, val anyPlayable: Boolean)
+
+/**
+ * A stream whose video (or audio) has no decoder on this device — VC-1, AV1 or HEVC without a
+ * decoder, a codec the platform lacks — would otherwise sit silently until the first-frame
+ * watchdog, which is never learned. Fail it deterministically so the session hands off to libmpv
+ * at once and remembers the channel. "Exceeds capabilities" still counts as playable: Media3 plays
+ * those and they usually work.
+ */
+internal fun media3UnsupportedTracksFailure(groups: List<Media3TrackGroupSupport>): PlaybackFailure? {
+    val video = groups.filter(Media3TrackGroupSupport::isVideo)
+    val audio = groups.filter(Media3TrackGroupSupport::isAudio)
+    return when {
+        video.isNotEmpty() && video.none(Media3TrackGroupSupport::anyPlayable) -> PlaybackFailure(
+            FailureCode.VIDEO_DECODER_UNAVAILABLE,
+            FailureDomain.VIDEO_DECODER,
+            FailurePhase.ENGINE_START,
+            Retryability.HANDOFF_ELIGIBLE,
+            deterministic = true,
+        )
+        audio.isNotEmpty() && audio.none(Media3TrackGroupSupport::anyPlayable) -> PlaybackFailure(
+            FailureCode.AUDIO_DECODER_FAILED,
+            FailureDomain.AUDIO_DECODER,
+            FailurePhase.ENGINE_START,
+            Retryability.HANDOFF_ELIGIBLE,
+            deterministic = true,
+        )
+        else -> null
+    }
+}

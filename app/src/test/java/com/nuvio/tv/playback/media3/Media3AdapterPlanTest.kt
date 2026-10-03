@@ -25,6 +25,7 @@ import com.nuvio.tv.playback.core.EvidenceFact
 import com.nuvio.tv.playback.core.EvidenceProvenance
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
+import com.nuvio.tv.playback.core.Retryability
 import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.FrameRatePreference
 import com.nuvio.tv.playback.core.GraphOutputProfile
@@ -248,6 +249,38 @@ class Media3AdapterPlanTest {
             DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER,
             audioExtensionRendererModeFor(software),
         )
+    }
+
+    @Test
+    fun `a stream whose tracks no decoder on this device can play fails fast and deterministically`() {
+        // VC-1, AV1 or HEVC without a decoder: Media3 would otherwise sit silently until the
+        // first-frame watchdog, which is never learned. A deterministic failure hands off to
+        // libmpv at once and is remembered for the channel.
+        val noVideoDecoder = media3UnsupportedTracksFailure(
+            listOf(Media3TrackGroupSupport(isVideo = true, isAudio = false, anyPlayable = false),
+                Media3TrackGroupSupport(isVideo = false, isAudio = true, anyPlayable = true)),
+        )!!
+        assertEquals(FailureCode.VIDEO_DECODER_UNAVAILABLE, noVideoDecoder.code)
+        assertEquals(FailureDomain.VIDEO_DECODER, noVideoDecoder.domain)
+        assertEquals(Retryability.HANDOFF_ELIGIBLE, noVideoDecoder.retryability)
+        assertTrue(noVideoDecoder.deterministic)
+
+        val noAudioDecoder = media3UnsupportedTracksFailure(
+            listOf(Media3TrackGroupSupport(isVideo = true, isAudio = false, anyPlayable = true),
+                Media3TrackGroupSupport(isVideo = false, isAudio = true, anyPlayable = false)),
+        )!!
+        assertEquals(FailureCode.AUDIO_DECODER_FAILED, noAudioDecoder.code)
+        assertEquals(Retryability.HANDOFF_ELIGIBLE, noAudioDecoder.retryability)
+
+        assertNull(
+            "one playable track of each kind is enough",
+            media3UnsupportedTracksFailure(
+                listOf(Media3TrackGroupSupport(isVideo = true, isAudio = false, anyPlayable = false),
+                    Media3TrackGroupSupport(isVideo = true, isAudio = false, anyPlayable = true),
+                    Media3TrackGroupSupport(isVideo = false, isAudio = true, anyPlayable = true)),
+            ),
+        )
+        assertNull("no tracks yet is not a failure", media3UnsupportedTracksFailure(emptyList()))
     }
 
     @Test
