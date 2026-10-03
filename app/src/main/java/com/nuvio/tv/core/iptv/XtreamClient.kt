@@ -99,6 +99,13 @@ data class XtreamAccount(
     val deviceId: String = "",
     /** Send the derived (or overridden) device signature on get_profile. Default on. */
     val sendDeviceId: Boolean = true,
+    // F46 — the rest of a MAG box's identity, for portals provisioned against a real box or another
+    // STB app. Blank = today's behaviour (device_id2 == device_id, derived signature, preset model/hw).
+    val deviceId2: String = "",
+    val signature: String = "",
+    /** STB model sent as stb_type + in X-User-Agent, e.g. MAG254. */
+    val stbModel: String = "",
+    val hwVersion: String = "",
     // --- Catch-up (tv_archive replay) preferences, per playlist. -------------------------------
     /**
      * Ask the panel for `.m3u8` catch-up first instead of `.ts`.
@@ -164,7 +171,11 @@ data class XtreamAccount(
             stalkerPassword == other.stalkerPassword &&
             serialNumber == other.serialNumber &&
             deviceId == other.deviceId &&
-            sendDeviceId == other.sendDeviceId
+            sendDeviceId == other.sendDeviceId &&
+            deviceId2 == other.deviceId2 &&
+            signature == other.signature &&
+            stbModel == other.stbModel &&
+            hwVersion == other.hwVersion
 
     /** Category filter: null selection = all (incl. future); empty = none; list = only those ids. */
     fun allowsCategory(type: String, categoryId: String?): Boolean {

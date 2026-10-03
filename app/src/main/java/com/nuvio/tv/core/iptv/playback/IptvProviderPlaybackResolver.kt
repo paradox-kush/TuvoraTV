@@ -348,6 +348,10 @@ class IptvProviderPlaybackResolver internal constructor(
         serialNumber,
         deviceId,
         sendDeviceId.toString(),
+        deviceId2,
+        signature,
+        stbModel,
+        hwVersion,
     )
 
     private fun ProviderPlaybackSelection.streamIdentityScope(): String = exactScope(

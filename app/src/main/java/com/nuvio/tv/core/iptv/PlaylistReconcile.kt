@@ -155,6 +155,10 @@ fun mergeEditOntoServer(server: XtreamAccount, base: XtreamAccount?, edit: Xtrea
         serialNumber = pick(server.serialNumber, base.serialNumber, edit.serialNumber),
         deviceId = pick(server.deviceId, base.deviceId, edit.deviceId),
         sendDeviceId = pick(server.sendDeviceId, base.sendDeviceId, edit.sendDeviceId),
+        deviceId2 = pick(server.deviceId2, base.deviceId2, edit.deviceId2),
+        signature = pick(server.signature, base.signature, edit.signature),
+        stbModel = pick(server.stbModel, base.stbModel, edit.stbModel),
+        hwVersion = pick(server.hwVersion, base.hwVersion, edit.hwVersion),
         backupUrls = pick(server.backupUrls, base.backupUrls, edit.backupUrls),
     )
 }

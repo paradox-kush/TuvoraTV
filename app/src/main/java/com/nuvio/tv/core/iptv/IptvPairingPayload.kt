@@ -134,7 +134,13 @@ fun pairingPayloadToXtreamAccount(payload: JsonElement?): XtreamAccount? {
                 stalkerPassword = obj.stringField("stalker_password").orEmpty(),
                 serialNumber = obj.stringField("serial_number").orEmpty(),
                 deviceId = obj.stringField("device_id").orEmpty(),
-                sendDeviceId = obj.boolField("send_device_id") ?: true
+                sendDeviceId = obj.boolField("send_device_id") ?: true,
+                // F46: the pairing page's advanced Stalker fields (typing a 64-char id on a remote
+                // is the reason the phone page exists).
+                deviceId2 = obj.stringField("device_id2")?.trim().orEmpty(),
+                signature = obj.stringField("signature")?.trim().orEmpty(),
+                stbModel = obj.stringField("stb_model")?.trim().orEmpty(),
+                hwVersion = obj.stringField("hw_version")?.trim().orEmpty()
             )
         }
 

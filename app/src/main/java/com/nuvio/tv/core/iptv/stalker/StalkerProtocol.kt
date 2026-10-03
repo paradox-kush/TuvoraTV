@@ -28,6 +28,12 @@ object StalkerProtocol {
      *   deviceId  = deviceId2 = sha256(mac).hex.upper()
      *   signature = sha256(mac + sn + deviceId + deviceId2).hex.upper()
      * User-supplied Serial / Device ID override the derived sn / deviceId (and feed the signature).
+     *
+     * F46: a user-supplied Device ID 2 / Signature (copied off a real box or another STB app) is
+     * sent verbatim. Blank keeps today's values EXACTLY — `device_id2 == device_id` and the derived
+     * signature — because portals pin the first identity they see to the MAC (stock Ministra
+     * `getProfile`, Xtream-Codes `lock_device`): changing the default would lock out every
+     * playlist that already works.
      */
     data class DeviceIdentity(
         val mac: String,
@@ -40,16 +46,20 @@ object StalkerProtocol {
     fun deriveDeviceIdentity(
         mac: String,
         serialOverride: String? = null,
-        deviceIdOverride: String? = null
+        deviceIdOverride: String? = null,
+        deviceId2Override: String? = null,
+        signatureOverride: String? = null,
     ): DeviceIdentity {
         val normalizedMac = mac.trim()
         val sn = serialOverride?.trim()?.takeIf { it.isNotEmpty() }
             ?: md5Hex(normalizedMac).uppercase().take(13)
         val deviceId = deviceIdOverride?.trim()?.takeIf { it.isNotEmpty() }
             ?: sha256Hex(normalizedMac).uppercase()
-        // MAG sends device_id2 == device_id; a Device ID override applies to both.
-        val deviceId2 = deviceId
-        val signature = sha256Hex(normalizedMac + sn + deviceId + deviceId2).uppercase()
+        // MAG convention: device_id2 == device_id (a Device ID override applies to both) unless the
+        // user entered a separate Device ID 2.
+        val deviceId2 = deviceId2Override?.trim()?.takeIf { it.isNotEmpty() } ?: deviceId
+        val signature = signatureOverride?.trim()?.takeIf { it.isNotEmpty() }
+            ?: sha256Hex(normalizedMac + sn + deviceId + deviceId2).uppercase()
         return DeviceIdentity(normalizedMac, sn, deviceId, deviceId2, signature)
     }
 
