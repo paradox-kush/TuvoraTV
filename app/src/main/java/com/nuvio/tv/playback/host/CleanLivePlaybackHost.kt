@@ -35,6 +35,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import com.nuvio.tv.playback.core.LiveVideoFitPolicy
+import com.nuvio.tv.playback.core.PlaybackQualityAccumulator
+import com.nuvio.tv.playback.wiring.PlaybackQualityReporter
+import com.nuvio.tv.playback.wiring.PostHogPlaybackQualityReporter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -59,6 +62,8 @@ internal class CleanLivePlaybackHost private constructor(
     private val controller: PlaybackSessionController,
     private val surfaces: CleanLiveSurfaceCoordinator,
     private val releaseAuthority: ReleaseAuthority,
+    private val quality: PlaybackQualityAccumulator,
+    private val qualityReporter: PlaybackQualityReporter,
 ) {
     private val commandMutex = Mutex()
 
@@ -151,6 +156,12 @@ internal class CleanLivePlaybackHost private constructor(
             }
             released = true
             hostJob.cancel()
+            val summary = synchronized(quality) {
+                quality.observe(controller.snapshot.value)
+                quality.finish()
+            }
+            // Telemetry must never break release.
+            if (summary.views > 0) runCatching { qualityReporter.report(summary) }
         }
     }
 
@@ -252,6 +263,8 @@ internal class CleanLivePlaybackHost private constructor(
             applicationLooper: Looper = Looper.getMainLooper(),
             applicationDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
             mediaSessionFactory: CleanMediaSessionOwnerFactory = productionMediaSessionFactory,
+            qualityReporter: PlaybackQualityReporter = PostHogPlaybackQualityReporter,
+            clockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
         ): CleanLivePlaybackHost {
             val parentJob = parentScope.coroutineContext[Job]
             val hostJob = SupervisorJob(parentJob)
@@ -316,6 +329,10 @@ internal class CleanLivePlaybackHost private constructor(
                 ?: ReleaseAuthority.ControllerFallback(controller)
             // MediaCodec and mpv's mediacodec_embed ignore pixel aspect when drawing, so the
             // surface is shaped here from the engine's facts (4:3 was stretched to 16:9).
+            val quality = PlaybackQualityAccumulator(now = clockMs)
+            hostScope.launch {
+                controller.snapshot.collect { snapshot -> synchronized(quality) { quality.observe(snapshot) } }
+            }
             hostScope.launch {
                 controller.snapshot
                     .map { snapshot ->
@@ -332,6 +349,8 @@ internal class CleanLivePlaybackHost private constructor(
                 controller = controller,
                 surfaces = surfaces,
                 releaseAuthority = authority,
+                quality = quality,
+                qualityReporter = qualityReporter,
             )
         }
 

@@ -251,6 +251,27 @@ class CleanLivePlaybackHostTest {
     }
 
     @Test
+    fun `one playback quality summary is reported when the host is released`() = runTest {
+        val fixture = fixture()
+        val host = fixture.create()
+        fixture.snapshot.value = PlaybackSnapshot(generation = 1, state = PlaybackState.STARTING_PRIMARY)
+        fixture.snapshot.value = PlaybackSnapshot(
+            generation = 1,
+            state = PlaybackState.PLAYING,
+            isPlaying = true,
+            progress = com.nuvio.tv.playback.core.PlaybackProgressEvidence(renderedVideoFrame = true),
+        )
+
+        host.release()
+        host.release()
+
+        assertEquals("sent once, at session end", 1, fixture.qualityReports.size)
+        assertEquals(1, fixture.qualityReports.single().views)
+        assertEquals(1, fixture.qualityReports.single().viewsStarted)
+        fixture.parentJob.cancel()
+    }
+
+    @Test
     fun `the session's video facts shape the surface to the stream display aspect`() = runTest {
         val fixture = fixture()
         fixture.owner.measure(
@@ -328,6 +349,7 @@ class CleanLivePlaybackHostTest {
             awaitSurfaceValidity = { _, _ -> true },
         )
         lateinit var composedHost: ProductionPlaybackHost
+        val qualityReports = mutableListOf<com.nuvio.tv.playback.core.PlaybackQualitySummary>()
 
         init {
             every { mediaOwner.updateMetadata(any()) } answers {
@@ -349,6 +371,7 @@ class CleanLivePlaybackHostTest {
             lifecycle = PlaybackLifecyclePort { emptyFlow() },
             applicationLooper = Looper.getMainLooper(),
             applicationDispatcher = Dispatchers.Unconfined,
+            qualityReporter = com.nuvio.tv.playback.wiring.PlaybackQualityReporter { qualityReports += it },
             mediaSessionFactory = CleanMediaSessionOwnerFactory { _, _, _, _, _ ->
                 if (mediaSessionCreationFails) error("synthetic creation failure")
                 mediaOwner
