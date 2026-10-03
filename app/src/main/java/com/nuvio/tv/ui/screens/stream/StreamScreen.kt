@@ -82,6 +82,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.torrent.TorrentGateDecision
+import com.nuvio.tv.core.torrent.TorrentPlaybackGate
 import com.nuvio.tv.core.player.ExternalPlayerLauncher
 import com.nuvio.tv.core.streams.StreamBadgePlacement
 import com.nuvio.tv.core.streams.StreamBadgeSettings
@@ -181,14 +183,41 @@ fun StreamScreen(
         onStreamSelected(playbackInfo)
     }
 
-    fun routePlayback(playbackInfo: StreamPlaybackInfo) {
+    /**
+     * Returns true when [playbackInfo] may go to a player now. Otherwise it opens the P2P consent
+     * dialog, or (store builds, where P2P is compiled off) says P2P is unavailable — B06.
+     */
+    fun passesTorrentGate(
+        playbackInfo: StreamPlaybackInfo,
+        p2pEnabledNow: Boolean = p2pEnabled,
+        consentJustGranted: Boolean = false
+    ): Boolean = when (
+        TorrentPlaybackGate.decide(
+            isTorrent = playbackInfo.isTorrent,
+            p2pAvailableInBuild = AppFeaturePolicy.p2pEnabled,
+            p2pEnabled = p2pEnabledNow,
+            consentJustGranted = consentJustGranted
+        )
+    ) {
+        TorrentGateDecision.PROCEED -> true
+        TorrentGateDecision.ASK_CONSENT -> {
+            pendingTorrentPlaybackInfo = playbackInfo
+            showP2pConsentDialog = true
+            false
+        }
+        TorrentGateDecision.UNAVAILABLE -> {
+            Toast.makeText(context, R.string.stream_p2p_unavailable, Toast.LENGTH_LONG).show()
+            false
+        }
+    }
+
+    /** [torrentGatePassed]: the caller already ran [passesTorrentGate] with fresher P2P facts. */
+    fun routePlayback(playbackInfo: StreamPlaybackInfo, torrentGatePassed: Boolean = false) {
         if (openExternalInBrowser(playbackInfo)) {
             return
         }
         val preference = playerPreference ?: return
-        if (playbackInfo.isTorrent && !p2pEnabled) {
-            pendingTorrentPlaybackInfo = playbackInfo
-            showP2pConsentDialog = true
+        if (!torrentGatePassed && !passesTorrentGate(playbackInfo)) {
             return
         }
         when (preference) {
@@ -207,15 +236,14 @@ fun StreamScreen(
         }
     }
 
-    fun routeAutoPlay(playbackInfo: StreamPlaybackInfo) {
+    fun routeAutoPlay(playbackInfo: StreamPlaybackInfo, p2pEnabledNow: Boolean) {
         if (openExternalInBrowser(playbackInfo)) {
             viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
             return
         }
         // Always check P2P consent for torrents, even in direct auto-play flow
-        if (playbackInfo.isTorrent && !p2pEnabled) {
-            pendingTorrentPlaybackInfo = playbackInfo
-            showP2pConsentDialog = true
+        if (!passesTorrentGate(playbackInfo, p2pEnabledNow = p2pEnabledNow)) {
+            if (!showP2pConsentDialog) viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
             return
         }
         val preference = playerPreference ?: return
@@ -253,7 +281,7 @@ fun StreamScreen(
             return
         } else {
             pendingRestoreOnResume = true
-            routePlayback(playbackInfo)
+            routePlayback(playbackInfo, torrentGatePassed = true)
             viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
         }
     }
@@ -279,7 +307,9 @@ fun StreamScreen(
         // builds a torrent:// sentinel URL downstream.
         if (playbackInfo.url != null || (playbackInfo.isTorrent && playbackInfo.infoHash != null)) {
             viewModel.awaitStreamLinkCacheSave()
-            routeAutoPlay(playbackInfo)
+            // Read the saved setting, not the composable state: on the first frame that state is
+            // still its `false` initial value and would ask for consent the user already gave.
+            routeAutoPlay(playbackInfo, p2pEnabledNow = viewModel.isP2pEnabledNow())
         }
     }
 
@@ -310,9 +340,8 @@ fun StreamScreen(
         }
         if (playbackInfo.url != null || (playbackInfo.isTorrent && playbackInfo.infoHash != null)) {
             // Torrent cached links still need P2P consent
-            if (playbackInfo.isTorrent && !p2pEnabled) {
-                pendingTorrentPlaybackInfo = playbackInfo
-                showP2pConsentDialog = true
+            if (!passesTorrentGate(playbackInfo, p2pEnabledNow = viewModel.isP2pEnabledNow())) {
+                if (!showP2pConsentDialog) viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
                 return@LaunchedEffect
             }
             // Respect player preference for cached links too
@@ -500,7 +529,12 @@ fun StreamScreen(
                     showP2pConsentDialog = false
                     val info = pendingTorrentPlaybackInfo!!
                     pendingTorrentPlaybackInfo = null
-                    routePlayback(info)
+                    // B06: the setting write is async, so `p2pEnabled` is still false here.
+                    // Gating on it re-opened the dialog in the same frame and the press looked
+                    // like it did nothing; the consent the user just gave is the fresher fact.
+                    if (passesTorrentGate(info, consentJustGranted = true)) {
+                        routePlayback(info, torrentGatePassed = true)
+                    }
                 },
                 onDismiss = {
                     showP2pConsentDialog = false
