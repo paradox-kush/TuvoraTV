@@ -174,6 +174,9 @@ class StreamScreenViewModel @Inject constructor(
 
     fun enableP2p() = torrentSettings.setP2pEnabled(true)
 
+    /** The saved P2P setting right now (store builds: always false), bypassing Compose state lag. */
+    suspend fun isP2pEnabledNow(): Boolean = torrentSettings.settings.first().p2pEnabled
+
     private inline fun updateUiStateIfChanged(
         transform: (StreamScreenUiState) -> StreamScreenUiState
     ) {

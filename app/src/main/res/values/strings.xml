@@ -1730,6 +1730,7 @@
     <string name="p2p_consent_body">This stream uses peer-to-peer (P2P) technology. By enabling P2P, you acknowledge and agree that:\n\n\u2022 Your IP address will be visible to other peers in the network\n\u2022 You are solely responsible for the content you access\n\u2022 You confirm you have the legal right to stream this content in your jurisdiction\n\u2022 Tuvora does not host, distribute, or control any P2P content\n\u2022 Tuvora bears no liability for any legal consequences arising from your use of P2P streaming\n\nYou use this feature entirely at your own risk. P2P can be disabled anytime in Settings.</string>
     <string name="p2p_consent_enable">Enable P2P</string>
     <string name="p2p_consent_cancel">Cancel</string>
+    <string name="stream_p2p_unavailable">P2P (torrent) streams are not supported in this version of Tuvora. Pick another source.</string>
     <string name="settings_p2p_title">P2P Streaming</string>
     <string name="settings_p2p_subtitle">Allow peer-to-peer (torrent) streams</string>
     <string name="settings_p2p_hide_stats_title">Hide torrent stats</string>
