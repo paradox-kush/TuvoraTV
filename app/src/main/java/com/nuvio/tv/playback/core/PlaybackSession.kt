@@ -73,6 +73,9 @@ class PlaybackSession(
     private var reconnectJob: Job? = null
     private var activeGraph: PlaybackGraph? = null
     private var activeGraphGeneration: Long? = null
+    /** The engine a zap left warm (player + surface held for the next channel), if any. */
+    @Volatile private var warmEngine: EngineType? = null
+    @Volatile private var warmEngineGeneration: Long? = null
     private var resolved: GenerationValue<ResolvedPlaybackRequest>? = null
     private var requirements: GenerationValue<PlaybackRequirements>? = null
     private var latestRequirementsChangeId: Long = 0
@@ -698,6 +701,29 @@ class PlaybackSession(
             return
         }
         generationScope(action.generation).launch {
+            // A zap keeps the previous engine warm and holding the one surface. If this channel
+            // selected the other engine, that warm engine must let go first — otherwise the attach
+            // "fails" in <100 ms and hands back to the warm engine on every later zap (fleet: ~40%
+            // of live zaps ended on a handoff engine nobody chose).
+            val warm = warmEngine
+            if (warm != null) {
+                if (warm != engine.type) {
+                    val released = releaseAdapterUntilComplete(
+                        generation = action.generation,
+                        engine = engineRegistry.engine(warm),
+                        engineGeneration = warmEngineGeneration,
+                    )
+                    if (released is PlaybackResult.Failure) {
+                        lane.send(
+                            LaneMessage.Reducer(
+                                PlaybackReducerInput.Event(PlaybackEvent.Failed(action.generation, released.failure)),
+                            ),
+                        )
+                        return@launch
+                    }
+                }
+                clearWarmEngine()
+            }
             when (val result = safeResult(FailurePhase.SURFACE_ATTACHMENT) {
                 engine.attachSurface(action.generation, action.graph)
             }) {
@@ -1028,13 +1054,19 @@ class PlaybackSession(
                     generation = action.generation,
                     engine = engine,
                     engineGeneration = releasedGraphGeneration,
-                )
+                ).also { result ->
+                    // The player and its surface stay warm for the next channel.
+                    if (result is PlaybackResult.Success && engine != null) {
+                        warmEngine = engine.type
+                        warmEngineGeneration = releasedGraphGeneration
+                    }
+                }
             } else {
                 releaseAdapterUntilComplete(
                     generation = action.generation,
                     engine = engine,
                     engineGeneration = releasedGraphGeneration,
-                )
+                ).also { if (engine?.type == warmEngine) clearWarmEngine() }
             }
             if (releaseResult is PlaybackResult.Failure) {
                 lane.send(
@@ -1411,6 +1443,11 @@ class PlaybackSession(
                 }
             }
         }
+    }
+
+    private fun clearWarmEngine() {
+        warmEngine = null
+        warmEngineGeneration = null
     }
 
     private suspend fun releaseAdapterUntilComplete(

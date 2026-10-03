@@ -1036,6 +1036,55 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `a channel change after a handoff returns to the preferred engine`() = runTest {
+        // Fleet (30 days): after one real handoff, every later zap in the session "failed" in
+        // <100 ms and handed off again, because the warm engine from the previous channel still
+        // held the one surface. ~40% of live zaps ended on the handoff engine nobody chose.
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val session = session(
+            engine = preferred,
+            otherEngine = fallback,
+            requirementsResolver = PlaybackRequirementsResolver {
+                PlaybackResult.Success(requirements(setOf(EngineType.MEDIA3, EngineType.LIBMPV)))
+            },
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        preferred.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.VIDEO_DECODER_FAILED,
+                    FailureDomain.VIDEO_DECODER,
+                    FailurePhase.PLAYBACK,
+                    Retryability.HANDOFF_ELIGIBLE,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+        assertEquals("the handoff ran on the fallback", 1, fallback.startCalls)
+        fallback.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        val zapGeneration = session.snapshot.value.generation
+        assertTrue(
+            "the next channel starts on the preferred engine, not the warm fallback",
+            zapGeneration in preferred.startGenerations,
+        )
+        assertEquals("the zap is not a handoff", 1, fallback.startCalls)
+        assertEquals(EngineType.MEDIA3, session.snapshot.value.graph?.engine)
+        close(session)
+    }
+
+    @Test
     fun `one live reconnect action retries indefinitely until progress`() = runTest {
         val engine = FakeEngine { start, input, events ->
             when (start) {
@@ -2000,9 +2049,15 @@ class PlaybackSessionTest {
         session.release()
     }
 
+    /** The one playback surface: like the coordinator, a second engine cannot take it while held. */
+    private class FakeSurface {
+        var owner: EngineType? = null
+    }
+
     private class FakeEngine(
         override val type: EngineType = EngineType.MEDIA3,
         private val onApply: suspend (PlaybackRequirements) -> Unit = { },
+        private val surface: FakeSurface? = null,
         private val onStart: suspend (Int, PlaybackEngineStart, MutableSharedFlow<PlaybackEvent>) -> Unit =
             { _, _, _ -> },
     ) : PlaybackEngine {
@@ -2028,10 +2083,27 @@ class PlaybackSessionTest {
         val pausedValues = mutableListOf<Boolean>()
         val volumeValues = mutableListOf<Float>()
 
+        val attachGenerations = mutableListOf<Long>()
+
         override suspend fun attachSurface(
             generation: Long,
             graph: PlaybackGraph,
-        ): PlaybackResult<Unit> = PlaybackResult.Success(Unit)
+        ): PlaybackResult<Unit> {
+            val held = surface?.owner
+            if (held != null && held != type) {
+                return PlaybackResult.Failure(
+                    PlaybackFailure(
+                        FailureCode.SURFACE_LOST,
+                        FailureDomain.VIDEO_RENDERER_SURFACE,
+                        FailurePhase.SURFACE_ATTACHMENT,
+                        Retryability.HANDOFF_ELIGIBLE,
+                    ),
+                )
+            }
+            surface?.owner = type
+            attachGenerations += generation
+            return PlaybackResult.Success(Unit)
+        }
 
         override suspend fun detachSurface(generation: Long): PlaybackResult<Unit> =
             PlaybackResult.Success(Unit)
@@ -2102,12 +2174,21 @@ class PlaybackSessionTest {
                 )
             }
             activeConnections = 0
+            if (!releasingSourceOnly && surface?.owner == type) surface.owner = null
             return PlaybackResult.Success(Unit)
         }
 
+        private var releasingSourceOnly = false
+
         override suspend fun releaseSource(generation: Long): PlaybackResult<Unit> {
             releaseSourceCalls++
-            return release(generation)
+            // A zap keeps the player and its surface warm; only a full release frees the surface.
+            releasingSourceOnly = true
+            return try {
+                release(generation)
+            } finally {
+                releasingSourceOnly = false
+            }
         }
 
         override suspend fun hardAbort(generation: Long): PlaybackResult<Unit> {
