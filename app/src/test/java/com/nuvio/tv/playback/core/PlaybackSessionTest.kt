@@ -1346,6 +1346,36 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `an error raised by the engine itself is recorded with its engine and code`() = runTest {
+        // Fleet analysis (2026-10-03): ~67% of Media3's terminal failures and nearly all libmpv
+        // handoff causes carried no code because engine-raised errors were never recorded.
+        val raised = PlaybackFailure(
+            FailureCode.DEMUX_FAILED,
+            FailureDomain.DEMUX,
+            FailurePhase.PLAYBACK,
+            Retryability.HANDOFF_ELIGIBLE,
+            deterministic = true,
+        )
+        val engine = FakeEngine()
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = session(engine, diagnostics = PlaybackDiagnostics(diagnostics::add))
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.Failed(1, raised))
+        advanceUntilIdle()
+
+        val recorded = diagnostics.single { it.code == PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE }
+        assertEquals(engine.type, recorded.engine)
+        assertEquals(FailureCode.DEMUX_FAILED, recorded.failure?.code)
+        assertEquals(1L, recorded.generation)
+        close(session)
+    }
+
+    @Test
     fun `failed VOD recovery releases the connection before becoming terminal`() = runTest {
         val fatalRecovery = PlaybackFailure(
             FailureCode.VIDEO_DECODER_FAILED,

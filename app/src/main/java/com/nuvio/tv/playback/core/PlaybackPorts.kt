@@ -244,6 +244,8 @@ enum class PlaybackDiagnosticCode {
     WATCHDOG_EXPIRED,
     COMPATIBILITY_HISTORY_RECORD_FAILED,
     PLAYBACK_OUTPUT_NONFATAL,
+    /** A failure the engine raised itself (decoder, demux, renderer, network...). */
+    ENGINE_REPORTED_FAILURE,
 }
 
 data class PlaybackDiagnosticEvent(

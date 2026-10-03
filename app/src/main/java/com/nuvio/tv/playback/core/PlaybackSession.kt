@@ -112,6 +112,18 @@ class PlaybackSession(
                             } else {
                                 event
                             }
+                            if (normalized is PlaybackEvent.Failed) {
+                                // Engine-raised errors were never recorded: most failure and
+                                // handoff causes reached telemetry without a code.
+                                diagnostics.record(
+                                    PlaybackDiagnosticEvent(
+                                        generation = normalized.generation,
+                                        code = PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE,
+                                        engine = engine.type,
+                                        failure = normalized.failure,
+                                    ),
+                                )
+                            }
                             engineEvents.emit(normalized)
                             lane.send(LaneMessage.Reducer(PlaybackReducerInput.Event(normalized)))
                         }
