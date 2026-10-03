@@ -251,6 +251,41 @@ class CleanLivePlaybackHostTest {
     }
 
     @Test
+    fun `playing video is captured and a reconnect shows the frozen frame instead of black`() = runTest {
+        val fixture = fixture()
+        fixture.owner.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+        )
+        fixture.owner.layout(0, 0, 1920, 1080)
+        val host = fixture.create()
+        val lease = (fixture.surfaces.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false)
+            as PlaybackResult.Success).value
+        fixture.snapshot.value = PlaybackSnapshot(
+            generation = 1,
+            state = PlaybackState.PLAYING,
+            isPlaying = true,
+            progress = com.nuvio.tv.playback.core.PlaybackProgressEvidence(renderedVideoFrame = true),
+        )
+        val deadline = System.currentTimeMillis() + 2_000
+        while (fixture.captures == 0 && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertTrue("a playing picture is captured periodically", fixture.captures > 0)
+
+        fixture.snapshot.value = fixture.snapshot.value.copy(
+            state = PlaybackState.LIVE_RECONNECTING,
+            isPlaying = false,
+            isReconnecting = true,
+        )
+
+        val overlay = fixture.owner.getChildAt(fixture.owner.childCount - 1)
+        assertTrue("the frozen frame covers the reconnect", overlay is android.widget.ImageView)
+        assertEquals(android.view.View.VISIBLE, overlay.visibility)
+        assertTrue(lease.release())
+        host.release()
+        fixture.parentJob.cancel()
+    }
+
+    @Test
     fun `one playback quality summary is reported when the host is released`() = runTest {
         val fixture = fixture()
         val host = fixture.create()
@@ -340,6 +375,7 @@ class CleanLivePlaybackHostTest {
             releaseSession = ::releaseSession,
         )
         val owner = FrameLayout(RuntimeEnvironment.getApplication())
+        @Volatile var captures = 0
         val surfaces = CleanLiveSurfaceCoordinator(
             owner = owner,
             callbackScope = parentScope,
@@ -347,6 +383,11 @@ class CleanLivePlaybackHostTest {
             secureMedia3SurfaceViewSupported = false,
             mainDispatcher = Dispatchers.Unconfined,
             awaitSurfaceValidity = { _, _ -> true },
+            frameCapturer = SurfaceFrameCapturer { _, into, done ->
+                captures += 1
+                into.eraseColor(android.graphics.Color.BLUE)
+                done(true)
+            },
         )
         lateinit var composedHost: ProductionPlaybackHost
         val qualityReports = mutableListOf<com.nuvio.tv.playback.core.PlaybackQualitySummary>()
@@ -372,6 +413,7 @@ class CleanLivePlaybackHostTest {
             applicationLooper = Looper.getMainLooper(),
             applicationDispatcher = Dispatchers.Unconfined,
             qualityReporter = com.nuvio.tv.playback.wiring.PlaybackQualityReporter { qualityReports += it },
+            freezeFrameCaptureIntervalMs = 20,
             mediaSessionFactory = CleanMediaSessionOwnerFactory { _, _, _, _, _ ->
                 if (mediaSessionCreationFails) error("synthetic creation failure")
                 mediaOwner

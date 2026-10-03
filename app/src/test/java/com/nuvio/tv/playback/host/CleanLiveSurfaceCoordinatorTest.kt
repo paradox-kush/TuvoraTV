@@ -6,6 +6,7 @@ import android.view.SurfaceView
 import android.view.TextureView
 import android.widget.FrameLayout
 import androidx.media3.exoplayer.ExoPlayer
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import com.nuvio.tv.playback.core.PlaybackCommand
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.PlaybackSnapshot
@@ -252,6 +253,79 @@ class CleanLiveSurfaceCoordinatorTest {
     }
 
     @Test
+    fun `the last captured frame covers an interruption and lifts on the next real frame`() = runTest {
+        // Owner rule: live never shows black. The frozen frame must survive the surface being torn
+        // down (reconnect/handoff remove the view) and must sit above any replacement surface.
+        val owner = owner().apply { layoutAs(1920, 1080) }
+        val captures = mutableListOf<android.view.View>()
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW),
+            frameCapturer = SurfaceFrameCapturer { view, into, done ->
+                captures += view
+                into.eraseColor(android.graphics.Color.RED)
+                done(true)
+            },
+        )
+        start(coordinator)
+        val first = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        coordinator.applyVideoAspect(4f / 3f)
+
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+        assertEquals("nothing captured yet: nothing to show", 1, owner.childCount)
+
+        coordinator.captureFrame()
+        assertEquals(listOf<android.view.View>(owner.getChildAt(0)), captures)
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+        val overlay = owner.getChildAt(owner.childCount - 1) as android.widget.ImageView
+        assertEquals(android.view.View.VISIBLE, overlay.visibility)
+        assertEquals("the frozen frame keeps the picture's shape", 0.75f, overlay.scaleX, 0.0001f)
+
+        assertTrue(first.release())
+        assertEquals("the frame outlives the torn-down surface", android.view.View.VISIBLE, overlay.visibility)
+
+        val second = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        assertTrue("the frame stays above the new surface", owner.getChildAt(owner.childCount - 1) === overlay)
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.HIDDEN)
+        assertEquals(android.view.View.GONE, overlay.visibility)
+
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.DIMMED)
+        assertEquals(android.view.View.VISIBLE, overlay.visibility)
+        assertTrue("a failure dims the frame under the error", overlay.alpha < 1f)
+
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.CLEARED)
+        assertEquals(android.view.View.GONE, overlay.visibility)
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+        assertEquals("a cleared frame is never shown again", android.view.View.GONE, overlay.visibility)
+        assertTrue(second.release())
+    }
+
+    @Test
+    fun `a failed capture keeps the previous good frame`() = runTest {
+        val owner = owner().apply { layoutAs(1920, 1080) }
+        var succeed = true
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW),
+            frameCapturer = SurfaceFrameCapturer { _, into, done ->
+                if (succeed) into.eraseColor(android.graphics.Color.GREEN) else into.eraseColor(android.graphics.Color.BLACK)
+                done(succeed)
+            },
+        )
+        start(coordinator)
+        val lease = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        coordinator.captureFrame()
+        succeed = false
+        coordinator.captureFrame()
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+
+        val overlay = owner.getChildAt(owner.childCount - 1) as android.widget.ImageView
+        val shown = (overlay.drawable as android.graphics.drawable.BitmapDrawable).bitmap
+        assertEquals(android.graphics.Color.GREEN, shown.getPixel(0, 0))
+        assertTrue(lease.release())
+    }
+
+    @Test
     fun `the shape follows the box when the guide pane promotes to fullscreen`() = runTest {
         val owner = owner().apply { layoutAs(640, 360) }
         val coordinator = coordinator(owner = owner, modes = setOf(SurfaceMode.SURFACE_VIEW))
@@ -457,6 +531,7 @@ class CleanLiveSurfaceCoordinatorTest {
         surfaceWaitTimeoutMs: Long = 100L,
         awaitSurfaceValidity: suspend (android.view.View, Long) -> Boolean = { _, _ -> true },
         mpvSurfaceFactory: (android.view.View) -> Surface? = { validSurface() },
+        frameCapturer: SurfaceFrameCapturer = SurfaceFrameCapturer { _, _, done -> done(false) },
     ) = CleanLiveSurfaceCoordinator(
         owner = owner,
         callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined).also(scopes::add),
@@ -466,6 +541,7 @@ class CleanLiveSurfaceCoordinatorTest {
         surfaceWaitTimeoutMs = surfaceWaitTimeoutMs,
         awaitSurfaceValidity = awaitSurfaceValidity,
         mpvSurfaceFactory = mpvSurfaceFactory,
+        frameCapturer = frameCapturer,
     )
 
     private fun owner() = FrameLayout(RuntimeEnvironment.getApplication())

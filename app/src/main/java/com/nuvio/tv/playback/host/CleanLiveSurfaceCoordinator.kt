@@ -1,5 +1,6 @@
 package com.nuvio.tv.playback.host
 
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -8,9 +9,11 @@ import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import com.nuvio.tv.playback.core.LiveVideoFitPolicy
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackResult
@@ -30,7 +33,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
 /**
  * Owns the one raw Android surface child used by a clean live-playback host.
@@ -48,6 +53,7 @@ internal class CleanLiveSurfaceCoordinator(
     private val surfaceWaitTimeoutMs: Long = DEFAULT_SURFACE_WAIT_TIMEOUT_MS,
     private val awaitSurfaceValidity: suspend (View, Long) -> Boolean = ::awaitAndroidSurfaceValidity,
     private val mpvSurfaceFactory: (View) -> Surface? = ::androidMpvSurface,
+    private val frameCapturer: SurfaceFrameCapturer = PixelCopyFrameCapturer,
 ) {
     init {
         require(owner.childCount == 0) { "Clean playback surface owner must start empty" }
@@ -72,6 +78,13 @@ internal class CleanLiveSurfaceCoordinator(
     private var reportedAvailable = false
     /** Last known display aspect; survives zaps so a new surface keeps the previous shape. */
     private var videoAspect: Float? = null
+    private var freezeView: ImageView? = null
+    private var frozenFrame: Bitmap? = null
+    private var spareFrame: Bitmap? = null
+    private var shownFrame: Bitmap? = null
+    private var frozenScaleX = 1f
+    private var frozenScaleY = 1f
+    private var capturing = false
 
     init {
         owner.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -139,6 +152,11 @@ internal class CleanLiveSurfaceCoordinator(
             val slot = current
             if (slot != null && !slot.released) return@withLock false
             slot?.let(::removeControlled)
+            freezeView?.let(owner::removeView)
+            freezeView = null
+            frozenFrame = null
+            spareFrame = null
+            shownFrame = null
             hosting = false
             disposed = true
             true
@@ -232,6 +250,80 @@ internal class CleanLiveSurfaceCoordinator(
         current?.let(::applyGeometry)
     }
 
+    /**
+     * Copies the picture currently on the surface into the freeze frame (downscaled). Runs only while
+     * real video plays (LiveFreezeFramePolicy.mayCapture); a failed copy keeps the previous frame.
+     */
+    suspend fun captureFrame() = withContext(mainDispatcher) {
+        val slot = current ?: return@withContext
+        val view = slot.view
+        // A surface added this frame may not be laid out yet; it is MATCH_PARENT of the owner.
+        val viewWidth = view.width.takeIf { it > 0 } ?: owner.width
+        val viewHeight = view.height.takeIf { it > 0 } ?: owner.height
+        if (slot.released || capturing || viewWidth <= 0 || viewHeight <= 0) return@withContext
+        val width = minOf(viewWidth, MAX_FREEZE_FRAME_WIDTH)
+        val height = (viewHeight.toLong() * width / viewWidth).toInt().coerceAtLeast(1)
+        val target = spareFrame?.takeIf { it.width == width && it.height == height }
+            ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val scaleX = view.scaleX
+        val scaleY = view.scaleY
+        capturing = true
+        val copied = try {
+            suspendCancellableCoroutine { continuation ->
+                frameCapturer.capture(view, target) { success ->
+                    if (continuation.isActive) continuation.resume(success)
+                }
+            }
+        } finally {
+            capturing = false
+        }
+        if (copied) {
+            spareFrame = frozenFrame
+            frozenFrame = target
+            frozenScaleX = scaleX
+            frozenScaleY = scaleY
+        } else {
+            spareFrame = target
+        }
+    }
+
+    /** Shows, dims, hides or drops the freeze frame above the surface (never below a new surface). */
+    suspend fun presentFreezeFrame(overlay: LiveFreezeFramePolicy.Overlay) = withContext(mainDispatcher) {
+        when (overlay) {
+            LiveFreezeFramePolicy.Overlay.HIDDEN -> freezeView?.visibility = View.GONE
+            LiveFreezeFramePolicy.Overlay.CLEARED -> {
+                freezeView?.visibility = View.GONE
+                freezeView?.setImageDrawable(null)
+                frozenFrame = null
+            }
+            LiveFreezeFramePolicy.Overlay.FROZEN,
+            LiveFreezeFramePolicy.Overlay.DIMMED,
+            -> {
+                val frame = frozenFrame ?: return@withContext
+                val view = freezeView ?: createFreezeView()
+                if (shownFrame !== frame) {
+                    view.setImageBitmap(frame)
+                    shownFrame = frame
+                }
+                view.scaleX = frozenScaleX
+                view.scaleY = frozenScaleY
+                view.alpha = if (overlay == LiveFreezeFramePolicy.Overlay.DIMMED) DIMMED_ALPHA else 1f
+                view.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun createFreezeView(): ImageView = ImageView(owner.context).apply {
+        scaleType = ImageView.ScaleType.FIT_XY
+        isFocusable = false
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        owner.addView(
+            this,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+        )
+        freezeView = this
+    }
+
     private fun applyGeometry(slot: SurfaceSlot) {
         // mpv's GPU renderer letterboxes inside its own surface; scaling it again would squash it.
         val scale = if (slot.mode == SurfaceMode.GPU_RENDER) {
@@ -264,11 +356,14 @@ internal class CleanLiveSurfaceCoordinator(
     }
 
     private fun install(slot: SurfaceSlot): SurfaceSlot {
-        check(current == null && owner.childCount == 0) { "Only one clean playback surface may exist" }
+        val surfaces = owner.childCount - if (freezeView != null) 1 else 0
+        check(current == null && surfaces == 0) { "Only one clean playback surface may exist" }
         current = slot
         currentToken = slot.token
+        // Index 0: the freeze frame must stay above any surface, including a replacement one.
         owner.addView(
             slot.view,
+            0,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -413,6 +508,9 @@ internal class CleanLiveSurfaceCoordinator(
 
     private companion object {
         const val DEFAULT_SURFACE_WAIT_TIMEOUT_MS = 3_000L
+        /** Freeze-frame copies are downscaled: shown for seconds, ~2 MB each at 960x540. */
+        const val MAX_FREEZE_FRAME_WIDTH = 960
+        const val DIMMED_ALPHA = 0.45f
         const val SURFACE_POLL_INTERVAL_MS = 16L
         val MEDIA3_MODES = setOf(SurfaceMode.SURFACE_VIEW, SurfaceMode.TEXTURE_VIEW)
         val MPV_MODES = setOf(SurfaceMode.NATIVE_EMBED, SurfaceMode.GPU_RENDER)
