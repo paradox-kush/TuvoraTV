@@ -250,6 +250,34 @@ class CleanLivePlaybackHostTest {
         fixture.parentJob.cancel()
     }
 
+    @Test
+    fun `the session's video facts shape the surface to the stream display aspect`() = runTest {
+        val fixture = fixture()
+        fixture.owner.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+        )
+        fixture.owner.layout(0, 0, 1920, 1080)
+        val host = fixture.create()
+        val lease = (fixture.surfaces.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false)
+            as PlaybackResult.Success).value
+
+        fixture.snapshot.value = PlaybackSnapshot(
+            generation = 1,
+            state = PlaybackState.PLAYING,
+            videoOutputFacts = com.nuvio.tv.playback.core.VideoOutputFacts(
+                revision = 1,
+                dimensions = com.nuvio.tv.playback.core.VideoDimensions(720, 576),
+                pixelWidthHeightRatio = 16f / 15f,
+            ),
+        )
+
+        assertEquals(0.75f, fixture.owner.getChildAt(0).scaleX, 0.0001f)
+        assertTrue(lease.release())
+        host.release()
+        fixture.parentJob.cancel()
+    }
+
     private fun fixture(
         mediaSessionCreationFails: Boolean = false,
         autoAdvanceAcceptedGeneration: Boolean = true,
@@ -290,12 +318,14 @@ class CleanLivePlaybackHostTest {
             },
             releaseSession = ::releaseSession,
         )
+        val owner = FrameLayout(RuntimeEnvironment.getApplication())
         val surfaces = CleanLiveSurfaceCoordinator(
-            owner = FrameLayout(RuntimeEnvironment.getApplication()),
+            owner = owner,
             callbackScope = parentScope,
             constructibleModes = setOf(SurfaceMode.SURFACE_VIEW),
             secureMedia3SurfaceViewSupported = false,
             mainDispatcher = Dispatchers.Unconfined,
+            awaitSurfaceValidity = { _, _ -> true },
         )
         lateinit var composedHost: ProductionPlaybackHost
 

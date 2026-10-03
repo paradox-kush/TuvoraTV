@@ -218,6 +218,58 @@ class CleanLiveSurfaceCoordinatorTest {
     }
 
     @Test
+    fun `decoder-scaled surfaces are shaped to the video display aspect`() = runTest {
+        // MediaCodec ignores pixel aspect when drawing to a Surface, and mpv's mediacodec_embed
+        // does no aspect handling, so Media3 and native-embed surfaces must be shaped by us.
+        val owner = owner().apply { layoutAs(1920, 1080) }
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW, SurfaceMode.NATIVE_EMBED, SurfaceMode.GPU_RENDER),
+        )
+        start(coordinator)
+
+        val media3 = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        coordinator.applyVideoAspect(4f / 3f)
+        assertEquals(0.75f, owner.getChildAt(0).scaleX, 0.0001f)
+        assertEquals(1f, owner.getChildAt(0).scaleY, 0f)
+
+        coordinator.applyVideoAspect(null)
+        assertEquals("unknown aspect keeps the last geometry", 0.75f, owner.getChildAt(0).scaleX, 0.0001f)
+        assertTrue(media3.release())
+
+        val native = mpvLease(coordinator, SurfaceMode.NATIVE_EMBED)
+        assertEquals("a zap's new surface keeps the last shape", 0.75f, owner.getChildAt(0).scaleX, 0.0001f)
+        coordinator.applyVideoAspect(16f / 9f)
+        assertEquals(1f, owner.getChildAt(0).scaleX, 0f)
+        assertTrue(native.release())
+        drainMain()
+
+        coordinator.applyVideoAspect(4f / 3f)
+        val gpu = mpvLease(coordinator, SurfaceMode.GPU_RENDER)
+        assertEquals("mpv letterboxes its own GPU output", 1f, owner.getChildAt(0).scaleX, 0f)
+        assertTrue(gpu.release())
+        drainMain()
+    }
+
+    @Test
+    fun `the shape follows the box when the guide pane promotes to fullscreen`() = runTest {
+        val owner = owner().apply { layoutAs(640, 360) }
+        val coordinator = coordinator(owner = owner, modes = setOf(SurfaceMode.SURFACE_VIEW))
+        start(coordinator)
+        val lease = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        coordinator.applyVideoAspect(4f / 3f)
+        assertEquals(0.75f, owner.getChildAt(0).scaleX, 0.0001f)
+
+        owner.layoutAs(1920, 800)
+        assertEquals(
+            (4f / 3f) / (1920f / 800f),
+            owner.getChildAt(0).scaleX,
+            0.0001f,
+        )
+        assertTrue(lease.release())
+    }
+
+    @Test
     fun `libmpv attached lease cannot release without detach proof`() = runTest {
         val coordinator = coordinator(
             modes = setOf(SurfaceMode.NATIVE_EMBED),
@@ -417,6 +469,14 @@ class CleanLiveSurfaceCoordinatorTest {
     )
 
     private fun owner() = FrameLayout(RuntimeEnvironment.getApplication())
+
+    private fun FrameLayout.layoutAs(width: Int, height: Int) {
+        measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(height, android.view.View.MeasureSpec.EXACTLY),
+        )
+        layout(0, 0, width, height)
+    }
 
     private fun controller(commands: MutableList<PlaybackCommand>) = PlaybackSessionController(
         snapshot = MutableStateFlow(PlaybackSnapshot()),

@@ -11,6 +11,7 @@ import android.widget.FrameLayout
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
+import com.nuvio.tv.playback.core.LiveVideoFitPolicy
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.Retryability
@@ -69,6 +70,16 @@ internal class CleanLiveSurfaceCoordinator(
     private var hosting = false
     private var disposed = false
     private var reportedAvailable = false
+    /** Last known display aspect; survives zaps so a new surface keeps the previous shape. */
+    private var videoAspect: Float? = null
+
+    init {
+        owner.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                current?.let(::applyGeometry)
+            }
+        }
+    }
 
     val capabilities: SurfaceCapabilities = SurfaceCapabilities(
         surfaceViewSupported = SurfaceMode.SURFACE_VIEW in modes,
@@ -211,6 +222,27 @@ internal class CleanLiveSurfaceCoordinator(
         }
     }
 
+    /**
+     * Shapes the decoder-scaled surface to [displayAspect] (null = unknown, keep the last shape).
+     * View scaling only: no relayout, no surfaceChanged, no mpv call on the main thread.
+     */
+    suspend fun applyVideoAspect(displayAspect: Float?) = withContext(mainDispatcher) {
+        if (displayAspect == null) return@withContext
+        videoAspect = displayAspect
+        current?.let(::applyGeometry)
+    }
+
+    private fun applyGeometry(slot: SurfaceSlot) {
+        // mpv's GPU renderer letterboxes inside its own surface; scaling it again would squash it.
+        val scale = if (slot.mode == SurfaceMode.GPU_RENDER) {
+            LiveVideoFitPolicy.Scale(1f, 1f)
+        } else {
+            LiveVideoFitPolicy.fitScale(videoAspect, owner.width, owner.height) ?: return
+        }
+        if (slot.view.scaleX != scale.x) slot.view.scaleX = scale.x
+        if (slot.view.scaleY != scale.y) slot.view.scaleY = scale.y
+    }
+
     private fun canAcquire(mode: SurfaceMode): Boolean =
         controller != null && hosting && !disposed && mode in modes
 
@@ -242,6 +274,7 @@ internal class CleanLiveSurfaceCoordinator(
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
         )
+        applyGeometry(slot)
         return slot
     }
 

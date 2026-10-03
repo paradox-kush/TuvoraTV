@@ -831,7 +831,8 @@ object PlaybackStateMachine {
             }
             is PlaybackEvent.VideoInputFormatChanged -> unchanged(state)
             is PlaybackEvent.VideoFrameRateChanged -> videoFrameRateChanged(state, event.frameRate)
-            is PlaybackEvent.VideoSizeChanged -> videoSizeChanged(state, event.width, event.height)
+            is PlaybackEvent.VideoSizeChanged ->
+                videoSizeChanged(state, event.width, event.height, event.pixelWidthHeightRatio)
             is PlaybackEvent.PlaybackEnded -> playbackEnded(state, event.reason)
             is PlaybackEvent.Failed -> failed(state, event.failure)
             // Engine release alone cannot satisfy the barrier: resolution/recovery/reconnect jobs
@@ -1152,14 +1153,17 @@ object PlaybackStateMachine {
         state: PlaybackMachineState,
         width: Int,
         height: Int,
+        pixelWidthHeightRatio: Float,
     ): PlaybackTransition {
         if (!state.snapshot.state.acceptsProgress() || width <= 0 || height <= 0) return unchanged(state)
         val previous = state.snapshot.videoOutputFacts
         val dimensions = VideoDimensions(width, height)
-        if (previous.dimensions == dimensions) return unchanged(state)
+        val ratio = pixelWidthHeightRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
+        if (previous.dimensions == dimensions && previous.pixelWidthHeightRatio == ratio) return unchanged(state)
         val facts = previous.copy(
             revision = nextOutputRevision(previous.revision),
             dimensions = dimensions,
+            pixelWidthHeightRatio = ratio,
         )
         val updated = state.copy(snapshot = state.snapshot.copy(videoOutputFacts = facts))
         return if (state.snapshot.progress.renderedVideoFrame) {

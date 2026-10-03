@@ -31,6 +31,10 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import com.nuvio.tv.playback.core.LiveVideoFitPolicy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -310,6 +314,19 @@ internal class CleanLivePlaybackHost private constructor(
             val authority = mediaSessionOwner
                 ?.let { ReleaseAuthority.MediaSession(it) }
                 ?: ReleaseAuthority.ControllerFallback(controller)
+            // MediaCodec and mpv's mediacodec_embed ignore pixel aspect when drawing, so the
+            // surface is shaped here from the engine's facts (4:3 was stretched to 16:9).
+            hostScope.launch {
+                controller.snapshot
+                    .map { snapshot ->
+                        val facts = snapshot.videoOutputFacts
+                        facts.dimensions?.let { size ->
+                            LiveVideoFitPolicy.displayAspect(size.width, size.height, facts.pixelWidthHeightRatio)
+                        }
+                    }
+                    .distinctUntilChanged()
+                    .collect { aspect -> surfaces.applyVideoAspect(aspect) }
+            }
             return CleanLivePlaybackHost(
                 hostJob = hostJob,
                 controller = controller,

@@ -86,7 +86,7 @@ class Media3EngineTest {
             Media3BackendEvent.VideoDecoderInitialized("c2.vendor.avc.decoder"),
             Media3BackendEvent.VideoInputFormatChanged("video/avc"),
             Media3BackendEvent.VideoFrameRateChanged(59.94f),
-            Media3BackendEvent.VideoSizeChanged(1920, 1080),
+            Media3BackendEvent.VideoSizeChanged(720, 576, pixelWidthHeightRatio = 16f / 15f),
         )
         val received = events.map { backendEvent ->
             val deferred = async(start = CoroutineStart.UNDISPATCHED) {
@@ -102,7 +102,7 @@ class Media3EngineTest {
         assertEquals(PlaybackEvent.VideoDecoderInitialized(12, "c2.vendor.avc.decoder"), received[1])
         assertEquals(PlaybackEvent.VideoInputFormatChanged(12, "video/avc"), received[2])
         assertEquals(PlaybackEvent.VideoFrameRateChanged(12, 59.94f), received[3])
-        assertEquals(PlaybackEvent.VideoSizeChanged(12, 1920, 1080), received[4])
+        assertEquals(PlaybackEvent.VideoSizeChanged(12, 720, 576, 16f / 15f), received[4])
     }
 
     @Test

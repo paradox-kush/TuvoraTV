@@ -538,7 +538,13 @@ private class AndroidMedia3Backend(
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             if (videoSize.width > 0 && videoSize.height > 0) {
-                _events.tryEmit(Media3BackendEvent.VideoSizeChanged(videoSize.width, videoSize.height))
+                _events.tryEmit(
+                    Media3BackendEvent.VideoSizeChanged(
+                        videoSize.width,
+                        videoSize.height,
+                        videoSize.pixelWidthHeightRatio,
+                    ),
+                )
             }
         }
     }
