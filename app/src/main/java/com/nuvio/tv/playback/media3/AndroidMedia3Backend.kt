@@ -285,6 +285,7 @@ internal class AndroidMedia3BackendFactory(
         val renderers = ContractRenderersFactory(
             applicationContext,
             forcePcm = plan.audioMode == AudioMode.DECODE,
+            audioExtensionMode = audioExtensionRendererModeFor(plan),
         )
             .setExtensionRendererMode(extensionRendererModeFor(plan))
             .setMediaCodecSelector(codecSelector)
@@ -371,6 +372,16 @@ internal fun extensionRendererModeFor(plan: Media3AdapterPlan): Int = when {
     else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
 }
 
+/**
+ * Audio extensions (ffmpeg: AC3 / E-AC3 / MP2 / DTS) are always available: they are cheap, and
+ * without them a DVB channel plays silent on boxes lacking a platform decoder. Video keeps
+ * [extensionRendererModeFor], which follows the decoder graph and the software-fallback permission.
+ */
+internal fun audioExtensionRendererModeFor(plan: Media3AdapterPlan): Int = when (plan.decoderMode) {
+    DecoderMode.SOFTWARE -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+    DecoderMode.HARDWARE -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+}
+
 private fun okhttp3.HttpUrl.sameOrigin(other: okhttp3.HttpUrl): Boolean =
     scheme == other.scheme && host == other.host && port == other.port
 
@@ -448,7 +459,30 @@ internal class Media3ReleaseProofGate(
 private class ContractRenderersFactory(
     context: Context,
     private val forcePcm: Boolean,
+    private val audioExtensionMode: Int,
 ) : DefaultRenderersFactory(context) {
+    override fun buildAudioRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        audioSink: AudioSink,
+        eventHandler: android.os.Handler,
+        eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
+        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+    ) {
+        super.buildAudioRenderers(
+            context,
+            audioExtensionMode,
+            mediaCodecSelector,
+            enableDecoderFallback,
+            audioSink,
+            eventHandler,
+            eventListener,
+            out,
+        )
+    }
+
     override fun buildAudioSink(
         context: Context,
         enableFloatOutput: Boolean,

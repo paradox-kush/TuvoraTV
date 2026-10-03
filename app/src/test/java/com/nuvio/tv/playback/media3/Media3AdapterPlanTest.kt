@@ -231,6 +231,26 @@ class Media3AdapterPlanTest {
     }
 
     @Test
+    fun `audio extension decoders stay on even when video software fallback is off`() {
+        // AC3 / E-AC3 / MP2 (common in DVB IPTV) need the ffmpeg audio decoder on boxes without a
+        // platform decoder. One shared extension mode turned it off whenever video software
+        // fallback was disallowed (user setting, low memory, thermal) and the channel played silent.
+        val strictHardware = plan(
+            graph = graph().copy(decoderMode = DecoderMode.HARDWARE),
+            requirements = requirements().copy(softwareDecodeFallbackAllowed = false),
+        )
+        assertEquals(
+            DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON,
+            audioExtensionRendererModeFor(strictHardware),
+        )
+        val software = plan(graph = graph().copy(decoderMode = DecoderMode.SOFTWARE))
+        assertEquals(
+            DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER,
+            audioExtensionRendererModeFor(software),
+        )
+    }
+
+    @Test
     fun `Media3 errors are normalized by domain without exceptions escaping`() {
         val timeout = Media3FailureMapper.map(PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
         assertEquals(FailureCode.NETWORK_TIMEOUT, timeout.code)
