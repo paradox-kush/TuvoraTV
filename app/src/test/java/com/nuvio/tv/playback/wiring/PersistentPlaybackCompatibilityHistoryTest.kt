@@ -81,6 +81,40 @@ class PersistentPlaybackCompatibilityHistoryTest {
     }
 
     @Test
+    fun `live freezes accumulate strikes that a later good start does not erase`() = runTest {
+        // A Media3 live freeze normally follows a good start; if the next good start erased the
+        // strike, a channel that freezes every time would never be learned.
+        val storage = FakeStorage()
+        val clock = FakeClock(1_000)
+        val history = history(storage, clock)
+        history.record(unstable(scopeA, recordedAt = 1_000, expiresAt = 10_000))
+        history.record(success(scopeA, recordedAt = 1_001, expiresAt = 10_000))
+        history.record(unstable(scopeA, recordedAt = 1_002, expiresAt = 10_000))
+
+        val record = history.records(scopeA).single()
+        assertEquals(CompatibilityOutcome.RUNTIME_UNSTABLE, record.outcome)
+        assertEquals(2, record.strikes)
+
+        val reloaded = history(storage, clock).records(scopeA).single()
+        assertEquals("strikes survive a restart", 2, reloaded.strikes)
+    }
+
+    @Test
+    fun `rows saved before strikes existed still load`() = runTest {
+        val storage = FakeStorage()
+        val clock = FakeClock(1_000)
+        history(storage, clock).record(fatal(scopeA, recordedAt = 1_000, expiresAt = 10_000))
+        // Released builds wrote one field fewer per row (no strike count).
+        storage.value = storage.value!!.lines().joinToString("\n") { line ->
+            if ('|' in line) line.substringBeforeLast('|') else line
+        }
+
+        val loaded = history(storage, clock).records(scopeA).single()
+        assertEquals(CompatibilityOutcome.DETERMINISTIC_FATAL, loaded.outcome)
+        assertEquals(1, loaded.strikes)
+    }
+
+    @Test
     fun `success does not erase a different decoder or surface graph`() = runTest {
         val storage = FakeStorage()
         val clock = FakeClock(1_000)
@@ -325,6 +359,23 @@ class PersistentPlaybackCompatibilityHistoryTest {
         failureCode = code,
         appVersion = appVersion,
         engineVersion = engineVersion,
+        recordedAtEpochMs = recordedAt,
+        expiresAtEpochMs = expiresAt,
+    )
+
+    private fun unstable(
+        scope: CompatibilityScopeKey,
+        recordedAt: Long,
+        expiresAt: Long,
+    ) = CompatibilityRecord(
+        scopeKey = scope,
+        graph = graph(),
+        runtime = runtime,
+        outcome = CompatibilityOutcome.RUNTIME_UNSTABLE,
+        failureDomain = FailureDomain.VIDEO_RENDERER_SURFACE,
+        failureCode = FailureCode.NO_PROGRESS,
+        appVersion = "app-1",
+        engineVersion = "media3-1",
         recordedAtEpochMs = recordedAt,
         expiresAtEpochMs = expiresAt,
     )

@@ -242,6 +242,33 @@ class PlaybackPreferenceResolverTest {
     }
 
     @Test
+    fun `a channel that froze twice on Media3 and then played on libmpv is learned`() {
+        // Freezes are the main Media3 live failure and are never deterministic, so they were
+        // never learned: every tune of an affected channel went back to Media3 and froze again.
+        val scope = CompatibilityScopeKey("provider|device|stream")
+        val mpvSuccess = record(scope = scope, engine = EngineType.LIBMPV, outcome = CompatibilityOutcome.SUCCESS, recordedAt = 11)
+
+        val twice = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(request = vodRequest(), scope = scope, records = listOf(unstable(scope, strikes = 2, recordedAt = 10), mpvSuccess)),
+        )
+        assertEquals(EnginePreference.LIBMPV, twice.engine.effective)
+        assertEquals(ResolutionAuthority.LEARNED_COMPATIBILITY, twice.engine.authority)
+
+        val once = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(request = vodRequest(), scope = scope, records = listOf(unstable(scope, strikes = 1, recordedAt = 10), mpvSuccess)),
+        )
+        assertEquals("one freeze is not enough: most Media3 stalls recover", EnginePreference.MEDIA3, once.engine.effective)
+
+        val unproven = PlaybackPreferenceResolver.resolve(
+            defaults(),
+            context(request = vodRequest(), scope = scope, records = listOf(unstable(scope, strikes = 2, recordedAt = 10))),
+        )
+        assertEquals("libmpv must have played the channel since", EnginePreference.MEDIA3, unproven.engine.effective)
+    }
+
+    @Test
     fun `AUTO does not prefer unpaired libmpv success or unproven libmpv fallback`() {
         val scope = CompatibilityScopeKey("provider|device|stream")
         val mpvSuccess = record(scope, EngineType.LIBMPV, CompatibilityOutcome.SUCCESS, recordedAt = 11)
@@ -752,6 +779,20 @@ class PlaybackPreferenceResolverTest {
         audioRoute = AudioRouteCapabilities(AudioRoute.HDMI),
         resources = ResourceCapabilities(availableMemoryBytes = availableMemoryBytes, lowMemory = lowMemory),
         surfaces = SurfaceCapabilities(secureSurfaceSupported = secureSurface),
+    )
+
+    private fun unstable(scope: CompatibilityScopeKey, strikes: Int, recordedAt: Long) = CompatibilityRecord(
+        scopeKey = scope,
+        graph = graph(EngineType.MEDIA3, GraphOutputProfile.MEDIA3_STANDARD),
+        runtime = runtime,
+        outcome = CompatibilityOutcome.RUNTIME_UNSTABLE,
+        failureDomain = FailureDomain.VIDEO_RENDERER_SURFACE,
+        failureCode = FailureCode.NO_PROGRESS,
+        appVersion = "app-1",
+        engineVersion = "media3-1",
+        recordedAtEpochMs = recordedAt,
+        expiresAtEpochMs = 1_000,
+        strikes = strikes,
     )
 
     private fun record(

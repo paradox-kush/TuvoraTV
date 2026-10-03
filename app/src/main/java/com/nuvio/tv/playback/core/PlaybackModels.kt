@@ -1097,6 +1097,8 @@ data class CompatibilityRecord(
     val engineVersion: String,
     val recordedAtEpochMs: Long,
     val expiresAtEpochMs: Long,
+    /** RUNTIME_UNSTABLE only: how many freezes this graph has had for the scope while current. */
+    val strikes: Int = 1,
 ) {
     /** Temporary source-compatible accessors while policy call sites move to [graph]. */
     val engine: EngineType get() = graph.engine
@@ -1107,12 +1109,28 @@ data class CompatibilityRecord(
         require(outcome != CompatibilityOutcome.DETERMINISTIC_FATAL || failureDomain != null) {
             "A deterministic fatal record requires a failure domain"
         }
+        require(outcome != CompatibilityOutcome.RUNTIME_UNSTABLE || failureDomain != null) {
+            "A runtime instability record requires a failure domain"
+        }
+        require(strikes >= 1) { "Strikes start at one" }
     }
 
     fun isExpired(nowEpochMs: Long): Boolean = nowEpochMs >= expiresAtEpochMs
 }
 
-enum class CompatibilityOutcome { SUCCESS, DETERMINISTIC_FATAL }
+enum class CompatibilityOutcome { SUCCESS, DETERMINISTIC_FATAL, RUNTIME_UNSTABLE }
+
+/**
+ * Live freezes and stalls: never deterministic, but the main Media3 live failure on TV boxes
+ * (fleet, 2026-10). Learned as RUNTIME_UNSTABLE strikes rather than deterministic exclusions.
+ */
+fun isRuntimeInstabilityFailure(domain: FailureDomain?, code: FailureCode?): Boolean = when (code) {
+    FailureCode.NO_PROGRESS,
+    FailureCode.VIDEO_RENDERER_FAILED,
+    -> domain == FailureDomain.VIDEO_RENDERER_SURFACE
+    FailureCode.VIDEO_DECODER_FAILED -> domain == FailureDomain.VIDEO_DECODER
+    else -> false
+}
 
 /** Closed compatibility-learning allowlist shared by the session hook and persistent store. */
 fun isLearnableCompatibilityFailure(domain: FailureDomain?, code: FailureCode?): Boolean =

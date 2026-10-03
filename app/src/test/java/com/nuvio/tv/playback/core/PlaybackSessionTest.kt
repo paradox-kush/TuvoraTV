@@ -305,6 +305,40 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `a live picture freeze is remembered as a runtime instability strike`() = runTest {
+        val history = FakeCompatibilityHistory()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = scopedResolver(CompatibilityScopeKey("freezes")),
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        engine.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.NO_PROGRESS,
+                    FailureDomain.VIDEO_RENDERER_SURFACE,
+                    FailurePhase.PLAYBACK,
+                    Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        val strike = history.values.single { it.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE }
+        assertEquals(FailureCode.NO_PROGRESS, strike.failureCode)
+        assertEquals(EngineType.MEDIA3, strike.engine)
+        close(session)
+    }
+
+    @Test
     fun `many zaps retain compatibility bookkeeping for only the active generation`() = runTest {
         val history = FakeCompatibilityHistory()
         val engine = FakeEngine()

@@ -342,7 +342,9 @@ class PlaybackSession(
         if (now < 0 || now == Long.MAX_VALUE) return
         val ttl = when (outcome) {
             CompatibilityOutcome.SUCCESS -> environment.successTtlMs
-            CompatibilityOutcome.DETERMINISTIC_FATAL -> environment.fatalTtlMs
+            CompatibilityOutcome.DETERMINISTIC_FATAL,
+            CompatibilityOutcome.RUNTIME_UNSTABLE,
+            -> environment.fatalTtlMs
         }
         val expiresAt = if (ttl > Long.MAX_VALUE - now) Long.MAX_VALUE else now + ttl
         if (expiresAt <= now) return
@@ -399,9 +401,17 @@ class PlaybackSession(
             PlaybackState.PLAYING,
             PlaybackState.DEGRADED,
         ) && after.snapshot.failure == failure
-        return CompatibilityOutcome.DETERMINISTIC_FATAL.takeIf {
-            acceptedFailure && failure.deterministic &&
-                isLearnableCompatibilityFailure(failure.domain, failure.code)
+        if (acceptedFailure && failure.deterministic &&
+            isLearnableCompatibilityFailure(failure.domain, failure.code)
+        ) {
+            return CompatibilityOutcome.DETERMINISTIC_FATAL
+        }
+        // A live freeze is a strike, not an exclusion: the resolver pre-routes a channel only after
+        // repeated freezes and a proven libmpv success since.
+        return CompatibilityOutcome.RUNTIME_UNSTABLE.takeIf {
+            acceptedFailure && !failure.deterministic &&
+                before.request?.contentType == ContentType.LIVE &&
+                isRuntimeInstabilityFailure(failure.domain, failure.code)
         }
     }
 
