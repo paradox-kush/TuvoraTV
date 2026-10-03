@@ -613,8 +613,8 @@ fun LiveGuide(
             fun restoreGuideFocus() {
                 when (notice.target) {
                     is GuideHideUndoPolicy.Target.Channel ->
-                        if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
-                            runCatching { channelListFocus.requestFocus() }
+                        if (!channelRowFocus.requestFocusOrFalse()) {
+                            channelListFocus.requestFocusOrFalse()
                         }
                     is GuideHideUndoPolicy.Target.Group -> runCatching { categoryListFocus.requestFocus() }
                 }
