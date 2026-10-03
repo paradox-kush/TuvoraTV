@@ -575,6 +575,11 @@ data class PlaybackRequirements(
     val adaptiveDimensionCeiling: VideoDimensions? = null,
     val bitrateCeiling: Long? = null,
     val displayModeSwitchAllowed: Boolean,
+    /**
+     * When switching is not allowed, keep a mode this session already matched instead of
+     * restoring the original (the live guide: no HDMI re-switch on every promote/demote).
+     */
+    val retainDisplayMode: Boolean = false,
     val resolutionMatchingEnabled: Boolean = false,
     val frameRatePreference: FrameRatePreference,
     val hdrPreference: HdrPreference,

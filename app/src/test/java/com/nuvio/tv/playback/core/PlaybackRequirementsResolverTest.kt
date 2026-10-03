@@ -448,6 +448,40 @@ class PlaybackRequirementsResolverTest {
     }
 
     @Test
+    fun `live fullscreen matches the display frame rate automatically even when stored OFF`() = runTest {
+        // Owner decision 2026-10-02: live frame-rate matching is automatic. Upgraded installs
+        // carry OFF from the one-shot legacy import, and no screen can change it, so OFF must not
+        // leave 25p channels juddering on a 59.94 Hz output.
+        val storedOff = PlaybackPreferences(display = DisplayPreference(frameRate = FrameRatePreference.OFF))
+        val resolved = resolve(input(profile = SessionProfile.FULLSCREEN, preferences = storedOff))
+
+        assertTrue(resolved.displayModeSwitchAllowed)
+        assertEquals(FrameRatePreference.ON_START, resolved.frameRatePreference)
+        assertFalse(resolved.retainDisplayMode)
+    }
+
+    @Test
+    fun `live guide keeps the matched display mode without starting a switch`() = runTest {
+        val resolved = resolve(input(profile = SessionProfile.GUIDE, previewViewport = VideoDimensions(640, 360)))
+
+        assertFalse(resolved.displayModeSwitchAllowed)
+        assertEquals(FrameRatePreference.OFF, resolved.frameRatePreference)
+        assertTrue("returning to the guide must not cost an HDMI re-switch", resolved.retainDisplayMode)
+    }
+
+    @Test
+    fun `VOD keeps the stored frame-rate preference`() = runTest {
+        val storedOff = PlaybackPreferences(display = DisplayPreference(frameRate = FrameRatePreference.OFF))
+        val resolved = resolve(
+            input(summary = requestSummary(contentType = ContentType.VOD), preferences = storedOff),
+        )
+
+        assertFalse(resolved.displayModeSwitchAllowed)
+        assertEquals(FrameRatePreference.OFF, resolved.frameRatePreference)
+        assertFalse(resolved.retainDisplayMode)
+    }
+
+    @Test
     fun `live guide to fullscreen promote with default settings applies in place`() = runTest {
         // Field regression (1.5.9): every preview->fullscreen promote tore the player down and
         // rebuilt it (~3.5s black). With default settings the resolved GUIDE and FULLSCREEN

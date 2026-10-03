@@ -139,7 +139,8 @@ class AndroidPlaybackOutputControllerTest {
             PlaybackOutputStatus.APPLIED,
             rateChange.apply(request(1, frameRate = 30f, preference = FrameRatePreference.ON_RATE_CHANGE)).status(),
         )
-        assertEquals(listOf(2, 3), rateChangeHost.requests)
+        // 30 fps doubles to the 60 Hz mode (highest exact multiple), not the 30 Hz mode.
+        assertEquals(listOf(2, 1), rateChangeHost.requests)
     }
 
     @Test
@@ -149,6 +150,8 @@ class AndroidPlaybackOutputControllerTest {
             ActiveWorkReleaseReason.RESELECT,
             ActiveWorkReleaseReason.HANDOFF,
             ActiveWorkReleaseReason.SURFACE_LOST,
+            // A live zap must not restore and re-switch: two HDMI blackouts per channel change.
+            ActiveWorkReleaseReason.REPLACE_REQUEST,
         )
         preserveReasons.forEach { reason ->
             val host = FakeHost()
@@ -160,7 +163,6 @@ class AndroidPlaybackOutputControllerTest {
 
         val terminalReasons = listOf(
             ActiveWorkReleaseReason.STOP,
-            ActiveWorkReleaseReason.REPLACE_REQUEST,
             ActiveWorkReleaseReason.COMPLETED,
             ActiveWorkReleaseReason.FAILURE,
             ActiveWorkReleaseReason.LIFECYCLE_INACTIVE,
@@ -222,6 +224,37 @@ class AndroidPlaybackOutputControllerTest {
     }
 
     @Test
+    fun `live guide keeps the matched mode instead of restoring it`() = runTest {
+        val host = FakeHost()
+        val controller = controller(host)
+        controller.apply(request(1))
+        assertEquals(
+            PlaybackOutputStatus.DISABLED,
+            controller.apply(request(2, enabled = false, retain = true)).status(),
+        )
+        assertEquals("guide must not trigger an HDMI re-switch", listOf(2), host.requests)
+        assertEquals(2, host.currentModeId)
+
+        controller.reset(2, ActiveWorkReleaseReason.STOP)
+        assertEquals("leaving Live TV restores the original mode", 1, host.currentModeId)
+    }
+
+    @Test
+    fun `restore finds the original mode after the display renumbers its mode ids`() = runTest {
+        // Android reassigns non-default mode ids after standby/wake (Kodi PR #27892); a cached id
+        // is silently ignored and the display would stay at the content rate.
+        val host = FakeHost()
+        val controller = controller(host)
+        controller.apply(request(1))
+        assertEquals(2, host.currentModeId)
+        host.renumber(mapOf(1 to 11, 2 to 12, 3 to 13))
+
+        controller.reset(1, ActiveWorkReleaseReason.STOP)
+
+        assertEquals(11, host.currentModeId)
+    }
+
+    @Test
     fun `actual Window operation failure is a nonfatal typed output status`() = runTest {
         val result = controller(FakeHost(failRequests = true)).apply(request(1))
         assertEquals(PlaybackOutputStatus.APPLY_FAILED, result.status())
@@ -235,14 +268,14 @@ class AndroidPlaybackOutputControllerTest {
     fun `lower fact revision cannot apply after a newer revision`() = runTest {
         val host = FakeHost()
         val controller = controller(host)
-        controller.apply(request(1, frameRate = 30f, preference = FrameRatePreference.ON_RATE_CHANGE, factsRevision = 2))
+        controller.apply(request(1, frameRate = 24f, preference = FrameRatePreference.ON_RATE_CHANGE, factsRevision = 2))
         assertEquals(
             PlaybackOutputStatus.NOT_REQUESTED,
             controller.apply(
-                request(1, frameRate = 24f, preference = FrameRatePreference.ON_RATE_CHANGE, factsRevision = 1),
+                request(1, frameRate = 30f, preference = FrameRatePreference.ON_RATE_CHANGE, factsRevision = 1),
             ).status(),
         )
-        assertEquals(listOf(3), host.requests)
+        assertEquals(listOf(2), host.requests)
     }
 
     private fun TestScope.controller(host: FakeHost) = AndroidPlaybackOutputController(
@@ -264,9 +297,10 @@ class AndroidPlaybackOutputControllerTest {
         resolutionMatching: Boolean = false,
         dimensions: com.nuvio.tv.playback.core.VideoDimensions? = null,
         factsRevision: Long = 0,
+        retain: Boolean = false,
     ) = PlaybackOutputRequest(
         generation = generation,
-        requirements = requirements(enabled, preference, resolutionMatching),
+        requirements = requirements(enabled, preference, resolutionMatching, retain),
         facts = VideoOutputFacts(revision = factsRevision, frameRate = frameRate, dimensions = dimensions),
         committed = committed,
     )
@@ -275,11 +309,13 @@ class AndroidPlaybackOutputControllerTest {
         enabled: Boolean,
         preference: FrameRatePreference,
         resolutionMatching: Boolean,
+        retain: Boolean = false,
     ) = PlaybackRequirements(
         profile = SessionProfile.FULLSCREEN,
         priority = SessionPriority.QUALITY_AND_STABILITY,
         qualityIntent = VideoQualityIntent.FULL,
         displayModeSwitchAllowed = enabled,
+        retainDisplayMode = retain,
         resolutionMatchingEnabled = resolutionMatching,
         frameRatePreference = preference,
         hdrPreference = HdrPreference.AUTO,
@@ -302,7 +338,7 @@ class AndroidPlaybackOutputControllerTest {
 
     private class FakeHost(
         private val snapshotAvailable: Boolean = true,
-        private val modes: List<AndroidDisplayMode> = listOf(
+        private var modes: List<AndroidDisplayMode> = listOf(
             AndroidDisplayMode(1, 1920, 1080, 60f),
             AndroidDisplayMode(2, 1920, 1080, 24f),
             AndroidDisplayMode(3, 1920, 1080, 30f),
@@ -323,10 +359,16 @@ class AndroidPlaybackOutputControllerTest {
             }
         }
 
+        fun renumber(ids: Map<Int, Int>) {
+            modes = modes.map { it.copy(modeId = ids.getValue(it.modeId)) }
+            currentModeId = ids.getValue(currentModeId)
+        }
+
         override fun requestMode(modeId: Int) {
             if (failRequests) error("synthetic host failure")
             requests += modeId
-            if (applyRequests) currentModeId = modeId
+            // Like Android, an id the display no longer offers is silently ignored.
+            if (applyRequests && modes.any { it.modeId == modeId }) currentModeId = modeId
         }
     }
 }

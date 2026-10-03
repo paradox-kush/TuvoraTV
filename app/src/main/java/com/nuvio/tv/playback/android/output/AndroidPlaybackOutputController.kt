@@ -73,6 +73,8 @@ class AndroidPlaybackOutputController internal constructor(
     private var latestFactsRevision: Long = 0
     private var ownerGeneration: Long? = null
     private var originalModeId: Int? = null
+    /** The original mode's shape, so restore survives Android renumbering mode ids after standby. */
+    private var originalMode: AndroidDisplayMode? = null
     private var lastRequestedModeId: Int? = null
     private var lastRequestedGeneration: Long? = null
     private var lastRequestedFactsRevision: Long? = null
@@ -100,6 +102,9 @@ class AndroidPlaybackOutputController internal constructor(
                 (request.requirements.frameRatePreference == FrameRatePreference.OFF &&
                     !request.requirements.resolutionMatchingEnabled)
             ) {
+                if (request.requirements.retainDisplayMode) {
+                    return@withLock success(PlaybackOutputStatus.DISABLED)
+                }
                 return@withLock when (val restored = restoreOwnedMode(request.generation)) {
                     RestoreResult.Failed -> success(PlaybackOutputStatus.APPLY_FAILED)
                     RestoreResult.NotConfirmed -> success(PlaybackOutputStatus.APPLY_NOT_CONFIRMED)
@@ -154,7 +159,10 @@ class AndroidPlaybackOutputController internal constructor(
                 }
 
                 is AndroidDisplayModeSelection.Switch -> {
-                    if (originalModeId == null) originalModeId = snapshot.currentModeId
+                    if (originalModeId == null) {
+                        originalModeId = snapshot.currentModeId
+                        originalMode = snapshot.supportedModes.firstOrNull { it.modeId == snapshot.currentModeId }
+                    }
                     ownerGeneration = request.generation
                     val targetModeId = selection.mode.modeId
                     val requested = requestModeIfNeeded(
@@ -196,7 +204,7 @@ class AndroidPlaybackOutputController internal constructor(
     }
 
     private suspend fun restoreOwnedMode(releasedGeneration: Long?): RestoreResult {
-        val targetModeId = originalModeId ?: run {
+        val originalId = originalModeId ?: run {
             clearGenerationState(releasedGeneration)
             return RestoreResult.Done
         }
@@ -205,7 +213,7 @@ class AndroidPlaybackOutputController internal constructor(
         } catch (_: Exception) {
             return RestoreResult.Failed
         } ?: return RestoreResult.NotConfirmed
-        if (snapshot.supportedModes.none { it.modeId == targetModeId }) {
+        val targetModeId = resolveOriginalModeId(snapshot, originalId) ?: run {
             clearOwnership()
             return RestoreResult.Done
         }
@@ -231,6 +239,23 @@ class AndroidPlaybackOutputController internal constructor(
             VerificationResult.Failed -> RestoreResult.Failed
         }
     }
+
+    /**
+     * Android reassigns non-default mode ids after standby/wake (Kodi PR #27892): a cached id is
+     * silently ignored. Prefer the id only while it still names the same shape; otherwise find the
+     * mode with the original resolution and refresh rate.
+     */
+    private fun resolveOriginalModeId(snapshot: AndroidDisplayModeSnapshot, originalId: Int): Int? {
+        val shape = originalMode
+        val byId = snapshot.supportedModes.firstOrNull { it.modeId == originalId }
+        if (byId != null && (shape == null || byId.hasShapeOf(shape))) return byId.modeId
+        if (shape == null) return null
+        return snapshot.supportedModes.firstOrNull { it.hasShapeOf(shape) }?.modeId
+    }
+
+    private fun AndroidDisplayMode.hasShapeOf(other: AndroidDisplayMode): Boolean =
+        width == other.width && height == other.height &&
+            kotlin.math.abs(refreshRate - other.refreshRate) < SAME_REFRESH_TOLERANCE_HZ
 
     private fun requestModeIfNeeded(
         modeId: Int,
@@ -288,6 +313,7 @@ class AndroidPlaybackOutputController internal constructor(
 
     private fun clearOwnership() {
         originalModeId = null
+        originalMode = null
         ownerGeneration = null
         clearLastRequest()
         onStartEffectiveGeneration = null
@@ -320,6 +346,10 @@ class AndroidPlaybackOutputController internal constructor(
             ActiveWorkReleaseReason.RESELECT,
             ActiveWorkReleaseReason.HANDOFF,
             ActiveWorkReleaseReason.SURFACE_LOST,
+            // A live zap: the next channel decides; restoring here would cost a second HDMI
+            // blackout per channel change.
+            ActiveWorkReleaseReason.REPLACE_REQUEST,
         )
+        const val SAME_REFRESH_TOLERANCE_HZ = 0.01f
     }
 }

@@ -448,7 +448,16 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
         // setting, and the legacy importer marks most upgraded devices CUSTOM without the user
         // ever choosing a buffer; honouring it in fullscreen made every guide->fullscreen promote
         // rebuild the player just to resize a buffer (field: changed_fields=BUFFERING on the Onn).
-        val effectiveBuffering = if (input.requestSummary.contentType == ContentType.LIVE) {
+        val live = input.requestSummary.contentType == ContentType.LIVE
+        // Live frame-rate matching is automatic (owner decision 2026-10-02): 25p/50p channels on a
+        // 59.94 Hz output judder on every pan, and upgraded installs carry a stored OFF from the
+        // one-shot legacy import that no screen can change. A stronger stored choice still wins.
+        val effectiveFrameRate = if (live && preferences.display.frameRate == FrameRatePreference.OFF) {
+            FrameRatePreference.ON_START
+        } else {
+            preferences.display.frameRate
+        }
+        val effectiveBuffering = if (live) {
             BufferingPreference.LOW_LATENCY_LIVE
         } else {
             preferences.buffering
@@ -464,10 +473,11 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
                 bitrateCeiling = environment.resourceBudget.networkBitrateCeiling.takeIf { adaptive },
                 displayModeSwitchAllowed = !guide &&
                     capabilities.display.modeSwitchSupported &&
-                    (preferences.display.frameRate != FrameRatePreference.OFF ||
+                    (effectiveFrameRate != FrameRatePreference.OFF ||
                         preferences.display.resolutionMatching),
+                retainDisplayMode = guide && live,
                 resolutionMatchingEnabled = !guide && preferences.display.resolutionMatching,
-                frameRatePreference = if (guide) FrameRatePreference.OFF else preferences.display.frameRate,
+                frameRatePreference = if (guide) FrameRatePreference.OFF else effectiveFrameRate,
                 hdrPreference = effectiveHdr,
                 decoderPreference = preferences.decoder,
                 softwareDecodeFallbackAllowed = preferences.softwareDecodeFallback &&
@@ -636,6 +646,7 @@ object PlaybackRequirementsDiffClassifier {
             ) add(RequirementsField.ADAPTIVE_QUALITY)
             if (previous.bitrateCeiling != next.bitrateCeiling) add(RequirementsField.NETWORK_BITRATE)
             if (previous.displayModeSwitchAllowed != next.displayModeSwitchAllowed ||
+                previous.retainDisplayMode != next.retainDisplayMode ||
                 previous.resolutionMatchingEnabled != next.resolutionMatchingEnabled ||
                 previous.frameRatePreference != next.frameRatePreference
             ) add(RequirementsField.DISPLAY_OUTPUT)
