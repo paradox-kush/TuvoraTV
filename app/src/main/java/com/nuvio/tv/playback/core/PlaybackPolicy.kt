@@ -121,6 +121,8 @@ class PlaybackPolicy(
     fun watchdogFailure(
         phase: WatchdogPhase,
         evidence: StreamEvidence,
+        live: Boolean = false,
+        reconnecting: Boolean = false,
     ): PlaybackFailure = when (phase) {
         WatchdogPhase.WAITING_FOR_SURFACE -> PlaybackFailure(
             code = FailureCode.SURFACE_LOST,
@@ -159,7 +161,14 @@ class PlaybackPolicy(
             code = FailureCode.NO_PROGRESS,
             domain = FailureDomain.VIDEO_RENDERER_SURFACE,
             phase = FailurePhase.PLAYBACK,
-            retryability = Retryability.HANDOFF_ELIGIBLE,
+            // Live: a frozen picture with no buffering signal is usually the source stalling, so
+            // reconnect with a fresh link first (owner decision 2026-10-02). A freeze during that
+            // reconnect, or on VOD, hands off to the other engine.
+            retryability = if (live && !reconnecting) {
+                Retryability.RETRYABLE_WITH_FRESH_REQUEST
+            } else {
+                Retryability.HANDOFF_ELIGIBLE
+            },
         )
     }
 
