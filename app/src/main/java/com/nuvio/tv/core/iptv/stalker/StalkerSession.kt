@@ -88,11 +88,12 @@ class StalkerSession(
     @Volatile private var lastFailedReauthAtMs: Long = 0L
     @Volatile private var resolvedEndpoint: String? = null   // e.g. "/portal.php"
     /**
-     * The STB identity this portal accepted. Starts at the one we have always sent, so a portal that
-     * already works is unaffected; a rejection walks [StalkerMagPresets.LADDER]. Session-scoped: a
+     * The STB identity this portal accepted. Starts at the one we have always sent (or the Model / HW
+     * Version the user pinned — F46), so a portal that already works is unaffected; a rejection walks
+     * [StalkerMagPresets.LADDER] (never away from a pinned identity). Session-scoped: a
      * relaunch re-walks it, which costs one rejected request on the minority of portals that need it.
      */
-    @Volatile private var magPreset: StalkerMagPreset = StalkerMagPresets.DEFAULT
+    @Volatile private var magPreset: StalkerMagPreset = StalkerMagPresets.initial(account.stbModel, account.hwVersion)
 
     private val authMutex = Mutex()
 
@@ -121,7 +122,9 @@ class StalkerSession(
         StalkerProtocol.deriveDeviceIdentity(
             mac = account.macAddress,
             serialOverride = account.serialNumber,
-            deviceIdOverride = account.deviceId
+            deviceIdOverride = account.deviceId,
+            deviceId2Override = account.deviceId2,
+            signatureOverride = account.signature,
         )
 
     /** The `.../c/` Referer for the currently-resolved endpoint (falls back to the first candidate). */

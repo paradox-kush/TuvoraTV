@@ -224,7 +224,12 @@ class XtreamSettingsViewModel @Inject constructor(
         val password: String = "",
         val serialNumber: String = "",
         val deviceId: String = "",
-        val sendDeviceId: Boolean = true
+        val sendDeviceId: Boolean = true,
+        // F46: the rest of a real box's identity (blank = derived / preset, as before).
+        val deviceId2: String = "",
+        val signature: String = "",
+        val stbModel: String = "",
+        val hwVersion: String = "",
     )
 
     /** Build a Stalker XtreamAccount from the form fields (id = the shared Step 0 key stalker|portal|MAC). */
@@ -246,7 +251,11 @@ class XtreamSettingsViewModel @Inject constructor(
             stalkerPassword = fields.password.trim(),
             serialNumber = fields.serialNumber.trim(),
             deviceId = fields.deviceId.trim(),
-            sendDeviceId = fields.sendDeviceId
+            sendDeviceId = fields.sendDeviceId,
+            deviceId2 = fields.deviceId2.trim(),
+            signature = fields.signature.trim(),
+            stbModel = fields.stbModel.trim(),
+            hwVersion = fields.hwVersion.trim(),
         )
     }
 

@@ -71,5 +71,6 @@ class StalkerSessionManager @Inject constructor(
      *  edited DNS choice wouldn't reach the portal until the process restarted. */
     private fun fingerprint(a: XtreamAccount): String =
         listOf(a.portalUrl, a.macAddress, a.serialNumber, a.deviceId, a.sendDeviceId.toString(),
+            a.deviceId2, a.signature, a.stbModel, a.hwVersion,
             a.stalkerUsername, a.stalkerPassword, a.dnsProvider, a.backupUrls.orEmpty().joinToString(",")).joinToString("|")
 }

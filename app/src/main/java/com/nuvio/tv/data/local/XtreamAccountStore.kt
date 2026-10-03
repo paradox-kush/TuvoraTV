@@ -382,6 +382,11 @@ private fun XtreamAccount.withDecodeDefaults(
     stalkerPassword = stalkerPassword ?: "",
     serialNumber = serialNumber ?: "",
     deviceId = deviceId ?: "",
+    // F46 identity fields: missing in pre-F46 JSON -> null; same load-bearing elvis.
+    deviceId2 = deviceId2 ?: "",
+    signature = signature ?: "",
+    stbModel = stbModel ?: "",
+    hwVersion = hwVersion ?: "",
     // sendDeviceId is a primitive boolean: Gson can't tell missing from an explicit false. Present ->
     // keep the stored value (incl. a deliberate false); missing (pre-P4 JSON) -> the `true` default.
     sendDeviceId = if (hadSendDeviceId) sendDeviceId else true,

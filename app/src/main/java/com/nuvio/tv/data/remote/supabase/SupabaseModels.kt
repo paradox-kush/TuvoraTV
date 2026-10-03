@@ -76,6 +76,11 @@ data class SupabaseIptvPlaylist(
     @SerialName("serial_number") val serialNumber: String? = null,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("send_device_id") val sendDeviceId: Boolean = true,
+    // F46 (nuvio-backend 20261003120000_iptv_playlists_stalker_identity.sql)
+    @SerialName("device_id2") val deviceId2: String? = null,
+    val signature: String? = null,
+    @SerialName("stb_model") val stbModel: String? = null,
+    @SerialName("hw_version") val hwVersion: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("updated_at") val updatedAt: String? = null
 )

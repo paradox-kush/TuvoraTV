@@ -1058,6 +1058,11 @@ private fun XtreamAddDialog(
     var serial by remember { mutableStateOf(initial?.serialNumber ?: "") }
     var deviceId by remember { mutableStateOf(initial?.deviceId ?: "") }
     var sendDeviceId by remember { mutableStateOf(initial?.sendDeviceId ?: true) }
+    // F46: the rest of a real box's identity (all optional, blank = derived / preset).
+    var deviceId2 by remember { mutableStateOf(initial?.deviceId2 ?: "") }
+    var signature by remember { mutableStateOf(initial?.signature ?: "") }
+    var stbModel by remember { mutableStateOf(initial?.stbModel ?: "") }
+    var hwVersion by remember { mutableStateOf(initial?.hwVersion ?: "") }
 
     // Step 0.3: backup server rows as typed, priority order (validated live; hidden for M3U files).
     var backupRows by remember { mutableStateOf(initial?.backupUrls.orEmpty()) }
@@ -1145,7 +1150,11 @@ private fun XtreamAddDialog(
                             password = stalkerPass.trim(),
                             serialNumber = serial.trim(),
                             deviceId = deviceId.trim(),
-                            sendDeviceId = sendDeviceId
+                            sendDeviceId = sendDeviceId,
+                            deviceId2 = deviceId2.trim(),
+                            signature = signature.trim(),
+                            stbModel = stbModel.trim(),
+                            hwVersion = hwVersion.trim(),
                         ),
                         name.trim().ifEmpty { null },
                         options()
@@ -1251,6 +1260,10 @@ private fun XtreamAddDialog(
                     password = stalkerPass, onPasswordChange = { stalkerPass = it },
                     serial = serial, onSerialChange = { serial = it },
                     deviceId = deviceId, onDeviceIdChange = { deviceId = it },
+                    deviceId2 = deviceId2, onDeviceId2Change = { deviceId2 = it },
+                    signature = signature, onSignatureChange = { signature = it },
+                    stbModel = stbModel, onStbModelChange = { stbModel = it },
+                    hwVersion = hwVersion, onHwVersionChange = { hwVersion = it },
                     sendDeviceId = sendDeviceId, onSendDeviceIdChange = { sendDeviceId = it },
                     firstFieldFocus = firstFieldFocus,
                     onSubmit = submit
@@ -1779,6 +1792,10 @@ private fun StalkerSourceFields(
     password: String, onPasswordChange: (String) -> Unit,
     serial: String, onSerialChange: (String) -> Unit,
     deviceId: String, onDeviceIdChange: (String) -> Unit,
+    deviceId2: String, onDeviceId2Change: (String) -> Unit,
+    signature: String, onSignatureChange: (String) -> Unit,
+    stbModel: String, onStbModelChange: (String) -> Unit,
+    hwVersion: String, onHwVersionChange: (String) -> Unit,
     sendDeviceId: Boolean, onSendDeviceIdChange: (Boolean) -> Unit,
     firstFieldFocus: FocusRequester,
     onSubmit: () -> Unit
@@ -1795,13 +1812,17 @@ private fun StalkerSourceFields(
     XtreamField(password, onPasswordChange, "Password (optional)", isPassword = true, onSubmit = onSubmit)
     XtreamField(serial, onSerialChange, "Serial Number (optional)", onSubmit = onSubmit)
     XtreamField(deviceId, onDeviceIdChange, "Device ID (optional)", onSubmit = onSubmit)
+    XtreamField(deviceId2, onDeviceId2Change, "Device ID 2 (optional)", onSubmit = onSubmit)
+    XtreamField(signature, onSignatureChange, "Signature (optional)", onSubmit = onSubmit)
+    XtreamField(stbModel, onStbModelChange, "STB Model (optional, e.g. MAG254)", onSubmit = onSubmit)
+    XtreamField(hwVersion, onHwVersionChange, "Hardware Version (optional, e.g. 2.6-IB-00)", onSubmit = onSubmit)
     SettingsActionRow(
         title = "Send Device ID",
         subtitle = "Include device identifier in portal requests",
         value = if (sendDeviceId) "On" else "Off",
         onClick = { onSendDeviceIdChange(!sendDeviceId) }
     )
-    FormHelperText("Enter your portal URL and the MAC registered with the provider. Serial / Device ID override the values derived from the MAC.")
+    FormHelperText("Enter your portal URL and the MAC registered with the provider. The serial, device IDs and signature are derived from the MAC and Tuvora presents itself as a MAG250 — only fill in the optional fields if your provider (or your old box) gave you specific values. Long values are easier to enter from your phone: use \"Add from phone\".")
 }
 
 /** A virtual STB MAC in Infomir's 00:1A:79 range (the OUI most Stalker portals accept). */
