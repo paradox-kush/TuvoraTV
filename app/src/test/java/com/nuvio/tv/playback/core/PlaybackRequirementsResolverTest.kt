@@ -448,6 +448,71 @@ class PlaybackRequirementsResolverTest {
     }
 
     @Test
+    fun `Media3 ranks after libmpv when audio processing it cannot apply is requested`() = runTest {
+        // Field (2026-10-02, onn + SWTV): every Media3 attempt failed AUDIO_OUTPUT_FAILED at
+        // ENGINE_START because the user had an audio delay / downmix / normalization set, which
+        // the Media3 adapter refuses. The policy picked a graph certain to be refused.
+        val delayed = PlaybackPreferences(audio = AudioPreference(delayMs = 120))
+        val vod = resolve(input(summary = requestSummary(contentType = ContentType.VOD), preferences = delayed))
+        assertEquals(EngineType.LIBMPV, vod.preferredEngineOrder.first())
+        assertEquals(120L, vod.audioDelayMs)
+
+        val plain = resolve(input(summary = requestSummary(contentType = ContentType.VOD)))
+        assertEquals(EngineType.MEDIA3, plain.preferredEngineOrder.first())
+    }
+
+    @Test
+    fun `a Media3-only fallback drops cosmetic processing so video still starts`() = runTest {
+        // Owner decision 2026-10-02: video is priority. When libmpv has failed (or is otherwise
+        // ineligible), Media3 starts without the processing it cannot apply instead of failing.
+        val processing = PlaybackPreferences(
+            audio = AudioPreference(downmixToStereo = true, normalization = true, delayMs = 120),
+            subtitles = SubtitlePreference(delayMs = 500),
+        )
+        val resolved = resolve(input(preferences = processing, eligibleEngines = setOf(EngineType.MEDIA3)))
+
+        assertEquals(setOf(EngineType.MEDIA3), resolved.eligibleEngines)
+        assertFalse(resolved.audioDownmixToStereo)
+        assertFalse(resolved.audioNormalization)
+        assertEquals(0L, resolved.audioDelayMs)
+        assertEquals(0L, resolved.subtitleDelayMs)
+    }
+
+    @Test
+    fun `live fullscreen matches the display frame rate automatically even when stored OFF`() = runTest {
+        // Owner decision 2026-10-02: live frame-rate matching is automatic. Upgraded installs
+        // carry OFF from the one-shot legacy import, and no screen can change it, so OFF must not
+        // leave 25p channels juddering on a 59.94 Hz output.
+        val storedOff = PlaybackPreferences(display = DisplayPreference(frameRate = FrameRatePreference.OFF))
+        val resolved = resolve(input(profile = SessionProfile.FULLSCREEN, preferences = storedOff))
+
+        assertTrue(resolved.displayModeSwitchAllowed)
+        assertEquals(FrameRatePreference.ON_START, resolved.frameRatePreference)
+        assertFalse(resolved.retainDisplayMode)
+    }
+
+    @Test
+    fun `live guide keeps the matched display mode without starting a switch`() = runTest {
+        val resolved = resolve(input(profile = SessionProfile.GUIDE, previewViewport = VideoDimensions(640, 360)))
+
+        assertFalse(resolved.displayModeSwitchAllowed)
+        assertEquals(FrameRatePreference.OFF, resolved.frameRatePreference)
+        assertTrue("returning to the guide must not cost an HDMI re-switch", resolved.retainDisplayMode)
+    }
+
+    @Test
+    fun `VOD keeps the stored frame-rate preference`() = runTest {
+        val storedOff = PlaybackPreferences(display = DisplayPreference(frameRate = FrameRatePreference.OFF))
+        val resolved = resolve(
+            input(summary = requestSummary(contentType = ContentType.VOD), preferences = storedOff),
+        )
+
+        assertFalse(resolved.displayModeSwitchAllowed)
+        assertEquals(FrameRatePreference.OFF, resolved.frameRatePreference)
+        assertFalse(resolved.retainDisplayMode)
+    }
+
+    @Test
     fun `live guide to fullscreen promote with default settings applies in place`() = runTest {
         // Field regression (1.5.9): every preview->fullscreen promote tore the player down and
         // rebuilt it (~3.5s black). With default settings the resolved GUIDE and FULLSCREEN

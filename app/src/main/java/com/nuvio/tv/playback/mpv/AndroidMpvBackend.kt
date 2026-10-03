@@ -63,7 +63,11 @@ internal sealed interface MpvBackendEvent {
     data class VideoDecoderInitialized(val decoderName: String) : MpvBackendEvent
     data class VideoInputFormatChanged(val sampleMimeType: String?) : MpvBackendEvent
     data class VideoFrameRateChanged(val frameRate: Float) : MpvBackendEvent
-    data class VideoSizeChanged(val width: Int, val height: Int) : MpvBackendEvent
+    data class VideoSizeChanged(
+        val width: Int,
+        val height: Int,
+        val pixelWidthHeightRatio: Float = 1f,
+    ) : MpvBackendEvent
     data class Ended(val reason: PlaybackEndReason) : MpvBackendEvent
     data class Failed(val failure: PlaybackFailure) : MpvBackendEvent
 }
@@ -180,6 +184,7 @@ internal class AndroidMpvBackend(
     @Volatile private var terminalEventsSuppressed = false
     private var videoWidth = 0
     private var videoHeight = 0
+    private var videoPixelAspect = 1f
     private var lastVideoFrameRate: Float? = null
     private var paused = plan.startPaused
     private var positionMs = plan.startPositionMs
@@ -546,6 +551,10 @@ internal class AndroidMpvBackend(
                     bufferedDurationMs = (value * 1_000).toLong().coerceAtLeast(0)
                     emitTimelineFacts()
                 }
+                "video-params/par" -> if (value.isFinite() && value > 0.0) {
+                    videoPixelAspect = value.toFloat()
+                    emitVideoSizeIfKnown()
+                }
                 "speed" -> if (value.isFinite() && value.toFloat() in 0.25f..4f) {
                     _events.tryEmit(MpvBackendEvent.PlaybackRateChanged(value.toFloat()))
                 }
@@ -616,6 +625,7 @@ internal class AndroidMpvBackend(
         firstAudioSent = false
         videoWidth = 0
         videoHeight = 0
+        videoPixelAspect = 1f
         lastVideoFrameRate = null
         positionMs = 0
         durationMs = null
@@ -635,6 +645,9 @@ internal class AndroidMpvBackend(
         core.observeLong("frame-drop-count")
         core.observeLong("video-params/w")
         core.observeLong("video-params/h")
+        // Pixel aspect (SAR) as mpv resolved it from container/codec; mediacodec_embed and
+        // MediaCodec ignore it when drawing, so the host shapes the surface from this.
+        core.observeDouble("video-params/par")
         core.observeDouble("audio-pts")
         core.observeDouble("time-pos")
         core.observeDouble("duration")
@@ -649,7 +662,7 @@ internal class AndroidMpvBackend(
 
     private fun emitVideoSizeIfKnown() {
         if (videoWidth > 0 && videoHeight > 0) {
-            _events.tryEmit(MpvBackendEvent.VideoSizeChanged(videoWidth, videoHeight))
+            _events.tryEmit(MpvBackendEvent.VideoSizeChanged(videoWidth, videoHeight, videoPixelAspect))
         }
     }
 

@@ -140,4 +140,32 @@ class PlaybackDiagnosticsAdapterTest {
                 .any { forbidden -> key.contains(forbidden, ignoreCase = true) }
         })
     }
+
+    @Test
+    fun `routine success diagnostics stay off the network while failures and recovery upload`() {
+        // ~98% of clean_playback_diagnostic volume (~114k events/week) was success-path logging,
+        // about five events per zap. The per-session quality summary replaces it.
+        val routine = listOf(
+            PlaybackDiagnosticCode.REQUEST_RESOLUTION_STARTED,
+            PlaybackDiagnosticCode.REQUEST_RESOLVED,
+            PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED,
+            PlaybackDiagnosticCode.RELEASE_BARRIER_COMPLETED,
+            PlaybackDiagnosticCode.REQUIREMENTS_CHANGE_RESOLVED,
+            PlaybackDiagnosticCode.GRAPH_SELECTED,
+        )
+        routine.forEach { code ->
+            val formatted = PlaybackDiagnosticFormatter.format(PlaybackDiagnosticEvent(generation = 1, code = code))
+            assertFalse("$code must not upload", PlaybackDiagnosticUploadPolicy.shouldUpload(formatted))
+        }
+        val kept = listOf(
+            PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+            PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+            PlaybackDiagnosticCode.LIVE_RECONNECT_ATTEMPT,
+            PlaybackDiagnosticCode.PLAYBACK_OUTPUT_NONFATAL,
+        )
+        kept.forEach { code ->
+            val formatted = PlaybackDiagnosticFormatter.format(PlaybackDiagnosticEvent(generation = 1, code = code))
+            assertTrue("$code must upload", PlaybackDiagnosticUploadPolicy.shouldUpload(formatted))
+        }
+    }
 }

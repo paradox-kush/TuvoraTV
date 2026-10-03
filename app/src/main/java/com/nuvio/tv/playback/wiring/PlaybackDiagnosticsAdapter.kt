@@ -4,6 +4,8 @@ import android.util.Log
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.playback.core.PlaybackDiagnosticEvent
 import com.nuvio.tv.playback.core.PlaybackDiagnostics
+import com.nuvio.tv.playback.core.PlaybackDiagnosticCode
+import com.nuvio.tv.playback.core.PlaybackQualitySummary
 import com.nuvio.tv.core.analytics.PostHogPrivacy
 import com.posthog.PostHog
 
@@ -72,6 +74,40 @@ class FormattingPlaybackDiagnostics(
 object PostHogPlaybackDiagnosticSink : PlaybackDiagnosticSink {
     override fun capture(event: FormattedPlaybackDiagnostic) {
         if (PostHogPrivacy.shouldDropEvent(event.eventName)) return
+        if (!PlaybackDiagnosticUploadPolicy.shouldUpload(event)) return
         PostHog.capture(event.eventName, properties = PostHogPrivacy.sanitize(event.properties))
+    }
+}
+
+/**
+ * Routine success-path diagnostics were ~98% of clean playback telemetry (~114k events/week,
+ * about five per zap) and answered nothing the per-session quality summary does not. They stay
+ * in the debug log; failures, watchdogs, recovery and output problems still upload.
+ */
+object PlaybackDiagnosticUploadPolicy {
+    private val ROUTINE_CODES = setOf(
+        PlaybackDiagnosticCode.REQUEST_RESOLUTION_STARTED.name,
+        PlaybackDiagnosticCode.REQUEST_RESOLVED.name,
+        PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED.name,
+        PlaybackDiagnosticCode.RELEASE_BARRIER_COMPLETED.name,
+        PlaybackDiagnosticCode.REQUIREMENTS_CHANGE_RESOLVED.name,
+        PlaybackDiagnosticCode.GRAPH_SELECTED.name,
+    )
+
+    fun shouldUpload(event: FormattedPlaybackDiagnostic): Boolean =
+        event.properties["diagnostic_code"] !in ROUTINE_CODES
+}
+
+/** Receives one playback-quality summary per host session, at release. */
+fun interface PlaybackQualityReporter {
+    fun report(summary: PlaybackQualitySummary)
+}
+
+object PostHogPlaybackQualityReporter : PlaybackQualityReporter {
+    const val EVENT = "clean_playback_session"
+
+    override fun report(summary: PlaybackQualitySummary) {
+        if (PostHogPrivacy.shouldDropEvent(EVENT)) return
+        PostHog.capture(EVENT, properties = PostHogPrivacy.sanitize(summary.toProperties()))
     }
 }

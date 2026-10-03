@@ -121,6 +121,8 @@ class PlaybackPolicy(
     fun watchdogFailure(
         phase: WatchdogPhase,
         evidence: StreamEvidence,
+        live: Boolean = false,
+        reconnecting: Boolean = false,
     ): PlaybackFailure = when (phase) {
         WatchdogPhase.WAITING_FOR_SURFACE -> PlaybackFailure(
             code = FailureCode.SURFACE_LOST,
@@ -159,7 +161,14 @@ class PlaybackPolicy(
             code = FailureCode.NO_PROGRESS,
             domain = FailureDomain.VIDEO_RENDERER_SURFACE,
             phase = FailurePhase.PLAYBACK,
-            retryability = Retryability.HANDOFF_ELIGIBLE,
+            // Live: a frozen picture with no buffering signal is usually the source stalling, so
+            // reconnect with a fresh link first (owner decision 2026-10-02). A freeze during that
+            // reconnect, or on VOD, hands off to the other engine.
+            retryability = if (live && !reconnecting) {
+                Retryability.RETRYABLE_WITH_FRESH_REQUEST
+            } else {
+                Retryability.HANDOFF_ELIGIBLE
+            },
         )
     }
 
@@ -448,7 +457,25 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
         // setting, and the legacy importer marks most upgraded devices CUSTOM without the user
         // ever choosing a buffer; honouring it in fullscreen made every guide->fullscreen promote
         // rebuild the player just to resize a buffer (field: changed_fields=BUFFERING on the Onn).
-        val effectiveBuffering = if (input.requestSummary.contentType == ContentType.LIVE) {
+        val live = input.requestSummary.contentType == ContentType.LIVE
+        // Media3 refuses these at ENGINE_START (no reliable generic implementation on the TV path).
+        val media3UnsupportedProcessing = (preferences.audio.downmixToStereo && pcmProcessingAllowed) ||
+            (preferences.audio.normalization && pcmProcessingAllowed) ||
+            preferences.audio.delayMs != 0L ||
+            preferences.subtitles.delayMs != 0L
+        // Video is priority (owner decision 2026-10-02): when Media3 is the only engine left — a
+        // handoff after libmpv failed, DRM, or an explicit pin — start it without the cosmetic
+        // processing it cannot apply rather than fail every attempt.
+        val dropMedia3Processing = media3UnsupportedProcessing && eligibleEngines == setOf(EngineType.MEDIA3)
+        // Live frame-rate matching is automatic (owner decision 2026-10-02): 25p/50p channels on a
+        // 59.94 Hz output judder on every pan, and upgraded installs carry a stored OFF from the
+        // one-shot legacy import that no screen can change. A stronger stored choice still wins.
+        val effectiveFrameRate = if (live && preferences.display.frameRate == FrameRatePreference.OFF) {
+            FrameRatePreference.ON_START
+        } else {
+            preferences.display.frameRate
+        }
+        val effectiveBuffering = if (live) {
             BufferingPreference.LOW_LATENCY_LIVE
         } else {
             preferences.buffering
@@ -464,10 +491,11 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
                 bitrateCeiling = environment.resourceBudget.networkBitrateCeiling.takeIf { adaptive },
                 displayModeSwitchAllowed = !guide &&
                     capabilities.display.modeSwitchSupported &&
-                    (preferences.display.frameRate != FrameRatePreference.OFF ||
+                    (effectiveFrameRate != FrameRatePreference.OFF ||
                         preferences.display.resolutionMatching),
+                retainDisplayMode = guide && live,
                 resolutionMatchingEnabled = !guide && preferences.display.resolutionMatching,
-                frameRatePreference = if (guide) FrameRatePreference.OFF else preferences.display.frameRate,
+                frameRatePreference = if (guide) FrameRatePreference.OFF else effectiveFrameRate,
                 hdrPreference = effectiveHdr,
                 decoderPreference = preferences.decoder,
                 softwareDecodeFallbackAllowed = preferences.softwareDecodeFallback &&
@@ -482,16 +510,18 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
                 customBuffer = preferences.customBuffer.takeIf {
                     effectiveBuffering == BufferingPreference.CUSTOM
                 },
-                audioDownmixToStereo = preferences.audio.downmixToStereo && pcmProcessingAllowed,
-                audioNormalization = preferences.audio.normalization && pcmProcessingAllowed,
+                audioDownmixToStereo = preferences.audio.downmixToStereo && pcmProcessingAllowed &&
+                    !dropMedia3Processing,
+                audioNormalization = preferences.audio.normalization && pcmProcessingAllowed &&
+                    !dropMedia3Processing,
                 audioSkipSilence = preferences.audio.skipSilence && pcmProcessingAllowed,
                 preferredAudioLanguage = preferences.audio.preferredLanguage,
-                audioDelayMs = preferences.audio.delayMs,
+                audioDelayMs = if (dropMedia3Processing) 0L else preferences.audio.delayMs,
                 preferredSubtitleLanguage = preferences.subtitles.preferredLanguage,
-                subtitleDelayMs = preferences.subtitles.delayMs,
+                subtitleDelayMs = if (dropMedia3Processing) 0L else preferences.subtitles.delayMs,
                 gpuRenderingAllowed = gpuAllowed,
                 eligibleEngines = eligibleEngines,
-                preferredEngineOrder = resolveEngineOrder(input, eligibleEngines),
+                preferredEngineOrder = resolveEngineOrder(input, eligibleEngines, media3UnsupportedProcessing),
                 allowedSurfaceModes = allowedSurfaces,
                 secureOutputRequired = secureOutputRequired,
                 resourceBudget = environment.resourceBudget,
@@ -560,6 +590,7 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
     private fun resolveEngineOrder(
         input: PlaybackRequirementsInput,
         eligible: Set<EngineType>,
+        media3UnsupportedProcessing: Boolean = false,
     ): List<EngineType> {
         val explicit = when (input.effectivePreferences.engine) {
             EnginePreference.AUTO -> emptyList()
@@ -573,7 +604,12 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
         // Environment order is deterministic compatibility/history evidence. It therefore ranks
         // after an explicit user override but before the product default.
         val requested = explicit + input.environment.preferredEngineOrder + productDefault
-        return requested.distinct().filter(eligible::contains)
+        val ordered = requested.distinct().filter(eligible::contains)
+        // Never lead with a graph the adapter is certain to refuse; an explicit pin still wins.
+        if (media3UnsupportedProcessing && explicit.isEmpty() && EngineType.LIBMPV in ordered) {
+            return listOf(EngineType.LIBMPV) + ordered.filter { it != EngineType.LIBMPV }
+        }
+        return ordered
     }
 
     private fun resolveAdaptiveCeiling(
@@ -636,6 +672,7 @@ object PlaybackRequirementsDiffClassifier {
             ) add(RequirementsField.ADAPTIVE_QUALITY)
             if (previous.bitrateCeiling != next.bitrateCeiling) add(RequirementsField.NETWORK_BITRATE)
             if (previous.displayModeSwitchAllowed != next.displayModeSwitchAllowed ||
+                previous.retainDisplayMode != next.retainDisplayMode ||
                 previous.resolutionMatchingEnabled != next.resolutionMatchingEnabled ||
                 previous.frameRatePreference != next.frameRatePreference
             ) add(RequirementsField.DISPLAY_OUTPUT)

@@ -32,6 +32,10 @@ internal sealed interface AndroidDisplayModeSelection {
 /** Pure, deterministic display-mode policy. It consumes engine facts and never probes a stream. */
 internal object AndroidDisplayModeSelector {
     private const val MIN_REFRESH_TOLERANCE_HZ = 0.08f
+    private const val MAX_OUTPUT_REFRESH_HZ = 120.5f
+    private const val MIN_COMFORTABLE_REFRESH_HZ = 47f
+    private const val PULLDOWN_MULTIPLIER = 2.5f
+    private val FILM_RATE_RANGE = 23.5f..24.5f
     private val fallbackCadenceRatios = floatArrayOf(1f, 2f, 2.5f, 3f, 4f, 5f, 6f)
 
     fun select(input: AndroidDisplayModeSelectionInput): AndroidDisplayModeSelection {
@@ -48,15 +52,16 @@ internal object AndroidDisplayModeSelector {
             return AndroidDisplayModeSelection.NoCompatibleMode
         }
         val selected: AndroidDisplayMode = (if (frameRate != null) {
-            listOf(1f, 2f, 2.5f)
+            val rateCandidates = candidates.filter { it.isAcceptableOutputFor(frameRate) || it.modeId == current.modeId }
+            cadenceMultipliers(frameRate)
                 .firstNotNullOfOrNull { multiplier ->
                     bestTargetMatch(
-                        modes = candidates,
+                        modes = rateCandidates,
                         target = frameRate * multiplier,
                         currentModeId = current.modeId,
                     )
                 }
-                ?: candidates.minWithOrNull(
+                ?: rateCandidates.minWithOrNull(
                     compareBy<AndroidDisplayMode>(
                         { fallbackCadenceError(it.refreshRate, frameRate) },
                         { if (it.modeId == current.modeId) 0 else 1 },
@@ -124,6 +129,20 @@ internal object AndroidDisplayModeSelector {
             )
             ?.first
     }
+
+    /**
+     * Highest exact integer multiple first (25 fps -> 50 Hz before 25 Hz, 24 -> 120/96/72/48/24),
+     * then 2.5x pulldown. This is what Kodi's default whitelist, SmartTube, Nova, Just Player and
+     * Apple TV choose: an even cadence without dropping the whole UI to a 25/30 Hz output.
+     */
+    private fun cadenceMultipliers(frameRate: Float): List<Float> {
+        val highest = (MAX_OUTPUT_REFRESH_HZ / frameRate).toInt().coerceAtLeast(1)
+        return (highest downTo 1).map { it.toFloat() } + PULLDOWN_MULTIPLIER
+    }
+
+    /** Below ~48 Hz the UI and remote feel sluggish; only film content earns a 24 Hz output. */
+    private fun AndroidDisplayMode.isAcceptableOutputFor(frameRate: Float): Boolean =
+        refreshRate >= MIN_COMFORTABLE_REFRESH_HZ || frameRate in FILM_RATE_RANGE
 
     private fun fallbackCadenceError(refreshRate: Float, frameRate: Float): Float {
         val ratio = refreshRate / frameRate

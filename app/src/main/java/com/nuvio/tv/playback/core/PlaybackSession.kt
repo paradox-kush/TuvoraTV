@@ -1672,7 +1672,12 @@ class PlaybackSession(
         phase: PlaybackPolicy.WatchdogPhase,
     ) {
         val evidence = machine.evidence ?: return
-        val classified = policy.watchdogFailure(phase, evidence)
+        val classified = policy.watchdogFailure(
+            phase,
+            evidence,
+            live = machine.request?.contentType == ContentType.LIVE,
+            reconnecting = machine.snapshot.isReconnecting,
+        )
         val failure = if (machine.snapshot.isReconnecting) {
             classified.copy(
                 code = FailureCode.NO_PROGRESS,

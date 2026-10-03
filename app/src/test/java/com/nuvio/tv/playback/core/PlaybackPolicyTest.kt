@@ -186,6 +186,35 @@ class PlaybackPolicyTest {
     }
 
     @Test
+    fun `a live picture freeze reconnects with a fresh link before any engine handoff`() {
+        // Owner decision 2026-10-02: for live IPTV a frozen picture with no buffering signal is
+        // usually the source stalling, so the first answer is a fresh link on the same engine.
+        // A freeze during that reconnect falls through to the engine handoff.
+        val raw = StreamEvidence(
+            delivery = EvidenceFact(DeliveryType.RAW_TRANSPORT_STREAM, EvidenceProvenance.EXTRACTOR_CONFIRMED),
+        )
+        val liveFreeze = policy.watchdogFailure(
+            PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS,
+            raw,
+            live = true,
+            reconnecting = false,
+        )
+        assertEquals(FailureCode.NO_PROGRESS, liveFreeze.code)
+        assertEquals(Retryability.RETRYABLE_WITH_FRESH_REQUEST, liveFreeze.retryability)
+
+        val freezeWhileReconnecting = policy.watchdogFailure(
+            PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS,
+            raw,
+            live = true,
+            reconnecting = true,
+        )
+        assertEquals(Retryability.HANDOFF_ELIGIBLE, freezeWhileReconnecting.retryability)
+
+        val vodFreeze = policy.watchdogFailure(PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS, raw)
+        assertEquals(Retryability.HANDOFF_ELIGIBLE, vodFreeze.retryability)
+    }
+
+    @Test
     fun `runtime video truth is only an advancing same-generation rendered frame counter`() {
         fun metrics(generation: Long, frames: Long?) = PlaybackEngineMetricsSnapshot(
             generation = generation,

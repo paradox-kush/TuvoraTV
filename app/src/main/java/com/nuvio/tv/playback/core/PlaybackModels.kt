@@ -575,6 +575,11 @@ data class PlaybackRequirements(
     val adaptiveDimensionCeiling: VideoDimensions? = null,
     val bitrateCeiling: Long? = null,
     val displayModeSwitchAllowed: Boolean,
+    /**
+     * When switching is not allowed, keep a mode this session already matched instead of
+     * restoring the original (the live guide: no HDMI re-switch on every promote/demote).
+     */
+    val retainDisplayMode: Boolean = false,
     val resolutionMatchingEnabled: Boolean = false,
     val frameRatePreference: FrameRatePreference,
     val hdrPreference: HdrPreference,
@@ -874,6 +879,8 @@ sealed interface PlaybackEvent {
         override val generation: Long,
         val width: Int,
         val height: Int,
+        /** Stream pixel aspect (SAR); MediaCodec ignores it when drawing, so the host applies it. */
+        val pixelWidthHeightRatio: Float = 1f,
     ) : PlaybackEvent
     data class PlaybackEnded(
         override val generation: Long,
@@ -974,6 +981,7 @@ data class VideoOutputFacts(
     val revision: Long = 0,
     val frameRate: Float? = null,
     val dimensions: VideoDimensions? = null,
+    val pixelWidthHeightRatio: Float = 1f,
 ) {
     init {
         require(revision >= 0) { "Video output fact revision must not be negative" }

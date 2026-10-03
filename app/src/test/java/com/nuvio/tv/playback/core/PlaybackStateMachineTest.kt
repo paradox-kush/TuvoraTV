@@ -202,6 +202,26 @@ class PlaybackStateMachineTest {
     }
 
     @Test
+    fun `pixel aspect reaches the output facts and a ratio-only change is a new fact`() {
+        val starting = startingState(ContentType.LIVE, SessionProfile.FULLSCREEN)
+        val sized = PlaybackStateMachine.reduce(
+            starting,
+            PlaybackEvent.VideoSizeChanged(1, 720, 576, 64f / 45f),
+        )
+        assertEquals(64f / 45f, sized.state.snapshot.videoOutputFacts.pixelWidthHeightRatio)
+
+        val reshaped = PlaybackStateMachine.reduce(
+            sized.state,
+            PlaybackEvent.VideoSizeChanged(1, 720, 576, 16f / 15f),
+        )
+        assertEquals(16f / 15f, reshaped.state.snapshot.videoOutputFacts.pixelWidthHeightRatio)
+        assertEquals(
+            sized.state.snapshot.videoOutputFacts.revision + 1,
+            reshaped.state.snapshot.videoOutputFacts.revision,
+        )
+    }
+
+    @Test
     fun `engine restart invalidates old output facts without reusing their revision`() {
         val starting = startingState(ContentType.LIVE, SessionProfile.FULLSCREEN).let { state ->
             state.copy(
