@@ -55,11 +55,18 @@ class LiveFreezeFramePolicyTest {
     }
 
     @Test
-    fun `leaving playback clears the frame`() {
+    fun `a suspended session keeps the frame for the resume`() {
+        // Device (Onn, 2026-10-03): Home then back suspends the session (LIFECYCLE_INACTIVE ->
+        // STOPPED) and resumes the same channel; clearing on STOPPED showed black on return.
+        // Really leaving disposes the host, which removes the frame anyway.
         assertEquals(
-            LiveFreezeFramePolicy.Overlay.CLEARED,
-            policy.overlay(snapshot(PlaybackState.STOPPED, generation = 1, rendered = false)),
+            LiveFreezeFramePolicy.Overlay.FROZEN,
+            policy.overlay(snapshot(PlaybackState.STOPPED, generation = 3, rendered = false)),
         )
+    }
+
+    @Test
+    fun `a session that never played has nothing to hold`() {
         assertEquals(
             LiveFreezeFramePolicy.Overlay.CLEARED,
             policy.overlay(snapshot(PlaybackState.IDLE, generation = 0, rendered = false)),

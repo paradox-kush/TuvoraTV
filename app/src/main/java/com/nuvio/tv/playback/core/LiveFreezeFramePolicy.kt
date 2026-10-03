@@ -19,12 +19,14 @@ object LiveFreezeFramePolicy {
         /** Terminal failure: keep the frame, dimmed under the error. */
         DIMMED,
 
-        /** Playback ended by the viewer: drop the frame. */
+        /** Nothing has played in this session: drop any frame. */
         CLEARED,
     }
 
     fun overlay(snapshot: PlaybackSnapshot): Overlay = when {
-        snapshot.state == PlaybackState.IDLE || snapshot.state == PlaybackState.STOPPED -> Overlay.CLEARED
+        // STOPPED is also a suspend (Home, then back): hold the frame for the resume. Really leaving
+        // disposes the host, which removes the frame with it.
+        snapshot.state == PlaybackState.IDLE -> Overlay.CLEARED
         snapshot.state == PlaybackState.FAILED -> Overlay.DIMMED
         showsRealVideo(snapshot) -> Overlay.HIDDEN
         else -> Overlay.FROZEN
