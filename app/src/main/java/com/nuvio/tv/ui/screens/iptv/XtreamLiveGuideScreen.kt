@@ -163,6 +163,9 @@ fun LiveGuide(
     var pendingEdgeFocus by remember { mutableStateOf(0) }
     val leadingCellFocus = remember { FocusRequester() }
     val trailingCellFocus = remember { FocusRequester() }
+    // The timeline row's own strip: where the cursor waits when the window holds nothing to press
+    // (the future, or the past of a channel with no archive), so LEFT/RIGHT keep travelling (B114).
+    val timelineStripFocus = remember { FocusRequester() }
     val channelRowFocus = remember { FocusRequester() }
     // Shown only for the airing programme on an archive channel — the one state with two
     // reasonable destinations (see GuideCellIntent).
@@ -184,10 +187,12 @@ fun LiveGuide(
     LaunchedEffect(windowStartMs, pendingEdgeFocus) {
         if (pendingEdgeFocus == 0) return@LaunchedEffect
         val target = if (pendingEdgeFocus < 0) leadingCellFocus else trailingCellFocus
-        // The new window can be empty of actionable cells (an archive that ends here); dropping
-        // back to the channel row is the honest answer rather than trapping the cursor.
-        if (runCatching { target.requestFocus() }.isFailure) {
-            runCatching { channelRowFocus.requestFocus() }
+        // The new window can hold nothing actionable (the future, or the past of a channel with no
+        // archive). The cursor then holds the row's strip and stays in time, so the next LEFT/RIGHT
+        // keeps travelling — dropping it on the channel row made the next RIGHT reset the guide to
+        // now, which is how travel read as impossible (B114). See GuideTimelineNavPolicy.
+        if (!target.requestFocusOrFalse() && !timelineStripFocus.requestFocusOrFalse()) {
+            channelRowFocus.requestFocusOrFalse()
             timelineChannelId = null
         }
         pendingEdgeFocus = 0
@@ -199,8 +204,8 @@ fun LiveGuide(
         timelineChannelId = null
         sheetProgramme = null
         viewModel.resetWindowToLive()
-        if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
-            runCatching { firstChannelFocus.requestFocus() }
+        if (!channelRowFocus.requestFocusOrFalse()) {
+            firstChannelFocus.requestFocusOrFalse()
         }
     }
 
@@ -498,6 +503,7 @@ fun LiveGuide(
                                 },
                                 leadingEdgeFocus = leadingCellFocus,
                                 trailingEdgeFocus = trailingCellFocus,
+                                stripFocus = timelineStripFocus,
                                 nowFraction = if (GuideTimeTravel.containsNow(windowStartMs, nowMs)) {
                                     GuideTimeTravel.nowFraction(windowStartMs, nowMs)
                                 } else null,
@@ -611,8 +617,8 @@ fun LiveGuide(
             fun restoreGuideFocus() {
                 when (notice.target) {
                     is GuideHideUndoPolicy.Target.Channel ->
-                        if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
-                            runCatching { channelListFocus.requestFocus() }
+                        if (!channelRowFocus.requestFocusOrFalse()) {
+                            channelListFocus.requestFocusOrFalse()
                         }
                     is GuideHideUndoPolicy.Target.Group -> runCatching { categoryListFocus.requestFocus() }
                 }
@@ -929,6 +935,8 @@ private fun GuideChannelRow(
     onProgrammeClick: (XtreamProgram) -> Unit,
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
+    /** The timeline strip's requester — where entering lands when no cell is actionable (B114). */
+    stripFocus: FocusRequester? = null,
     nowFraction: Float? = null,
 ) {
     var isFocused by remember { mutableStateOf(false) }
@@ -939,7 +947,11 @@ private fun GuideChannelRow(
     LaunchedEffect(timelineActive) {
         if (timelineActive) {
             leadingEdgeFocus?.let { requester ->
-                if (runCatching { requester.requestFocus() }.isFailure) onLeaveTimeline()
+                // Nothing actionable in this window: hold the strip rather than leaving (which
+                // reset the guide to now and made travel impossible on a no-archive channel).
+                if (!requester.requestFocusOrFalse() && stripFocus?.requestFocusOrFalse() != true) {
+                    onLeaveTimeline()
+                }
             }
         }
     }
@@ -1063,6 +1075,7 @@ private fun GuideChannelRow(
             onTravel = onTravel,
             leadingEdgeFocus = leadingEdgeFocus,
             trailingEdgeFocus = trailingEdgeFocus,
+            stripFocus = stripFocus,
             nowFraction = nowFraction,
         )
     }

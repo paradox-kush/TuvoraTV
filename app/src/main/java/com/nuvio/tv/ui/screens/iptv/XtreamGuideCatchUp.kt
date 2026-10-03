@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -101,6 +103,8 @@ internal fun RowScope.GuideProgrammeCells(
     onTravel: (Int) -> Unit,
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
+    /** Focus target for the strip itself when the window holds nothing actionable (B114). */
+    stripFocus: FocusRequester? = null,
     nowFraction: Float? = null,
 ) {
     val windowEndMs = windowStartMs + GuideTimeTravel.WINDOW_MS
@@ -110,9 +114,25 @@ internal fun RowScope.GuideProgrammeCells(
     val actionable = if (!interactive) emptyList() else visible.filter {
         GuideCellIntent.isFocusable(guideActionFor(it, channel, nowMs, catchUpSupported))
     }
-    val firstActionableStart = actionable.firstOrNull()?.startMs
-    val lastActionableStart = actionable.lastOrNull()?.startMs
+    val actionableStarts = actionable.map { it.startMs }
+    val firstActionableStart = actionableStarts.firstOrNull()
+    val lastActionableStart = actionableStarts.lastOrNull()
     var focusedStart by remember { mutableStateOf<Long?>(null) }
+    // The strip holds the cursor when the window has no cell to stop on, so time travel never
+    // depends on one existing — see GuideTimelineNavPolicy.
+    var stripFocused by remember { mutableStateOf(false) }
+    val stripFocusable = GuideTimelineNavPolicy.stripFocusable(
+        interactive = interactive,
+        hasActionableCell = actionable.isNotEmpty(),
+        stripFocused = stripFocused,
+    )
+    // Cells arriving under a waiting cursor (history landing after the travel) take it over, the
+    // same landing a travel makes.
+    LaunchedEffect(stripFocused, actionable.isNotEmpty()) {
+        if (stripFocused && actionable.isNotEmpty()) {
+            leadingEdgeFocus?.requestFocusOrFalse()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -124,15 +144,48 @@ internal fun RowScope.GuideProgrammeCells(
             // is the way out of the timeline.
             .onPreviewKeyEvent { event ->
                 if (!interactive || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                val here = focusedStart ?: return@onPreviewKeyEvent false
-                when (event.key) {
-                    // Edge presses PAGE (a full window), they do not step a slot — see
-                    // GuideTimeTravel.EDGE_TRAVEL_SLOTS for the field report behind this.
-                    Key.DirectionLeft -> if (here == firstActionableStart) { onTravel(-GuideTimeTravel.EDGE_TRAVEL_SLOTS); true } else false
-                    Key.DirectionRight -> if (here == lastActionableStart) { onTravel(GuideTimeTravel.EDGE_TRAVEL_SLOTS); true } else false
-                    else -> false
+                val direction = when (event.key) {
+                    Key.DirectionLeft -> GuideTimelineNavPolicy.Direction.BACK
+                    Key.DirectionRight -> GuideTimelineNavPolicy.Direction.FORWARD
+                    else -> return@onPreviewKeyEvent false
+                }
+                // Edge presses PAGE (a full window), they do not step a slot — see
+                // GuideTimeTravel.EDGE_TRAVEL_SLOTS for the field report behind this.
+                when (
+                    GuideTimelineNavPolicy.onHorizontalKey(
+                        direction = direction,
+                        focusedCellStart = if (stripFocused) null else focusedStart,
+                        actionableStarts = actionableStarts,
+                    )
+                ) {
+                    GuideTimelineNavPolicy.KeyOutcome.WALK -> false
+                    GuideTimelineNavPolicy.KeyOutcome.TRAVEL_BACK -> { onTravel(-GuideTimeTravel.EDGE_TRAVEL_SLOTS); true }
+                    GuideTimelineNavPolicy.KeyOutcome.TRAVEL_FORWARD -> { onTravel(GuideTimeTravel.EDGE_TRAVEL_SLOTS); true }
                 }
             }
+            // The strip is a focus target on the timeline row only. It stays in the tree for the
+            // whole visit and is switched with canFocus rather than added and removed, so cells
+            // arriving under a focused strip never detach the node that holds the cursor.
+            .then(
+                if (interactive && stripFocus != null) {
+                    Modifier
+                        .focusRequester(stripFocus)
+                        .focusProperties { canFocus = stripFocusable }
+                        .onFocusChanged {
+                            stripFocused = it.isFocused
+                            if (it.isFocused) focusedStart = null
+                        }
+                        // The app's D-pad vocabulary: a focused strip is outlined like a cell.
+                        .border(
+                            if (stripFocused) 2.dp else 0.dp,
+                            if (stripFocused) NuvioTheme.colors.BorderFocused else Color.Transparent,
+                            RoundedCornerShape(NuvioTheme.radii.xs),
+                        )
+                        // clickable for reliable D-pad focus (see GuideCell); OK on an empty
+                        // stretch of time has nothing to do.
+                        .clickable { }
+                } else Modifier
+            )
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
@@ -167,12 +220,12 @@ internal fun RowScope.GuideProgrammeCells(
                         focusable = focusable,
                         // The window's edge cells carry the travel requesters, so a window that has
                         // just scrolled can put the cursor back where the viewer was pushing.
-                        focusRequester = when {
-                            !focusable -> null
-                            p.startMs == firstActionableStart -> leadingEdgeFocus
-                            p.startMs == lastActionableStart -> trailingEdgeFocus
-                            else -> null
-                        },
+                        // A single actionable cell is BOTH edges: forward travel lands on the trailing
+                        // requester, which used to be missing there and dumped the cursor.
+                        focusRequesters = if (!focusable) emptyList() else listOfNotNull(
+                            leadingEdgeFocus.takeIf { p.startMs == firstActionableStart },
+                            trailingEdgeFocus.takeIf { p.startMs == lastActionableStart },
+                        ),
                         onFocused = { focusedStart = p.startMs },
                     )
                     cursor = end
@@ -215,7 +268,7 @@ private fun RowScope.GuideCell(
     filler: Boolean,
     onClick: () -> Unit,
     focusable: Boolean = false,
-    focusRequester: FocusRequester? = null,
+    focusRequesters: List<FocusRequester> = emptyList(),
     onFocused: () -> Unit = {},
 ) {
     var isFocused by remember { mutableStateOf(false) }
@@ -240,7 +293,7 @@ private fun RowScope.GuideCell(
                 if (isFocused) NuvioTheme.colors.BorderFocused else Color.Transparent,
                 RoundedCornerShape(NuvioTheme.radii.xs)
             )
-            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .then(focusRequesters.fold<FocusRequester, Modifier>(Modifier) { m, r -> m.focusRequester(r) })
             .onFocusChanged { isFocused = it.isFocused; if (it.isFocused) latestOnFocused() }
             // clickable, not focusable(): the same reason GuideCategoryRow gives — plain
             // focusable() does not reliably take D-pad focus inside these lists.

@@ -73,7 +73,9 @@ internal object GuideRapidZapPolicy {
 data class GuideEpg(
     val now: XtreamProgram?,
     val next: XtreamProgram?,
-    val programmes: List<XtreamProgram> = emptyList()
+    val programmes: List<XtreamProgram> = emptyList(),
+    /** [programmes] came from a windowed read of stored rows — see [GuideWindowRows.mergeNowNext]. */
+    val storedWindow: Boolean = false,
 )
 
 /** Everything the player needs for one replay — see CatchUpPlaybackCoordinator. */
@@ -257,6 +259,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private var categoriesJob: Job? = null
     private var channelsJob: Job? = null
     private var epgFocusJob: Job? = null
+    /** The latest "rows follow the window" read; a newer travel step cancels the older one. */
+    private var windowPublishJob: Job? = null
     private val epgRequested = mutableSetOf<Int>()
 
     /**
@@ -743,6 +747,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // around it because that is one cheap call each; a week of programmes per channel is
             // not, so this one deliberately does not follow the window.
             ensureHistory(channel)
+            // In a travelled window the rows scrolling into view follow it from disk as well
+            // (UX54); the live window keeps its now/next first paint untouched.
+            if (!GuideTimeTravel.isAtLiveEdge(_uiState.value.windowStartMs, System.currentTimeMillis())) {
+                publishVisibleWindows()
+            }
         }
     }
 
@@ -858,7 +867,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     .takeIf { it >= 0 } ?: 0
                 val now = programs.getOrNull(nowIdx)
                 val next = programs.getOrNull(nowIdx + 1)
-                _uiState.update { it.copy(epg = it.epg + (streamId to GuideEpg(now, next, programs))) }
+                // Merge, never replace: a row already drawn from stored rows keeps its cells (the
+                // past lives only there) and takes just the fresh now/next — B11.
+                _uiState.update {
+                    it.copy(epg = it.epg + (streamId to GuideWindowRows.mergeNowNext(it.epg[streamId], now, next, programs)))
+                }
             }
         }
     }
@@ -939,7 +952,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     nowMs = System.currentTimeMillis(),
                 )
             }
-            publishWindow(channel)
+            publishWindows(listOf(channel))
         }
     }
 
@@ -962,48 +975,73 @@ class XtreamLiveGuideViewModel @Inject constructor(
     }
 
     /**
-     * Republishes one channel's cells for the CURRENT visible window from the database — a windowed
-     * read with the description truncated in SQL, so a travelling guide costs one screenful of rows
-     * rather than the whole archive. Keeps the panel's now/next when there is no stored history.
+     * Republishes the cells of [channels] for the CURRENT visible window from the database — a
+     * windowed read with the description truncated in SQL, so a travelling guide costs one
+     * screenful of rows rather than the whole archive. Disk only: no row here costs a request.
+     *
+     * Each row takes the channel's own catch-up table when it has one (it carries the panel's
+     * archive marks), else the playlist's whole-guide store (6 h back, 48 h ahead), so rows that
+     * were never focused follow the window too (UX54). A row with nothing stored keeps what it has
+     * — the panel's now/next stays the first paint. One state update per batch, and none at all if
+     * the window has moved past what was read: a stale read must never repaint the new window.
      */
-    private suspend fun publishWindow(channel: GuideChannel) {
+    private suspend fun publishWindows(channels: List<GuideChannel>) {
         val acc = account ?: return
         val windowStart = _uiState.value.windowStartMs
-        val rows = runCatching {
-            contentDb.epgWindow(
-                playlistId = acc.id,
-                channelId = epgChannelKey(channel.streamId),
-                fromMs = windowStart - GuideTimeTravel.WINDOW_MS,
-                toMs = windowStart + 2 * GuideTimeTravel.WINDOW_MS,
-            )
-        }.getOrDefault(emptyList())
-        if (rows.isEmpty()) return
+        val fromMs = GuideWindowRows.readFromMs(windowStart)
+        val toMs = GuideWindowRows.readToMs(windowStart)
         val nowMs = System.currentTimeMillis()
-        val programmes = rows.map {
-            XtreamProgram(
-                title = it.title,
-                description = it.desc.orEmpty(),
-                startMs = it.startMs,
-                endMs = it.endMs,
-                nowPlaying = nowMs in it.startMs until it.endMs,
-                hasArchive = it.hasArchive.takeIf { marked -> marked },
-            )
+        val published = LinkedHashMap<Int, List<XtreamProgram>>()
+        for (channel in channels) {
+            if (channel.streamId <= 0 || channel.streamId in published) continue
+            val table = runCatching {
+                contentDb.epgWindow(acc.id, epgChannelKey(channel.streamId), fromMs, toMs)
+            }.getOrDefault(emptyList())
+            val store = if (table.isNotEmpty()) emptyList() else runCatching {
+                val epgId = matchIndex.liveEpgIdFor(acc.id, channel.streamId)
+                if (epgId.isNullOrBlank()) emptyList() else contentDb.epgWindow(acc.id, epgId, fromMs, toMs)
+            }.getOrDefault(emptyList())
+            val rows = GuideWindowRows.pick(table, store) ?: continue
+            published[channel.streamId] = rows.map {
+                XtreamProgram(
+                    title = it.title,
+                    description = it.desc.orEmpty(),
+                    startMs = it.startMs,
+                    endMs = it.endMs,
+                    nowPlaying = nowMs in it.startMs until it.endMs,
+                    hasArchive = it.hasArchive.takeIf { marked -> marked },
+                )
+            }
         }
+        if (published.isEmpty()) return
         _uiState.update { state ->
-            val existing = state.epg[channel.streamId]
-            state.copy(
-                epg = state.epg + (channel.streamId to GuideEpg(
-                    now = existing?.now ?: programmes.firstOrNull { it.nowPlaying },
-                    next = existing?.next,
-                    programmes = programmes,
-                ))
-            )
+            // Identity at write time: if the window moved past what was read (a travel step, not
+            // the minute tick's slot roll, which the read's margin covers) or the playlist
+            // changed, these rows belong to a window no longer on screen.
+            if (!GuideWindowRows.readCovers(fromMs, toMs, state.windowStartMs) || account?.id != acc.id) {
+                return@update state
+            }
+            state.copy(epg = state.epg + published.mapValues { (streamId, programmes) ->
+                GuideWindowRows.mergeStoredWindow(state.epg[streamId], programmes)
+            })
         }
+    }
+
+    /** The focused row and the screenful around it follow the window (see [GuideWindowRows]). */
+    private fun publishVisibleWindows() {
+        val state = _uiState.value
+        val center = state.channels.indexOfFirst { it.contentId == state.focusedChannelId }
+            .takeIf { it >= 0 } ?: 0
+        val rows = GuideWindowRows.rowsFollowingWindow(center, state.channels.size)
+            .mapNotNull { state.channels.getOrNull(it) }
+        if (rows.isEmpty()) return
+        windowPublishJob?.cancel()
+        windowPublishJob = viewModelScope.launch { publishWindows(rows) }
     }
 
     /**
      * Moves the visible window [slots] half-hours (negative = back into the archive), clamped to the
-     * provider's window, and reloads the focused channel's cells for where it landed.
+     * provider's window, and reloads the cells of every row on screen for where it landed.
      */
     fun travelWindow(slots: Int) {
         val channel = _uiState.value.focusedChannel
@@ -1015,7 +1053,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         )
         if (next == _uiState.value.windowStartMs) return
         _uiState.update { it.copy(windowStartMs = next) }
-        channel?.let { viewModelScope.launch { publishWindow(it) } }
+        publishVisibleWindows()
     }
 
     /** BACK out of the timeline, or a channel change: return the guide to now. */
@@ -1023,7 +1061,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val live = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis())
         if (live == _uiState.value.windowStartMs) return
         _uiState.update { it.copy(windowStartMs = live) }
-        _uiState.value.focusedChannel?.let { viewModelScope.launch { publishWindow(it) } }
+        // Every row on screen comes back with it — they were showing the travelled window.
+        publishVisibleWindows()
     }
 
     /**
