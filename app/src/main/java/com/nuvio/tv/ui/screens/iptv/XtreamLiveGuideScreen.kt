@@ -460,6 +460,8 @@ fun LiveGuide(
                                     }
                                 },
                                 onLongClick = { viewModel.toggleFavorite(ch) },
+                                // B106: MENU on the row hides it, the same call fullscreen makes.
+                                onHide = { viewModel.hideChannel(ch) },
                                 channel = ch,
                                 catchUpSupported = uiState.catchUpSupported,
                                 timelineActive = isTimelineRow,
@@ -611,8 +613,8 @@ fun LiveGuide(
             fun restoreGuideFocus() {
                 when (notice.target) {
                     is GuideHideUndoPolicy.Target.Channel ->
-                        if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
-                            runCatching { channelListFocus.requestFocus() }
+                        if (!channelRowFocus.requestFocusOrFalse()) {
+                            channelListFocus.requestFocusOrFalse()
                         }
                     is GuideHideUndoPolicy.Target.Group -> runCatching { categoryListFocus.requestFocus() }
                 }
@@ -917,6 +919,8 @@ private fun GuideChannelRow(
     onFocused: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    /** MENU on the focused row: hide the channel (B106). */
+    onHide: () -> Unit,
     focusRequester: FocusRequester? = null,
     channel: GuideChannel,
     catchUpSupported: Boolean,
@@ -977,21 +981,27 @@ private fun GuideChannelRow(
             // lockFocus short-circuits everything: while fullscreen the row is a hidden focus
             // anchor and every key belongs to the root handler (play/pause, zapping).
             .onPreviewKeyEvent { event ->
-                if (lockFocus || timelineActive || !isFocused) return@onPreviewKeyEvent false
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                when (event.key) {
-                    Key.DirectionRight -> {
-                        onEnterTimeline()
-                        true
-                    }
+                // The decision lives in GuideChannelRowKeyPolicy (B106: MENU used to do nothing here).
+                when (
+                    GuideChannelRowKeyPolicy.actionFor(
+                        key = event.key,
+                        isKeyDown = event.type == KeyEventType.KeyDown,
+                        rowFocused = isFocused,
+                        lockFocus = lockFocus,
+                        timelineActive = timelineActive,
+                        canExitCategory = onExitCategory != null,
+                    )
+                ) {
+                    GuideChannelRowKeyPolicy.Action.PASS -> false
+                    GuideChannelRowKeyPolicy.Action.CONSUME -> true
+                    GuideChannelRowKeyPolicy.Action.ENTER_TIMELINE -> { onEnterTimeline(); true }
                     // LEFT re-opens the category column. Handled here rather than left to focus
                     // search: the column is collapsed to zero width at this point, so there is
                     // nothing for a search to land on.
-                    Key.DirectionLeft -> {
-                        val exit = onExitCategory
-                        if (exit == null) false else { exit(); true }
-                    }
-                    else -> false
+                    GuideChannelRowKeyPolicy.Action.EXIT_CATEGORY -> { onExitCategory?.invoke(); true }
+                    // MENU hides the channel through the same path fullscreen uses (overlay write +
+                    // notice with Undo), which is what the guide hint has always promised.
+                    GuideChannelRowKeyPolicy.Action.HIDE_CHANNEL -> { onHide(); true }
                 }
             }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
