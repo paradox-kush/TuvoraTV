@@ -64,3 +64,8 @@ AGENTS.md
 /PR.md
 docs/
 status-page/
+
+# JVM crash / replay dumps (never commit)
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
