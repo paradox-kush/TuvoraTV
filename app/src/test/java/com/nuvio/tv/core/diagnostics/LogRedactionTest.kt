@@ -73,12 +73,22 @@ class LogRedactionTest {
     }
 
     @Test
+    fun iptvIdentityKeysMaskTheUsernameOrMac() {
+        assertEquals("xtream content id", "xtream:http://line.example.com:8080|***:live:12345", LogRedaction.url("xtream:http://line.example.com:8080|alice:live:12345"))
+        assertEquals("content id whose base URL has a path", "http://line.example.com/c|***:series:5", LogRedaction.url("http://line.example.com/c|alice:series:5"))
+        assertEquals("Stalker MAC identity", "stalker:http://portal.example.com|***:live:4", LogRedaction.url("stalker:http://portal.example.com|00:1A:79:12:34:56:live:4"))
+        assertEquals("playlist key", "http://line.example.com|***", LogRedaction.url("http://line.example.com|alice"))
+        assertNoSecret(LogRedaction.text("preserved key=xtream:http://line.example.com|alice:movie:987 (live channel, local-only)"))
+    }
+
+    @Test
     fun plainUrlsStayUnchanged() {
         listOf(
             "https://image.tmdb.org/t/p/w500/kqjL17yufvn9OVLyXYpvtyrFfak.jpg",
             "https://v3-cinemeta.strem.io/meta/movie/tt0111161.json",
             "https://example.com/some-movie-title-2024/stream?quality=1080p",
             "http://127.0.0.1:8090/stream/file.mkv?link=abc&index=1&play",
+            "https://torrentio.strem.fun/providers=yts,eztv|sort=qualitysize/manifest.json",
         ).forEach { plain -> assertEquals("plain URL must stay unchanged", plain, LogRedaction.url(plain)) }
         assertEquals("null", "", LogRedaction.url(null))
         assertEquals("not a URL", "not a url", LogRedaction.url("not a url"))
