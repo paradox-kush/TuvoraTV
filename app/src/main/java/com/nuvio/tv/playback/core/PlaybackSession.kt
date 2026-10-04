@@ -73,6 +73,9 @@ class PlaybackSession(
     private var reconnectJob: Job? = null
     private var activeGraph: PlaybackGraph? = null
     private var activeGraphGeneration: Long? = null
+    /** The engine a zap left warm (player + surface held for the next channel), if any. */
+    @Volatile private var warmEngine: EngineType? = null
+    @Volatile private var warmEngineGeneration: Long? = null
     private var resolved: GenerationValue<ResolvedPlaybackRequest>? = null
     private var requirements: GenerationValue<PlaybackRequirements>? = null
     private var latestRequirementsChangeId: Long = 0
@@ -111,6 +114,18 @@ class PlaybackSession(
                                 )
                             } else {
                                 event
+                            }
+                            if (normalized is PlaybackEvent.Failed) {
+                                // Engine-raised errors were never recorded: most failure and
+                                // handoff causes reached telemetry without a code.
+                                diagnostics.record(
+                                    PlaybackDiagnosticEvent(
+                                        generation = normalized.generation,
+                                        code = PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE,
+                                        engine = engine.type,
+                                        failure = normalized.failure,
+                                    ),
+                                )
                             }
                             engineEvents.emit(normalized)
                             lane.send(LaneMessage.Reducer(PlaybackReducerInput.Event(normalized)))
@@ -327,7 +342,9 @@ class PlaybackSession(
         if (now < 0 || now == Long.MAX_VALUE) return
         val ttl = when (outcome) {
             CompatibilityOutcome.SUCCESS -> environment.successTtlMs
-            CompatibilityOutcome.DETERMINISTIC_FATAL -> environment.fatalTtlMs
+            CompatibilityOutcome.DETERMINISTIC_FATAL,
+            CompatibilityOutcome.RUNTIME_UNSTABLE,
+            -> environment.fatalTtlMs
         }
         val expiresAt = if (ttl > Long.MAX_VALUE - now) Long.MAX_VALUE else now + ttl
         if (expiresAt <= now) return
@@ -384,9 +401,17 @@ class PlaybackSession(
             PlaybackState.PLAYING,
             PlaybackState.DEGRADED,
         ) && after.snapshot.failure == failure
-        return CompatibilityOutcome.DETERMINISTIC_FATAL.takeIf {
-            acceptedFailure && failure.deterministic &&
-                isLearnableCompatibilityFailure(failure.domain, failure.code)
+        if (acceptedFailure && failure.deterministic &&
+            isLearnableCompatibilityFailure(failure.domain, failure.code)
+        ) {
+            return CompatibilityOutcome.DETERMINISTIC_FATAL
+        }
+        // A live freeze is a strike, not an exclusion: the resolver pre-routes a channel only after
+        // repeated freezes and a proven libmpv success since.
+        return CompatibilityOutcome.RUNTIME_UNSTABLE.takeIf {
+            acceptedFailure && !failure.deterministic &&
+                before.request?.contentType == ContentType.LIVE &&
+                isRuntimeInstabilityFailure(failure.domain, failure.code)
         }
     }
 
@@ -686,6 +711,29 @@ class PlaybackSession(
             return
         }
         generationScope(action.generation).launch {
+            // A zap keeps the previous engine warm and holding the one surface. If this channel
+            // selected the other engine, that warm engine must let go first — otherwise the attach
+            // "fails" in <100 ms and hands back to the warm engine on every later zap (fleet: ~40%
+            // of live zaps ended on a handoff engine nobody chose).
+            val warm = warmEngine
+            if (warm != null) {
+                if (warm != engine.type) {
+                    val released = releaseAdapterUntilComplete(
+                        generation = action.generation,
+                        engine = engineRegistry.engine(warm),
+                        engineGeneration = warmEngineGeneration,
+                    )
+                    if (released is PlaybackResult.Failure) {
+                        lane.send(
+                            LaneMessage.Reducer(
+                                PlaybackReducerInput.Event(PlaybackEvent.Failed(action.generation, released.failure)),
+                            ),
+                        )
+                        return@launch
+                    }
+                }
+                clearWarmEngine()
+            }
             when (val result = safeResult(FailurePhase.SURFACE_ATTACHMENT) {
                 engine.attachSurface(action.generation, action.graph)
             }) {
@@ -1016,13 +1064,19 @@ class PlaybackSession(
                     generation = action.generation,
                     engine = engine,
                     engineGeneration = releasedGraphGeneration,
-                )
+                ).also { result ->
+                    // The player and its surface stay warm for the next channel.
+                    if (result is PlaybackResult.Success && engine != null) {
+                        warmEngine = engine.type
+                        warmEngineGeneration = releasedGraphGeneration
+                    }
+                }
             } else {
                 releaseAdapterUntilComplete(
                     generation = action.generation,
                     engine = engine,
                     engineGeneration = releasedGraphGeneration,
-                )
+                ).also { if (engine?.type == warmEngine) clearWarmEngine() }
             }
             if (releaseResult is PlaybackResult.Failure) {
                 lane.send(
@@ -1399,6 +1453,11 @@ class PlaybackSession(
                 }
             }
         }
+    }
+
+    private fun clearWarmEngine() {
+        warmEngine = null
+        warmEngineGeneration = null
     }
 
     private suspend fun releaseAdapterUntilComplete(

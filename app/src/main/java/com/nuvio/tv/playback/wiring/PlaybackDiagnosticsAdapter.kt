@@ -80,18 +80,16 @@ object PostHogPlaybackDiagnosticSink : PlaybackDiagnosticSink {
 }
 
 /**
- * Routine success-path diagnostics were ~98% of clean playback telemetry (~114k events/week,
- * about five per zap) and answered nothing the per-session quality summary does not. They stay
- * in the debug log; failures, watchdogs, recovery and output problems still upload.
+ * Routine success-path diagnostics with no analytic use stay in the debug log. GRAPH_SELECTED and
+ * RELEASE_BARRIER_STARTED keep uploading: per-engine fleet health (handoffs, failures, channel
+ * changes) is measured from them.
  */
 object PlaybackDiagnosticUploadPolicy {
     private val ROUTINE_CODES = setOf(
         PlaybackDiagnosticCode.REQUEST_RESOLUTION_STARTED.name,
         PlaybackDiagnosticCode.REQUEST_RESOLVED.name,
-        PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED.name,
         PlaybackDiagnosticCode.RELEASE_BARRIER_COMPLETED.name,
         PlaybackDiagnosticCode.REQUIREMENTS_CHANGE_RESOLVED.name,
-        PlaybackDiagnosticCode.GRAPH_SELECTED.name,
     )
 
     fun shouldUpload(event: FormattedPlaybackDiagnostic): Boolean =

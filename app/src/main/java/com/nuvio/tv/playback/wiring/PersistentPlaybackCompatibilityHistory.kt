@@ -16,6 +16,7 @@ import com.nuvio.tv.playback.core.PlaybackClock
 import com.nuvio.tv.playback.core.PlaybackCompatibilityHistory
 import com.nuvio.tv.playback.core.VideoCodec
 import com.nuvio.tv.playback.core.isLearnableCompatibilityFailure
+import com.nuvio.tv.playback.core.isRuntimeInstabilityFailure
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Base64
@@ -121,10 +122,23 @@ class PersistentPlaybackCompatibilityHistory(
         if (newestExactRecord != null && newestExactRecord > value.recordedAtEpochMs) {
             return@withLock
         }
+        val priorStrikes = existing.asSequence()
+            .filter(sameGraph)
+            .map(StoredRecord::record)
+            .firstOrNull { it.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE }
+            ?.strikes
+        // A live freeze usually follows a good start, so a good start must not erase the strikes —
+        // they age out with the record instead. Each new freeze adds a strike.
+        if (value.outcome == CompatibilityOutcome.SUCCESS && priorStrikes != null) return@withLock
+        val stored = if (value.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE) {
+            value.copy(strikes = (priorStrikes ?: 0) + 1)
+        } else {
+            value
+        }
         // A verified success invalidates prior fatal history for the exact graph. A newer fatal
         // likewise replaces stale success; history never votes with contradictory simultaneous rows.
         existing.removeAll(sameGraph)
-        existing += StoredRecord(value, lastAccessedAtEpochMs = now)
+        existing += StoredRecord(stored, lastAccessedAtEpochMs = now)
         persistLocked(compact(existing, now))
     }
 
@@ -134,6 +148,9 @@ class PersistentPlaybackCompatibilityHistory(
         if (currentEngineVersions[record.engine] != record.engineVersion) return false
         if (record.outcome == CompatibilityOutcome.SUCCESS) {
             return record.failureDomain == null && record.failureCode == null
+        }
+        if (record.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE) {
+            return isRuntimeInstabilityFailure(record.failureDomain, record.failureCode)
         }
         return record.deterministicFailure() &&
             isLearnableCompatibilityFailure(record.failureDomain, record.failureCode)
@@ -172,6 +189,7 @@ class PersistentPlaybackCompatibilityHistory(
                     record.recordedAtEpochMs.toString(),
                     record.expiresAtEpochMs.toString(),
                     stored.lastAccessedAtEpochMs.toString(),
+                    record.strikes.toString(),
                 ).joinToString("|"),
             )
             append('\n')
@@ -186,7 +204,8 @@ class PersistentPlaybackCompatibilityHistory(
 
     private fun decodeLine(line: String): StoredRecord? = runCatching {
         val parts = line.split('|')
-        if (parts.size != FIELD_COUNT) return null
+        // Rows written before strikes existed have one field fewer and count as one strike.
+        if (parts.size != FIELD_COUNT && parts.size != FIELD_COUNT - 1) return null
         StoredRecord(
             record = CompatibilityRecord(
                 scopeKey = CompatibilityScopeKey(decoded(parts[0])),
@@ -211,6 +230,7 @@ class PersistentPlaybackCompatibilityHistory(
                 ),
                 recordedAtEpochMs = parts[16].toLong(),
                 expiresAtEpochMs = parts[17].toLong(),
+                strikes = parts.getOrNull(19)?.toInt() ?: 1,
             ),
             lastAccessedAtEpochMs = parts[18].toLong(),
         )
@@ -251,7 +271,7 @@ class PersistentPlaybackCompatibilityHistory(
 
     private companion object {
         const val FORMAT_VERSION = "nuvio-playback-history-v2"
-        const val FIELD_COUNT = 19
+        const val FIELD_COUNT = 20
         const val DEFAULT_MAX_RECORDS = 512
         const val DEFAULT_MAX_ENCODED_BYTES = 256 * 1024
     }

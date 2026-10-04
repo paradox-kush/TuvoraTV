@@ -1,5 +1,7 @@
 package com.nuvio.tv.playback.settings
 
+import com.nuvio.tv.playback.core.isRuntimeInstabilityFailure
+
 import com.nuvio.tv.playback.core.AudioOutputPreference
 import com.nuvio.tv.playback.core.BufferingPreference
 import com.nuvio.tv.playback.core.CompatibilityOutcome
@@ -622,17 +624,30 @@ object PlaybackPreferenceResolver {
     ): EngineType? {
         val scope = context.compatibilityScopeKey ?: return null
         if (EngineType.LIBMPV !in eligible) return null
-        if (!isDeterministicFatal(EngineType.MEDIA3, effectiveMpvOutput, context)) return null
-        val latestMedia3Fatal = context.compatibilityRecords.asSequence()
-            .filter { record ->
-                record.scopeKey == scope &&
-                    record.engine == EngineType.MEDIA3 &&
-                    record.graph in context.eligibleGraphFingerprints &&
-                    record.outcome == CompatibilityOutcome.DETERMINISTIC_FATAL &&
-                    isCurrentCompatibilityRecord(record, context)
-            }
-            .maxOfOrNull(CompatibilityRecord::recordedAtEpochMs)
-            ?: return null
+        val latestMedia3Fatal = if (isDeterministicFatal(EngineType.MEDIA3, effectiveMpvOutput, context)) {
+            context.compatibilityRecords.asSequence()
+                .filter { record ->
+                    record.scopeKey == scope &&
+                        record.engine == EngineType.MEDIA3 &&
+                        record.graph in context.eligibleGraphFingerprints &&
+                        record.outcome == CompatibilityOutcome.DETERMINISTIC_FATAL &&
+                        isCurrentCompatibilityRecord(record, context)
+                }
+                .maxOfOrNull(CompatibilityRecord::recordedAtEpochMs)
+        } else {
+            // Repeated live freezes on Media3 for this scope: one stall usually recovers on a
+            // retry, so it takes UNSTABLE_STRIKES_TO_PREROUTE before the channel goes to libmpv.
+            context.compatibilityRecords.asSequence()
+                .filter { record ->
+                    record.scopeKey == scope &&
+                        record.engine == EngineType.MEDIA3 &&
+                        record.graph in context.eligibleGraphFingerprints &&
+                        record.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE &&
+                        record.strikes >= UNSTABLE_STRIKES_TO_PREROUTE &&
+                        isCurrentCompatibilityRecord(record, context)
+                }
+                .maxOfOrNull(CompatibilityRecord::recordedAtEpochMs)
+        } ?: return null
         val provenFallback = context.compatibilityRecords.any { record ->
             record.scopeKey == scope &&
                 record.engine == EngineType.LIBMPV &&
@@ -656,6 +671,7 @@ object PlaybackPreferenceResolver {
 
     private fun CompatibilityRecord.hasValidCompatibilityOutcome(): Boolean = when (outcome) {
         CompatibilityOutcome.SUCCESS -> failureDomain == null && failureCode == null
+        CompatibilityOutcome.RUNTIME_UNSTABLE -> isRuntimeInstabilityFailure(failureDomain, failureCode)
         CompatibilityOutcome.DETERMINISTIC_FATAL -> when (failureDomain) {
             FailureDomain.MANIFEST -> failureCode == FailureCode.MANIFEST_INVALID
             FailureDomain.DEMUX -> failureCode == FailureCode.DEMUX_FAILED
@@ -733,3 +749,6 @@ object PlaybackPreferenceResolver {
         impact = impact,
     )
 }
+
+/** Live freezes on Media3 before a channel is pre-routed to libmpv (with a libmpv success since). */
+internal const val UNSTABLE_STRIKES_TO_PREROUTE = 2

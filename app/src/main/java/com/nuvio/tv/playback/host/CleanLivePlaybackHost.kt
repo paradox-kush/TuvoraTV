@@ -34,7 +34,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import com.nuvio.tv.playback.core.LiveVideoFitPolicy
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import com.nuvio.tv.playback.core.PlaybackQualityAccumulator
 import com.nuvio.tv.playback.wiring.PlaybackQualityReporter
 import com.nuvio.tv.playback.wiring.PostHogPlaybackQualityReporter
@@ -265,6 +268,7 @@ internal class CleanLivePlaybackHost private constructor(
             mediaSessionFactory: CleanMediaSessionOwnerFactory = productionMediaSessionFactory,
             qualityReporter: PlaybackQualityReporter = PostHogPlaybackQualityReporter,
             clockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+            freezeFrameCaptureIntervalMs: Long = FREEZE_FRAME_CAPTURE_INTERVAL_MS,
         ): CleanLivePlaybackHost {
             val parentJob = parentScope.coroutineContext[Job]
             val hostJob = SupervisorJob(parentJob)
@@ -329,6 +333,19 @@ internal class CleanLivePlaybackHost private constructor(
                 ?: ReleaseAuthority.ControllerFallback(controller)
             // MediaCodec and mpv's mediacodec_embed ignore pixel aspect when drawing, so the
             // surface is shaped here from the engine's facts (4:3 was stretched to 16:9).
+            // Live never shows black (owner rule 2026-10-03): keep a recent copy of the real picture
+            // and hold it over any interruption until a new frame is drawn.
+            hostScope.launch {
+                controller.snapshot.collect { snapshot ->
+                    surfaces.presentFreezeFrame(LiveFreezeFramePolicy.overlay(snapshot))
+                }
+            }
+            hostScope.launch {
+                while (isActive) {
+                    delay(freezeFrameCaptureIntervalMs)
+                    if (LiveFreezeFramePolicy.mayCapture(controller.snapshot.value)) surfaces.captureFrame()
+                }
+            }
             val quality = PlaybackQualityAccumulator(now = clockMs)
             hostScope.launch {
                 controller.snapshot.collect { snapshot -> synchronized(quality) { quality.observe(snapshot) } }
@@ -371,3 +388,6 @@ internal class CleanLivePlaybackHost private constructor(
         }
     }
 }
+
+/** Freeze-frame refresh while real video plays: a held frame is at most this old. */
+private const val FREEZE_FRAME_CAPTURE_INTERVAL_MS = 1_000L

@@ -148,16 +148,19 @@ class PlaybackDiagnosticsAdapterTest {
         val routine = listOf(
             PlaybackDiagnosticCode.REQUEST_RESOLUTION_STARTED,
             PlaybackDiagnosticCode.REQUEST_RESOLVED,
-            PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED,
             PlaybackDiagnosticCode.RELEASE_BARRIER_COMPLETED,
             PlaybackDiagnosticCode.REQUIREMENTS_CHANGE_RESOLVED,
-            PlaybackDiagnosticCode.GRAPH_SELECTED,
         )
         routine.forEach { code ->
             val formatted = PlaybackDiagnosticFormatter.format(PlaybackDiagnosticEvent(generation = 1, code = code))
             assertFalse("$code must not upload", PlaybackDiagnosticUploadPolicy.shouldUpload(formatted))
         }
+        // Engine choice and release reasons are what per-engine fleet health is measured from
+        // (handoff, failure and channel-change analysis): they must keep uploading.
         val kept = listOf(
+            PlaybackDiagnosticCode.GRAPH_SELECTED,
+            PlaybackDiagnosticCode.RELEASE_BARRIER_STARTED,
+            PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE,
             PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
             PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
             PlaybackDiagnosticCode.LIVE_RECONNECT_ATTEMPT,
