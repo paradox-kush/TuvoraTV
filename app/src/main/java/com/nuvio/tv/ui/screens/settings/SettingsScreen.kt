@@ -1189,7 +1189,7 @@ private fun IntegrationSettingsContent(
                             item(key = "integration_hub_iptv") {
                                 SettingsActionRow(
                                     title = stringResource(R.string.iptv_settings_title),
-                                    subtitle = "Add a live TV / VOD provider by URL",
+                                    subtitle = stringResource(R.string.iptv_settings_hub_subtitle),
                                     leadingIcon = Icons.Default.LiveTv,
                                     onClick = { onSelectSection(IntegrationSettingsSection.Iptv) }
                                 )

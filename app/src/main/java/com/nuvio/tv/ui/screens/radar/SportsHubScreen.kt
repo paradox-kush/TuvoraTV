@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.radar
 
+import androidx.compose.ui.res.stringResource
+import com.nuvio.tv.R
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -239,7 +241,7 @@ fun SportsHubScreen(
             .padding(top = NuvioTheme.spacing.xl),
     ) {
         Text(
-            "Sports",
+            stringResource(R.string.nav_sports),
             style = MaterialTheme.typography.headlineSmall,
             color = NuvioTheme.colors.TextPrimary,
             modifier = Modifier.padding(start = SportsRowStartPadding, bottom = NuvioTheme.spacing.md),

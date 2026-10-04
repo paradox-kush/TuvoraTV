@@ -1079,12 +1079,16 @@ open class MainActivity : ComponentActivity() {
                     val strNavSearch = stringResource(R.string.nav_search)
                     val strNavLibrary = stringResource(R.string.nav_library)
                     val strNavSettings = stringResource(R.string.nav_settings)
+                    val strNavIptv = stringResource(R.string.nav_iptv)
+                    val strNavSports = stringResource(R.string.nav_sports)
                     val drawerItems = remember(
                         strNavHome,
                         strNavDiscover,
                         strNavSearch,
                         strNavLibrary,
                         strNavSettings,
+                        strNavIptv,
+                        strNavSports,
                         discoverLocation
                     ) {
                         buildList {
@@ -1121,14 +1125,14 @@ open class MainActivity : ComponentActivity() {
                             add(
                                 DrawerItem(
                                     route = Screen.XtreamHub.route,
-                                    label = "IPTV",
+                                    label = strNavIptv,
                                     icon = Icons.Default.LiveTv
                                 )
                             )
                             add(
                                 DrawerItem(
                                     route = Screen.SportsHub.route,
-                                    label = "Sports",
+                                    label = strNavSports,
                                     icon = Icons.Default.SportsSoccer
                                 )
                             )
