@@ -3269,8 +3269,6 @@
     <string name="diag_value_disk_cache_unavailable">Nedostupné</string>
     <string name="diag_value_disk_cache_not_used">Vypnuté - nepoužíva sa pre tento stream</string>
     <string name="diag_value_disk_cache_usage">%1$s prečítané, %2$s uvoľnené</string>
-    <string name="playback_section_general_desc">Základné správanie prehrávania.</string>
-    <string name="playback_section_audio_desc">Kompatibilita videa a ovládanie audia.</string>
     <string name="sub_startup_mode_title">Načítavanie titulkov z doplnkov</string>
     <string name="sub_startup_mode_fast">Rýchle spustenie</string>
     <string name="sub_startup_mode_preferred">Preferované jazyky</string>

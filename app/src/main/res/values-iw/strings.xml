@@ -3352,7 +3352,6 @@
     <string name="autosync_toast_failed_no_reference">הסנכרון נכשל: אין בסרטון הזה כתוביות מוטמעות להשוואה.</string>
     <string name="autosync_toast_failed_unsupported">הסנכרון נכשל: הסנכרון האוטומטי לא תומך בפורמט הכתוביות הזה.</string>
     <string name="autosync_label_synced">מסונכרן אוטומטית</string>
-    <string name="playback_section_player">נגן ובחירת Stream</string>
     <string name="sub_startup_mode_title">טעינת כתוביות תוסף</string>
     <string name="sub_startup_mode_fast">הפעלה מהירה</string>
     <string name="sub_startup_mode_preferred">שפות מועדפות</string>
