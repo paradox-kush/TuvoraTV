@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.flow.update
@@ -50,8 +51,8 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
                 )
                 Log.d(
                     PlayerRuntimeController.TAG,
-                    "TRACK_PREF load: contentId=$id S${currentSeason}E${currentEpisode} " +
-                        "result=${if (loaded == null) "null (no saved preference)" else "audio=${loaded.audio?.language}/${loaded.audio?.name} subtitle=${loaded.subtitle?.javaClass?.simpleName}"}"
+                    LogRedaction.text("TRACK_PREF load: contentId=$id S${currentSeason}E${currentEpisode} " +
+                        "result=${if (loaded == null) "null (no saved preference)" else "audio=${loaded.audio?.language}/${loaded.audio?.name} subtitle=${loaded.subtitle?.javaClass?.simpleName}"}")
                 )
                 persistedTrackPreference = loaded
             } ?: Log.d(PlayerRuntimeController.TAG, "TRACK_PREF load: skipped (contentId is null)")
@@ -66,7 +67,7 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
                     _uiState.update { it.copy(subtitleDelayMs = savedDelayMs) }
                     Log.d(
                         PlayerRuntimeController.TAG,
-                        "TRACK_PREF load: restored subtitleDelayMs=$savedDelayMs for videoId=$vid"
+                        LogRedaction.text("TRACK_PREF load: restored subtitleDelayMs=$savedDelayMs for videoId=$vid")
                     )
                 }
             }

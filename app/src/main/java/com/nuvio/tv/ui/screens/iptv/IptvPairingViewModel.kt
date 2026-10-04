@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -176,7 +177,7 @@ class IptvPairingViewModel @Inject constructor(
                 it.copy(status = IptvPairingStatus.SUCCESS, savedAccountName = account.name)
             }
         }.onFailure { e ->
-            Log.e("IptvPairingViewModel", "savePairedAccount failed for ${account.id}", e)
+            Log.e("IptvPairingViewModel", LogRedaction.text("savePairedAccount failed for ${account.id}"), e)
             _uiState.update {
                 it.copy(status = IptvPairingStatus.ERROR, errorMessage = friendlyError(e))
             }
