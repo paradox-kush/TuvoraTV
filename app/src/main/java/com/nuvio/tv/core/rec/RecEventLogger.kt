@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.rec
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.Context
 import android.util.Log
 import com.nuvio.tv.BuildConfig
@@ -161,10 +162,10 @@ class RecEventLogger @Inject constructor(
             if (BuildConfig.IS_DEBUG_BUILD) {
                 Log.d(
                     TAG,
-                    "queued ${record.event.eventType} ${record.event.itemId} " +
+                    LogRedaction.text("queued ${record.event.eventType} ${record.event.itemId} " +
                         "row=${record.event.rowId}#${record.event.itemPosition} " +
                         "type=${record.event.contentType} pct=${record.event.progressPct} " +
-                        "profile=${record.event.profileId}",
+                        "profile=${record.event.profileId}"),
                 )
             }
             if (shouldFlush) scope.launch { flush("threshold") }

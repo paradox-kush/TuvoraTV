@@ -46,7 +46,7 @@ class SubtitleRepositoryImpl @Inject constructor(
     ): List<Subtitle> = withContext(Dispatchers.IO) {
         val requestType = canonicalSubtitleType(type)
         val startedAtMs = System.currentTimeMillis()
-        Log.d(TAG, "Fetching subtitles for type=$requestType, id=$id, videoId=$videoId")
+        Log.d(TAG, LogRedaction.text("Fetching subtitles for type=$requestType, id=$id, videoId=$videoId"))
         
         // Get installed addons
         val addons = try {

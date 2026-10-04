@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.detail
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -508,7 +509,7 @@ class MetaDetailsViewModel @Inject constructor(
             }
 
             if (staleEpisodes.isNotEmpty()) {
-                Log.d(TAG, "revalidateWatchedEpisodes: pruning ${staleEpisodes.size} stale entries for $contentId")
+                Log.d(TAG, LogRedaction.text("revalidateWatchedEpisodes: pruning ${staleEpisodes.size} stale entries for $contentId"))
                 watchedItemsPreferences.unmarkAsWatchedBatch(
                     contentId = contentId,
                     episodes = staleEpisodes.toList(),

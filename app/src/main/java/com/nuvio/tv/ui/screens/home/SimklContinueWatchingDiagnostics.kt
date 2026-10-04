@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.home
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import com.nuvio.tv.core.tracking.TrackingDiagnosticIdentity
 import com.nuvio.tv.core.tracking.TrackingProviderId
@@ -210,10 +211,10 @@ internal fun logSimklAsyncNextUpResolution(
     }
     Log.d(
         "SimklCwDiag",
-        "async key=${TrackingDiagnosticIdentity.alias(seed.contentId)} " +
+        LogRedaction.text("async key=${TrackingDiagnosticIdentity.alias(seed.contentId)} " +
             "seed=${seedEpisode?.display() ?: "none"} " +
             "resolved=${shown?.display() ?: "none"} exact=${exact.size} " +
-            "shownInExact=$shownInExact finding=$finding"
+            "shownInExact=$shownInExact finding=$finding")
     )
 }
 

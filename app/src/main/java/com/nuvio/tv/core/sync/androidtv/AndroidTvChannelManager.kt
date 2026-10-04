@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.sync.androidtv
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -116,7 +117,7 @@ class AndroidTvChannelManager @Inject constructor(
             prefs.setChannelId(id)
             writeChannelLogo(id)
             TvContractCompat.requestChannelBrowsable(context, id)
-            Log.d(TAG, "Created channel id=$id")
+            Log.d(TAG, LogRedaction.text("Created channel id=$id"))
             id
         }.onFailure { Log.w(TAG, "ensureChannel failed", it) }.getOrNull()
     }
@@ -138,7 +139,7 @@ class AndroidTvChannelManager @Inject constructor(
                         context.contentResolver.delete(
                             TvContractCompat.buildPreviewProgramUri(rowId), null, null
                         )
-                        Log.d(TAG, "Removed program key=$key rowId=$rowId")
+                        Log.d(TAG, LogRedaction.text("Removed program key=$key rowId=$rowId"))
                     }
                     syncedProgramFingerprints.remove(key)
                 }
@@ -199,7 +200,7 @@ class AndroidTvChannelManager @Inject constructor(
                             context.contentResolver.delete(
                                 TvContractCompat.buildPreviewProgramUri(extraRowId), null, null
                             )
-                            Log.d(TAG, "Removed duplicate program key=$key rowId=$extraRowId")
+                            Log.d(TAG, LogRedaction.text("Removed duplicate program key=$key rowId=$extraRowId"))
                         }
                     }
                 } else {
@@ -208,7 +209,7 @@ class AndroidTvChannelManager @Inject constructor(
                     )
                 }
                 syncedProgramFingerprints[key] = newFingerprint
-                Log.d(TAG, "${if (!rowIds.isNullOrEmpty()) "Updated" else "Inserted"} program key=$key pos=${values.getAsInteger("last_playback_position_millis")} dur=${values.getAsInteger("duration_millis")} pct=${progress.progressPercent}")
+                Log.d(TAG, LogRedaction.text("${if (!rowIds.isNullOrEmpty()) "Updated" else "Inserted"} program key=$key pos=${values.getAsInteger("last_playback_position_millis")} dur=${values.getAsInteger("duration_millis")} pct=${progress.progressPercent}"))
             }
         }.onFailure { Log.w(TAG, "reconcile failed", it) }
     }

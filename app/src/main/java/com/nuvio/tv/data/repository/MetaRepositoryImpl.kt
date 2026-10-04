@@ -182,8 +182,8 @@ class MetaRepositoryImpl @Inject constructor(
             } else {
                 Log.w(
                     TAG,
-                    "Addon advertises neither type, requesting as-is " +
-                        "addonId=${addon.id} requested=$requestedType inferred=$inferredType id=$id"
+                    LogRedaction.text("Addon advertises neither type, requesting as-is " +
+                        "addonId=${addon.id} requested=$requestedType inferred=$inferredType id=$id")
                 )
             }
         }
@@ -494,7 +494,7 @@ class MetaRepositoryImpl @Inject constructor(
                         // trying further addons.
                         if (normalizedSourceUrl != null) {
                             if (normalizedAddonKey(addon.baseUrl) == normalizedSourceUrl) {
-                                Log.d(TAG, "Source addon matched, catalog meta is sufficient addon=${addon.name} type=$candidateType id=$id")
+                                Log.d(TAG, LogRedaction.text("Source addon matched, catalog meta is sufficient addon=${addon.name} type=$candidateType id=$id"))
                                 return@async MetaLookupResult.SourceSufficient
                             }
                         }
@@ -513,10 +513,10 @@ class MetaRepositoryImpl @Inject constructor(
                                     val cached = CachedMeta(meta, System.currentTimeMillis() + ttlMs)
                                     addonMetaCache[cacheKey] = cached
                                     metaCache[addonMetaCacheKey(addon.baseUrl, candidateType, id)] = cached
-                                    Log.d(TAG, "Meta fetch success addonId=${addon.id} type=$candidateType id=$id ttl=${ttlMs}ms")
+                                    Log.d(TAG, LogRedaction.text("Meta fetch success addonId=${addon.id} type=$candidateType id=$id ttl=${ttlMs}ms"))
                                     return@async MetaLookupResult.Found(meta)
                                 }
-                                Log.d(TAG, "Meta response was null addonId=${addon.id} type=$candidateType id=$id")
+                                Log.d(TAG, LogRedaction.text("Meta response was null addonId=${addon.id} type=$candidateType id=$id"))
                                 loopFailures += buildMissingMetaFailure(addon)
                             } else {
                                 loopFailures += MetaAttemptFailure(
