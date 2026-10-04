@@ -10,7 +10,7 @@ import okhttp3.Response
  * ("HttpTrace"), so cold-start network can be split by source (image vs catalog vs EPG) — see the
  * anti-jank design's F1 question.
  *
- * NEVER logs the query string: Xtream URLs carry username/password there. Gated on IS_DEBUG_BUILD,
+ * NEVER logs the query string: Xtream URLs carry username/password there; the path is redacted. Gated on IS_DEBUG_BUILD,
  * NOT BuildConfig.DEBUG — TV debug builds set isDebuggable=false, so BuildConfig.DEBUG is false and
  * the stock HttpLoggingInterceptor silently never fires. Never ships; never leaves the device.
  */
@@ -28,7 +28,10 @@ class HttpTraceInterceptor(private val tag: String) : Interceptor {
             .mapNotNull { k -> req.url.queryParameter(k)?.let { "$k=$it" } }
             .joinToString(" ")
             .let { if (it.isEmpty()) "" else " [$it]" }
-        Log.d("HttpTrace", "$tag ${req.method} ${req.url.host}${req.url.encodedPath} ${resp.code} ${ms}ms$cls")
+        // The PATH can carry credentials too (Xtream `/live/<user>/<pass>/…`, add-on debrid config
+        // segments), so it goes through the shared redaction policy (B116).
+        val path = LogRedaction.url("http://h${req.url.encodedPath}").removePrefix("http://h")
+        Log.d("HttpTrace", "$tag ${req.method} ${req.url.host}$path ${resp.code} ${ms}ms$cls")
         return resp
     }
 }

@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.app.Activity
 import android.content.Context
 import android.media.AudioDeviceCallback
@@ -710,6 +711,6 @@ internal fun PlayerRuntimeController.logSwitchTrace(
     val streamToken = currentStreamUrl.hashCode().toUInt().toString(16)
     Log.w(
         PlayerRuntimeController.SWITCH_TRACE_TAG,
-        "sid=$switchTraceSessionId seq=$sequence stage=$stage engine=$currentInternalPlayerEngine streamToken=$streamToken $message"
+        "sid=$switchTraceSessionId seq=$sequence stage=$stage engine=$currentInternalPlayerEngine streamToken=$streamToken ${LogRedaction.text(message)}"
     )
 }

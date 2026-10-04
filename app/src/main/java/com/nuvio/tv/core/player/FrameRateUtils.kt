@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.app.Activity
 import android.content.Context
 import android.media.MediaExtractor
@@ -1292,7 +1293,7 @@ object FrameRateUtils {
             }
         } catch (e: Exception) {
             call.cancel()
-            Log.w(TAG, "fetchHttpRangeToFile failed for url=$url range=$rangeHeader: ${e.message}")
+            Log.w(TAG, "fetchHttpRangeToFile failed for url=${LogRedaction.url(url)} range=$rangeHeader: ${LogRedaction.text(e.message)}")
             HttpRangeFetchResult(success = false)
         }
     }

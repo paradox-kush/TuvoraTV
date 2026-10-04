@@ -1,5 +1,6 @@
 package com.lagradost.cloudstream3.network
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import android.webkit.CookieManager
 import androidx.annotation.AnyThread
@@ -74,7 +75,7 @@ class CloudflareKiller : Interceptor {
                 } else {
                     response.close()
                     bypassCloudflare(request)?.let {
-                        Log.d(TAG, "Succeeded bypassing cloudflare: ${request.url}")
+                        Log.d(TAG, "Succeeded bypassing cloudflare: ${LogRedaction.url(request.url.toString())}")
                         return@runBlocking it
                     }
                 }
@@ -84,7 +85,7 @@ class CloudflareKiller : Interceptor {
             }
         }
 
-        Log.w(TAG, "Failed cloudflare at: ${request.url}")
+        Log.w(TAG, "Failed cloudflare at: ${LogRedaction.url(request.url.toString())}")
         return@runBlocking chain.proceed(request)
     }
 
@@ -126,7 +127,7 @@ class CloudflareKiller : Interceptor {
         val url = request.url.toString()
 
         if (!trySolveWithSavedCookies(request)) {
-            Log.d(TAG, "Loading webview to solve cloudflare for ${request.url}")
+            Log.d(TAG, "Loading webview to solve cloudflare for ${LogRedaction.url(request.url.toString())}")
             try {
                 WebViewResolver(
                     interceptUrl = Regex(".^"),

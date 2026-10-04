@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.repository
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.net.Uri
 import android.os.Build
 import com.nuvio.tv.BuildConfig
@@ -645,8 +646,11 @@ class PlaybackIssueReportRepository @Inject constructor(
             ?.takeIf { it.isNotBlank() }
             ?.limit(maxLength)
 
+    // B116: raw player event lines can quote request URIs (credentials included) and this report
+    // leaves the device — redact before it is truncated, so a cut never splits a secret open.
     private fun String.rawLogLine(maxLength: Int): String? =
-        replace('\n', ' ')
+        LogRedaction.text(this)
+            .replace('\n', ' ')
             .replace('\r', ' ')
             .trim()
             .takeIf { it.isNotBlank() }

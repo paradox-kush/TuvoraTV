@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.iptv.stalker
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -525,7 +526,7 @@ class StalkerSession(
                 ).jsOrNull()?.asJsonObject?.get("token")?.asStringOrNull()?.isNotBlank() == true
             }.onFailure { lastError = it }.getOrDefault(false)
             if (ok) {
-                Log.d(TAG, "Stalker endpoint resolved for ${account.name}: $candidate")
+                Log.d(TAG, "Stalker endpoint resolved for ${account.name}: ${LogRedaction.url(candidate)}")
                 return candidate
             }
         }

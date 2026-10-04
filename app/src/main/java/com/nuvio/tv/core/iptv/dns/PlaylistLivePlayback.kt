@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.iptv.dns
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import com.nuvio.tv.core.iptv.XtreamAccount
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -68,7 +69,7 @@ class PlaylistLivePlayback @Inject constructor(
             val rewrite = rewriteUrlToResolvedIp(finalUrl, ip) ?: return PreparedLiveStream(finalUrl, emptyMap())
             PreparedLiveStream(rewrite.url, mapOf("Host" to rewrite.hostHeader))
         } catch (t: Throwable) {
-            Log.w(TAG, "DoH live prepare failed for provider=$provider; using original URL", t)
+            Log.w(TAG, "DoH live prepare failed for provider=$provider; using original URL: ${LogRedaction.text(t.toString())}")
             untouched
         }
     }

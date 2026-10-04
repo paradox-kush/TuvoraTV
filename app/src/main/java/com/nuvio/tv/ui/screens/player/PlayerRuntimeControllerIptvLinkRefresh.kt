@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import androidx.media3.common.PlaybackException
 import kotlinx.coroutines.Dispatchers
@@ -99,7 +100,7 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
 
     Log.w(
         PlayerRuntimeController.TAG,
-        "IPTV_LINK_REFRESH: stream rejected ($detailedError) — minting a fresh link for " +
+        "IPTV_LINK_REFRESH: stream rejected (${LogRedaction.text(detailedError)}) — minting a fresh link for " +
             (refreshId ?: "matched:$matchedVideoId via $currentAddonName")
     )
 
@@ -123,7 +124,7 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
                 )
             }
         }
-            .onFailure { Log.w(PlayerRuntimeController.TAG, "IPTV_LINK_REFRESH: resolve threw: ${it.message}") }
+            .onFailure { Log.w(PlayerRuntimeController.TAG, "IPTV_LINK_REFRESH: resolve threw: ${LogRedaction.text(it.message)}") }
             .getOrNull()
         if (freshUrl.isNullOrBlank()) {
             Log.w(
