@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
@@ -565,6 +566,8 @@ fun LiveGuide(
                     paused = playbackUi?.isPaused == true,
                     tuning = playbackUi?.spinnerVisible == true ||
                         (overlayChannel != null && overlayChannel.contentId != playingContentId),
+                    // Same message the docked preview shows; without it a failed tune read "Live".
+                    errorText = playbackErrorText(playbackState, playbackUi?.bottomErrorCode),
                 )
             }
             playbackUi?.bottomStatusCode?.let { status ->
@@ -679,6 +682,22 @@ private fun playbackErrorText(
  * The guide preview's playback notice, as the same translated sentence the full player shows. It used
  * to print the raw error object (B50: Shield users saw "PreviewUnavailable(reasonCode=GUIDE_…)").
  */
+internal enum class LiveOverlayStatus { TUNING, FAILED, PAUSED, LIVE }
+
+/**
+ * The fullscreen live status chip. Tuning comes first: while a zap walks ahead, any error still
+ * belongs to the previous channel. A failure on the settled channel must read as failed — the
+ * never-black hold keeps the last frame up, so without this a dead channel looked "Live".
+ */
+internal object LiveOverlayStatusPolicy {
+    fun status(tuning: Boolean, paused: Boolean, failed: Boolean): LiveOverlayStatus = when {
+        tuning -> LiveOverlayStatus.TUNING
+        failed -> LiveOverlayStatus.FAILED
+        paused -> LiveOverlayStatus.PAUSED
+        else -> LiveOverlayStatus.LIVE
+    }
+}
+
 internal object LiveGuidePreviewErrorPolicy {
     @StringRes
     fun messageRes(state: CleanLiveGuidePlaybackState, error: LivePlaybackUiErrorCode?): Int? = when {
@@ -709,7 +728,10 @@ private fun BoxScope.LiveControlsOverlay(
     paused: Boolean,
     /** A zap is walking ahead of the stream — the channel named here is not on screen yet. */
     tuning: Boolean = false,
+    /** Why the playing channel can't play, or null while it is healthy. */
+    errorText: String? = null,
 ) {
+    val status = LiveOverlayStatusPolicy.status(tuning = tuning, paused = paused, failed = errorText != null)
     Column(
         modifier = Modifier
             .align(Alignment.BottomCenter)
@@ -750,26 +772,42 @@ private fun BoxScope.LiveControlsOverlay(
                         maxLines = 1
                     )
                 }
+                if (status == LiveOverlayStatus.FAILED && errorText != null) {
+                    Text(
+                        text = errorText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NuvioTheme.colors.Error,
+                        maxLines = 2
+                    )
+                }
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
             ) {
-                // Tuning outranks paused: it is the newer fact, and the frame on screen still
-                // belongs to the old channel either way.
-                val stateColor = if (paused && !tuning) Color.White else NuvioTheme.colors.Primary
+                // Order lives in LiveOverlayStatusPolicy: tuning > failed > paused > live.
+                val stateColor = when (status) {
+                    LiveOverlayStatus.FAILED -> NuvioTheme.colors.Error
+                    LiveOverlayStatus.PAUSED -> Color.White
+                    else -> NuvioTheme.colors.Primary
+                }
                 Icon(
-                    imageVector = if (paused && !tuning) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    imageVector = when (status) {
+                        LiveOverlayStatus.FAILED -> Icons.Default.ErrorOutline
+                        LiveOverlayStatus.PAUSED -> Icons.Default.Pause
+                        else -> Icons.Default.PlayArrow
+                    },
                     contentDescription = null,
                     tint = stateColor,
                     modifier = Modifier.size(NuvioTheme.spacing.xl)
                 )
                 Text(
                     text = stringResource(
-                        when {
-                            tuning -> R.string.iptv_guide_tuning
-                            paused -> R.string.iptv_guide_paused
-                            else -> R.string.iptv_guide_live
+                        when (status) {
+                            LiveOverlayStatus.TUNING -> R.string.iptv_guide_tuning
+                            LiveOverlayStatus.FAILED -> R.string.iptv_guide_unavailable
+                            LiveOverlayStatus.PAUSED -> R.string.iptv_guide_paused
+                            LiveOverlayStatus.LIVE -> R.string.iptv_guide_live
                         }
                     ),
                     style = MaterialTheme.typography.titleMedium,
