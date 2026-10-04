@@ -100,12 +100,13 @@ internal fun RowScope.GuideProgrammeCells(
     catchUpSupported: Boolean,
     interactive: Boolean,
     onProgrammeClick: (XtreamProgram) -> Unit,
-    onTravel: (Int) -> Unit,
+    onTravel: (Int) -> Boolean,
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
     /** Focus target for the strip itself when the window holds nothing actionable (B114). */
     stripFocus: FocusRequester? = null,
     nowFraction: Float? = null,
+    onExitTimeline: (() -> Unit)? = null,
 ) {
     val windowEndMs = windowStartMs + GuideTimeTravel.WINDOW_MS
     val visible = programmes
@@ -121,16 +122,26 @@ internal fun RowScope.GuideProgrammeCells(
     // The strip holds the cursor when the window has no cell to stop on, so time travel never
     // depends on one existing — see GuideTimelineNavPolicy.
     var stripFocused by remember { mutableStateOf(false) }
-    val stripFocusable = GuideTimelineNavPolicy.stripFocusable(
-        interactive = interactive,
-        hasActionableCell = actionable.isNotEmpty(),
-        stripFocused = stripFocused,
-    )
+    // The window a page left from, while that page is in flight: the window reaches the screen a
+    // frame or more after the key, and until it does the cursor waits on the strip (which survives
+    // the move) instead of the departing cell — see GuideTimelineNavPolicy.stripFocusable.
+    var travelFromWindowMs by remember { mutableStateOf<Long?>(null) }
+    val travelling = travelFromWindowMs == windowStartMs
+    LaunchedEffect(windowStartMs, interactive) {
+        if (!interactive || travelFromWindowMs != windowStartMs) travelFromWindowMs = null
+    }
     // Cells arriving under a waiting cursor (history landing after the travel) take it over, the
-    // same landing a travel makes.
+    // same landing a travel makes. Not the departing window's cells while a page is in flight.
     LaunchedEffect(stripFocused, actionable.isNotEmpty()) {
-        if (stripFocused && actionable.isNotEmpty()) {
+        if (stripFocused && actionable.isNotEmpty() && !travelling) {
             leadingEdgeFocus?.requestFocusOrFalse()
+        }
+    }
+    fun travel(slots: Int) {
+        val from = windowStartMs
+        if (onTravel(slots)) {
+            travelFromWindowMs = from
+            if (!stripFocused) stripFocus?.requestFocusOrFalse()
         }
     }
 
@@ -143,7 +154,16 @@ internal fun RowScope.GuideProgrammeCells(
             // and AT the window's edge they scroll the window itself. That is why BACK, not LEFT,
             // is the way out of the timeline.
             .onPreviewKeyEvent { event ->
-                if (!interactive || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (!interactive) return@onPreviewKeyEvent false
+                // BACK leaves the timeline in one press (Compose would spend it on FocusDirection.Exit).
+                if (event.key == Key.Back && onExitTimeline != null) {
+                    when (GuideTimelineNavPolicy.onBack(isKeyDown = event.type == KeyEventType.KeyDown)) {
+                        GuideTimelineNavPolicy.BackOutcome.LEAVE_TIMELINE -> onExitTimeline()
+                        GuideTimelineNavPolicy.BackOutcome.CONSUME -> Unit
+                    }
+                    return@onPreviewKeyEvent true
+                }
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 val direction = when (event.key) {
                     Key.DirectionLeft -> GuideTimelineNavPolicy.Direction.BACK
                     Key.DirectionRight -> GuideTimelineNavPolicy.Direction.FORWARD
@@ -159,8 +179,8 @@ internal fun RowScope.GuideProgrammeCells(
                     )
                 ) {
                     GuideTimelineNavPolicy.KeyOutcome.WALK -> false
-                    GuideTimelineNavPolicy.KeyOutcome.TRAVEL_BACK -> { onTravel(-GuideTimeTravel.EDGE_TRAVEL_SLOTS); true }
-                    GuideTimelineNavPolicy.KeyOutcome.TRAVEL_FORWARD -> { onTravel(GuideTimeTravel.EDGE_TRAVEL_SLOTS); true }
+                    GuideTimelineNavPolicy.KeyOutcome.TRAVEL_BACK -> { travel(-GuideTimeTravel.EDGE_TRAVEL_SLOTS); true }
+                    GuideTimelineNavPolicy.KeyOutcome.TRAVEL_FORWARD -> { travel(GuideTimeTravel.EDGE_TRAVEL_SLOTS); true }
                 }
             }
             // The strip is a focus target on the timeline row only. It stays in the tree for the
@@ -170,7 +190,16 @@ internal fun RowScope.GuideProgrammeCells(
                 if (interactive && stripFocus != null) {
                     Modifier
                         .focusRequester(stripFocus)
-                        .focusProperties { canFocus = stripFocusable }
+                        // Read at request time: a page parks the cursor here in the same key
+                        // handler that starts it, before any recomposition.
+                        .focusProperties {
+                            canFocus = GuideTimelineNavPolicy.stripFocusable(
+                                interactive = interactive,
+                                hasActionableCell = actionable.isNotEmpty(),
+                                stripFocused = stripFocused,
+                                travelling = travelFromWindowMs == windowStartMs,
+                            )
+                        }
                         .onFocusChanged {
                             stripFocused = it.isFocused
                             if (it.isFocused) focusedStart = null

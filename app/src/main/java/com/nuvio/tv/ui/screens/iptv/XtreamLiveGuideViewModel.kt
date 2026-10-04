@@ -1043,7 +1043,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * Moves the visible window [slots] half-hours (negative = back into the archive), clamped to the
      * provider's window, and reloads the cells of every row on screen for where it landed.
      */
-    fun travelWindow(slots: Int) {
+    fun travelWindow(slots: Int): Boolean {
         val channel = _uiState.value.focusedChannel
         val next = GuideTimeTravel.shift(
             currentStartMs = _uiState.value.windowStartMs,
@@ -1051,9 +1051,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
             nowMs = System.currentTimeMillis(),
             catchUpDays = channel?.catchUpDays ?: 0,
         )
-        if (next == _uiState.value.windowStartMs) return
+        if (next == _uiState.value.windowStartMs) return false
         _uiState.update { it.copy(windowStartMs = next) }
         publishVisibleWindows()
+        return true
     }
 
     /** BACK out of the timeline, or a channel change: return the guide to now. */

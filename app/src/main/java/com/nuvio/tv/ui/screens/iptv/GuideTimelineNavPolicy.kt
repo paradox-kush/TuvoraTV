@@ -59,8 +59,41 @@ internal object GuideTimelineNavPolicy {
     /**
      * Whether the strip is a focus target. Only on the row the viewer is in, and only while it has
      * nothing better to offer — or while it already holds focus, so cells arriving under the cursor
-     * (history landing late) can never pull the focus target out from under it.
+     * (history landing late) can never pull the focus target out from under it — or while a page is
+     * in flight ([travelling]): the window reaches the screen a frame or more after the key (the
+     * ViewModel round trip), and the cell that held the cursor leaves with the old window. Parked on
+     * the strip, which survives the move, the cursor stays in the row; left on the cell, focus was
+     * dropped and the view re-took it on row 1 (Onn, on device).
      */
-    fun stripFocusable(interactive: Boolean, hasActionableCell: Boolean, stripFocused: Boolean): Boolean =
-        interactive && (!hasActionableCell || stripFocused)
+    fun stripFocusable(
+        interactive: Boolean,
+        hasActionableCell: Boolean,
+        stripFocused: Boolean,
+        travelling: Boolean = false,
+    ): Boolean = interactive && (!hasActionableCell || stripFocused || travelling)
+
+    /**
+     * Whether the edge landing after a page should run now: only once the window has actually moved
+     * off [travelFromWindowMs]. Run on the old window it refocused the departing cell.
+     */
+    fun landingDue(pendingSlots: Int, travelFromWindowMs: Long?, windowStartMs: Long): Boolean =
+        pendingSlots != 0 && travelFromWindowMs != null && windowStartMs != travelFromWindowMs
+
+    enum class BackOutcome {
+        /** Leave the timeline and return the guide to now. */
+        LEAVE_TIMELINE,
+
+        /** The press: swallowed so Compose's Exit cannot move the cursor to the row first. */
+        CONSUME,
+    }
+
+    /**
+     * BACK inside the timeline. Compose maps Back to FocusDirection.Exit (ui 1.11.2
+     * FocusInteropUtils.toFocusDirection), which moves the cursor from a cell to its row and consumes
+     * the key, so the guide's BackHandler only saw a second press. The timeline answers it itself:
+     * swallow the press, leave on the release (BACK acts on release, like the platform's), so no
+     * half of the key is left over for the next focus owner or the activity.
+     */
+    fun onBack(isKeyDown: Boolean): BackOutcome =
+        if (isKeyDown) BackOutcome.CONSUME else BackOutcome.LEAVE_TIMELINE
 }
