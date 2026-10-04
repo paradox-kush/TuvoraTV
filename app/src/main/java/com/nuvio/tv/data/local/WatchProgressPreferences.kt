@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.local
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -319,7 +320,7 @@ class WatchProgressPreferences @Inject constructor(
             val beforeSize = recent.size + archive.size
             Log.d(
                 TAG,
-                "removeProgress start contentId=$contentId season=$season episode=$episode entriesBefore=$beforeSize"
+                LogRedaction.text("removeProgress start contentId=$contentId season=$season episode=$episode entriesBefore=$beforeSize")
             )
 
             if (season != null && episode != null) {
@@ -344,7 +345,7 @@ class WatchProgressPreferences @Inject constructor(
             }
 
             val updated = WatchProgressBuckets(recent, archive)
-            Log.d(TAG, "removeProgress complete contentId=$contentId entriesAfter=${recent.size + archive.size}")
+            Log.d(TAG, LogRedaction.text("removeProgress complete contentId=$contentId entriesAfter=${recent.size + archive.size}"))
             writeBucketsLocked(profileId, current, updated)
         }
     }
@@ -370,7 +371,7 @@ class WatchProgressPreferences @Inject constructor(
             }
             recent.remove(contentId)
             archive.remove(contentId)
-            Log.d(TAG, "removeProgressBatch contentId=$contentId removed=${episodes.size} episodes entriesAfter=${recent.size + archive.size}")
+            Log.d(TAG, LogRedaction.text("removeProgressBatch contentId=$contentId removed=${episodes.size} episodes entriesAfter=${recent.size + archive.size}"))
             writeBucketsLocked(profileId, current, WatchProgressBuckets(recent, archive))
         }
     }
@@ -469,7 +470,7 @@ class WatchProgressPreferences @Inject constructor(
                 removedKeys.forEach { key ->
                     val localEntry = local[key]
                     if (localEntry != null && isNonTraktId != null && isNonTraktId(localEntry.contentId)) {
-                        Log.d("WatchProgressPrefs", "  preserved key=$key (non-Trakt ID: ${localEntry.contentId})")
+                        Log.d("WatchProgressPrefs", LogRedaction.text("  preserved key=$key (non-Trakt ID: ${localEntry.contentId})"))
                         preservedLocalItems = true
                     } else if (localEntry != null &&
                         (localEntry.contentType.equals("live", ignoreCase = true) ||
@@ -477,16 +478,16 @@ class WatchProgressPreferences @Inject constructor(
                     ) {
                         // Live progress is local-only (never pushed) — its absence from
                         // remote doesn't mean deletion on another device.
-                        Log.d("WatchProgressPrefs", "  preserved key=$key (live channel, local-only)")
+                        Log.d("WatchProgressPrefs", LogRedaction.text("  preserved key=$key (live channel, local-only)"))
                         preservedLocalItems = true
                     } else if (key in pendingUpsertKeys) {
-                        Log.d("WatchProgressPrefs", "  preserved pending key=$key")
+                        Log.d("WatchProgressPrefs", LogRedaction.text("  preserved pending key=$key"))
                         preservedLocalItems = true
                     } else if (localEntry != null && lastSuccessfulPushMs != null && localEntry.lastWatched > lastSuccessfulPushMs) {
                         preservedLocalItems = true
                     } else {
                         local.remove(key)
-                        Log.d("WatchProgressPrefs", "  removed key=$key (not in remote)")
+                        Log.d("WatchProgressPrefs", LogRedaction.text("  removed key=$key (not in remote)"))
                     }
                 }
             }
@@ -505,7 +506,7 @@ class WatchProgressPreferences @Inject constructor(
                     }
                     else -> {
                         local[key] = mergeDisplayMetadata(remote, existing)
-                        Log.d("WatchProgressPrefs", "  merged key=$key (existing=${existing != null})")
+                        Log.d("WatchProgressPrefs", LogRedaction.text("  merged key=$key (existing=${existing != null})"))
                     }
                 }
             }
@@ -838,7 +839,7 @@ class WatchProgressPreferences @Inject constructor(
                 }.onSuccess { watchProgress ->
                     if (watchProgress != null) parsed[key] = watchProgress
                 }.onFailure {
-                    Log.w(TAG, "Skipping malformed watch progress entry for key=$key")
+                    Log.w(TAG, LogRedaction.text("Skipping malformed watch progress entry for key=$key"))
                 }
             }
             parsed

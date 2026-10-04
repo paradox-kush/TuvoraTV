@@ -219,7 +219,7 @@ class StreamRepositoryImpl @Inject constructor(
 
             // Convert IMDB ID to TMDB ID if needed for plugins
             val tmdbId = tmdbService.ensureTmdbId(videoId, type)
-            Log.d(TAG, "Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)")
+            Log.d(TAG, LogRedaction.text("Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)"))
             val pluginRequest = buildPluginRequest(tmdbId, type, videoId)
             val attemptedAddonNames = streamAddons.map { it.displayName }
             val attemptedFailures = java.util.Collections.synchronizedList(
@@ -742,7 +742,7 @@ class StreamRepositoryImpl @Inject constructor(
                         streamSourcesEnabled = AppFeaturePolicy.addonStreamSourcesEnabled,
                         isIptv = PlaybackAvailability.isIptvId(videoId)
                     )
-                    Log.d(TAG, "Inline streams from meta: addon=${addon.displayName} videoId=$videoId found=${streams.size}")
+                    Log.d(TAG, LogRedaction.text("Inline streams from meta: addon=${addon.displayName} videoId=$videoId found=${streams.size}"))
                     streams
                 }
                 else -> emptyList()

@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.cloud.CloudLibraryPlaybackResult
@@ -341,7 +342,7 @@ class ExternalPlaybackTracker @Inject constructor(
         // we're still foreground, so background-FGS-start restrictions don't apply.
         ExternalPlaybackKeepAliveService.start(appContext)
 
-        Log.d(TAG, "Started tracking: content=${metadata.contentId}, video=${metadata.videoId}")
+        Log.d(TAG, LogRedaction.text("Started tracking: content=${metadata.contentId}, video=${metadata.videoId}"))
 
         // Zidoo's built-in player does not return ActivityResult data, so keep its REST monitor
         // running as a fallback. Third-party players on the same device still use ActivityResult.
@@ -986,7 +987,7 @@ class ExternalPlaybackTracker @Inject constructor(
                     }
                 }
             if (!resolvedSnapshot.metadataResolved) {
-                Log.d(AUTO_NEXT_TAG, "Could not load series meta for ${metadata.contentId} (timeout or error); skipping")
+                Log.d(AUTO_NEXT_TAG, LogRedaction.text("Could not load series meta for ${metadata.contentId} (timeout or error); skipping"))
                 dismissOverlayIfCurrent()
                 return@launch
             }
@@ -994,7 +995,7 @@ class ExternalPlaybackTracker @Inject constructor(
             val nextVideoId = resolvedSnapshot.nextVideoId
             val nextEpisode = resolvedSnapshot.nextEpisode
             if (nextVideoId == null || nextEpisode == null) {
-                Log.d(AUTO_NEXT_TAG, "No next episode after S${season}E${episode} for ${metadata.contentId}")
+                Log.d(AUTO_NEXT_TAG, LogRedaction.text("No next episode after S${season}E${episode} for ${metadata.contentId}"))
                 dismissOverlayIfCurrent()
                 return@launch
             }
@@ -1018,8 +1019,8 @@ class ExternalPlaybackTracker @Inject constructor(
 
             Log.d(
                 AUTO_NEXT_TAG,
-                "Next episode resolved: S${nextSeason}E${nextEpisode} videoId=$nextVideoId " +
-                    "(from S${season}E${episode}, content=${metadata.contentId})"
+                LogRedaction.text("Next episode resolved: S${nextSeason}E${nextEpisode} videoId=$nextVideoId " +
+                    "(from S${season}E${episode}, content=${metadata.contentId})")
             )
 
             // Mark the time of this emit so the resulting launch is recognised as a chain
@@ -1293,7 +1294,7 @@ class ExternalPlaybackTracker @Inject constructor(
         )
         if (!shouldRaise) {
             if (hasNextEpisode == false) {
-                Log.d(AUTO_NEXT_TAG, "loader skipped for known final episode ${metadata.videoId}")
+                Log.d(AUTO_NEXT_TAG, LogRedaction.text("loader skipped for known final episode ${metadata.videoId}"))
             }
             return
         }
@@ -1302,7 +1303,7 @@ class ExternalPlaybackTracker @Inject constructor(
             logo = metadata.logo,
             title = metadata.contentName
         )
-        Log.d(AUTO_NEXT_TAG, "raised loader for ${metadata.videoId}")
+        Log.d(AUTO_NEXT_TAG, LogRedaction.text("raised loader for ${metadata.videoId}"))
     }
 
     // ===================== Tracking lifecycle + Zidoo =====================
@@ -1412,9 +1413,9 @@ class ExternalPlaybackTracker @Inject constructor(
                 progressPercent = explicitPercent,
                 lastWatched = System.currentTimeMillis()
             )
-            Log.d(TAG, "Saving progress: pos=${positionMs}ms, dur=${effectiveDuration}ms, " +
+            Log.d(TAG, LogRedaction.text("Saving progress: pos=${positionMs}ms, dur=${effectiveDuration}ms, " +
                 "content=${metadata.contentId}, video=${metadata.videoId}, " +
-                "progressPct=${progress.progressPercentage}, isInProgress=${progress.isInProgress()}")
+                "progressPct=${progress.progressPercentage}, isInProgress=${progress.isInProgress()}"))
             watchProgressRepository.saveProgress(progress, metadata.profileId)
 
             val progressPercent = if (effectiveDuration > 0L) {

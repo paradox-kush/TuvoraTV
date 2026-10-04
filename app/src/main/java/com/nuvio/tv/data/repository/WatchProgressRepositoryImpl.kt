@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.repository
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.sync.WatchProgressSyncService
@@ -1183,7 +1184,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
                         profileId = profileId
                     )
                 }
-            }.onFailure { Log.w(TAG, "Progress artwork hydration failed for ${progress.contentId}", it) }
+            }.onFailure { Log.w(TAG, LogRedaction.text("Progress artwork hydration failed for ${progress.contentId}"), it) }
         }
     }
 

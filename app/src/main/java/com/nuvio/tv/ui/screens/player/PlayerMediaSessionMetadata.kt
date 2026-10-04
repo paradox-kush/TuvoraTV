@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.net.Uri
 import android.util.Log
 import androidx.media3.common.MediaMetadata
@@ -86,8 +87,8 @@ internal fun PlayerRuntimeController.updateMediaSessionMetadata() {
         }
         Log.d(
             PlayerRuntimeController.TAG,
-            "MediaSession metadata updated: title=${metadata.title}, " +
-                "artist=${metadata.artist}, mediaId=$mediaId, artworkUri=${metadata.artworkUri}"
+            LogRedaction.text("MediaSession metadata updated: title=${metadata.title}, " +
+                "artist=${metadata.artist}, mediaId=$mediaId, artworkUri=${metadata.artworkUri}")
         )
     } catch (e: Exception) {
         Log.w(PlayerRuntimeController.TAG, "Failed to update MediaSession metadata", e)

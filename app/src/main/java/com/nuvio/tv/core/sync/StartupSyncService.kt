@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.sync
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.os.SystemClock
 import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
@@ -405,12 +406,12 @@ class StartupSyncService @Inject constructor(
                 }
 
                 val error = result.exceptionOrNull()
-                Log.w(TAG, "Startup sync attempt $attempt failed for key=$key", error)
+                Log.w(TAG, LogRedaction.text("Startup sync attempt $attempt failed for key=$key"), error)
                 if (error?.isSyncAuthRefusal() == true) {
                     // Retrying cannot mint a token; the remaining attempts would only re-collect
                     // the same 42501. The pull resumes from the auth-state collector above once a
                     // session is back.
-                    Log.w(TAG, "Startup sync abandoned for key=$key - session refused")
+                    Log.w(TAG, LogRedaction.text("Startup sync abandoned for key=$key - session refused"))
                     break
                 }
                 if (attempt < maxAttempts) {
