@@ -41,7 +41,10 @@ internal fun PlayerRuntimeController.applyAudioDelay(
     delayMs: Int,
     persistForCurrentRoute: Boolean = true
 ) {
-    val clampedDelayMs = delayMs.coerceIn(AUDIO_DELAY_MIN_MS, AUDIO_DELAY_MAX_MS)
+    // Engine-aware: a large delay on ExoPlayer can never be buffered and hangs playback
+    // (AudioDelayRangePolicy). A stored per-device value re-applied here (persistForCurrentRoute =
+    // false) is only capped for this session; the saved value is left alone for libmpv.
+    val clampedDelayMs = AudioDelayRangePolicy.effectiveDelayMs(delayMs, usingMpv = isUsingMpvEngine())
     audioDelayUs.set(clampedDelayMs.toLong() * 1000L)
     _uiState.update { it.copy(audioDelayMs = clampedDelayMs) }
     if (persistForCurrentRoute) {
