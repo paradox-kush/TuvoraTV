@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.tmdb
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.data.remote.api.TmdbApi
@@ -242,7 +243,7 @@ class TmdbService @Inject constructor(
         }
         
         // Unknown format
-        Log.w(TAG, "Unknown video ID format: $videoId")
+        Log.w(TAG, LogRedaction.text("Unknown video ID format: $videoId"))
         return null
     }
     

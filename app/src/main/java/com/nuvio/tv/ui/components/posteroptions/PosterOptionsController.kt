@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.components.posteroptions
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.tmdb.TmdbService
@@ -209,7 +210,7 @@ class PosterOptionsController @Inject constructor(
                     canonical.toLibraryEntryInput(state.addonBaseUrl.takeIf { it.isNotBlank() })
                 )
             }.onFailure { error ->
-                Log.w(TAG, "Failed to toggle library for ${canonical.id}: ${error.message}")
+                Log.w(TAG, LogRedaction.text("Failed to toggle library for ${canonical.id}: ${error.message}"))
             }
             _state.update { it.copy(isLibraryPending = false) }
         }
@@ -259,7 +260,7 @@ class PosterOptionsController @Inject constructor(
                     )
                 }
             }.onFailure { error ->
-                Log.w(TAG, "Failed to load list picker for ${canonical.id}: ${error.message}")
+                Log.w(TAG, LogRedaction.text("Failed to load list picker for ${canonical.id}: ${error.message}"))
                 _state.update { current ->
                     current.copy(
                         listPickerPending = false,
@@ -427,7 +428,7 @@ class PosterOptionsController @Inject constructor(
                     watchProgressRepository.markAsCompleted(buildCompletedMovieProgress(canonical))
                 }
             }.onFailure { error ->
-                Log.w(TAG, "Failed to toggle watched for ${canonical.id}: ${error.message}")
+                Log.w(TAG, LogRedaction.text("Failed to toggle watched for ${canonical.id}: ${error.message}"))
                 // Revert optimistic update on failure
                 watchProgressRepository.revertOptimisticWatchedMovie(optimisticIds, add = !currentlyWatched)
             }
@@ -462,7 +463,7 @@ class PosterOptionsController @Inject constructor(
                     markSeriesWatched(canonical)
                 }
             }.onFailure { error ->
-                Log.w(TAG, "Failed to toggle series watched for ${canonical.id}: ${error.message}")
+                Log.w(TAG, LogRedaction.text("Failed to toggle series watched for ${canonical.id}: ${error.message}"))
                 // Revert optimistic update on failure
                 watchedSeriesStateHolder.update(currentIds)
             }
