@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.iptv
 
 import com.nuvio.tv.core.auth.AuthManager
+import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.network.SyncBackendConfig
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.core.profile.ProfileManager
@@ -52,10 +53,10 @@ class ProviderSetupRepositoryTest {
 
     @Test
     fun `redeem tells the backend to skip add-ons only when this build hides them`() = runTest {
-        // unit tests run the full flavour: add-ons are shown, so none are skipped
+        // Runs under both flavours: full shows add-ons (skip=false), playstore hides them (skip=true).
         coEvery { api.redeem(any(), any(), any()) } returns done(added = 1, keys = listOf("k"))
         repo().redeem("ABCDEFGHJKMN", 1)
-        coVerify { api.redeem("ABCDEFGHJKMN", 1, false) }
+        coVerify { api.redeem("ABCDEFGHJKMN", 1, !AppFeaturePolicy.addonsEnabled) }
     }
 
     @Test
