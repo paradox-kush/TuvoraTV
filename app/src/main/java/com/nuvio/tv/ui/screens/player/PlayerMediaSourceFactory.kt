@@ -26,6 +26,7 @@ import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.VodCacheSizeMode
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.net.SocketTimeoutException
 import java.net.URLDecoder
@@ -92,7 +93,12 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         mediaMetadata: androidx.media3.common.MediaMetadata? = null
     ): MediaSource {
         val sanitizedHeaders = sanitizeHeaders(headers)
-        val httpDataSourceFactory = PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders, playbackDns)
+        val httpDataSourceFactory = PlayerPlaybackNetworking.createDataSourceFactory(
+            context,
+            sanitizedHeaders,
+            playbackDns,
+            useLongReadTimeout = isLoopbackUrl(url)
+        )
 
         val resolvedMimeType = mimeTypeOverride
             ?: IptvContainerMimeMemory.learnedContainerMimeType(url)
@@ -273,6 +279,12 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
     }
 
     companion object {
+        /** Local engine streams (torrent engine, local proxies) get the long loopback read timeout. */
+        internal fun isLoopbackUrl(url: String): Boolean {
+            val host = url.toHttpUrlOrNull()?.host ?: return false
+            return host == "127.0.0.1" || host == "::1" || host.equals("localhost", ignoreCase = true)
+        }
+
         private const val MIME_VIDEO_QUICK_TIME = "video/quicktime"
         private const val MP4_SESSION_CHUNK_BYTES = 8L * 1024L * 1024L
         private const val ENABLE_VOD_CACHE = true

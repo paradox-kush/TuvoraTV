@@ -135,6 +135,16 @@ import androidx.media3.exoplayer.ExoPlayer
 import io.github.peerless2012.ass.media.widget.AssSubtitleView
 import kotlin.math.abs
 
+internal fun playerBackTreatsSkipAsAutoPlay(
+    streamAutoPlayMode: StreamAutoPlayMode,
+    preferBingeGroupForNextEpisode: Boolean
+): Boolean = streamAutoPlayMode != StreamAutoPlayMode.MANUAL || preferBingeGroupForNextEpisode
+
+internal fun playerBackOpensCurrentEpisodeStreams(
+    episodeChangedInPlace: Boolean,
+    autoPlayEnabled: Boolean
+): Boolean = episodeChangedInPlace && !autoPlayEnabled
+
 @Composable
 fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
@@ -164,6 +174,10 @@ fun PlayerScreen(
     var subtitleTimingConsumeNextConfirmKeyUp by remember { mutableStateOf(false) }
     var reportCodeVisible by remember { mutableStateOf(false) }
     var exitDispatched by remember { mutableStateOf(false) }
+    val autoPlayEnabledForBack = playerBackTreatsSkipAsAutoPlay(
+        streamAutoPlayMode = uiState.streamAutoPlayMode,
+        preferBingeGroupForNextEpisode = uiState.streamAutoPlayPreferBingeGroupForNextEpisode
+    )
 
     val exitPlayer: () -> Unit = exitPlayer@{
         if (exitDispatched) return@exitPlayer
@@ -172,7 +186,7 @@ fun PlayerScreen(
         viewModel.stopAndRelease()
         val completed = timeline.duration > 0L &&
             (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD
-        onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, uiState.streamAutoPlayMode != StreamAutoPlayMode.MANUAL, completed)
+        onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, autoPlayEnabledForBack, completed)
     }
     val exitPlayerFromError: () -> Unit = exitPlayerFromError@{
         if (exitDispatched) return@exitPlayerFromError
@@ -307,7 +321,7 @@ fun PlayerScreen(
                         uiState.currentVideoId,
                         uiState.currentSeason,
                         uiState.currentEpisode,
-                        uiState.streamAutoPlayMode != StreamAutoPlayMode.MANUAL,
+                        autoPlayEnabledForBack,
                         true
                     )
                 }
@@ -324,7 +338,7 @@ fun PlayerScreen(
                         uiState.currentVideoId,
                         uiState.currentSeason,
                         uiState.currentEpisode,
-                        uiState.streamAutoPlayMode != StreamAutoPlayMode.MANUAL,
+                        autoPlayEnabledForBack,
                         true
                     )
                 }
@@ -753,6 +767,8 @@ fun PlayerScreen(
                     controller = viewModel.controller,
                     keepScreenOn = keepScreenOnIntent,
                     aspectMode = uiState.aspectMode,
+                    tunnelingEnabled = uiState.tunnelingEnabled,
+                    tunneledSurfaceFill = uiState.tunneledSurfaceFill,
                     useLibass = uiState.useLibass,
                     libassRenderType = uiState.libassRenderType,
                     subtitleStyle = uiState.subtitleStyle,
@@ -1069,7 +1085,7 @@ fun PlayerScreen(
                     // Exit PlayerScreen - tracker will save progress when external player returns
                     val completed = timeline.duration > 0L &&
                         (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD
-                    onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, uiState.streamAutoPlayMode != StreamAutoPlayMode.MANUAL, completed)
+                    onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, autoPlayEnabledForBack, completed)
                 },
                 onShowStreamInfo = {
                     restoreStreamInfoFocus = true
@@ -1443,6 +1459,8 @@ private fun ExoPlayerSurface(
     controller: PlayerRuntimeController,
     keepScreenOn: Boolean,
     aspectMode: AspectMode,
+    tunnelingEnabled: Boolean,
+    tunneledSurfaceFill: Boolean,
     useLibass: Boolean,
     libassRenderType: LibassRenderType,
     subtitleStyle: SubtitleStyleSettings,
@@ -1450,6 +1468,8 @@ private fun ExoPlayerSurface(
 ) {
     val context = LocalContext.current
     val latestAspectMode by rememberUpdatedState(aspectMode)
+    val latestTunnelingEnabled by rememberUpdatedState(tunnelingEnabled)
+    val latestTunneledSurfaceFill by rememberUpdatedState(tunneledSurfaceFill)
     val latestSubtitleStyle by rememberUpdatedState(subtitleStyle)
     val playerView = remember(context, player) {
         PlayerView(context).apply {
@@ -1503,13 +1523,21 @@ private fun ExoPlayerSurface(
                     0f
                 }
                 playerView.post {
-                    playerView.applyExoAspectMode(latestAspectMode)
+                    playerView.syncExoSurfaceLayout(
+                        tunnelingEnabled = latestTunnelingEnabled,
+                        tunneledSurfaceFill = latestTunneledSurfaceFill,
+                        aspectMode = latestAspectMode
+                    )
                 }
             }
 
             override fun onRenderedFirstFrame() {
                 playerView.post {
-                    playerView.applyExoAspectMode(latestAspectMode)
+                    playerView.syncExoSurfaceLayout(
+                        tunnelingEnabled = latestTunnelingEnabled,
+                        tunneledSurfaceFill = latestTunneledSurfaceFill,
+                        aspectMode = latestAspectMode
+                    )
                 }
             }
 
@@ -1523,7 +1551,11 @@ private fun ExoPlayerSurface(
         }
         player.addListener(listener)
         playerView.post {
-            playerView.applyExoAspectMode(latestAspectMode)
+            playerView.syncExoSurfaceLayout(
+                tunnelingEnabled = latestTunnelingEnabled,
+                tunneledSurfaceFill = latestTunneledSurfaceFill,
+                aspectMode = latestAspectMode
+            )
         }
         onDispose {
             player.removeListener(listener)
@@ -1533,7 +1565,11 @@ private fun ExoPlayerSurface(
     DisposableEffect(playerView) {
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             playerView.post {
-                playerView.applyExoAspectMode(latestAspectMode)
+                playerView.syncExoSurfaceLayout(
+                    tunnelingEnabled = latestTunnelingEnabled,
+                    tunneledSurfaceFill = latestTunneledSurfaceFill,
+                    aspectMode = latestAspectMode
+                )
             }
         }
         val removeListener = addExoAspectLayoutChangeListener(playerView, listener)
@@ -1548,8 +1584,12 @@ private fun ExoPlayerSurface(
         }
     }
 
-    LaunchedEffect(playerView, aspectMode) {
-        playerView.applyExoAspectMode(aspectMode)
+    LaunchedEffect(playerView, aspectMode, tunnelingEnabled, tunneledSurfaceFill) {
+        playerView.syncExoSurfaceLayout(
+            tunnelingEnabled = tunnelingEnabled,
+            tunneledSurfaceFill = tunneledSurfaceFill,
+            aspectMode = aspectMode
+        )
     }
 
     LaunchedEffect(playerView, player, useLibass, libassRenderType) {
@@ -1576,6 +1616,25 @@ internal fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
 private fun PlayerView.applyExoAspectMode(mode: AspectMode) {
     setTag(R.id.player_view_aspect_mode_tag, mode)
     applyExoAspectMode(this, mode)
+}
+
+/**
+ * Tunneled video ignores view scale, so while tunneling the surface size (FIT/FILL) is the
+ * only aspect control and the view-scale aspect mode is held at ORIGINAL (upstream 9d4c5d050).
+ */
+private fun PlayerView.syncExoSurfaceLayout(
+    tunnelingEnabled: Boolean,
+    tunneledSurfaceFill: Boolean,
+    aspectMode: AspectMode
+) {
+    val targetResizeMode = PlayerDisplayModeUtils.exoSurfaceResizeMode(
+        tunnelingEnabled = tunnelingEnabled,
+        tunneledSurfaceFill = tunneledSurfaceFill
+    )
+    if (resizeMode != targetResizeMode) {
+        resizeMode = targetResizeMode
+    }
+    applyExoAspectMode(aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode))
 }
 
 private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSettings) {

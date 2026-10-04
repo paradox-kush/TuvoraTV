@@ -53,7 +53,7 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
                 Log.d("PlayerStartup", "Torrent stream ready: ${LogRedaction.url(localUrl)}")
                 currentStreamUrl = localUrl
                 currentHeaders = emptyMap()
-                // Use loadSavedProgress = true — TorrServer handles seeking via
+                // Use loadSavedProgress = true — the torrent engine handles seeking via
                 // HTTP Range requests, so ExoPlayer's standard resume logic works.
                 preparePlaybackBeforeStart(
                     url = localUrl,

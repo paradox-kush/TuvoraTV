@@ -20,6 +20,9 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 internal object PlayerPlaybackNetworking {
+    /** The local torrent engine can block a read while it fetches pieces (upstream 76c05edd3). */
+    private const val LOOPBACK_READ_TIMEOUT_SECONDS = 65L
+
     private val trustAllManager = object : X509TrustManager {
         override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
 
@@ -93,9 +96,13 @@ internal object PlayerPlaybackNetworking {
     @OptIn(UnstableApi::class)
     fun createHttpDataSourceFactory(
         defaultHeaders: Map<String, String> = emptyMap(),
-        dns: Dns? = null
+        dns: Dns? = null,
+        useLongReadTimeout: Boolean = false
     ): DataSource.Factory {
         val builder = playbackHttpClient.newBuilder()
+        if (useLongReadTimeout) {
+            builder.readTimeout(LOOPBACK_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        }
         // Per-playlist DoH resolver (VOD/series). SNI/cert stay keyed on the original host, so this
         // works for https too — only mpv's live URL-rewrite can't do https (see PlaylistLivePlayback).
         if (dns != null) builder.dns(dns)
@@ -136,11 +143,12 @@ internal object PlayerPlaybackNetworking {
     fun createDataSourceFactory(
         context: android.content.Context,
         defaultHeaders: Map<String, String> = emptyMap(),
-        dns: Dns? = null
+        dns: Dns? = null,
+        useLongReadTimeout: Boolean = false
     ): DataSource.Factory {
         // DefaultDataSource keeps file/content/rtmp/udp/asset URIs working; only http(s) uses the
         // OkHttp (optionally DoH-resolved) upstream.
-        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns))
+        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns, useLongReadTimeout))
     }
 
     fun openConnection(

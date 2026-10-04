@@ -42,6 +42,7 @@ import com.nuvio.tv.ui.screens.player.PlayerExitReason
 import com.nuvio.tv.ui.screens.player.PlayerScreen
 import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerRoute
 import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerViewModel
+import com.nuvio.tv.ui.screens.player.playerBackOpensCurrentEpisodeStreams
 import com.nuvio.tv.ui.screens.plugin.PluginScreen
 import com.nuvio.tv.ui.screens.search.DiscoverScreen
 import com.nuvio.tv.ui.screens.search.SearchScreen
@@ -1011,6 +1012,9 @@ private fun PlaybackNavHost(
                     }
 
                     when {
+                        playbackCompleted && contentId.isNotBlank() -> {
+                            returnToDetail()
+                        }
                         episodeChangedInPlace && autoPlayEnabled -> {
                             // autoplay moved to next episode — skip Stream, go to detail
                             if (returnToDetailOnBack && contentType.equals("series", ignoreCase = true) && contentId.isNotBlank()) {
@@ -1019,7 +1023,7 @@ private fun PlaybackNavHost(
                                 navController.popBackStack()
                             }
                         }
-                        episodeChangedInPlace && !autoPlayEnabled -> {
+                        playerBackOpensCurrentEpisodeStreams(episodeChangedInPlace, autoPlayEnabled) -> {
                             // manual stream switch to next episode — go to Stream of current episode
                             val videoId = currentVideoId ?: args?.getString("videoId").orEmpty()
                             if (videoId.isNotBlank() && contentType.isNotBlank()) {
@@ -1050,18 +1054,12 @@ private fun PlaybackNavHost(
                             }
                         }
                         else -> {
-                            // normal back — skip Stream screen if episode/movie was completed
-                            val skipStreamScreen = playbackCompleted && contentId.isNotBlank()
-                            if (skipStreamScreen) {
-                                returnToDetail()
-                            } else {
-                                val returnedToStream = popBackToStream()
-                                if (!returnedToStream) {
-                                    if (returnToDetailOnBack && contentType.equals("series", ignoreCase = true) && contentId.isNotBlank()) {
-                                        returnToDetail()
-                                    } else {
-                                        navController.popBackStack()
-                                    }
+                            val returnedToStream = popBackToStream()
+                            if (!returnedToStream) {
+                                if (returnToDetailOnBack && contentType.equals("series", ignoreCase = true) && contentId.isNotBlank()) {
+                                    returnToDetail()
+                                } else {
+                                    navController.popBackStack()
                                 }
                             }
                         }

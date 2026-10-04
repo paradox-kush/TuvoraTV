@@ -1061,6 +1061,30 @@ private fun StreamsList(
         streamFocusRequesters.getOrPut(key) { FocusRequester() }
     }
     var firstCardHasFocus by remember(firstStreamKey) { mutableStateOf(false) }
+
+    var focusedStreamKey by remember { mutableStateOf<String?>(null) }
+    val prevStreamKeysRef = remember { mutableStateOf(streamKeys) }
+
+    LaunchedEffect(streamKeys) {
+        val prevKeys = prevStreamKeysRef.value
+        prevStreamKeysRef.value = streamKeys
+        val key = focusedStreamKey
+        if (key != null && prevKeys !== streamKeys) {
+            val oldIndex = prevKeys.indexOf(key)
+            val newIndex = streamKeys.indexOf(key)
+            if (oldIndex >= 0 && newIndex >= 0 && oldIndex != newIndex) {
+                val shift = newIndex - oldIndex
+                val correctedFirst = (streamListState.firstVisibleItemIndex + shift)
+                    .coerceIn(0, (streamKeys.size - 1).coerceAtLeast(0))
+                try {
+                    streamListState.scrollToItem(correctedFirst, streamListState.firstVisibleItemScrollOffset)
+                } catch (_: Exception) { }
+                withFrameNanos { }
+                runCatching { streamFocusRequesters[key]?.requestFocus() }
+            }
+        }
+    }
+
     // Reset scroll position to the top when the addon filter changes (#2538).
     LaunchedEffect(selectedAddonFilter) {
         streamListState.scrollToItem(0)
@@ -1154,6 +1178,9 @@ private fun StreamsList(
                         else -> streamFocusRequesters.getValue(streamKeys[index])
                     },
                     onFocusChanged = { focused ->
+                        if (focused) {
+                            focusedStreamKey = streamKeys.getOrNull(index)
+                        }
                         if (index == 0) {
                             firstCardHasFocus = focused
                         }

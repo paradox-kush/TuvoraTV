@@ -99,13 +99,6 @@
     <string name="home_no_addons">No addons installed. Add one to get started.</string>
     <string name="home_no_catalog_addons">No catalog addons installed. Install a catalog addon to see content.</string>
     <string name="auth_notice_nuvio_logged_out">You were signed out of Tuvora. Everything on this TV was kept — sign in again to keep it syncing.</string>
-    <string name="account_switch_title">Different account</string>
-    <string name="account_switch_message">This TV still has data from %1$s, and some of it may not have synced. It won\'t be added to %2$s. Continue as %2$s and remove it from this TV, or keep it and sign back in as %1$s later.</string>
-    <string name="account_switch_confirm">Remove and continue</string>
-    <string name="account_switch_keep">Keep data</string>
-    <string name="account_switch_unknown_account">another account</string>
-    <string name="account_sync_now_title">Sync now</string>
-    <string name="account_sync_now_subtitle">Get the latest from your other devices and send anything that hasn\'t synced yet</string>
     <string name="auth_notice_trakt_logged_out">You have been signed out of Trakt. Please reconnect.</string>
     <string name="error_generic">An error occurred</string>
 
@@ -455,13 +448,9 @@
 
     <!-- SettingsScreen categories -->
     <string name="settings_experience">Experience</string>
-    <string name="settings_experience_subtitle">Essential or Advanced</string>
     <string name="settings_account">Account</string>
-    <string name="settings_account_subtitle">Account and sync status</string>
     <string name="settings_profiles">Profiles</string>
-    <string name="settings_profiles_subtitle">Manage user profiles</string>
     <string name="settings_layout">Layout</string>
-    <string name="settings_layout_subtitle">Home structure and poster styles</string>
     <string name="settings_content_discovery">Content &amp; Discovery</string>
     <string name="settings_content_discovery_subtitle">Add-ons, plugins, catalogs, and discovery sources</string>
     <string name="settings_content_discovery_addons_subtitle">Manage add-ons, catalog order, and collections</string>
@@ -470,10 +459,8 @@
     <string name="settings_plugins_subtitle">Repositories and providers</string>
     <string name="settings_integration">Integrations</string>
     <string name="settings_playback">Playback</string>
-    <string name="settings_playback_subtitle">Player, subtitles, and auto-play</string>
     <string name="settings_trakt_subtitle">Open Trakt connection screen</string>
     <string name="settings_tracking_title">Tracking</string>
-    <string name="settings_tracking_subtitle">Manage your tracking accounts</string>
     <string name="settings_tracking_description">Connect tracking providers and choose which one powers your Library and Continue Watching.</string>
     <string name="tracking_accounts_title">Accounts</string>
     <string name="tracking_accounts_subtitle">Connect and manage tracking services</string>
@@ -500,7 +487,6 @@
     <string name="tracking_trakt_progress_required">Available when Trakt is the Watch Progress source</string>
     <string name="trakt_name">Trakt</string>
     <string name="simkl_name">Simkl</string>
-    <string name="settings_about_subtitle">Version and policies</string>
     <string name="settings_network">Network speed</string>
     <string name="settings_network_subtitle">Latency and download diagnostics</string>
     <string name="settings_advanced">Advanced</string>
@@ -605,6 +591,8 @@
     <string name="sentry_turn_off">Turn off</string>
     <string name="sentry_turn_on">Turn on</string>
     <string name="advanced_section_cache">Cache</string>
+    <string name="advanced_section_startup">Startup &amp; exit</string>
+    <string name="advanced_section_network_tests">Network tests</string>
     <string name="advanced_section_dv_diagnostics" translatable="false">DV Diagnostics</string>
     <string name="advanced_fast_horizontal_navigation">Fast Horizontal Navigation</string>
     <string name="advanced_fast_horizontal_navigation_subtitle">Increase D-pad repeat speed in rows while keeping repeat throttling enabled.</string>
@@ -632,7 +620,6 @@
     <string name="advanced_confirm_exit_subtitle">Fully terminate the app and free memory when exiting. Requires pressing back twice to confirm.</string>
     <string name="confirm_exit_toast">Press back again to exit</string>
     <string name="settings_debug">Debug</string>
-    <string name="settings_debug_subtitle">Developer tools and feature flags</string>
     <string name="settings_plugins_section_subtitle">Manage repositories, providers, and plugin states</string>
     <string name="settings_account_section_subtitle">Account and sync status</string>
     <string name="account_stat_addons">addons</string>
@@ -719,8 +706,27 @@
     <string name="contributors_hide_kofi_qr">Hide Ko-fi QR</string>
     <string name="contributors_profile_unavailable">GitHub profile link unavailable.</string>
 
-    <string name="playback_section_general">General</string>
-    <string name="playback_section_general_desc">Core playback behavior.</string>
+    <string name="playback_section_player_title">Player</string>
+    <string name="playback_section_player_title_desc">Default player, internal engine and error fallback.</string>
+    <string name="playback_section_stream_selection">Stream Selection</string>
+    <string name="playback_section_stream_selection_desc">How a stream is picked when you press play.</string>
+    <string name="playback_section_up_next">Up Next</string>
+    <string name="playback_section_up_next_desc">Next episode autoplay and post-play suggestions.</string>
+    <string name="playback_section_skip">Skip Segments</string>
+    <string name="playback_section_skip_desc">Skip intros, recaps and credits.</string>
+    <string name="playback_section_interface">Player Interface</string>
+    <string name="playback_section_interface_desc">Overlays, clock and details shown during playback.</string>
+    <string name="playback_section_audio_only_desc">Languages, decoding and audio output.</string>
+    <string name="playback_section_video_desc">Frame rate matching, Dolby Vision and HDR.</string>
+    <string name="playback_default_player">Default Player</string>
+    <string name="playback_external_player_label">External Player</string>
+    <string name="playback_afr_mode">Frame Rate Matching</string>
+    <string name="playback_dv_hdr_label">Dolby Vision &amp; HDR</string>
+    <string name="playback_mpv_decoding_label">MPV Decoding</string>
+    <string name="playback_network_label">Network</string>
+    <string name="sub_languages_label">Languages</string>
+    <string name="sub_style_label">Style</string>
+    <string name="autoplay_selected_count">%1$d selected</string>
     <string name="playback_loading_overlay">Loading Overlay</string>
     <string name="playback_loading_overlay_sub">Show loading screen until first video frame appears.</string>
     <string name="playback_pause_overlay">Pause Overlay</string>
@@ -744,9 +750,6 @@
     <string name="skip_movie_credits">Skip Credits</string>
     <string name="skip_to_post_credits">Skip to Post-Credits</string>
     <string name="playback_auto_frame_rate">Auto Frame Rate &amp; Resolution</string>
-    <string name="playback_section_player">Player &amp; Stream Selection</string>
-    <string name="playback_section_player_desc">Player preference, auto-play, and source filtering.</string>
-    <string name="playback_player">Player</string>
     <string name="playback_player_internal">Internal</string>
     <string name="playback_player_external">External</string>
     <string name="playback_player_ask">Ask every time</string>
@@ -759,12 +762,8 @@
     <string name="playback_external_forward_subtitles_sub">Fetch subtitles in your preferred language from addons and pass them to the external player.</string>
     <string name="playback_external_send_skip_segments">Send intro and outro timestamps</string>
     <string name="playback_external_send_skip_segments_sub">Pass resolved intro/outro skip timestamps to the external player for auto-skipping. Only works in players that support it; other players ignore it.</string>
-    <string name="playback_section_audio">Audio &amp; Video</string>
-    <string name="playback_section_audio_desc">Audio controls and video compatibility.</string>
     <string name="playback_section_subtitles">Subtitles</string>
     <string name="playback_section_subtitles_desc">Language, style, and render mode.</string>
-    <string name="playback_afr_open">Open</string>
-    <string name="playback_afr_closed">Closed</string>
     <string name="playback_afr_off">Off</string>
     <string name="playback_afr_off_sub">Don\'t change display refresh rate.</string>
     <string name="playback_afr_on_start">On start</string>
@@ -789,6 +788,8 @@
     <string name="playback_engine_mvplayer_desc">Wider codec support via libmpv — fixes blocky or corrupted video some hardware decoders produce on certain streams. With Tuvora OSD controls. Experimental.</string>
 
     <string name="video_section">Video</string>
+    <string name="playback_true_black_letterbox">True black bars</string>
+    <string name="playback_true_black_letterbox_sub">Leave the bars around the picture unpainted so HDR stays true black. Keep this off if a bright line appears on the bars.</string>
     <string name="audio_trailer_section">Trailer</string>
     <string name="audio_autoplay_trailers">Auto-play Trailers</string>
     <string name="audio_autoplay_trailers_sub">Automatically play trailers on detail and post-play screens</string>
@@ -910,6 +911,9 @@
     <string name="sub_org_by_lang_desc">Group subtitles by language.</string>
     <string name="sub_org_by_addon_desc">Group subtitles by addon source.</string>
 
+    <string name="autoplay_preload_next_episode">Preload Next Episode Sources</string>
+    <string name="autoplay_preload_next_episode_sub">Start searching for sources in the background before the next episode button appears.</string>
+
     <string name="autoplay_reuse_last_link">Reuse Last Link</string>
     <string name="autoplay_reuse_last_link_sub">Auto-play your last working stream for this same movie/episode when cache is still valid</string>
     <string name="autoplay_last_link_cache">Last Link Cache Duration</string>
@@ -978,14 +982,18 @@
     <string name="layout_modern_desc">Fixed hero with a single active row for faster browsing</string>
     <string name="layout_section_home">Home Layout</string>
     <string name="layout_section_home_desc">Choose structure and hero source.</string>
-    <string name="layout_landscape_posters">Landscape Posters</string>
-    <string name="layout_landscape_posters_sub">Switch between portrait and landscape cards for Modern view.</string>
+    <string name="layout_landscape_posters">Landscape Poster Mode</string>
+    <string name="layout_landscape_posters_sub">Use landscape cards everywhere.</string>
     <string name="layout_preview_row">Show Preview Row</string>
     <string name="layout_preview_row_sub">Show a partial preview of the row below in Modern Home layout.</string>
     <string name="layout_hero_catalogs">Hero Catalogs</string>
     <string name="layout_hero_catalogs_sub">Select one or more catalogs for hero content.</string>
     <string name="layout_section_content">Home Content</string>
     <string name="layout_section_content_desc">Control what appears on home and search.</string>
+    <string name="layout_section_sidebar">Sidebar &amp; Navigation</string>
+    <string name="layout_section_sidebar_desc">Sidebar style and where Discover appears.</string>
+    <string name="layout_section_card_depth_desc">Edge light and sheen on image cards.</string>
+    <string name="layout_section_custom_poster_desc">Use artwork from an external poster service.</string>
     <string name="layout_collapse_sidebar">Collapse Sidebar</string>
     <string name="layout_collapse_sidebar_sub">Hide sidebar by default; show when focused.</string>
     <string name="layout_hide_floating_pill">Hide Floating Pill</string>
@@ -1064,6 +1072,13 @@
     <string name="upcoming_section_title">Upcoming</string>
     <string name="layout_trailer_button">Show Trailer Button</string>
     <string name="layout_trailer_button_sub">Show trailer button on detail page (only when trailer is available).</string>
+    <string name="layout_trailer_play_in_background">Play in Background</string>
+    <string name="layout_trailer_play_in_background_sub">Play the trailer in place of the backdrop while the page stays visible.</string>
+    <string name="layout_trailer_pause_on_scroll">Pause When Scrolling</string>
+    <string name="layout_trailer_pause_on_scroll_sub">Pause the trailer when you scroll down and resume it when you return to the top.</string>
+    <string name="layout_detail_group_episodes">Episodes</string>
+    <string name="layout_detail_group_trailers">Trailers</string>
+    <string name="layout_detail_group_metadata">Metadata</string>
     <string name="layout_prefer_external_meta">Prefer meta from external addon</string>
     <string name="layout_prefer_external_meta_sub">Use metadata from external addon instead of catalog addon.</string>
     <string name="layout_show_full_release_date">Show full release date</string>
@@ -1143,7 +1158,6 @@
     <string name="custom_poster_qr_instruction">Scan the QR code with your phone to paste a poster URL pattern</string>
 
     <!-- Custom Poster URL - Screen Toggles -->
-    <string name="layout_custom_poster_apply_to">Apply custom posters to:</string>
     <string name="layout_custom_poster_screen_home">Home</string>
     <string name="layout_custom_poster_screen_continue_watching">Continue Watching</string>
     <string name="layout_custom_poster_screen_collections">Collections</string>
@@ -1152,8 +1166,8 @@
     <string name="layout_custom_poster_screen_details">Details Screen</string>
 
     <!-- Custom Poster Web Page -->
-    <string name="layout_always_show_landscape_clearlogo">Always Show Logo on Landscape Posters</string>
-    <string name="layout_always_show_landscape_clearlogo_sub">Show the clearlogo overlay even when a landscape poster is available.</string>
+    <string name="layout_always_show_landscape_clearlogo">Always Backdrop with Logo for Landscape Posters</string>
+    <string name="layout_always_show_landscape_clearlogo_sub">Ignore landscape poster from addon and use backdrop with clearlogo overlay instead.</string>
     <string name="web_custom_poster_title">Custom Poster Source</string>
     <string name="web_custom_poster_subtitle">Paste a poster URL pattern below and press Save.</string>
     <string name="web_custom_poster_label">URL Pattern</string>
@@ -1217,11 +1231,21 @@
     <string name="mdblist_metacritic_subtitle">Show Metacritic score</string>
     <string name="mdblist_mal_title">MyAnimeList</string>
     <string name="mdblist_mal_subtitle">Show MyAnimeList rating</string>
+    <string name="mdblist_show_on_hero_title">Use Ratings on Hero</string>
+    <string name="mdblist_show_on_hero_subtitle">Show MDBList ratings on hero carousel (modern and classic/grid)</string>
+    <string name="mdblist_rating_order_title">Rating Order</string>
+    <string name="mdblist_rating_order_subtitle">First 3 enabled and available ratings are shown on the modern hero. Use arrows to reorder.</string>
     <string name="mdblist_dialog_title">MDBList API Key</string>
     <string name="mdblist_dialog_subtitle">Enter your API key to fetch external ratings</string>
     <string name="mdblist_dialog_placeholder">Enter MDBList API key</string>
     <string name="mdblist_not_set">Not set</string>
     <string name="mdblist_invalid_api_key">Invalid MDBList API key</string>
+    <string name="mdblist_library_lists">Library lists</string>
+    <string name="mdblist_library_lists_description">Choose which MDBList lists appear in the Library and in Manage Lists. The Watchlist is always shown.</string>
+    <string name="mdblist_library_lists_empty">No lists found in your MDBList account yet. Sync to load them.</string>
+    <string name="mdblist_library_lists_summary">%1$d of %2$d shown</string>
+    <string name="tracking_mdblist_features_title">MDBList features</string>
+    <string name="tracking_mdblist_features_subtitle">MDBList-specific settings</string>
 
     <string name="debrid_title">Connected Services</string>
     <string name="debrid_subtitle">Connect accounts for links and library access</string>
@@ -1717,24 +1741,44 @@
     <string name="stream_retry">Retry</string>
     <string name="stream_no_streams">No streams found</string>
     <string name="stream_no_streams_hint">Try installing more addons to find streams</string>
-    <string name="stream_no_streams_hint_iptv">Add your IPTV playlist in Settings to play titles from your provider</string>
     <string name="stream_finding_source">Finding stream source</string>
     <string name="debrid_resolving_stream">Resolving debrid stream</string>
     <string name="debrid_stale_stream">This Debrid result expired. Refreshing streams.</string>
     <string name="debrid_missing_api_key">Add a Debrid API key in Settings.</string>
     <string name="debrid_not_cached">Not cached on this service.</string>
     <string name="debrid_resolution_failed">Could not resolve this Debrid stream.</string>
+    <string name="youtube_resolving_stream">Loading YouTube video</string>
+    <string name="youtube_resolution_failed">Could not load this YouTube video.</string>
     <string name="stream_type_torrent">Torrent</string>
     <string name="stream_type_youtube">YouTube</string>
     <string name="p2p_consent_title">P2P Streaming</string>
     <string name="p2p_consent_body">This stream uses peer-to-peer (P2P) technology. By enabling P2P, you acknowledge and agree that:\n\n\u2022 Your IP address will be visible to other peers in the network\n\u2022 You are solely responsible for the content you access\n\u2022 You confirm you have the legal right to stream this content in your jurisdiction\n\u2022 Tuvora does not host, distribute, or control any P2P content\n\u2022 Tuvora bears no liability for any legal consequences arising from your use of P2P streaming\n\nYou use this feature entirely at your own risk. P2P can be disabled anytime in Settings.</string>
     <string name="p2p_consent_enable">Enable P2P</string>
     <string name="p2p_consent_cancel">Cancel</string>
-    <string name="stream_p2p_unavailable">P2P (torrent) streams are not supported in this version of Tuvora. Pick another source.</string>
     <string name="settings_p2p_title">P2P Streaming</string>
     <string name="settings_p2p_subtitle">Allow peer-to-peer (torrent) streams</string>
     <string name="settings_p2p_hide_stats_title">Hide torrent stats</string>
     <string name="settings_p2p_hide_stats_subtitle">Hide buffer, seeds, peers and download speed during loading and playback</string>
+    <string name="settings_p2p_profile_title">Torrent profile</string>
+    <string name="settings_p2p_profile_soft">Soft</string>
+    <string name="settings_p2p_profile_balanced">Balanced</string>
+    <string name="settings_p2p_profile_fast">Fast</string>
+    <string name="settings_p2p_profile_soft_description">Uses fewer peer connections to reduce battery and network load</string>
+    <string name="settings_p2p_profile_balanced_description">Recommended balance of startup speed and connection stability</string>
+    <string name="settings_p2p_profile_fast_description">Uses more peer connections for difficult or high-bitrate torrents</string>
+    <string name="settings_p2p_cache_size_title">Torrent cache size</string>
+    <string name="settings_p2p_cache_size_description">Downloaded torrent data kept on this device for faster replays</string>
+    <string name="settings_p2p_cache_none">No persistent cache</string>
+    <string name="settings_p2p_cache_2_gb">2 GB</string>
+    <string name="settings_p2p_cache_5_gb">5 GB</string>
+    <string name="settings_p2p_cache_10_gb">10 GB</string>
+    <string name="settings_p2p_clear_cache_title">Clear torrent cache</string>
+    <string name="settings_p2p_clear_cache_usage">%1$s currently used</string>
+    <string name="settings_p2p_clear_cache_usage_pending">Usage is measured after P2P starts; select to clear cached torrent data</string>
+    <string name="settings_p2p_clear_cache_clearing">Clearing inactive torrent data…</string>
+    <string name="settings_p2p_clear_cache_playback_active">Stop P2P playback before clearing the cache</string>
+    <string name="settings_p2p_clear_cache_done">Cleared %1$s of inactive torrent data</string>
+    <string name="settings_p2p_clear_cache_failed">Could not clear the torrent cache</string>
     <string name="p2p_download_title">Downloading P2P Engine</string>
     <string name="p2p_download_subtitle">This is a one-time download required for P2P streaming.</string>
     <string name="stream_type_external">External</string>
@@ -1799,8 +1843,6 @@
     <string name="player_report_issue_sent_button">Report Sent</string>
     <string name="player_report_issue_failed">Unable to send report</string>
     <string name="player_report_loading_issue">Report Loading Issue</string>
-    <string name="player_loading_resuming_slow">Resuming at %1$s — the provider is slow to jump there</string>
-    <string name="player_start_from_beginning">Start from beginning</string>
     <plurals name="player_report_loading_issue_prompt">
         <item quantity="one">Still loading after %1$d second</item>
         <item quantity="other">Still loading after %1$d seconds</item>
@@ -2117,6 +2159,7 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Loading\u2026</string>
     <string name="account_sync_description">Sync your library, watch progress, addons, and plugins across devices.</string>
+    <string name="account_sync_restart_note">Sync is not real-time across active devices. Restart this device after signing in or to pick up changes made elsewhere.</string>
     <string name="account_signin_qr_title">Sign In with QR</string>
     <string name="account_signin_qr_subtitle">Scan a QR code and complete email login on your phone</string>
     <string name="account_signin_email_title">Sign In</string>
@@ -2824,6 +2867,10 @@
     <string name="player_torrent_status">%1$s · %2$s</string>
     <string name="player_torrent_stats">%1$d peers · %2$d seeds · %3$d%%</string>
     <string name="player_torrent_connecting_peers">Connecting to peers…</string>
+    <string name="player_torrent_fetching_metadata">Fetching torrent metadata…</string>
+    <string name="player_torrent_preparing_stream">Preparing torrent stream…</string>
+    <string name="player_torrent_connecting_status">%1$s · %2$s · %3$s</string>
+    <string name="player_torrent_loading_status">%1$s downloaded · %2$s · %3$s</string>
     <string name="player_track_audio_fallback">Audio %1$d</string>
     <string name="player_track_subtitle_fallback">Subtitle %1$d</string>
 
@@ -2993,11 +3040,8 @@
     <string name="network_fast_error_script_path_missing">fast.com: script path not found</string>
     <string name="network_fast_error_token_missing">fast.com: token not found in bundle</string>
 
-    <!-- Torrent service / TorrServer binary errors -->
-    <string name="torrent_error_add_failed">Failed to add torrent</string>
-    <string name="torrent_error_binary_missing">TorrServer binary not found at %1$s</string>
-    <string name="torrent_error_process_died">TorrServer process died on startup (exit code %1$d)</string>
-    <string name="torrent_error_start_timeout">TorrServer failed to start within %1$ds</string>
+    <!-- Torrent service errors -->
+    <string name="torrent_error_start_timeout">Torrent stream did not start within %1$ds</string>
 
     <!-- Player runtime: stream / external link errors -->
     <string name="player_torrent_starting_engine">Starting P2P engine…</string>
@@ -3286,6 +3330,52 @@
     <string name="stream_test_video_bitrate">Average Video Bitrate: %1$s</string>
     <string name="stream_test_error_connection">Connection failed. The last played stream link may have expired or is unreachable. Please play the video again and retry.</string>
 
+    <string name="random_episode_title">Shuffle</string>
+    <string name="layout_random_episode_sub">Shuffle episodes from any series. Turning this off pauses shuffle.</string>
+    <string name="random_episode_unwatched">Unwatched episodes</string>
+    <string name="random_episode_include_watched">All episodes</string>
+    <string name="random_episode_empty_subtitle">No episodes are available to shuffle.</string>
+    <string name="random_episode_caught_up">You have watched every episode. Choose All episodes to watch again.</string>
+    <string name="random_episode_loading">Loading episodes…</string>
+    <string name="shuffle_starting">Starting shuffle…</string>
+    <string name="shuffle_choose_episodes">Choose which episodes to shuffle.</string>
+    <string name="shuffle_preview_title">Your episode</string>
+    <string name="shuffle_play_episode">Play episode</string>
+    <string name="shuffle_again">Shuffle again</string>
+    <string name="shuffle_only_episode">This is the only episode in your selection.</string>
+    <string name="shuffle_artwork_hidden">Artwork hidden to avoid spoilers</string>
+    <string name="shuffle_stop">Stop shuffle</string>
+    <string name="shuffle_enabled_all">Shuffle on · All episodes</string>
+    <string name="shuffle_enabled_unwatched">Shuffle on · Unwatched episodes</string>
+    <string name="shuffle_disabled">Shuffle off</string>
+    <string name="shuffle_save_failed">Could not update shuffle. Try again.</string>
+    <string name="shuffle_change_selection">Choose episodes</string>
+    <string name="shuffle_badge">Episode shuffle enabled</string>
+
+    <!-- Subtitle AutoSync -->
+    <string name="autosync_setting_title">Auto Sync Subtitles</string>
+    <string name="autosync_setting_description">Match the selected add-on subtitle to the timing of the subtitles embedded in the video.</string>
+    <string name="autosync_tolerance_title">Auto Sync Tolerance</string>
+    <string name="autosync_tolerance_description">Keep the original timing when the correction needed is this small or smaller.</string>
+    <string name="autosync_tolerance_off">Off</string>
+    <string name="autosync_tolerance_value">%1$d ms</string>
+    <string name="autosync_thorough_title">Thorough Auto Sync Search</string>
+    <string name="autosync_thorough_description">Keep comparing other subtitles and embedded tracks for a closer match before syncing. When off, the first strong match is used sooner. Only confident matches are ever applied.</string>
+    <string name="autosync_toast_failed">Sync failed: Auto Sync couldn\'t match this subtitle to the video.</string>
+    <string name="autosync_toast_failed_no_reference">Sync failed: this video has no embedded subtitles to compare with.</string>
+    <string name="autosync_toast_failed_unsupported">Sync failed: Auto Sync doesn\'t support this subtitle format.</string>
+    <string name="autosync_label_synced">Auto synced</string>
+    <string name="account_switch_title">Different account</string>
+    <string name="account_switch_message">This TV still has data from %1$s, and some of it may not have synced. It won\'t be added to %2$s. Continue as %2$s and remove it from this TV, or keep it and sign back in as %1$s later.</string>
+    <string name="account_switch_confirm">Remove and continue</string>
+    <string name="account_switch_keep">Keep data</string>
+    <string name="account_switch_unknown_account">another account</string>
+    <string name="account_sync_now_title">Sync now</string>
+    <string name="account_sync_now_subtitle">Get the latest from your other devices and send anything that hasn\'t synced yet</string>
+    <string name="stream_no_streams_hint_iptv">Add your IPTV playlist in Settings to play titles from your provider</string>
+    <string name="stream_p2p_unavailable">P2P (torrent) streams are not supported in this version of Tuvora. Pick another source.</string>
+    <string name="player_loading_resuming_slow">Resuming at %1$s — the provider is slow to jump there</string>
+    <string name="player_start_from_beginning">Start from beginning</string>
     <string name="about_discord">Join the Discord</string>
     <string name="about_discord_subtitle">Setup help, feature ideas and release news</string>
     <string name="about_discord_qr_instruction">Scan with your phone to join the Tuvora Discord</string>
@@ -3379,24 +3469,18 @@
     <string name="clean_live_ingress_unavailable">This Live TV channel is currently unavailable.</string>
     <string name="clean_live_ingress_profile_changed">Your profile changed. Select the channel again.</string>
     <string name="auth_qr_phone_hint">Use your phone to sign in with email/password. TV stays QR-only for faster login.</string>
-    <!-- wave1 t1 -->
     <string name="iptv_settings_title">IPTV playlists</string>
     <string name="iptv_remove_playlist_message_all_devices">Its favourites, Continue Watching entries and watch progress go with it, on all your devices. This can\'t be undone.</string>
     <string name="iptv_remove_playlist_message_if_you_sync">Its favourites, Continue Watching entries and watch progress go with it. If you sync, it is removed from your other devices too. This can\'t be undone.</string>
     <string name="iptv_playlist_removed">Playlist removed</string>
     <string name="iptv_guide_favorites_empty">Hold OK on a channel to add it to Favorites</string>
-    <!-- wave1 x1 -->
     <string name="addon_not_synced_yet">Not synced yet</string>
-    <!-- wave2 t3 -->
     <string name="auth_qr_phone_hint_scan_or_email">Scan the code with your phone, or sign in with email on this TV.</string>
     <string name="auth_qr_phone_hint_scan_only">Scan the code with your phone to sign in.</string>
     <string name="auth_qr_scan_only_instruction">Scan the QR code with your phone\'s camera.</string>
-    <!-- wave2 t4 -->
     <string name="iptv_guide_hidden_notice">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → %2$s → Hidden channels &amp; groups.</string>
     <string name="iptv_guide_hidden_notice_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → your playlist → Hidden channels &amp; groups.</string>
     <string name="iptv_guide_hidden_undo">Undo</string>
-    <!-- /wave2 t4 -->
-    <!-- Step 0.3: backup servers (Add/Edit playlist form + the playlist row). -->
     <string name="iptv_backup_servers_title">Backup servers</string>
     <string name="iptv_backup_servers_helper">Used automatically if the main server doesn\'t respond.</string>
     <string name="iptv_backup_server_row">Backup server %1$d</string>
@@ -3421,7 +3505,6 @@
     <string name="iptv_backup_server_problem_too_many">At most %1$d backup servers</string>
     <string name="iptv_using_backup_server">Using backup server %1$d</string>
     <string name="iptv_using_backup_server_host">Using backup server %1$d (%2$s)</string>
-    <!-- Step 2: provider setup codes. These sentences are pinned to SetupMessage by SetupCodeOutcomeTest. -->
     <string name="setup_code_msg_empty">Enter the setup code your provider gave you.</string>
     <string name="setup_code_msg_bad_characters">That doesn\'t look like a setup code. Codes use letters and the numbers 2-9 only.</string>
     <string name="setup_code_msg_wrong_length">A code has 12 characters. Check it against the one your provider sent.</string>
@@ -3434,7 +3517,6 @@
     <string name="setup_code_msg_nothing_bad_address">Your provider\'s server address isn\'t valid. Ask your provider to check it.</string>
     <string name="setup_code_msg_already_set_up">This code was already used with this account, so there was nothing new to add.</string>
     <string name="setup_code_msg_nothing_added">Nothing was added. Ask your provider to check your setup.</string>
-    <!-- Step 2: playlist details page (two panes, three shelves) -->
     <string name="iptv_details_managed_by">Managed by %1$s</string>
     <string name="iptv_details_managed_by_updated">Managed by %1$s \u00B7 updated %2$s</string>
     <string name="iptv_details_detached_banner">Detached from %1$s</string>
@@ -3498,7 +3580,6 @@
     <string name="iptv_cancel">Cancel</string>
     <string name="iptv_managed_row_line">Managed by %1$s</string>
     <string name="iptv_managed_row_line_days">Managed by %1$s \u00B7 %2$s</string>
-    <!-- Step 2: Enter setup code screen -->
     <string name="iptv_setup_entry_title">Enter setup code</string>
     <string name="iptv_setup_entry_subtitle">Add a provider\'s playlists with the code they sent you</string>
     <string name="iptv_setup_title">Enter setup code</string>

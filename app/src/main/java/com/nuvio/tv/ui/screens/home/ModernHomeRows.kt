@@ -1213,14 +1213,28 @@ private fun ModernCarouselCard(
     var isFocused by remember { mutableStateOf(false) }
     val payload = item.payload as? ModernPayload.CollectionFolder
     val isCollectionFolder = item.payload is ModernPayload.CollectionFolder
+    val effectiveIgnoreLandscapePoster = alwaysShowLandscapeClearlogo
+    val useLandscapeAsExpanded = focusedPosterBackdropExpandEnabled && isBackdropExpanded &&
+        !alwaysShowLandscapeClearlogo &&
+        !item.metaPreview?.landscapePoster.isNullOrBlank()
     val baseImageUrl = if (focusedPosterBackdropExpandEnabled && isBackdropExpanded) {
         if (useLandscapeOverlayTreatment) {
-            item.metaPreview?.landscapePoster ?: effectiveBackdropUrl ?: item.heroPreview.backdrop ?: item.imageUrl ?: item.heroPreview.poster
+            if (effectiveIgnoreLandscapePoster) {
+                effectiveBackdropUrl ?: item.heroPreview.backdrop ?: item.imageUrl ?: item.heroPreview.poster
+            } else {
+                item.metaPreview?.landscapePoster ?: effectiveBackdropUrl ?: item.heroPreview.backdrop ?: item.imageUrl ?: item.heroPreview.poster
+            }
+        } else if (useLandscapeAsExpanded) {
+            item.metaPreview?.landscapePoster
         } else {
             item.heroPreview.backdrop ?: item.imageUrl ?: item.heroPreview.poster
         }
     } else if (useLandscapeOverlayTreatment && !isCollectionFolder) {
-        item.metaPreview?.landscapePoster ?: effectiveBackdropUrl ?: item.heroPreview.poster
+        if (effectiveIgnoreLandscapePoster) {
+            effectiveBackdropUrl ?: item.heroPreview.poster
+        } else {
+            item.metaPreview?.landscapePoster ?: effectiveBackdropUrl ?: item.heroPreview.poster
+        }
     } else if (isCollectionFolder && !payload?.coverEmoji.isNullOrBlank()) {
         // Emoji cover folders: never fall back to backdrop for the card poster
         item.imageUrl
@@ -1269,7 +1283,7 @@ private fun ModernCarouselCard(
             if (revalidationKey > 0) {
                 builder.placeholderMemoryCacheKey("${it}_${requestWidthPx}x${requestHeightPx}_v${revalidationKey - 1}")
             }
-            val isLandscapeCustomPoster = useLandscapeOverlayTreatment && !item.metaPreview?.landscapePoster.isNullOrBlank()
+            val isLandscapeCustomPoster = useLandscapeOverlayTreatment && !effectiveIgnoreLandscapePoster && !item.metaPreview?.landscapePoster.isNullOrBlank()
             val fallbackUrl = if (isLandscapeCustomPoster) {
                 // Landscape custom poster -> fall back to original backdrop
                 item.metaPreview?.background ?: item.heroPreview.backdrop ?: item.metaPreview?.rawPosterUrl
@@ -1304,6 +1318,7 @@ private fun ModernCarouselCard(
     }
     var landscapeLogoLoadFailed by remember(effectiveLogoUrl) { mutableStateOf(false) }
     val shouldPlayTrailerInCard = playTrailerInExpandedCard && !trailerPreviewUrl.isNullOrBlank()
+    var trailerFirstFrameRendered by remember(trailerPreviewUrl) { mutableStateOf(false) }
 
     // Use the image model directly — Coil's memory cache handles repeated
     // requests efficiently without needing scroll-aware request swapping.
@@ -1313,7 +1328,8 @@ private fun ModernCarouselCard(
             !isCollectionFolder &&
             !effectiveLogoUrl.isNullOrBlank() &&
             !landscapeLogoLoadFailed &&
-            (alwaysShowLandscapeClearlogo || isBackdropExpanded || item.metaPreview?.landscapePoster.isNullOrBlank() || customPosterLoadFailed)
+            !(useLandscapeAsExpanded && !trailerFirstFrameRendered) &&
+            (effectiveIgnoreLandscapePoster || isBackdropExpanded || item.metaPreview?.landscapePoster.isNullOrBlank() || customPosterLoadFailed)
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
     val backgroundCardColor = NuvioTheme.colors.BackgroundCard
@@ -1520,6 +1536,7 @@ private fun ModernCarouselCard(
                                 trailerAudioUrl = trailerPreviewAudioUrl,
                                 isPlaying = true,
                                 onEnded = onTrailerEnded,
+                                onFirstFrameRendered = { trailerFirstFrameRendered = true },
                                 muted = focusedPosterBackdropTrailerMuted,
                                 cropToFill = true,
                                 overscanZoom = MODERN_TRAILER_OVERSCAN_ZOOM,
@@ -1542,7 +1559,7 @@ private fun ModernCarouselCard(
                         contentScale = ContentScale.Fit,
                         alignment = Alignment.CenterStart
                     )
-                } else if ((useLandscapeOverlayTreatment || isBackdropExpanded) && !isCollectionFolder && (item.metaPreview?.landscapePoster.isNullOrBlank() || customPosterLoadFailed)) {
+                } else if ((useLandscapeOverlayTreatment || isBackdropExpanded) && !isCollectionFolder && !(useLandscapeAsExpanded && !trailerFirstFrameRendered) && (effectiveIgnoreLandscapePoster || item.metaPreview?.landscapePoster.isNullOrBlank() || customPosterLoadFailed)) {
                     Text(
                         text = item.title,
                         style = titleStyle.copy(

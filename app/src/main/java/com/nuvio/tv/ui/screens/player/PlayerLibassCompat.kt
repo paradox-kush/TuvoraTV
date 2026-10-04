@@ -110,8 +110,11 @@ private fun ExtractorsFactory.withAssMkvSupportCompat(
     return ExtractorsFactory {
         val extractors = delegate.createExtractors()
         extractors.forEachIndexed { index, extractor ->
+            // Media3 wraps extractors (e.g. subtitle transcoding), so match on the underlying
+            // implementation or the swap below silently never happens (upstream 84ec910db).
+            val underlying = extractor.getUnderlyingImplementation()
             // Stock MatroskaExtractor: replace with ASS-aware variant for libass support.
-            if (extractor is MatroskaExtractor) {
+            if (underlying is MatroskaExtractor) {
                 extractors[index] = NuvioAssMatroskaExtractor(subtitleParserFactory, assHandler)
             }
             // The DV7 factory swaps in a vendored DvMatroskaExtractor for DV conversion.
@@ -120,7 +123,7 @@ private fun ExtractorsFactory.withAssMkvSupportCompat(
             // Replace DvMatroskaExtractor with AssMatroskaExtractor so that libass works.
             // For actual DV content, maybeAdjustLibassPipelineForTracks will detect the DV
             // video track and rebuild the player without libass, restoring DvMatroskaExtractor.
-            if (extractor is DvMatroskaExtractor) {
+            if (underlying is DvMatroskaExtractor) {
                 extractors[index] = NuvioAssMatroskaExtractor(subtitleParserFactory, assHandler)
             }
         }

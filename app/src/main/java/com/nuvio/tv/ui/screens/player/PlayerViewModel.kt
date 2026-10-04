@@ -51,6 +51,7 @@ class PlayerViewModel @Inject constructor(
     private val streamBadgeSettingsDataStore: StreamBadgeSettingsDataStore,
     private val bingeGroupCacheDataStore: com.nuvio.tv.data.local.BingeGroupCacheDataStore,
     private val layoutPreferenceDataStore: com.nuvio.tv.data.local.LayoutPreferenceDataStore,
+    private val episodeShufflePlayback: com.nuvio.tv.core.player.EpisodeShufflePlayback,
     private val watchedItemsPreferences: com.nuvio.tv.data.local.WatchedItemsPreferences,
     private val trackPreferenceDataStore: com.nuvio.tv.data.local.TrackPreferenceDataStore,
     private val audioDelayRouteDataStore: AudioDelayRouteDataStore,
@@ -61,6 +62,7 @@ class PlayerViewModel @Inject constructor(
     private val tmdbSettingsDataStore: TmdbSettingsDataStore,
     private val trailerPlayerPool: com.nuvio.tv.core.player.TrailerPlayerPool,
     private val directDebridResolver: DirectDebridResolver,
+    private val youTubeStreamResolver: com.nuvio.tv.core.streams.YouTubeStreamResolver,
     private val directDebridStreamPreparer: DirectDebridStreamPreparer,
     private val streamBadgePresentation: com.nuvio.tv.core.streams.StreamBadgePresentation,
     private val playbackIssueReportRepository: com.nuvio.tv.data.repository.PlaybackIssueReportRepository,
@@ -107,6 +109,7 @@ class PlayerViewModel @Inject constructor(
         streamBadgeSettingsDataStore = streamBadgeSettingsDataStore,
         bingeGroupCacheDataStore = bingeGroupCacheDataStore,
         layoutPreferenceDataStore = layoutPreferenceDataStore,
+        episodeShufflePlayback = episodeShufflePlayback,
         watchedItemsPreferences = watchedItemsPreferences,
         trackPreferenceDataStore = trackPreferenceDataStore,
         audioDelayRouteDataStore = audioDelayRouteDataStore,
@@ -116,13 +119,15 @@ class PlayerViewModel @Inject constructor(
         tmdbMetadataService = tmdbMetadataService,
         tmdbSettingsDataStore = tmdbSettingsDataStore,
         directDebridResolver = directDebridResolver,
+        youTubeStreamResolver = youTubeStreamResolver,
         directDebridStreamPreparer = directDebridStreamPreparer,
         streamBadgePresentation = streamBadgePresentation,
         playbackIssueReportRepository = playbackIssueReportRepository,
         livePlayback = livePlayback,
         playerMemoryBudget = playerMemoryBudget,
         savedStateHandle = savedStateHandle,
-        scope = viewModelScope
+        scope = viewModelScope,
+        profileId = launchProfileId
     )
 
     val uiState: StateFlow<PlayerUiState>
@@ -265,13 +270,7 @@ class PlayerViewModel @Inject constructor(
                 subtitles = cachedSubtitles,
                 nextEpisodeSnapshot = controller.metaVideos
                     .takeIf { it.isNotEmpty() }
-                    ?.let { videos ->
-                        com.nuvio.tv.core.player.resolveExternalNextEpisodeSnapshot(
-                            videos = videos,
-                            currentSeason = metadata.season,
-                            currentEpisode = metadata.episode
-                        )
-                    },
+                    ?.let { videos -> externalPlaybackTracker.resolveNextEpisodeSnapshot(metadata, videos) },
                 context = activityContext
             )
         }

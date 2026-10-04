@@ -2,7 +2,9 @@ package com.nuvio.tv.ui.screens.player
 
 import androidx.media3.common.MimeTypes
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlayerMediaSourceFactoryTest {
@@ -191,5 +193,20 @@ class PlayerMediaSourceFactoryTest {
             IptvContainerMimeMemory.learnedContainerKey("https://panel.example.com/ch/7_")
         )
         assertNull(IptvContainerMimeMemory.learnedContainerKey("not a url"))
+    }
+
+    @Test
+    fun `isLoopbackUrl returns true for engine and local proxy loopback streams`() {
+        assertTrue(PlayerMediaSourceFactory.isLoopbackUrl("http://127.0.0.1:51234/stream/movie.mkv"))
+        assertTrue(PlayerMediaSourceFactory.isLoopbackUrl("http://localhost:51234/stream/movie.mkv"))
+        assertTrue(PlayerMediaSourceFactory.isLoopbackUrl("http://[::1]:51234/stream/movie.mkv"))
+        assertTrue(PlayerMediaSourceFactory.isLoopbackUrl("http://127.0.0.1:8080/stream/video.mkv?token=abc"))
+    }
+
+    @Test
+    fun `isLoopbackUrl returns false for external and non-loopback urls`() {
+        assertFalse(PlayerMediaSourceFactory.isLoopbackUrl("https://debrid.example.com/stream/movie.mkv"))
+        assertFalse(PlayerMediaSourceFactory.isLoopbackUrl("http://192.168.1.100:8091/stream?link=123"))
+        assertFalse(PlayerMediaSourceFactory.isLoopbackUrl(""))
     }
 }

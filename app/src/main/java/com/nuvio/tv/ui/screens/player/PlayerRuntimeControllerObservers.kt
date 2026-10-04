@@ -239,6 +239,13 @@ internal fun PlayerRuntimeController.observeEpisodeWatchProgress() {
             _uiState.update { it.copy(watchedEpisodeKeys = watchedSet) }
         }
     }
+    // Episode shuffle continues across player sessions (upstream d07d7438e).
+    scope.launch {
+        episodeShufflePlayback.observe(profileId, id, type).collectLatest { state ->
+            playbackShuffleState = state
+            recomputeNextEpisode(resetVisibility = false)
+        }
+    }
 }
 
 internal fun PlayerRuntimeController.observeSubtitleSettings() {
@@ -346,6 +353,8 @@ internal fun PlayerRuntimeController.observeSubtitleSettings() {
             currentInternalPlayerEngine = resolvedInternalPlayerEngine
             streamAutoPlayModeSetting = settings.streamAutoPlayMode
             streamAutoPlayNextEpisodeEnabledSetting = settings.streamAutoPlayNextEpisodeEnabled
+            streamAutoPlayTimeoutSecondsSetting = settings.streamAutoPlayTimeoutSeconds
+            preloadNextEpisodeSourcesSetting = settings.preloadNextEpisodeSources
             _uiState.update {
                 it.copy(
                     streamAutoPlayMode = settings.streamAutoPlayMode,
@@ -888,4 +897,20 @@ internal fun PlayerRuntimeController.observeDeviceLocalAspectMode() {
  */
 internal fun PlayerRuntimeController.reinitializeLiveStreamFromLiveEdge() {
     scheduleDeferredPlayerReinitialize(fromPositionMs = 0L, clearResumeProgress = true)
+}
+
+internal fun PlayerRuntimeController.observeDeviceLocalTunneledSurfaceFill() {
+    scope.launch {
+        deviceLocalPlayerPreferences.tunneledSurfaceFill
+            .distinctUntilChanged()
+            .collect { fill ->
+                if (_uiState.value.tunneledSurfaceFill != fill) {
+                    Log.d(
+                        PlayerRuntimeController.TAG,
+                        "Tunneled surface fill restored from device-local prefs: $fill"
+                    )
+                    _uiState.update { it.copy(tunneledSurfaceFill = fill) }
+                }
+            }
+    }
 }

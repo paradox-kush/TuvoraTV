@@ -92,6 +92,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
@@ -2530,7 +2531,8 @@ private fun ProfileNameField(
                 .onFocusChanged { isFocused = it.isFocused },
             textStyle = TextStyle(
                 color = Color.White,
-                fontSize = 16.sp
+                fontSize = 16.sp,
+                textDirection = TextDirection.Content
             ),
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),

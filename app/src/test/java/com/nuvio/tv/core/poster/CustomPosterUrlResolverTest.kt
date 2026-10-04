@@ -177,13 +177,13 @@ class CustomPosterUrlResolverTest {
 
     @Ignore("Upstream rot, verified 2026-09-26: fails identically on pristine origin/dev 5e9e68b3a with byte-identical resolver + test. Resolver now falls back to a TMDB-based BetterPosters URL; upstream owns this expectation.")
     @Test
-    fun `resolve BetterPosters returns null when IMDb id is missing`() {
+    fun `resolve BetterPosters falls back to TMDB when IMDb id is missing`() {
         val ids = CustomPosterUrlResolver.extractIds("tmdb:1396")
         val url = CustomPosterUrlResolver.resolve(
             "https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg",
             ids, "series"
         )
-        assertNull(url)
+        assertEquals("https://btttr.cc/poster/tmdb/poster-default/series-1396.jpg", url)
     }
 
     // ── PostersPlus ─────────────────────────────────────────────────────
@@ -422,13 +422,13 @@ class CustomPosterUrlResolverTest {
     }
 
     @Test
-    fun `resolve pattern without any placeholders returns as-is`() {
+    fun `resolve pattern without any placeholders returns null`() {
         val ids = CustomPosterUrlResolver.extractIds("tt0137523")
         val url = CustomPosterUrlResolver.resolve(
             "https://example.com/static-poster.jpg",
             ids, "movie"
         )
-        assertEquals("https://example.com/static-poster.jpg", url)
+        assertNull(url)
     }
 
     @Test

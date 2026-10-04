@@ -20,7 +20,6 @@ moshi = "1.15.1"
 coroutines = "1.8.1"
 coil = "3.3.0"
 posthog = "3.63.0"
-lottie = "6.7.1"
 navigationCompose = "2.8.8"
 datastore = "1.2.1"
 lifecycleViewModelCompose = "2.8.7"
@@ -93,7 +92,6 @@ coil-gif = { group = "io.coil-kt.coil3", name = "coil-gif", version.ref = "coil"
 coil-svg = { group = "io.coil-kt.coil3", name = "coil-svg", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 coil-network-cache-control = { group = "io.coil-kt.coil3", name = "coil-network-cache-control", version.ref = "coil" }
-lottie-compose = { group = "com.airbnb.android", name = "lottie-compose", version.ref = "lottie" }
 
 # Analytics
 posthog-android = { group = "com.posthog", name = "posthog-android", version.ref = "posthog" }

@@ -200,11 +200,20 @@ internal fun PlayerRuntimeController.recomputeNextEpisode(resetVisibility: Boole
         return
     }
 
-    val resolvedNext = PlayerNextEpisodeRules.resolveNextEpisode(
-        videos = metaVideos,
-        currentSeason = season,
-        currentEpisode = episode
-    )
+    // Episode shuffle (upstream d07d7438e): the shuffle state streams in asynchronously; until
+    // it arrives (or for content it is never observed for) keep the in-order successor.
+    val shuffleState = playbackShuffleState
+    val resolvedNext = if (shuffleState != null) {
+        episodeShufflePlayback.nextEpisode(
+            profileId, contentId.orEmpty(), metaVideos, season, episode, shuffleState
+        )
+    } else {
+        PlayerNextEpisodeRules.resolveNextEpisode(
+            videos = metaVideos,
+            currentSeason = season,
+            currentEpisode = episode
+        )
+    }
 
     nextEpisodeVideo = resolvedNext
     if (resolvedNext == null) {
@@ -311,6 +320,23 @@ internal fun PlayerRuntimeController.evaluatePostPlayOverlayVisibility(positionM
     if (state.postPlayMode != null || state.postPlayDismissedForCurrentEpisode) return
 
     val effectiveDuration = effectiveDurationEarly
+
+    // Preload: start fetching sources for next episode before the button appears (upstream b7ba1278e).
+    if (preloadNextEpisodeSourcesSetting && !nextEpisodePreloadTriggered && state.nextEpisode != null) {
+        val preloadLeadMs = streamAutoPlayTimeoutSecondsSetting.toLong() * 1_000L
+        val shouldPreload = PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
+            positionMs = positionMs + preloadLeadMs,
+            durationMs = effectiveDuration,
+            skipIntervals = skipIntervals,
+            thresholdMode = nextEpisodeThresholdModeSetting,
+            thresholdPercent = nextEpisodeThresholdPercentSetting,
+            thresholdMinutesBeforeEnd = nextEpisodeThresholdMinutesBeforeEndSetting
+        )
+        if (shouldPreload) {
+            preloadNextEpisodeSources()
+        }
+    }
+
     val shouldShow = PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
         positionMs = positionMs,
         durationMs = effectiveDuration,

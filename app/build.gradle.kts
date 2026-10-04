@@ -10,6 +10,7 @@ plugins {
     id("com.posthog.android") version "1.4.0"
 }
 
+import com.android.build.gradle.internal.tasks.L8DexDesugarLibTask
 import java.io.File
 import java.security.MessageDigest
 import java.util.Properties
@@ -141,7 +142,7 @@ android {
         // emulator-only. This is the ONLY lever that shrinks the shipped UNIVERSAL sideload
         // APK: `splits.abi.include(...)` below filters only the per-ABI split outputs, while
         // `isUniversalApk = true` packs every ABI that was actually COMPILED — so without
-        // this filter the universal carried a torrserver + FFmpeg + libmpv copy for all four
+        // this filter the universal carried a torrent-engine + FFmpeg + libmpv copy for all four
         // ABIs (~220 MB) and failed to install (INSUFFICIENT_STORAGE / truncated download) on
         // low-storage boxes. Restricting compilation to both ARM ABIs keeps one universal APK
         // that installs on every real TV device (64-bit AND 32-bit — no wrong-ABI brick) at
@@ -248,7 +249,7 @@ android {
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("release")
-            isDebuggable = false
+            isDebuggable = parseBooleanProperty(providers.gradleProperty("debuggable").orNull)
             isMinifyEnabled = false
 
             buildConfigField("boolean", "IS_DEBUG_BUILD", "true")
@@ -444,8 +445,7 @@ android {
                 "lib/*/libavformat.so",
                 "lib/*/libavutil.so",
                 "lib/*/libswscale.so",
-                "lib/*/libswresample.so",
-                "lib/*/libtorrserver.so"
+                "lib/*/libswresample.so"
             )
         }
     }
@@ -459,6 +459,14 @@ androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         val isPlaystore = variant.productFlavors.any { it.second == "playstore" }
         variant.applicationId.set(if (isPlaystore) "com.tuvora.tv.debug" else "com.tuvora.tv.debug")
+    }
+}
+
+afterEvaluate {
+    tasks.withType<L8DexDesugarLibTask>().configureEach {
+        if (name.endsWith("AndroidTest")) {
+            keepRulesConfigurations.add("-keep class j\$.** { *; }")
+        }
     }
 }
 
@@ -649,7 +657,6 @@ dependencies {
     implementation(libs.coil.svg)
     implementation(libs.coil.network.okhttp)
     implementation(libs.coil.network.cache.control)
-    implementation(libs.lottie.compose)
 
     // Analytics
     implementation(libs.posthog.android)
@@ -697,6 +704,7 @@ dependencies {
         "libs/lib-decoder-mpegh-release.aar"
     ))
     add("fullImplementation", files("libs/lib-decoder-iamf-release.aar"))
+    implementation(files("libs/lib-nuvio-engine-android-0.1.2.aar"))
     if (useLocalFfmpegDecoder) {
         implementation(project(":ffmpeg-decoder-downmix"))
     } else {

@@ -77,6 +77,7 @@ class PlayerRuntimeController(
     internal val streamBadgeSettingsDataStore: StreamBadgeSettingsDataStore,
     internal val bingeGroupCacheDataStore: BingeGroupCacheDataStore,
     internal val layoutPreferenceDataStore: com.nuvio.tv.data.local.LayoutPreferenceDataStore,
+    internal val episodeShufflePlayback: com.nuvio.tv.core.player.EpisodeShufflePlayback,
     internal val watchedItemsPreferences: com.nuvio.tv.data.local.WatchedItemsPreferences,
     internal val trackPreferenceDataStore: com.nuvio.tv.data.local.TrackPreferenceDataStore,
     internal val audioDelayRouteDataStore: AudioDelayRouteDataStore,
@@ -86,6 +87,7 @@ class PlayerRuntimeController(
     internal val tmdbMetadataService: com.nuvio.tv.core.tmdb.TmdbMetadataService,
     internal val tmdbSettingsDataStore: com.nuvio.tv.data.local.TmdbSettingsDataStore,
     internal val directDebridResolver: DirectDebridResolver,
+    internal val youTubeStreamResolver: com.nuvio.tv.core.streams.YouTubeStreamResolver,
     internal val directDebridStreamPreparer: DirectDebridStreamPreparer,
     internal val streamBadgePresentation: com.nuvio.tv.core.streams.StreamBadgePresentation,
     internal val playbackIssueReportRepository: PlaybackIssueReportRepository,
@@ -94,7 +96,9 @@ class PlayerRuntimeController(
     /** Device memory budget for the player buffers (Part A budget port). */
     internal val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
     savedStateHandle: SavedStateHandle,
-    internal val scope: CoroutineScope
+    internal val scope: CoroutineScope,
+    /** Profile this playback belongs to (episode shuffle state is profile-scoped). */
+    internal val profileId: Int
 ) {
 
     companion object {
@@ -429,9 +433,12 @@ class PlayerRuntimeController(
     /** Back buffer (ms) the user configured, captured at build to restore once DV7 status is known. */
     internal var configuredBackBufferMs: Int = 0
     internal var metaVideos: List<Video> = emptyList()
+    internal var playbackShuffleState: com.nuvio.tv.core.player.PlaybackShuffleState? = null
     internal var metaGenres: List<String> = emptyList()
     internal var metaCountry: String? = null
     internal var nextEpisodeVideo: Video? = null
+    internal var nextEpisodePreloadJob: Job? = null
+    internal var nextEpisodePreloadTriggered: Boolean = false
     internal var userPausedManually = false
     internal var pauseStartTimeMs: Long = 0L
 
@@ -475,6 +482,8 @@ class PlayerRuntimeController(
     internal var streamAutoPlayModeSetting: StreamAutoPlayMode = StreamAutoPlayMode.MANUAL
     internal var streamAutoPlayNextEpisodeEnabledSetting: Boolean = false
     internal var streamAutoPlayPreferBingeGroupForNextEpisodeSetting: Boolean = false
+    internal var streamAutoPlayTimeoutSecondsSetting: Int = 10
+    internal var preloadNextEpisodeSourcesSetting: Boolean = false
     internal var nextEpisodeThresholdModeSetting: NextEpisodeThresholdMode = NextEpisodeThresholdMode.PERCENTAGE
     internal var nextEpisodeThresholdPercentSetting: Float = 98f
     internal var nextEpisodeThresholdMinutesBeforeEndSetting: Float = 2f
@@ -646,6 +655,7 @@ class PlayerRuntimeController(
         observeTorrentSettings()
         observeStreamBadgeSettings()
         observeDeviceLocalAspectMode()
+        observeDeviceLocalTunneledSurfaceFill()
     }
 
     private fun observeTorrentSettings() {
@@ -673,6 +683,7 @@ class PlayerRuntimeController(
     fun onCleared() {
         releasePlayer()
         stopTorrentStream()
+        torrentService.shutdown()
         startupLoadingReportJob?.cancel()
         startOverOfferJob?.cancel()
         vodTelemetryJob?.cancel()
