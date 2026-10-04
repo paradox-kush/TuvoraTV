@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.app.Activity
 import android.os.SystemClock
 import android.util.Log
@@ -37,7 +38,7 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
             "S${currentSeason ?: "-"}E${currentEpisode ?: "-"} infoHash=${infoHash != null} " +
             "startFromBeginning=${navigationArgs.startFromBeginning} streamName=${streamName ?: "n/a"}"
     )
-    Log.d("PlayerStartup", "startInitialPlayback: infoHash=$infoHash, streamUrl=${initialStreamUrl.take(80)}")
+    Log.d("PlayerStartup", "startInitialPlayback: infoHash=$infoHash, streamUrl=${LogRedaction.url(initialStreamUrl)}")
     if (infoHash != null && !initialStreamUrl.startsWith("http")) {
         torrentStreamJob = scope.launch {
             try {
@@ -49,7 +50,7 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
                     filename = navigationArgs.filename,
                     trackers = navigationArgs.torrentTrackers
                 )
-                Log.d("PlayerStartup", "Torrent stream ready: $localUrl")
+                Log.d("PlayerStartup", "Torrent stream ready: ${LogRedaction.url(localUrl)}")
                 currentStreamUrl = localUrl
                 currentHeaders = emptyMap()
                 // Use loadSavedProgress = true — TorrServer handles seeking via

@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.Context
 import android.net.Uri
 import android.util.Log
@@ -74,7 +75,7 @@ class SubtitleFileCache @Inject constructor(
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.w(TAG, "HTTP ${response.code} downloading subtitle: ${input.url}")
+                    Log.w(TAG, "HTTP ${response.code} downloading subtitle: ${LogRedaction.url(input.url)}")
                     return@withContext null
                 }
 
@@ -91,7 +92,7 @@ class SubtitleFileCache @Inject constructor(
                 file
             )
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to download subtitle file: ${input.url}", e)
+            Log.w(TAG, "Failed to download subtitle file: ${LogRedaction.url(input.url)}: ${LogRedaction.text(e.toString())}")
             file.delete()
             null
         }

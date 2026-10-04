@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.plugin.cloudstream
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import com.nuvio.tv.domain.model.ExternalPluginEntry
 import com.nuvio.tv.domain.model.ExternalRepoManifest
@@ -108,7 +109,7 @@ class ExternalRepoParser @Inject constructor(
         try {
             pluginListAdapter.fromJson(body.trim())
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse plugin list from $url: ${e.message}")
+            Log.e(TAG, "Failed to parse plugin list from ${LogRedaction.url(url)}: ${LogRedaction.text(e.message)}")
             null
         }
     }
@@ -121,13 +122,13 @@ class ExternalRepoParser @Inject constructor(
                 .build()
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.e(TAG, "HTTP ${response.code} for $url")
+                    Log.e(TAG, "HTTP ${response.code} for ${LogRedaction.url(url)}")
                     return null
                 }
                 response.body?.string()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch $url: ${e.message}")
+            Log.e(TAG, "Failed to fetch ${LogRedaction.url(url)}: ${LogRedaction.text(e.message)}")
             null
         }
     }

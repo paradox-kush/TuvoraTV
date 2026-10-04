@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.epg
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.content.EpgProgramme
@@ -369,7 +370,7 @@ class EpgMirrorRepository @Inject constructor(
                 ?: run { Log.w(TAG, "manifest exceeded $MAX_FETCH_CHARS chars; rejected"); return@use null }
             json.decodeFromString<MirrorManifest>(text)
         }
-    }.onFailure { Log.d(TAG, "manifest fetch failed: $it") }.getOrNull()
+    }.onFailure { Log.d(TAG, "manifest fetch failed: ${LogRedaction.text(it.toString())}") }.getOrNull()
 
     /**
      * Stream the (gunzipped) channels-index to [onChunk] as decoded char chunks, NEVER materializing
@@ -420,7 +421,7 @@ class EpgMirrorRepository @Inject constructor(
                 }
                 XmltvParser.parseProgrammes(parser, wantIds, onProgramme)
             }
-        }.onFailure { Log.w(TAG, "feed $url failed: $it") }
+        }.onFailure { Log.w(TAG, "feed ${LogRedaction.url(url)} failed: ${LogRedaction.text(it.toString())}") }
     }
 
     // --- wire models ------------------------------------------------------------------
