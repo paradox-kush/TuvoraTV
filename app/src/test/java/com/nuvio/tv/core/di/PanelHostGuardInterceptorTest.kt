@@ -5,7 +5,6 @@ import com.nuvio.tv.core.iptv.PanelHostFastFailIOException
 import com.nuvio.tv.core.iptv.PanelHostGuard
 import java.io.File
 import java.net.ConnectException
-import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -35,9 +34,9 @@ class PanelHostGuardInterceptorTest {
     private var now = 0L
     private val guard = PanelHostGuard { now }
 
-    /** A base URL with NOTHING listening: bind an ephemeral port, close it, use it. */
+    /** A base URL with NOTHING listening. Port 1 (tcpmux) — privileged, so no test process can bind it, and nothing listens there: every connect is refused at once. A closed ephemeral port raced: under parallel tests another socket could take it. */
     private fun deadOrigin(): String {
-        val port = ServerSocket(0).use { it.localPort }
+        val port = 1
         return "http://127.0.0.1:$port"
     }
 
