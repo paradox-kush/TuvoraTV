@@ -79,4 +79,53 @@ class GuideTimelineNavPolicyTest {
         assertEquals("back", KeyOutcome.TRAVEL_BACK, GuideTimelineNavPolicy.onHorizontalKey(Direction.BACK, b, cells))
         assertEquals("forward", KeyOutcome.TRAVEL_FORWARD, GuideTimelineNavPolicy.onHorizontalKey(Direction.FORWARD, b, cells))
     }
+
+    @Test
+    fun `the edge landing waits for the window to actually move`() {
+        // The key handler sets the pending landing in the same frame; the window arrives from the
+        // ViewModel a frame or more later. Landing on the OLD window refocused the cell that was
+        // about to leave, and the cursor fell to row 1 when it did (Onn, on device).
+        assertFalse(
+            "window has not moved yet",
+            GuideTimelineNavPolicy.landingDue(pendingSlots = 4, travelFromWindowMs = a, windowStartMs = a),
+        )
+        assertTrue(
+            "window moved: land now",
+            GuideTimelineNavPolicy.landingDue(pendingSlots = 4, travelFromWindowMs = a, windowStartMs = c),
+        )
+        assertFalse(
+            "nothing pending",
+            GuideTimelineNavPolicy.landingDue(pendingSlots = 0, travelFromWindowMs = a, windowStartMs = c),
+        )
+    }
+
+    @Test
+    fun `the strip parks the cursor for the trip even while the old window still has cells`() {
+        assertTrue(
+            "travelling: the strip is a stop although the departing window has a cell",
+            GuideTimelineNavPolicy.stripFocusable(interactive = true, hasActionableCell = true, stripFocused = false, travelling = true),
+        )
+        assertFalse(
+            "not travelling: a window with a cell keeps the cell as the only stop",
+            GuideTimelineNavPolicy.stripFocusable(interactive = true, hasActionableCell = true, stripFocused = false, travelling = false),
+        )
+        assertFalse(
+            "never off the timeline row",
+            GuideTimelineNavPolicy.stripFocusable(interactive = false, hasActionableCell = false, stripFocused = false, travelling = true),
+        )
+    }
+
+    @Test
+    fun `BACK in the timeline swallows the press and leaves on the release`() {
+        assertEquals(
+            "press",
+            GuideTimelineNavPolicy.BackOutcome.CONSUME,
+            GuideTimelineNavPolicy.onBack(isKeyDown = true),
+        )
+        assertEquals(
+            "release",
+            GuideTimelineNavPolicy.BackOutcome.LEAVE_TIMELINE,
+            GuideTimelineNavPolicy.onBack(isKeyDown = false),
+        )
+    }
 }

@@ -161,6 +161,9 @@ fun LiveGuide(
     // to after the window scrolls (the cell that was focused no longer exists once it rebuilds).
     var timelineChannelId by remember { mutableStateOf<String?>(null) }
     var pendingEdgeFocus by remember { mutableStateOf(0) }
+    // The window that page left from: the landing waits until the window has actually moved off it
+    // (it arrives from the ViewModel a frame or more after the key).
+    var pendingEdgeFromWindowMs by remember { mutableStateOf<Long?>(null) }
     val leadingCellFocus = remember { FocusRequester() }
     val trailingCellFocus = remember { FocusRequester() }
     // The timeline row's own strip: where the cursor waits when the window holds nothing to press
@@ -185,7 +188,11 @@ fun LiveGuide(
 
     // Restore the cursor to the window's new edge after travelling, so holding LEFT keeps going.
     LaunchedEffect(windowStartMs, pendingEdgeFocus) {
-        if (pendingEdgeFocus == 0) return@LaunchedEffect
+        // Run on the OLD window, this refocused the departing cell, which then left with the window
+        // and dropped the cursor on row 1 (Onn). See GuideTimelineNavPolicy.landingDue.
+        if (!GuideTimelineNavPolicy.landingDue(pendingEdgeFocus, pendingEdgeFromWindowMs, windowStartMs)) {
+            return@LaunchedEffect
+        }
         val target = if (pendingEdgeFocus < 0) leadingCellFocus else trailingCellFocus
         // The new window can hold nothing actionable (the future, or the past of a channel with no
         // archive). The cursor then holds the row's strip and stays in time, so the next LEFT/RIGHT
@@ -196,11 +203,12 @@ fun LiveGuide(
             timelineChannelId = null
         }
         pendingEdgeFocus = 0
+        pendingEdgeFromWindowMs = null
     }
 
     // BACK leaves the timeline (and returns the guide to now) before it collapses fullscreen or
     // exits the guide — LEFT/RIGHT are spent on travelling, so BACK is the way out.
-    BackHandler(enabled = !fullscreen && timelineChannelId != null) {
+    fun leaveTimelineToNow() {
         timelineChannelId = null
         sheetProgramme = null
         viewModel.resetWindowToLive()
@@ -208,6 +216,9 @@ fun LiveGuide(
             firstChannelFocus.requestFocusOrFalse()
         }
     }
+    // The timeline's cells answer BACK themselves (Compose turns a BACK on a cell into
+    // FocusDirection.Exit before any BackHandler sees it); this covers the cursor on the row itself.
+    BackHandler(enabled = !fullscreen && timelineChannelId != null) { leaveTimelineToNow() }
 
     // ...and then BACK unwinds the category depth before it leaves the guide. Entering a category
     // is now a navigation step (the column collapses), so BACK has to undo that step rather than
@@ -486,9 +497,15 @@ fun LiveGuide(
                                     viewModel.resetWindowToLive()
                                 },
                                 onTravel = { slots ->
-                                    pendingEdgeFocus = slots
-                                    viewModel.travelWindow(slots)
+                                    val from = windowStartMs
+                                    viewModel.travelWindow(slots).also { moved ->
+                                        if (moved) {
+                                            pendingEdgeFromWindowMs = from
+                                            pendingEdgeFocus = slots
+                                        }
+                                    }
                                 },
+                                onBackOutOfTimeline = { leaveTimelineToNow() },
                                 onProgrammeClick = { programme ->
                                     when (GuideCellIntent.forAction(
                                         guideActionFor(programme, ch, nowMs, uiState.catchUpSupported)
@@ -935,7 +952,9 @@ private fun GuideChannelRow(
     /** LEFT off any channel returns to the category list (re-expanding it when collapsed). */
     onExitCategory: (() -> Unit)? = null,
     onLeaveTimeline: () -> Unit,
-    onTravel: (Int) -> Unit,
+    onTravel: (Int) -> Boolean,
+    /** BACK from inside the timeline: leave it and return the guide to now, in one press (B114). */
+    onBackOutOfTimeline: () -> Unit,
     onProgrammeClick: (XtreamProgram) -> Unit,
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
@@ -1087,6 +1106,7 @@ private fun GuideChannelRow(
             trailingEdgeFocus = trailingEdgeFocus,
             stripFocus = stripFocus,
             nowFraction = nowFraction,
+            onExitTimeline = onBackOutOfTimeline,
         )
     }
 }

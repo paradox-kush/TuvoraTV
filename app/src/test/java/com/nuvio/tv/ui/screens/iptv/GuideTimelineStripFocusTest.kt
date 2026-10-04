@@ -1,14 +1,27 @@
 package com.nuvio.tv.ui.screens.iptv
 
 import android.app.Application
+import android.os.Handler
+import android.os.Looper
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
@@ -76,7 +89,7 @@ class GuideTimelineStripFocusTest {
                         catchUpSupported = true,
                         interactive = true,
                         onProgrammeClick = {},
-                        onTravel = { travels += it },
+                        onTravel = { travels += it; true },
                         leadingEdgeFocus = leading,
                         trailingEdgeFocus = trailing,
                         stripFocus = strip,
@@ -116,7 +129,7 @@ class GuideTimelineStripFocusTest {
                         catchUpSupported = true,
                         interactive = true,
                         onProgrammeClick = {},
-                        onTravel = {},
+                        onTravel = { false },
                         leadingEdgeFocus = leading,
                         trailingEdgeFocus = FocusRequester(),
                         stripFocus = strip,
@@ -127,5 +140,91 @@ class GuideTimelineStripFocusTest {
         rule.runOnIdle {
             assertTrue("the airing programme takes the cursor", leading.requestFocusOrFalse())
         }
+    }
+
+    /**
+     * On the Onn the window reaches the screen a frame or more AFTER the key (ViewModel StateFlow ->
+     * Compose round trip). The cell holding the cursor left with the old window, focus was dropped,
+     * and the view re-took it on the first focusable — row 1 — so RIGHT from the airing programme
+     * "jumped to the top of the list" instead of paging. The window here moves a frame late on
+     * purpose, and a focusable sits before the cells the way row 1 does in the guide.
+     */
+    @Test
+    fun `paging off the focused cell keeps the cursor in the row while the window catches up`() {
+        val liveWindowStart = GuideTimeTravel.liveWindowStartMs(now)
+        val airing = XtreamProgram("Airing", "", now - hour / 2, now + hour / 2, nowPlaying = true)
+        val muchLater = XtreamProgram("Much later", "", liveWindowStart + 2 * hour, liveWindowStart + 3 * hour, nowPlaying = false)
+        val leading = FocusRequester()
+        val trailing = FocusRequester()
+        val strip = FocusRequester()
+        val main = Handler(Looper.getMainLooper())
+        var windowStart by mutableStateOf(liveWindowStart)
+        rule.setContent {
+            NuvioTheme {
+                Row(Modifier.width(900.dp).height(44.dp)) {
+                    Box(Modifier.size(10.dp).testTag("row1").focusable())
+                    GuideProgrammeCells(
+                        programmes = listOf(airing, muchLater),
+                        channel = channel,
+                        windowStartMs = windowStart,
+                        nowMs = now,
+                        catchUpSupported = true,
+                        interactive = true,
+                        onProgrammeClick = {},
+                        onTravel = { slots ->
+                            main.post { windowStart += slots * GuideTimeTravel.SLOT_MS }
+                            true
+                        },
+                        leadingEdgeFocus = leading,
+                        trailingEdgeFocus = trailing,
+                        stripFocus = strip,
+                    )
+                }
+            }
+        }
+        rule.runOnIdle { assertTrue("the airing programme holds the cursor", trailing.requestFocusOrFalse()) }
+        rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals("one page forward", liveWindowStart + GuideTimeTravel.EDGE_TRAVEL_SLOTS * GuideTimeTravel.SLOT_MS, windowStart)
+        }
+        rule.onAllNodes(isFocused()).assertCountEquals(1)
+        rule.onNodeWithTag("row1").assertIsNotFocused()
+    }
+
+    /**
+     * Compose maps BACK to FocusDirection.Exit (ui 1.11.2 FocusInteropUtils.toFocusDirection), so the
+     * first BACK moved the cursor from a cell to its row and was consumed — the guide's BackHandler
+     * (leave the timeline, return to now) only ran on a second press.
+     */
+    @Test
+    fun `BACK in the timeline leaves it on the first press`() {
+        val leading = FocusRequester()
+        val liveWindowStart = GuideTimeTravel.liveWindowStartMs(now)
+        val airing = XtreamProgram("Airing", "", now - hour / 2, now + hour / 2, nowPlaying = true)
+        var exits = 0
+        rule.setContent {
+            NuvioTheme {
+                Row(Modifier.width(900.dp).height(44.dp).focusable()) {
+                    GuideProgrammeCells(
+                        programmes = listOf(airing),
+                        channel = channel,
+                        windowStartMs = liveWindowStart,
+                        nowMs = now,
+                        catchUpSupported = true,
+                        interactive = true,
+                        onProgrammeClick = {},
+                        onTravel = { false },
+                        leadingEdgeFocus = leading,
+                        trailingEdgeFocus = FocusRequester(),
+                        stripFocus = FocusRequester(),
+                        onExitTimeline = { exits++ },
+                    )
+                }
+            }
+        }
+        rule.runOnIdle { assertTrue(leading.requestFocusOrFalse()) }
+        rule.onRoot().performKeyInput { pressKey(Key.Back) }
+        rule.runOnIdle { assertEquals("one BACK, one exit", 1, exits) }
     }
 }
