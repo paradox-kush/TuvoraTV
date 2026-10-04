@@ -8,6 +8,7 @@ package com.nuvio.tv.core.diagnostics
  * M3U/EPG/panel APIs put them in the QUERY (`get.php?username=&password=`), Stalker carries
  * `mac`/`token`/`play_token`, add-on transport URLs embed debrid API keys in a config path segment
  * (`realdebrid=KEY|…`, or an opaque base64/encrypted blob), and some hosts use `user:pass@` userinfo.
+ * IPTV content/account ids embed the provider username after a pipe (`xtream:<baseUrl>|<user>:live:<id>`).
  *
  * [url] keeps the scheme, host, port and the path SHAPE (so a log still says which provider, which
  * route, which stream id) and replaces every credential with [MASK]. [text] does the same for every
@@ -59,6 +60,7 @@ object LogRedaction {
     private val BEARER = Regex("(?i)\\b(bearer)\\s+[A-Za-z0-9._~+/=\\-]+")
     private val BASIC = Regex("\\b(Basic)\\s+[A-Za-z0-9+/]{8,}={0,2}")
     private val FREE_TEXT_PAIR = Regex("(?i)\\b([a-z_][a-z0-9_\\-]*)(\\s*=\\s*)([^\\s&|,;\"'}\\])]+)")
+    private val LEADING_MAC = Regex("^[0-9A-Fa-f]{2}(?:[:\\-][0-9A-Fa-f]{2}){5}")
     private val MAC_ADDRESS = Regex("\\b[0-9A-Fa-f]{2}(?:[:\\-][0-9A-Fa-f]{2}){5}\\b")
 
     /** Redacts one URL. Not-a-URL input (e.g. a Stalker `ffmpeg http://…` cmd) is treated as [text]. */
@@ -79,7 +81,9 @@ object LogRedaction {
         val authority = if (slash >= 0) authorityAndPath.substring(0, slash) else authorityAndPath
         val path = if (slash >= 0) authorityAndPath.substring(slash) else ""
         val at = authority.lastIndexOf('@')
-        val hostPort = if (at >= 0) "$MASK@" + authority.substring(at + 1) else authority
+        val host = if (at >= 0) "$MASK@" + authority.substring(at + 1) else authority
+        // `<baseUrl>|<username>` identity keys (content ids, playlist keys) parse as the authority.
+        val hostPort = if ('|' in host) maskPipeIdentity(host) else host
 
         return buildString {
             append(scheme).append("://").append(hostPort).append(redactPath(path))
@@ -158,7 +162,25 @@ object LogRedaction {
             }
         }
         if (isOpaqueToken(segment)) return MASK
+        if ('|' in segment && '=' !in decoded) return maskPipeIdentity(segment)
         return segment
+    }
+
+    /**
+     * `host|alice:live:1` -> `host|***:live:1`: the token after the first pipe (up to `:`) is an
+     * identity — a username, or a Stalker MAC (whose own colons must not end the mask early).
+     */
+    private fun maskPipeIdentity(value: String): String {
+        val pipe = value.indexOf('|')
+        if (pipe < 0 || pipe == value.length - 1) return value
+        val mac = LEADING_MAC.find(value.substring(pipe + 1))
+        val end = if (mac != null) {
+            pipe + 1 + mac.value.length
+        } else {
+            value.indexOf(':', pipe + 1).let { if (it < 0) value.length else it }
+        }
+        if (end == pipe + 1) return value
+        return value.substring(0, pipe + 1) + MASK + value.substring(end)
     }
 
     private fun isOpaqueToken(segment: String): Boolean {
