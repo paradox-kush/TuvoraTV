@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.remote.supabase
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.Context
 import android.util.Log
 import com.nuvio.tv.data.local.MemberCatalogStorage
@@ -194,7 +195,7 @@ class ProfileBackgroundRepository @Inject constructor(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            Log.w(ProfileBackgroundTag, "Unable to load supporter profile background ${item.id}", error)
+            Log.w(ProfileBackgroundTag, LogRedaction.text("Unable to load supporter profile background ${item.id}"), error)
         }
     }
 

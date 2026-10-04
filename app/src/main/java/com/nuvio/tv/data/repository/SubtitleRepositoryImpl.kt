@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.repository
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
@@ -45,7 +46,7 @@ class SubtitleRepositoryImpl @Inject constructor(
     ): List<Subtitle> = withContext(Dispatchers.IO) {
         val requestType = canonicalSubtitleType(type)
         val startedAtMs = System.currentTimeMillis()
-        Log.d(TAG, "Fetching subtitles for type=$requestType, id=$id, videoId=$videoId")
+        Log.d(TAG, LogRedaction.text("Fetching subtitles for type=$requestType, id=$id, videoId=$videoId"))
         
         // Get installed addons
         val addons = try {
@@ -184,7 +185,7 @@ class SubtitleRepositoryImpl @Inject constructor(
             "$basePath/subtitles/$encodedType/$encodedActualId.json$baseQuery"
         }
         
-        Log.d(TAG, "Fetching subtitles from ${addon.name}: $subtitleUrl")
+        Log.d(TAG, "Fetching subtitles from ${addon.name}: ${LogRedaction.url(subtitleUrl)}")
         
         return try {
             when (val result = safeApiCall(context) { api.getSubtitles(subtitleUrl) }) {

@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.sync
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
@@ -181,7 +182,7 @@ class WatchProgressSyncService @Inject constructor(
             }
             Log.d(TAG, "pushToRemote: ${rawEntries.size} pending entries, ${entries.size} canonical entries to push for profile $profileId")
             entries.forEach { (key, progress) ->
-                Log.d(TAG, "  push entry: key=$key contentId=${progress.contentId} type=${progress.contentType} pos=${progress.position} dur=${progress.duration} lastWatched=${progress.lastWatched}")
+                Log.d(TAG, LogRedaction.text("  push entry: key=$key contentId=${progress.contentId} type=${progress.contentType} pos=${progress.position} dur=${progress.duration} lastWatched=${progress.lastWatched}"))
             }
 
             if (entries.isNotEmpty()) {
@@ -256,7 +257,7 @@ class WatchProgressSyncService @Inject constructor(
             }
 
             mutationStore.acknowledgeProgressUpserts(mapOf(key to progress), profileId)
-            Log.d(TAG, "Pushed single watch progress entry to remote for profile $profileId (key=$key)")
+            Log.d(TAG, LogRedaction.text("Pushed single watch progress entry to remote for profile $profileId (key=$key)"))
             // Deliberately does not move the sync point. One entry reaching remote says
             // nothing about the rest, and advancing it here would mark every other local
             // entry as synced, so the next pull would drop the ones that never made it.
@@ -310,7 +311,7 @@ class WatchProgressSyncService @Inject constructor(
 
             Log.d(TAG, "pullFromRemote: fetched ${remote.size} entries from Supabase via RPC for profile $profileId sinceLastWatched=$sinceLastWatched")
             remote.forEach { entry ->
-                Log.d(TAG, "  pull entry: key=${entry.progressKey} contentId=${entry.contentId} type=${entry.contentType} pos=${entry.position} dur=${entry.duration} lastWatched=${entry.lastWatched}")
+                Log.d(TAG, LogRedaction.text("  pull entry: key=${entry.progressKey} contentId=${entry.contentId} type=${entry.contentType} pos=${entry.position} dur=${entry.duration} lastWatched=${entry.lastWatched}"))
             }
 
             val pulled = remote.map { entry ->

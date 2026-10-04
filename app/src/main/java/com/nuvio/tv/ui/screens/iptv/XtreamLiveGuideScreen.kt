@@ -161,8 +161,14 @@ fun LiveGuide(
     // to after the window scrolls (the cell that was focused no longer exists once it rebuilds).
     var timelineChannelId by remember { mutableStateOf<String?>(null) }
     var pendingEdgeFocus by remember { mutableStateOf(0) }
+    // The window that page left from: the landing waits until the window has actually moved off it
+    // (it arrives from the ViewModel a frame or more after the key).
+    var pendingEdgeFromWindowMs by remember { mutableStateOf<Long?>(null) }
     val leadingCellFocus = remember { FocusRequester() }
     val trailingCellFocus = remember { FocusRequester() }
+    // The timeline row's own strip: where the cursor waits when the window holds nothing to press
+    // (the future, or the past of a channel with no archive), so LEFT/RIGHT keep travelling (B114).
+    val timelineStripFocus = remember { FocusRequester() }
     val channelRowFocus = remember { FocusRequester() }
     // Shown only for the airing programme on an archive channel — the one state with two
     // reasonable destinations (see GuideCellIntent).
@@ -182,27 +188,37 @@ fun LiveGuide(
 
     // Restore the cursor to the window's new edge after travelling, so holding LEFT keeps going.
     LaunchedEffect(windowStartMs, pendingEdgeFocus) {
-        if (pendingEdgeFocus == 0) return@LaunchedEffect
+        // Run on the OLD window, this refocused the departing cell, which then left with the window
+        // and dropped the cursor on row 1 (Onn). See GuideTimelineNavPolicy.landingDue.
+        if (!GuideTimelineNavPolicy.landingDue(pendingEdgeFocus, pendingEdgeFromWindowMs, windowStartMs)) {
+            return@LaunchedEffect
+        }
         val target = if (pendingEdgeFocus < 0) leadingCellFocus else trailingCellFocus
-        // The new window can be empty of actionable cells (an archive that ends here); dropping
-        // back to the channel row is the honest answer rather than trapping the cursor.
-        if (runCatching { target.requestFocus() }.isFailure) {
-            runCatching { channelRowFocus.requestFocus() }
+        // The new window can hold nothing actionable (the future, or the past of a channel with no
+        // archive). The cursor then holds the row's strip and stays in time, so the next LEFT/RIGHT
+        // keeps travelling — dropping it on the channel row made the next RIGHT reset the guide to
+        // now, which is how travel read as impossible (B114). See GuideTimelineNavPolicy.
+        if (!target.requestFocusOrFalse() && !timelineStripFocus.requestFocusOrFalse()) {
+            channelRowFocus.requestFocusOrFalse()
             timelineChannelId = null
         }
         pendingEdgeFocus = 0
+        pendingEdgeFromWindowMs = null
     }
 
     // BACK leaves the timeline (and returns the guide to now) before it collapses fullscreen or
     // exits the guide — LEFT/RIGHT are spent on travelling, so BACK is the way out.
-    BackHandler(enabled = !fullscreen && timelineChannelId != null) {
+    fun leaveTimelineToNow() {
         timelineChannelId = null
         sheetProgramme = null
         viewModel.resetWindowToLive()
-        if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
-            runCatching { firstChannelFocus.requestFocus() }
+        if (!channelRowFocus.requestFocusOrFalse()) {
+            firstChannelFocus.requestFocusOrFalse()
         }
     }
+    // The timeline's cells answer BACK themselves (Compose turns a BACK on a cell into
+    // FocusDirection.Exit before any BackHandler sees it); this covers the cursor on the row itself.
+    BackHandler(enabled = !fullscreen && timelineChannelId != null) { leaveTimelineToNow() }
 
     // ...and then BACK unwinds the category depth before it leaves the guide. Entering a category
     // is now a navigation step (the column collapses), so BACK has to undo that step rather than
@@ -460,6 +476,8 @@ fun LiveGuide(
                                     }
                                 },
                                 onLongClick = { viewModel.toggleFavorite(ch) },
+                                // B106: MENU on the row hides it, the same call fullscreen makes.
+                                onHide = { viewModel.hideChannel(ch) },
                                 channel = ch,
                                 catchUpSupported = uiState.catchUpSupported,
                                 timelineActive = isTimelineRow,
@@ -479,9 +497,15 @@ fun LiveGuide(
                                     viewModel.resetWindowToLive()
                                 },
                                 onTravel = { slots ->
-                                    pendingEdgeFocus = slots
-                                    viewModel.travelWindow(slots)
+                                    val from = windowStartMs
+                                    viewModel.travelWindow(slots).also { moved ->
+                                        if (moved) {
+                                            pendingEdgeFromWindowMs = from
+                                            pendingEdgeFocus = slots
+                                        }
+                                    }
                                 },
+                                onBackOutOfTimeline = { leaveTimelineToNow() },
                                 onProgrammeClick = { programme ->
                                     when (GuideCellIntent.forAction(
                                         guideActionFor(programme, ch, nowMs, uiState.catchUpSupported)
@@ -498,6 +522,7 @@ fun LiveGuide(
                                 },
                                 leadingEdgeFocus = leadingCellFocus,
                                 trailingEdgeFocus = trailingCellFocus,
+                                stripFocus = timelineStripFocus,
                                 nowFraction = if (GuideTimeTravel.containsNow(windowStartMs, nowMs)) {
                                     GuideTimeTravel.nowFraction(windowStartMs, nowMs)
                                 } else null,
@@ -611,8 +636,8 @@ fun LiveGuide(
             fun restoreGuideFocus() {
                 when (notice.target) {
                     is GuideHideUndoPolicy.Target.Channel ->
-                        if (runCatching { channelRowFocus.requestFocus() }.isFailure) {
-                            runCatching { channelListFocus.requestFocus() }
+                        if (!channelRowFocus.requestFocusOrFalse()) {
+                            channelListFocus.requestFocusOrFalse()
                         }
                     is GuideHideUndoPolicy.Target.Group -> runCatching { categoryListFocus.requestFocus() }
                 }
@@ -917,6 +942,8 @@ private fun GuideChannelRow(
     onFocused: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    /** MENU on the focused row: hide the channel (B106). */
+    onHide: () -> Unit,
     focusRequester: FocusRequester? = null,
     channel: GuideChannel,
     catchUpSupported: Boolean,
@@ -925,10 +952,14 @@ private fun GuideChannelRow(
     /** LEFT off any channel returns to the category list (re-expanding it when collapsed). */
     onExitCategory: (() -> Unit)? = null,
     onLeaveTimeline: () -> Unit,
-    onTravel: (Int) -> Unit,
+    onTravel: (Int) -> Boolean,
+    /** BACK from inside the timeline: leave it and return the guide to now, in one press (B114). */
+    onBackOutOfTimeline: () -> Unit,
     onProgrammeClick: (XtreamProgram) -> Unit,
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
+    /** The timeline strip's requester — where entering lands when no cell is actionable (B114). */
+    stripFocus: FocusRequester? = null,
     nowFraction: Float? = null,
 ) {
     var isFocused by remember { mutableStateOf(false) }
@@ -939,7 +970,11 @@ private fun GuideChannelRow(
     LaunchedEffect(timelineActive) {
         if (timelineActive) {
             leadingEdgeFocus?.let { requester ->
-                if (runCatching { requester.requestFocus() }.isFailure) onLeaveTimeline()
+                // Nothing actionable in this window: hold the strip rather than leaving (which
+                // reset the guide to now and made travel impossible on a no-archive channel).
+                if (!requester.requestFocusOrFalse() && stripFocus?.requestFocusOrFalse() != true) {
+                    onLeaveTimeline()
+                }
             }
         }
     }
@@ -977,21 +1012,27 @@ private fun GuideChannelRow(
             // lockFocus short-circuits everything: while fullscreen the row is a hidden focus
             // anchor and every key belongs to the root handler (play/pause, zapping).
             .onPreviewKeyEvent { event ->
-                if (lockFocus || timelineActive || !isFocused) return@onPreviewKeyEvent false
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                when (event.key) {
-                    Key.DirectionRight -> {
-                        onEnterTimeline()
-                        true
-                    }
+                // The decision lives in GuideChannelRowKeyPolicy (B106: MENU used to do nothing here).
+                when (
+                    GuideChannelRowKeyPolicy.actionFor(
+                        key = event.key,
+                        isKeyDown = event.type == KeyEventType.KeyDown,
+                        rowFocused = isFocused,
+                        lockFocus = lockFocus,
+                        timelineActive = timelineActive,
+                        canExitCategory = onExitCategory != null,
+                    )
+                ) {
+                    GuideChannelRowKeyPolicy.Action.PASS -> false
+                    GuideChannelRowKeyPolicy.Action.CONSUME -> true
+                    GuideChannelRowKeyPolicy.Action.ENTER_TIMELINE -> { onEnterTimeline(); true }
                     // LEFT re-opens the category column. Handled here rather than left to focus
                     // search: the column is collapsed to zero width at this point, so there is
                     // nothing for a search to land on.
-                    Key.DirectionLeft -> {
-                        val exit = onExitCategory
-                        if (exit == null) false else { exit(); true }
-                    }
-                    else -> false
+                    GuideChannelRowKeyPolicy.Action.EXIT_CATEGORY -> { onExitCategory?.invoke(); true }
+                    // MENU hides the channel through the same path fullscreen uses (overlay write +
+                    // notice with Undo), which is what the guide hint has always promised.
+                    GuideChannelRowKeyPolicy.Action.HIDE_CHANNEL -> { onHide(); true }
                 }
             }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
@@ -1063,7 +1104,9 @@ private fun GuideChannelRow(
             onTravel = onTravel,
             leadingEdgeFocus = leadingEdgeFocus,
             trailingEdgeFocus = trailingEdgeFocus,
+            stripFocus = stripFocus,
             nowFraction = nowFraction,
+            onExitTimeline = onBackOutOfTimeline,
         )
     }
 }

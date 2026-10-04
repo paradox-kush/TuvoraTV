@@ -794,16 +794,7 @@ class StalkerClient @Inject constructor(
         var page = 1
         var total = Int.MAX_VALUE
         while (out.size < total && out.size < maxItems && page <= MAX_PAGES) {
-            val params = buildMap {
-                put("type", type)
-                put("action", "get_ordered_list")
-                put("genre", categoryId ?: "*")
-                if (type != "itv") put("category", categoryId ?: "*")
-                search?.let { put("search", it) }
-                put("p", page.toString())
-                put("sortby", "number")
-                put("JsHttpRequest", "1-xml")
-            }.filterKeys { it != "JsHttpRequest" }
+            val params = StalkerListParams.forPage(type, categoryId, search, page)
             val js = runCatching { browse(acc, params) }.getOrNull() ?: break
             val obj = js as? JsonObject ?: break
             total = obj.int("total_items") ?: obj.int("max_page_items")?.let { it * MAX_PAGES } ?: out.size

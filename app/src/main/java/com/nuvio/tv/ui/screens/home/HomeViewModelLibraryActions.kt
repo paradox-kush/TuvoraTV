@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.home
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.tracking.TrackingMembershipRemovalConfirmation
@@ -103,7 +104,7 @@ fun HomeViewModel.togglePosterLibrary(item: MetaPreview, addonBaseUrl: String?) 
         runCatching {
             libraryRepository.toggleDefault(item.toLibraryEntryInput(addonBaseUrl))
         }.onFailure { error ->
-            Log.w(HomeViewModel.TAG, "Failed to toggle poster library for ${item.id}: ${error.message}")
+            Log.w(HomeViewModel.TAG, LogRedaction.text("Failed to toggle poster library for ${item.id}: ${error.message}"))
         }
         runCatching {
             val isNowInLibrary = libraryRepository.isInLibrary(item.id, item.apiType).first()
@@ -158,7 +159,7 @@ fun HomeViewModel.openPosterListPicker(item: MetaPreview, addonBaseUrl: String?)
                 )
             }
         }.onFailure { error ->
-            Log.w(HomeViewModel.TAG, "Failed to load poster list picker for ${item.id}: ${error.message}")
+            Log.w(HomeViewModel.TAG, LogRedaction.text("Failed to load poster list picker for ${item.id}: ${error.message}"))
             _uiState.update { state ->
                 state.copy(
                     showPosterListPicker = true,
@@ -334,7 +335,7 @@ fun HomeViewModel.togglePosterMovieWatched(item: MetaPreview) {
                 watchProgressRepository.markAsCompleted(buildCompletedMovieProgress(item))
             }
         }.onFailure { error ->
-            Log.w(HomeViewModel.TAG, "Failed to toggle poster watched status for ${item.id}: ${error.message}")
+            Log.w(HomeViewModel.TAG, LogRedaction.text("Failed to toggle poster watched status for ${item.id}: ${error.message}"))
         }
         _uiState.update { state ->
             state.copy(movieWatchedPending = state.movieWatchedPending - statusKey)
@@ -386,7 +387,7 @@ fun HomeViewModel.togglePosterSeriesWatched(item: MetaPreview) {
                 markSeriesWatched(item)
             }
         }.onFailure { error ->
-            Log.w(HomeViewModel.TAG, "Failed to toggle series watched for ${item.id}: ${error.message}")
+            Log.w(HomeViewModel.TAG, LogRedaction.text("Failed to toggle series watched for ${item.id}: ${error.message}"))
             // Revert optimistic update on failure
             _uiState.update { state ->
                 state.copy(

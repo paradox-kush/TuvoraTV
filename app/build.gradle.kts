@@ -287,7 +287,9 @@ android {
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
+                // B116: strip Log.v/Log.d from shipped builds (cert/benchmark reset this below).
+                "proguard-release-logs.pro"
             )
             signingConfig = if (useDebugReleaseSigning) {
                 signingConfigs.getByName("debug")
@@ -330,9 +332,13 @@ android {
             isDebuggable = false
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+            // Reset (not append): initWith(release) copied proguard-release-logs.pro, and this
+            // IS_DEBUG_BUILD=true validation build keeps its debug logging.
+            setProguardFiles(
+                listOf(
+                    getDefaultProguardFile("proguard-android-optimize.txt"),
+                    "proguard-rules.pro"
+                )
             )
             buildConfigField("boolean", "IS_DEBUG_BUILD", "true")
             buildConfigField("String", "SENTRY_ENVIRONMENT", buildConfigString("benchmark"))
@@ -348,6 +354,13 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             isDebuggable = false
             applicationIdSuffix = ".cert"
+            // B116: keep Log.d on cert (CleanPlaybackDiag below) — drop release's log-strip rules.
+            setProguardFiles(
+                listOf(
+                    getDefaultProguardFile("proguard-android-optimize.txt"),
+                    "proguard-rules.pro"
+                )
+            )
             // Production R8/minify/shrink stay on (this is the point of the cert build), but the
             // debug-flavor flag is forced true so the CleanPlaybackDiag logcat stream stays
             // available for validation. IS_DEBUG_BUILD gates only diagnostics/settings/dev
@@ -754,6 +767,9 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("io.mockk:mockk:1.13.12")
     testImplementation("org.robolectric:robolectric:4.16.1")
+    // Compose UI tests on Robolectric (JVM) — focus/key behaviour of guide cells (B114).
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     debugImplementation("androidx.compose.ui:ui-tooling")

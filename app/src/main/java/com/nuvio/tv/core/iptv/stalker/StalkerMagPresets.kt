@@ -83,8 +83,41 @@ internal object StalkerMagPresets {
      */
     fun next(current: StalkerMagPreset?): StalkerMagPreset? {
         if (current == null) return DEFAULT
+        // The user told us which box to be (F46). Walking to another box would send a different
+        // stb_type / hw_version than the one they entered — and on a lock_device panel the pinned
+        // hw_version IS the identity — so a rejection of a pinned identity is final.
+        if (current.id == PINNED_ID) return null
         val index = LADDER.indexOfFirst { it.id == current.id }
         if (index < 0) return DEFAULT
         return LADDER.getOrNull(index + 1)
     }
+
+    /** Id of the identity built from the user's own STB Model / HW Version (see [pinned]). */
+    const val PINNED_ID: String = "user_pinned"
+
+    /**
+     * F46: the STB identity the user entered on the playlist form — `Model` (sent as `stb_type` and
+     * in the `X-User-Agent: Model: …` header) and/or `HW Version` (`hw_version`). Null when both are
+     * blank, which keeps the ladder's first-try behaviour unchanged for every existing playlist.
+     *
+     * Fields the user did not enter come from the ladder preset whose `stb_type` matches the model
+     * (so "MAG254" also gets a MAG254 image/firmware/User-Agent), else from [DEFAULT]. Values are
+     * sent as typed (trimmed): Xtream-Codes `lock_device` compares `hw_version` byte-for-byte against
+     * what the line first registered, so normalising it would defeat the point of the field.
+     */
+    fun pinned(model: String?, hwVersion: String?): StalkerMagPreset? {
+        val m = model?.trim()?.takeIf { it.isNotEmpty() }
+        val hw = hwVersion?.trim()?.takeIf { it.isNotEmpty() }
+        if (m == null && hw == null) return null
+        val base = m?.let { wanted -> LADDER.firstOrNull { it.stbType.equals(wanted, ignoreCase = true) } } ?: DEFAULT
+        return base.copy(
+            id = PINNED_ID,
+            stbType = m ?: base.stbType,
+            hwVersion = hw ?: base.hwVersion,
+            xUserAgent = if (m != null) "Model: $m; Link: WiFi" else base.xUserAgent,
+        )
+    }
+
+    /** The identity a fresh session presents first: the user's pinned box, else [DEFAULT]. */
+    fun initial(model: String?, hwVersion: String?): StalkerMagPreset = pinned(model, hwVersion) ?: DEFAULT
 }

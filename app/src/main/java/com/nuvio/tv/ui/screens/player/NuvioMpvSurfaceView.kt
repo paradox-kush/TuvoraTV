@@ -908,6 +908,11 @@ ctl {
 
     override fun initOptions() {
         mpv.setOptionString("profile", "fast")
+        // B116: the library default (all=v) makes libmpv's native layer print "Playing: <url>" and
+        // "Failed to open <url>." — provider credentials included — straight to logcat. Raw modules
+        // that format URLs stay silent; decoder/output modules (and the presentation-fault lines the
+        // log observer watches) remain. Policy + rationale: MpvLogLevelPolicy.
+        mpv.setOptionString("msg-level", com.nuvio.tv.player.mpv.MpvLogLevelPolicy.MSG_LEVEL)
         setVo("gpu")
         mpv.setOptionString("gpu-context", "android")
         mpv.setOptionString("opengl-es", "yes")

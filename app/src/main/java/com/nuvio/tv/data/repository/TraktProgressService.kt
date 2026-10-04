@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.repository
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.os.SystemClock
 import android.util.Log
 import com.nuvio.tv.BuildConfig
@@ -669,9 +670,9 @@ class TraktProgressService @Inject constructor(
         title: String?,
         year: Int?
     ) {
-        Log.d(TAG, "markAsWatched: contentId=${progress.contentId} videoId=${progress.videoId} " +
+        Log.d(TAG, LogRedaction.text("markAsWatched: contentId=${progress.contentId} videoId=${progress.videoId} " +
             "season=${progress.season} episode=${progress.episode} " +
-            "contentType=${progress.contentType} title=$title year=$year")
+            "contentType=${progress.contentType} title=$title year=$year"))
 
         val effectiveInitialProgress = if (isSeriesEpisodeProgress(progress)) {
             val remapped = resolveCanonicalEpisodeMapping(progress)
@@ -692,7 +693,7 @@ class TraktProgressService @Inject constructor(
 
         val body = buildHistoryAddRequest(effectiveInitialProgress, title, year)
         if (body == null) {
-            Log.w(TAG, "markAsWatched: insufficient Trakt IDs for contentId=${progress.contentId} videoId=${progress.videoId} — skipping")
+            Log.w(TAG, LogRedaction.text("markAsWatched: insufficient Trakt IDs for contentId=${progress.contentId} videoId=${progress.videoId} — skipping"))
             return
         }
 
@@ -847,7 +848,7 @@ class TraktProgressService @Inject constructor(
     suspend fun removeProgress(contentId: String, season: Int?, episode: Int?) {
         Log.d(
             TAG,
-            "removeProgress start contentId=$contentId season=$season episode=$episode"
+            LogRedaction.text("removeProgress start contentId=$contentId season=$season episode=$episode")
         )
         applyOptimisticRemoval(contentId, season, episode)
         val playbackMovies = getPlayback("movies", force = true)
@@ -887,12 +888,12 @@ class TraktProgressService @Inject constructor(
                 }
             }
 
-        Log.d(TAG, "removeProgress refreshNow contentId=$contentId")
+        Log.d(TAG, LogRedaction.text("removeProgress refreshNow contentId=$contentId"))
         refreshNow()
     }
 
     suspend fun removeFromHistory(contentId: String, videoId: String? = null, season: Int?, episode: Int?) {
-        Log.d(TAG, "removeFromHistory: contentId=$contentId videoId=$videoId season=$season episode=$episode")
+        Log.d(TAG, LogRedaction.text("removeFromHistory: contentId=$contentId videoId=$videoId season=$season episode=$episode"))
         applyOptimisticRemoval(contentId, season, episode)
 
         var ids = toTraktIds(parseContentIds(contentId))
@@ -2328,7 +2329,7 @@ class TraktProgressService @Inject constructor(
         } catch (error: Exception) {
             Log.w(
                 TAG,
-                "resolveAddonEpisodeProgress failed for $contentId s=$season e=$episode",
+                LogRedaction.text("resolveAddonEpisodeProgress failed for $contentId s=$season e=$episode"),
                 error
             )
             null
@@ -2395,7 +2396,7 @@ class TraktProgressService @Inject constructor(
         val first = progressList.first()
         val ids = resolveHistoryIds(first)
         if (!ids.hasAnyId()) {
-            Log.w(TAG, "markSeasonWatchedBatch: no valid Trakt IDs for ${first.contentId}")
+            Log.w(TAG, LogRedaction.text("markSeasonWatchedBatch: no valid Trakt IDs for ${first.contentId}"))
             return
         }
         val watchedAt = toTraktUtcDateTime(System.currentTimeMillis())
@@ -2498,7 +2499,7 @@ class TraktProgressService @Inject constructor(
         if (episodes.isEmpty()) return
         val ids = toTraktIds(parseContentIds(contentId))
         if (!ids.hasAnyId()) {
-            Log.w(TAG, "removeSeasonFromHistoryBatch: no valid Trakt IDs for $contentId")
+            Log.w(TAG, LogRedaction.text("removeSeasonFromHistoryBatch: no valid Trakt IDs for $contentId"))
             return
         }
         val episodesBySeason = episodes.groupBy { it.first }
@@ -2587,7 +2588,7 @@ class TraktProgressService @Inject constructor(
         year: Int?
     ): TraktHistoryAddRequestDto? {
         val ids = resolveHistoryIds(progress)
-        Log.d(TAG, "buildHistoryAddRequest: resolvedIds=$ids contentId=${progress.contentId} videoId=${progress.videoId}")
+        Log.d(TAG, LogRedaction.text("buildHistoryAddRequest: resolvedIds=$ids contentId=${progress.contentId} videoId=${progress.videoId}"))
         if (!ids.hasAnyId()) return null
         val watchedAt = toTraktUtcDateTime(progress.lastWatched)
 

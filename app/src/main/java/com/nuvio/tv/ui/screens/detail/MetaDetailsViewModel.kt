@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.detail
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -508,7 +509,7 @@ class MetaDetailsViewModel @Inject constructor(
             }
 
             if (staleEpisodes.isNotEmpty()) {
-                Log.d(TAG, "revalidateWatchedEpisodes: pruning ${staleEpisodes.size} stale entries for $contentId")
+                Log.d(TAG, LogRedaction.text("revalidateWatchedEpisodes: pruning ${staleEpisodes.size} stale entries for $contentId"))
                 watchedItemsPreferences.unmarkAsWatchedBatch(
                     contentId = contentId,
                     episodes = staleEpisodes.toList(),
@@ -1086,7 +1087,7 @@ class MetaDetailsViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                Log.w(TAG, "Failed to load Trakt comments for ${meta.id}: ${error.message}")
+                Log.w(TAG, LogRedaction.text("Failed to load Trakt comments for ${meta.id}: ${error.message}"))
                 _uiState.update { state ->
                     if (state.meta == null || state.meta.id != meta.id) {
                         state
@@ -1168,7 +1169,7 @@ class MetaDetailsViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                Log.w(TAG, "Failed to load more Trakt comments for ${meta.id}: ${error.message}")
+                Log.w(TAG, LogRedaction.text("Failed to load more Trakt comments for ${meta.id}: ${error.message}"))
                 _uiState.update { current ->
                     if (current.meta?.id != meta.id) current else current.copy(isCommentsLoadingMore = false)
                 }
@@ -1242,7 +1243,7 @@ class MetaDetailsViewModel @Inject constructor(
                             fallbackItemType = itemType
                         )
                     }.getOrElse {
-                        Log.w(TAG, "Failed to load Trakt related titles for ${meta.id}: ${it.message}")
+                        Log.w(TAG, LogRedaction.text("Failed to load Trakt related titles for ${meta.id}: ${it.message}"))
                         emptyList()
                     }
                 }
@@ -1255,7 +1256,7 @@ class MetaDetailsViewModel @Inject constructor(
                             fallbackItemType = itemType
                         )
                     }.getOrElse {
-                        Log.w(TAG, "Failed to load Simkl related titles for ${meta.id}: ${it.message}")
+                        Log.w(TAG, LogRedaction.text("Failed to load Simkl related titles for ${meta.id}: ${it.message}"))
                         emptyList()
                     }
                 }
@@ -1278,7 +1279,7 @@ class MetaDetailsViewModel @Inject constructor(
                             language = settings.language
                         )
                     }.getOrElse {
-                        Log.w(TAG, "Failed to load More like this for ${meta.id}: ${it.message}")
+                        Log.w(TAG, LogRedaction.text("Failed to load More like this for ${meta.id}: ${it.message}"))
                         emptyList()
                     }
                 }
@@ -1474,7 +1475,7 @@ class MetaDetailsViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                Log.w(TAG, "Failed to load episode ratings for ${meta.id}: ${error.message}")
+                Log.w(TAG, LogRedaction.text("Failed to load episode ratings for ${meta.id}: ${error.message}"))
                 _uiState.update { state ->
                     if (state.meta == null || state.meta.id != meta.id) {
                         state

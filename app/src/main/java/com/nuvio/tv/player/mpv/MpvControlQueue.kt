@@ -1,5 +1,6 @@
 package com.nuvio.tv.player.mpv
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
@@ -50,7 +51,7 @@ internal class MpvControlQueue(
                     return@execute
                 }
                 runCatching(block).onFailure {
-                    android.util.Log.w(TAG, "control write threw: ${it.message}")
+                    android.util.Log.w(TAG, "control write threw: ${LogRedaction.text(it.message)}")
                 }
             }
         }.onFailure {

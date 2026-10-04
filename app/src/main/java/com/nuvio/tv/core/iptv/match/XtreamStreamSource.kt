@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.iptv.match
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.tmdb.TmdbService
@@ -38,7 +39,7 @@ class XtreamStreamSource @Inject constructor(
         // offers no sources at all, so skip the TMDB and provider work outright.
         if (!IptvSourceCategoryPolicy.offers(acc, IptvSourceCategoryPolicy.typeOf(kind))) return emptyList()
         val tmdbId = tmdbService.ensureTmdbId(videoId, type)?.toIntOrNull() ?: run {
-            android.util.Log.w("XtreamStreamSource", "skip $videoId: no TMDB id (missing API key or unknown id)")
+            android.util.Log.w("XtreamStreamSource", LogRedaction.text("skip $videoId: no TMDB id (missing API key or unknown id)"))
             return emptyList()
         }
         val titles = tmdbService.titleBundle(tmdbId, type) ?: run {

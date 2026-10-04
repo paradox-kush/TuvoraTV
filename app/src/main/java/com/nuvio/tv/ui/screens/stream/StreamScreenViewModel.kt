@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.stream
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.SavedStateHandle
@@ -173,6 +174,9 @@ class StreamScreenViewModel @Inject constructor(
         .distinctUntilChanged()
 
     fun enableP2p() = torrentSettings.setP2pEnabled(true)
+
+    /** The saved P2P setting right now (store builds: always false), bypassing Compose state lag. */
+    suspend fun isP2pEnabledNow(): Boolean = torrentSettings.settings.first().p2pEnabled
 
     private inline fun updateUiStateIfChanged(
         transform: (StreamScreenUiState) -> StreamScreenUiState
@@ -573,7 +577,7 @@ class StreamScreenViewModel @Inject constructor(
                 getEmbeddedStreamsFromMeta()?.let { embeddedAddonStreams ->
                     Log.d(
                         TAG,
-                        "Using embedded video streams for videoId=$videoId count=${embeddedAddonStreams.streams.size}"
+                        LogRedaction.text("Using embedded video streams for videoId=$videoId count=${embeddedAddonStreams.streams.size}")
                     )
                     applySuccess(listOf(embeddedAddonStreams), isAllLoaded = true)
                     updateSourceChipsForEmbedded(embeddedAddonStreams.addonName)
@@ -1798,8 +1802,8 @@ class StreamScreenViewModel @Inject constructor(
                 duration = effectiveDuration,
                 lastWatched = System.currentTimeMillis()
             )
-            Log.d(TAG, "Saving external player progress: pos=${positionMs}ms, dur=${effectiveDuration}ms, " +
-                "content=$contentId, video=$videoId")
+            Log.d(TAG, LogRedaction.text("Saving external player progress: pos=${positionMs}ms, dur=${effectiveDuration}ms, " +
+                "content=$contentId, video=$videoId"))
             watchProgressRepository.saveProgress(progress)
 
             val progressPercent = if (effectiveDuration > 0L) {

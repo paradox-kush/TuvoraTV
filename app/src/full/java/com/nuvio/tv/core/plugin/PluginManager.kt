@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.plugin
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import com.nuvio.tv.core.sync.AddonSyncMerge
 import android.util.Log
 import com.nuvio.tv.core.plugin.cloudstream.toNuvioType
@@ -146,7 +147,7 @@ class PluginManager @Inject constructor(
                 if (response.code in 301..302) {
                     val location = response.header("Location")
                     if (!location.isNullOrBlank()) {
-                        Log.d(TAG, "Short code '$code' resolved to: $location")
+                        Log.d(TAG, "Short code '$code' resolved to: ${LogRedaction.url(location)}")
                         return sanitizeScheme(location)
                     }
                 }
@@ -168,7 +169,7 @@ class PluginManager @Inject constructor(
             httpClient.newCall(request).execute().use { response ->
                 val finalUrl = response.request.url.toString()
                 if (finalUrl != "https://cutt.ly/$code" && response.isSuccessful) {
-                    Log.d(TAG, "Short code '$code' resolved via redirect chain to: $finalUrl")
+                    Log.d(TAG, "Short code '$code' resolved via redirect chain to: ${LogRedaction.url(finalUrl)}")
                     sanitizeScheme(finalUrl)
                 } else {
                     null
@@ -321,7 +322,7 @@ class PluginManager @Inject constructor(
             // If the URL points to a specific .json file (not manifest.json),
             // try external format first to avoid a wasted 404 on the NuvioTV path.
             if (isExplicitJsonFile) {
-                Log.d(TAG, "URL ends in .json — trying external format first: $sanitizedUrl")
+                Log.d(TAG, "URL ends in .json — trying external format first: ${LogRedaction.url(sanitizedUrl)}")
                 val externalResult = externalRepoParser.tryParse(sanitizedUrl)
                 if (externalResult != null) {
                     return@withContext addExternalRepository(sanitizedUrl, externalResult)
@@ -330,7 +331,7 @@ class PluginManager @Inject constructor(
 
             // Try NuvioTV format (with canonicalized /manifest.json URL)
             val canonicalManifestUrl = canonicalizeManifestUrl(sanitizedUrl)
-            Log.d(TAG, "Trying NuvioTV manifest: $canonicalManifestUrl")
+            Log.d(TAG, "Trying NuvioTV manifest: ${LogRedaction.url(canonicalManifestUrl)}")
 
             val manifest = fetchManifest(canonicalManifestUrl)
             if (manifest != null) {
@@ -339,7 +340,7 @@ class PluginManager @Inject constructor(
 
             // If we haven't tried external format yet, try it now
             if (!isExplicitJsonFile) {
-                Log.d(TAG, "NuvioTV manifest not found, trying external format: $sanitizedUrl")
+                Log.d(TAG, "NuvioTV manifest not found, trying external format: ${LogRedaction.url(sanitizedUrl)}")
                 val externalResult = externalRepoParser.tryParse(sanitizedUrl)
                 if (externalResult != null) {
                     return@withContext addExternalRepository(sanitizedUrl, externalResult)
@@ -367,7 +368,7 @@ class PluginManager @Inject constructor(
 
             when (typeHint) {
                 RepositoryType.EXTERNAL_DEX -> {
-                    Log.d(TAG, "addRepositoryWithTypeHint: EXTERNAL_DEX hint, trying external format: $sanitizedUrl")
+                    Log.d(TAG, "addRepositoryWithTypeHint: EXTERNAL_DEX hint, trying external format: ${LogRedaction.url(sanitizedUrl)}")
                     val externalResult = externalRepoParser.tryParse(sanitizedUrl)
                     if (externalResult != null) {
                         return@withContext addExternalRepository(sanitizedUrl, externalResult)
@@ -376,7 +377,7 @@ class PluginManager @Inject constructor(
                     Log.w(TAG, "addRepositoryWithTypeHint: EXTERNAL_DEX hint failed, falling back to auto-detect")
                 }
                 RepositoryType.NUVIO_JS -> {
-                    Log.d(TAG, "addRepositoryWithTypeHint: NUVIO_JS hint, trying manifest: $sanitizedUrl")
+                    Log.d(TAG, "addRepositoryWithTypeHint: NUVIO_JS hint, trying manifest: ${LogRedaction.url(sanitizedUrl)}")
                     val canonicalManifestUrl = canonicalizeManifestUrl(sanitizedUrl)
                     val manifest = fetchManifest(canonicalManifestUrl)
                     if (manifest != null) {
@@ -425,7 +426,7 @@ class PluginManager @Inject constructor(
         val existingRepo = dataStore.repositories.first()
             .find { normalizeUrl(it.url) == normalizeUrl(repoUrl) }
         if (existingRepo != null) {
-            Log.d(TAG, "External repository already exists: ${existingRepo.name} (${existingRepo.url})")
+            Log.d(TAG, "External repository already exists: ${existingRepo.name} (${LogRedaction.url(existingRepo.url)})")
             return Result.success(existingRepo)
         }
 
@@ -520,7 +521,7 @@ class PluginManager @Inject constructor(
             initialLocalRepos
                 .filter { normalizeUrl(it.url) !in keptUrlSet }
                 .forEach { repo ->
-                    Log.d(TAG, "reconcile: removing local repo: ${repo.name} (${repo.url})")
+                    Log.d(TAG, "reconcile: removing local repo: ${repo.name} (${LogRedaction.url(repo.url)})")
                     removeRepository(repo.id)
                 }
         }
@@ -533,7 +534,7 @@ class PluginManager @Inject constructor(
                 }
                 val result = addRepositoryWithTypeHint(remotePlugin.url, typeHint)
                 if (result.isFailure) {
-                    Log.e(TAG, "reconcile: failed to add repo ${remotePlugin.url}: ${result.exceptionOrNull()?.message}")
+                    Log.e(TAG, "reconcile: failed to add repo ${LogRedaction.url(remotePlugin.url)}: ${result.exceptionOrNull()?.message}")
                 }
             }
         }
@@ -1033,7 +1034,7 @@ class PluginManager @Inject constructor(
                         code.contains("[Hrefli]", ignoreCase = false)
                     Log.d(
                         TAG,
-                        "Downloaded scraper code: ${info.name}(${info.id}) bytes=${code.toByteArray(Charsets.UTF_8).size} sha256=${sha.take(12)} hrefliLogs=$hasHrefliLogs url=$codeUrl"
+                        "Downloaded scraper code: ${info.name}(${info.id}) bytes=${code.toByteArray(Charsets.UTF_8).size} sha256=${sha.take(12)} hrefliLogs=$hasHrefliLogs url=${LogRedaction.url(codeUrl)}"
                     )
                 } catch (_: Exception) {
                     // ignore

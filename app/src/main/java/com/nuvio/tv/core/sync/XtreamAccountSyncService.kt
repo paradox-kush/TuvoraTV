@@ -468,6 +468,10 @@ private fun SupabaseIptvPlaylist.toDerivedAccountOrNull(): XtreamAccount? {
                 serialNumber = serialNumber.orEmpty(),
                 deviceId = deviceId.orEmpty(),
                 sendDeviceId = sendDeviceId,
+                deviceId2 = deviceId2?.trim().orEmpty(),
+                signature = signature?.trim().orEmpty(),
+                stbModel = stbModel?.trim().orEmpty(),
+                hwVersion = hwVersion?.trim().orEmpty(),
                 // B04: a Stalker playlist's UA rides the shared `user_agent` column too. Not reading it
                 // here (and not writing it on push) made every TV sync blank it for every device.
                 userAgent = userAgent?.takeIf { it.isNotBlank() }
@@ -567,6 +571,13 @@ internal fun playlistPushJson(acc: XtreamAccount, sortOrder: Int): JsonObject = 
             acc.serialNumber.takeIf { it.isNotBlank() }?.let { put("serial_number", it) }
             acc.deviceId.takeIf { it.isNotBlank() }?.let { put("device_id", it) }
             put("send_device_id", acc.sendDeviceId)
+            // F46: ALWAYS present (null clears). The server carries a column forward when its key is
+            // ABSENT, so a build that predates these fields can never wipe them — which means a
+            // cleared field has to be sent as an explicit null to be cleared.
+            put("device_id2", acc.deviceId2.takeIf { it.isNotBlank() })
+            put("signature", acc.signature.takeIf { it.isNotBlank() })
+            put("stb_model", acc.stbModel.takeIf { it.isNotBlank() })
+            put("hw_version", acc.hwVersion.takeIf { it.isNotBlank() })
             acc.userAgent?.takeIf { it.isNotBlank() }?.let { put("user_agent", it) }   // B04: round-trip the UA
         }
     }
