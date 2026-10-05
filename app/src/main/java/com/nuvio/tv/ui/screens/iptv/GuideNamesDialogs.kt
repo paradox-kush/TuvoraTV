@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
 import androidx.tv.material3.Text
@@ -162,12 +163,27 @@ private fun GuideTextField(
     modifier: Modifier = Modifier,
     placeholder: String? = null,
 ) {
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     androidx.compose.material3.OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         singleLine = true,
         placeholder = placeholder?.let { { Text(it) } },
-        modifier = modifier.fillMaxWidth(),
+        // A focused text field swallows D-pad UP/DOWN (device pass 2026-10-05: the dialog opens with
+        // focus here, so the results below were unreachable). Same escape as the playlist form's
+        // fields (B69, InputFieldKeys): UP/DOWN leave the field; LEFT/RIGHT stay with the cursor.
+        modifier = modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+            val native = event.nativeKeyEvent
+            val direction = com.nuvio.tv.ui.screens.account.InputFieldKeys.exitDirection(
+                isEditing = true,
+                isKeyDown = native.action == android.view.KeyEvent.ACTION_DOWN,
+                keyCode = native.keyCode,
+            ) ?: return@onPreviewKeyEvent false
+            keyboard?.hide()
+            focusManager.moveFocus(direction)
+            true
+        },
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
             imeAction = androidx.compose.ui.text.input.ImeAction.Search,
             autoCorrectEnabled = false,
