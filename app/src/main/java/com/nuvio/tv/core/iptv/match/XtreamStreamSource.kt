@@ -145,8 +145,9 @@ class XtreamStreamSource @Inject constructor(
         episode: Int?,
     ): List<Stream> {
         val query = titles.primary?.takeIf { it.isNotBlank() } ?: return emptyList()
-        val wantKeys = listOfNotNull(titles.primary, titles.original)
-            .map { TitleNormalizer.normKey(it) }.filter { it.isNotEmpty() }.toSet()
+        // B122: matched under the SAME keys the Xtream index uses (StalkerTitleMatchPolicy), so
+        // "EN - The Matrix (1999)" is the TMDB "The Matrix" here exactly as it is for Xtream.
+        val wantKeys = StalkerTitleMatchPolicy.wantKeys(listOf(titles.primary, titles.original))
         if (wantKeys.isEmpty()) return emptyList()
 
         return when (kind) {
@@ -154,8 +155,7 @@ class XtreamStreamSource @Inject constructor(
             MatchKind.MOVIE -> IptvSourceCategoryPolicy.keepCapped(
                 acc, XtreamAccount.TYPE_MOVIES,
                 stalkerClient.searchMovies(acc, query)
-                    .filter { TitleNormalizer.normKey(it.name) in wantKeys }
-                    .filter { yearCompatible(TitleNormalizer.yearOf(it.name), titles.year) },
+                    .filter { StalkerTitleMatchPolicy.movieMatches(it.name, wantKeys, titles.year) },
                 cap = MAX_STALKER_EDITIONS,   // a catalog carries 4K/HD/language cuts of one film
             ) { it.categoryId }
                 .map { movie ->
@@ -171,7 +171,7 @@ class XtreamStreamSource @Inject constructor(
                 // and TMDB's year is the FIRST-air year — guarding would drop later-season matches.
                 IptvSourceCategoryPolicy.keepCapped(
                     acc, XtreamAccount.TYPE_SERIES,
-                    stalkerClient.searchSeries(acc, query).filter { TitleNormalizer.normKey(it.name) in wantKeys },
+                    stalkerClient.searchSeries(acc, query).filter { StalkerTitleMatchPolicy.seriesMatches(it.name, wantKeys, s) },
                     cap = MAX_STALKER_EDITIONS,   // language cuts ("Breaking Bad (Hindi)") are separate
                 ) { it.categoryId }
                     .map { series ->
