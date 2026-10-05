@@ -72,7 +72,9 @@ class StartupSyncService @Inject constructor(
     private val profileManager: ProfileManager,
     private val startupSyncPreferences: StartupSyncPreferences,
     private val syncDeviceReporter: SyncDeviceReporter,
-    private val cwEnrichmentCache: com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache
+    private val cwEnrichmentCache: com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache,
+    // Fork surfaces (e.g. the IPTV overlay) bound at the composition root — this file names none of them.
+    private val realtimeParticipants: Set<@JvmSuppressWildcards com.nuvio.tv.core.contracts.RealtimeSyncParticipant>
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startupPullJob: Job? = null
@@ -273,7 +275,20 @@ class StartupSyncService @Inject constructor(
                             Log.e(TAG, "Realtime profiles pull failed", error)
                         }
                 }
-                else -> Log.w(TAG, "Unknown realtime sync surface=$surface profile=$profileId")
+                else -> {
+                    val participants = com.nuvio.tv.core.contracts.RealtimeSyncRouting
+                        .participantsFor(surface, realtimeParticipants)
+                    if (participants.isEmpty()) {
+                        Log.w(TAG, "Unknown realtime sync surface=$surface profile=$profileId")
+                    }
+                    participants.forEach { participant ->
+                        runCatching { participant.pullForRealtimeSurface(profileId) }
+                            .onFailure { error ->
+                                if (error is CancellationException) throw error
+                                Log.e(TAG, "Realtime ${participant.name} pull failed profile=$profileId", error)
+                            }
+                    }
+                }
             }
         }
     }
