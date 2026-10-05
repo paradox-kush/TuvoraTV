@@ -77,10 +77,19 @@ class StalkerClient @Inject constructor(
     private val seasonCache = ConcurrentHashMap<String, List<StalkerSeason>>()
     private val seasonMutex = Mutex()
 
+    // B02: the series dialect each portal answered with this session (StalkerSeriesDialect), and the
+    // genuine-Ministra series tree: seasons keyed accountId:seriesId, episodes accountId:seasonId.
+    private val seriesDialects = ConcurrentHashMap<String, StalkerSeriesDialect.Dialect>()
+    private val ministraSeasons = ConcurrentHashMap<String, List<StalkerSeriesDialect.Node>>()
+    private val ministraEpisodes = ConcurrentHashMap<String, List<MinistraEpisode>>()
+
     /** Drop an account's cached lineup/rows (portal or MAC edited, playlist removed). */
     fun evictCaches(accountId: String) {
         epgUnsupported.remove(accountId)
         seasonCache.keys.removeAll { it.startsWith("$accountId:") }
+        seriesDialects.remove(accountId)
+        ministraSeasons.keys.removeAll { it.startsWith("$accountId:") }
+        ministraEpisodes.keys.removeAll { it.startsWith("$accountId:") }
         rowCache.keys.removeAll { it.startsWith("$accountId:") }
         linkFlags.keys.removeAll { it.startsWith("$accountId:") }
     }
@@ -133,8 +142,36 @@ class StalkerClient @Inject constructor(
     override suspend fun vodCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
         categories(acc, "vod", "get_categories")
 
-    override suspend fun seriesCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
-        categories(acc, "series", "get_categories")
+    /**
+     * Series categories, and the moment the portal's series dialect is learned (B02): XC-family
+     * portals answer `type=series`; genuine Ministra has no such module, so its series live in the
+     * `vod` categories (rows flagged `is_series`). One extra `vod` call, once per session, and only
+     * on a portal whose `type=series` didn't answer.
+     */
+    override suspend fun seriesCategories(acc: XtreamAccount): Result<List<XtreamCategory>> {
+        if (seriesDialects[acc.id] == StalkerSeriesDialect.Dialect.MINISTRA) return categories(acc, "vod", "get_categories")
+        val xc = categories(acc, "series", "get_categories")
+        if (xc.getOrNull()?.isNotEmpty() == true) {
+            seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.XC
+            return xc
+        }
+        val vod = categories(acc, "vod", "get_categories")
+        return when (StalkerSeriesDialect.decide(false, vod.getOrNull()?.isNotEmpty() == true)) {
+            StalkerSeriesDialect.Dialect.MINISTRA -> {
+                Log.i(TAG, "stalker: no type=series module — using the Ministra vod series tree")
+                seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.MINISTRA
+                vod
+            }
+            else -> xc
+        }
+    }
+
+    /** The portal's series dialect, learned once per session through [seriesCategories]. */
+    private suspend fun seriesDialect(acc: XtreamAccount): StalkerSeriesDialect.Dialect =
+        seriesDialects[acc.id] ?: run {
+            seriesCategories(acc)
+            seriesDialects[acc.id] ?: StalkerSeriesDialect.Dialect.XC
+        }
 
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = runCatching {
         if (!ensureLineup(acc)) return@runCatching emptyList()
@@ -238,7 +275,8 @@ class StalkerClient @Inject constructor(
     )
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = runCatching {
-        val items = orderedList(acc, "vod", categoryId, maxItems = CATEGORY_ITEMS)
+        // Genuine Ministra lists its series among the vod rows (is_series): those are Series, never Movies.
+        val items = orderedList(acc, "vod", categoryId, maxItems = CATEGORY_ITEMS).filterNot(StalkerSeriesDialect::isSeriesRow)
         writeThroughVod(acc, items)
         items.map { movieOf(acc, it) }.filter { it.streamId > 0 }
     }
@@ -288,6 +326,7 @@ class StalkerClient @Inject constructor(
      */
     suspend fun searchMovies(acc: XtreamAccount, query: String): List<XtreamMovie> = runCatching {
         val items = orderedList(acc, "vod", null, search = query, maxItems = SEARCH_ITEMS)
+            .filterNot(StalkerSeriesDialect::isSeriesRow)   // B02: a Ministra series is not a movie source
         writeThroughVod(acc, items)   // a searched-then-favorited movie must survive a cold start too
         items.map { movieOf(acc, it) }.filter { it.streamId > 0 }
     }.getOrDefault(emptyList())
@@ -304,7 +343,7 @@ class StalkerClient @Inject constructor(
     )
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = runCatching {
-        val fetched = orderedList(acc, "series", categoryId, maxItems = CATEGORY_ITEMS)
+        val fetched = seriesRows(acc, categoryId, search = null, maxItems = CATEGORY_ITEMS)
         writeThroughSeries(acc, fetched)
         fetched.map { item ->
             XtreamSeriesItem(
@@ -332,6 +371,7 @@ class StalkerClient @Inject constructor(
      * returns Season 2..5 rows, each carrying its own episode numbers + cmd).
      */
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail> = runCatching {
+        if (seriesDialect(acc) == StalkerSeriesDialect.Dialect.MINISTRA) return@runCatching ministraSeriesInfo(acc, seriesId)
         // Read the series row for its episode list + cmd (portals have no get_series_info).
         val row = row(acc, "series", seriesId)
         val plot = row?.str("description")
@@ -580,14 +620,113 @@ class StalkerClient @Inject constructor(
         // Season cmd resolution, cheapest first: this session's cache -> the write-through rows
         // (cold-start Continue Watching plays with ZERO portal requests before create_link) ->
         // the portal's season fetch.
-        val cmd = seasonCache["${acc.id}:$seriesId"]
+        // XC caches first — only the XC tree ever fills them, so a hit is XC with zero extra requests.
+        val cached = seasonCache["${acc.id}:$seriesId"]
             ?.let { se -> (season?.let { n -> se.firstOrNull { it.number == n } } ?: se.firstOrNull())?.cmd }
             ?: contentDb.episodesFor(acc.id, seriesId)
                 .let { rows -> (season?.let { n -> rows.firstOrNull { it.season == n } } ?: rows.firstOrNull())?.cmd }
+        if (cached == null && seriesDialect(acc) == StalkerSeriesDialect.Dialect.MINISTRA) {
+            return ministraEpisodeUrl(acc, seriesId, season, episodeNum)
+        }
+        val cmd = cached
             ?: seasonsOf(acc, seriesId)
                 .let { se -> (season?.let { n -> se.firstOrNull { it.number == n } } ?: se.firstOrNull())?.cmd }
             ?: return null
         return createLink(playbackSession(acc), "vod", cmd, extraParams = mapOf("series" to episodeNum.toString()))
+    }
+
+    // --- genuine Ministra series (B02) ------------------------------------------------------
+
+    private class MinistraEpisode(val node: StalkerSeriesDialect.Node, val title: String)
+
+    /**
+     * Series rows for a category or a search: `type=series` on XC-family portals; on genuine Ministra
+     * the `vod` rows flagged `is_series` (the cap counts every row walked, so a category heavy on
+     * movies shows fewer series — the same bound the Movies tab has).
+     */
+    private suspend fun seriesRows(acc: XtreamAccount, categoryId: String?, search: String?, maxItems: Int): List<JsonObject> =
+        if (seriesDialect(acc) == StalkerSeriesDialect.Dialect.MINISTRA) {
+            orderedList(acc, "vod", categoryId, search = search, maxItems = maxItems).filter(StalkerSeriesDialect::isSeriesRow)
+        } else {
+            orderedList(acc, "series", categoryId, search = search, maxItems = maxItems)
+        }
+
+    /** Every episode of a Ministra series: seasons (`movie_id`), then each season's pages (`season_id`). */
+    private suspend fun ministraSeriesInfo(acc: XtreamAccount, seriesId: Int): XtreamSeriesDetail {
+        val row = rowCache[rowKey(acc.id, "vod", seriesId)]
+        val plot = row?.str("description")
+        val backdrop = (row?.str("screenshot_uri") ?: row?.str("cover"))?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) }
+        val episodes = ministraSeasonsOf(acc, seriesId).flatMap { season ->
+            ministraEpisodesOf(acc, seriesId, season.id).map { ep ->
+                XtreamEpisode(
+                    // Same "seriesId:season:episode" shape as XC — play re-walks the tree by NUMBER.
+                    episodeId = "$seriesId:${season.number}:${ep.node.number}",
+                    season = season.number,
+                    episodeNum = ep.node.number,
+                    title = ep.title,
+                    plot = null,
+                    still = null,
+                    streamUrl = "",   // create_link at play time on the episode's file cmd
+                )
+            }
+        }
+        return XtreamSeriesDetail(tmdbId = null, plot = plot, backdrop = backdrop, episodes = episodes)
+    }
+
+    /**
+     * Ministra episode play: season by number -> episode by number -> its file rows; the first FILE
+     * cmd (`/media/file_<id>.mpg`, or a custom URL) is create_link's input. No `series=` argument —
+     * that is the XC season-container convention. Always mints, like XC episodes.
+     */
+    private suspend fun ministraEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
+        val seasons = ministraSeasonsOf(acc, seriesId)
+        val s = (season?.let { n -> seasons.firstOrNull { it.number == n } } ?: seasons.firstOrNull()) ?: return null
+        val ep = ministraEpisodesOf(acc, seriesId, s.id).firstOrNull { it.node.number == episodeNum } ?: return null
+        val files = runCatching { browse(acc, StalkerSeriesDialect.filesParams(seriesId, s.id, ep.node.id)) }.getOrNull()
+        val cmd = ((files as? JsonObject)?.get("data") as? com.google.gson.JsonArray)
+            ?.mapNotNull { it as? JsonObject }
+            ?.firstNotNullOfOrNull { f -> f.str("cmd")?.takeIf { it.isNotBlank() } }
+            ?: return null
+        return createLink(playbackSession(acc), "vod", cmd)
+    }
+
+    private suspend fun ministraSeasonsOf(acc: XtreamAccount, seriesId: Int): List<StalkerSeriesDialect.Node> {
+        val key = "${acc.id}:$seriesId"
+        ministraSeasons[key]?.let { return it }
+        val seasons = ministraPages(acc) { page -> StalkerSeriesDialect.seasonsParams(seriesId, page) }
+            .mapNotNull(StalkerSeriesDialect::season).distinctBy { it.number }.sortedBy { it.number }
+        if (seasons.isNotEmpty()) ministraSeasons[key] = seasons
+        return seasons
+    }
+
+    private suspend fun ministraEpisodesOf(acc: XtreamAccount, seriesId: Int, seasonId: Int): List<MinistraEpisode> {
+        val key = "${acc.id}:$seasonId"
+        ministraEpisodes[key]?.let { return it }
+        val episodes = ministraPages(acc) { page -> StalkerSeriesDialect.episodesParams(seriesId, seasonId, page) }
+            .mapNotNull { row ->
+                StalkerSeriesDialect.episode(row)?.let { node ->
+                    MinistraEpisode(node, row.str("name")?.takeIf { it.isNotBlank() } ?: "Episode ${node.number}")
+                }
+            }
+            .distinctBy { it.node.number }.sortedBy { it.node.number }
+        if (episodes.isNotEmpty()) ministraEpisodes[key] = episodes
+        return episodes
+    }
+
+    /** One tree level, every page (`total_items` bounds it; [MINISTRA_TREE_PAGES] caps a runaway). */
+    private suspend fun ministraPages(acc: XtreamAccount, params: (Int) -> Map<String, String>): List<JsonObject> {
+        val out = ArrayList<JsonObject>()
+        var page = 1
+        var total = Int.MAX_VALUE
+        while (out.size < total && page <= MINISTRA_TREE_PAGES) {
+            val obj = runCatching { browse(acc, params(page)) }.getOrNull() as? JsonObject ?: break
+            total = obj.int("total_items") ?: out.size
+            val data = (obj.get("data") as? com.google.gson.JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+            if (data.isEmpty()) break
+            out += data
+            page++
+        }
+        return out
     }
 
     private class StalkerSeason(val number: Int, val cmd: String, val episodeNums: List<Int>)
@@ -647,7 +786,7 @@ class StalkerClient @Inject constructor(
 
     /** Portal-side series search — same rationale as [searchMovies]. */
     suspend fun searchSeries(acc: XtreamAccount, query: String): List<XtreamSeriesItem> = runCatching {
-        val fetched = orderedList(acc, "series", null, search = query, maxItems = SEARCH_ITEMS)
+        val fetched = seriesRows(acc, null, search = query, maxItems = SEARCH_ITEMS)
         writeThroughSeries(acc, fetched)
         fetched.map { item ->
             XtreamSeriesItem(
@@ -855,6 +994,8 @@ class StalkerClient @Inject constructor(
             "The portal couldn't build a playback link for this channel"
         private const val MAX_ITEMS = 8000    // ponytail: categories are the browse path; don't slurp 26k
         private const val MAX_PAGES = 200
+        /** Pages per Ministra season/episode level: 14 rows a page, so 20 = 280 episodes in a season. */
+        private const val MINISTRA_TREE_PAGES = 20
         private const val MAX_CACHED_ROWS = 10_000
 
         // A hub category is ONE poster row (no see-all), and a real portal serves get_ordered_list 14
