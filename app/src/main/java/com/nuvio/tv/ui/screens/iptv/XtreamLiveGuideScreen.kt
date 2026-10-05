@@ -430,7 +430,8 @@ fun LiveGuide(
                     }
                     // F08: back to the channel watched before (LAST/RECALL), if it is in this lineup.
                     LiveControlsPolicy.KeyAction.ZAP_BACK -> {
-                        zapBack.target(uiState.channels.map { it.contentId })
+                        // T4: LAST stays in the playing playlist too (All favorites mixes playlists).
+                        zapBack.target(viewModel.zapLineup().map { it.contentId })
                             ?.let(viewModel::focusChannel)
                             ?.let(playbackViewModel::requestTune)
                         if (!controlsVisible) showControls() else controlsTick++
@@ -779,7 +780,8 @@ fun LiveGuide(
             aspectLabel?.takeIf { fullscreen }?.let { LiveAspectIndicator(it) }
             if (fullscreen && channelListOpen) {
                 LiveChannelListOverlay(
-                    channels = uiState.channels,
+                    // T4: the fullscreen list is the playing playlist's own lineup.
+                    channels = viewModel.zapLineup(),
                     epg = uiState.epg,
                     playingContentId = playingContentId,
                     favoriteIds = favoriteIds,
