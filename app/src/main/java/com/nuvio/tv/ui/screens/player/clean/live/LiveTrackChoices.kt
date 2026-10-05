@@ -45,11 +45,14 @@ internal object LiveTrackChoices {
             }
 
     /**
-     * T6 (W2 device pass): live plays on mpv's DIRECT output (mediacodec_embed — the decoder renders
-     * straight to the video plane, product decision 2026-08-28: smooth video first). That path has
-     * no layer to draw subtitles on, so an HLS subtitle track was listed, picked, and never shown.
+     * T6 (W2 device pass): which live output can actually draw a picked subtitle. Only mpv's GPU
+     * render path draws text (libmpv's own subtitle renderer, given its font — MpvSubtitleFonts).
+     * mpv's DIRECT output (mediacodec_embed, the decoder straight to the video plane — product
+     * decision 2026-08-28, smooth video first) has no layer to draw on, and the clean Media3 live
+     * path has no cue renderer (no SubtitleView / onCues consumer) yet. On those an HLS subtitle
+     * track was listed, picked and never shown; now the picker lists it but says why.
      */
-    fun canDrawSubtitles(graph: PlaybackGraph?): Boolean = graph?.outputProfile != GraphOutputProfile.MPV_DIRECT
+    fun canDrawSubtitles(graph: PlaybackGraph?): Boolean = graph?.outputProfile == GraphOutputProfile.MPV_RENDER
 
     /** P3: a closed-caption track reads "Closed captions" (or its real language), never its codec. */
     fun subtitleLabel(track: PlaybackTrackDescriptor, index: Int, closedCaptionsLabel: String = CLOSED_CAPTIONS): String {
