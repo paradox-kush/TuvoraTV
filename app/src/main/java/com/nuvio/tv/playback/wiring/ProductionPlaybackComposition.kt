@@ -123,7 +123,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
     @ApplicationContext context: Context,
     private val providerResolverFactory: ProviderPlaybackResolverFactory,
     private val applicationDnsResolver: ApplicationDnsResolver,
-    legacyPreferenceSource: LegacyPlaybackPreferenceSnapshotSource,
+    private val legacyPreferenceSource: LegacyPlaybackPreferenceSnapshotSource,
 ) {
     private val appContext = context.applicationContext
     private val strictPlaybackHttpClient = OkHttpClient.Builder().build()
@@ -140,6 +140,17 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
     private val clock: PlaybackClock = AndroidPlaybackClock
     private val versions = ProductionPlaybackVersionFacts.current()
     private val diagnostics = FormattingPlaybackDiagnostics(PostHogPlaybackDiagnosticSink)
+
+    /**
+     * F13: the user's live buffer length from the legacy (user-facing) settings, read per session so
+     * a change applies to the next channel. The clean preference document only imports legacy
+     * settings once, so it cannot carry a setting the user keeps adjusting. Any failure means Auto.
+     */
+    private suspend fun liveBufferSeconds(profileId: PlaybackProfileId): Int =
+        runCatching { legacyPreferenceSource.snapshot(profileId.value).values["liveBufferSeconds"]?.toIntOrNull() }
+            .getOrNull()
+            ?.let(com.nuvio.tv.playback.core.LiveBufferPolicy::normalize)
+            ?: com.nuvio.tv.playback.core.LiveBufferPolicy.AUTO
 
     suspend fun create(
         preferenceProfileId: PlaybackProfileId,
@@ -178,7 +189,9 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             requestResolver = concreteRequestResolver,
             providerPlaybackResolver = providerResolverFactory.create(preferenceProfileId),
             environmentProvider = environmentProvider,
-            requirementsResolver = DefaultPlaybackRequirementsResolver(),
+            requirementsResolver = DefaultPlaybackRequirementsResolver(
+                liveBufferSeconds = liveBufferSeconds(preferenceProfileId),
+            ),
             graphProvider = graphProvider,
             engineRegistry = PlaybackEngineRegistry { engines[it] },
             outputController = host.outputController,

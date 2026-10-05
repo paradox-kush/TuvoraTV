@@ -124,6 +124,10 @@ internal object MpvAdapterPlanFactory {
             "demuxer-readahead-secs" to bufferMaximumMs(input).div(1_000.0).toString(),
             "ao" to "audiotrack,aaudio",
         )
+        // F13: a user-chosen live buffer also sets how long mpv refills after a stall (default 1 s).
+        input.requirements.customBuffer
+            ?.takeIf { request.contentType == ContentType.LIVE }
+            ?.let { options["cache-pause-wait"] = it.rebufferStartBufferMs.div(1_000.0).toString() }
         when (request.network.proxyMode) {
             ProxyMode.SYSTEM -> Unit
             ProxyMode.DIRECT -> options["http-proxy"] = ""

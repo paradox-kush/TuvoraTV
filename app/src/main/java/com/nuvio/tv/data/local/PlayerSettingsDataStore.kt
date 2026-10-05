@@ -239,6 +239,8 @@ data class PlayerSettings(
     val playbackIssueReportsEnabled: Boolean = false,
     /** F37 "Remember my player preferences" (PlayerPreferencePolicy). Device-local: see sync service. */
     val rememberPlayerPreferences: Boolean = com.nuvio.tv.ui.screens.player.PlayerPreferencePolicy.DEFAULT_REMEMBER,
+    /** F13: live IPTV buffer in seconds (LiveBufferPolicy); 0 = Auto. Device-local: see sync service. */
+    val liveBufferSeconds: Int = com.nuvio.tv.playback.core.LiveBufferPolicy.AUTO,
     val pauseOverlayEnabled: Boolean = true,
     val osdClockEnabled: Boolean = true,
     val skipIntroEnabled: Boolean = true,
@@ -484,6 +486,7 @@ class PlayerSettingsDataStore @Inject constructor(
     private val showPlayerLoadingStatusKey = booleanPreferencesKey("show_player_loading_status")
     private val playbackIssueReportsEnabledKey = booleanPreferencesKey("playback_issue_reports_enabled")
     private val rememberPlayerPreferencesKey = booleanPreferencesKey("remember_player_preferences")
+    private val liveBufferSecondsKey = intPreferencesKey("live_buffer_seconds")
     private val pauseOverlayEnabledKey = booleanPreferencesKey("pause_overlay_enabled")
     private val osdClockEnabledKey = booleanPreferencesKey("osd_clock_enabled")
     private val skipIntroEnabledKey = booleanPreferencesKey("skip_intro_enabled")
@@ -848,6 +851,7 @@ class PlayerSettingsDataStore @Inject constructor(
                 playbackIssueReportsEnabled = prefs[playbackIssueReportsEnabledKey] ?: false,
                 rememberPlayerPreferences = prefs[rememberPlayerPreferencesKey]
                     ?: com.nuvio.tv.ui.screens.player.PlayerPreferencePolicy.DEFAULT_REMEMBER,
+                liveBufferSeconds = com.nuvio.tv.playback.core.LiveBufferPolicy.normalize(prefs[liveBufferSecondsKey]),
                 pauseOverlayEnabled = prefs[pauseOverlayEnabledKey] ?: true,
                 osdClockEnabled = prefs[osdClockEnabledKey] ?: true,
                 skipIntroEnabled = prefs[skipIntroEnabledKey] ?: true,
@@ -1174,6 +1178,12 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setShowPlayerLoadingStatus(enabled: Boolean) {
         store().edit { prefs ->
             prefs[showPlayerLoadingStatusKey] = enabled
+        }
+    }
+
+    suspend fun setLiveBufferSeconds(seconds: Int) {
+        store().edit { prefs ->
+            prefs[liveBufferSecondsKey] = com.nuvio.tv.playback.core.LiveBufferPolicy.normalize(seconds)
         }
     }
 

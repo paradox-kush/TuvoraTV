@@ -1905,6 +1905,10 @@
     <string name="playback_remember_preferences_sub">Keep the audio and subtitle track, subtitles on or off, aspect and zoom for each series, and carry them to the next episode.</string>
     <string name="playback_subtitle_side_padding">Subtitle side padding</string>
     <string name="playback_subtitle_side_padding_sub">Space kept clear on the left and right of subtitles</string>
+    <string name="playback_live_buffer">Live TV buffer</string>
+    <string name="playback_live_buffer_sub">More seconds rides out an unstable provider; fewer stays closer to live. Applies to the next channel.</string>
+    <string name="playback_live_buffer_auto">Auto</string>
+    <string name="playback_live_buffer_seconds">%1$d s</string>
     <string name="player_aspect_stretch">Stretch</string>
     <string name="player_aspect_fit_width">Fit Width</string>
     <string name="player_aspect_fit_height">Fit Height</string>

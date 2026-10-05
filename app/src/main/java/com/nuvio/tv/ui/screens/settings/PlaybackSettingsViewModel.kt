@@ -167,6 +167,10 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setShowPlayerLoadingStatus(enabled)
     }
 
+    suspend fun setLiveBufferSeconds(seconds: Int) {
+        playerSettingsDataStore.setLiveBufferSeconds(seconds)
+    }
+
     suspend fun setRememberPlayerPreferences(enabled: Boolean) {
         playerSettingsDataStore.setRememberPlayerPreferences(enabled)
     }

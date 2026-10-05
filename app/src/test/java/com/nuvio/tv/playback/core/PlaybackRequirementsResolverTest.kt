@@ -448,6 +448,44 @@ class PlaybackRequirementsResolverTest {
     }
 
     @Test
+    fun `a chosen live buffer length is one custom buffer for guide and fullscreen alike`() = runTest {
+        // F13: both profiles get the same buffer, so the guide->fullscreen promote still applies in
+        // place; VOD keeps its own buffering preference.
+        val liveResolver = DefaultPlaybackRequirementsResolver(liveBufferSeconds = 20)
+        suspend fun resolveWith(input: PlaybackRequirementsInput) =
+            (liveResolver.resolve(input) as PlaybackResult.Success).value
+        val guide = resolveWith(input(profile = SessionProfile.GUIDE))
+        val fullscreen = resolveWith(input(profile = SessionProfile.FULLSCREEN))
+        val expected = CustomBufferPreference(20_000, 40_000, 1_500, 10_000)
+        assertEquals(BufferingPreference.CUSTOM, guide.buffering)
+        assertEquals(expected, guide.customBuffer)
+        assertEquals(expected, fullscreen.customBuffer)
+        val diff = PlaybackRequirementsDiffClassifier.classify(guide, fullscreen)
+        assertEquals(diff.changedFields.toString(), ChangeImpact.APPLY_IN_PLACE, diff.impact)
+
+        val vod = resolveWith(input(summary = requestSummary(contentType = ContentType.VOD)))
+        assertEquals(PlaybackPreferences.recommended().buffering, vod.buffering)
+        assertNull(vod.customBuffer)
+    }
+
+    @Test
+    fun `auto live buffer keeps the low-latency default`() = runTest {
+        val auto = (DefaultPlaybackRequirementsResolver(liveBufferSeconds = LiveBufferPolicy.AUTO)
+            .resolve(input()) as PlaybackResult.Success).value
+        assertEquals(BufferingPreference.LOW_LATENCY_LIVE, auto.buffering)
+        assertNull(auto.customBuffer)
+    }
+
+    @Test
+    fun `live buffer choices snap and map to engine numbers`() {
+        assertEquals(10, LiveBufferPolicy.normalize(12))
+        assertEquals(60, LiveBufferPolicy.normalize(600))
+        assertEquals(LiveBufferPolicy.AUTO, LiveBufferPolicy.normalize(-1))
+        assertNull(LiveBufferPolicy.customBuffer(0))
+        assertEquals(CustomBufferPreference(5_000, 10_000, 1_500, 5_000), LiveBufferPolicy.customBuffer(5))
+    }
+
+    @Test
     fun `RTMP and raw RTP links never go to Media3`() = runTest {
         // The build has no Media3 RTMP data source and Media3 only speaks RTP inside RTSP: such a
         // link could only fail on Media3, then hand off. Route it to libmpv up front.

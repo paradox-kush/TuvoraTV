@@ -144,7 +144,9 @@ private val localOnlyPlayerProfileSettingsKeys = setOf(
     // F37/F47 (2026-10-04): device-local until the owner decides whether player preferences sync
     // (mobile/desktop keep them out of their sync payload too).
     "remember_player_preferences",
-    "subtitle_side_margin_percent"
+    "subtitle_side_margin_percent",
+    // F13: buffer/network choices are device-local like the VOD buffer keys above.
+    "live_buffer_seconds"
 )
 
 // Third-party provider credentials must never leave the device inside a synced profile-settings

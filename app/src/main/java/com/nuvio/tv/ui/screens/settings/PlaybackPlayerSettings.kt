@@ -155,6 +155,22 @@ internal fun PlaybackPlayerInterfaceSection(
         onToggle = { onUpdate { setRememberPlayerPreferences(!settings.rememberPlayerPreferences) } },
         enabled = internalPlayer
     )
+    // F13: live IPTV buffer length; the slider walks the offered choices (0 = Auto).
+    val liveBufferChoices = com.nuvio.tv.playback.core.LiveBufferPolicy.CHOICES_SECONDS
+    SliderSettingsItem(
+        title = stringResource(R.string.playback_live_buffer),
+        subtitle = stringResource(R.string.playback_live_buffer_sub),
+        value = liveBufferChoices.indexOf(settings.liveBufferSeconds).coerceAtLeast(0),
+        valueText = if (settings.liveBufferSeconds == com.nuvio.tv.playback.core.LiveBufferPolicy.AUTO) {
+            stringResource(R.string.playback_live_buffer_auto)
+        } else {
+            stringResource(R.string.playback_live_buffer_seconds, settings.liveBufferSeconds)
+        },
+        minValue = 0,
+        maxValue = liveBufferChoices.lastIndex,
+        step = 1,
+        onValueChange = { index -> onUpdate { setLiveBufferSeconds(liveBufferChoices[index]) } }
+    )
     SettingsToggleRow(
         title = stringResource(R.string.playback_osd_clock),
         subtitle = stringResource(R.string.playback_show_clock_sub),
