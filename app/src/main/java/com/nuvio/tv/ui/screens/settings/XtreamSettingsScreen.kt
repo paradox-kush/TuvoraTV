@@ -712,13 +712,16 @@ private fun EpgRegionPickerDialog(
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.xs)
             ) {
                 itemsIndexed(regions, key = { _, r -> r.name }) { index, region ->
-                    val checked = region.name in selected
+                    // B119: under "All" (empty) every row is checked and OK removes just that one.
+                    val checked = com.nuvio.tv.core.epg.EpgRegionSelection.isChecked(selected, region.name)
                     EpgRegionCheckRow(
                         region = region,
                         checked = checked,
                         focusRequester = if (index == 0) firstRowFocus else null,
                         onToggle = {
-                            selected = if (checked) selected - region.name else selected + region.name
+                            selected = com.nuvio.tv.core.epg.EpgRegionSelection.toggle(
+                                selected, regions.map { it.name }, region.name,
+                            )
                         },
                     )
                 }
