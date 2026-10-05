@@ -2,6 +2,7 @@
 
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.ui.components.player.DialogButton
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.foundation.background

@@ -16,8 +16,10 @@ package com.nuvio.tv.core.iptv
  *
  *  | Xtream   | `scheme://host[:port]|username` — scheme + host lowercased, the scheme's default port
  *  |          | (http 80 / https 443) dropped, path/query dropped, username as entered (trimmed)
- *  | M3U link | `m3u|` + URL trimmed, `http://` prepended when it has no http(s) scheme; nothing else
- *  |          | is touched (query kept — it is the fetch target)
+ *  | M3U link | `m3u|` + URL trimmed, `http://` prepended when it has no http(s) scheme, with the LOGIN
+ *  |          | removed ([com.nuvio.tv.core.iptv.identity.M3uIdentity.playlistKey], B64): user-info and
+ *  |          | username/password query params dropped, `|u<hex8>` appended when a username was present.
+ *  |          | A URL without a login keeps its pre-B64 key byte-for-byte.
  *  | Stalker  | `stalker|` + `scheme://host[:port]` (as Xtream) + `|` + MAC trimmed and uppercased
  *  | M3U file | `m3u_file|` + file name (trimmed) + `|` + the creation epoch ms
  *
@@ -31,10 +33,8 @@ object PlaylistKey {
         return "$origin|$user"
     }
 
-    fun m3uUrl(url: String): String? {
-        val raw = url.trim().takeIf { it.isNotEmpty() } ?: return null
-        return "m3u|" + withHttpScheme(raw)
-    }
+    fun m3uUrl(url: String): String? =
+        com.nuvio.tv.core.iptv.identity.M3uIdentity.playlistKey(url)
 
     fun stalker(portalUrl: String, macAddress: String): String? {
         val origin = origin(portalUrl) ?: return null
@@ -201,4 +201,11 @@ fun XtreamAccount.asEditOf(old: XtreamAccount): XtreamAccount = copy(
     contentTypes = old.contentTypes,
     categorySelections = old.categorySelections,
     backupUrls = old.backupUrls,
+    // Device-local preferences set from the playlist's own cards, never from the edit form — an
+    // edit used to reset them all (device pass 2026-10-05).
+    preferM3u8CatchUp = old.preferM3u8CatchUp,
+    catchUpCorrectionMinutes = old.catchUpCorrectionMinutes,
+    guideEpgCorrectionMinutes = old.guideEpgCorrectionMinutes,
+    cleanChannelNames = old.cleanChannelNames,
+    channelNameTags = old.channelNameTags,
 )

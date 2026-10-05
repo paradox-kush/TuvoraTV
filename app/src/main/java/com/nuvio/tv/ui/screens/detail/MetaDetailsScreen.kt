@@ -55,6 +55,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRestorer
@@ -467,6 +469,9 @@ fun MetaDetailsScreen(
     val selectedComment = uiState.selectedComment
     var commentOverlayDirection by remember { mutableIntStateOf(0) }
     var restorePlayFocusAfterTrailerBackToken by rememberSaveable { mutableIntStateOf(0) }
+    // B118: OK during the auto trailer preview plays the title (TrailerPreviewKeyPolicy).
+    var playFromTrailerPreviewToken by remember { mutableIntStateOf(0) }
+    var trailerPreviewSelectDownSeen by remember { mutableStateOf(false) }
     var restoreSharedTrailerFocusToken by rememberSaveable { mutableIntStateOf(0) }
     var isTrailerPaused by remember { mutableStateOf(false) }
     val playOnLoadConsumed = rememberSaveable { mutableStateOf(false) }
@@ -620,11 +625,35 @@ fun MetaDetailsScreen(
                             else -> false
                         }
                     }
-                    // During auto trailer preview, consume all keys except back/ESC so content doesn't scroll.
-                    val keyCode = keyEvent.nativeKeyEvent.keyCode
-                    return@onPreviewKeyEvent keyCode != KeyEvent.KEYCODE_BACK &&
-                            keyCode != KeyEvent.KEYCODE_ESCAPE
+                    if (currentShowTrailerControls) {
+                        // Full trailer with controls: consume all keys except back/ESC.
+                        val keyCode = keyEvent.nativeKeyEvent.keyCode
+                        return@onPreviewKeyEvent keyCode != KeyEvent.KEYCODE_BACK &&
+                                keyCode != KeyEvent.KEYCODE_ESCAPE
+                    }
+                    // Auto trailer preview (B118): OK plays the title — the preview only arms while
+                    // Play is focused, so that is the button the viewer meant; Back stops it; the
+                    // rest is swallowed so content doesn't scroll under the preview.
+                    val native = keyEvent.nativeKeyEvent
+                    return@onPreviewKeyEvent when (
+                        TrailerPreviewKeyPolicy.actionFor(
+                            native.keyCode, native.action, native.repeatCount, trailerPreviewSelectDownSeen,
+                        )
+                    ) {
+                        TrailerPreviewKeyPolicy.Action.PASS -> false
+                        TrailerPreviewKeyPolicy.Action.SWALLOW -> true
+                        TrailerPreviewKeyPolicy.Action.PLAY -> {
+                            if (native.action == KeyEvent.ACTION_DOWN) trailerPreviewSelectDownSeen = true
+                            isTrailerPaused = false
+                            // Stops the preview (and marks it played, so it doesn't re-arm).
+                            viewModel.onEvent(MetaDetailsEvent.OnUserInteraction)
+                            restorePlayFocusAfterTrailerBackToken += 1
+                            playFromTrailerPreviewToken += 1
+                            true
+                        }
+                    }
                 }
+                trailerPreviewSelectDownSeen = false
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
                     val nativeEvent = keyEvent.nativeKeyEvent
                     val shouldDispatch =
@@ -1065,6 +1094,7 @@ fun MetaDetailsScreen(
                     },
                     commentOverlayDirection = commentOverlayDirection,
                     restorePlayFocusAfterTrailerBackToken = restorePlayFocusAfterTrailerBackToken,
+                    playFromTrailerPreviewToken = playFromTrailerPreviewToken,
                     restoreSharedTrailerFocusToken = restoreSharedTrailerFocusToken,
                     onSharedTrailerFocusRestored = { restoreSharedTrailerFocusToken = 0 },
                     onNavigateToCastDetail = onNavigateToCastDetail,
@@ -1139,6 +1169,22 @@ fun MetaDetailsScreen(
             overlayState = trailerSeekOverlayState,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
+
+        // B118 (device pass 2026-10-05): a playing trailer hides the hero, and with it the focused
+        // Play button, so NOTHING held focus — and a Compose key handler only sees keys while focus
+        // is inside it: OK during the preview reached neither the preview policy above nor anything
+        // else. A 1 dp focus holder keeps keys flowing to this Box while a foreground trailer plays;
+        // Play takes focus back when it stops (restorePlayFocusAfterTrailerBackToken).
+        if (uiState.isTrailerPlaying) {
+            val trailerKeyFocus = remember { FocusRequester() }
+            Box(
+                Modifier
+                    .size(1.dp)
+                    .focusRequester(trailerKeyFocus)
+                    .focusable()
+            )
+            LaunchedEffect(Unit) { runCatching { trailerKeyFocus.requestFocus() } }
+        }
     }
 
     LaunchedEffect(trailerSeekOverlayVisible, uiState.isTrailerPlaying, uiState.showTrailerControls, trailerSeekToken) {
@@ -1273,6 +1319,7 @@ private fun MetaDetailsContent(
     onDismissCommentOverlay: () -> Unit,
     commentOverlayDirection: Int,
     restorePlayFocusAfterTrailerBackToken: Int,
+    playFromTrailerPreviewToken: Int = 0,
     restoreSharedTrailerFocusToken: Int,
     onSharedTrailerFocusRestored: () -> Unit,
     onNavigateToCastDetail: (personId: Int, personName: String, preferCrew: Boolean) -> Unit = { _, _, _ -> },
@@ -2086,6 +2133,15 @@ private fun MetaDetailsContent(
             } else {
                 onPlayClick(meta.id)
             }
+        }
+    }
+    // B118: OK pressed during the auto trailer preview = the Play button the viewer was looking at.
+    // Same guard as the hero Play button (enabled = shufflePoolEmpty || isPlayEnabled).
+    LaunchedEffect(playFromTrailerPreviewToken) {
+        if (playFromTrailerPreviewToken <= 0) return@LaunchedEffect
+        when {
+            shufflePoolEmpty -> showRandomEpisodeOverlay = true
+            isPlayEnabled -> heroPlayClick()
         }
     }
     val heroPlayManualClick = remember(heroVideo, meta.id, onEpisodeManualPlayClick, onPlayManuallyClick, isPlayEnabled) {

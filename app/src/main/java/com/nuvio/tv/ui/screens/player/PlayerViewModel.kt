@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.VideoZoom
 import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -175,6 +177,10 @@ class PlayerViewModel @Inject constructor(
      */
     fun applyMpvAspectMode(mode: AspectMode) {
         controller.mpvView?.applyAspectMode(mode)
+    }
+
+    fun applyMpvVideoZoom(zoom: VideoZoom) {
+        controller.mpvView?.applyVideoZoom(zoom)
     }
 
     fun applyMpvSubtitleStyle(style: com.nuvio.tv.data.local.SubtitleStyleSettings) {

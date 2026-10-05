@@ -135,6 +135,14 @@ data class XtreamAccount(
      */
     val guideEpgCorrectionMinutes: Int = 0,
     /**
+     * F10 — show channel names cleaned of country prefixes, quality tags and decorations
+     * ([com.nuvio.tv.core.epg.ChannelNameCleaner]) on this device. Display only and opt-in; the
+     * guide matcher always cleans. Device-local like the catch-up prefs (not on the wire).
+     */
+    val cleanChannelNames: Boolean = false,
+    /** F10 — extra tags the user wants stripped (comma / newline separated). Matching + display. */
+    val channelNameTags: String? = null,
+    /**
      * Step 0 — the playlist's alternate server addresses in failover order (max 5); null = none.
      * Client-owned and synced (`iptv_playlists.backup_urls`); this build only round-trips it (no UI
      * yet). Nullable rather than an empty-list default because Gson (Unsafe, no constructor) decodes
@@ -142,8 +150,21 @@ data class XtreamAccount(
      */
     val backupUrls: List<String>? = null
 ) {
-    /** The correction as the panel-offset [XtreamCatchUp.candidateUrls] takes; null = unset (UTC). */
+    /**
+     * The manual correction alone, in ms; null = unset. NOT what a replay sends any more: since B117
+     * the start is [XtreamCatchUp.replayOffsetMs] = the panel's measured clock + this correction.
+     */
     val catchUpOffsetMs: Long? get() = catchUpCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }
+
+    /** F10 — the name clean-up rules this playlist's matcher uses: the defaults plus the user's tags. */
+    fun channelNameRules(): com.nuvio.tv.core.epg.ChannelNameCleaner.Rules =
+        com.nuvio.tv.core.epg.ChannelNameCleaner.Rules(
+            userTags = com.nuvio.tv.core.epg.ChannelNameCleaner.parseTags(channelNameTags),
+        )
+
+    /** F10 — the name to SHOW for a channel of this playlist: cleaned when the user opted in. */
+    fun displayChannelName(raw: String): String =
+        if (cleanChannelNames) com.nuvio.tv.core.epg.ChannelNameCleaner.clean(raw, channelNameRules()) else raw
 
     /** The manual guide offset in milliseconds; null = auto-detect (the default). */
     val guideEpgOffsetMs: Long? get() = guideEpgCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }
@@ -177,10 +198,14 @@ data class XtreamAccount(
             stbModel == other.stbModel &&
             hwVersion == other.hwVersion
 
-    /** Category filter: null selection = all (incl. future); empty = none; list = only those ids. */
-    fun allowsCategory(type: String, categoryId: String?): Boolean {
+    /**
+     * Category filter: null selection = all (incl. future); empty = none; list = only those ids. B64
+     * transition: a selection written before B64 names M3U categories by their raw group NAME (TV's old
+     * category id), so where the caller knows the category's [categoryName] it matches too.
+     */
+    fun allowsCategory(type: String, categoryId: String?, categoryName: String? = null): Boolean {
         val selection = categorySelections.forType(type) ?: return true
-        return categoryId != null && categoryId in selection
+        return (categoryId != null && categoryId in selection) || (categoryName != null && categoryName in selection)
     }
 
     companion object {

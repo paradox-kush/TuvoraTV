@@ -88,6 +88,49 @@ class IptvOverlayRepository @Inject constructor(
         }
     }
 
+    // ---- F14: manual guide-channel picks --------------------------------------------------------
+
+    private val _epgOverrideChanges = kotlinx.coroutines.flow.MutableSharedFlow<Set<String>>(extraBufferCapacity = 8)
+
+    /** Playlist ids whose picks changed (here or pulled); the guide ingest re-checks those. */
+    val epgOverrideChanges: kotlinx.coroutines.flow.SharedFlow<Set<String>> = _epgOverrideChanges
+
+    /** The active profile's picks for a playlist: entity id -> guide channel id. */
+    suspend fun epgOverridesFor(playlistId: String): Map<String, String> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) { runCatching { db.epgOverrides(profile(), playlistId) }.getOrDefault(emptyMap()) }
+
+    /** Every profile's picked guide ids for a playlist (the ingest keeps their programmes). */
+    suspend fun epgOverrideGuideIds(playlistId: String): Set<String> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) { runCatching { db.epgOverrideGuideIds(playlistId) }.getOrDefault(emptySet()) }
+
+    /** Pick ([guideId] non-null) or clear the guide channel for one channel; synced like hide/pin. */
+    fun setEpgOverride(entityId: String, playlistId: String, guideId: String?, guideName: String?) {
+        val p = profile()
+        launchSafely("setEpgOverride") {
+            db.setEpgOverride(p, entityId, playlistId, guideId, guideName, now())
+            _epgOverrideChanges.tryEmit(setOf(playlistId))
+            push(p)
+        }
+    }
+
+    /**
+     * F03: explicit positions for some channels — a group's pinned channels in a new order
+     * ([com.nuvio.tv.core.iptv.PinnedChannelOrder]) — as one edit, pushed like a website edit.
+     */
+    fun setChannelPositions(playlistId: String?, positions: List<Pair<String, Int>>) {
+        if (positions.isEmpty()) return
+        val p = profile()
+        val current = _uiState.value.channels
+        launchSafely("setChannelPositions") {
+            val t = now()
+            positions.forEach { (entityId, position) ->
+                db.setChannel(p, entityId, playlistId, (current[entityId] ?: ChannelOverlay()).copy(position = position), t)
+            }
+            _uiState.value = db.snapshot(p)
+            push(p)
+        }
+    }
+
     /** After a playlist is removed, drop its channel/category overlay (twin of Mobile's onPlaylistRemoved). */
     suspend fun onPlaylistRemoved(playlistId: String) {
         val p = profile()
@@ -118,6 +161,7 @@ class IptvOverlayRepository @Inject constructor(
         if (!authManager.canSync) return false
         var since = db.getCursor(profileId)
         var changed = false
+        val epgPlaylists = HashSet<String>()
         while (true) {
             val rows = postgrest.rpc(
                 "sync_pull_iptv_overlay_delta",
@@ -133,6 +177,11 @@ class IptvOverlayRepository @Inject constructor(
                     "category" -> db.setCategory(profileId, r.playlistId ?: continue, v.strOrNull("content_type") ?: "live", r.okey, CategoryOverlay(v.bool("hidden"), v.bool("pinned"), v.intOrNull("position"), v.strOrNull("rename")), r.updatedAt, deletedOverride = deleted)
                     "group" -> db.applyRemoteGroup(profileId, r.okey, r.playlistId, v.strOrNull("content_type") ?: "live", v.strOrNull("name") ?: "", v.intOrNull("position") ?: 0, r.updatedAt, deleted)
                     "member" -> r.okey.split("|", limit = 2).takeIf { it.size == 2 }?.let { db.applyRemoteMember(profileId, it[0], it[1], v.intOrNull("position") ?: 0, r.updatedAt, deleted) }
+                    // F14 (lane G): a manual guide-channel pick made on another device / the web.
+                    IptvOverlayDb.EPG_KIND -> {
+                        db.applyRemoteEpg(profileId, r.okey, r.playlistId, v.strOrNull("guide_id"), v.strOrNull("guide_name"), r.updatedAt, deleted)
+                        r.playlistId?.let { epgPlaylists.add(it) }
+                    }
                 }
                 changed = true
             }
@@ -140,6 +189,7 @@ class IptvOverlayRepository @Inject constructor(
             if (rows.size < 500) break
         }
         if (changed && profileId == profile()) _uiState.value = db.snapshot(profileId)
+        if (epgPlaylists.isNotEmpty() && profileId == profile()) _epgOverrideChanges.tryEmit(epgPlaylists)
         return changed
     }
 

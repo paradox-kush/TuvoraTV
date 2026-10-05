@@ -1,5 +1,7 @@
 package com.nuvio.tv.playback.host
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.VideoZoom
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.os.Looper
@@ -137,6 +139,9 @@ internal class CleanLivePlaybackHost private constructor(
         controller.selectSubtitleTrack(trackId)
     }
     suspend fun disableSubtitles() = withActiveHost(controller::disableSubtitles)
+
+    /** F28: the viewer's aspect mode + manual zoom — a surface transform, not a session command. */
+    suspend fun applyPicture(mode: AspectMode, zoom: VideoZoom) = surfaces.applyPicture(mode, zoom)
     suspend fun attachExternalSubtitle(subtitleId: ExternalSubtitleId) = withActiveHost {
         controller.attachExternalSubtitle(subtitleId)
     }

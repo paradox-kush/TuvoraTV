@@ -2,30 +2,23 @@
 
 package com.nuvio.tv.ui.screens.player.clean
 
-import android.view.KeyEvent
+import androidx.compose.ui.platform.LocalContext
+import com.nuvio.tv.core.picture.LivePicturePort
+import com.nuvio.tv.core.picture.PictureChoice
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.VideoZoomPolicy
+import com.nuvio.tv.core.picture.aspectModeLabel
+import com.nuvio.tv.core.picture.nextAspectMode
+import com.nuvio.tv.ui.components.player.VideoZoomDialog
+import com.nuvio.tv.ui.screens.player.clean.live.LiveAspectIndicator
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -33,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -40,35 +34,44 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Icon
-import androidx.tv.material3.IconButton
-import androidx.tv.material3.IconButtonDefaults
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.playback.core.FailureCode
+import com.nuvio.tv.playback.core.PlaybackTrackCatalog
+import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.PreviewUnavailableReason
 import com.nuvio.tv.playback.core.StreamUnavailableReason
 import com.nuvio.tv.playback.ui.LivePlaybackUiErrorCode
 import com.nuvio.tv.playback.ui.LivePlaybackUiState
 import com.nuvio.tv.playback.ui.LivePlaybackUiStatusCode
+import com.nuvio.tv.ui.components.player.PlayerControlsTiming
+import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsOverlay
+import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
+import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
+import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayInfo
+import com.nuvio.tv.ui.screens.player.clean.live.LivePanel
+import com.nuvio.tv.ui.screens.player.clean.live.LiveStreamInfoDialog
+import com.nuvio.tv.ui.screens.player.clean.live.LiveTrackChoices
+import com.nuvio.tv.ui.screens.player.clean.live.LiveTrackDialog
 import com.nuvio.tv.updater.ImmersivePlaybackGate
 import kotlinx.coroutines.delay
 
-/** Idle delay before the overlay chrome fades away over live video, matching the live guide's 4s. */
-private const val CLEAN_LIVE_CONTROLS_AUTO_HIDE_MS = 4_000L
-
 /**
- * Engine-neutral fullscreen live UI. The future route owns session construction and release.
- * [onExitRequested] must release its host before removing this screen from composition.
+ * Engine-neutral fullscreen live UI (a Sports launch, a one-off channel). The future route owns
+ * session construction and release. [onExitRequested] must release its host before removing this
+ * screen from composition.
+ *
+ * F28: draws the ONE live overlay ([LiveControlsOverlay], the VOD player's own pieces) that the
+ * guide's fullscreen draws too, with the same remote rules ([LiveControlsPolicy]). There is no
+ * lineup here, so no channel list or favourite; channel up/down zap the published lineup.
  */
 @Composable
 internal fun CleanLivePlayerScreen(
@@ -83,35 +86,69 @@ internal fun CleanLivePlayerScreen(
     onZapPrevious: () -> Unit,
     onZapNext: () -> Unit,
     onExitRequested: () -> Unit,
+    trackCatalog: PlaybackTrackCatalog = PlaybackTrackCatalog(),
+    streamInfo: List<Pair<String, String>> = emptyList(),
+    /** T6: false when the live picture's output can't draw subtitles ([LiveTrackChoices.canDrawSubtitles]). */
+    subtitlesDrawable: Boolean = true,
+    onSelectAudio: (PlaybackTrackId) -> Unit = {},
+    onSelectSubtitle: (PlaybackTrackId?) -> Unit = {},
+    /** F28: the channel's picture (aspect + manual zoom, lane F's model) and how to change it. */
+    picture: PictureChoice = LivePicturePort.DEFAULT_CHOICE,
+    onPictureChange: ((PictureChoice) -> PictureChoice) -> Unit = {},
 ) {
     val chrome = CleanLivePlayerUiPolicy.present(uiState)
     val latestSurfaceOwnerReady by rememberUpdatedState(onSurfaceOwnerReady)
 
-    // The overlay chrome starts shown so the viewer sees what's playing, then auto-hides over the
-    // video — the behaviour the live guide has always had but the clean player was missing, which
-    // left the controls stuck on screen after launching from the Sports feed. Any remote key
-    // reveals it again and re-arms the idle timer.
+    // Starts shown so the viewer sees what's playing, then hides on the shared delay.
     var controlsVisible by remember { mutableStateOf(true) }
     var revealTick by remember { mutableIntStateOf(0) }
+    var moreOpen by remember { mutableStateOf(false) }
+    var panel by remember { mutableStateOf<LivePanel?>(null) }
+    var aspectLabel by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(aspectLabel) { if (aspectLabel != null) { delay(1_500); aspectLabel = null } }
+    val context = LocalContext.current
     val rootFocus = remember { FocusRequester() }
+    val primaryFocus = remember { FocusRequester() }
+    val paused = !uiState.playWhenReady
+    // Any error keeps the controls up; Retry itself is offered only where retrying can help.
+    val failed = chrome.messageIsError
+    val nowMs by produceState(System.currentTimeMillis()) {
+        while (true) { delay(30_000); value = System.currentTimeMillis() }
+    }
 
-    LaunchedEffect(revealTick, controlsVisible, uiState.playWhenReady, chrome.retryEnabled) {
-        if (controlsVisible && CleanLivePlayerUiPolicy.controlsMayAutoHide(uiState, chrome.retryEnabled)) {
-            delay(CLEAN_LIVE_CONTROLS_AUTO_HIDE_MS)
-            controlsVisible = false
+    fun showControls() { controlsVisible = true; revealTick++ }
+    fun hideControls() { controlsVisible = false; moreOpen = false }
+
+    // T10: an error or a reconnect brings the controls (and the reason) back by itself.
+    val reconnecting = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
+        uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECOVERING
+    LaunchedEffect(failed, reconnecting) {
+        if (LiveControlsPolicy.revealForTrouble(failed, reconnecting, controlsVisible, panel != null)) showControls()
+    }
+    LaunchedEffect(revealTick, controlsVisible, paused, failed, panel) {
+        if (LiveControlsPolicy.mayAutoHide(controlsVisible, paused, failed, panelOpen = panel != null)) {
+            delay(PlayerControlsTiming.AUTO_HIDE_MS)
+            hideControls()
         }
     }
-    // When the chrome hides, its focusable buttons leave composition; grab focus back to the root
-    // so the next key press still reaches the handler that reveals the controls.
-    LaunchedEffect(controlsVisible) {
-        if (!controlsVisible) runCatching { rootFocus.requestFocus() }
+    // Shown: focus the first control. Hidden: the buttons leave composition, so focus returns to
+    // the root, where the next key still reaches the policy.
+    LaunchedEffect(controlsVisible, failed) {
+        runCatching { if (controlsVisible) primaryFocus.requestFocus() else rootFocus.requestFocus() }
     }
 
     DisposableEffect(Unit) {
         ImmersivePlaybackGate.setImmersive(true)
         onDispose { ImmersivePlaybackGate.setImmersive(false) }
     }
-    BackHandler(onBack = onExitRequested)
+    // BACK: close a panel (the dialogs answer it themselves), then hide the controls, then leave.
+    BackHandler {
+        when (LiveControlsPolicy.backAction(panelOpen = panel != null, controlsVisible = controlsVisible)) {
+            LiveControlsPolicy.BackAction.CLOSE_PANEL -> panel = null
+            LiveControlsPolicy.BackAction.HIDE_CONTROLS -> hideControls()
+            LiveControlsPolicy.BackAction.EXIT -> onExitRequested()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -120,269 +157,130 @@ internal fun CleanLivePlayerScreen(
             .focusRequester(rootFocus)
             .focusable()
             .onPreviewKeyEvent { event ->
-                if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
-                    controlsVisible = true
-                    revealTick++
-                }
-                val action = CleanLivePlayerUiPolicy.remoteAction(
-                    keyCode = event.nativeKeyEvent.keyCode,
-                    keyAction = event.nativeKeyEvent.action,
-                    repeatCount = event.nativeKeyEvent.repeatCount,
-                    uiState = uiState,
-                ) ?: return@onPreviewKeyEvent false
-                dispatchRemoteAction(
-                    action = action,
-                    onPause = onPause,
-                    onResume = onResume,
-                    onZapPrevious = onZapPrevious,
-                    onZapNext = onZapNext,
+                val action = LiveControlsPolicy.keyAction(
+                    key = event.key,
+                    isKeyDown = event.type == KeyEventType.KeyDown,
+                    controlsVisible = controlsVisible,
+                    paused = paused,
+                    panelOpen = panel != null,
+                    isRepeat = event.nativeKeyEvent.repeatCount > 0,
                 )
+                when (action) {
+                    LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
+                    LiveControlsPolicy.KeyAction.PASS_AND_KEEP_ALIVE -> {
+                        if (event.type == KeyEventType.KeyDown) revealTick++
+                        return@onPreviewKeyEvent false
+                    }
+                    LiveControlsPolicy.KeyAction.CONSUME -> Unit
+                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> showControls()
+                    LiveControlsPolicy.KeyAction.TOGGLE_PAUSE -> {
+                        if (uiState.controlsEnabled) { if (paused) onResume() else onPause() }
+                        showControls()
+                    }
+                    // Zapping is only dispatched while the session accepts controls; disabled keys
+                    // fall through rather than being swallowed silently.
+                    LiveControlsPolicy.KeyAction.ZAP_PREVIOUS ->
+                        if (uiState.controlsEnabled) onZapPrevious() else return@onPreviewKeyEvent false
+                    LiveControlsPolicy.KeyAction.ZAP_NEXT ->
+                        if (uiState.controlsEnabled) onZapNext() else return@onPreviewKeyEvent false
+                    // No lineup history or hideable channel identity on this destination.
+                    LiveControlsPolicy.KeyAction.ZAP_BACK,
+                    LiveControlsPolicy.KeyAction.HIDE_CHANNEL -> showControls()
+                }
                 true
             },
     ) {
         AndroidView(
-            factory = { context ->
-                FrameLayout(context).also(latestSurfaceOwnerReady)
-            },
-            update = { owner ->
-                owner.keepScreenOn = chrome.keepScreenOn
-            },
+            factory = { context -> FrameLayout(context).also(latestSurfaceOwnerReady) },
+            update = { owner -> owner.keepScreenOn = chrome.keepScreenOn },
             modifier = Modifier.fillMaxSize(),
         )
-
-        CleanLivePlayerChrome(
-            sanitizedTitle = sanitizedTitle,
-            sanitizedSubtitle = sanitizedSubtitle,
-            sanitizedStation = sanitizedStation,
-            uiState = uiState,
-            chrome = chrome,
-            controlsVisible = controlsVisible,
-            onPause = onPause,
-            onResume = onResume,
-            onRetry = onRetry,
-            onZapPrevious = onZapPrevious,
-            onZapNext = onZapNext,
-            onExitRequested = onExitRequested,
-        )
-    }
-}
-
-@Composable
-private fun CleanLivePlayerChrome(
-    sanitizedTitle: String,
-    sanitizedSubtitle: String?,
-    sanitizedStation: String?,
-    uiState: LivePlaybackUiState,
-    chrome: CleanLivePlayerChromeState,
-    controlsVisible: Boolean,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onRetry: () -> Unit,
-    onZapPrevious: () -> Unit,
-    onZapNext: () -> Unit,
-    onExitRequested: () -> Unit,
-) {
-    val playPauseFocus = remember { FocusRequester() }
-    val retryFocus = remember { FocusRequester() }
-    val exitFocus = remember { FocusRequester() }
-
-    // Re-focus a control each time the overlay reappears; when hidden its buttons aren't composed.
-    LaunchedEffect(controlsVisible, uiState.controlsEnabled, chrome.retryEnabled) {
-        if (!controlsVisible) return@LaunchedEffect
-        runCatching {
-            when {
-                uiState.controlsEnabled -> playPauseFocus.requestFocus()
-                chrome.retryEnabled -> retryFocus.requestFocus()
-                else -> exitFocus.requestFocus()
-            }
-        }
-    }
-
-    Box(Modifier.fillMaxSize()) {
-        // The spinner is playback feedback, not a control — it stays regardless of the overlay.
+        // Playback feedback, not a control — it stays regardless of the overlay.
         if (uiState.spinnerVisible) {
-            CircularProgressIndicator(
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(44.dp),
-            )
+            CircularProgressIndicator(color = Color.White, modifier = Modifier.align(Alignment.Center).size(44.dp))
         }
-
-        if (!controlsVisible) return@Box
-
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(190.dp)
-                .align(Alignment.TopCenter)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Black.copy(alpha = 0.82f), Color.Transparent),
+        if (controlsVisible) {
+            val buttons = LiveControlsPolicy.buttons(
+                failed = chrome.retryEnabled,
+                subtitleTracks = trackCatalog.subtitles.size,
+                audioTracks = trackCatalog.audio.size,
+                hasLineup = false,
+            )
+            val messageText = chrome.messageRes?.let { stringResource(it) }
+            LiveControlsOverlay(
+                info = LiveOverlayInfo(
+                    channelName = sanitizedTitle,
+                    subtitle = listOfNotNull(sanitizedStation, sanitizedSubtitle).filter(String::isNotBlank).joinToString(" · ").ifBlank { null },
+                    status = LiveControlsPolicy.status(
+                        tuning = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RESOLVING ||
+                            uiState.bottomStatusCode == LivePlaybackUiStatusCode.STARTING,
+                        reconnecting = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
+                            uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECOVERING,
+                        paused = paused,
+                        failed = chrome.messageIsError,
                     ),
+                    errorText = if (chrome.messageIsError) messageText else null,
                 ),
-        )
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(250.dp)
-                .align(Alignment.BottomCenter)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f)),
-                    ),
-                ),
-        )
-
-        CleanLiveTitle(
-            station = sanitizedStation,
-            title = sanitizedTitle,
-            subtitle = sanitizedSubtitle,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(horizontal = 48.dp, vertical = 32.dp),
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomStart)
-                .padding(horizontal = 48.dp, vertical = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            chrome.messageRes?.let { messageRes ->
-                Text(
-                    text = stringResource(messageRes),
-                    color = if (chrome.messageIsError) Color(0xFFFFB4AB) else Color.White,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                )
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CleanLiveControlButton(
-                    icon = Icons.Default.SkipPrevious,
-                    descriptionRes = R.string.clean_live_action_previous_channel,
-                    enabled = uiState.controlsEnabled,
-                    onClick = onZapPrevious,
-                )
-                CleanLiveControlButton(
-                    icon = if (uiState.playWhenReady) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    descriptionRes = if (uiState.playWhenReady) {
-                        R.string.clean_live_action_pause
-                    } else {
-                        R.string.clean_live_action_play
+                nowMs = nowMs,
+                buttons = buttons,
+                paused = paused,
+                favourite = false,
+                moreOpen = moreOpen,
+                primaryFocus = primaryFocus,
+                actions = LiveOverlayActions(
+                    onPlayPause = { if (paused) onResume() else onPause() },
+                    onZapPrevious = onZapPrevious.takeIf { uiState.controlsEnabled },
+                    onZapNext = onZapNext.takeIf { uiState.controlsEnabled },
+                    onRetry = onRetry,
+                    onSubtitles = { panel = LivePanel.SUBTITLES },
+                    onAudio = { panel = LivePanel.AUDIO },
+                    onAspect = {
+                        val next = nextAspectMode(picture.aspectMode)
+                        onPictureChange { it.copy(aspectMode = next) }
+                        aspectLabel = aspectModeLabel(next, context::getString)
+                        revealTick++
                     },
-                    enabled = uiState.controlsEnabled,
-                    onClick = if (uiState.playWhenReady) onPause else onResume,
-                    modifier = Modifier.focusRequester(playPauseFocus),
-                )
-                CleanLiveControlButton(
-                    icon = Icons.Default.Refresh,
-                    descriptionRes = R.string.clean_live_action_retry,
-                    enabled = chrome.retryEnabled,
-                    onClick = onRetry,
-                    modifier = Modifier.focusRequester(retryFocus),
-                )
-                CleanLiveControlButton(
-                    icon = Icons.Default.SkipNext,
-                    descriptionRes = R.string.clean_live_action_next_channel,
-                    enabled = uiState.controlsEnabled,
-                    onClick = onZapNext,
-                )
-                Spacer(Modifier.weight(1f))
-                CleanLiveControlButton(
-                    icon = Icons.Default.ArrowBack,
-                    descriptionRes = R.string.clean_live_action_exit,
-                    enabled = true,
-                    onClick = onExitRequested,
-                    modifier = Modifier.focusRequester(exitFocus),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CleanLiveTitle(
-    station: String?,
-    title: String,
-    subtitle: String?,
-    modifier: Modifier,
-) {
-    Column(modifier) {
-        station?.takeIf(String::isNotBlank)?.let {
-            Text(
-                text = it,
-                color = Color.White.copy(alpha = 0.72f),
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
+                    onZoom = { panel = LivePanel.ZOOM },
+                    onChannelList = null,
+                    onToggleFavourite = null,
+                    onStreamInfo = { panel = LivePanel.STREAM_INFO }.takeIf { streamInfo.isNotEmpty() },
+                    onToggleMore = { moreOpen = !moreOpen; revealTick++ },
+                    onKeepAlive = { revealTick++ },
+                    onHide = { hideControls() },
+                ),
             )
         }
-        Text(
-            text = title,
-            color = Color.White,
-            style = MaterialTheme.typography.headlineMedium,
-            maxLines = 1,
-        )
-        subtitle?.takeIf(String::isNotBlank)?.let {
-            Text(
-                text = it,
-                color = Color.White.copy(alpha = 0.82f),
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
+        when (panel) {
+            LivePanel.SUBTITLES -> LiveTrackDialog(
+                title = stringResource(R.string.cd_subtitles),
+                choices = LiveTrackChoices.subtitles(
+                    trackCatalog,
+                    stringResource(R.string.live_subtitles_off),
+                    closedCaptionsLabel = stringResource(R.string.live_subtitles_closed_captions),
+                    drawable = subtitlesDrawable,
+                ),
+                onPick = { onSelectSubtitle(it); panel = null },
+                onDismiss = { panel = null },
+                note = stringResource(R.string.live_subtitles_cannot_draw).takeUnless { subtitlesDrawable },
             )
+            LivePanel.AUDIO -> LiveTrackDialog(
+                title = stringResource(R.string.cd_audio_tracks),
+                choices = LiveTrackChoices.audio(trackCatalog),
+                onPick = { id -> id?.let(onSelectAudio); panel = null },
+                onDismiss = { panel = null },
+            )
+            LivePanel.STREAM_INFO -> LiveStreamInfoDialog(streamInfo) { panel = null }
+            LivePanel.ZOOM -> VideoZoomDialog(
+                zoom = picture.zoom,
+                onAdjust = { axis, steps -> onPictureChange { it.copy(zoom = VideoZoomPolicy.adjust(it.zoom, axis, steps)) } },
+                onReset = { onPictureChange { it.copy(zoom = VideoZoom.IDENTITY) } },
+                onDismiss = { panel = null },
+            )
+            null -> Unit
         }
+        aspectLabel?.let { LiveAspectIndicator(it) }
     }
 }
-
-@Composable
-private fun CleanLiveControlButton(
-    icon: ImageVector,
-    @StringRes descriptionRes: Int,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    IconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.size(52.dp),
-        colors = IconButtonDefaults.colors(
-            containerColor = Color.White.copy(alpha = 0.14f),
-            focusedContainerColor = Color.White,
-            contentColor = Color.White,
-            focusedContentColor = Color.Black,
-            disabledContainerColor = Color.White.copy(alpha = 0.06f),
-            disabledContentColor = Color.White.copy(alpha = 0.3f),
-        ),
-        shape = IconButtonDefaults.shape(shape = RoundedCornerShape(14.dp)),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = stringResource(descriptionRes),
-            modifier = Modifier.size(26.dp),
-        )
-    }
-}
-
-private fun dispatchRemoteAction(
-    action: CleanLiveRemoteAction,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onZapPrevious: () -> Unit,
-    onZapNext: () -> Unit,
-) = when (action) {
-    CleanLiveRemoteAction.PAUSE -> onPause()
-    CleanLiveRemoteAction.RESUME -> onResume()
-    CleanLiveRemoteAction.ZAP_PREVIOUS -> onZapPrevious()
-    CleanLiveRemoteAction.ZAP_NEXT -> onZapNext()
-}
-
-internal enum class CleanLiveRemoteAction { PAUSE, RESUME, ZAP_PREVIOUS, ZAP_NEXT }
 
 internal data class CleanLivePlayerChromeState(
     val keepScreenOn: Boolean,
@@ -408,59 +306,6 @@ internal object CleanLivePlayerUiPolicy {
                 ?: uiState.bottomStatusCode?.let(::statusMessageRes),
             messageIsError = error != null,
         )
-    }
-
-    /**
-     * Whether the overlay chrome may auto-hide after the idle delay. It hides only while playback
-     * is proceeding under the user's play intent with nothing to act on; a paused stream or an
-     * actionable (retryable) error keeps the controls up so the buttons stay reachable. This is the
-     * decision the Sports/clean-player path was missing entirely — its chrome was drawn
-     * unconditionally, so the controls never went away over the video.
-     */
-    fun controlsMayAutoHide(uiState: LivePlaybackUiState, retryEnabled: Boolean): Boolean =
-        uiState.playWhenReady && !retryEnabled
-
-    /** UP/DOWN are consumed by the screen only when an enabled zap is actually dispatched. */
-    fun remoteAction(
-        keyCode: Int,
-        keyAction: Int,
-        repeatCount: Int,
-        uiState: LivePlaybackUiState,
-    ): CleanLiveRemoteAction? {
-        if (keyAction != KeyEvent.ACTION_DOWN) return null
-        return when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_UP -> if (uiState.controlsEnabled) {
-                CleanLiveRemoteAction.ZAP_PREVIOUS
-            } else {
-                null
-            }
-            KeyEvent.KEYCODE_DPAD_DOWN -> if (uiState.controlsEnabled) {
-                CleanLiveRemoteAction.ZAP_NEXT
-            } else {
-                null
-            }
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> if (repeatCount == 0 && uiState.controlsEnabled) {
-                if (uiState.playWhenReady) CleanLiveRemoteAction.PAUSE
-                else CleanLiveRemoteAction.RESUME
-            } else {
-                null
-            }
-            KeyEvent.KEYCODE_MEDIA_PLAY -> if (
-                repeatCount == 0 && uiState.controlsEnabled && !uiState.playWhenReady
-            ) {
-                CleanLiveRemoteAction.RESUME
-            } else {
-                null
-            }
-            KeyEvent.KEYCODE_MEDIA_PAUSE -> if (
-                repeatCount == 0 && uiState.controlsEnabled && uiState.playWhenReady
-            ) {
-                CleanLiveRemoteAction.PAUSE
-            } else {
-                null
-            }
-            else -> null
-        }
     }
 
     @StringRes
@@ -534,6 +379,8 @@ internal object CleanLivePlayerUiPolicy {
         FailureCode.RESOURCE_RELEASE_FAILED -> R.string.clean_live_error_release
         FailureCode.NO_ELIGIBLE_GRAPH -> R.string.clean_live_error_no_graph
         FailureCode.NO_PROGRESS -> R.string.clean_live_error_no_progress
+        // T10: "This channel is no longer available." — not a network problem.
+        FailureCode.SOURCE_NOT_FOUND -> R.string.clean_live_error_stream_expired
         FailureCode.UNKNOWN -> R.string.clean_live_error_unknown
     }
 }

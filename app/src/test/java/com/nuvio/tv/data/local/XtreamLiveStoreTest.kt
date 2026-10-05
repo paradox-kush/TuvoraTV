@@ -98,6 +98,28 @@ class XtreamLiveStoreTest {
         assertNull(subject.urlFor("clean"))
     }
 
+    /** T3 (W2 device pass): a play with no known name never replaces a favourite's real name. */
+    @Test
+    fun `a play with no known name keeps the stored name`() = runTest {
+        activeProfileId.value = 1
+        subject.recordPlayedIdentityForProfile(1, "bbc1", "BBC One", "bbc.png")
+
+        subject.recordPlayedIdentityForProfile(1, "bbc1", null, null)
+
+        val identity = subject.identityForProfile(1, "bbc1")
+        assertEquals("BBC One", identity?.title)
+        assertEquals("bbc.png", identity?.logo)
+    }
+
+    @Test
+    fun `a play with no known name and no stored row records nothing`() = runTest {
+        activeProfileId.value = 1
+
+        subject.recordPlayedIdentityForProfile(1, "nameless", null, "logo.png")
+
+        assertNull(subject.identityForProfile(1, "nameless"))
+    }
+
     @Test
     fun `explicit profile identity write never follows active profile`() = runTest {
         activeProfileId.value = 1

@@ -260,6 +260,25 @@ class WatchProgressPreferences @Inject constructor(
     }
 
     /**
+     * T1: a display-only update (artwork / name / duration) of an entry that still exists — see
+     * [ProgressDisplayPatch]. Never creates an entry, so a hydration that began before a re-key,
+     * a removal or a newer save can't bring a stale key back. True when something was written.
+     */
+    suspend fun patchExistingDisplay(
+        patch: WatchProgress,
+        profileId: Int = profileManager.activeProfileId.value
+    ): Boolean = storageMutex.withLock {
+        ensureStorageLocked(profileId)
+        val current = readBucketsLocked(profileId)
+        val entries = mergeWatchProgressBuckets(current.recent, current.archive)
+        val key = createKey(patch)
+        val updated = ProgressDisplayPatch.apply(entries[key], patch) ?: return@withLock false
+        entries[key] = updated
+        writeBucketsLocked(profileId, current, splitWatchProgressEntries(entries))
+        true
+    }
+
+    /**
      * Save or update watch progress
      */
     suspend fun saveProgress(
@@ -602,6 +621,18 @@ class WatchProgressPreferences @Inject constructor(
             // One shared rewrite with the adoption's sync plan (WatchStateRekeyPlan), so what is
             // queued for upsert is exactly what this store ends up holding.
             val rekeyed = com.nuvio.tv.core.sync.rekeyProgressEntries(map, oldPrefix, newPrefix)
+            if (rekeyed.removedKeys.isEmpty()) return@withLock
+            writeBucketsLocked(profileId, current, splitWatchProgressEntries(rekeyed.entries))
+        }
+    }
+
+    /** B64: [com.nuvio.tv.core.sync.rewriteProgressEntries] on [profileId]'s store (same shared rewrite the sync plan uses). */
+    suspend fun rewriteEntries(profileId: Int, rewrite: (WatchProgress) -> WatchProgress?) {
+        storageMutex.withLock {
+            ensureStorageLocked(profileId)
+            val current = readBucketsLocked(profileId)
+            val map = mergeWatchProgressBuckets(current.recent, current.archive)
+            val rekeyed = com.nuvio.tv.core.sync.rewriteProgressEntries(map, rewrite)
             if (rekeyed.removedKeys.isEmpty()) return@withLock
             writeBucketsLocked(profileId, current, splitWatchProgressEntries(rekeyed.entries))
         }

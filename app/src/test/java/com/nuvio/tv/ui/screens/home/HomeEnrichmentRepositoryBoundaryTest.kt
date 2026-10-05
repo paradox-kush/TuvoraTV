@@ -119,7 +119,8 @@ class HomeEnrichmentRepositoryBoundaryTest {
             xtreamClient = mockk(relaxed = true),
             iptvClientFactory = mockk(relaxed = true),
             xtreamAccountStore = mockk(relaxed = true),
-            tmdbMetadataService = mockk(relaxed = true)
+            tmdbMetadataService = mockk(relaxed = true),
+            iptvItemDisplay = mockk(relaxed = true),
         )
     }
 

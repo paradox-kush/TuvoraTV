@@ -32,7 +32,7 @@ class PlaylistKeyTest {
         V("xtream", "http://example.com:99999", "u", null),
         V("xtream", "", "u", null),
         V("xtream", "http://example.com", "   ", null),
-        V("m3u", "http://example.com/list.m3u?user=a&pass=b", "", "m3u|http://example.com/list.m3u?user=a&pass=b"),
+        V("m3u", "http://example.com/list.m3u?user=a&pass=b", "", "m3u|http://example.com/list.m3u|ue40c292c"),
         V("m3u", "example.com/list.m3u", "", "m3u|http://example.com/list.m3u"),
         V("m3u", "HTTPS://Example.com/List.m3u", "", "m3u|HTTPS://Example.com/List.m3u"),
         V("m3u", "  http://example.com/a.m3u  ", "", "m3u|http://example.com/a.m3u"),

@@ -5,6 +5,7 @@
 
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.ui.components.player.DialogButton
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut

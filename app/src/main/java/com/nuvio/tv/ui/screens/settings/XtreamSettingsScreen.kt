@@ -132,6 +132,10 @@ fun XtreamSettingsContent(
     // Step 2: after a Detach, "Detached from <provider>" on that playlist's page until the page is closed.
     var detachedFrom by remember { mutableStateOf<Pair<String, String>?>(null) }
     var catchUpFor by remember { mutableStateOf<String?>(null) }
+    // Lane G: the "Guide & channel names" card, its tag editor and the guide-assign flow.
+    var guideFor by remember { mutableStateOf<String?>(null) }
+    var tagsFor by remember { mutableStateOf<String?>(null) }
+    var assignFor by remember { mutableStateOf<String?>(null) }
     var rematchStarted by remember { mutableStateOf(setOf<String>()) }
     // B57: Remove used to delete on the first OK with no confirmation, from a row that was cut off
     // the bottom of a non-scrolling dialog.
@@ -256,12 +260,13 @@ fun XtreamSettingsContent(
                 } else stringResource(R.string.iptv_managed_row_line, m.providerName)
             }
             SettingsActionRow(
-                title = account.name,
+                title = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name),
                 subtitle = listOfNotNull(
                     managedLine,
                     // Step 0.3: say which server is actually answering when it isn't the main one.
                     activeServers[account.id]?.let { stringResource(R.string.iptv_using_backup_server, it) }
-                        ?: account.baseUrl,
+                        // T7: an M3U link carries the login — never on screen.
+                        ?: com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(account.baseUrl),
                     // B60: an edit saved although the provider check failed says so on its row.
                     uiState.saveWarnings[account.id],
                     com.nuvio.tv.core.iptv.match.indexingStatusLine(
@@ -403,7 +408,8 @@ fun XtreamSettingsContent(
                     needsReimport = needsReimport,
                     backupLine = activeServers[id]?.let { n ->
                         account.backupUrls?.getOrNull(n - 1)
-                            ?.let { host -> stringResource(R.string.iptv_using_backup_server_host, n, host) }
+                            // T7: a backup M3U link carries the login too.
+                            ?.let { host -> stringResource(R.string.iptv_using_backup_server_host, n, com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(host)) }
                             ?: stringResource(R.string.iptv_using_backup_server, n)
                     },
                     justAddedBy = justAddedBy,
@@ -425,6 +431,10 @@ fun XtreamSettingsContent(
                             rematchStarted = rematchStarted + id
                         }
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.CATCHUP -> catchUpFor = id
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.GUIDE -> {
+                            guideFor = id
+                            viewModel.loadGuideCensus(account)
+                        }
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.EDIT,
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.REIMPORT -> editFor = account
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.TOGGLE_ENABLED ->
@@ -476,13 +486,14 @@ fun XtreamSettingsContent(
             NuvioDialog(
                 onDismiss = { catchUpFor = null },
                 title = stringResource(R.string.iptv_catchup_dialog_title),
-                subtitle = account.name,
+                subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name),
                 scrollable = true
             ) {
+                // F35: the phone/desktop wording, so "Prefer m3u8" is the same setting everywhere.
                 SettingsActionRow(
-                    title = "Catch-up container",
-                    subtitle = "m3u8 enables the scrub bar; TS is more widely served",
-                    value = if (account.preferM3u8CatchUp) "Prefer m3u8" else "Prefer TS",
+                    title = CatchUpContainerCopy.TITLE,
+                    subtitle = CatchUpContainerCopy.description(account.preferM3u8CatchUp),
+                    value = CatchUpContainerCopy.value(account.preferM3u8CatchUp),
                     onClick = { viewModel.setPreferM3u8CatchUp(account.id, !account.preferM3u8CatchUp) }
                 )
                 SettingsActionRow(
@@ -507,6 +518,57 @@ fun XtreamSettingsContent(
         }
     }
 
+    guideFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) guideFor = null
+        else if (tagsFor == null && assignFor == null) com.nuvio.tv.ui.screens.iptv.GuideNamesDialog(
+            account = account,
+            census = uiState.guideCensus[id],
+            onDismiss = { guideFor = null },
+            onAssign = {
+                assignFor = id
+                viewModel.searchGuideAssignChannels(account, "")
+            },
+            onToggleClean = { viewModel.setCleanChannelNames(id, !account.cleanChannelNames) },
+            onEditTags = { tagsFor = id },
+        )
+    }
+
+    tagsFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) tagsFor = null
+        else com.nuvio.tv.ui.screens.iptv.ChannelTagsDialog(
+            initial = account.channelNameTags.orEmpty(),
+            onSave = { text ->
+                viewModel.setChannelNameTags(account, text)
+                tagsFor = null
+            },
+            onDismiss = { tagsFor = null },
+        )
+    }
+
+    assignFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) {
+            assignFor = null
+        } else {
+            com.nuvio.tv.ui.screens.iptv.GuideAssignDialog(
+                account = account,
+                state = uiState.guideAssign?.takeIf { it.accountId == id },
+                onSearchChannels = { q -> viewModel.searchGuideAssignChannels(account, q) },
+                onOpenChannel = { ch -> viewModel.searchGuideOptions(account, ch, "") },
+                onSearchOptions = { ch, q -> viewModel.searchGuideOptions(account, ch, q) },
+                onPick = { ch, row -> viewModel.pickGuide(account, ch, row) },
+                onBack = { viewModel.backFromGuideOptions() },
+                onDismiss = {
+                    assignFor = null
+                    viewModel.closeGuideAssign()
+                    viewModel.loadGuideCensus(account)
+                },
+            )
+        }
+    }
+
     hiddenFor?.let { account ->
         val items = uiState.hiddenItems
         // UX34: start on the first hidden item (Done only when there is nothing to unhide); re-aimed
@@ -523,7 +585,7 @@ fun XtreamSettingsContent(
         }
         NuvioDialog(
             onDismiss = { hiddenFor = null },
-            title = "Hidden in ${account.name}",
+            title = "Hidden in ${com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name)}",
             subtitle = when {
                 items == null -> "Loading\u2026"
                 items.isEmpty() -> "Nothing is hidden in this playlist. In the Live TV guide, press MENU on a " +
@@ -556,7 +618,7 @@ fun XtreamSettingsContent(
         // stray press can never delete a playlist. For a managed playlist the owner is named.
         val providerName = managedInfos[account.id]?.providerName
         HoldConfirmDialog(
-            title = stringResource(R.string.iptv_remove_title, account.name),
+            title = stringResource(R.string.iptv_remove_title, com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name)),
             message = when (PlaylistRemovalUiPolicy.confirmWording(signedIn)) {
                 PlaylistRemovalUiPolicy.ConfirmWording.ALL_DEVICES -> stringResource(R.string.iptv_remove_playlist_message_all_devices)
                 PlaylistRemovalUiPolicy.ConfirmWording.IF_YOU_SYNC -> stringResource(R.string.iptv_remove_playlist_message_if_you_sync)
@@ -624,7 +686,7 @@ private fun XtreamContentTypesDialog(
     NuvioDialog(
         onDismiss = onDismiss,
         title = "Content & Categories",
-        subtitle = account.name
+        subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name)
     ) {
         CONTENT_TYPES.forEachIndexed { index, (type, label) ->
             val enabled = account.typeEnabled(type)
@@ -712,13 +774,16 @@ private fun EpgRegionPickerDialog(
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.xs)
             ) {
                 itemsIndexed(regions, key = { _, r -> r.name }) { index, region ->
-                    val checked = region.name in selected
+                    // B119: under "All" (empty) every row is checked and OK removes just that one.
+                    val checked = com.nuvio.tv.core.epg.EpgRegionSelection.isChecked(selected, region.name)
                     EpgRegionCheckRow(
                         region = region,
                         checked = checked,
                         focusRequester = if (index == 0) firstRowFocus else null,
                         onToggle = {
-                            selected = if (checked) selected - region.name else selected + region.name
+                            selected = com.nuvio.tv.core.epg.EpgRegionSelection.toggle(
+                                selected, regions.map { it.name }, region.name,
+                            )
                         },
                     )
                 }
@@ -1288,8 +1353,12 @@ private fun XtreamAddDialog(
             }
 
             // --- EPG URL (shared) --------------------------------------------
-            FormSectionLabel("EPG URL (optional)")
-            XtreamField(epgUrl, { epgUrl = it }, "http://host:port/xmltv.php?username=…&password=…", onSubmit = submit, label = "EPG URL")
+            FormSectionLabel("EPG URLs (optional)")
+            XtreamField(epgUrl, { epgUrl = it }, "https://…/guide.xml.gz, https://…/more.xml", onSubmit = submit, label = "EPG URLs")
+            FormHelperText(
+                "Add one or more XMLTV guides, separated by commas. The first one wins for each channel; " +
+                    "the provider's own guide still covers every channel these don't."
+            )
 
             // --- DNS Provider (shared) ---------------------------------------
             FormSectionLabel("DNS Provider")
@@ -1430,7 +1499,7 @@ private fun BackupServersSection(
     rows.forEachIndexed { index, value ->
         SettingsActionRow(
             title = stringResource(R.string.iptv_backup_server_row, index + 1),
-            subtitle = value.ifBlank { stringResource(R.string.iptv_backup_server_not_set) },
+            subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(value).ifBlank { stringResource(R.string.iptv_backup_server_not_set) }, // T7
             value = problems[index]?.let { backupProblemText(it) },
             valueColor = NuvioTheme.colors.Error,
             onClick = { onEdit(index) },
@@ -1506,7 +1575,7 @@ private fun BackupServerEditorDialog(
         } else {
             SettingsActionRow(
                 title = addressLabel,
-                subtitle = value.ifBlank { stringResource(R.string.iptv_backup_server_not_set) },
+                subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(value).ifBlank { stringResource(R.string.iptv_backup_server_not_set) }, // T7
                 onClick = { typing = true },
                 modifier = Modifier.focusRequester(addressRowFocus),
             )
@@ -1563,7 +1632,7 @@ private fun BackupServerRemoveConfirmDialog(
     NuvioDialog(
         onDismiss = onCancel,
         title = stringResource(R.string.iptv_backup_server_remove_confirm_title, index + 1),
-        subtitle = value.ifBlank { null }?.let { stringResource(R.string.iptv_backup_server_remove_confirm_subtitle, it) },
+        subtitle = value.ifBlank { null }?.let { stringResource(R.string.iptv_backup_server_remove_confirm_subtitle, com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(it)) }, // T7
         width = 460.dp,
     ) {
         Button(
@@ -2032,7 +2101,8 @@ private val CATCHUP_CORRECTION_OPTIONS: List<Int> =
         .toList()
 
 private fun catchUpCorrectionLabel(minutes: Int): String {
-    if (minutes == 0) return "None (UTC)"
+    // 0 is not "UTC": replays follow the panel's own measured clock; this only corrects it (B117).
+    if (minutes == 0) return "None"
     val sign = if (minutes < 0) "-" else "+"
     val abs = kotlin.math.abs(minutes)
     return if (abs % 60 == 0) "$sign${abs / 60}h" else "$sign${abs / 60}h ${abs % 60}m"

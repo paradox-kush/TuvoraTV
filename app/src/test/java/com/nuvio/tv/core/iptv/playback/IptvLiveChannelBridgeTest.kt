@@ -279,6 +279,26 @@ class IptvLiveChannelBridgeTest {
             .record(LivePlayedIdentity(target, profile, generation = 9))
     }
 
+    /** T3 (W2 device pass): the "Live TV" stand-in is display-only and never reaches the history store. */
+    @Test
+    fun `history never saves the stand-in title as the channel name`() = runTest {
+        val writes = mutableListOf<String?>()
+        val subject = bridge(history = { _, _, title, _ -> writes += title })
+        val nameless = LiveChannelTarget.sanitized(
+            selection = selection(nextId),
+            contentId = nextId,
+            title = "   ",
+            logo = null,
+            playlistVersion = 9,
+            boundProfileId = profile,
+        )
+
+        subject.record(LivePlayedIdentity(nameless, profile, generation = 11))
+
+        assertEquals("the target still shows the stand-in", "Live TV", nameless.title)
+        assertEquals("but no name is written", listOf<String?>(null), writes)
+    }
+
     @Test
     fun `history preserves cancellation`() = runTest {
         val subject = bridge(
@@ -302,7 +322,7 @@ class IptvLiveChannelBridgeTest {
         relative: suspend (String, Int, Int) -> IptvIngressSelectionResult = { _, _, _ ->
             selected(nextId)
         },
-        history: suspend (Int, String, String, String?) -> Unit = { _, _, _, _ -> },
+        history: suspend (Int, String, String?, String?) -> Unit = { _, _, _, _ -> },
     ) = IptvLiveChannelBridge(
         activeProfile = ActivePlaybackProfileSource(active),
         initialSource = InitialLiveSelectionSource(initial),

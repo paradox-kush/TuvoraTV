@@ -48,6 +48,22 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/** F14 — the two-step "Assign guide" dialog: pick a channel, then the guide channel that feeds it. */
+data class GuideAssignState(
+    val accountId: String,
+    val query: String,
+    val channels: List<Channel> = emptyList(),
+    val picking: Channel? = null,
+    val optionsQuery: String = "",
+    val options: List<com.nuvio.tv.core.iptv.content.EpgGuideChannelRow> = emptyList(),
+) {
+    /** [current] = the guide channel id it reads now; [manual] = the user picked it. */
+    data class Channel(val sid: Int, val name: String, val current: String?, val manual: Boolean)
+}
+
+private const val GUIDE_ASSIGN_LIMIT = 60
+private val STORED_KEY_PREFIX = Regex("^s\\d+:")
+
 data class XtreamSettingsUiState(
     val accounts: List<XtreamAccount> = emptyList(),
     val isValidating: Boolean = false,
@@ -64,6 +80,10 @@ data class XtreamSettingsUiState(
     val accountInfo: Map<String, XtreamAccountInfo> = emptyMap(),
     /** accountId -> the guide's EPG-source coverage line (mirror mapping + session tally; read-only). */
     val guideEpgCoverage: Map<String, String> = emptyMap(),
+    /** B10: accountId -> what the playlist's OWN guide sources matched at the last ingest. */
+    val guideCensus: Map<String, String> = emptyMap(),
+    /** F14: the "Assign guide" dialog's current list (channels, then guide channels). */
+    val guideAssign: GuideAssignState? = null,
     /** accountId -> a note about a saved edit (B60: the provider check failed, but the edit was kept). */
     val saveWarnings: Map<String, String> = emptyMap(),
     /** F02: the open "Hidden channels & groups" list; null while it loads. */
@@ -97,6 +117,8 @@ class XtreamSettingsViewModel @Inject constructor(
     private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
     private val providerSetup: com.nuvio.tv.core.iptv.ProviderSetupRepository,
     private val detailsRequests: com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests,
+    /** B10/F14/F10 (lane G): the playlist's guide census, channel-name clean-up and manual picks. */
+    private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
 ) : ViewModel() {
 
     /** Step 2: a setup code just added a playlist; the screen opens its details page once it has arrived. */
@@ -287,6 +309,8 @@ class XtreamSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             if (persistOrError { store.replace(old.id, account) }) {
                 registry.clear()
+                // P6 / F14: a changed guide source (EPG URLs, portal, MAC) is read at once.
+                if (com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.guideSourcesChanged(old, account)) xmltv.refreshNow(account)
                 evictAccountCaches(old.id)
                 syncService.triggerRemoteSync()
                 onSuccess()
@@ -578,6 +602,8 @@ class XtreamSettingsViewModel @Inject constructor(
                 if (!old.sameConnectionAs(account)) refreshLiveStreamUrls(account)
                 // Cached stream URLs embed the old server/creds; rebuild lazily on demand.
                 registry.clear()
+                // P6 / F14: new EPG URLs (or a new server/login) are read now, not at the 12-hour refresh.
+                if (com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.guideSourcesChanged(old, account)) xmltv.refreshNow(account)
                 // A renewed/edited account must not keep showing a stale "Expired" status or
                 // category lists fetched under the old creds — evict its caches.
                 evictAccountCaches(old.id)
@@ -629,6 +655,94 @@ class XtreamSettingsViewModel @Inject constructor(
             catchUpWinners.forget(id)
         }
     }
+
+    // --- Guide & channel names (lane G: B10 census, F10 clean-up, F14 manual picks) -------------
+
+    fun loadGuideCensus(account: XtreamAccount) {
+        viewModelScope.launch {
+            val census = runCatching { xmltv.census(account) }.getOrNull()
+            val picks = runCatching { overlayRepository.epgOverridesFor(account.id).size }.getOrDefault(0)
+            val line = census?.let { com.nuvio.tv.core.iptv.epg.GuideCensusText.line(it, picks) }
+                ?: "The playlist's guide hasn't been matched on this TV yet. Open the Live TV guide to load it."
+            _uiState.update { it.copy(guideCensus = it.guideCensus + (account.id to line)) }
+        }
+    }
+
+    fun setCleanChannelNames(id: String, on: Boolean) {
+        viewModelScope.launch { store.update(id) { it.copy(cleanChannelNames = on) } }
+    }
+
+    /** The tags feed the guide matcher too, so a change re-matches the playlist's guide. */
+    fun setChannelNameTags(account: XtreamAccount, text: String) {
+        val cleaned = com.nuvio.tv.core.epg.ChannelNameCleaner.parseTags(text).joinToString(", ").ifEmpty { null }
+        if (cleaned == account.channelNameTags) return
+        viewModelScope.launch {
+            store.update(account.id) { it.copy(channelNameTags = cleaned) }
+            xmltv.refreshNow(account.copy(channelNameTags = cleaned))
+        }
+    }
+
+    /** Step 1 of "Assign guide": the playlist's channels whose name contains [query], with their guide. */
+    fun searchGuideAssignChannels(account: XtreamAccount, query: String) {
+        viewModelScope.launch {
+            val q = query.trim().lowercase()
+            val lineup = runCatching {
+                if (account.isXtream()) matchIndex.liveLineup(account.id).map { it.sid to it.name }
+                else contentDb.liveLineup(account.id).map { (sid, name, _) -> sid to name }
+            }.getOrDefault(emptyList())
+            val hits = lineup.asSequence()
+                .filter { q.isEmpty() || it.second.lowercase().contains(q) }
+                .take(GUIDE_ASSIGN_LIMIT)
+                .toList()
+                .map { (sid, name) ->
+                    val manual = runCatching { xmltv.manualKeyFor(account, sid) }.getOrNull()
+                    val auto = if (manual != null) null else runCatching { xmltv.storedKeyFor(account, sid) }.getOrNull()
+                    GuideAssignState.Channel(sid, name, current = (manual ?: auto)?.let(::guideIdOfKey), manual = manual != null)
+                }
+            _uiState.update { it.copy(guideAssign = GuideAssignState(account.id, query, channels = hits)) }
+        }
+    }
+
+    /** Step 2: guide channels for the chosen channel; [query] blank = seeded from its cleaned name. */
+    fun searchGuideOptions(account: XtreamAccount, channel: GuideAssignState.Channel, query: String) {
+        viewModelScope.launch {
+            val seed = query.ifBlank {
+                com.nuvio.tv.core.epg.ChannelNameCleaner.clean(channel.name, account.channelNameRules()).substringBefore(' ')
+            }
+            val options = runCatching { xmltv.guideChannels(account, seed) }.getOrDefault(emptyList())
+            _uiState.update { s ->
+                s.copy(guideAssign = (s.guideAssign ?: GuideAssignState(account.id, "")).copy(picking = channel, optionsQuery = seed, options = options))
+            }
+        }
+    }
+
+    /** Pick ([row] non-null) or return the channel to automatic matching. */
+    fun pickGuide(account: XtreamAccount, channel: GuideAssignState.Channel, row: com.nuvio.tv.core.iptv.content.EpgGuideChannelRow?) {
+        viewModelScope.launch {
+            val entity = runCatching { xmltv.entityIdFor(account, channel.sid) }.getOrNull() ?: return@launch
+            overlayRepository.setEpgOverride(entity, account.id, row?.guideId, row?.name)
+            // The write is asynchronous: reflect the pick in the list now. Clearing shows "automatic"
+            // until the list is re-searched (the auto match is re-read then).
+            _uiState.update { st ->
+                val ga = st.guideAssign ?: return@update st
+                st.copy(
+                    guideAssign = ga.copy(
+                        picking = null,
+                        options = emptyList(),
+                        channels = ga.channels.map { c ->
+                            if (c.sid != channel.sid) c else c.copy(current = row?.guideId, manual = row != null)
+                        },
+                    ),
+                )
+            }
+        }
+    }
+
+    fun backFromGuideOptions() = _uiState.update { it.copy(guideAssign = it.guideAssign?.copy(picking = null, options = emptyList())) }
+
+    fun closeGuideAssign() = _uiState.update { it.copy(guideAssign = null) }
+
+    private fun guideIdOfKey(key: String): String = key.replace(STORED_KEY_PREFIX, "")
 
     /** Manual catch-up time correction, for panels that lie about their own clock. */
     fun setCatchUpCorrectionMinutes(id: String, minutes: Int) {

@@ -1762,6 +1762,8 @@ class StreamScreenViewModel @Inject constructor(
                 videoHash = playbackInfo.videoHash,
                 videoSize = playbackInfo.videoSize,
                 filename = playbackInfo.filename,
+                season = metadata.season,
+                episode = metadata.episode,
                 onProgress = { completed, total, addonName ->
                     val msg = if (completed == 0) {
                         context.getString(R.string.player_loading_subtitles_from, total)

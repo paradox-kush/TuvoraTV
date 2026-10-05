@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.PlayerPreferencePolicy
 import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.app.Activity
 import android.content.Context
@@ -463,6 +464,10 @@ class PlayerRuntimeController(
     internal var pendingAudioSelectionAfterSubtitleRefresh: PendingAudioSelection? = null
     internal var rememberedTrackPreference: TrackPreference? = null
     internal var persistedTrackPreference: TrackPreference? = null
+    /** F37: "Remember my player preferences", read per playback start (PlayerPreferencePolicy). */
+    internal var rememberPlayerPreferences: Boolean = PlayerPreferencePolicy.DEFAULT_REMEMBER
+    /** F37/F36: the series' aspect + zoom was applied for this playback; re-inits keep it. */
+    internal var seriesPictureApplied: Boolean = false
     internal var pendingEngineSwitchTrackPreference: PendingEngineSwitchTrackPreference? = null
     internal var explicitSubtitleSelectionForEngineSwitch: ExplicitSubtitleSelectionForEngineSwitch? = null
     internal var effectiveSubtitleSelectionForEngineSwitch: ExplicitSubtitleSelectionForEngineSwitch? = null

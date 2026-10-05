@@ -399,8 +399,14 @@ object AudioOutputPolicy {
     }
 }
 
-/** Pure WP3 resolver: it translates effective intent and runtime evidence into one engine contract. */
-class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
+/**
+ * Pure WP3 resolver: it translates effective intent and runtime evidence into one engine contract.
+ * [liveBufferSeconds] is the user's F13 live buffer length ([LiveBufferPolicy]); AUTO keeps
+ * LOW_LATENCY_LIVE.
+ */
+class DefaultPlaybackRequirementsResolver(
+    private val liveBufferSeconds: Int = LiveBufferPolicy.AUTO,
+) : PlaybackRequirementsResolver {
     override suspend fun resolve(input: PlaybackRequirementsInput): PlaybackResult<PlaybackRequirements> {
         val environment = input.environment
         val capabilities = environment.runtimeCapabilities
@@ -475,10 +481,13 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
         } else {
             preferences.display.frameRate
         }
-        val effectiveBuffering = if (live) {
-            BufferingPreference.LOW_LATENCY_LIVE
-        } else {
-            preferences.buffering
+        // F13: a chosen live buffer length is a CUSTOM buffer for live in BOTH profiles (guide and
+        // fullscreen agree, so a promote still applies in place); AUTO keeps LOW_LATENCY_LIVE.
+        val liveCustomBuffer = if (live) LiveBufferPolicy.customBuffer(liveBufferSeconds) else null
+        val effectiveBuffering = when {
+            liveCustomBuffer != null -> BufferingPreference.CUSTOM
+            live -> BufferingPreference.LOW_LATENCY_LIVE
+            else -> preferences.buffering
         }
 
         return PlaybackResult.Success(
@@ -507,8 +516,8 @@ class DefaultPlaybackRequirementsResolver : PlaybackRequirementsResolver {
                 audioOutput = effectiveAudioOutput,
                 pcmProcessingAllowed = pcmProcessingAllowed,
                 buffering = effectiveBuffering,
-                customBuffer = preferences.customBuffer.takeIf {
-                    effectiveBuffering == BufferingPreference.CUSTOM
+                customBuffer = liveCustomBuffer ?: preferences.customBuffer.takeIf {
+                    effectiveBuffering == BufferingPreference.CUSTOM && !live
                 },
                 audioDownmixToStereo = preferences.audio.downmixToStereo && pcmProcessingAllowed &&
                     !dropMedia3Processing,

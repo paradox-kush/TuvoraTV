@@ -117,6 +117,8 @@ class LiveChannelPresentation private constructor(
     val title: String,
     val logo: String?,
     val playlistVersion: Long,
+    /** T3: false when [title] is the "Live TV" stand-in — shown, never saved as the channel's name. */
+    val titleKnown: Boolean = true,
 ) {
     override fun toString(): String =
         "LiveChannelPresentation(hasLogo=${logo != null}, playlistVersion=$playlistVersion)"
@@ -140,22 +142,23 @@ class LiveChannelPresentation private constructor(
             identity: XtreamLiveChannelIdentity,
             playlistVersion: Long,
         ): LiveChannelPresentation {
+            val usable = usableTitle(identity.title)
             return LiveChannelPresentation(
                 contentId = identity.contentId,
-                title = sanitizeTitle(identity.title),
+                title = usable ?: FALLBACK_TITLE,
                 logo = sanitizeLogo(identity.logo),
                 playlistVersion = playlistVersion,
+                titleKnown = usable != null,
             )
         }
 
-        private fun sanitizeTitle(value: String): String {
+        private fun usableTitle(value: String): String? {
             val normalized = clean(value, MAX_TITLE_LENGTH)?.replace(whitespace, " ")
             return normalized
                 ?.takeUnless { candidate ->
                     val lowercase = candidate.lowercase()
                     "://" in lowercase || secretMarkers.any(lowercase::contains)
                 }
-                ?: FALLBACK_TITLE
         }
 
         private fun sanitizeLogo(value: String?): String? {

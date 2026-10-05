@@ -11,6 +11,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.playback.core.FailureCode
+import com.nuvio.tv.playback.core.PlaybackTrackCatalog
+import com.nuvio.tv.ui.screens.player.clean.live.LiveTrackChoices
 import com.nuvio.tv.playback.core.PreviewAvailability
 import com.nuvio.tv.playback.core.StreamAvailability
 import com.nuvio.tv.playback.live.LiveZapDirection
@@ -36,6 +38,7 @@ internal fun CleanLivePlayerRoute(
     viewModel: CleanLivePlayerViewModel = hiltViewModel(),
 ) {
     val routeState by viewModel.routeState.collectAsStateWithLifecycle()
+    val picture by viewModel.picture.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context.findActivity()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -109,6 +112,15 @@ internal fun CleanLivePlayerRoute(
             if (!exitGate.isStarted()) viewModel.requestZap(LiveZapDirection.NEXT)
         },
         onExitRequested = ::requestReleaseAndExit,
+        // F28: the shared overlay's audio/subtitle pickers and stream info, from the session's own
+        // URL-free snapshot.
+        trackCatalog = ready?.snapshot?.trackCatalog ?: PlaybackTrackCatalog(),
+        streamInfo = ready?.snapshot?.let(LiveTrackChoices::streamInfo).orEmpty(),
+        subtitlesDrawable = LiveTrackChoices.canDrawSubtitles(ready?.snapshot?.graph),
+        onSelectAudio = { id -> if (!exitGate.isStarted()) scope.launch { viewModel.selectAudioTrack(id) } },
+        onSelectSubtitle = { id -> if (!exitGate.isStarted()) scope.launch { viewModel.selectSubtitleTrack(id) } },
+        picture = picture,
+        onPictureChange = { update -> if (!exitGate.isStarted()) viewModel.requestPictureChange(update) },
     )
 }
 

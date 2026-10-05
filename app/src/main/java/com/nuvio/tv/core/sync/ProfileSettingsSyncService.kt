@@ -65,6 +65,8 @@ private const val SETTINGS_PUSH_DEBOUNCE_MS = 1500L
 private const val FOREGROUND_PULL_DELAY_MS = 2500L
 private const val FOREGROUND_PULL_MIN_INTERVAL_MS = 60_000L
 private const val SETTINGS_SYNC_PLATFORM = "tv"
+/** B03 (D4): per-profile DataStore holding the last-synced settings blob (merge base). */
+private const val SETTINGS_BASE_FEATURE = "settings_sync_base"
 private const val PLAYER_SETTINGS_FEATURE = "player_settings"
 
 private val catalogKeysExcludedFromProfileSettingsBlob = setOf(
@@ -140,7 +142,13 @@ private val localOnlyPlayerProfileSettingsKeys = setOf(
     "migration_allow_large_target_buffer_off_done",
     "migration_buffer_budget_managed_exo_done",
     "migration_vod_cache_back_buffer_zeroed_done",
-    "nuvio_performance_mode_enabled"
+    "nuvio_performance_mode_enabled",
+    // F37/F47 (2026-10-04): device-local until the owner decides whether player preferences sync
+    // (mobile/desktop keep them out of their sync payload too).
+    "remember_player_preferences",
+    "subtitle_side_margin_percent",
+    // F13: buffer/network choices are device-local like the VOD buffer keys above.
+    "live_buffer_seconds"
 )
 
 // Third-party provider credentials must never leave the device inside a synced profile-settings
@@ -232,7 +240,21 @@ class ProfileSettingsSyncService @Inject constructor(
         syncMutex.withLock {
             try {
                 val profileId = profileManager.activeProfileId.value
-                pushProfileToRemote(profileId)
+                // B03 (D4): merge with the server's blob field by field before pushing, so a website edit
+                // to a key this TV did not touch survives (a stale whole-blob push used to revert it).
+                var blob = exportSettingsBlob(profileId)
+                val base = loadBase(profileId)
+                if (base != null) {
+                    val remote = runCatching { pullProfileFromRemote(profileId) }.getOrNull()
+                    val merged = remote?.let { SettingsBlobMerge.merge(base, blob, it) as? JsonObject }
+                    val mergedFeatures = merged?.get("features")?.jsonObject
+                    if (merged != null && merged != blob && mergedFeatures != null) {
+                        applySettingsBlob(profileId, mergedFeatures, buildSettingsSignature(mergedFeatures))
+                        blob = exportSettingsBlob(profileId)
+                    }
+                }
+                pushProfileToRemote(profileId, blob)
+                saveBase(profileId, blob)
                 Log.d(TAG, "Pushed profile settings blob for profile $profileId")
                 Result.success(Unit)
             } catch (e: Exception) {
@@ -267,10 +289,12 @@ class ProfileSettingsSyncService @Inject constructor(
                 val localSignature = buildSettingsSignature(profileId)
                 if (remoteSignature == localSignature) {
                     Log.d(TAG, "Remote profile settings already match local for profile $profileId")
+                    saveBase(profileId, exportSettingsBlob(profileId))
                     return@withLock Result.success(inheritedPluginSettingsApplied)
                 }
 
                 applySettingsBlob(profileId, featuresJson, remoteSignature)
+                saveBase(profileId, exportSettingsBlob(profileId))
                 Log.d(TAG, "Applied remote profile settings blob for profile $profileId")
                 Result.success(true)
             } catch (e: Exception) {
@@ -380,6 +404,22 @@ class ProfileSettingsSyncService @Inject constructor(
             lastForegroundPullAtMs = SystemClock.elapsedRealtime()
             pullCurrentProfileFromRemote()
         }
+    }
+
+    /** Keyed by account: another account signing in on this TV starts without a base. */
+    private fun baseKey() = (authManager.authState.value as? com.nuvio.tv.domain.model.AuthState.FullAccount)
+        ?.userId?.let { androidx.datastore.preferences.core.stringPreferencesKey("blob_$it") }
+
+    /** B03 (D4): the blob as this TV last synced it — the merge base of [SettingsBlobMerge]. */
+    private suspend fun loadBase(profileId: Int): JsonObject? {
+        val key = baseKey() ?: return null
+        return profileDataStoreFactory.get(profileId, SETTINGS_BASE_FEATURE).data.first()[key]
+            ?.let { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+    }
+
+    private suspend fun saveBase(profileId: Int, blob: JsonObject) {
+        val key = baseKey() ?: return
+        profileDataStoreFactory.get(profileId, SETTINGS_BASE_FEATURE).edit { it[key] = blob.toString() }
     }
 
     private suspend fun pushProfileToRemote(

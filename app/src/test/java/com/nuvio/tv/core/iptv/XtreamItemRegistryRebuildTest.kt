@@ -62,4 +62,37 @@ class XtreamItemRegistryRebuildTest {
         assertEquals("kind preserved", XtreamKind.LIVE, item.kind)
         coVerify(exactly = 0) { client.resolveStreamUrl(any(), any(), any(), any()) }
     }
+
+    /**
+     * T2 (W2 device pass): after the B64 re-key, items opened from Library / Continue Watching came
+     * back from a registry miss with a BLANK name and no artwork — an empty detail page. The rebuild
+     * now takes the name/artwork from the catalog this device holds.
+     */
+    @Test
+    fun `rebuildFromId names the item from the catalog this device holds`() = runTest {
+        val client = mockk<StalkerClient>()
+        val display = XtreamItemDisplaySource { accountId, kind, streamId ->
+            if (accountId == account.id && kind == XtreamKind.VOD && streamId == 20642) {
+                XtreamItemDisplay("The Matrix (1999)", "https://img/matrix.jpg")
+            } else {
+                null
+            }
+        }
+        val registry = XtreamItemRegistry()
+        val id = XtreamItemRegistry.vodId(account.id, 20642)
+
+        val item = registry.rebuildFromId(id, fixtureStore(), fixtureFactory(client), display)
+
+        assertEquals("name from the catalog", "The Matrix (1999)", item!!.name)
+        assertEquals("artwork from the catalog", "https://img/matrix.jpg", item.poster)
+        assertEquals("the registered item carries the name too", "The Matrix (1999)", registry.get(id)!!.name)
+    }
+
+    @Test
+    fun `rebuildFromId without a catalog row stays bare and still succeeds`() = runTest {
+        val item = XtreamItemRegistry().rebuildFromId(
+            XtreamItemRegistry.liveId(account.id, 7), fixtureStore(), fixtureFactory(mockk()),
+        ) { _, _, _ -> XtreamItemDisplay("  ", null) }
+        assertEquals("a blank catalog name is ignored", "", item!!.name)
+    }
 }

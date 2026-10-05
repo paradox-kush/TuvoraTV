@@ -21,7 +21,7 @@ class M3UUrlParserTest {
     fun `id is the shared Step 0 key of the link and ignores the UA`() {
         val a = m3uAccountFromUrl("http://host.example.com:8080/get.php?username=u1&password=p1", userAgent = "VLC/3.0")!!
         // Step 0: the id is the shared `m3u|<url>` key (the same a phone or the web mints); UA MUST NOT change it
-        assertEquals("m3u|http://host.example.com:8080/get.php?username=u1&password=p1", a.id)
+        assertEquals("m3u|http://host.example.com:8080/get.php|u0442a7f3", a.id)   // B64: login-free key
         val b = m3uAccountFromUrl("http://host.example.com:8080/get.php?username=u1&password=p1", userAgent = "Different/UA")!!
         assertEquals(a.id, b.id)  // same playlist, different UA -> same id (stable across UA edits)
     }

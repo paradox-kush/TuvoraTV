@@ -11,7 +11,7 @@ package com.nuvio.tv.core.iptv
 object ManagedDetailsModel {
 
     enum class DetailsAction {
-        CONTACT, CONTENT, HIDDEN, REMATCH, CATCHUP, EDIT, REIMPORT, TOGGLE_ENABLED, DETACH, REMOVE
+        CONTACT, CONTENT, HIDDEN, GUIDE, REMATCH, CATCHUP, EDIT, REIMPORT, TOGGLE_ENABLED, DETACH, REMOVE
     }
 
     enum class ShelfGroup { PROVIDER, LIBRARY, REMOVE }
@@ -102,7 +102,7 @@ object ManagedDetailsModel {
         nowEpochSec: Long,
         checkFailed: Boolean = false,
     ): Facts = Facts(
-        name = account.name,
+        name = PlaylistDisplayPolicy.displayName(account.name),
         managedBy = managed?.providerName,
         expiry = expiry(info, nowEpochSec, checkFailed),
         connections = info?.maxConnections?.takeIf { it > 0 }?.let { Connections(info.activeConnections, it) },
@@ -126,6 +126,8 @@ object ManagedDetailsModel {
             } else {
                 add(DetailsAction.CONTENT)
                 add(DetailsAction.HIDDEN)
+                // Lane G (B10/F10/F14): every playlist type has a guide and channel names.
+                add(DetailsAction.GUIDE)
                 if (account.isXtream()) {
                     add(DetailsAction.REMATCH)
                     add(DetailsAction.CATCHUP)

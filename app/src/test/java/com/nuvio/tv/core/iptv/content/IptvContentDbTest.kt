@@ -37,8 +37,9 @@ class IptvContentDbTest {
             w.addVod(ContentVod(3, "Alien Romulus (2024)", "http://img/a.jpg", "MOVIES", "http://h/movie/u/p/3.mp4", "mp4"))
             w.addVod(ContentVod(4, "The Accountant (2025)", null, "MOVIES", "http://h/movie/u/p/4.mkv", "mkv"))
             // series: two episodes of one show grouped under a header (created on first sight)
-            w.addEpisode("SERIES", "The Grand Tour", 1, 1, "The Grand Tour S01E01", null, "http://h/series/u/p/10.mp4", "mp4")
-            w.addEpisode("SERIES", "The Grand Tour", 1, 2, "The Grand Tour S01E02", null, "http://h/series/u/p/11.mp4", "mp4")
+            val tour = ContentSeries(7, "The Grand Tour", null, "SERIES")
+            w.addEpisode(tour, ContentEpisode(7, "a1", 1, 1, "The Grand Tour S01E01", null, "http://h/series/u/p/10.mp4", "mp4"))
+            w.addEpisode(tour, ContentEpisode(7, "a2", 1, 2, "The Grand Tour S01E02", null, "http://h/series/u/p/11.mp4", "mp4"))
         }
     }
 

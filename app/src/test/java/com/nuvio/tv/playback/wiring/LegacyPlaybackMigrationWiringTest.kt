@@ -25,8 +25,9 @@ class LegacyPlaybackMigrationWiringTest {
             .map { it.name }
             .toSet()
 
-        // 71: upstream b7ba1278e added preloadNextEpisodeSources.
-        assertEquals(71, productionFields.size)
+        // 71: upstream b7ba1278e added preloadNextEpisodeSources. 72: rememberPlayerPreferences (F37).
+        // 73: liveBufferSeconds (F13).
+        assertEquals(73, productionFields.size)
         assertEquals(productionFields, LegacyPlayerSettingsSnapshotMapper.topLevelFieldNames)
         val mapped = LegacyPlayerSettingsSnapshotMapper.map(PlayerSettings(), "player-settings-v1")
         assertTrue(mapped.values.keys.containsAll(productionFields))

@@ -217,6 +217,11 @@ internal class AndroidMpvBackend(
                     plan.preInitOptions.forEach { (name, value) ->
                         if (!core.setOption(name, value)) throw IllegalStateException("Rejected mpv option: $name")
                     }
+                    // T6: without a font libass draws no subtitle at all (see MpvSubtitleFonts).
+                    // Best effort: a missing font never fails playback.
+                    ensureSubtitleFontsDir()?.let { dir ->
+                        MpvSubtitleFonts.options(dir.absolutePath).forEach { (name, value) -> core.setOption(name, value) }
+                    }
                     core.initialize()
                     // Legacy-proven re-assert (NuvioMpvSurfaceView:135): wrapper/init layers have
                     // historically overwritten idle post-init; idle is runtime-settable and a
@@ -744,6 +749,21 @@ internal class AndroidMpvBackend(
         else -> null
     }
 
+    /** The directory holding the bundled subtitle font, materialized once from the AAR's assets. */
+    private fun ensureSubtitleFontsDir(): File? = runCatching {
+        val directory = File(context.filesDir, MpvSubtitleFonts.DIRECTORY_NAME)
+        val font = File(directory, MpvSubtitleFonts.ASSET_NAME)
+        if (font.isFile && font.length() > 0L) return@runCatching directory
+        directory.mkdirs()
+        val temporary = File(directory, "${MpvSubtitleFonts.ASSET_NAME}.tmp")
+        context.assets.open(MpvSubtitleFonts.ASSET_NAME).use { input ->
+            temporary.outputStream().use(input::copyTo)
+        }
+        check(temporary.renameTo(font) || font.isFile) { "Unable to materialize the subtitle font" }
+        if (temporary.exists()) temporary.delete()
+        directory
+    }.getOrNull()
+
     private fun ensureTlsCaFile(): File {
         val destination = File(context.filesDir, "cacert.pem")
         if (destination.isFile && destination.length() > 0L) return destination
@@ -958,6 +978,9 @@ internal fun normalizeMpvError(raw: String?): PlaybackFailure {
         "timeout" in value -> Triple(FailureCode.NETWORK_TIMEOUT, FailureDomain.NETWORK, Retryability.RETRYABLE_WITH_FRESH_REQUEST)
         inferredStatus != null ->
             Triple(FailureCode.AUTHORIZATION_REJECTED, FailureDomain.AUTHORIZATION_PROVIDER_LIMIT, Retryability.FATAL)
+        // T10: "HTTP error 404 Not Found" is a missing stream, not an unreachable network.
+        MPV_HTTP_NOT_FOUND.containsMatchIn(value) ->
+            Triple(FailureCode.SOURCE_NOT_FOUND, FailureDomain.NETWORK, Retryability.FATAL)
         "tls" in value || "certificate" in value ->
             Triple(FailureCode.TLS_HANDSHAKE_FAILED, FailureDomain.TLS, Retryability.HANDOFF_ELIGIBLE)
         "network" in value || "resolve" in value || "connect" in value ->
@@ -976,6 +999,11 @@ internal fun normalizeMpvError(raw: String?): PlaybackFailure {
         },
     )
 }
+
+private val MPV_HTTP_NOT_FOUND = Regex(
+    "(?:http(?:\\s+(?:error|status))?|server\\s+returned|status\\s+code)\\s*[:=]?\\s*404\\b|\\b404\\s+not\\s+found\\b",
+    RegexOption.IGNORE_CASE,
+)
 
 private val MPV_HTTP_AUTHORIZATION = Regex(
     "(?:http(?:\\s+(?:error|status))?|server\\s+returned|status\\s+code)\\s*[:=]?\\s*(401|403)\\b|\\b(401\\s+unauthorized|403\\s+forbidden)\\b",

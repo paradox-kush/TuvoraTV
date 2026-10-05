@@ -38,7 +38,7 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /** A category entry in the guide's left column. [special] marks the synthetic ones. */
-enum class GuideSpecial { SEARCH, FAVORITES, RECENT, ALL, GROUP }
+enum class GuideSpecial { SEARCH, FAVORITES, RECENT, ALL, GROUP, ALL_FAVORITES }
 data class GuideCategory(val id: String, val name: String, val special: GuideSpecial? = null)
 
 /** One channel row in the guide. [categoryId] is null for synthetic rows (Favorites/Recent
@@ -66,6 +66,20 @@ internal object GuideRapidZapPolicy {
         require(channelCount > 0)
         val delta = if (direction == com.nuvio.tv.playback.live.LiveZapDirection.NEXT) 1 else -1
         return Math.floorMod(currentIndex + delta, channelCount)
+    }
+}
+
+/**
+ * T4 (W2 device pass): the channels a zap (UP/DOWN, CH+/CH-, LAST, the fullscreen channel list) may
+ * land on. A guide list is normally one playlist's, but F03's "All favorites" mixes every playlist's
+ * favourites; walking it zapped into another playlist's channel, which this guide's playback lineup
+ * does not hold. Zapping stays inside the playing playlist — the published lineup is that playlist's.
+ */
+internal object GuideZapLineupPolicy {
+    fun <T> zappable(channels: List<T>, accountId: String?, contentIdOf: (T) -> String): List<T> {
+        accountId ?: return channels
+        val prefix = XtreamItemRegistry.accountPrefix(accountId)
+        return channels.filter { contentIdOf(it).startsWith(prefix) }
     }
 }
 
@@ -118,9 +132,18 @@ data class LiveGuideUiState(
     val replayLaunch: ReplayLaunch? = null,
     /** UX36/UX73: the confirmation (with Undo) for the hide just made; null when none is showing. */
     val hideNotice: GuideHideUndoPolicy.Notice? = null,
+    /** F03: the confirmation (with Undo) for the favourite toggle just made. */
+    val favoriteNotice: FavoriteNotice? = null,
+    /** F03: an All-favorites channel of ANOTHER playlist was chosen — the host switches the guide to it. */
+    val switchAccountRequest: String? = null,
+    /** F03: tune this channel once it is in the list (after such a switch). */
+    val pendingTune: String? = null,
 ) {
     val focusedChannel: GuideChannel? get() = channels.firstOrNull { it.contentId == focusedChannelId }
 }
+
+/** F03: "“X” added to / removed from Favorites", with Undo (the toggle back). */
+data class FavoriteNotice(val channel: GuideChannel, val added: Boolean)
 
 /** Immutable authority carried by account-scoped guide work across suspension points. */
 internal data class LiveGuideAccountCommitToken(
@@ -176,6 +199,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
+    private val accountStore: com.nuvio.tv.data.local.XtreamAccountStore,
 ) : ViewModel() {
 
     /**
@@ -274,6 +298,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
     // Caches so revisiting an account/category is instant (no spinner flash, no re-fetch).
     private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> RAW provider cats (overlay applied at display)
     private val channelsCache = mutableMapOf<String, List<GuideChannel>>()      // "accountId|categoryId"
+    // B120: catalog twins of Favourites/Recent rows (content id -> real row; a handful, not the catalog),
+    // and the accounts whose lineup was already fetched once to find them.
+    private val syntheticTwins = HashMap<String, GuideChannel>()
+    private val syntheticLineupTried = HashSet<String>()
 
     /**
      * Turns the raw provider channel list into what the user sees: the personalization overlay
@@ -291,6 +319,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     private fun displayChannels(accountId: String?, channels: List<GuideChannel>, isAllView: Boolean): List<GuideChannel> {
         lastRawChannels = channels; lastOverlayAccountId = accountId; lastAllChannelsView = isAllView
+        // F10: cleaned names when the user opted in for this playlist — before the overlay, so an
+        // explicit rename still wins. The raw list above stays raw (identity is computed from it).
+        val cleanFor = account?.takeIf { it.id == accountId && it.cleanChannelNames }
+        @Suppress("NAME_SHADOWING")
+        val channels = if (cleanFor == null) channels else channels.map { it.copy(name = cleanFor.displayChannelName(it.name)) }
         return try {
             val overlay = overlayRepository.uiState.value.channels
             val displayed = if (isAllView) {
@@ -340,6 +373,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
         lastRawCategories = rawCats; lastCategoryAccountId = accountId
         val specials = listOf(
             GuideCategory(SEARCH_ID, "Search", GuideSpecial.SEARCH),
+            // F03 (owner 2026-10-04): the favourites of EVERY playlist, in the synced order.
+            GuideCategory(ALL_FAVORITES_ID, "All favorites", GuideSpecial.ALL_FAVORITES),
             GuideCategory("__fav", "Favorites", GuideSpecial.FAVORITES),
             GuideCategory("__recent", "Recent", GuideSpecial.RECENT),
             GuideCategory(ALL_ID, "All channels", GuideSpecial.ALL),
@@ -557,8 +592,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             _uiState.update { it.copy(categories = visible) }
             selectCategoryFor(
                 acc = acc,
-                categoryId = visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
-                    ?: visible.firstOrNull()?.id,
+                categoryId = defaultCategoryId(visible),
                 force = false,
                 token = accountToken,
             )
@@ -577,13 +611,18 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // Default to "All channels" so the guide isn't empty for a fresh account.
             selectCategoryFor(
                 acc = acc,
-                categoryId = visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
-                    ?: visible.firstOrNull()?.id,
+                categoryId = defaultCategoryId(visible),
                 force = false,
                 token = accountToken,
             )
         }
     }
+
+    /** "All channels" — or All favorites while a cross-playlist favourite waits to be tuned (F03). */
+    private fun defaultCategoryId(visible: List<GuideCategory>): String? =
+        (if (_uiState.value.pendingTune != null) visible.firstOrNull { it.special == GuideSpecial.ALL_FAVORITES } else null)?.id
+            ?: visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
+            ?: visible.firstOrNull()?.id
 
     /** Category selections hide deselected provider categories; the synthetic ones
      *  (Favorites/Recent/All channels) are always shown. */
@@ -628,13 +667,21 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // null = the panel request FAILED (these panels throw transient 403/500s and
             // rate-limit bursts) — retry once, then surface an error instead of faking "empty".
             val rawChannels: List<GuideChannel>? = when (category.special) {
-                GuideSpecial.FAVORITES -> favoriteChannels(acc)
+                // P6: saved rows carry their stored name — cleaned like the playlist's own rows.
+                GuideSpecial.FAVORITES -> withCatalogIdentity(acc, favoriteChannels(acc)).withSavedDisplayNames(listOf(acc))
+                // F03 spans every playlist; B120's catalog identity only resolves this playlist's rows.
+                // P6: each row is cleaned with ITS playlist's setting.
+                GuideSpecial.ALL_FAVORITES -> withOwnCatalogIdentity(acc, favoriteChannels(null))
+                    .withSavedDisplayNames(accountStore.accounts.first())
                 // Scoped to THIS account: the store keeps one flat profile-wide list (favorites
                 // and recents across every playlist), and these rails live inside a provider's
                 // guide — the auto-resume above already filters the same way.
-                GuideSpecial.RECENT -> liveStore.recents.first()
-                    .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
-                    .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) }
+                GuideSpecial.RECENT -> withCatalogIdentity(
+                    acc,
+                    liveStore.recents.first()
+                        .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
+                        .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) },
+                ).withSavedDisplayNames(listOf(acc))
                 // "All channels" honors the category selections too. NOTE: no cap here — the cap is
                 // applied by displayChannels(isAllView = true) AFTER the overlay floats pins, so a
                 // channel pinned past ALL_CAP survives (the "web pin never shows on TV" bug). rawChannels
@@ -656,7 +703,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // ALL_CAP after the pins float — BEFORE publishing, so the playback lineup and the guide
             // agree and EPG is primed only for what's shown.
             val isAllView = category.special == GuideSpecial.ALL
-            val channels = if (category.special == GuideSpecial.SEARCH || category.special == GuideSpecial.GROUP) {
+            // F03: the favourites views keep the favourites order (the overlay's pin/reorder would
+            // scramble it), like Search and a custom group.
+            val keepsOwnOrder = category.special == GuideSpecial.SEARCH || category.special == GuideSpecial.GROUP ||
+                category.special == GuideSpecial.FAVORITES || category.special == GuideSpecial.ALL_FAVORITES
+            val channels = if (keepsOwnOrder) {
                 // Search results keep their ranking and a group its own order (the overlay's pin/reorder
                 // would scramble either); hidden
                 // rows were already dropped, so only the pin marker is stamped. Clearing lastRawChannels
@@ -691,11 +742,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
     ): Boolean {
         if (!isCurrentAccount(token) || token.accountId != accountId) return false
         val accountPrefix = XtreamItemRegistry.accountPrefix(accountId)
-        if (channels.any { !it.contentId.startsWith(accountPrefix) }) return false
+        // The zapping lineup is ONE playlist's. F03's All favorites lists other playlists' favourites
+        // too: those are left out of the lineup (choosing one switches the guide to its own playlist
+        // first — requestCrossTune), so the published lineup stays this playlist's alone.
+        val ownChannels = channels.filter { it.contentId.startsWith(accountPrefix) }
         val profileId = profileManager.activeProfileId.value.takeIf { it > 0 } ?: return false
         livePlaylist.set(
             profileId = PlaybackProfileId(profileId.toString()),
-            channels = channels.mapNotNull { channel ->
+            channels = ownChannels.mapNotNull { channel ->
                 XtreamLiveChannelIdentity.from(channel.contentId, channel.name, channel.logo)
             },
         )
@@ -758,18 +812,111 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** Moves the authoritative highlight synchronously and returns its exact stable identity. */
     fun moveChannelFocus(direction: com.nuvio.tv.playback.live.LiveZapDirection): ProviderSelectionId? {
         val state = _uiState.value
-        if (state.channels.isEmpty()) return null
-        val current = state.channels.indexOfFirst { it.contentId == state.focusedChannelId }
+        // T4: walk the playing playlist's own channels — All favorites lists other playlists' too.
+        val lineup = zapLineup()
+        if (lineup.isEmpty()) return null
+        val current = lineup.indexOfFirst { it.contentId == state.focusedChannelId }
             .takeIf { it >= 0 } ?: 0
-        val nextIndex = GuideRapidZapPolicy.advance(current, state.channels.size, direction)
-        val next = state.channels[nextIndex]
-        onChannelFocused(next, nextIndex)
+        val nextIndex = GuideRapidZapPolicy.advance(current, lineup.size, direction)
+        val next = lineup[nextIndex]
+        onChannelFocused(next, state.channels.indexOfFirst { it.contentId == next.contentId })
         return ProviderSelectionId(next.contentId)
     }
 
+    /** T4: the shown channels a zap may land on — this guide's playlist only ([GuideZapLineupPolicy]). */
+    fun zapLineup(): List<GuideChannel> =
+        GuideZapLineupPolicy.zappable(_uiState.value.channels, account?.id) { it.contentId }
+
+    /**
+     * F08: aim the guide at one channel of the current lineup (the channel list's pick, the zap-back
+     * jump) and return its exact identity for the playback owner. Null when it is not in the lineup —
+     * playback refuses channels outside the published lineup anyway.
+     */
+    fun focusChannel(contentId: String): ProviderSelectionId? {
+        val channels = _uiState.value.channels
+        val index = channels.indexOfFirst { it.contentId == contentId }
+        if (index < 0) return null
+        onChannelFocused(channels[index], index)
+        return ProviderSelectionId(contentId)
+    }
+
+    /**
+     * F03: MENU on a row — the small menu for a favourite or a pinned channel
+     * ([GuideChannelMenuPolicy]), or null: hide it straight away, as before.
+     */
+    fun channelMenu(channel: GuideChannel): List<GuideChannelMenuPolicy.Action>? {
+        val state = _uiState.value
+        val special = state.categories.firstOrNull { it.id == state.selectedCategoryId }?.special
+        val favouritesView = special == GuideSpecial.FAVORITES || special == GuideSpecial.ALL_FAVORITES
+        val list = if (favouritesView) state.channels else state.channels.filter { it.pinned }
+        return GuideChannelMenuPolicy.menu(special, channel.pinned, list.indexOfFirst { it.contentId == channel.contentId }, list.size)
+    }
+
+    /** F03: move a favourite (favourites order) or a pinned channel (pin positions) one step. */
+    fun moveChannel(channel: GuideChannel, delta: Int) {
+        val state = _uiState.value
+        val special = state.categories.firstOrNull { it.id == state.selectedCategoryId }?.special
+        if (special == GuideSpecial.FAVORITES || special == GuideSpecial.ALL_FAVORITES) {
+            viewModelScope.launch {
+                val addedAt = libraryRepository.libraryItems.first().associate { it.id to it.listedAt }
+                val ordered = com.nuvio.tv.core.iptv.LiveFavouritesOrder.ordered(
+                    state.channels.mapNotNull { ch -> addedAt[ch.contentId]?.let { com.nuvio.tv.core.iptv.LiveFavouritesOrder.Fav(ch.contentId, it) } },
+                )
+                val changes = com.nuvio.tv.core.iptv.LiveFavouritesOrder.nudge(ordered, channel.contentId, delta)
+                if (libraryRepository.setFavoritesOrder(changes) > 0) reloadSelected()
+            }
+            return
+        }
+        val pinned = state.channels.filter { it.pinned && it.entityId.isNotBlank() }.map { it.entityId }
+        val from = pinned.indexOf(channel.entityId)
+        if (from < 0) return
+        val writes = com.nuvio.tv.core.iptv.PinnedChannelOrder.move(pinned, channel.entityId, from + delta)
+        val playlistId = XtreamItemRegistry.parseId(channel.contentId)?.accountId ?: lastOverlayAccountId
+        overlayRepository.setChannelPositions(playlistId, writes)
+    }
+
+    /** Re-read the selected (dynamic) category — the favourites views are not cached. */
+    private fun reloadSelected() {
+        val acc = account ?: return
+        val token = accountCommitFence.capture(acc.id) ?: return
+        selectCategoryFor(acc, _uiState.value.selectedCategoryId, force = true, token = token)
+    }
+
+    /** F03: Undo on the favourite notice — the same toggle back. */
+    fun undoFavorite() {
+        val notice = _uiState.value.favoriteNotice ?: return
+        _uiState.update { it.copy(favoriteNotice = null) }
+        toggleFavorite(notice.channel, withNotice = false)
+    }
+
+    fun dismissFavoriteNotice(notice: FavoriteNotice) {
+        _uiState.update { if (it.favoriteNotice == notice) it.copy(favoriteNotice = null) else it }
+    }
+
+    /**
+     * F03: OK on an All-favorites channel of ANOTHER playlist: the guide (and its zapping lineup) is one
+     * playlist's, so ask the host to switch to that playlist, then tune the channel once it is listed.
+     * Returns false for a channel of this playlist (the caller tunes it as usual).
+     */
+    fun requestCrossTune(channel: GuideChannel): Boolean {
+        val acc = account ?: return false
+        val owner = XtreamItemRegistry.parseId(channel.contentId)?.accountId ?: return false
+        if (owner == acc.id) return false
+        _uiState.update { it.copy(switchAccountRequest = owner, pendingTune = channel.contentId) }
+        return true
+    }
+
+    fun consumeSwitchAccountRequest() = _uiState.update { it.copy(switchAccountRequest = null) }
+
+    fun consumePendingTune() = _uiState.update { it.copy(pendingTune = null) }
+
     /** Add/remove a channel from the platform Library (same store as movies). */
-    fun toggleFavorite(channel: GuideChannel) {
+    fun toggleFavorite(channel: GuideChannel) = toggleFavorite(channel, withNotice = true)
+
+    private fun toggleFavorite(channel: GuideChannel, withNotice: Boolean) {
         val adding = channel.contentId !in favoriteLiveIds.value
+        // F03 (owner 2026-10-04): confirmed with Undo, like a hide — not a confirmation popup.
+        if (withNotice) _uiState.update { it.copy(favoriteNotice = FavoriteNotice(channel, added = adding)) }
         viewModelScope.launch {
             libraryRepository.toggleDefault(
                 LibraryEntryInput(
@@ -826,15 +973,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 accountId = acc.id,
                 streamId = streamId,
                 nowMs = nowMs,
-                manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+                // F14: the user's own pick of guide channel for this channel, if any.
+                manual = com.nuvio.tv.core.iptv.EpgSourceLadder.ManualResolver { _, sid, _ ->
+                    runCatching { xmltv.manualNowNext(acc, sid, nowMs) }.getOrNull()?.map {
+                        XtreamProgram(it.title, it.desc.orEmpty(), it.startMs, it.endMs, nowPlaying = nowMs in it.startMs until it.endMs)
+                    }
+                },
                 // The account's own guide, ingested once into SQLite. Zero network per channel —
                 // this is the rung that makes a guide fling cost nothing. An account with no stored
-                // guide answers empty and the ladder falls through exactly as before.
+                // guide answers empty and the ladder falls through exactly as before. B10: joined by
+                // the ingest's channel map (provider id, then cleaned name), not the raw id alone.
                 store = {
                     runCatching {
-                        val epgId = matchIndex.liveEpgIdFor(acc.id, streamId)
-                        if (epgId.isNullOrBlank()) emptyList()
-                        else contentDb.epgNowNext(acc.id, epgId, nowMs).map {
+                        xmltv.storedNowNext(acc, streamId, nowMs).map {
                             XtreamProgram(
                                 title = it.title,
                                 description = it.desc.orEmpty(),
@@ -910,13 +1061,24 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * mobile has no ref on TV. The policy builds a row for EVERY live favourite from the library
      * entry's own name/logo (the ref is only an optional fast-path), fixing the empty Favorites row.
      */
-    private suspend fun favoriteChannels(acc: XtreamAccount): List<GuideChannel> {
-        val entries = libraryRepository.libraryItems.first().map {
+    /** P6 / F10: Favorites / Recent rows show the same cleaned names as the playlist's rows. */
+    private fun List<GuideChannel>?.withSavedDisplayNames(accounts: List<XtreamAccount>): List<GuideChannel>? =
+        this?.map { it.copy(name = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.savedChannelDisplayName(it.name, it.contentId, accounts)) }
+
+    private suspend fun favoriteChannels(acc: XtreamAccount?): List<GuideChannel> {
+        // F03: in the synced favourites order (newest first; reordering rewrites the synced added-at).
+        val library = libraryRepository.libraryItems.first()
+        val order = com.nuvio.tv.core.iptv.LiveFavouritesOrder.ordered(
+            library.map { com.nuvio.tv.core.iptv.LiveFavouritesOrder.Fav(it.id, it.listedAt) },
+        ).map { it.id }
+        val byId = library.associateBy { it.id }
+        val entries = order.mapNotNull { byId[it] }.map {
             com.nuvio.tv.core.iptv.LiveFavoritesRowPolicy.FavoriteEntry(it.id, it.name, it.logo)
         }
         return com.nuvio.tv.core.iptv.LiveFavoritesRowPolicy.rows(
             entries = entries,
-            accountPrefix = XtreamItemRegistry.accountPrefix(acc.id),
+            // null = All favorites: every playlist's.
+            accountPrefix = acc?.let { XtreamItemRegistry.accountPrefix(it.id) } ?: XtreamItemRegistry.PREFIX,
             localRef = { id ->
                 liveStore.refFor(id)?.let {
                     com.nuvio.tv.core.iptv.LiveFavoritesRowPolicy.LocalRef(it.name, it.logo, it.streamUrl)
@@ -924,6 +1086,45 @@ class XtreamLiveGuideViewModel @Inject constructor(
             },
             streamIdOf = ::streamIdOf,
         ).map { GuideChannel(it.contentId, it.name, it.logo, it.streamUrl, it.streamId) }
+    }
+
+    /**
+     * B120 / UX148: Favourites/Recent rows take the real channel's archive flag, archive window and
+     * overlay identity, so catch-up, time travel and MENU-hide work there as they do in the channel
+     * list. Looked up first in what this screen already holds (the twins found before, the last
+     * channel list — the full catalog when "All channels" was open — and the cached categories);
+     * only if a row is still unknown is the lineup fetched, once per account per guide session, and
+     * then dropped: only the handful of twins is kept.
+     */
+    /** [withCatalogIdentity] for this playlist's rows of a cross-playlist list; foreign rows pass through. */
+    private suspend fun withOwnCatalogIdentity(acc: XtreamAccount, rows: List<GuideChannel>): List<GuideChannel> {
+        val own = rows.filter { XtreamItemRegistry.parseId(it.contentId)?.accountId == acc.id }
+        if (own.isEmpty()) return rows
+        val resolved = withCatalogIdentity(acc, own).associateBy { it.contentId }
+        return rows.map { resolved[it.contentId] ?: it }
+    }
+
+    private suspend fun withCatalogIdentity(acc: XtreamAccount, rows: List<GuideChannel>): List<GuideChannel> {
+        if (rows.isEmpty()) return rows
+        val wanted = rows.mapTo(HashSet()) { it.contentId }
+        val cachePrefix = "${acc.id}|"
+        val inMemory = sequence {
+            yield(syntheticTwins.values.toList())
+            if (lastOverlayAccountId == acc.id) yield(lastRawChannels)
+            lineupPool?.takeIf { it.first == acc.id }?.let { yield(it.second) }
+            channelsCache.forEach { (key, list) -> if (key.startsWith(cachePrefix)) yield(list) }
+        }
+        syntheticTwins.putAll(GuideSyntheticRows.catalogMatches(wanted, inMemory))
+        var resolved = GuideSyntheticRows.withCatalogIdentity(rows) { syntheticTwins[it] }
+        if (GuideSyntheticRows.shouldFetchLineup(GuideSyntheticRows.unresolved(resolved), acc.id in syntheticLineupTried)) {
+            syntheticLineupTried += acc.id
+            val lineup = retryOnce { fetchChannels(acc, null) }
+            if (lineup != null) {
+                syntheticTwins.putAll(GuideSyntheticRows.catalogMatches(wanted, sequenceOf(lineup)))
+                resolved = GuideSyntheticRows.withCatalogIdentity(rows) { syntheticTwins[it] }
+            }
+        }
+        return resolved
     }
 
     /** Best-effort streamId from a live content id ("xtream:acc:live:<streamId>"). */
@@ -998,8 +1199,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 contentDb.epgWindow(acc.id, epgChannelKey(channel.streamId), fromMs, toMs)
             }.getOrDefault(emptyList())
             val store = if (table.isNotEmpty()) emptyList() else runCatching {
-                val epgId = matchIndex.liveEpgIdFor(acc.id, channel.streamId)
-                if (epgId.isNullOrBlank()) emptyList() else contentDb.epgWindow(acc.id, epgId, fromMs, toMs)
+                // B10/F14: the user's pick, else the ingest's match (provider id, then cleaned name).
+                xmltv.storedWindow(acc, channel.streamId, fromMs, toMs)
             }.getOrDefault(emptyList())
             val rows = GuideWindowRows.pick(table, store) ?: continue
             published[channel.streamId] = rows.map {
@@ -1085,6 +1286,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     fun startReplay(channel: GuideChannel, programme: XtreamProgram) {
         val acc = account ?: return
+        // Suspends only for the panel's clock pair (B117), memoized per session — usually free.
+        viewModelScope.launch { startReplayFor(acc, channel, programme) }
+    }
+
+    private suspend fun startReplayFor(acc: XtreamAccount, channel: GuideChannel, programme: XtreamProgram) {
         val nowMs = System.currentTimeMillis()
         val session = catchUp.begin(
             account = acc,
@@ -1136,6 +1342,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     companion object {
         private const val ALL_ID = "__all"
+        private const val ALL_FAVORITES_ID = "__allfav"
         const val SEARCH_ID = "__search"
         /** Enough to scan by eye with a D-pad; a longer list means the query should be narrower. */
         private const val SEARCH_CAP = 300

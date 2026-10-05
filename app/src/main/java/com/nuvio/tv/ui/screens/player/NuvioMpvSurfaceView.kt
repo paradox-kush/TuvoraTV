@@ -1,5 +1,12 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.aspectModeNeedsVideoAspect
+import com.nuvio.tv.core.picture.readViewAspectRatio
+import com.nuvio.tv.core.picture.resolveAspectScale
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.VideoZoomPolicy
+import com.nuvio.tv.core.picture.SubtitleStyleMpvMapping
 import android.app.ActivityManager
 import android.content.Context
 import android.os.SystemClock
@@ -73,6 +80,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     private fun ctl(block: () -> Unit) = controlQueue.submit(block)
     private var hardwareDecodeMode: MpvHardwareDecodeMode = MpvHardwareDecodeMode.AUTO_SAFE
     private var currentAspectMode: AspectMode = AspectMode.ORIGINAL
+    private var currentVideoZoom: VideoZoom = VideoZoom.IDENTITY
     private var pendingAspectRetryCount = 0
     private val aspectReapplyRunnable = Runnable {
         applyAspectModeInternal(currentAspectMode, allowRetry = true)
@@ -528,6 +536,13 @@ ctl {
         applyAspectModeInternal(mode, allowRetry = true)
     }
 
+    override fun applyVideoZoom(zoom: VideoZoom) {
+        val normalized = VideoZoomPolicy.normalize(zoom)
+        if (normalized == currentVideoZoom) return
+        currentVideoZoom = normalized
+        applyAspectModeInternal(currentAspectMode, allowRetry = false)
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w == oldw && h == oldh) return
@@ -549,8 +564,13 @@ ctl {
             viewAspect = viewAspect,
             videoAspect = videoAspect
         )
-        scaleX = scale.scaleX
-        scaleY = scale.scaleY
+        // F36: the manual zoom multiplies the aspect scale; the pan is a fraction of the on-screen
+        // picture (VideoZoomPolicy). View transforms, like the aspect modes: mpv itself is untouched.
+        val zoomed = VideoZoomPolicy.surfaceTransform(currentVideoZoom, width, height, scale.scaleX, scale.scaleY)
+        scaleX = zoomed.scaleX
+        scaleY = zoomed.scaleY
+        translationX = zoomed.translationX
+        translationY = zoomed.translationY
         if (
             allowRetry &&
             aspectModeNeedsVideoAspect(mode) &&
@@ -597,19 +617,22 @@ ctl {
                 isAssOrSsaSubtitleSelectedNow() -> style.outlineWidth.coerceIn(1, 6).toDouble()
                 else -> 1.0
             }
-            val backgroundAlpha = (style.backgroundColor ushr 24) and 0xFF
-            val borderStyle = if (backgroundAlpha > 0) "opaque-box" else "outline-and-shadow"
+            val backgroundAlpha = ((style.backgroundColor ushr 24) and 0xFF) / 255f
 
             mpv.setPropertyDouble("sub-scale", scale)
             mpv.setPropertyBoolean("sub-bold", style.bold)
-            mpv.setPropertyDouble("sub-outline-size", outlineSize)
             mpv.setPropertyDouble("sub-pos", subPos)
             mpv.setPropertyInt("sub-margin-y", subMarginY)
-            mpv.setPropertyDouble("sub-shadow-offset", 0.0)
-            mpv.setPropertyString("sub-border-style", borderStyle)
             mpv.setPropertyString("sub-color", toMpvColor(style.textColor))
-            mpv.setPropertyString("sub-back-color", toMpvColor(style.backgroundColor))
-            mpv.setPropertyString("sub-outline-color", toMpvColor(style.outlineColor))
+            // UX61/F47: background-box (alpha honoured — opaque-box painted the outline colour, so
+            // "dim" looked solid), outline, box padding and side padding from the shared mapping.
+            SubtitleStyleMpvMapping.properties(
+                backgroundColorHex = toMpvColor(style.backgroundColor),
+                backgroundAlpha = backgroundAlpha,
+                outlineColorHex = toMpvColor(style.outlineColor),
+                outlineSize = outlineSize,
+                sideMarginPercent = style.sideMarginPercent,
+            ).forEach { (name, value) -> mpv.setPropertyString(name, value) }
         }.onFailure {
             Log.w(TAG, "Failed to apply subtitle style on mpv: ${it.message}")
         }

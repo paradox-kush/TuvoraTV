@@ -13,5 +13,5 @@ internal object GuideEmptyStatePolicy {
 
     /** UX13: only the Favorites view gets the how-to; [special] is the selected category's kind. */
     fun kind(special: GuideSpecial?): Kind =
-        if (special == GuideSpecial.FAVORITES) Kind.FAVORITES_HINT else Kind.NO_CHANNELS
+        if (special == GuideSpecial.FAVORITES || special == GuideSpecial.ALL_FAVORITES) Kind.FAVORITES_HINT else Kind.NO_CHANNELS
 }

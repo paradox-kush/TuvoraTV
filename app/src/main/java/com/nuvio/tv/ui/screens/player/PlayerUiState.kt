@@ -1,5 +1,9 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.VideoZoomAxis
+import com.nuvio.tv.core.picture.PlayerPreferencePolicy
 import androidx.media3.common.C
 import androidx.media3.common.TrackGroup
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -225,6 +229,9 @@ data class PlayerUiState(
     // Aspect ratio / resize mode
     val resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
     val aspectMode: AspectMode = AspectMode.ORIGINAL,
+    /** F36 manual zoom on top of [aspectMode] (PlayerPreferencePolicy); per series when remembering. */
+    val videoZoom: VideoZoom = VideoZoom.IDENTITY,
+    val showVideoZoomPanel: Boolean = false,
     val tunneledSurfaceFill: Boolean = false,
     val tunnelingEnabled: Boolean = false,
     val showAspectRatioIndicator: Boolean = false,
@@ -358,6 +365,11 @@ sealed class PlayerEvent {
     data class OnSetSubtitleOutlineColor(val color: Int) : PlayerEvent()
     data class OnSetSubtitleVerticalOffset(val offset: Int) : PlayerEvent()
     data object OnResetSubtitleDefaults : PlayerEvent()
+    data class OnSetSubtitleSideMargin(val percent: Int) : PlayerEvent()
+    data object OnShowVideoZoomPanel : PlayerEvent()
+    data object OnDismissVideoZoomPanel : PlayerEvent()
+    data class OnAdjustVideoZoom(val axis: VideoZoomAxis, val steps: Int) : PlayerEvent()
+    data object OnResetVideoZoom : PlayerEvent()
     data object OnToggleAspectRatio : PlayerEvent()
     data object OnSwitchInternalPlayerEngine : PlayerEvent()
     data object OnShowStreamInfo : PlayerEvent()

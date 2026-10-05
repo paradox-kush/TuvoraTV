@@ -48,6 +48,47 @@ class AndroidMpvBackendTest {
             assertTrue("false positive for $raw", normalizeMpvError(raw).code != com.nuvio.tv.playback.core.FailureCode.AUTHORIZATION_REJECTED)
         }
     }
+    /**
+     * T6 (W2 device pass): with `config=no` libmpv finds no subtitle font (Android has no font
+     * provider), so subtitles never rendered in the clean player. The bundled font is handed over
+     * explicitly before init.
+     */
+    @Test
+    fun `the clean core gets the bundled subtitle font before init`() = runTest {
+        val core = FakeCore()
+        val files = File(System.getProperty("java.io.tmpdir"), "mpv-fonts-${System.nanoTime()}").apply { mkdirs() }
+        File(files, "cacert.pem").writeText("test-ca")
+        val assetManager = mockk<AssetManager> {
+            every { open("cacert.pem") } returns ByteArrayInputStream("test-ca".toByteArray())
+            every { open("subfont.ttf") } returns ByteArrayInputStream("font-bytes".toByteArray())
+        }
+        val context = mockk<Context>(relaxed = true) {
+            every { filesDir } returns files
+            every { assets } returns assetManager
+        }
+        val backend = AndroidMpvBackend(context, testPlan(), StandardTestDispatcher(testScheduler), core)
+
+        assertSuccess(backend.attachSurface(FakeLease()))
+
+        val fontsDir = File(files, "mpv-fonts")
+        assertEquals("font materialized", "font-bytes", File(fontsDir, "subfont.ttf").readText())
+        assertTrue("fonts dir option: ${core.options}", core.options.contains("sub-fonts-dir" to fontsDir.absolutePath))
+        assertTrue("bundled family: ${core.options}", core.options.contains("sub-font" to "Droid Sans Fallback"))
+    }
+
+    /** T10: mpv's "HTTP error 404 Not Found" is a missing stream, not an unreachable network. */
+    @Test
+    fun `mpv 404 is a missing stream`() {
+        listOf("HTTP error 404 Not Found", "server returned 404", "404 Not Found").forEach { raw ->
+            assertEquals(raw, com.nuvio.tv.playback.core.FailureCode.SOURCE_NOT_FOUND, normalizeMpvError(raw).code)
+        }
+        assertTrue(
+            "a stream id is not a status",
+            normalizeMpvError("https://example.test/live/404.ts failed to connect").code !=
+                com.nuvio.tv.playback.core.FailureCode.SOURCE_NOT_FOUND,
+        )
+    }
+
     @Test
     fun `hard abort after proven release does not terminate twice`() = runTest {
         val core = FakeCore()

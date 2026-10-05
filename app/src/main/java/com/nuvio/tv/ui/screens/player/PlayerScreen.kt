@@ -5,6 +5,11 @@
 
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.aspectModeAppliedToExoSurface
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.SubtitleSideMargin
+import com.nuvio.tv.ui.components.player.VideoZoomDialog
 import com.nuvio.tv.ui.theme.NuvioMotion
 
 import com.nuvio.tv.ui.theme.NuvioTheme
@@ -62,6 +67,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -115,6 +121,9 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
+import com.nuvio.tv.ui.components.player.ControlButton
+import com.nuvio.tv.ui.components.player.DialogButton
+import com.nuvio.tv.ui.components.player.rememberRawSvgPainter
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.LibassRenderType
 import com.nuvio.tv.data.local.SubtitleStyleSettings
@@ -757,6 +766,7 @@ fun PlayerScreen(
                 viewModel = viewModel,
                 keepScreenOn = keepScreenOnIntent,
                 aspectMode = uiState.aspectMode,
+                videoZoom = uiState.videoZoom,
                 subtitleStyle = uiState.subtitleStyle,
                 modifier = Modifier.fillMaxSize()
             )
@@ -767,6 +777,7 @@ fun PlayerScreen(
                     controller = viewModel.controller,
                     keepScreenOn = keepScreenOnIntent,
                     aspectMode = uiState.aspectMode,
+                    videoZoom = uiState.videoZoom,
                     tunnelingEnabled = uiState.tunnelingEnabled,
                     tunneledSurfaceFill = uiState.tunneledSurfaceFill,
                     useLibass = uiState.useLibass,
@@ -1065,6 +1076,7 @@ fun PlayerScreen(
                     Log.d("PlayerScreen", "onToggleAspectRatio called - dispatching event")
                     viewModel.onEvent(PlayerEvent.OnToggleAspectRatio)
                 },
+                onShowVideoZoom = { viewModel.onEvent(PlayerEvent.OnShowVideoZoomPanel) },
                 onSwitchPlayerEngine = { viewModel.onEvent(PlayerEvent.OnSwitchInternalPlayerEngine) },
                 onReportPlaybackIssue = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
                 onToggleMoreActions = {
@@ -1392,6 +1404,15 @@ fun PlayerScreen(
             )
         }
 
+        if (uiState.showVideoZoomPanel) {
+            VideoZoomDialog(
+                zoom = uiState.videoZoom,
+                onAdjust = { axis, steps -> viewModel.onEvent(PlayerEvent.OnAdjustVideoZoom(axis, steps)) },
+                onReset = { viewModel.onEvent(PlayerEvent.OnResetVideoZoom) },
+                onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissVideoZoomPanel) }
+            )
+        }
+
         if (uiState.showSpeedDialog) {
             SpeedSelectionDialog(
                 currentSpeed = uiState.playbackSpeed,
@@ -1407,6 +1428,7 @@ private fun MpvPlayerSurface(
     viewModel: PlayerViewModel,
     keepScreenOn: Boolean,
     aspectMode: AspectMode,
+    videoZoom: VideoZoom,
     subtitleStyle: SubtitleStyleSettings,
     modifier: Modifier = Modifier
 ) {
@@ -1448,6 +1470,10 @@ private fun MpvPlayerSurface(
         viewModel.applyMpvAspectMode(aspectMode)
     }
 
+    LaunchedEffect(mpvView, videoZoom) {
+        viewModel.applyMpvVideoZoom(videoZoom)
+    }
+
     LaunchedEffect(mpvView, subtitleStyle) {
         viewModel.applyMpvSubtitleStyle(subtitleStyle)
     }
@@ -1459,6 +1485,7 @@ private fun ExoPlayerSurface(
     controller: PlayerRuntimeController,
     keepScreenOn: Boolean,
     aspectMode: AspectMode,
+    videoZoom: VideoZoom,
     tunnelingEnabled: Boolean,
     tunneledSurfaceFill: Boolean,
     useLibass: Boolean,
@@ -1468,6 +1495,7 @@ private fun ExoPlayerSurface(
 ) {
     val context = LocalContext.current
     val latestAspectMode by rememberUpdatedState(aspectMode)
+    val latestVideoZoom by rememberUpdatedState(videoZoom)
     val latestTunnelingEnabled by rememberUpdatedState(tunnelingEnabled)
     val latestTunneledSurfaceFill by rememberUpdatedState(tunneledSurfaceFill)
     val latestSubtitleStyle by rememberUpdatedState(subtitleStyle)
@@ -1526,7 +1554,8 @@ private fun ExoPlayerSurface(
                     playerView.syncExoSurfaceLayout(
                         tunnelingEnabled = latestTunnelingEnabled,
                         tunneledSurfaceFill = latestTunneledSurfaceFill,
-                        aspectMode = latestAspectMode
+                        aspectMode = latestAspectMode,
+                        videoZoom = latestVideoZoom
                     )
                 }
             }
@@ -1536,7 +1565,8 @@ private fun ExoPlayerSurface(
                     playerView.syncExoSurfaceLayout(
                         tunnelingEnabled = latestTunnelingEnabled,
                         tunneledSurfaceFill = latestTunneledSurfaceFill,
-                        aspectMode = latestAspectMode
+                        aspectMode = latestAspectMode,
+                        videoZoom = latestVideoZoom
                     )
                 }
             }
@@ -1554,7 +1584,8 @@ private fun ExoPlayerSurface(
             playerView.syncExoSurfaceLayout(
                 tunnelingEnabled = latestTunnelingEnabled,
                 tunneledSurfaceFill = latestTunneledSurfaceFill,
-                aspectMode = latestAspectMode
+                aspectMode = latestAspectMode,
+                videoZoom = latestVideoZoom
             )
         }
         onDispose {
@@ -1568,7 +1599,8 @@ private fun ExoPlayerSurface(
                 playerView.syncExoSurfaceLayout(
                     tunnelingEnabled = latestTunnelingEnabled,
                     tunneledSurfaceFill = latestTunneledSurfaceFill,
-                    aspectMode = latestAspectMode
+                    aspectMode = latestAspectMode,
+                    videoZoom = latestVideoZoom
                 )
             }
         }
@@ -1584,11 +1616,12 @@ private fun ExoPlayerSurface(
         }
     }
 
-    LaunchedEffect(playerView, aspectMode, tunnelingEnabled, tunneledSurfaceFill) {
+    LaunchedEffect(playerView, aspectMode, videoZoom, tunnelingEnabled, tunneledSurfaceFill) {
         playerView.syncExoSurfaceLayout(
             tunnelingEnabled = tunnelingEnabled,
             tunneledSurfaceFill = tunneledSurfaceFill,
-            aspectMode = aspectMode
+            aspectMode = aspectMode,
+            videoZoom = videoZoom
         )
     }
 
@@ -1613,9 +1646,9 @@ internal fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
     }
 }
 
-private fun PlayerView.applyExoAspectMode(mode: AspectMode) {
+private fun PlayerView.applyExoAspectMode(mode: AspectMode, zoom: VideoZoom) {
     setTag(R.id.player_view_aspect_mode_tag, mode)
-    applyExoAspectMode(this, mode)
+    applyExoAspectMode(this, mode, zoom)
 }
 
 /**
@@ -1625,7 +1658,8 @@ private fun PlayerView.applyExoAspectMode(mode: AspectMode) {
 private fun PlayerView.syncExoSurfaceLayout(
     tunnelingEnabled: Boolean,
     tunneledSurfaceFill: Boolean,
-    aspectMode: AspectMode
+    aspectMode: AspectMode,
+    videoZoom: VideoZoom
 ) {
     val targetResizeMode = PlayerDisplayModeUtils.exoSurfaceResizeMode(
         tunnelingEnabled = tunnelingEnabled,
@@ -1634,7 +1668,11 @@ private fun PlayerView.syncExoSurfaceLayout(
     if (resizeMode != targetResizeMode) {
         resizeMode = targetResizeMode
     }
-    applyExoAspectMode(aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode))
+    // Tunneled video ignores view scale, so manual zoom is held at identity there too.
+    applyExoAspectMode(
+        aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode),
+        if (tunnelingEnabled) VideoZoom.IDENTITY else videoZoom
+    )
 }
 
 private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSettings) {
@@ -1667,10 +1705,13 @@ private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSe
         }
 
         setStyle(
+            // F47: the background is ONE box per cue (window colour, with inner horizontal padding
+            // from Media3 + SubtitleBoxPadding), like libmpv's background-box, not tight per-line
+            // strips. Media3 draws it with square corners (no corner-radius API).
             androidx.media3.ui.CaptionStyleCompat(
                 subtitleStyle.textColor,
-                subtitleStyle.backgroundColor,
                 android.graphics.Color.TRANSPARENT,
+                subtitleStyle.backgroundColor,
                 edgeType,
                 subtitleStyle.outlineColor,
                 typeface
@@ -1685,7 +1726,9 @@ private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSe
 
         post {
             val extraPadding = (height * (subtitleStyle.verticalOffset / 400f)).toInt().coerceAtLeast(0)
-            setPadding(paddingLeft, paddingTop, paddingRight, extraPadding)
+            // F47: side padding, a percent of the width on each side (SubtitleSideMargin).
+            val side = SubtitleSideMargin.paddingPx(width, subtitleStyle.sideMarginPercent)
+            setPadding(side, paddingTop, side, extraPadding)
         }
     }
 }
@@ -1772,6 +1815,7 @@ private fun PlayerControlsOverlay(
     onShowSubtitleDialog: () -> Unit,
     onShowSpeedDialog: () -> Unit,
     onToggleAspectRatio: () -> Unit,
+    onShowVideoZoom: () -> Unit,
     onSwitchPlayerEngine: () -> Unit,
     onReportPlaybackIssue: () -> Unit,
     onToggleMoreActions: () -> Unit,
@@ -2054,6 +2098,16 @@ private fun PlayerControlsOverlay(
                                 onFocused = onResetHideTimer
                             )
                             ControlButton(
+                                icon = Icons.Default.ZoomIn,
+                                contentDescription = stringResource(R.string.cd_manual_zoom),
+                                onClick = {
+                                    onShowVideoZoom()
+                                },
+                                upFocusRequester = progressBarFocusRequester,
+                                onDownKey = onHideControls,
+                                onFocused = onResetHideTimer
+                            )
+                            ControlButton(
                                 icon = Icons.AutoMirrored.Filled.OpenInNew,
                                 contentDescription = stringResource(R.string.cd_open_external_player),
                                 onClick = {
@@ -2192,84 +2246,6 @@ private fun ReportControlButton(
     }
 }
 
-@Composable
-private fun ControlButton(
-    icon: ImageVector,
-    iconPainter: Painter? = null,
-    contentDescription: String,
-    onClick: () -> Unit,
-    focusRequester: FocusRequester? = null,
-    upFocusRequester: FocusRequester? = null,
-    enabled: Boolean = true,
-    onDownKey: (() -> Unit)? = null,
-    onFocused: (() -> Unit)? = null
-) {
-    var isFocused by remember { mutableStateOf(false) }
-
-    IconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier
-            .size(NuvioTheme.spacing.xxxl)
-            .then(
-                if (focusRequester != null) Modifier.focusRequester(focusRequester)
-                else Modifier
-            )
-            .then(
-                if (upFocusRequester != null) {
-                    Modifier.focusProperties { up = upFocusRequester }
-                } else {
-                    Modifier
-                }
-            )
-            .onPreviewKeyEvent { keyEvent ->
-                if (
-                    upFocusRequester != null &&
-                    keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN &&
-                    keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_UP
-                ) {
-                    try {
-                        upFocusRequester.requestFocus()
-                    } catch (_: Exception) {}
-                    true
-                } else if (
-                    onDownKey != null &&
-                    keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN &&
-                    keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_DOWN
-                ) {
-                    onDownKey.invoke()
-                    true
-                } else {
-                    false
-                }
-            }
-            .onFocusChanged {
-                isFocused = it.isFocused
-                if (it.isFocused) onFocused?.invoke()
-            },
-        colors = IconButtonDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color.White,
-            contentColor = Color.White,
-            focusedContentColor = Color.Black
-        ),
-        shape = IconButtonDefaults.shape(shape = CircleShape)
-    ) {
-        if (iconPainter != null) {
-            Icon(
-                painter = iconPainter,
-                contentDescription = contentDescription,
-                modifier = Modifier.size(NuvioTheme.spacing.xl)
-            )
-        } else {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                modifier = Modifier.size(28.dp)
-            )
-        }
-    }
-}
 
 @Composable
 private fun ProgressBar(
@@ -2783,19 +2759,6 @@ private fun SubtitleDelayOverlay(
     }
 }
 
-@Composable
-private fun rememberRawSvgPainter(@RawRes iconRes: Int): Painter {
-    val context = LocalContext.current
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val sizePx = with(density) { NuvioTheme.spacing.xl.roundToPx() }
-    val request = remember(iconRes, context, sizePx) {
-        ImageRequest.Builder(context)
-            .data(iconRes)
-            .size(sizePx)
-            .build()
-    }
-    return rememberAsyncImagePainter(model = request)
-}
 
 @Composable
 private fun StartOverAction(
@@ -3175,41 +3138,6 @@ private fun SpeedItem(
     }
 }
 
-@Composable
-internal fun DialogButton(
-    text: String,
-    onClick: () -> Unit,
-    isPrimary: Boolean,
-    enabled: Boolean = true,
-    modifier: Modifier = Modifier
-) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier,
-        colors = ButtonDefaults.colors(
-            containerColor = if (isPrimary) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundCard,
-            contentColor = if (isPrimary) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextSecondary,
-            focusedContainerColor = if (isPrimary) NuvioTheme.colors.SecondaryVariant else NuvioTheme.colors.FocusBackground,
-            focusedContentColor = if (isPrimary) NuvioTheme.colors.OnSecondaryVariant else NuvioTheme.colors.Primary
-        ),
-        border = ButtonDefaults.border(
-            focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, if (isPrimary) NuvioTheme.colors.SecondaryVariant else NuvioTheme.colors.FocusRing),
-                shape = RoundedCornerShape(NuvioTheme.radii.md)
-            )
-        ),
-        shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md)),
-        scale = ButtonDefaults.scale(focusedScale = 1f)
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
 
 private fun formatTime(millis: Long): String {
     if (millis <= 0) return "0:00"

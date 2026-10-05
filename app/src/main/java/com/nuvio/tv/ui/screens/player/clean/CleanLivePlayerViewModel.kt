@@ -1,5 +1,9 @@
 package com.nuvio.tv.ui.screens.player.clean
 
+import com.nuvio.tv.core.picture.LivePicturePort
+import com.nuvio.tv.core.picture.PictureChoice
+import com.nuvio.tv.data.local.LivePicturePreferences
+import com.nuvio.tv.ui.screens.player.clean.live.LivePictureFollower
 import android.app.Activity
 import android.content.Context
 import android.widget.FrameLayout
@@ -7,6 +11,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.host.AndroidCleanLiveHostFactory
@@ -115,6 +120,7 @@ internal class CleanLivePlayerViewModel private constructor(
     ownerDispatcher: CoroutineDispatcher,
     private val releaseRetryWait: CleanLiveReleaseRetryWait,
     private val zapSettleWait: CleanLiveZapSettleWait,
+    picturePort: LivePicturePort,
 ) : ViewModel() {
     @Inject
     internal constructor(
@@ -124,6 +130,7 @@ internal class CleanLivePlayerViewModel private constructor(
         hostFactory: AndroidCleanLiveHostFactory,
         liveNavigation: LiveChannelNavigationPort,
         playedHistory: LivePlayedHistoryPort,
+        livePicture: LivePicturePreferences,
     ) : this(
         appContext = context.applicationContext,
         launchConsumer = CleanLiveDestinationLaunchConsumer(launchStore::consume),
@@ -134,6 +141,7 @@ internal class CleanLivePlayerViewModel private constructor(
         ownerDispatcher = Dispatchers.Main.immediate,
         releaseRetryWait = CleanLiveReleaseRetryWait { delay(it) },
         zapSettleWait = CleanLiveZapSettleWait { delay(LiveZapSettlePolicy.SETTLE_MS) },
+        picturePort = livePicture,
     )
 
     internal constructor(
@@ -148,6 +156,7 @@ internal class CleanLivePlayerViewModel private constructor(
         ownerDispatcher: CoroutineDispatcher,
         releaseRetryWait: CleanLiveReleaseRetryWait = CleanLiveReleaseRetryWait {},
         zapSettleWait: CleanLiveZapSettleWait = CleanLiveZapSettleWait {},
+        picturePort: LivePicturePort = LivePicturePort.Unremembered,
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
     ) : this(
         appContext = context.applicationContext,
@@ -159,6 +168,7 @@ internal class CleanLivePlayerViewModel private constructor(
         ownerDispatcher = ownerDispatcher,
         releaseRetryWait = releaseRetryWait,
         zapSettleWait = zapSettleWait,
+        picturePort = picturePort,
     )
 
     private val ownerJob = SupervisorJob()
@@ -170,6 +180,19 @@ internal class CleanLivePlayerViewModel private constructor(
         MutableStateFlow<CleanLivePlayerRouteState>(CleanLivePlayerRouteState.Initializing)
 
     val routeState: StateFlow<CleanLivePlayerRouteState> = mutableRouteState.asStateFlow()
+
+    // F28: the picture (aspect + manual zoom) follows the channel on screen, per channel.
+    private val pictureFollower = LivePictureFollower(picturePort, ownerScope)
+    val picture: StateFlow<PictureChoice> = pictureFollower.picture
+
+    /** F28: change the picture of the channel on screen (aspect cycle, zoom step, reset). */
+    fun requestPictureChange(update: (PictureChoice) -> PictureChoice) {
+        pictureFollower.change(update) { choice -> command { it.applyPicture(choice.aspectMode, choice.zoom) } }
+    }
+
+    private fun followPicture(channelId: String) {
+        pictureFollower.follow(channelId) { choice -> command { it.applyPicture(choice.aspectMode, choice.zoom) } }
+    }
 
     private var initialized = false
     private var releaseCompleted = false
@@ -304,12 +327,19 @@ internal class CleanLivePlayerViewModel private constructor(
             boundProfileId = launch.playbackProfileId(),
             generation = acceptedGeneration,
         )
+        followPicture(launch.target.contentId.value)
         publishReady(created, launch.metadata, launch.origin)
     }
 
     suspend fun pause() = command { it.pause() }
     suspend fun resume() = command { it.resume() }
     suspend fun retry() = command { it.retry() }
+
+    /** F28: the live overlay's audio/subtitle pickers. Null subtitle = Off. */
+    suspend fun selectAudioTrack(trackId: PlaybackTrackId) = command { it.selectAudioTrack(trackId) }
+    suspend fun selectSubtitleTrack(trackId: PlaybackTrackId?) = command {
+        if (trackId == null) it.disableSubtitles() else it.selectSubtitleTrack(trackId)
+    }
 
     /**
      * Remote presses accumulate as signed steps behind one ViewModel-owned settled worker; the
@@ -427,6 +457,7 @@ internal class CleanLivePlayerViewModel private constructor(
 
             activeLaunch = nextLaunch
             activeMetadata = nextMediaMetadata
+            followPicture(target.contentId.value)
             pendingPlayed = LivePlayedIdentity(
                 target = target,
                 boundProfileId = nextLaunch.playbackProfileId(),

@@ -289,7 +289,7 @@ class XtreamHubViewModel @Inject constructor(
         // Cache hit: restore categories + their already-loaded items instantly (no spinner, no re-fetch).
         // The cache keeps the UNFILTERED list; category selections filter at display time.
         categoriesCache[catKey]?.let { cached ->
-            val visible = cached.filter { acc.allowsCategory(section.typeKey, it.id) }
+            val visible = cached.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
             val items = visible.mapNotNull { c -> itemsCache["$catKey|${c.id}"]?.let { c.id to it } }.toMap()
             _uiState.update { it.copy(categories = visible, itemsByCategory = items, loading = false, error = null) }
             return
@@ -305,7 +305,7 @@ class XtreamHubViewModel @Inject constructor(
                 }.getOrDefault(emptyList())
                 if (stored.isNotEmpty()) {
                     categoriesCache[catKey] = stored
-                    val visible = stored.filter { acc.allowsCategory(section.typeKey, it.id) }
+                    val visible = stored.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
                     _uiState.update { it.copy(categories = visible, loading = false) }
                     return@launch
                 }
@@ -319,7 +319,7 @@ class XtreamHubViewModel @Inject constructor(
             result
                 .onSuccess { cats ->
                     categoriesCache[catKey] = cats
-                    val visible = cats.filter { acc.allowsCategory(section.typeKey, it.id) }
+                    val visible = cats.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
                     _uiState.update { it.copy(categories = visible, loading = false) }
                 }
                 .onFailure { e ->

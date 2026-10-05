@@ -46,6 +46,7 @@ internal fun PlayerRuntimeController.attachMpvView(view: MpvSurface?) {
         view.applySubtitleStyle(_uiState.value.subtitleStyle)
         view.setSubtitleDelayMs(_uiState.value.subtitleDelayMs)
         view.applyAspectMode(_uiState.value.aspectMode)
+        view.applyVideoZoom(_uiState.value.videoZoom)
         view.setPaused(false)
         applyPendingMpvSeekIfNeeded(view)
         hasRenderedFirstFrame = false
@@ -154,6 +155,7 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
         view.applySubtitleStyle(_uiState.value.subtitleStyle)
         view.setSubtitleDelayMs(_uiState.value.subtitleDelayMs)
         view.applyAspectMode(_uiState.value.aspectMode)
+        view.applyVideoZoom(_uiState.value.videoZoom)
         view.setPaused(false)
         applyPendingMpvSeekIfNeeded(view)
 
