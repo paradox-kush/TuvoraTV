@@ -310,6 +310,19 @@ class WatchedItemsPreferences @Inject constructor(
         }
     }
 
+    /** B64: re-keys [profileId]'s watched marks in place ([rewrite] = replacement, or null to keep). */
+    suspend fun rewriteItems(profileId: Int, rewrite: (WatchedItem) -> WatchedItem?) {
+        store(profileId).edit { preferences ->
+            val current = preferences[watchedItemsKey] ?: return@edit
+            var changed = false
+            val updated = current.map { json ->
+                val item = runCatching { gson.fromJson(json, WatchedItem::class.java) }.getOrNull() ?: return@map json
+                rewrite(item)?.let { changed = true; gson.toJson(it) } ?: json
+            }.toSet()
+            if (changed) preferences[watchedItemsKey] = updated
+        }
+    }
+
     suspend fun clearAll(profileId: Int = profileManager.activeProfileId.value) {
         store(profileId).edit { preferences ->
             preferences.remove(watchedItemsKey)

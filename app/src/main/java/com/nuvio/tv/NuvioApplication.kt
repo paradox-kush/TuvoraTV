@@ -71,6 +71,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver
     @Inject lateinit var xtreamTmdbResolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
     @Inject lateinit var realtimeSyncInvalidationService: RealtimeSyncInvalidationService
+    @Inject lateinit var m3uIdRekeyer: com.nuvio.tv.core.iptv.M3uIdRekeyer
     @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
     @Inject lateinit var imagePerformancePreferences: ImagePerformancePreferences
     @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
@@ -214,6 +215,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         }
         // Keep the IPTV auto-refresh worker scheduled to the shortest enabled playlist interval.
         iptvRefreshScheduler.start()
+        // B64: moves saved M3U refs onto the login-free ids once each catalog is rebuilt under them.
+        runCatching { m3uIdRekeyer.start() }
         // Warm the Xtream match indexes off the critical path so the first play/search
         // doesn't pay the full-catalog download (minutes on budget boxes).
         xtreamTmdbResolver.warmUpAll()

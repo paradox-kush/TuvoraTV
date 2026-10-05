@@ -58,6 +58,11 @@ class M3UClient @Inject constructor(
     private val inFlight = mutableMapOf<String, CompletableDeferred<Unit>>()
     private val lastFailedMs = mutableMapOf<String, Long>()
 
+    private val _catalogRebuilt = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 16)
+
+    /** B64: emits a playlist id after its catalog was (re)built under the current item ids. */
+    val catalogRebuilt: kotlinx.coroutines.flow.SharedFlow<String> = _catalogRebuilt
+
     // Ingest outlives the browse request that triggered it (a 192MB parse takes a while and the
     // user navigates); a cancelled request must not kill (and backoff-poison) the ingest.
     private val ingestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -72,7 +77,10 @@ class M3UClient @Inject constructor(
         val id = acc.id
         val builtAt = db.builtAt(id)
         val stale = builtAt == null ||
-            (acc.autoRefreshHours > 0 && System.currentTimeMillis() - builtAt > acc.autoRefreshHours * 3_600_000L)
+            (acc.autoRefreshHours > 0 && System.currentTimeMillis() - builtAt > acc.autoRefreshHours * 3_600_000L) ||
+            // B64: a catalog built under the pre-B64 ids rebuilds once (its legacy ids are kept first) —
+            // when it can: a file playlist whose local copy is gone keeps serving what it has.
+            (db.idScheme(id) < M3U_ID_SCHEME && (!acc.isM3UFile() || fileStore.exists(id)))
         if (!force && !stale) return
 
         val (deferred, isOwner) = ingestLock.withLock {
@@ -108,7 +116,18 @@ class M3UClient @Inject constructor(
      * EPG (throttled) so M3U live channels get real now/next.
      */
     private suspend fun ingest(acc: XtreamAccount) = withContext(Dispatchers.IO) {
-        if (acc.isM3UFile()) ingestFromFile(acc) else ingestFromUrl(acc)
+        // B64: before the first login-free build replaces a pre-B64 catalog, keep where its ids move —
+        // the old ordinal ids exist nowhere else (M3uLegacyIds). Re-captured on a retry; harmless.
+        val sourceReady = !acc.isM3UFile() || fileStore.exists(acc.id)
+        if (sourceReady && db.builtAt(acc.id) != null && db.idScheme(acc.id) < M3U_ID_SCHEME) {
+            val kept = db.captureLegacyIds(acc.id, if (acc.isM3UFile()) null else M3uIdentity.loginOf(acc.baseUrl))
+            Log.i(TAG, "B64: kept $kept legacy id moves for ${acc.name}")
+        }
+        val built = if (acc.isM3UFile()) ingestFromFile(acc) else { ingestFromUrl(acc); true }
+        if (built) {
+            db.setIdScheme(acc.id, M3U_ID_SCHEME)
+            _catalogRebuilt.tryEmit(acc.id)
+        }
         // Piggyback an EPG refresh on the catalog ingest. NOT forced — a fresh add has no EPG yet so
         // it fetches, but a frequent catalog auto-refresh (e.g. every 6h) won't blow past the ~2×/day
         // EPG cap (refreshIfStale throttles). A catalog re-ingest resets epg_built_at (finish writes
@@ -180,17 +199,18 @@ class M3UClient @Inject constructor(
      * synced), skip cleanly: leave any prior catalog intact and let the hub show the re-import
      * affordance (builtAt stays as-is). Gzip-aware (.gz exports) via magic-byte sniffing.
      */
-    private suspend fun ingestFromFile(acc: XtreamAccount) {
+    private suspend fun ingestFromFile(acc: XtreamAccount): Boolean {
         val file = fileStore.fileFor(acc.id)
         if (!file.exists() || file.length() == 0L) {
             Log.w(TAG, "M3U file missing for ${acc.name} (${acc.fileName}) — needs re-import on this device")
-            return
+            return false
         }
         openMaybeGzip(file.inputStream()).use { stream ->
             val reader = stream.bufferedReader(Charsets.UTF_8)
             val writer = db.ingest(acc.id) { w -> parseInto(reader, w, null) }
             Log.i(TAG, "ingested M3U (file) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
         }
+        return true
     }
 
     /** Wrap a raw file stream in a GZIPInputStream when it starts with the gzip magic (0x1f 0x8b),
@@ -210,9 +230,9 @@ class M3UClient @Inject constructor(
     private fun parseInto(reader: BufferedReader, w: IptvContentDb.IngestWriter, login: M3uIdentity.Login?) {
         M3UParser.parseStream(reader, onHeaderTvgUrl = { w.setTvgUrl(it) }) { entry ->
             when (val row = M3uIngestMapping.map(entry, login)) {
-                is M3uIngestRow.Channel -> w.addChannel(row.row, entry.group)
-                is M3uIngestRow.Movie -> w.addVod(row.row, entry.group)
-                is M3uIngestRow.Episode -> w.addEpisode(row.series, row.row, entry.group)
+                is M3uIngestRow.Channel -> w.addChannel(row.row, M3uIngestMapping.categoryName(entry.group))
+                is M3uIngestRow.Movie -> w.addVod(row.row, M3uIngestMapping.categoryName(entry.group))
+                is M3uIngestRow.Episode -> w.addEpisode(row.series, row.row, M3uIngestMapping.categoryName(entry.group))
             }
         }
     }
@@ -316,6 +336,8 @@ class M3UClient @Inject constructor(
     )
 
     companion object {
+        /** B64: the item-id scheme this build writes (1 = pre-B64 ordinals; 2 = login-free + shared series). */
+        const val M3U_ID_SCHEME = 2
         private const val TAG = "M3UClient"
         private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
         /** The M3U validation probe reads at most this much (Step 0.3b). */

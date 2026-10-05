@@ -88,4 +88,12 @@ class XtreamCategoryFilterTest {
         // disabled content type -> never searched, selection irrelevant
         assertFalse(account(types = setOf(XtreamAccount.TYPE_LIVE)).searchIncludesType(XtreamAccount.TYPE_MOVIES))
     }
+
+    @Test
+    fun `a pre-B64 selection matches M3U categories by name where the name is known`() {
+        val acc = account(CategorySelections(live = listOf("UK NEWS")))
+        assertTrue(acc.allowsCategory(XtreamAccount.TYPE_LIVE, "182736455", "UK NEWS"))
+        assertFalse(acc.allowsCategory(XtreamAccount.TYPE_LIVE, "99", "US NEWS"))
+        assertFalse("name unknown: id only", acc.allowsCategory(XtreamAccount.TYPE_LIVE, "182736455"))
+    }
 }

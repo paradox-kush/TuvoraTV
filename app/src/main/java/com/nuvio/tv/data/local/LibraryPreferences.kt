@@ -194,6 +194,32 @@ class LibraryPreferences @Inject constructor(
         }
     }
 
+    /**
+     * B64: re-keys saved items of the active profile in place — [rewrite] returns an item's
+     * replacement, or null to leave it. Each move is a sync-reducer delete of the old id + upsert of
+     * the replacement (queued for push), exactly as [migrateIdPrefix]. Returns how many moved.
+     */
+    suspend fun rekeyItems(rewrite: (SavedLibraryItem) -> SavedLibraryItem?): Int {
+        var moved = 0
+        store().edit { preferences ->
+            var state = preferences.toLibrarySyncState()
+            val changes = state.items.mapNotNull { item -> rewrite(item)?.let { item to it } }
+            if (changes.isEmpty()) return@edit
+            val now = System.currentTimeMillis()
+            changes.forEach { (old, _) ->
+                state = LibrarySyncReducer.deleteLocal(state = state, contentId = old.id, contentType = old.type)
+            }
+            changes.forEach { (_, new) ->
+                if (state.items.none { it.id == new.id && it.type == new.type }) {
+                    state = LibrarySyncReducer.upsertLocal(state = state, item = new, nowEpochMs = now)
+                }
+            }
+            preferences.writeLibrarySyncState(state)
+            moved = changes.size
+        }
+        return moved
+    }
+
     override suspend fun applyRemoteSnapshot(
         profileId: Int,
         remoteItems: Collection<SavedLibraryItem>,

@@ -177,10 +177,14 @@ data class XtreamAccount(
             stbModel == other.stbModel &&
             hwVersion == other.hwVersion
 
-    /** Category filter: null selection = all (incl. future); empty = none; list = only those ids. */
-    fun allowsCategory(type: String, categoryId: String?): Boolean {
+    /**
+     * Category filter: null selection = all (incl. future); empty = none; list = only those ids. B64
+     * transition: a selection written before B64 names M3U categories by their raw group NAME (TV's old
+     * category id), so where the caller knows the category's [categoryName] it matches too.
+     */
+    fun allowsCategory(type: String, categoryId: String?, categoryName: String? = null): Boolean {
         val selection = categorySelections.forType(type) ?: return true
-        return categoryId != null && categoryId in selection
+        return (categoryId != null && categoryId in selection) || (categoryName != null && categoryName in selection)
     }
 
     companion object {

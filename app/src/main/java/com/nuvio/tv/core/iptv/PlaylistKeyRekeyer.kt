@@ -36,6 +36,7 @@ class PlaylistKeyRekeyer @Inject constructor(
     private val fileStore: M3UFileStore,
     private val purge: IptvAccountPurge,
     private val watchState: WatchStatePrefixMover,
+    private val m3uIds: dagger.Lazy<M3uIdRekeyer>,
 ) {
     /** Resolves [pulled] against [profileId]'s stored playlists and executes every re-key it decides. */
     suspend fun adoptFromPull(profileId: Int, pulled: List<PulledPlaylist>): PlaylistKeyAdoption.Result {
@@ -52,6 +53,8 @@ class PlaylistKeyRekeyer @Inject constructor(
         for (rekey in rekeys) {
             step("saved data") { queuedWatchSync = rekeySavedData(rekey, profileId) || queuedWatchSync }
             step("file copy") { fileStore.move(rekey.oldId, rekey.newId) }
+            // B64: the kept pre-B64 id moves follow the playlist BEFORE the purge drops the old id's rows.
+            step("m3u legacy ids") { m3uIds.get().onPlaylistRekeyed(profileId, rekey.oldId, rekey.newId) }
             step("cache purge") { purge.purge(rekey.oldId, PlaylistRemovalOrigin.SyncPull) }
         }
         if (queuedWatchSync) watchState.pushQueued(profileId)

@@ -607,6 +607,18 @@ class WatchProgressPreferences @Inject constructor(
         }
     }
 
+    /** B64: [com.nuvio.tv.core.sync.rewriteProgressEntries] on [profileId]'s store (same shared rewrite the sync plan uses). */
+    suspend fun rewriteEntries(profileId: Int, rewrite: (WatchProgress) -> WatchProgress?) {
+        storageMutex.withLock {
+            ensureStorageLocked(profileId)
+            val current = readBucketsLocked(profileId)
+            val map = mergeWatchProgressBuckets(current.recent, current.archive)
+            val rekeyed = com.nuvio.tv.core.sync.rewriteProgressEntries(map, rewrite)
+            if (rekeyed.removedKeys.isEmpty()) return@withLock
+            writeBucketsLocked(profileId, current, splitWatchProgressEntries(rekeyed.entries))
+        }
+    }
+
     /**
      * Clear all watch progress
      */

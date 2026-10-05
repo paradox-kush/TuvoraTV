@@ -222,6 +222,7 @@ class PlaylistKeyRekeyWatchSyncTest {
             fileStore = mockk<M3UFileStore>(relaxed = true),
             purge = mockk<IptvAccountPurge>(relaxed = true),
             watchState = WatchStatePrefixMover(auth, mutations, progress, watched, progressSync, watchedSync),
+            m3uIds = dagger.Lazy { mockk<M3uIdRekeyer>(relaxed = true) },
         )
         return Harness(rekeyer, progress, watched, mutations, progressSync, watchedSync)
     }

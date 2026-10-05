@@ -1,6 +1,9 @@
 package com.nuvio.tv.core.iptv
 
 import android.net.Uri
+import com.nuvio.tv.core.iptv.content.ContentChannel
+import com.nuvio.tv.core.iptv.content.ContentEpisode
+import com.nuvio.tv.core.iptv.content.ContentSeries
 import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.core.iptv.content.M3UFileStore
 import com.nuvio.tv.core.iptv.epg.XmltvClient
@@ -116,5 +119,33 @@ class M3uIngestIdentityTest {
         val s = snapshot(acc)
         assertEquals(M3uIdentity.sidOf("series:breaking bad"), s.series["Breaking Bad"])
         assertEquals(M3uIdentity.sidOf("http://h:8080/movie/12.mp4").toString(16), s.episodes["Breaking Bad S01E03"])
+    }
+
+    @Test
+    fun `the first login-free build keeps where every pre-B64 id moves`() = runTest {
+        val acc = account()
+        // A pre-B64 catalog as TV used to build it: ordinal ids, e<seq> episodes, raw-name categories.
+        db.ingest(acc.id) { w ->
+            w.addChannel(ContentChannel(1, "BBC One", null, "bbc.uk", "UK", "http://h:8080/live/alice/OLD/1.ts"))
+            w.addChannel(ContentChannel(2, "ITV", null, null, "UK", "http://h:8080/live/alice/OLD/2.ts"))
+            val tour = ContentSeries(1, "The Grand Tour", null, "SERIES")
+            w.addEpisode(tour, ContentEpisode(1, "e0", 1, 2, "The Grand Tour S01E02", null, "http://h:8080/series/alice/OLD/11.mkv", "mkv"))
+        }
+        assertEquals("pre-B64 catalog", 1, db.idScheme(acc.id))
+        val src = File(app.cacheDir, "ids-legacy.m3u").apply { writeText(ORIGINAL) }
+        fileStore.importFrom(acc.id, Uri.fromFile(src))
+
+        client.ensureIngested(acc)   // not forced: the old scheme alone makes it rebuild
+
+        assertEquals("rebuilt under the new ids", M3UClient.M3U_ID_SCHEME, db.idScheme(acc.id))
+        val moves = db.legacyIds(acc.id, listOf("live:1", "live:2", "episode:e0", "series:1", "cat:live:UK", "live:404"))
+        assertEquals("live:${M3uIdentity.sidOf("http://h:8080/live/1.ts")}", moves["live:1"]?.newId)
+        assertEquals("live:${M3uIdentity.sidOf("http://h:8080/live/2.ts")}", moves["live:2"]?.newId)
+        assertEquals("episode:${M3uIdentity.sidOf("http://h:8080/series/11.mkv").toString(16)}", moves["episode:e0"]?.newId)
+        assertEquals("series:${M3uIdentity.sidOf("series:the grand tour")}", moves["series:1"]?.newId)
+        assertEquals("cat:live:${M3uIdentity.sidOf("UK")}", moves["cat:live:UK"]?.newId)
+        assertEquals("unknown ids have no move", null, moves["live:404"])
+        // And the served catalog is the new one.
+        assertEquals(M3uIdentity.sidOf("http://h:8080/live/1.ts"), snapshot(acc).channels["BBC One"])
     }
 }

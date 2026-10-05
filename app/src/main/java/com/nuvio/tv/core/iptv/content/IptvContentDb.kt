@@ -71,6 +71,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             db.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL, tvg_url TEXT, epg_built_at INTEGER, active_generation INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID")
             createEpgTable(db)
             db.execSQL(EPG_META_DDL)
+            db.execSQL(ID_SCHEME_DDL)
+            db.execSQL(LEGACY_IDS_DDL)
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -92,7 +94,15 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
     // epg_meta is created lazily too, so existing v5 databases pick it up with no migration (a version
     // bump would drop every cached catalog).
-    private val db: SQLiteDatabase by lazy { helper.writableDatabase.also { it.execSQL(EPG_META_DDL) } }
+    private val db: SQLiteDatabase by lazy {
+        helper.writableDatabase.also {
+            it.execSQL(EPG_META_DDL)
+            // B64: created lazily like epg_meta — a version bump would drop every cached catalog, and
+            // the old catalog is exactly what the legacy-id capture must read.
+            it.execSQL(ID_SCHEME_DDL)
+            it.execSQL(LEGACY_IDS_DDL)
+        }
+    }
 
     /** The generation an in-flight ingest (ingest → writer → finish) is writing, per playlist. */
     private val pendingGeneration = HashMap<String, Long>()
@@ -349,7 +359,9 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             // NOTE: epg_programmes is intentionally NOT cleared here. A catalog re-ingest resets the
             // meta's epg_built_at (finish writes NULL) so the EPG re-fetches, but the old programmes
             // stay readable until that fetch replaces them (via replaceEpg) — no now/next gap.
-            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_meta")) {
+            // B64: id_scheme goes with the catalog; the kept legacy ids do NOT (an edit re-ingests under
+            // the same id and the profile may not have applied them yet) — only [purge] drops them.
+            for (t in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_meta", "id_scheme")) {
                 db.delete(t, "playlist_id = ?", arrayOf(playlistId))
             }
         }
@@ -380,8 +392,106 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
                 db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
                 db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
                 db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(playlistId))
+                db.delete("m3u_legacy_ids", "playlist_id = ?", arrayOf(playlistId))
             }
         }
+    }
+
+    // --- B64: item-id scheme + legacy ids -------------------------------------
+
+    /** The item-id scheme the served catalog was built with (1 = pre-B64 ordinals; none built = 1). */
+    suspend fun idScheme(playlistId: String): Int = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT scheme FROM id_scheme WHERE playlist_id = ?", arrayOf(playlistId)).use { c ->
+            if (c.moveToFirst()) c.getInt(0) else 1
+        }
+    }
+
+    suspend fun setIdScheme(playlistId: String, scheme: Int) = withContext(Dispatchers.IO) {
+        db.execSQL("INSERT OR REPLACE INTO id_scheme(playlist_id, scheme) VALUES(?,?)", arrayOf<Any?>(playlistId, scheme))
+    }
+
+    /**
+     * B64: maps every row of the SERVED (pre-B64) catalog through [com.nuvio.tv.core.iptv.M3uLegacyIds]
+     * and keeps the old -> new pairs, BEFORE a login-free ingest replaces the catalog (the old ordinal
+     * ids exist nowhere else). Paged reads, chunked writes; replaces any earlier capture. Returns the
+     * number of pairs kept.
+     */
+    suspend fun captureLegacyIds(playlistId: String, login: com.nuvio.tv.core.iptv.identity.M3uIdentity.Login?): Int = withContext(Dispatchers.IO) {
+        val L = com.nuvio.tv.core.iptv.M3uLegacyIds
+        val seriesById = HashMap<Int, ContentSeries>()
+        db.rawQuery("SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? AND $gen", arrayOf(playlistId, playlistId)).use { c ->
+            while (c.moveToNext()) ContentSeries(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3)).let { seriesById[it.sid] = it }
+        }
+        val moves = sequence {
+            for (type in listOf(TYPE_LIVE, TYPE_VOD, TYPE_SERIES)) {
+                db.rawQuery("SELECT id, name FROM categories WHERE playlist_id = ? AND $gen AND type = ?", arrayOf(playlistId, playlistId, type)).use { c ->
+                    while (c.moveToNext()) yield(L.category(type, ContentCategory(c.getString(0), c.getString(1))))
+                }
+            }
+            db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url FROM channels WHERE playlist_id = ? AND $gen", arrayOf(playlistId, playlistId)).use { c ->
+                while (c.moveToNext()) L.channel(ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5)), login)?.let { yield(it) }
+            }
+            db.rawQuery("SELECT sid, name, logo, category_id, url, ext FROM vod WHERE playlist_id = ? AND $gen", arrayOf(playlistId, playlistId)).use { c ->
+                while (c.moveToNext()) L.movie(ContentVod(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getString(4), c.getStringOrNull(5)), login)?.let { yield(it) }
+            }
+            db.rawQuery("SELECT series_sid, episode_sid, season, episode_num, title, logo, url, ext FROM episodes WHERE playlist_id = ? AND $gen", arrayOf(playlistId, playlistId)).use { c ->
+                while (c.moveToNext()) {
+                    val e = ContentEpisode(c.getInt(0), c.getString(1), c.getInt(2), c.getInt(3), c.getString(4), c.getStringOrNull(5), c.getString(6), c.getStringOrNull(7))
+                    yieldAll(L.episode(e, seriesById[e.seriesSid], login))
+                }
+            }
+        }
+        // ONE transaction: the reads stream through cursors on the same connection the inserts use, so
+        // nothing larger than one row is held (a 100k-item catalog never materializes), and a crash
+        // leaves no half capture.
+        var kept = 0
+        inTx {
+            db.delete("m3u_legacy_ids", "playlist_id = ?", arrayOf(playlistId))
+            val st = db.compileStatement("INSERT OR IGNORE INTO m3u_legacy_ids(playlist_id, old_id, new_id, series_id, season, episode, series_name) VALUES(?,?,?,?,?,?,?)")
+            for (m in moves) {
+                if (m.oldId == m.newId) continue
+                st.clearBindings()
+                st.bindString(1, playlistId); st.bindString(2, m.oldId); st.bindString(3, m.newId)
+                bindNullable(st, 4, m.seriesId)
+                if (m.season != null) st.bindLong(5, m.season.toLong()) else st.bindNull(5)
+                if (m.episode != null) st.bindLong(6, m.episode.toLong()) else st.bindNull(6)
+                bindNullable(st, 7, m.seriesName)
+                // INSERT OR IGNORE: the first move per old id wins (a series maps to its first episode's series).
+                kept += st.executeUpdateDelete()
+            }
+        }
+        kept
+    }
+
+    /** B64: the kept legacy moves of [playlistId] for the given old suffixes (indexed lookups, chunked). */
+    suspend fun legacyIds(playlistId: String, oldIds: Collection<String>): Map<String, com.nuvio.tv.core.iptv.M3uLegacyIds.Move> = withContext(Dispatchers.IO) {
+        val out = HashMap<String, com.nuvio.tv.core.iptv.M3uLegacyIds.Move>()
+        oldIds.distinct().chunked(500).forEach { chunk ->
+            val marks = chunk.joinToString(",") { "?" }
+            db.rawQuery(
+                "SELECT old_id, new_id, series_id, season, episode, series_name FROM m3u_legacy_ids WHERE playlist_id = ? AND old_id IN ($marks)",
+                arrayOf(playlistId) + chunk.toTypedArray(),
+            ).use { c ->
+                while (c.moveToNext()) out[c.getString(0)] = com.nuvio.tv.core.iptv.M3uLegacyIds.Move(
+                    c.getString(0), c.getString(1), c.getStringOrNull(2),
+                    if (c.isNull(3)) null else c.getInt(3), if (c.isNull(4)) null else c.getInt(4), c.getStringOrNull(5),
+                )
+            }
+        }
+        out
+    }
+
+    /**
+     * B64: a Step 0 key adoption renamed the playlist — its kept legacy moves follow (they are id
+     * SUFFIXES, valid under any playlist key), so a profile that has not applied them yet still can.
+     */
+    suspend fun moveLegacyIds(oldPlaylistId: String, newPlaylistId: String) = withContext(Dispatchers.IO) {
+        db.execSQL("UPDATE OR IGNORE m3u_legacy_ids SET playlist_id = ? WHERE playlist_id = ?", arrayOf<Any?>(newPlaylistId, oldPlaylistId))
+    }
+
+    /** B64: whether any legacy moves are kept for [playlistId] (a profile may still need to apply them). */
+    suspend fun hasLegacyIds(playlistId: String): Boolean = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT 1 FROM m3u_legacy_ids WHERE playlist_id = ? LIMIT 1", arrayOf(playlistId)).use { it.moveToFirst() }
     }
 
     // --- Queries ------------------------------------------------------------
@@ -890,6 +1000,13 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         /** Per-playlist guide freshness, for every source type (see [replaceEpg]). */
         private const val EPG_META_DDL =
             "CREATE TABLE IF NOT EXISTS epg_meta(playlist_id TEXT NOT NULL PRIMARY KEY, epg_built_at INTEGER NOT NULL) WITHOUT ROWID"
+        /** B64: the item-id scheme each playlist's catalog was built with (absent = 1, pre-B64). */
+        private const val ID_SCHEME_DDL =
+            "CREATE TABLE IF NOT EXISTS id_scheme(playlist_id TEXT NOT NULL PRIMARY KEY, scheme INTEGER NOT NULL) WITHOUT ROWID"
+        /** B64: old (pre-B64) id suffix -> new, per playlist, captured from the last pre-B64 catalog. */
+        private const val LEGACY_IDS_DDL =
+            "CREATE TABLE IF NOT EXISTS m3u_legacy_ids(playlist_id TEXT NOT NULL, old_id TEXT NOT NULL, new_id TEXT NOT NULL, " +
+                "series_id TEXT, season INTEGER, episode INTEGER, series_name TEXT, PRIMARY KEY(playlist_id, old_id)) WITHOUT ROWID"
         private const val EPG_SHADOW_DDL =
             "CREATE TABLE IF NOT EXISTS $EPG_SHADOW(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, " +
                 "start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, " +

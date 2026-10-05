@@ -27,12 +27,20 @@ sealed interface M3uIngestRow {
  *    category + name), episode id = hex([M3uIdentity.itemSid]) (was `e<sequence>`);
  *  - a `/movie/` row named "Show S01E02" is an episode of Show (TV's promotion, now shared — D2);
  *  - category id = the phone's hash of the group name (was the raw name); the name is kept for display.
- *    A row with no group keeps no category (TV shows it under "All" only, as before).
+ *    A row with no group gets the phone's "0" / [UNGROUPED_NAME] category (owner decision 2026-10-04:
+ *    one category model everywhere; TV used to leave such rows in "All" only).
  */
 object M3uIngestMapping {
 
-    fun categoryId(group: String?): String? =
-        group?.takeIf { it.isNotBlank() }?.let { M3uIdentity.sidOf(it).toString() }
+    /** The phone's category id: FNV of the group name, or [UNGROUPED_ID] for a row without one. */
+    fun categoryId(group: String?): String =
+        if (group.isNullOrBlank()) UNGROUPED_ID else M3uIdentity.sidOf(group).toString()
+
+    /** The category name stored for [group] (the phone's literal for a row without one). */
+    fun categoryName(group: String?): String = if (group.isNullOrBlank()) UNGROUPED_NAME else group
+
+    const val UNGROUPED_ID = "0"
+    const val UNGROUPED_NAME = "Uncategorized"
 
     fun map(entry: M3UEntry, login: M3uIdentity.Login?): M3uIngestRow {
         val cat = categoryId(entry.group)
@@ -64,7 +72,7 @@ object M3uIngestMapping {
     }
 
     private fun episode(
-        entry: M3UEntry, key: String, seriesName: String, season: Int, episode: Int, login: M3uIdentity.Login?, cat: String?,
+        entry: M3UEntry, key: String, seriesName: String, season: Int, episode: Int, login: M3uIdentity.Login?, cat: String,
     ): M3uIngestRow.Episode {
         val seriesSid = M3uSeriesGrouping.seriesSid(key)
         return M3uIngestRow.Episode(

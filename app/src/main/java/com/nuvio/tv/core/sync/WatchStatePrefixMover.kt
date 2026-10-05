@@ -54,6 +54,35 @@ class WatchStatePrefixMover @Inject constructor(
         return queued
     }
 
+    /** B64: [move]'s twin for an id REWRITE (no drop): queue the sync ops, then change the local stores. */
+    suspend fun rewrite(
+        profileId: Int,
+        progressRewrite: (com.nuvio.tv.domain.model.WatchProgress) -> com.nuvio.tv.domain.model.WatchProgress?,
+        watchedRewrite: (com.nuvio.tv.domain.model.WatchedItem) -> com.nuvio.tv.domain.model.WatchedItem?,
+    ): Boolean {
+        val plan = WatchStateRekeyPlan.buildRewrite(
+            progress = watchProgressPreferences.getAllRawEntries(profileId),
+            watched = watchedItemsPreferences.getAllItems(profileId),
+            progressRewrite = progressRewrite,
+            watchedRewrite = watchedRewrite,
+            fullAccount = authManager.isAuthenticated,
+        )
+        var queued = false
+        if (!plan.isEmpty) guard("sync queue") {
+            mutationStore.queueRekey(
+                progressUpserts = plan.progressUpserts,
+                progressDeletes = plan.progressDeletes,
+                watchedUpserts = plan.watchedUpserts,
+                watchedDeletes = plan.watchedDeletes,
+                profileId = profileId,
+            )
+            queued = true
+        }
+        watchProgressPreferences.rewriteEntries(profileId, progressRewrite)
+        watchedItemsPreferences.rewriteItems(profileId, watchedRewrite)
+        return queued
+    }
+
     /**
      * Sends the queued ops now (Mobile pushes at once too) when the session can sync. A failure or a
      * lapsed session only defers: the outbox is durable and the next sync cycle pushes it.
