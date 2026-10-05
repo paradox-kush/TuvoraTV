@@ -60,7 +60,8 @@ class SubtitleRepositoryImpl @Inject constructor(
                 videoId = publicId,
                 videoHash = videoHash,
                 videoSize = videoSize,
-                filename = filename,
+                // Privacy: an IPTV stream's file name is the panel's id (or a token) — never sent.
+                filename = com.nuvio.tv.core.player.AddonSubtitleIdPolicy.requestFilename(id, videoId, filename),
                 onProgress = onProgress,
                 onSubtitlesEmitted = onSubtitlesEmitted,
                 season = null,
