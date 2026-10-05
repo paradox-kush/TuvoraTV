@@ -2,6 +2,8 @@ package com.nuvio.tv.core.di
 
 import com.nuvio.tv.core.iptv.CatchUpWinnerPrefs
 import com.nuvio.tv.core.iptv.CatchUpWinnerStore
+import com.nuvio.tv.core.iptv.PanelClockSource
+import com.nuvio.tv.core.iptv.XtreamClient
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -21,4 +23,10 @@ object CatchUpModule {
     @Singleton
     fun provideCatchUpWinnerStore(prefs: CatchUpWinnerPrefs): CatchUpWinnerStore =
         CatchUpWinnerStore(prefs)
+
+    /** B117: the replay start is the panel's wall clock — measured once per session per playlist. */
+    @Provides
+    @Singleton
+    fun providePanelClockSource(client: XtreamClient): PanelClockSource =
+        PanelClockSource { account -> client.measuredClockOffsetMs(account) }
 }

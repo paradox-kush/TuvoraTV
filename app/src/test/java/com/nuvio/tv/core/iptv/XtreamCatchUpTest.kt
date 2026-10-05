@@ -255,5 +255,56 @@ class XtreamCatchUpTest {
         assertTrue("expected the +1h panel-local time in $url", url.contains("2024-03-09:17-00"))
     }
 
+    // --- B117: the replay start is panel-local by default, not UTC ------------------------------
+
+    /**
+     * B117 (Onn pass 2026-10-03): "Start over" on a UK channel played a different show. The panel
+     * is Europe/London (BST, +1h) and reads `start` in ITS wall clock, but TV only ever sent the
+     * manual correction (default 0 = UTC), so every replay landed an hour early. The measured
+     * clock-pair offset is the default now — what the phone, desktop and Apple TV already send.
+     */
+    @Test
+    fun `measured panel offset is used when no manual correction is set`() {
+        assertEquals(
+            "the clock-pair offset must drive the start string by default",
+            60 * 60_000L,
+            XtreamCatchUp.replayOffsetMs(measuredClockOffsetMs = 60 * 60_000L, manualCorrectionMinutes = 0),
+        )
+    }
+
+    @Test
+    fun `manual correction rides on top of the measured offset`() {
+        // The phone semantics (CatchUpEpgRepository.panelFacts): the correction exists for panels
+        // whose own clock pair is wrong, so it corrects the measurement rather than replacing it.
+        assertEquals(
+            "measured +1h corrected by -1h",
+            0L,
+            XtreamCatchUp.replayOffsetMs(measuredClockOffsetMs = 60 * 60_000L, manualCorrectionMinutes = -60),
+        )
+        assertEquals(
+            "no measurement: the correction alone",
+            90 * 60_000L,
+            XtreamCatchUp.replayOffsetMs(measuredClockOffsetMs = null, manualCorrectionMinutes = 90),
+        )
+    }
+
+    @Test
+    fun `nothing measured and nothing set stays unset (UTC)`() {
+        assertEquals(
+            "unset must stay null so the start string is plain UTC",
+            null,
+            XtreamCatchUp.replayOffsetMs(measuredClockOffsetMs = null, manualCorrectionMinutes = 0),
+        )
+    }
+
+    @Test
+    fun `out-of-range manual correction is clamped to the settings range`() {
+        assertEquals(
+            "+14h is the ceiling",
+            840 * 60_000L,
+            XtreamCatchUp.replayOffsetMs(measuredClockOffsetMs = null, manualCorrectionMinutes = 5_000),
+        )
+    }
+
     private companion object { const val DAY = 24L * 60 * 60 * 1000 }
 }

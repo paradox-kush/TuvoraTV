@@ -713,13 +713,16 @@ private fun EpgRegionPickerDialog(
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.xs)
             ) {
                 itemsIndexed(regions, key = { _, r -> r.name }) { index, region ->
-                    val checked = region.name in selected
+                    // B119: under "All" (empty) every row is checked and OK removes just that one.
+                    val checked = com.nuvio.tv.core.epg.EpgRegionSelection.isChecked(selected, region.name)
                     EpgRegionCheckRow(
                         region = region,
                         checked = checked,
                         focusRequester = if (index == 0) firstRowFocus else null,
                         onToggle = {
-                            selected = if (checked) selected - region.name else selected + region.name
+                            selected = com.nuvio.tv.core.epg.EpgRegionSelection.toggle(
+                                selected, regions.map { it.name }, region.name,
+                            )
                         },
                     )
                 }
@@ -2033,7 +2036,8 @@ private val CATCHUP_CORRECTION_OPTIONS: List<Int> =
         .toList()
 
 private fun catchUpCorrectionLabel(minutes: Int): String {
-    if (minutes == 0) return "None (UTC)"
+    // 0 is not "UTC": replays follow the panel's own measured clock; this only corrects it (B117).
+    if (minutes == 0) return "None"
     val sign = if (minutes < 0) "-" else "+"
     val abs = kotlin.math.abs(minutes)
     return if (abs % 60 == 0) "$sign${abs / 60}h" else "$sign${abs / 60}h ${abs % 60}m"

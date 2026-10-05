@@ -142,7 +142,10 @@ data class XtreamAccount(
      */
     val backupUrls: List<String>? = null
 ) {
-    /** The correction as the panel-offset [XtreamCatchUp.candidateUrls] takes; null = unset (UTC). */
+    /**
+     * The manual correction alone, in ms; null = unset. NOT what a replay sends any more: since B117
+     * the start is [XtreamCatchUp.replayOffsetMs] = the panel's measured clock + this correction.
+     */
     val catchUpOffsetMs: Long? get() = catchUpCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }
 
     /** The manual guide offset in milliseconds; null = auto-detect (the default). */

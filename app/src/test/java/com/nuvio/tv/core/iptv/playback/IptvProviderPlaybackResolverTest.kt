@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.iptv.playback
 
 import com.nuvio.tv.core.iptv.CatchUpDialectWalk
+import com.nuvio.tv.core.iptv.PanelClockSource
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.playback.core.ContainerType
@@ -193,6 +194,22 @@ class IptvProviderPlaybackResolverTest {
         assertTrue(unsupported is PlaybackResult.Failure)
     }
 
+    /** B117: the clean pipeline mints the replay too, so it must ask for the panel-local start. */
+    @Test
+    fun `catch-up start is panel-local when the panel clock is measured`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_XTREAM)
+        val resolver = resolver(account, panelOffsetMs = 60 * 60_000L) { _, _, _, _ -> error("catch-up must not use live resolver") }
+        // 2026-10-03 19:00 UTC; a +1h (BST) panel reads its wall clock: 20:00.
+        val window = ProviderCatchUpWindow(1_791_054_000_000L, 1_791_057_600_000L)
+
+        val replay = resolver.resolve(
+            selection(account, ProviderSourceType.XTREAM, ContentType.CATCH_UP, window = window),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success()
+
+        assertTrue("panel-local start expected: ${replay.request.url}", replay.request.url.contains("2026-10-03:20-00"))
+    }
+
     @Test
     fun `source and content identity mismatches fail before any provider call`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_XTREAM)
@@ -254,11 +271,13 @@ class IptvProviderPlaybackResolverTest {
 
     private fun resolver(
         account: XtreamAccount,
+        panelOffsetMs: Long? = null,
         link: suspend (XtreamAccount, String, Int, Boolean) -> ProviderLinkResult,
     ) = IptvProviderPlaybackResolver(
         accounts = ProviderAccountLookup { id -> account.takeIf { it.id == id } },
         links = ProviderLinkSource(link),
         winnerMemory = Memory(),
+        panelClock = PanelClockSource { panelOffsetMs },
     )
 
     private fun selection(
