@@ -74,7 +74,8 @@ class StartupSyncService @Inject constructor(
     private val syncDeviceReporter: SyncDeviceReporter,
     private val cwEnrichmentCache: com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache,
     // Fork surfaces (e.g. the IPTV overlay) bound at the composition root — this file names none of them.
-    private val realtimeParticipants: Set<@JvmSuppressWildcards com.nuvio.tv.core.contracts.RealtimeSyncParticipant>
+    private val realtimeParticipants: Set<@JvmSuppressWildcards com.nuvio.tv.core.contracts.RealtimeSyncParticipant>,
+    private val surfaceCatchUp: dagger.Lazy<SurfaceCatchUp>,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startupPullJob: Job? = null
@@ -212,83 +213,86 @@ class StartupSyncService @Inject constructor(
 
         scope.launch {
             Log.i(TAG, "Realtime surface pull requested profile=$profileId surface=$surface")
-            when (surface) {
-                "addons" -> pullRealtimeAddons(profileId)
-                "plugins" -> pullRealtimePlugins(profileId)
-                "library" -> pullNuvioLibrary(profileId)
-                "watch_progress" -> {
-                    syncWatchProgressDelta(
-                        profileId = profileId,
-                        pushUnsynced = false,
-                        failureMessage = "Realtime watch progress pull failed"
-                    )
+            pullSurface(profileId, surface)
+        }
+    }
+
+    /** Surfaces [pullSurface] knows by name; fork surfaces come from [realtimeParticipants]. */
+    private val namedSurfaces = setOf(
+        "addons", "plugins", "library", "watch_progress", "watched_items", "profile_settings",
+        "provider_credentials", "collections", "home_catalog_settings", "profiles",
+    )
+
+    /** B03: every surface this client can pull (what a version-vector catch-up may plan). */
+    fun pullableSurfaces(): Set<String> = namedSurfaces + realtimeParticipants.flatMap { it.realtimeSurfaces }
+
+    /**
+     * Pulls one sync surface — the shared dispatcher of a Realtime invalidation and the B03 version
+     * catch-up. True when the pull succeeded (an unknown surface counts as done).
+     */
+    suspend fun pullSurface(profileId: Int, surface: String): Boolean {
+        suspend fun attempt(what: String, block: suspend () -> Boolean): Boolean =
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Realtime $what pull failed profile=$profileId", e)
+                false
+            }
+        return when (surface) {
+            "addons" -> attempt("addons") { pullRealtimeAddons(profileId); true }
+            "plugins" -> attempt("plugins") { pullRealtimePlugins(profileId); true }
+            "library" -> attempt("library") { pullNuvioLibrary(profileId) }
+            "watch_progress" -> attempt("watch progress") {
+                syncWatchProgressDelta(
+                    profileId = profileId,
+                    pushUnsynced = false,
+                    failureMessage = "Realtime watch progress pull failed"
+                ).isSuccess
+            }
+            "watched_items" -> attempt("watched items") {
+                if (watchProgressSyncService.shouldUseSupabaseWatchProgressSync(profileId)) {
+                    pullWatchedItemsDelta(profileId = profileId, pushUnsynced = false)
+                } else {
+                    watchProgressRepository.hasCompletedInitialWatchedItemsPull = true
+                    true
                 }
-                "watched_items" -> {
-                    if (watchProgressSyncService.shouldUseSupabaseWatchProgressSync(profileId)) {
-                        pullWatchedItemsDelta(profileId = profileId, pushUnsynced = false)
-                    } else {
-                        watchProgressRepository.hasCompletedInitialWatchedItemsPull = true
-                    }
+            }
+            "profile_settings" -> attempt("profile settings") {
+                profileSettingsSyncService.pullCurrentProfileFromRemote()
+                    .onSuccess { applied -> Log.d(TAG, "Realtime profile settings pull completed profile=$profileId applied=$applied") }
+                    .isSuccess
+            }
+            "provider_credentials" -> attempt("provider credentials") {
+                providerCredentialSyncService.syncFromRemote(profileId)
+                    .onSuccess { applied -> Log.d(TAG, "Realtime provider credential pull completed profile=$profileId applied=$applied") }
+                    .isSuccess
+            }
+            "collections" -> attempt("collections") {
+                collectionSyncService.pullFromRemote()
+                    .onSuccess { applied -> Log.d(TAG, "Realtime collections pull completed profile=$profileId applied=$applied") }
+                    .isSuccess
+            }
+            "home_catalog_settings" -> attempt("home catalog settings") {
+                homeCatalogSettingsSyncService.pullFromRemote()
+                    .onSuccess { applied -> Log.d(TAG, "Realtime home catalog settings pull completed profile=$profileId applied=$applied") }
+                    .isSuccess
+            }
+            "profiles" -> attempt("profiles") {
+                profileSyncService.pullFromRemote(force = true)
+                    .onSuccess { profiles -> Log.d(TAG, "Realtime profiles pull completed count=${profiles.size}") }
+                    .isSuccess
+            }
+            else -> {
+                val participants = com.nuvio.tv.core.contracts.RealtimeSyncRouting
+                    .participantsFor(surface, realtimeParticipants)
+                if (participants.isEmpty()) {
+                    Log.w(TAG, "Unknown realtime sync surface=$surface profile=$profileId")
                 }
-                "profile_settings" -> {
-                    profileSettingsSyncService.pullCurrentProfileFromRemote()
-                        .onSuccess { applied ->
-                            Log.d(TAG, "Realtime profile settings pull completed profile=$profileId applied=$applied")
-                        }
-                        .onFailure { error ->
-                            Log.e(TAG, "Realtime profile settings pull failed profile=$profileId", error)
-                        }
-                }
-                "provider_credentials" -> {
-                    providerCredentialSyncService.syncFromRemote(profileId)
-                        .onSuccess { applied ->
-                            Log.d(TAG, "Realtime provider credential pull completed profile=$profileId applied=$applied")
-                        }
-                        .onFailure { error ->
-                            Log.e(TAG, "Realtime provider credential pull failed profile=$profileId", error)
-                        }
-                }
-                "collections" -> {
-                    collectionSyncService.pullFromRemote()
-                        .onSuccess { applied ->
-                            Log.d(TAG, "Realtime collections pull completed profile=$profileId applied=$applied")
-                        }
-                        .onFailure { error ->
-                            Log.e(TAG, "Realtime collections pull failed profile=$profileId", error)
-                        }
-                }
-                "home_catalog_settings" -> {
-                    homeCatalogSettingsSyncService.pullFromRemote()
-                        .onSuccess { applied ->
-                            Log.d(TAG, "Realtime home catalog settings pull completed profile=$profileId applied=$applied")
-                        }
-                        .onFailure { error ->
-                            Log.e(TAG, "Realtime home catalog settings pull failed profile=$profileId", error)
-                        }
-                }
-                "profiles" -> {
-                    profileSyncService.pullFromRemote(force = true)
-                        .onSuccess { profiles ->
-                            Log.d(TAG, "Realtime profiles pull completed count=${profiles.size}")
-                        }
-                        .onFailure { error ->
-                            Log.e(TAG, "Realtime profiles pull failed", error)
-                        }
-                }
-                else -> {
-                    val participants = com.nuvio.tv.core.contracts.RealtimeSyncRouting
-                        .participantsFor(surface, realtimeParticipants)
-                    if (participants.isEmpty()) {
-                        Log.w(TAG, "Unknown realtime sync surface=$surface profile=$profileId")
-                    }
-                    participants.forEach { participant ->
-                        runCatching { participant.pullForRealtimeSurface(profileId) }
-                            .onFailure { error ->
-                                if (error is CancellationException) throw error
-                                Log.e(TAG, "Realtime ${participant.name} pull failed profile=$profileId", error)
-                            }
-                    }
-                }
+                participants.map { participant ->
+                    attempt(participant.name) { participant.pullForRealtimeSurface(profileId); true }
+                }.all { it }
             }
         }
     }
@@ -313,7 +317,10 @@ class StartupSyncService @Inject constructor(
             val succeeded = coroutineScope {
                 val watchState = async { pullPeriodicWatchState() }
                 val library = async { pullPeriodicLibrary() }
-                watchState.await() && library.await()
+                // B03 (D1): everything else that changed while the TV was away — settings, add-ons,
+                // home rows, playlists, … — from the version vector (one tiny call; no pulls when idle).
+                val catchUp = async { runCatching { surfaceCatchUp.get().run(profileId, reason) }.isSuccess }
+                watchState.await() && library.await() && catchUp.await()
             }
             if (succeeded) {
                 activityPullFreshness = SurfacePullFreshness(
@@ -583,7 +590,8 @@ class StartupSyncService @Inject constructor(
         coroutineScope {
             val libraryJob = async {
                 val isTrackingLibrary = libraryRepository.sourceMode.first() != LibrarySourceMode.LOCAL
-                if (!isTrackingLibrary) {
+                // B03/D5: live favourites ride the Tuvora library under Trakt/Simkl too.
+                if (LiveFavoriteStoragePolicy.pullsNuvioLibrary(isTrackingLibrary)) {
                     libraryRepository.isSyncingFromRemote = true
                     try {
                         val result = librarySyncService.syncFromRemote(profileId).getOrElse { throw it }
@@ -695,7 +703,7 @@ class StartupSyncService @Inject constructor(
 
     private suspend fun pullNuvioLibrary(profileId: Int): Boolean {
         val isTrackingLibrary = libraryRepository.sourceMode.first() != LibrarySourceMode.LOCAL
-        if (isTrackingLibrary) {
+        if (!LiveFavoriteStoragePolicy.pullsNuvioLibrary(isTrackingLibrary)) {
             libraryRepository.hasCompletedInitialPull = true
             Log.d(TAG, "Skipping Nuvio library pull for profile $profileId because a tracking library provider is active")
             return true

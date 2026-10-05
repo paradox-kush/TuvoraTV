@@ -19,4 +19,12 @@ abstract class RealtimeSyncModule {
     @Binds
     @IntoSet
     abstract fun bindIptvOverlayRealtimeParticipant(impl: IptvOverlayRealtimeParticipant): RealtimeSyncParticipant
+
+    @Binds
+    @IntoSet
+    abstract fun bindIptvPlaylistsRealtimeParticipant(impl: com.nuvio.tv.core.iptv.IptvPlaylistsRealtimeParticipant): RealtimeSyncParticipant
+
+    @Binds
+    @IntoSet
+    abstract fun bindRadarRealtimeParticipant(impl: com.nuvio.tv.core.radar.RadarRealtimeParticipant): RealtimeSyncParticipant
 }
