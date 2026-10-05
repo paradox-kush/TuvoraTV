@@ -21,6 +21,7 @@ class CatchUpPlaybackCoordinator @Inject constructor(
     private val winners: CatchUpWinnerStore,
     /** Step 0.3: replays are built on the playlist's ACTIVE server and never fail over themselves. */
     private val serverFailover: PlaylistServerFailover = PlaylistServerFailover.detached(),
+    private val panelClock: PanelClockSource = PanelClockSource.NONE,
 ) {
     private val walk = CatchUpDialectWalk(winners)
 
@@ -58,7 +59,7 @@ class CatchUpPlaybackCoordinator @Inject constructor(
      * Starts a replay and answers the first URL to try, or null when nothing can be built (blank
      * credentials, a non-Xtream source, a degenerate programme).
      */
-    fun begin(
+    suspend fun begin(
         account: XtreamAccount,
         channelContentId: String,
         channelName: String,

@@ -1085,6 +1085,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     fun startReplay(channel: GuideChannel, programme: XtreamProgram) {
         val acc = account ?: return
+        // Suspends only for the panel's clock pair (B117), memoized per session — usually free.
+        viewModelScope.launch { startReplayFor(acc, channel, programme) }
+    }
+
+    private suspend fun startReplayFor(acc: XtreamAccount, channel: GuideChannel, programme: XtreamProgram) {
         val nowMs = System.currentTimeMillis()
         val session = catchUp.begin(
             account = acc,

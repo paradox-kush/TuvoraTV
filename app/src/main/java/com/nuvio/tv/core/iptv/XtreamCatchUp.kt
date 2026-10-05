@@ -52,6 +52,10 @@ object XtreamCatchUp {
             .format(Date(startMs))
     }
 
+    /** STUB (red step) — old behaviour: the manual correction alone. */
+    fun replayOffsetMs(measuredClockOffsetMs: Long?, manualCorrectionMinutes: Int): Long? =
+        manualCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }
+
     /** What the guide can offer for one programme. */
     enum class ProgrammeAction {
         /** Nothing playable: not broadcast yet, or gone from the panel. */

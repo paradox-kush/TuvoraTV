@@ -131,6 +131,7 @@ class IptvProviderPlaybackResolver internal constructor(
     winnerMemory: CatchUpDialectWalk.WinnerMemory,
     /** Step 0.3: the playlist on its ACTIVE server — catch-up replays from there, never failing over. */
     private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
+    private val panelClock: com.nuvio.tv.core.iptv.PanelClockSource = com.nuvio.tv.core.iptv.PanelClockSource.NONE,
 ) : ProviderPlaybackResolver {
 
     private val mapper = PlaybackRequestMapper()
