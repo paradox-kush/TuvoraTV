@@ -265,7 +265,8 @@ fun XtreamSettingsContent(
                     managedLine,
                     // Step 0.3: say which server is actually answering when it isn't the main one.
                     activeServers[account.id]?.let { stringResource(R.string.iptv_using_backup_server, it) }
-                        ?: account.baseUrl,
+                        // T7: an M3U link carries the login — never on screen.
+                        ?: com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(account.baseUrl),
                     // B60: an edit saved although the provider check failed says so on its row.
                     uiState.saveWarnings[account.id],
                     com.nuvio.tv.core.iptv.match.indexingStatusLine(
@@ -407,7 +408,8 @@ fun XtreamSettingsContent(
                     needsReimport = needsReimport,
                     backupLine = activeServers[id]?.let { n ->
                         account.backupUrls?.getOrNull(n - 1)
-                            ?.let { host -> stringResource(R.string.iptv_using_backup_server_host, n, host) }
+                            // T7: a backup M3U link carries the login too.
+                            ?.let { host -> stringResource(R.string.iptv_using_backup_server_host, n, com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(host)) }
                             ?: stringResource(R.string.iptv_using_backup_server, n)
                     },
                     justAddedBy = justAddedBy,
@@ -1493,7 +1495,7 @@ private fun BackupServersSection(
     rows.forEachIndexed { index, value ->
         SettingsActionRow(
             title = stringResource(R.string.iptv_backup_server_row, index + 1),
-            subtitle = value.ifBlank { stringResource(R.string.iptv_backup_server_not_set) },
+            subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(value).ifBlank { stringResource(R.string.iptv_backup_server_not_set) }, // T7
             value = problems[index]?.let { backupProblemText(it) },
             valueColor = NuvioTheme.colors.Error,
             onClick = { onEdit(index) },
@@ -1569,7 +1571,7 @@ private fun BackupServerEditorDialog(
         } else {
             SettingsActionRow(
                 title = addressLabel,
-                subtitle = value.ifBlank { stringResource(R.string.iptv_backup_server_not_set) },
+                subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(value).ifBlank { stringResource(R.string.iptv_backup_server_not_set) }, // T7
                 onClick = { typing = true },
                 modifier = Modifier.focusRequester(addressRowFocus),
             )

@@ -31,7 +31,7 @@ object ChannelNameCleaner {
         }
     }
 
-    /** Country / region labels panels put in front of a channel name. Compared uppercase. */
+    /** Country / region / language labels panels put in front of a channel name. Compared uppercase. */
     private val COUNTRY = setOf(
         // ISO 3166-1 alpha-2 that panels actually use as prefixes
         "AD", "AE", "AF", "AL", "AM", "AO", "AR", "AT", "AU", "AZ", "BA", "BD", "BE", "BG", "BH", "BO",
@@ -48,6 +48,8 @@ object ChannelNameCleaner {
         "NOR", "DEN", "DNK", "FIN", "CAN", "AUS", "MEX", "BRA", "ARG", "IND", "PAK", "BAN", "AFG", "ARA",
         "ARB", "ARAB", "AFR", "LAT", "LATAM", "LATINO", "EXYU", "EX-YU", "YU", "KUR", "SOM", "ETH",
         "CARIB", "INT", "EU", "MENA", "ASIA", "NEPAL",
+        // language labels panels put where a country goes (T8: "|EN| CNN" read "EN| CNN")
+        "EN", "ENG",
     )
 
     /** Quality / codec tags. Compared lowercase. "HD+" is NOT here — it is a German platform. */

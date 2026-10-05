@@ -79,7 +79,9 @@ class EpgSourcePlanTest {
     fun `census line counts against eligible channels with the tier split`() {
         val c = com.nuvio.tv.core.iptv.content.EpgCensusRow(lineup = 1_600, eligible = 1_530, manual = 0, byId = 812, byName = 392, fuzzy = 0, sources = 2, sourcesFailed = 1, builtAtMs = 0)
         assertEquals(
-            "Playlist guide: 1,204 of 1,530 channels matched (812 by provider id · 392 by name · 3 picked by you)." +
+            // P7: picks are their own sentence (they were counted twice inside the automatic split).
+            "Playlist guide: 1,204 of 1,530 channels matched (812 by provider id · 392 by name)." +
+                " 3 channels use a guide you picked." +
                 " 70 more are 24/7, PPV or event channels without a guide. 1 of 2 guide sources failed to download.",
             GuideCensusText.line(c, picks = 3),
         )

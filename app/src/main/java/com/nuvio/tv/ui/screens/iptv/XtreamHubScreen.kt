@@ -262,7 +262,7 @@ fun XtreamHubScreen(
             uiState.accounts.forEach { acc ->
                 com.nuvio.tv.ui.screens.settings.SettingsActionRow(
                     title = acc.name,
-                    subtitle = acc.baseUrl,
+                    subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(acc.baseUrl), // T7
                     value = if (acc.id == uiState.selectedAccountId) stringResource(R.string.iptv_hub_provider_current) else null,
                     onClick = { viewModel.selectAccount(acc.id); showAccountPicker = false }
                 )

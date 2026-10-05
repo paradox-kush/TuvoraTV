@@ -309,6 +309,8 @@ class XtreamSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             if (persistOrError { store.replace(old.id, account) }) {
                 registry.clear()
+                // P6 / F14: a changed guide source (EPG URLs, portal, MAC) is read at once.
+                if (com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.guideSourcesChanged(old, account)) xmltv.refreshNow(account)
                 evictAccountCaches(old.id)
                 syncService.triggerRemoteSync()
                 onSuccess()
@@ -600,6 +602,8 @@ class XtreamSettingsViewModel @Inject constructor(
                 if (!old.sameConnectionAs(account)) refreshLiveStreamUrls(account)
                 // Cached stream URLs embed the old server/creds; rebuild lazily on demand.
                 registry.clear()
+                // P6 / F14: new EPG URLs (or a new server/login) are read now, not at the 12-hour refresh.
+                if (com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.guideSourcesChanged(old, account)) xmltv.refreshNow(account)
                 // A renewed/edited account must not keep showing a stale "Expired" status or
                 // category lists fetched under the old creds — evict its caches.
                 evictAccountCaches(old.id)
