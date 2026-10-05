@@ -10,6 +10,7 @@ import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackProgressEvidence
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.PlaybackState
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ProviderSelectionId
@@ -425,6 +426,26 @@ class CleanLiveGuidePlaybackViewModelTest {
     }
 
     @Test
+    fun `F28 live track picks reach the active host, Off disables subtitles`() = runTest {
+        val fixture = fixture()
+        fixture.viewModel.attach(
+            fixture.initial.contentId,
+            fixture.activity,
+            fixture.lifecycle,
+            fixture.owner,
+        )
+
+        fixture.viewModel.requestAudioTrack(PlaybackTrackId("a2"))
+        fixture.viewModel.requestSubtitleTrack(PlaybackTrackId("s1"))
+        fixture.viewModel.requestSubtitleTrack(null)
+        advanceUntilIdle()
+
+        assertEquals(listOf(PlaybackTrackId("a2")), fixture.firstHost.audioSelections)
+        assertEquals(listOf(PlaybackTrackId("s1"), null), fixture.firstHost.subtitleSelections)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
     fun `public command failure is contained and published`() = runTest {
         val fixture = fixture(commandFailures = 1)
         fixture.viewModel.attach(
@@ -664,6 +685,11 @@ class CleanLiveGuidePlaybackViewModelTest {
     ) : CleanLiveHost {
         val snapshotFlow = MutableStateFlow(PlaybackSnapshot())
         override val snapshot: StateFlow<PlaybackSnapshot> = snapshotFlow
+        val audioSelections = mutableListOf<PlaybackTrackId>()
+        val subtitleSelections = mutableListOf<PlaybackTrackId?>()
+        override suspend fun selectAudioTrack(trackId: PlaybackTrackId) { audioSelections += trackId }
+        override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) { subtitleSelections += trackId }
+        override suspend fun disableSubtitles() { subtitleSelections += null }
         val tuneTargets = mutableListOf<ProviderPlaybackSelection>()
         val tuneProfiles = mutableListOf<SessionProfile>()
         val zapSelections = mutableListOf<ProviderPlaybackSelection>()

@@ -7,6 +7,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelStore
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.PlaybackProgressEvidence
 import com.nuvio.tv.playback.core.PlaybackState
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
@@ -925,6 +926,11 @@ class CleanLivePlayerViewModelTest {
     ) : CleanLiveHost {
         val snapshotFlow = MutableStateFlow(PlaybackSnapshot())
         override val snapshot: StateFlow<PlaybackSnapshot> = snapshotFlow
+        val audioSelections = mutableListOf<PlaybackTrackId>()
+        val subtitleSelections = mutableListOf<PlaybackTrackId?>()
+        override suspend fun selectAudioTrack(trackId: PlaybackTrackId) { audioSelections += trackId }
+        override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) { subtitleSelections += trackId }
+        override suspend fun disableSubtitles() { subtitleSelections += null }
         var tunedSelection: ProviderPlaybackSelection? = null
         var tunedProfile: SessionProfile? = null
         var tunedMetadata: CleanMediaSessionMetadata? = null

@@ -38,4 +38,9 @@
     <string name="clean_live_error_no_graph">No compatible playback engine is available.</string>
     <string name="clean_live_error_no_progress">Playback stopped making progress.</string>
     <string name="clean_live_error_unknown">Live TV playback failed.</string>
+    <!-- F28: the shared live overlay (guide fullscreen + clean live player). -->
+    <string name="live_action_add_favourite">Add to Favorites</string>
+    <string name="live_action_remove_favourite">Remove from Favorites</string>
+    <string name="live_action_close">Close</string>
+    <string name="live_subtitles_off">Off</string>
 </resources>

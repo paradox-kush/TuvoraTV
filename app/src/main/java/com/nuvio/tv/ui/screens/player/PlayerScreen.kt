@@ -115,6 +115,9 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
+import com.nuvio.tv.ui.components.player.ControlButton
+import com.nuvio.tv.ui.components.player.DialogButton
+import com.nuvio.tv.ui.components.player.rememberRawSvgPainter
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.LibassRenderType
 import com.nuvio.tv.data.local.SubtitleStyleSettings
@@ -2192,84 +2195,6 @@ private fun ReportControlButton(
     }
 }
 
-@Composable
-private fun ControlButton(
-    icon: ImageVector,
-    iconPainter: Painter? = null,
-    contentDescription: String,
-    onClick: () -> Unit,
-    focusRequester: FocusRequester? = null,
-    upFocusRequester: FocusRequester? = null,
-    enabled: Boolean = true,
-    onDownKey: (() -> Unit)? = null,
-    onFocused: (() -> Unit)? = null
-) {
-    var isFocused by remember { mutableStateOf(false) }
-
-    IconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier
-            .size(NuvioTheme.spacing.xxxl)
-            .then(
-                if (focusRequester != null) Modifier.focusRequester(focusRequester)
-                else Modifier
-            )
-            .then(
-                if (upFocusRequester != null) {
-                    Modifier.focusProperties { up = upFocusRequester }
-                } else {
-                    Modifier
-                }
-            )
-            .onPreviewKeyEvent { keyEvent ->
-                if (
-                    upFocusRequester != null &&
-                    keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN &&
-                    keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_UP
-                ) {
-                    try {
-                        upFocusRequester.requestFocus()
-                    } catch (_: Exception) {}
-                    true
-                } else if (
-                    onDownKey != null &&
-                    keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN &&
-                    keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_DOWN
-                ) {
-                    onDownKey.invoke()
-                    true
-                } else {
-                    false
-                }
-            }
-            .onFocusChanged {
-                isFocused = it.isFocused
-                if (it.isFocused) onFocused?.invoke()
-            },
-        colors = IconButtonDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color.White,
-            contentColor = Color.White,
-            focusedContentColor = Color.Black
-        ),
-        shape = IconButtonDefaults.shape(shape = CircleShape)
-    ) {
-        if (iconPainter != null) {
-            Icon(
-                painter = iconPainter,
-                contentDescription = contentDescription,
-                modifier = Modifier.size(NuvioTheme.spacing.xl)
-            )
-        } else {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                modifier = Modifier.size(28.dp)
-            )
-        }
-    }
-}
 
 @Composable
 private fun ProgressBar(
@@ -2783,19 +2708,6 @@ private fun SubtitleDelayOverlay(
     }
 }
 
-@Composable
-private fun rememberRawSvgPainter(@RawRes iconRes: Int): Painter {
-    val context = LocalContext.current
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val sizePx = with(density) { NuvioTheme.spacing.xl.roundToPx() }
-    val request = remember(iconRes, context, sizePx) {
-        ImageRequest.Builder(context)
-            .data(iconRes)
-            .size(sizePx)
-            .build()
-    }
-    return rememberAsyncImagePainter(model = request)
-}
 
 @Composable
 private fun StartOverAction(
@@ -3175,41 +3087,6 @@ private fun SpeedItem(
     }
 }
 
-@Composable
-internal fun DialogButton(
-    text: String,
-    onClick: () -> Unit,
-    isPrimary: Boolean,
-    enabled: Boolean = true,
-    modifier: Modifier = Modifier
-) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier,
-        colors = ButtonDefaults.colors(
-            containerColor = if (isPrimary) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundCard,
-            contentColor = if (isPrimary) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextSecondary,
-            focusedContainerColor = if (isPrimary) NuvioTheme.colors.SecondaryVariant else NuvioTheme.colors.FocusBackground,
-            focusedContentColor = if (isPrimary) NuvioTheme.colors.OnSecondaryVariant else NuvioTheme.colors.Primary
-        ),
-        border = ButtonDefaults.border(
-            focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, if (isPrimary) NuvioTheme.colors.SecondaryVariant else NuvioTheme.colors.FocusRing),
-                shape = RoundedCornerShape(NuvioTheme.radii.md)
-            )
-        ),
-        shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md)),
-        scale = ButtonDefaults.scale(focusedScale = 1f)
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
 
 private fun formatTime(millis: Long): String {
     if (millis <= 0) return "0:00"

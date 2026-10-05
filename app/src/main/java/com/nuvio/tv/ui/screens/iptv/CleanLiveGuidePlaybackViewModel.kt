@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.VideoDimensions
@@ -487,6 +488,12 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     fun requestPause() = requestCommand { it.pause() }
     fun requestResume() = requestCommand { it.resume() }
     fun requestRetry() = requestCommand { it.retry() }
+
+    /** F28: the live overlay's audio/subtitle pickers. Null subtitle = Off. */
+    fun requestAudioTrack(trackId: PlaybackTrackId) = requestCommand { it.selectAudioTrack(trackId) }
+    fun requestSubtitleTrack(trackId: PlaybackTrackId?) = requestCommand {
+        if (trackId == null) it.disableSubtitles() else it.selectSubtitleTrack(trackId)
+    }
 
     private fun requestCommand(action: suspend (CleanLiveHost) -> Unit) {
         if (!releaseCompleted && !clearedReleaseLoopStarted) {

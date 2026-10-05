@@ -7,6 +7,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.host.AndroidCleanLiveHostFactory
@@ -310,6 +311,12 @@ internal class CleanLivePlayerViewModel private constructor(
     suspend fun pause() = command { it.pause() }
     suspend fun resume() = command { it.resume() }
     suspend fun retry() = command { it.retry() }
+
+    /** F28: the live overlay's audio/subtitle pickers. Null subtitle = Off. */
+    suspend fun selectAudioTrack(trackId: PlaybackTrackId) = command { it.selectAudioTrack(trackId) }
+    suspend fun selectSubtitleTrack(trackId: PlaybackTrackId?) = command {
+        if (trackId == null) it.disableSubtitles() else it.selectSubtitleTrack(trackId)
+    }
 
     /**
      * Remote presses accumulate as signed steps behind one ViewModel-owned settled worker; the

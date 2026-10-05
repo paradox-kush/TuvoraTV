@@ -8,6 +8,7 @@ import com.nuvio.tv.playback.android.AndroidPlaybackLifecyclePort
 import com.nuvio.tv.playback.android.output.AndroidPlaybackOutputController
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.SurfaceMode
@@ -39,6 +40,11 @@ internal interface CleanLiveHost {
     suspend fun pause()
     suspend fun resume()
     suspend fun retry()
+
+    /** F28: live track choices, the same session commands VOD uses. */
+    suspend fun selectAudioTrack(trackId: PlaybackTrackId)
+    suspend fun selectSubtitleTrack(trackId: PlaybackTrackId)
+    suspend fun disableSubtitles()
     suspend fun changeProfile(profile: SessionProfile)
     suspend fun stop()
     suspend fun release()
@@ -119,6 +125,9 @@ private class AndroidCleanLiveHost(
     override suspend fun pause() = host.pause()
     override suspend fun resume() = host.resume()
     override suspend fun retry() = host.retry()
+    override suspend fun selectAudioTrack(trackId: PlaybackTrackId) = host.selectAudioTrack(trackId)
+    override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) = host.selectSubtitleTrack(trackId)
+    override suspend fun disableSubtitles() = host.disableSubtitles()
     override suspend fun changeProfile(profile: SessionProfile) = host.changeProfile(profile)
     override suspend fun stop() = host.stop()
     override suspend fun release() = host.release()
