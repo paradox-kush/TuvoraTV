@@ -28,4 +28,12 @@ class AddonSubtitleIdPolicyTest {
         assertEquals("series", AddonSubtitleIdPolicy.requestType("movie", "tt0388629:3:12"))
         assertEquals("movie", AddonSubtitleIdPolicy.requestType("movie", "tt0111161"))
     }
+
+    /** W2 device pass: the IPTV stream's file name ("100000.mp4", or a per-user token) went with the IMDb id. */
+    @Test
+    fun `an IPTV item sends no file name hint`() {
+        assertNull("provider-scoped content", AddonSubtitleIdPolicy.requestFilename(m3uEpisode, null, "100000.mp4"))
+        assertNull("provider-scoped video", AddonSubtitleIdPolicy.requestFilename("tt0111161", m3uEpisode, "token123.ts"))
+        assertEquals("add-on items keep it", "Movie.2020.mkv", AddonSubtitleIdPolicy.requestFilename("tt0111161", "tt0111161", "Movie.2020.mkv"))
+    }
 }

@@ -30,6 +30,15 @@ object AddonSubtitleIdPolicy {
         return resolvedPublicId?.takeUnless { isProviderScoped(it) }
     }
 
+    /**
+     * The `filename` hint an add-on may receive. For an IPTV item it is the last segment of the
+     * provider's stream URL — the panel's stream id (`100000.mp4`), or for some M3U lists a per-user
+     * token (`/play/<token>.ts`); W2 device pass found it sent with the public IMDb id. A
+     * provider-scoped item sends none (the IMDb id and the content hash identify it).
+     */
+    fun requestFilename(contentId: String?, videoId: String?, filename: String?): String? =
+        filename?.takeUnless { isProviderScoped(contentId) || isProviderScoped(videoId) }
+
     fun requestType(contentType: String, publicId: String): String =
         if (publicId.count { it == ':' } >= 2) "series" else contentType
 }
