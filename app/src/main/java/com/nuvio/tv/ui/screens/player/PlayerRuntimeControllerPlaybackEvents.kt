@@ -984,6 +984,7 @@ fun PlayerRuntimeController.scheduleHideControls() {
         if (_uiState.value.isPlaying && !_uiState.value.showAudioOverlay &&
             !_uiState.value.showSubtitleOverlay && !_uiState.value.showSubtitleStylePanel &&
             !_uiState.value.showSpeedDialog && !_uiState.value.showMoreDialog &&
+            !_uiState.value.showVideoZoomPanel &&
             !_uiState.value.showSubtitleDelayOverlay &&
             !_uiState.value.showSubtitleTimingDialog &&
             !_uiState.value.showEpisodesPanel && !_uiState.value.showSourcesPanel &&
@@ -1086,7 +1087,7 @@ internal fun PlayerRuntimeController.schedulePauseOverlay() {
         val anyPanelOpen = s.showSubtitleOverlay || s.showSubtitleStylePanel ||
             s.showSpeedDialog || s.showMoreDialog || s.showEpisodesPanel ||
             s.showSourcesPanel || s.showAudioOverlay || s.showStreamInfoOverlay ||
-            s.showSubtitleTimingDialog || s.showSubtitleDelayOverlay
+            s.showSubtitleTimingDialog || s.showSubtitleDelayOverlay || s.showVideoZoomPanel
         if (!s.isPlaying && s.pauseOverlayEnabled && s.error == null && !anyPanelOpen) {
             _uiState.update { it.copy(showPauseOverlay = true, showControls = false) }
         }
@@ -1676,9 +1677,17 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         is PlayerEvent.OnSetSubtitleVerticalOffset -> {
             scope.launch { playerSettingsDataStore.setSubtitleVerticalOffset(event.offset) }
         }
+        is PlayerEvent.OnSetSubtitleSideMargin -> {
+            scope.launch { playerSettingsDataStore.setSubtitleSideMarginPercent(event.percent) }
+        }
+        PlayerEvent.OnShowVideoZoomPanel,
+        PlayerEvent.OnDismissVideoZoomPanel,
+        is PlayerEvent.OnAdjustVideoZoom,
+        PlayerEvent.OnResetVideoZoom -> handleVideoZoomEvent(event)
         PlayerEvent.OnResetSubtitleDefaults -> {
             scope.launch {
                 val defaults = SubtitleStyleSettings()
+                playerSettingsDataStore.setSubtitleSideMarginPercent(defaults.sideMarginPercent)
                 playerSettingsDataStore.setSubtitleSize(defaults.size)
                 playerSettingsDataStore.setSubtitleTextColor(defaults.textColor)
                 playerSettingsDataStore.setSubtitleBold(defaults.bold)
@@ -1735,6 +1744,8 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                 Log.d(PlayerRuntimeController.TAG, "Persisting aspect mode: $newMode")
                 deviceLocalPlayerPreferences.setAspectMode(newMode)
             }
+            // F37: also the series' own aspect (global last-used above stays the fallback).
+            persistSeriesPicture()
             hideAspectRatioIndicatorJob?.cancel()
             hideAspectRatioIndicatorJob = scope.launch {
                 delay(1500)

@@ -278,7 +278,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     internalPlayerEngine = effectiveInternalPlayerEngine,
                     frameRateMatchingMode = playerSettings.frameRateMatchingMode,
                     resizeMode = playerSettings.resizeMode,
-                    aspectMode = deviceAspectMode,
+                    // F37: a series' remembered aspect (restoreSeriesPicture) survives re-inits.
+                    aspectMode = if (seriesPictureApplied) it.aspectMode else deviceAspectMode,
                     tunneledSurfaceFill = tunneledSurfaceFill,
                     playbackIssueReportsEnabled = playerSettings.playbackIssueReportsEnabled,
                     tunnelingEnabled = playerSettings.tunnelingEnabled &&
@@ -857,6 +858,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                 },
                 isBuiltInSubtitleProvider = {
                     _uiState.value.selectedAddonSubtitle == null
+                },
+                // F47: inner horizontal padding inside the cue box (only when a box is drawn).
+                boxPaddingCharsProvider = {
+                    if ((_uiState.value.subtitleStyle.backgroundColor ushr 24) != 0) SubtitleBoxPadding.EXO_PAD_CHARS else 0
                 },
                 videoBoundsFractionProvider = {
                     val pv = exoPlayerView
@@ -2161,6 +2166,7 @@ private class SubtitleOffsetRenderersFactory(
     private val audioDelayUsProvider: () -> Long,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
     private val isBuiltInSubtitleProvider: () -> Boolean,
+    private val boxPaddingCharsProvider: () -> Int,
     private val videoBoundsFractionProvider: () -> RectF?,
     private val gainAudioProcessor: GainAudioProcessor,
     private val downmixEnabled: Boolean,
@@ -2243,6 +2249,7 @@ private class SubtitleOffsetRenderersFactory(
             delegate = output,
             shouldNormalizeCuePositionProvider = shouldNormalizeCuePositionProvider,
             isBuiltInSubtitleProvider = isBuiltInSubtitleProvider,
+            boxPaddingCharsProvider = boxPaddingCharsProvider,
             videoBoundsFractionProvider = videoBoundsFractionProvider
         )
         val startIndex = out.size
@@ -2292,6 +2299,7 @@ private class CueNormalizingTextOutput(
     private val delegate: TextOutput,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
     private val isBuiltInSubtitleProvider: () -> Boolean,
+    private val boxPaddingCharsProvider: () -> Int,
     private val videoBoundsFractionProvider: () -> RectF?
 ) : TextOutput {
 
@@ -2309,6 +2317,13 @@ private class CueNormalizingTextOutput(
         var processed = fixRtlCueText(SubtitleMojibakeSanitizer.sanitizeCue(cue))
         if (shouldNormalizeCuePositionProvider()) {
             processed = normalizeCuePosition(processed)
+        }
+        val padChars = boxPaddingCharsProvider()
+        if (padChars > 0 && processed.bitmap == null) {
+            val text = processed.text?.toString()
+            if (!text.isNullOrEmpty()) {
+                processed = processed.buildUpon().setText(SubtitleBoxPadding.padLines(text, padChars)).build()
+            }
         }
         if (processed.bitmap != null) {
             val bounds = videoBoundsFractionProvider()

@@ -593,6 +593,8 @@ private fun PlayerRuntimeController.currentTrackPreferenceForPersistence(): Play
 
 internal fun PlayerRuntimeController.persistTrackPreference() {
     val id = contentId ?: return
+    // F37: in-player choices are written to the series memory only while remembering is on.
+    if (!PlayerPreferencePolicy.persistsSeriesChoice(rememberPlayerPreferences, id)) return
     // Use the currently-effective preference (remembered OR previously persisted)
     // so that a delay-only change does not wipe a previously-saved track selection.
     // For the resume-from-CW case, rememberedTrackPreference is null for the fresh

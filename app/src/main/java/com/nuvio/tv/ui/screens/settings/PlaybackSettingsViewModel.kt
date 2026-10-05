@@ -167,6 +167,18 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setShowPlayerLoadingStatus(enabled)
     }
 
+    suspend fun setLiveBufferSeconds(seconds: Int) {
+        playerSettingsDataStore.setLiveBufferSeconds(seconds)
+    }
+
+    suspend fun setRememberPlayerPreferences(enabled: Boolean) {
+        playerSettingsDataStore.setRememberPlayerPreferences(enabled)
+    }
+
+    suspend fun setSubtitleSideMarginPercent(percent: Int) {
+        playerSettingsDataStore.setSubtitleSideMarginPercent(percent)
+    }
+
     suspend fun setPauseOverlayEnabled(enabled: Boolean) {
         playerSettingsDataStore.setPauseOverlayEnabled(enabled)
     }

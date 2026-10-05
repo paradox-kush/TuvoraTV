@@ -17,6 +17,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.yield
 
 internal data class SubtitleFetchRequest(
@@ -101,7 +102,9 @@ internal suspend fun PlayerRuntimeController.fetchAddonSubtitlesNow(
         videoHash = currentVideoHash,
         videoSize = currentVideoSize,
         filename = currentFilename,
-        onProgress = onProgress
+        onProgress = onProgress,
+        season = currentSeason,
+        episode = currentEpisode,
     )
 }
 
@@ -877,6 +880,9 @@ internal fun PlayerRuntimeController.observeDeviceLocalAspectMode() {
     scope.launch {
         deviceLocalPlayerPreferences.aspectMode
             .distinctUntilChanged()
+            // The stored value is read at init (and may be overridden by a series' remembered aspect,
+            // F37); only LATER changes made elsewhere should reach the running player.
+            .drop(1)
             .collect { mode ->
                 val currentState = _uiState.value
                 if (currentState.aspectMode != mode) {
