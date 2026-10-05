@@ -27,7 +27,7 @@ class SubtitleRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val api: AddonApi,
     private val addonRepository: AddonRepositoryImpl,
-    private val iptvSubtitleIdResolver: com.nuvio.tv.core.iptv.IptvSubtitleIdResolver,
+    private val iptvSubtitleIdResolver: com.nuvio.tv.core.contracts.IptvSubtitleIds,
 ) : SubtitleRepository {
 
     companion object {

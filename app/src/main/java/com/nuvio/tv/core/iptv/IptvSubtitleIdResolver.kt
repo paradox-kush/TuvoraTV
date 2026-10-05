@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.iptv
 
+import com.nuvio.tv.core.contracts.IptvSubtitleIds
 import com.nuvio.tv.core.iptv.match.MatchKind
 import com.nuvio.tv.core.iptv.match.XtreamMatchIndex
 import com.nuvio.tv.core.player.AddonSubtitleIdPolicy
@@ -17,8 +18,8 @@ import javax.inject.Singleton
 class IptvSubtitleIdResolver @Inject constructor(
     private val matchIndex: XtreamMatchIndex,
     private val tmdbService: TmdbService,
-) {
-    suspend fun publicSubtitleVideoId(contentId: String, season: Int?, episode: Int?): String? {
+) : IptvSubtitleIds {
+    override suspend fun publicSubtitleVideoId(contentId: String, season: Int?, episode: Int?): String? {
         val parsed = XtreamItemRegistry.parseId(contentId) ?: return null
         val sid = parsed.streamId.toIntOrNull() ?: return null
         val (kind, isSeries) = when (parsed.kind) {
