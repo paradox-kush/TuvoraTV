@@ -279,12 +279,12 @@ class M3UClient @Inject constructor(
      * no EPG has been fetched. Also nudges a throttled EPG refresh so a first browse warms it.
      */
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = runCatching {
-        val tvgId = db.channelRow(acc.id, streamId)?.tvgId?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
-            ?: return@runCatching emptyList()
         // Lazily ensure the EPG is present/fresh (single-flight + throttled inside XmltvClient).
         runCatching { xmltv.refreshIfStale(acc) }
         val now = System.currentTimeMillis()
-        db.epgNowNext(acc.id, tvgId, now).map { p ->
+        // B10: by the ingest's channel map, so a channel with NO tvg-id still gets the guide its name
+        // matched (this returned empty before even looking).
+        xmltv.storedNowNext(acc, streamId, now).map { p ->
             XtreamProgram(
                 title = p.title,
                 description = p.desc.orEmpty(),

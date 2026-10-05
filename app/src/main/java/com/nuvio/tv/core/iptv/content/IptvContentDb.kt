@@ -24,6 +24,34 @@ data class ContentCategory(val id: String, val name: String)
  *  reads truncate [desc] to 600 chars — [IptvContentDb.epgFullDesc] fetches the whole text. */
 data class EpgProgramme(val channelId: String, val startMs: Long, val endMs: Long, val title: String, val desc: String?, val hasArchive: Boolean = false)
 
+/** One guide `<channel>` the playlist's sources offer — what the manual-assign picker lists (F14). */
+data class EpgGuideChannelRow(val guideKey: String, val guideId: String, val name: String, val sourceIndex: Int)
+
+/**
+ * B10/F14 — the result of matching a playlist's lineup onto its guide sources, written in the SAME
+ * transaction as the programme swap. [assignments] = stream id -> (stored programme key, tier slug).
+ */
+data class EpgMappingWrite(
+    val assignments: Map<Int, Pair<String, String>>,
+    val guideChannels: List<EpgGuideChannelRow>,
+    val census: EpgCensusRow,
+)
+
+/** Per-playlist coverage census (B10): what the playlist screen shows. Counts only. */
+data class EpgCensusRow(
+    val lineup: Int,
+    val eligible: Int,
+    val manual: Int,
+    val byId: Int,
+    val byName: Int,
+    val fuzzy: Int,
+    val sources: Int,
+    val sourcesFailed: Int,
+    val builtAtMs: Long,
+) {
+    val matched: Int get() = manual + byId + byName + fuzzy
+}
+
 /**
  * Disk-backed catalog for M3U/URL playlists. Unlike Xtream (which has a live API per browse),
  * a parsed M3U IS the catalog — a provider list can be 192MB / 685k entries, far too large to
@@ -92,7 +120,14 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
     // epg_meta is created lazily too, so existing v5 databases pick it up with no migration (a version
     // bump would drop every cached catalog).
-    private val db: SQLiteDatabase by lazy { helper.writableDatabase.also { it.execSQL(EPG_META_DDL) } }
+    private val db: SQLiteDatabase by lazy {
+        helper.writableDatabase.also { d ->
+            d.execSQL(EPG_META_DDL)
+            // B10/F14 map tables: IF NOT EXISTS on open, like epg_meta, so no version bump (which would
+            // drop every cached catalog). An empty map = fall back to the provider id (pre-B10).
+            EPG_MAP_DDL.forEach { d.execSQL(it) }
+        }
+    }
 
     /** The generation an in-flight ingest (ingest → writer → finish) is writing, per playlist. */
     private val pendingGeneration = HashMap<String, Long>()
@@ -380,9 +415,14 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         withContext(Dispatchers.IO) {
             db.execSQL(EPG_SHADOW_DDL) // lazily created (see replaceEpg) — may not exist yet
             inTx {
-                db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
-                db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
-                db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(playlistId))
+                // A Stalker playlist's XMLTV lane lives in its own partition (XmltvClient.partitionOf).
+                for (id in listOf(playlistId, playlistId + XMLTV_PARTITION_SUFFIX)) {
+                    db.delete("epg_programmes", "playlist_id = ?", arrayOf(id))
+                    db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(id))
+                    db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(id))
+                    db.delete("epg_meta", "playlist_id = ?", arrayOf(id))
+                    for (t in EPG_MAP_TABLES) db.delete(t, "playlist_id = ?", arrayOf(id))
+                }
             }
         }
     }
@@ -664,7 +704,24 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
      * shadow only ever holds one in-flight generation for a playlist; any rows a previously aborted
      * attempt left behind are cleared before this fill begins.
      */
-    suspend fun replaceEpg(playlistId: String, builtAtMs: Long, fill: suspend (EpgWriter) -> Unit) = withContext(Dispatchers.IO) {
+    suspend fun replaceEpg(
+        playlistId: String,
+        builtAtMs: Long,
+        fill: suspend (EpgWriter) -> Unit,
+    ) = replaceEpg(playlistId, builtAtMs, mapping = null, fill = fill)
+
+    /**
+     * [replaceEpg] plus the B10/F14 channel map: [mapping] is produced DURING [fill] (the matcher runs
+     * when the guide's channel list completes) and written in the same swap transaction, so new keys
+     * appear exactly when the rows they point at do. An empty fill keeps the prior map with the prior
+     * programmes.
+     */
+    suspend fun replaceEpg(
+        playlistId: String,
+        builtAtMs: Long,
+        mapping: (() -> EpgMappingWrite?)?,
+        fill: suspend (EpgWriter) -> Unit,
+    ) = withContext(Dispatchers.IO) {
         db.execSQL(EPG_SHADOW_DDL) // lazily created so existing v5 databases pick it up with no migration
         inTx { db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(playlistId)) }
 
@@ -682,6 +739,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
                         "SELECT playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive FROM $EPG_SHADOW WHERE playlist_id = ?",
                     arrayOf(playlistId),
                 )
+                mapping?.invoke()?.let { writeMapping(playlistId, it) }
             }
             db.delete(EPG_SHADOW, "playlist_id = ?", arrayOf(playlistId))
             // Stamp freshness last — even on an empty result, so a provider serving no guide right now
@@ -690,6 +748,77 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             // and every guide entry re-downloaded the whole xmltv.php.
             db.execSQL("INSERT OR REPLACE INTO epg_meta(playlist_id, epg_built_at) VALUES(?, ?)", arrayOf<Any?>(playlistId, builtAtMs))
             db.execSQL("UPDATE ingest_meta SET epg_built_at = ? WHERE playlist_id = ?", arrayOf<Any?>(builtAtMs, playlistId))
+        }
+    }
+
+    private fun writeMapping(playlistId: String, m: EpgMappingWrite) {
+        for (t in EPG_MAP_TABLES) db.delete(t, "playlist_id = ?", arrayOf(playlistId))
+        db.compileStatement("INSERT OR REPLACE INTO epg_channel_map(playlist_id, sid, guide_key, tier) VALUES(?,?,?,?)").use { s ->
+            for ((sid, keyTier) in m.assignments) {
+                s.clearBindings()
+                s.bindString(1, playlistId); s.bindLong(2, sid.toLong()); s.bindString(3, keyTier.first); s.bindString(4, keyTier.second)
+                s.executeInsert()
+            }
+        }
+        db.compileStatement("INSERT OR IGNORE INTO epg_guide_channels(playlist_id, guide_key, guide_id, name, source_idx) VALUES(?,?,?,?,?)").use { s ->
+            for (g in m.guideChannels) {
+                s.clearBindings()
+                s.bindString(1, playlistId); s.bindString(2, g.guideKey); s.bindString(3, g.guideId); s.bindString(4, g.name)
+                s.bindLong(5, g.sourceIndex.toLong())
+                s.executeInsert()
+            }
+        }
+        val k = m.census
+        db.execSQL(
+            "INSERT OR REPLACE INTO epg_census(playlist_id, lineup, eligible, manual, by_id, by_name, fuzzy, sources, sources_failed, built_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            arrayOf<Any?>(playlistId, k.lineup, k.eligible, k.manual, k.byId, k.byName, k.fuzzy, k.sources, k.sourcesFailed, k.builtAtMs),
+        )
+    }
+
+    /** The stored programme key a lineup channel reads (B10), or null when the map has no row for it. */
+    suspend fun epgGuideKey(playlistId: String, sid: Int): String? = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT guide_key FROM epg_channel_map WHERE playlist_id = ? AND sid = ?", arrayOf(playlistId, sid.toString())).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }
+
+    /** The stored key for a guide channel id (a manual pick), highest-priority source first. */
+    suspend fun epgGuideKeyForGuideId(playlistId: String, guideId: String): String? = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT guide_key FROM epg_guide_channels WHERE playlist_id = ? AND guide_id = ? ORDER BY source_idx LIMIT 1",
+            arrayOf(playlistId, guideId),
+        ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }
+
+    /** The last matched ingest's coverage census (B10), or null before one. */
+    suspend fun epgCensus(playlistId: String): EpgCensusRow? = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT lineup, eligible, manual, by_id, by_name, fuzzy, sources, sources_failed, built_at FROM epg_census WHERE playlist_id = ?",
+            arrayOf(playlistId),
+        ).use { c ->
+            if (!c.moveToFirst()) null else EpgCensusRow(
+                lineup = c.getInt(0), eligible = c.getInt(1), manual = c.getInt(2), byId = c.getInt(3), byName = c.getInt(4),
+                fuzzy = c.getInt(5), sources = c.getInt(6), sourcesFailed = c.getInt(7), builtAtMs = c.getLong(8),
+            )
+        }
+    }
+
+    /** Guide channels for the manual picker (F14): name/id contains [query], priority source first. */
+    suspend fun epgGuideChannels(playlistId: String, query: String, limit: Int = 200): List<EpgGuideChannelRow> = withContext(Dispatchers.IO) {
+        val q = "%" + query.trim().lowercase() + "%"
+        db.rawQuery(
+            "SELECT guide_key, guide_id, name, source_idx FROM epg_guide_channels WHERE playlist_id = ? " +
+                "AND (lower(name) LIKE ? OR guide_id LIKE ?) ORDER BY source_idx, name LIMIT ?",
+            arrayOf(playlistId, q, q, limit.toString()),
+        ).use { c ->
+            buildList { while (c.moveToNext()) add(EpgGuideChannelRow(c.getString(0), c.getString(1), c.getString(2), c.getInt(3))) }
+        }
+    }
+
+    /** The live lineup of an M3U / Stalker playlist as (sid, name, tvg-id) — the matcher's input. */
+    suspend fun liveLineup(playlistId: String): List<Triple<Int, String, String?>> = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT sid, name, tvg_id FROM channels WHERE playlist_id = ? AND $gen", arrayOf(playlistId, playlistId)).use { c ->
+            buildList { while (c.moveToNext()) add(Triple(c.getInt(0), c.getString(1), c.getStringOrNull(2))) }
         }
     }
 
@@ -888,6 +1017,20 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         /** Insert batch size — matches XtreamMatchIndex's chunk to keep write locks short. */
         const val CHUNK = 5_000
 
+        /**
+         * Suffix of the partition a Stalker playlist's XMLTV guide is stored under — Stalker's bulk
+         * get_epg_info swaps the playlist's main partition, so an explicit EPG URL on a Stalker
+         * playlist and the portal guide used to wipe each other on every refresh.
+         */
+        const val XMLTV_PARTITION_SUFFIX = "#xmltv"
+        /** B10/F14 mapping tables, replaced together with the programmes. */
+        private val EPG_MAP_TABLES = listOf("epg_channel_map", "epg_guide_channels", "epg_census")
+        private val EPG_MAP_DDL = listOf(
+            "CREATE TABLE IF NOT EXISTS epg_channel_map(playlist_id TEXT NOT NULL, sid INTEGER NOT NULL, guide_key TEXT NOT NULL, tier TEXT NOT NULL, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID",
+            "CREATE TABLE IF NOT EXISTS epg_guide_channels(playlist_id TEXT NOT NULL, guide_key TEXT NOT NULL, guide_id TEXT NOT NULL, name TEXT NOT NULL, source_idx INTEGER NOT NULL, PRIMARY KEY(playlist_id, guide_key)) WITHOUT ROWID",
+            "CREATE INDEX IF NOT EXISTS epg_guide_channels_id ON epg_guide_channels(playlist_id, guide_id)",
+            "CREATE TABLE IF NOT EXISTS epg_census(playlist_id TEXT NOT NULL PRIMARY KEY, lineup INTEGER NOT NULL, eligible INTEGER NOT NULL, manual INTEGER NOT NULL, by_id INTEGER NOT NULL, by_name INTEGER NOT NULL, fuzzy INTEGER NOT NULL, sources INTEGER NOT NULL, sources_failed INTEGER NOT NULL, built_at INTEGER NOT NULL) WITHOUT ROWID",
+        )
         /** Staging table for [replaceEpg]'s generation swap; holds only the in-flight refresh's rows. */
         private const val EPG_SHADOW = "epg_programmes_shadow"
         /** Per-playlist guide freshness, for every source type (see [replaceEpg]). */

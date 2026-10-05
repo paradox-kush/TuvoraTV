@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
@@ -355,6 +356,7 @@ private fun cardSpec(action: DetailsAction, state: PlaylistDetailsState): CardSp
         Icons.Default.Refresh,
     )
     DetailsAction.CATCHUP -> CardSpec(stringResource(R.string.iptv_card_catchup), stringResource(R.string.iptv_card_catchup_sub), Icons.Default.History)
+    DetailsAction.GUIDE -> CardSpec(stringResource(R.string.iptv_card_guide), stringResource(R.string.iptv_card_guide_sub), Icons.Default.DateRange)
     DetailsAction.EDIT -> CardSpec(
         stringResource(R.string.iptv_card_edit),
         stringResource(if (state.account.fileName != null) R.string.iptv_card_edit_file_sub else R.string.iptv_card_edit_sub),

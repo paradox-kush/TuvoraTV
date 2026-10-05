@@ -44,6 +44,13 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
             db.execSQL("CREATE TABLE overlay_cursor(profile_id INTEGER NOT NULL PRIMARY KEY, cursor INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID")
         }
 
+        // F14 (lane G): the manual guide-channel pick table is created on OPEN (IF NOT EXISTS) rather
+        // than through a version bump, so it can never collide with another lane's overlay migration.
+        override fun onOpen(db: SQLiteDatabase) {
+            super.onOpen(db)
+            db.execSQL(EPG_OVERRIDE_DDL)
+        }
+
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             // v2: `dirty` marks locally-edited rows still to be pushed, so a push sends only the delta
             // instead of the whole overlay set on every edit (2026-09-19 write-amplification). Add the
@@ -123,7 +130,47 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
         val args = arrayOf(profileId.toString(), playlistId)
         db.delete("channel_overlay", "profile_id = ? AND playlist_id = ?", args)
         db.delete("category_overlay", "profile_id = ? AND playlist_id = ?", args)
+        db.delete("epg_override", "profile_id = ? AND playlist_id = ?", args)
     }
+
+    // ---- F14: manual guide-channel picks (overlay kind "epg") ------------------------------------
+
+    /** A local pick; a null [guideId] clears it (tombstone, pushed as a delete). */
+    @Synchronized
+    fun setEpgOverride(profileId: Int, entityId: String, playlistId: String?, guideId: String?, guideName: String?, updatedAt: Long) =
+        db.execSQL(
+            "INSERT INTO epg_override(profile_id, entity_id, playlist_id, guide_id, guide_name, updated_at, deleted, dirty) VALUES(?,?,?,?,?,?,?,1) " +
+                "ON CONFLICT(profile_id, entity_id) DO UPDATE SET playlist_id=excluded.playlist_id, guide_id=excluded.guide_id, " +
+                "guide_name=excluded.guide_name, updated_at=excluded.updated_at, deleted=excluded.deleted, dirty=1",
+            arrayOf<Any?>(profileId, entityId, playlistId, guideId, guideName, updatedAt, if (guideId.isNullOrBlank()) 1 else 0),
+        )
+
+    /** A pulled pick (another device / the web). LWW-guarded like every other kind. */
+    @Synchronized
+    fun applyRemoteEpg(profileId: Int, entityId: String, playlistId: String?, guideId: String?, guideName: String?, updatedAt: Long, deleted: Boolean) =
+        db.execSQL(
+            "INSERT INTO epg_override(profile_id, entity_id, playlist_id, guide_id, guide_name, updated_at, deleted) VALUES(?,?,?,?,?,?,?) " +
+                "ON CONFLICT(profile_id, entity_id) DO UPDATE SET playlist_id=excluded.playlist_id, guide_id=excluded.guide_id, " +
+                "guide_name=excluded.guide_name, updated_at=excluded.updated_at, deleted=excluded.deleted, dirty=0 " +
+                "WHERE excluded.updated_at >= epg_override.updated_at",
+            arrayOf<Any?>(profileId, entityId, playlistId, guideId, guideName, updatedAt, if (deleted || guideId.isNullOrBlank()) 1 else 0),
+        )
+
+    /** One profile's picks for a playlist: entity id -> guide channel id. */
+    @Synchronized
+    fun epgOverrides(profileId: Int, playlistId: String): Map<String, String> =
+        db.rawQuery(
+            "SELECT entity_id, guide_id FROM epg_override WHERE profile_id=? AND playlist_id=? AND deleted=0 AND guide_id IS NOT NULL",
+            arrayOf(profileId.toString(), playlistId),
+        ).use { c -> buildMap { while (c.moveToNext()) put(c.getString(0), c.getString(1)) } }
+
+    /** Every guide id ANY profile picked for a playlist — the ingest keeps those programmes. */
+    @Synchronized
+    fun epgOverrideGuideIds(playlistId: String): Set<String> =
+        db.rawQuery(
+            "SELECT DISTINCT guide_id FROM epg_override WHERE playlist_id=? AND deleted=0 AND guide_id IS NOT NULL",
+            arrayOf(playlistId),
+        ).use { c -> buildSet { while (c.moveToNext()) add(c.getString(0)) } }
 
     @Synchronized fun getCursor(profileId: Int): Long =
         db.rawQuery("SELECT cursor FROM overlay_cursor WHERE profile_id=?", arrayOf(profileId.toString())).use { if (it.moveToFirst()) it.getLong(0) else 0L }
@@ -180,6 +227,18 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
                 out.add(OverlayPushRow("category", c.getString(0), c.getString(1), v, c.getLong(7), c.getInt(8) != 0))
             }
         }
+        // F14 manual guide picks: same delta discipline.
+        db.rawQuery("SELECT entity_id, playlist_id, guide_id, guide_name, updated_at, deleted FROM epg_override WHERE profile_id=? AND dirty=1", arrayOf(profileId.toString())).use { c ->
+            while (c.moveToNext()) {
+                val v = buildString {
+                    append("{")
+                    if (!c.isNull(2)) append("\"guide_id\":\"").append(c.getString(2).jsonEscaped()).append("\"")
+                    if (!c.isNull(3)) append(if (c.isNull(2)) "" else ",").append("\"guide_name\":\"").append(c.getString(3).jsonEscaped()).append("\"")
+                    append("}")
+                }
+                out.add(OverlayPushRow(EPG_KIND, c.getString(0), if (c.isNull(1)) null else c.getString(1), v, c.getLong(4), c.getInt(5) != 0))
+            }
+        }
         return out
     }
 
@@ -196,9 +255,19 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
             val sql = when (r.kind) {
                 "channel" -> "UPDATE channel_overlay SET dirty=0 WHERE profile_id=? AND entity_id=? AND updated_at=? AND dirty=1"
                 "category" -> "UPDATE category_overlay SET dirty=0 WHERE profile_id=? AND category_key=? AND updated_at=? AND dirty=1"
+                EPG_KIND -> "UPDATE epg_override SET dirty=0 WHERE profile_id=? AND entity_id=? AND updated_at=? AND dirty=1"
                 else -> continue
             }
             db.execSQL(sql, arrayOf<Any?>(profileId, r.okey, r.updatedAt))
         }
+    }
+
+    companion object {
+        /** Overlay kind of a manual guide pick (F14) — the same string the KMP clients and the web use. */
+        const val EPG_KIND = "epg"
+        private const val EPG_OVERRIDE_DDL =
+            "CREATE TABLE IF NOT EXISTS epg_override(profile_id INTEGER NOT NULL, entity_id TEXT NOT NULL, playlist_id TEXT, " +
+                "guide_id TEXT, guide_name TEXT, updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, " +
+                "dirty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(profile_id, entity_id)) WITHOUT ROWID"
     }
 }

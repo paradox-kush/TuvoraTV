@@ -153,4 +153,99 @@ object XmltvParser {
             event = parser.next()
         }
     }
+
+    /**
+     * B10 — one pass over a whole guide that ALSO hands over the channel list: every `<channel>` with
+     * all its `<display-name>`s goes to [onChannel]; when the first `<programme>` opens (the DTD puts
+     * every channel first) — or the document ends — [onChannelsDone] runs ONCE and returns the set of
+     * normalized channel ids whose programmes to keep. Unlike [parseProgrammes], an EMPTY returned set
+     * keeps nothing (a guide that matched no channel stores no rows).
+     */
+    fun parseGuide(
+        parser: XmlPullParser,
+        onChannel: (id: String, names: List<String>) -> Unit,
+        onChannelsDone: () -> Set<String>,
+        onProgramme: (EpgProgramme) -> Unit,
+    ) {
+        var event = parser.eventType
+        var keepSet: Set<String>? = null
+        var channelId: String? = null
+        val names = ArrayList<String>(2)
+        var nameText: StringBuilder? = null
+        var inProgramme = false
+        var keep = false
+        var channel = ""
+        var startMs = 0L
+        var endMs = 0L
+        var title: String? = null
+        var desc: String? = null
+        var currentText: StringBuilder? = null
+
+        fun allow(): Set<String> = keepSet ?: onChannelsDone().also { keepSet = it }
+
+        while (event != XmlPullParser.END_DOCUMENT) {
+            when (event) {
+                XmlPullParser.START_TAG -> when (parser.name) {
+                    "channel" -> if (keepSet == null) {
+                        channelId = parser.getAttributeValue(null, "id")?.trim()?.takeIf { it.isNotEmpty() }
+                        names.clear()
+                    }
+                    "display-name" -> if (channelId != null && !inProgramme) nameText = StringBuilder()
+                    "programme" -> {
+                        val filter = allow()
+                        val ch = normalizeChannelId(parser.getAttributeValue(null, "channel").orEmpty())
+                        val start = parseXmltvTime(parser.getAttributeValue(null, "start"))
+                        val stop = parseXmltvTime(parser.getAttributeValue(null, "stop"))
+                        inProgramme = true
+                        keep = ch.isNotEmpty() && ch in filter && start != null && stop != null && stop > start
+                        channel = ch
+                        startMs = start ?: 0L
+                        endMs = stop ?: 0L
+                        title = null; desc = null
+                    }
+                    "title" -> if (inProgramme && keep && title == null) currentText = StringBuilder()
+                    "desc" -> if (inProgramme && keep && desc == null) currentText = StringBuilder()
+                }
+                XmlPullParser.TEXT -> {
+                    nameText?.let { if (it.length < MAX_TEXT_CHARS) it.append(parser.text) }
+                    currentText?.let {
+                        if (it.length < MAX_TEXT_CHARS) it.append(parser.text)
+                        if (it.length > MAX_TEXT_CHARS) it.setLength(MAX_TEXT_CHARS)
+                    }
+                }
+                XmlPullParser.END_TAG -> when (parser.name) {
+                    "display-name" -> {
+                        nameText?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { if (names.size < MAX_NAMES) names.add(it) }
+                        nameText = null
+                    }
+                    "channel" -> {
+                        channelId?.let { onChannel(it, names.toList()) }
+                        channelId = null
+                        names.clear()
+                    }
+                    "title" -> { currentText?.let { title = it.toString().trim() }; currentText = null }
+                    "desc" -> { currentText?.let { desc = it.toString().trim() }; currentText = null }
+                    "programme" -> {
+                        if (keep) {
+                            onProgramme(
+                                EpgProgramme(
+                                    channelId = channel,
+                                    startMs = startMs,
+                                    endMs = endMs,
+                                    title = title?.takeIf { it.isNotEmpty() } ?: "",
+                                    desc = desc?.takeIf { it.isNotEmpty() },
+                                )
+                            )
+                        }
+                        inProgramme = false; keep = false; currentText = null
+                    }
+                }
+            }
+            event = parser.next()
+        }
+        allow()   // a guide with channels but no programmes still reports its channel list
+    }
+
+    /** Display-names kept per channel (real feeds list 1-3). */
+    private const val MAX_NAMES = 8
 }

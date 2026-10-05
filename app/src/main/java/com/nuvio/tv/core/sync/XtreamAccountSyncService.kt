@@ -508,7 +508,9 @@ internal fun preserveDeviceLocalPrefs(
     acc.copy(
         preferM3u8CatchUp = match.preferM3u8CatchUp,
         catchUpCorrectionMinutes = match.catchUpCorrectionMinutes,
-        guideEpgCorrectionMinutes = match.guideEpgCorrectionMinutes
+        guideEpgCorrectionMinutes = match.guideEpgCorrectionMinutes,
+        cleanChannelNames = match.cleanChannelNames,
+        channelNameTags = match.channelNameTags,
     )
 }
 
