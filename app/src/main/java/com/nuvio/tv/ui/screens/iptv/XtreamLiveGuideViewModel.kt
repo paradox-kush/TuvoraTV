@@ -767,6 +767,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
         return ProviderSelectionId(next.contentId)
     }
 
+    /**
+     * F08: aim the guide at one channel of the current lineup (the channel list's pick, the zap-back
+     * jump) and return its exact identity for the playback owner. Null when it is not in the lineup —
+     * playback refuses channels outside the published lineup anyway.
+     */
+    fun focusChannel(contentId: String): ProviderSelectionId? {
+        val channels = _uiState.value.channels
+        val index = channels.indexOfFirst { it.contentId == contentId }
+        if (index < 0) return null
+        onChannelFocused(channels[index], index)
+        return ProviderSelectionId(contentId)
+    }
+
     /** Add/remove a channel from the platform Library (same store as movies). */
     fun toggleFavorite(channel: GuideChannel) {
         val adding = channel.contentId !in favoriteLiveIds.value

@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -290,6 +291,23 @@ fun LiveGuide(
 
     var controlsVisible by remember { mutableStateOf(false) }
     var controlsTick by remember { mutableStateOf(0) }
+    // F08: the channel list over fullscreen video, and the previous channel for the LAST key.
+    var channelListOpen by remember { mutableStateOf(false) }
+    val fullscreenAnchor = remember { FocusRequester() }
+    var anchorUsed by remember { mutableStateOf(false) }
+    LaunchedEffect(channelListOpen) { if (channelListOpen) anchorUsed = true }
+    LaunchedEffect(fullscreen) {
+        if (fullscreen) return@LaunchedEffect
+        channelListOpen = false
+        // Leaving fullscreen after the channel list: focus was behind the video, give it back to
+        // the guide on the aimed channel (row 1 if that row isn't composed).
+        if (anchorUsed) {
+            anchorUsed = false
+            if (!channelRowFocus.requestFocusOrFalse()) firstChannelFocus.requestFocusOrFalse()
+        }
+    }
+    var zapBack by remember(account.id) { mutableStateOf(LiveZapBack()) }
+    LaunchedEffect(playingContentId) { playingContentId?.let { zapBack = zapBack.onSettled(it) } }
     fun showControls() { controlsVisible = true; controlsTick++ }
     fun togglePause() {
         if (playbackUi?.isPaused == true) playbackViewModel.requestResume()
@@ -310,40 +328,52 @@ fun LiveGuide(
             // arrive there — intercept them in the preview phase before the row's clickable.
             // BACK is NOT consumed (BackHandler collapses). UP/DOWN zap channels.
             .onPreviewKeyEvent { event ->
-                // While a hide notice is up its Undo holds focus; its keys are its own.
-                if (!fullscreen || uiState.hideNotice != null) return@onPreviewKeyEvent false
-                val handled = when (event.key) {
-                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
-                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause,
-                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight, Key.Menu -> true
-                    else -> false
-                }
-                if (!handled) return@onPreviewKeyEvent false
-                if (event.type == KeyEventType.KeyDown) {
-                    when (event.key) {
-                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> togglePause()
-                        Key.MediaPlay -> if (playbackUi?.isPaused == true) togglePause() else showControls()
-                        Key.MediaPause -> if (playbackUi?.isPaused != true) togglePause() else showControls()
-                        // MENU on the aimed channel hides it (personalization overlay; syncs to web + other
-                        // devices) and confirms with a notice + Undo (UX36/UX73 — it used to toggle silently).
-                        Key.Menu -> uiState.focusedChannel?.let { viewModel.hideChannel(it) }
-                        // The live-TV remote split: UP/DOWN are the channel keys. Every press
-                        // surfaces the overlay naming the AIMED channel immediately (each press
-                        // restarts the 4s auto-hide), so a settled zap is never a blind walk.
-                        Key.DirectionUp -> {
-                            viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS)
-                                ?.let(playbackViewModel::requestSettledTune)
-                            showControls()
-                        }
-                        Key.DirectionDown -> {
-                            viewModel.moveChannelFocus(LiveZapDirection.NEXT)
-                                ?.let(playbackViewModel::requestSettledTune)
-                            showControls()
-                        }
-                        else -> showControls()
+                if (!fullscreen) return@onPreviewKeyEvent false
+                // The remote map lives in LiveFullscreenKeyPolicy (F08). While a hide notice is up its
+                // Undo holds focus, and while the channel list is open it does: their keys are their own.
+                when (
+                    LiveFullscreenKeyPolicy.actionFor(
+                        key = event.key,
+                        isKeyDown = event.type == KeyEventType.KeyDown,
+                        paused = playbackUi?.isPaused == true,
+                        channelListOpen = channelListOpen,
+                        noticeShowing = uiState.hideNotice != null,
+                    )
+                ) {
+                    LiveFullscreenKeyPolicy.Action.PASS -> return@onPreviewKeyEvent false
+                    // The KeyUp half of a handled key: consumed so the locked row never clicks.
+                    LiveFullscreenKeyPolicy.Action.CONSUME -> Unit
+                    LiveFullscreenKeyPolicy.Action.TOGGLE_PAUSE -> togglePause()
+                    LiveFullscreenKeyPolicy.Action.SHOW_CONTROLS -> showControls()
+                    // MENU on the aimed channel hides it (personalization overlay; syncs to web + other
+                    // devices) and confirms with a notice + Undo (UX36/UX73 — it used to toggle silently).
+                    LiveFullscreenKeyPolicy.Action.HIDE_CHANNEL -> uiState.focusedChannel?.let { viewModel.hideChannel(it) }
+                    // The live-TV remote split: UP/DOWN are the channel keys. Every press
+                    // surfaces the overlay naming the AIMED channel immediately (each press
+                    // restarts the auto-hide), so a settled zap is never a blind walk.
+                    LiveFullscreenKeyPolicy.Action.ZAP_PREVIOUS -> {
+                        viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS)
+                            ?.let(playbackViewModel::requestSettledTune)
+                        showControls()
+                    }
+                    LiveFullscreenKeyPolicy.Action.ZAP_NEXT -> {
+                        viewModel.moveChannelFocus(LiveZapDirection.NEXT)
+                            ?.let(playbackViewModel::requestSettledTune)
+                        showControls()
+                    }
+                    // F08: back to the channel watched before (LAST/RECALL), if it is in this lineup.
+                    LiveFullscreenKeyPolicy.Action.ZAP_BACK -> {
+                        zapBack.target(uiState.channels.map { it.contentId })
+                            ?.let(viewModel::focusChannel)
+                            ?.let(playbackViewModel::requestTune)
+                        showControls()
+                    }
+                    LiveFullscreenKeyPolicy.Action.OPEN_CHANNEL_LIST -> {
+                        controlsVisible = false
+                        channelListOpen = true
                     }
                 }
-                true // consume KeyUp of handled keys too, so the locked row never clicks
+                true
             }
     ) {
         // Breathing room: the guide's left edge sits on the same 52dp content gutter the rails
@@ -467,7 +497,9 @@ fun LiveGuide(
                                 // keys are intercepted by the root onPreviewKeyEvent (controls
                                 // overlay + play/pause + zapping), BACK collapses.
                                 lockFocus = fullscreen,
-                                onFocused = { viewModel.onChannelFocused(ch, index) },
+                                // While fullscreen the aimed channel moves only by zapping/the channel
+                                // list; a focus landing on a hidden row must not re-aim it (F08).
+                                onFocused = { if (!fullscreen) viewModel.onChannelFocused(ch, index) },
                                 // OK: tune the preview; OK on the tuned channel: go fullscreen.
                                 onClick = {
                                     when {
@@ -551,6 +583,16 @@ fun LiveGuide(
             // in the guide's fullscreen, which the legacy player prevented on its player view.
             val keepScreenOn = playbackUi?.let { CleanLivePlayerUiPolicy.present(it).keepScreenOn } == true
             AndroidView(factory = { surfaceOwner }, update = { it.keepScreenOn = keepScreenOn }, modifier = Modifier.fillMaxSize())
+            // F08: where focus waits behind fullscreen video once the channel list has had it. The
+            // guide's own rows can't take it back: the aimed channel's row may not be composed, and
+            // landing on another would re-aim the guide.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .focusRequester(fullscreenAnchor)
+                    .focusProperties { canFocus = fullscreen }
+                    .focusable()
+            )
             if (playbackUi?.spinnerVisible == true) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
@@ -568,6 +610,27 @@ fun LiveGuide(
                         (overlayChannel != null && overlayChannel.contentId != playingContentId),
                     // Same message the docked preview shows; without it a failed tune read "Live".
                     errorText = playbackErrorText(playbackState, playbackUi?.bottomErrorCode),
+                )
+            }
+            if (fullscreen && channelListOpen) {
+                LiveChannelListOverlay(
+                    channels = uiState.channels,
+                    epg = uiState.epg,
+                    playingContentId = playingContentId,
+                    favoriteIds = favoriteIds,
+                    // Browsing fetches the row's now/next but never tunes or moves the aimed channel.
+                    onBrowse = { viewModel.ensureEpg(it.streamId) },
+                    onPick = { picked ->
+                        channelListOpen = false
+                        viewModel.focusChannel(picked.contentId)?.let(playbackViewModel::requestTune)
+                        fullscreenAnchor.requestFocusOrFalse()
+                        showControls()
+                    },
+                    onClose = {
+                        channelListOpen = false
+                        // Focus back behind the video so the root handler gets the keys again.
+                        fullscreenAnchor.requestFocusOrFalse()
+                    },
                 )
             }
             playbackUi?.bottomStatusCode?.let { status ->
