@@ -29,6 +29,7 @@ import com.nuvio.tv.playback.core.SubtitleFidelity
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.core.VideoQualityIntent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -79,6 +80,27 @@ class MpvAdapterPlanTest {
         assertEquals("15", live.preInitOptions["network-timeout"])
         val vod = plan(start(request = PlaybackRequest("https://example.test/movie.mkv", contentType = ContentType.VOD)))
         assertEquals("60", vod.preInitOptions["network-timeout"])
+    }
+
+    @Test
+    fun `a chosen live buffer sets the rebuffer cushion and readahead while auto leaves mpv defaults`() {
+        // F13: mpv refills only 1 s after a stall by default; a user-chosen live buffer raises that.
+        val chosen = requirements().copy(
+            buffering = BufferingPreference.CUSTOM,
+            customBuffer = com.nuvio.tv.playback.core.LiveBufferPolicy.customBuffer(20),
+        )
+        val live = plan(start(requirements = chosen))
+        assertEquals("10.0", live.preInitOptions["cache-pause-wait"])
+        assertEquals("40.0", live.preInitOptions["demuxer-readahead-secs"])
+        val auto = plan(start())
+        assertNull(auto.preInitOptions["cache-pause-wait"])
+        val vod = plan(
+            start(
+                request = PlaybackRequest("https://example.test/movie.mkv", contentType = ContentType.VOD),
+                requirements = chosen,
+            ),
+        )
+        assertNull(vod.preInitOptions["cache-pause-wait"])
     }
 
     @Test
