@@ -479,10 +479,11 @@ fun XtreamSettingsContent(
                 subtitle = account.name,
                 scrollable = true
             ) {
+                // F35: the phone/desktop wording, so "Prefer m3u8" is the same setting everywhere.
                 SettingsActionRow(
-                    title = "Catch-up container",
-                    subtitle = "m3u8 enables the scrub bar; TS is more widely served",
-                    value = if (account.preferM3u8CatchUp) "Prefer m3u8" else "Prefer TS",
+                    title = CatchUpContainerCopy.TITLE,
+                    subtitle = CatchUpContainerCopy.description(account.preferM3u8CatchUp),
+                    value = CatchUpContainerCopy.value(account.preferM3u8CatchUp),
                     onClick = { viewModel.setPreferM3u8CatchUp(account.id, !account.preferM3u8CatchUp) }
                 )
                 SettingsActionRow(
