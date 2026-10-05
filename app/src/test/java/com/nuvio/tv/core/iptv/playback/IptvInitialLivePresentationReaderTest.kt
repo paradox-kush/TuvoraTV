@@ -170,6 +170,38 @@ class IptvInitialLivePresentationReaderTest {
         }
     }
 
+    /**
+     * T3 (W2 device pass): a live favourite opened from the Library after the B64 re-key hit a registry
+     * entry rebuilt with a BLANK name; it won with the "Live TV" stand-in, which was then saved as the
+     * channel's name, and Favourites/Recent preferred it. A nameless source no longer wins.
+     */
+    @Test
+    fun `a nameless registry entry does not win over the stored name`() = runTest {
+        val contentId = XtreamItemRegistry.liveId("account", 7)
+        val subject = reader(
+            registry = { item(contentId, "account", 7, "", null) },
+            persisted = { _, requestedId -> StoredLiveChannelIdentity(requestedId, "BBC One", "bbc.png") },
+        )
+
+        val result = subject.read(profileId = 2, contentId = contentId)
+
+        assertEquals("BBC One", result?.title)
+        assertEquals("bbc.png", result?.logo)
+        assertEquals(true, result?.titleKnown)
+    }
+
+    @Test
+    fun `with no name anywhere the stand-in is shown but marked unknown`() = runTest {
+        val contentId = XtreamItemRegistry.liveId("account", 7)
+        val subject = reader(registry = { item(contentId, "account", 7, " ", "logo.png") })
+
+        val result = subject.read(profileId = 2, contentId = contentId)
+
+        assertEquals("Live TV", result?.title)
+        assertEquals("logo.png", result?.logo)
+        assertEquals(false, result?.titleKnown)
+    }
+
     private fun reader(
         playlist: (Int, String) -> LiveChannelPresentation? = { _, _ -> null },
         registry: (String) -> XtreamResolvedItem? = { null },

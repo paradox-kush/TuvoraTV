@@ -28,6 +28,8 @@ internal fun interface ExplicitProfileStoredLiveIdentitySource {
 class IptvInitialLivePresentation internal constructor(
     val title: String,
     val logo: String?,
+    /** T3: false when [title] is the "Live TV" stand-in (no source knew a name). */
+    val titleKnown: Boolean = true,
 ) {
     override fun toString(): String =
         "IptvInitialLivePresentation(hasLogo=${logo != null})"
@@ -72,13 +74,28 @@ class IptvInitialLivePresentationReader internal constructor(
         if (parsed.kind != LIVE_KIND) return null
         val streamId = parsed.streamId.toIntOrNull()?.takeIf { it > 0 } ?: return null
 
+        // T3 (W2 device pass): a source that matches but has no usable name (a registry entry rebuilt
+        // nameless, a playlist row whose name was a URL) no longer wins with the "Live TV" stand-in —
+        // that stand-in was then saved as the channel's name and Favourites/Recent preferred it. The
+        // next source is asked; only when none has a name is the stand-in used, marked as such.
+        var fallbackLogo: String? = null
+        var matched = false
+
         readSafely { playlist.presentationFor(profileId, contentId) }
             ?.takeIf { it.contentId.value == contentId }
-            ?.let { return sanitized(it.title, it.logo) }
+            ?.let { found ->
+                matched = true
+                fallbackLogo = fallbackLogo ?: sanitizeLogo(found.logo)
+                if (found.titleKnown) usableTitle(found.title)?.let { return named(it, found.logo) }
+            }
 
         readSafely { registry.itemFor(contentId) }
             ?.takeIf { item -> item.matches(contentId, parsed.accountId, streamId) }
-            ?.let { return sanitized(it.name, it.poster) }
+            ?.let { found ->
+                matched = true
+                fallbackLogo = fallbackLogo ?: sanitizeLogo(found.poster)
+                usableTitle(found.name)?.let { return named(it, found.poster) }
+            }
 
         val stored = try {
             persisted.identityFor(profileId, contentId)
@@ -87,9 +104,18 @@ class IptvInitialLivePresentationReader internal constructor(
         } catch (_: Exception) {
             null
         }
-        return stored
+        stored
             ?.takeIf { it.contentId == contentId }
-            ?.let { sanitized(it.title, it.logo) }
+            ?.let { found ->
+                matched = true
+                fallbackLogo = fallbackLogo ?: sanitizeLogo(found.logo)
+                usableTitle(found.title)?.let { return named(it, found.logo) }
+            }
+        return if (matched) {
+            IptvInitialLivePresentation(title = FALLBACK_TITLE, logo = fallbackLogo, titleKnown = false)
+        } else {
+            null
+        }
     }
 
     private inline fun <T> readSafely(block: () -> T): T? = try {
@@ -110,20 +136,20 @@ class IptvInitialLivePresentationReader internal constructor(
             this.accountId == accountId &&
             this.streamId == streamId
 
-    private fun sanitized(title: String, logo: String?): IptvInitialLivePresentation =
+    private fun named(title: String, logo: String?): IptvInitialLivePresentation =
         IptvInitialLivePresentation(
-            title = sanitizeTitle(title),
+            title = title,
             logo = sanitizeLogo(logo),
         )
 
-    private fun sanitizeTitle(value: String): String {
+    /** The cleaned title, or null when it is blank, a URL or carries a secret. */
+    private fun usableTitle(value: String): String? {
         val normalized = clean(value, MAX_TITLE_LENGTH)?.replace(WHITESPACE, " ")
         return normalized
             ?.takeUnless { candidate ->
                 val lowercase = candidate.lowercase()
                 "://" in lowercase || SECRET_MARKERS.any(lowercase::contains)
             }
-            ?: FALLBACK_TITLE
     }
 
     private fun sanitizeLogo(value: String?): String? {
