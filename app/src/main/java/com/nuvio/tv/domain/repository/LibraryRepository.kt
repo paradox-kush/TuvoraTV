@@ -18,6 +18,12 @@ interface LibraryRepository {
     val listTabs: Flow<List<LibraryListTab>>
     val membershipListTabs: Flow<List<LibraryListTab>>
 
+    /**
+     * F03: rewrite saved items' synced "date added" — the live favourites order (see
+     * com.nuvio.tv.core.iptv.LiveFavouritesOrder). Local synced library only. Returns how many changed.
+     */
+    suspend fun setFavoritesOrder(changes: Map<String, Long>): Int = 0
+
     fun isInLibrary(itemId: String, itemType: String): Flow<Boolean>
     fun isInWatchlist(itemId: String, itemType: String): Flow<Boolean>
 

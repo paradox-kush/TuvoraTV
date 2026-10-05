@@ -3456,7 +3456,7 @@
     <string name="iptv_guide_no_information">No information</string>
     <string name="iptv_guide_min_left">%1$d min left</string>
     <string name="iptv_guide_next_programme">Next: %1$s · %2$s</string>
-    <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK favorite · MENU hide · ▶ guide</string>
+    <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK favorite · MENU hide or move · ▶ guide</string>
     <string name="iptv_guide_fullscreen_hint">OK play/pause · ▲▼ channel · BACK exit fullscreen</string>
     <string name="iptv_guide_paused">Paused</string>
     <string name="iptv_guide_live">Live</string>
@@ -3485,6 +3485,13 @@
     <string name="iptv_guide_hidden_notice">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → %2$s → Hidden channels &amp; groups.</string>
     <string name="iptv_guide_hidden_notice_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → your playlist → Hidden channels &amp; groups.</string>
     <string name="iptv_guide_hidden_undo">Undo</string>
+    <string name="iptv_guide_all_favorites">All favorites</string>
+    <string name="iptv_guide_favorite_added">“%1$s” added to Favorites.</string>
+    <string name="iptv_guide_favorite_removed">“%1$s” removed from Favorites.</string>
+    <string name="iptv_guide_move_up">Move up</string>
+    <string name="iptv_guide_move_down">Move down</string>
+    <string name="iptv_guide_remove_favorite">Remove from Favorites</string>
+    <string name="iptv_guide_hide_channel">Hide channel</string>
     <string name="iptv_backup_servers_title">Backup servers</string>
     <string name="iptv_backup_servers_helper">Used automatically if the main server doesn\'t respond.</string>
     <string name="iptv_backup_server_row">Backup server %1$d</string>

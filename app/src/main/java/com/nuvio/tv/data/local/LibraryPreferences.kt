@@ -195,6 +195,28 @@ class LibraryPreferences @Inject constructor(
     }
 
     /**
+     * F03: rewrites saved items' synced "date added" — the favourites order
+     * ([com.nuvio.tv.core.iptv.LiveFavouritesOrder]); queued for push by the sync reducer. Returns how
+     * many changed.
+     */
+    suspend fun setAddedAt(changes: Map<String, Long>): Int {
+        if (changes.isEmpty()) return 0
+        var moved = 0
+        store().edit { preferences ->
+            var state = preferences.toLibrarySyncState()
+            val items = state.items.filter { it.id in changes && changes[it.id] != it.addedAt }
+            if (items.isEmpty()) return@edit
+            val now = System.currentTimeMillis()
+            items.forEach { item ->
+                state = LibrarySyncReducer.upsertLocal(state = state, item = item.copy(addedAt = changes.getValue(item.id)), nowEpochMs = now)
+            }
+            preferences.writeLibrarySyncState(state)
+            moved = items.size
+        }
+        return moved
+    }
+
+    /**
      * B64: re-keys saved items of the active profile in place — [rewrite] returns an item's
      * replacement, or null to leave it. Each move is a sync-reducer delete of the old id + upsert of
      * the replacement (queued for push), exactly as [migrateIdPrefix]. Returns how many moved.

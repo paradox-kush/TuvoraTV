@@ -88,6 +88,24 @@ class IptvOverlayRepository @Inject constructor(
         }
     }
 
+    /**
+     * F03: explicit positions for some channels — a group's pinned channels in a new order
+     * ([com.nuvio.tv.core.iptv.PinnedChannelOrder]) — as one edit, pushed like a website edit.
+     */
+    fun setChannelPositions(playlistId: String?, positions: List<Pair<String, Int>>) {
+        if (positions.isEmpty()) return
+        val p = profile()
+        val current = _uiState.value.channels
+        launchSafely("setChannelPositions") {
+            val t = now()
+            positions.forEach { (entityId, position) ->
+                db.setChannel(p, entityId, playlistId, (current[entityId] ?: ChannelOverlay()).copy(position = position), t)
+            }
+            _uiState.value = db.snapshot(p)
+            push(p)
+        }
+    }
+
     /** After a playlist is removed, drop its channel/category overlay (twin of Mobile's onPlaylistRemoved). */
     suspend fun onPlaylistRemoved(playlistId: String) {
         val p = profile()

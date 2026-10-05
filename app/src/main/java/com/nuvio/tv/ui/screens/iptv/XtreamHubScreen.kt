@@ -237,7 +237,8 @@ fun XtreamHubScreen(
                 fullscreen = liveFullscreen,
                 onFullscreenChange = { liveFullscreen = it },
                 selectedTabRequester = selectedTabRequester,
-                onPlayCatchUp = onPlayCatchUp
+                onPlayCatchUp = onPlayCatchUp,
+                onSwitchAccount = viewModel::selectAccount,
             )
         } else {
             HubBrowseContent(

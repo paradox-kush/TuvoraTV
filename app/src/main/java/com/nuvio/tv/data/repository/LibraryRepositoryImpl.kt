@@ -189,6 +189,12 @@ class LibraryRepositoryImpl @Inject constructor(
         }.distinctUntilChanged()
     }
 
+    override suspend fun setFavoritesOrder(changes: Map<String, Long>): Int {
+        val moved = libraryPreferences.setAddedAt(changes)
+        if (moved > 0) triggerRemoteSync(profileManager.activeProfileId.value)
+        return moved
+    }
+
     override suspend fun toggleDefault(
         item: LibraryEntryInput,
         confirmedRemovalProviders: Set<TrackingProviderId>
