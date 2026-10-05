@@ -102,7 +102,7 @@ object ManagedDetailsModel {
         nowEpochSec: Long,
         checkFailed: Boolean = false,
     ): Facts = Facts(
-        name = account.name,
+        name = PlaylistDisplayPolicy.displayName(account.name),
         managedBy = managed?.providerName,
         expiry = expiry(info, nowEpochSec, checkFailed),
         connections = info?.maxConnections?.takeIf { it > 0 }?.let { Connections(info.activeConnections, it) },
