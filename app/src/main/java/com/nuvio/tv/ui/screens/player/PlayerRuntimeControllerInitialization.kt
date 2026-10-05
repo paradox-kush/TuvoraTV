@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.SubtitleBoxPadding
 import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.Context
 import android.content.res.Resources

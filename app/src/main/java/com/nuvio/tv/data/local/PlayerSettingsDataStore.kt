@@ -142,7 +142,7 @@ data class SubtitleStyleSettings(
     val bold: Boolean = false,
     val textColor: Int = Color.White.toArgb(),
     /** F47 default look for new users (see SubtitleStyleDefaults for existing customisers). */
-    val backgroundColor: Int = com.nuvio.tv.ui.screens.player.SubtitleStyleDefaults.BOX_BACKGROUND,
+    val backgroundColor: Int = com.nuvio.tv.core.picture.SubtitleStyleDefaults.BOX_BACKGROUND,
     val outlineEnabled: Boolean = false,
     val outlineColor: Int = Color.Black.toArgb(),
     val outlineWidth: Int = 2, // 1-5
@@ -971,9 +971,9 @@ class PlayerSettingsDataStore @Inject constructor(
                     bold = prefs[subtitleBoldKey] ?: false,
                     textColor = prefs[subtitleTextColorKey] ?: Color.White.toArgb(),
                     backgroundColor = prefs[subtitleBackgroundColorKey]
-                        ?: com.nuvio.tv.ui.screens.player.SubtitleStyleDefaults.background(subtitleStyleStored(prefs)),
+                        ?: com.nuvio.tv.core.picture.SubtitleStyleDefaults.background(subtitleStyleStored(prefs)),
                     outlineEnabled = prefs[subtitleOutlineEnabledKey]
-                        ?: com.nuvio.tv.ui.screens.player.SubtitleStyleDefaults.outlineEnabled(subtitleStyleStored(prefs)),
+                        ?: com.nuvio.tv.core.picture.SubtitleStyleDefaults.outlineEnabled(subtitleStyleStored(prefs)),
                     outlineColor = prefs[subtitleOutlineColorKey] ?: Color.Black.toArgb(),
                     outlineWidth = prefs[subtitleOutlineWidthKey] ?: 2,
                     sideMarginPercent = (prefs[subtitleSideMarginPercentKey]

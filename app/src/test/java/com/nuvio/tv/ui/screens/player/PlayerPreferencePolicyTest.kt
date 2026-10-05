@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.SubtitleBoxPadding
+import com.nuvio.tv.core.picture.SubtitleStyleDefaults
 import com.nuvio.tv.core.picture.AspectMode
 import com.nuvio.tv.core.picture.VideoZoom
 import com.nuvio.tv.core.picture.VideoZoomAxis
