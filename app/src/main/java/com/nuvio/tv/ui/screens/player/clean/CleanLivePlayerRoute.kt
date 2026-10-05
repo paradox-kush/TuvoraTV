@@ -38,6 +38,7 @@ internal fun CleanLivePlayerRoute(
     viewModel: CleanLivePlayerViewModel = hiltViewModel(),
 ) {
     val routeState by viewModel.routeState.collectAsStateWithLifecycle()
+    val picture by viewModel.picture.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context.findActivity()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -117,6 +118,8 @@ internal fun CleanLivePlayerRoute(
         streamInfo = ready?.snapshot?.let(LiveTrackChoices::streamInfo).orEmpty(),
         onSelectAudio = { id -> if (!exitGate.isStarted()) scope.launch { viewModel.selectAudioTrack(id) } },
         onSelectSubtitle = { id -> if (!exitGate.isStarted()) scope.launch { viewModel.selectSubtitleTrack(id) } },
+        picture = picture,
+        onPictureChange = { update -> if (!exitGate.isStarted()) viewModel.requestPictureChange(update) },
     )
 }
 

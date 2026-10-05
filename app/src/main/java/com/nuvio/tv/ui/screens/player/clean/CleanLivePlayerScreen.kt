@@ -2,6 +2,15 @@
 
 package com.nuvio.tv.ui.screens.player.clean
 
+import androidx.compose.ui.platform.LocalContext
+import com.nuvio.tv.core.picture.LivePicturePort
+import com.nuvio.tv.core.picture.PictureChoice
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.VideoZoomPolicy
+import com.nuvio.tv.core.picture.aspectModeLabel
+import com.nuvio.tv.core.picture.nextAspectMode
+import com.nuvio.tv.ui.components.player.VideoZoomDialog
+import com.nuvio.tv.ui.screens.player.clean.live.LiveAspectIndicator
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
@@ -81,6 +90,9 @@ internal fun CleanLivePlayerScreen(
     streamInfo: List<Pair<String, String>> = emptyList(),
     onSelectAudio: (PlaybackTrackId) -> Unit = {},
     onSelectSubtitle: (PlaybackTrackId?) -> Unit = {},
+    /** F28: the channel's picture (aspect + manual zoom, lane F's model) and how to change it. */
+    picture: PictureChoice = LivePicturePort.DEFAULT_CHOICE,
+    onPictureChange: ((PictureChoice) -> PictureChoice) -> Unit = {},
 ) {
     val chrome = CleanLivePlayerUiPolicy.present(uiState)
     val latestSurfaceOwnerReady by rememberUpdatedState(onSurfaceOwnerReady)
@@ -90,6 +102,9 @@ internal fun CleanLivePlayerScreen(
     var revealTick by remember { mutableIntStateOf(0) }
     var moreOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<LivePanel?>(null) }
+    var aspectLabel by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(aspectLabel) { if (aspectLabel != null) { delay(1_500); aspectLabel = null } }
+    val context = LocalContext.current
     val rootFocus = remember { FocusRequester() }
     val primaryFocus = remember { FocusRequester() }
     val paused = !uiState.playWhenReady
@@ -211,7 +226,13 @@ internal fun CleanLivePlayerScreen(
                     onRetry = onRetry,
                     onSubtitles = { panel = LivePanel.SUBTITLES },
                     onAudio = { panel = LivePanel.AUDIO },
-                    onAspect = null, // TODO(F28-next): needs a clean-host fit/zoom command (see report)
+                    onAspect = {
+                        val next = nextAspectMode(picture.aspectMode)
+                        onPictureChange { it.copy(aspectMode = next) }
+                        aspectLabel = aspectModeLabel(next, context::getString)
+                        revealTick++
+                    },
+                    onZoom = { panel = LivePanel.ZOOM },
                     onChannelList = null,
                     onToggleFavourite = null,
                     onStreamInfo = { panel = LivePanel.STREAM_INFO }.takeIf { streamInfo.isNotEmpty() },
@@ -235,8 +256,15 @@ internal fun CleanLivePlayerScreen(
                 onDismiss = { panel = null },
             )
             LivePanel.STREAM_INFO -> LiveStreamInfoDialog(streamInfo) { panel = null }
+            LivePanel.ZOOM -> VideoZoomDialog(
+                zoom = picture.zoom,
+                onAdjust = { axis, steps -> onPictureChange { it.copy(zoom = VideoZoomPolicy.adjust(it.zoom, axis, steps)) } },
+                onReset = { onPictureChange { it.copy(zoom = VideoZoom.IDENTITY) } },
+                onDismiss = { panel = null },
+            )
             null -> Unit
         }
+        aspectLabel?.let { LiveAspectIndicator(it) }
     }
 }
 

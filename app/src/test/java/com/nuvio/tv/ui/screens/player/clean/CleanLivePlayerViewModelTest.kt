@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player.clean
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.VideoZoom
 import android.app.Activity
 import android.content.Context
 import android.widget.FrameLayout
@@ -931,6 +933,8 @@ class CleanLivePlayerViewModelTest {
         override suspend fun selectAudioTrack(trackId: PlaybackTrackId) { audioSelections += trackId }
         override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) { subtitleSelections += trackId }
         override suspend fun disableSubtitles() { subtitleSelections += null }
+        val pictures = mutableListOf<Pair<AspectMode, VideoZoom>>()
+        override suspend fun applyPicture(mode: AspectMode, zoom: VideoZoom) { pictures += mode to zoom }
         var tunedSelection: ProviderPlaybackSelection? = null
         var tunedProfile: SessionProfile? = null
         var tunedMetadata: CleanMediaSessionMetadata? = null

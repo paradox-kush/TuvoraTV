@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.VideoZoom
 import android.app.Activity
 import android.content.Context
 import android.view.View
@@ -446,6 +448,28 @@ class CleanLiveGuidePlaybackViewModelTest {
     }
 
     @Test
+    fun `F28 the tuned channel's remembered picture reaches the host and a change is kept for it`() = runTest {
+        val crop = com.nuvio.tv.core.picture.PictureChoice(AspectMode.FULL_SCREEN, VideoZoom.IDENTITY)
+        val saved = mutableMapOf<String, com.nuvio.tv.core.picture.PictureChoice>()
+        val port = object : com.nuvio.tv.core.picture.LivePicturePort {
+            override suspend fun initial(channelId: String) = saved[channelId] ?: com.nuvio.tv.core.picture.LivePicturePort.DEFAULT_CHOICE
+            override suspend fun save(channelId: String, choice: com.nuvio.tv.core.picture.PictureChoice) { saved[channelId] = choice }
+        }
+        val fixture = fixture(picturePort = port)
+        saved[fixture.initial.contentId.value] = crop
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        advanceUntilIdle()
+        assertEquals("remembered crop applied on tune", listOf(AspectMode.FULL_SCREEN to VideoZoom.IDENTITY), fixture.firstHost.pictures)
+
+        val zoomed = VideoZoom(scaleX = 1.2f, scaleY = 1.2f)
+        fixture.viewModel.requestPictureChange { it.copy(zoom = zoomed) }
+        advanceUntilIdle()
+        assertEquals("the change reaches the host", AspectMode.FULL_SCREEN to zoomed, fixture.firstHost.pictures.last())
+        assertEquals("kept for that channel", crop.copy(zoom = zoomed), saved[fixture.initial.contentId.value])
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
     fun `public command failure is contained and published`() = runTest {
         val fixture = fixture(commandFailures = 1)
         fixture.viewModel.attach(
@@ -583,6 +607,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         releaseWait: CleanLiveGuideReleaseRetryWait = CleanLiveGuideReleaseRetryWait {},
         ownerDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
         extraTargets: List<LiveChannelTarget> = emptyList(),
+        picturePort: com.nuvio.tv.core.picture.LivePicturePort = com.nuvio.tv.core.picture.LivePicturePort.Unremembered,
     ): Fixture {
         val context = RuntimeEnvironment.getApplication() as Context
         val operations = mutableListOf<String>()
@@ -622,6 +647,7 @@ class CleanLiveGuidePlaybackViewModelTest {
             playedHistory = LivePlayedHistoryPort { played += it },
             ownerDispatcher = ownerDispatcher,
             releaseRetryWait = releaseWait,
+            picturePort = picturePort,
         )
         return Fixture(
             viewModel = viewModel,
@@ -690,6 +716,8 @@ class CleanLiveGuidePlaybackViewModelTest {
         override suspend fun selectAudioTrack(trackId: PlaybackTrackId) { audioSelections += trackId }
         override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) { subtitleSelections += trackId }
         override suspend fun disableSubtitles() { subtitleSelections += null }
+        val pictures = mutableListOf<Pair<AspectMode, VideoZoom>>()
+        override suspend fun applyPicture(mode: AspectMode, zoom: VideoZoom) { pictures += mode to zoom }
         val tuneTargets = mutableListOf<ProviderPlaybackSelection>()
         val tuneProfiles = mutableListOf<SessionProfile>()
         val zapSelections = mutableListOf<ProviderPlaybackSelection>()

@@ -1,6 +1,12 @@
 package com.nuvio.tv.ui.screens.iptv
 
 
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.VideoZoomPolicy
+import com.nuvio.tv.core.picture.aspectModeLabel
+import com.nuvio.tv.core.picture.nextAspectMode
+import com.nuvio.tv.ui.components.player.VideoZoomDialog
+import com.nuvio.tv.ui.screens.player.clean.live.LiveAspectIndicator
 import androidx.activity.compose.BackHandler
 import android.widget.FrameLayout
 import com.nuvio.tv.playback.core.ProviderSelectionId
@@ -306,6 +312,10 @@ fun LiveGuide(
     var moreOpen by remember { mutableStateOf(false) }
     var livePanel by remember { mutableStateOf<LivePanel?>(null) }
     val controlsPrimaryFocus = remember { FocusRequester() }
+    // F28: the live picture (aspect + zoom) of the channel on screen, and the mode just chosen.
+    val livePicture by playbackViewModel.picture.collectAsStateWithLifecycle()
+    var aspectLabel by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(aspectLabel) { if (aspectLabel != null) { delay(1_500); aspectLabel = null } }
     LaunchedEffect(channelListOpen, controlsVisible) {
         if (fullscreen && (channelListOpen || controlsVisible)) anchorUsed = true
     }
@@ -689,9 +699,14 @@ fun LiveGuide(
                         onRetry = { playbackViewModel.requestRetry(); controlsTick++ },
                         onSubtitles = { livePanel = LivePanel.SUBTITLES },
                         onAudio = { livePanel = LivePanel.AUDIO },
-                        // TODO(F28-next): aspect/zoom needs a clean-host fit command incl. mpv's
-                        // gpu output (see the lane A report); lane F owns the persisted preference.
-                        onAspect = null,
+                        // F28: lane F's picture model, per channel. One press = next aspect mode.
+                        onAspect = {
+                            val next = nextAspectMode(livePicture.aspectMode)
+                            playbackViewModel.requestPictureChange { it.copy(aspectMode = next) }
+                            aspectLabel = aspectModeLabel(next, context::getString)
+                            controlsTick++
+                        },
+                        onZoom = { livePanel = LivePanel.ZOOM },
                         onChannelList = {
                             controlsVisible = false
                             moreOpen = false
@@ -725,8 +740,17 @@ fun LiveGuide(
                     lines = readyPlayback?.snapshot?.let(LiveTrackChoices::streamInfo).orEmpty(),
                     onDismiss = { livePanel = null },
                 )
+                LivePanel.ZOOM -> VideoZoomDialog(
+                    zoom = livePicture.zoom,
+                    onAdjust = { axis, steps ->
+                        playbackViewModel.requestPictureChange { it.copy(zoom = VideoZoomPolicy.adjust(it.zoom, axis, steps)) }
+                    },
+                    onReset = { playbackViewModel.requestPictureChange { it.copy(zoom = VideoZoom.IDENTITY) } },
+                    onDismiss = { livePanel = null },
+                )
                 null -> Unit
             }
+            aspectLabel?.takeIf { fullscreen }?.let { LiveAspectIndicator(it) }
             if (fullscreen && channelListOpen) {
                 LiveChannelListOverlay(
                     channels = uiState.channels,

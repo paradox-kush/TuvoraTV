@@ -19,7 +19,7 @@ import com.nuvio.tv.ui.components.player.DialogButton
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 /** Which picker the live overlay has open. */
-internal enum class LivePanel { SUBTITLES, AUDIO, STREAM_INFO }
+internal enum class LivePanel { SUBTITLES, AUDIO, STREAM_INFO, ZOOM }
 
 /**
  * F28: the live subtitle/audio picker — the app's dialog with the VOD player's [DialogButton] rows,

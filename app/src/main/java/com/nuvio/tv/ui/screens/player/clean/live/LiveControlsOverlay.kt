@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -87,6 +88,8 @@ internal class LiveOverlayActions(
     val onChannelList: (() -> Unit)?,
     val onToggleFavourite: (() -> Unit)?,
     val onStreamInfo: (() -> Unit)?,
+    /** Lane F's manual zoom (VideoZoomDialog), in "More" as in the VOD player. */
+    val onZoom: (() -> Unit)? = null,
     val onToggleMore: () -> Unit,
     /** Any focus move on the controls: restart the shared auto-hide. */
     val onKeepAlive: () -> Unit,
@@ -270,6 +273,13 @@ internal fun BoxScope.LiveControlsOverlay(
                                     )
                                 }
                             }
+                            actions.onZoom?.let {
+                                ControlButton(
+                                    icon = Icons.Default.ZoomIn,
+                                    contentDescription = stringResource(R.string.player_zoom_title),
+                                    onClick = it, onDownKey = actions.onHide, onFocused = actions.onKeepAlive,
+                                )
+                            }
                             actions.onStreamInfo?.let {
                                 ControlButton(
                                     icon = Icons.Default.Info,
@@ -328,4 +338,23 @@ private fun ProgrammeLine(fraction: Float?) {
             )
         }
     }
+}
+
+/**
+ * F28: names the aspect mode just chosen, briefly, as the VOD player's aspect indicator does — the
+ * mode cycles on one button, so without it the viewer can't tell where they are in the cycle.
+ */
+@Composable
+internal fun BoxScope.LiveAspectIndicator(label: String) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.titleMedium,
+        color = Color.White,
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = NuvioTheme.spacing.xxl)
+            .clip(RoundedCornerShape(NuvioTheme.radii.md))
+            .background(Color.Black.copy(alpha = 0.7f))
+            .padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.sm),
+    )
 }

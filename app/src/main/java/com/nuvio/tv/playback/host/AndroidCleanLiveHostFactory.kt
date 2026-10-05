@@ -1,5 +1,7 @@
 package com.nuvio.tv.playback.host
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.VideoZoom
 import android.app.Activity
 import android.content.Context
 import android.widget.FrameLayout
@@ -45,6 +47,9 @@ internal interface CleanLiveHost {
     suspend fun selectAudioTrack(trackId: PlaybackTrackId)
     suspend fun selectSubtitleTrack(trackId: PlaybackTrackId)
     suspend fun disableSubtitles()
+
+    /** F28: the viewer's aspect mode and manual zoom (lane F's picture model). */
+    suspend fun applyPicture(mode: AspectMode, zoom: VideoZoom)
     suspend fun changeProfile(profile: SessionProfile)
     suspend fun stop()
     suspend fun release()
@@ -128,6 +133,7 @@ private class AndroidCleanLiveHost(
     override suspend fun selectAudioTrack(trackId: PlaybackTrackId) = host.selectAudioTrack(trackId)
     override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) = host.selectSubtitleTrack(trackId)
     override suspend fun disableSubtitles() = host.disableSubtitles()
+    override suspend fun applyPicture(mode: AspectMode, zoom: VideoZoom) = host.applyPicture(mode, zoom)
     override suspend fun changeProfile(profile: SessionProfile) = host.changeProfile(profile)
     override suspend fun stop() = host.stop()
     override suspend fun release() = host.release()
