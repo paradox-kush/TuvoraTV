@@ -395,6 +395,39 @@ class XtreamMatchIndex @Inject constructor(@ApplicationContext context: Context)
         }
     }
 
+    /** One live channel as the guide matcher sees it (B10). */
+    data class LiveLineupRow(val sid: Int, val name: String, val epgId: String?, val entityId: String?)
+
+    /**
+     * The live lineup as (sid, name, epg_channel_id, entity_id) — what the guide matcher maps onto
+     * the playlist's own XMLTV channel list (B10). One indexed scan, run on the ingest scope.
+     */
+    suspend fun liveLineup(provider: String): List<LiveLineupRow> = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT sid, name, epg_id, entity_id FROM items WHERE provider = ? AND kind = ?",
+            arrayOf(provider, MatchKind.LIVE.slug),
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(
+                    LiveLineupRow(
+                        sid = c.getInt(0),
+                        name = c.getString(1),
+                        epgId = if (c.isNull(2)) null else c.getString(2),
+                        entityId = if (c.isNull(3)) null else c.getString(3),
+                    )
+                )
+            }
+        }
+    }
+
+    /** One live channel's canon-v1 entity id (the key a manual guide pick is stored under, F14). */
+    suspend fun liveEntityIdFor(provider: String, sid: Int): String? = withContext(Dispatchers.IO) {
+        db.rawQuery(
+            "SELECT entity_id FROM items WHERE provider = ? AND kind = ? AND sid = ?",
+            arrayOf(provider, MatchKind.LIVE.slug, sid.toString()),
+        ).use { c -> if (c.moveToNext() && !c.isNull(0)) c.getString(0) else null }
+    }
+
     suspend fun liveEpgIds(provider: String): Set<String> = withContext(Dispatchers.IO) {
         db.rawQuery(
             "SELECT DISTINCT epg_id FROM items WHERE provider = ? AND kind = ? AND epg_id IS NOT NULL",

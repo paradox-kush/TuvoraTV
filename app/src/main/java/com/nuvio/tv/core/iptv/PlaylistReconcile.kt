@@ -166,4 +166,7 @@ fun mergeEditOntoServer(server: XtreamAccount, base: XtreamAccount?, edit: Xtrea
 /** A row with this device's local-only preferences (never on the wire) neutralised — what two rows
  *  must share to be "in sync" when no wire mapping is supplied (see PlaylistV2SyncEngine.syncedKey). */
 fun XtreamAccount.withoutDeviceLocalPrefs(): XtreamAccount =
-    copy(preferM3u8CatchUp = false, catchUpCorrectionMinutes = 0, guideEpgCorrectionMinutes = 0)
+    copy(
+        preferM3u8CatchUp = false, catchUpCorrectionMinutes = 0, guideEpgCorrectionMinutes = 0,
+        cleanChannelNames = false, channelNameTags = null,
+    )

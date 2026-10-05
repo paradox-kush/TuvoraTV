@@ -132,6 +132,10 @@ fun XtreamSettingsContent(
     // Step 2: after a Detach, "Detached from <provider>" on that playlist's page until the page is closed.
     var detachedFrom by remember { mutableStateOf<Pair<String, String>?>(null) }
     var catchUpFor by remember { mutableStateOf<String?>(null) }
+    // Lane G: the "Guide & channel names" card, its tag editor and the guide-assign flow.
+    var guideFor by remember { mutableStateOf<String?>(null) }
+    var tagsFor by remember { mutableStateOf<String?>(null) }
+    var assignFor by remember { mutableStateOf<String?>(null) }
     var rematchStarted by remember { mutableStateOf(setOf<String>()) }
     // B57: Remove used to delete on the first OK with no confirmation, from a row that was cut off
     // the bottom of a non-scrolling dialog.
@@ -425,6 +429,10 @@ fun XtreamSettingsContent(
                             rematchStarted = rematchStarted + id
                         }
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.CATCHUP -> catchUpFor = id
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.GUIDE -> {
+                            guideFor = id
+                            viewModel.loadGuideCensus(account)
+                        }
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.EDIT,
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.REIMPORT -> editFor = account
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.TOGGLE_ENABLED ->
@@ -505,6 +513,57 @@ fun XtreamSettingsContent(
                     }
                 )
             }
+        }
+    }
+
+    guideFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) guideFor = null
+        else if (tagsFor == null && assignFor == null) com.nuvio.tv.ui.screens.iptv.GuideNamesDialog(
+            account = account,
+            census = uiState.guideCensus[id],
+            onDismiss = { guideFor = null },
+            onAssign = {
+                assignFor = id
+                viewModel.searchGuideAssignChannels(account, "")
+            },
+            onToggleClean = { viewModel.setCleanChannelNames(id, !account.cleanChannelNames) },
+            onEditTags = { tagsFor = id },
+        )
+    }
+
+    tagsFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) tagsFor = null
+        else com.nuvio.tv.ui.screens.iptv.ChannelTagsDialog(
+            initial = account.channelNameTags.orEmpty(),
+            onSave = { text ->
+                viewModel.setChannelNameTags(account, text)
+                tagsFor = null
+            },
+            onDismiss = { tagsFor = null },
+        )
+    }
+
+    assignFor?.let { id ->
+        val account = uiState.accounts.firstOrNull { it.id == id }
+        if (account == null) {
+            assignFor = null
+        } else {
+            com.nuvio.tv.ui.screens.iptv.GuideAssignDialog(
+                account = account,
+                state = uiState.guideAssign?.takeIf { it.accountId == id },
+                onSearchChannels = { q -> viewModel.searchGuideAssignChannels(account, q) },
+                onOpenChannel = { ch -> viewModel.searchGuideOptions(account, ch, "") },
+                onSearchOptions = { ch, q -> viewModel.searchGuideOptions(account, ch, q) },
+                onPick = { ch, row -> viewModel.pickGuide(account, ch, row) },
+                onBack = { viewModel.backFromGuideOptions() },
+                onDismiss = {
+                    assignFor = null
+                    viewModel.closeGuideAssign()
+                    viewModel.loadGuideCensus(account)
+                },
+            )
         }
     }
 
@@ -1292,8 +1351,12 @@ private fun XtreamAddDialog(
             }
 
             // --- EPG URL (shared) --------------------------------------------
-            FormSectionLabel("EPG URL (optional)")
-            XtreamField(epgUrl, { epgUrl = it }, "http://host:port/xmltv.php?username=…&password=…", onSubmit = submit, label = "EPG URL")
+            FormSectionLabel("EPG URLs (optional)")
+            XtreamField(epgUrl, { epgUrl = it }, "https://…/guide.xml.gz, https://…/more.xml", onSubmit = submit, label = "EPG URLs")
+            FormHelperText(
+                "Add one or more XMLTV guides, separated by commas. The first one wins for each channel; " +
+                    "the provider's own guide still covers every channel these don't."
+            )
 
             // --- DNS Provider (shared) ---------------------------------------
             FormSectionLabel("DNS Provider")

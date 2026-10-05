@@ -3568,6 +3568,8 @@
     <string name="iptv_card_rematch_started">Re-check started</string>
     <string name="iptv_card_catchup">Catch-up &amp; guide</string>
     <string name="iptv_card_catchup_sub">Replay and guide timing</string>
+    <string name="iptv_card_guide">Guide &amp; channel names</string>
+    <string name="iptv_card_guide_sub">Guide coverage, assign a channel\'s guide, clean up names</string>
     <string name="iptv_card_edit">Edit playlist</string>
     <string name="iptv_card_edit_sub">Server, login, EPG</string>
     <string name="iptv_card_edit_file_sub">Pick the file again</string>

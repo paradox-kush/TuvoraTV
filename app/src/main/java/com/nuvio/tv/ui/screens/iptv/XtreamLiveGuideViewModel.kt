@@ -295,6 +295,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     private fun displayChannels(accountId: String?, channels: List<GuideChannel>, isAllView: Boolean): List<GuideChannel> {
         lastRawChannels = channels; lastOverlayAccountId = accountId; lastAllChannelsView = isAllView
+        // F10: cleaned names when the user opted in for this playlist — before the overlay, so an
+        // explicit rename still wins. The raw list above stays raw (identity is computed from it).
+        val cleanFor = account?.takeIf { it.id == accountId && it.cleanChannelNames }
+        @Suppress("NAME_SHADOWING")
+        val channels = if (cleanFor == null) channels else channels.map { it.copy(name = cleanFor.displayChannelName(it.name)) }
         return try {
             val overlay = overlayRepository.uiState.value.channels
             val displayed = if (isAllView) {
@@ -846,15 +851,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 accountId = acc.id,
                 streamId = streamId,
                 nowMs = nowMs,
-                manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+                // F14: the user's own pick of guide channel for this channel, if any.
+                manual = com.nuvio.tv.core.iptv.EpgSourceLadder.ManualResolver { _, sid, _ ->
+                    runCatching { xmltv.manualNowNext(acc, sid, nowMs) }.getOrNull()?.map {
+                        XtreamProgram(it.title, it.desc.orEmpty(), it.startMs, it.endMs, nowPlaying = nowMs in it.startMs until it.endMs)
+                    }
+                },
                 // The account's own guide, ingested once into SQLite. Zero network per channel —
                 // this is the rung that makes a guide fling cost nothing. An account with no stored
-                // guide answers empty and the ladder falls through exactly as before.
+                // guide answers empty and the ladder falls through exactly as before. B10: joined by
+                // the ingest's channel map (provider id, then cleaned name), not the raw id alone.
                 store = {
                     runCatching {
-                        val epgId = matchIndex.liveEpgIdFor(acc.id, streamId)
-                        if (epgId.isNullOrBlank()) emptyList()
-                        else contentDb.epgNowNext(acc.id, epgId, nowMs).map {
+                        xmltv.storedNowNext(acc, streamId, nowMs).map {
                             XtreamProgram(
                                 title = it.title,
                                 description = it.desc.orEmpty(),
@@ -1049,8 +1058,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 contentDb.epgWindow(acc.id, epgChannelKey(channel.streamId), fromMs, toMs)
             }.getOrDefault(emptyList())
             val store = if (table.isNotEmpty()) emptyList() else runCatching {
-                val epgId = matchIndex.liveEpgIdFor(acc.id, channel.streamId)
-                if (epgId.isNullOrBlank()) emptyList() else contentDb.epgWindow(acc.id, epgId, fromMs, toMs)
+                // B10/F14: the user's pick, else the ingest's match (provider id, then cleaned name).
+                xmltv.storedWindow(acc, channel.streamId, fromMs, toMs)
             }.getOrDefault(emptyList())
             val rows = GuideWindowRows.pick(table, store) ?: continue
             published[channel.streamId] = rows.map {
