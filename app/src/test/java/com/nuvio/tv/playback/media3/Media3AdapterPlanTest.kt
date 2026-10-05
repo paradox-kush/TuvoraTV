@@ -321,6 +321,35 @@ class Media3AdapterPlanTest {
         assertEquals(com.nuvio.tv.playback.core.HttpStatusProvenance.CONFIRMED, failure.statusProvenance)
     }
 
+    /**
+     * T10 (W2 device pass): a live channel answering 404 read "could not be reached over the network"
+     * and ran the reconnect loop (black for ~10 s, no message). A missing stream is said at once.
+     */
+    @Test
+    fun `Media3 404 is a missing stream, fatal, not an unreachable network`() {
+        fun failureFor(code: Int, message: String) = Media3FailureMapper.map(
+            PlaybackException(
+                "http status",
+                HttpDataSource.InvalidResponseCodeException(code, message, null, emptyMap(), mockk(), byteArrayOf()),
+                PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+            ),
+        )
+
+        val notFound = failureFor(404, "Not Found")
+        assertEquals(FailureCode.SOURCE_NOT_FOUND, notFound.code)
+        assertEquals(com.nuvio.tv.playback.core.Retryability.FATAL, notFound.retryability)
+        assertEquals(404, notFound.httpStatus)
+
+        // The vendored localhost data source reports 400 and keeps the real status in the message.
+        assertEquals(FailureCode.SOURCE_NOT_FOUND, failureFor(400, "HTTP/1.1 404 Not Found").code)
+
+        val gone = failureFor(410, "Gone")
+        assertEquals(FailureCode.SOURCE_NOT_FOUND, gone.code)
+        assertEquals(com.nuvio.tv.playback.core.Retryability.RETRYABLE_WITH_FRESH_REQUEST, gone.retryability)
+
+        assertEquals(FailureCode.NETWORK_UNREACHABLE, failureFor(502, "Bad Gateway").code)
+    }
+
     @Test
     fun `Media3 manual subtitle override survives guide fullscreen runtime plan change`() {
         val subtitleGroup = TrackGroup(

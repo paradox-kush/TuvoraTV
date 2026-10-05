@@ -31,14 +31,20 @@ internal fun LiveTrackDialog(
     choices: List<LiveTrackChoices.Choice>,
     onPick: (PlaybackTrackId?) -> Unit,
     onDismiss: () -> Unit,
+    /** T6: why some rows can't be picked here, shown above them. */
+    note: String? = null,
 ) {
     val selectedFocus = remember { FocusRequester() }
     NuvioDialog(onDismiss = onDismiss, title = title, scrollable = true) {
+        note?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary)
+        }
         choices.forEach { choice ->
             DialogButton(
                 text = choice.label,
                 onClick = { onPick(choice.id) },
                 isPrimary = choice.selected,
+                enabled = choice.enabled,
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(if (choice.selected) Modifier.focusRequester(selectedFocus) else Modifier),

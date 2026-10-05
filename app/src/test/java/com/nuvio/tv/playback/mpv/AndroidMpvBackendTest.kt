@@ -48,6 +48,19 @@ class AndroidMpvBackendTest {
             assertTrue("false positive for $raw", normalizeMpvError(raw).code != com.nuvio.tv.playback.core.FailureCode.AUTHORIZATION_REJECTED)
         }
     }
+    /** T10: mpv's "HTTP error 404 Not Found" is a missing stream, not an unreachable network. */
+    @Test
+    fun `mpv 404 is a missing stream`() {
+        listOf("HTTP error 404 Not Found", "server returned 404", "404 Not Found").forEach { raw ->
+            assertEquals(raw, com.nuvio.tv.playback.core.FailureCode.SOURCE_NOT_FOUND, normalizeMpvError(raw).code)
+        }
+        assertTrue(
+            "a stream id is not a status",
+            normalizeMpvError("https://example.test/live/404.ts failed to connect").code !=
+                com.nuvio.tv.playback.core.FailureCode.SOURCE_NOT_FOUND,
+        )
+    }
+
     @Test
     fun `hard abort after proven release does not terminate twice`() = runTest {
         val core = FakeCore()

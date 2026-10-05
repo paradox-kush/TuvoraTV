@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player.clean.live
 
+import com.nuvio.tv.playback.core.GraphOutputProfile
+import com.nuvio.tv.playback.core.PlaybackGraph
 import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.PlaybackTrackCatalog
 import com.nuvio.tv.playback.core.PlaybackTrackDescriptor
@@ -12,7 +14,8 @@ import com.nuvio.tv.playback.core.PlaybackTrackId
  */
 internal object LiveTrackChoices {
 
-    data class Choice(val id: PlaybackTrackId?, val label: String, val selected: Boolean)
+    /** [enabled] false = listed but not pickable here (T6: an output that cannot draw subtitles). */
+    data class Choice(val id: PlaybackTrackId?, val label: String, val selected: Boolean, val enabled: Boolean = true)
 
     /** Audio: one row per track; the selected one marked. */
     fun audio(catalog: PlaybackTrackCatalog): List<Choice> =
@@ -20,12 +23,43 @@ internal object LiveTrackChoices {
             Choice(track.id, label(track, index), track.id == catalog.selectedAudioTrackId)
         }
 
-    /** Subtitles: "Off" first (id = null), then one row per track. */
-    fun subtitles(catalog: PlaybackTrackCatalog, offLabel: String): List<Choice> =
-        listOf(Choice(null, offLabel, !catalog.subtitlesEnabled || catalog.selectedSubtitleTrackId == null)) +
+    /**
+     * Subtitles: "Off" first (id = null), then one row per track. [drawable] false (T6): the live
+     * picture is on a path with no subtitle layer, so the tracks are listed but not pickable — the
+     * picker says why ([canDrawSubtitles]) instead of a pick that silently shows nothing.
+     */
+    fun subtitles(
+        catalog: PlaybackTrackCatalog,
+        offLabel: String,
+        closedCaptionsLabel: String = CLOSED_CAPTIONS,
+        drawable: Boolean = true,
+    ): List<Choice> =
+        listOf(Choice(null, offLabel, !drawable || !catalog.subtitlesEnabled || catalog.selectedSubtitleTrackId == null)) +
             catalog.subtitles.mapIndexed { index, track ->
-                Choice(track.id, label(track, index), catalog.subtitlesEnabled && track.id == catalog.selectedSubtitleTrackId)
+                Choice(
+                    track.id,
+                    subtitleLabel(track, index, closedCaptionsLabel),
+                    drawable && catalog.subtitlesEnabled && track.id == catalog.selectedSubtitleTrackId,
+                    enabled = drawable,
+                )
             }
+
+    /**
+     * T6 (W2 device pass): live plays on mpv's DIRECT output (mediacodec_embed — the decoder renders
+     * straight to the video plane, product decision 2026-08-28: smooth video first). That path has
+     * no layer to draw subtitles on, so an HLS subtitle track was listed, picked, and never shown.
+     */
+    fun canDrawSubtitles(graph: PlaybackGraph?): Boolean = graph?.outputProfile != GraphOutputProfile.MPV_DIRECT
+
+    /** P3: a closed-caption track reads "Closed captions" (or its real language), never its codec. */
+    fun subtitleLabel(track: PlaybackTrackDescriptor, index: Int, closedCaptionsLabel: String = CLOSED_CAPTIONS): String {
+        if (!ClosedCaptionTracks.isClosedCaption(track)) return label(track, index)
+        val name = ClosedCaptionTracks.realLanguage(track)?.let { "${languageName(it)} · $closedCaptionsLabel" }
+            ?: closedCaptionsLabel
+        return if (track.forced) "$name · Forced" else name
+    }
+
+    private const val CLOSED_CAPTIONS = "Closed captions"
 
     /** "English · 5.1", falling back to the language, then "Track N". Never blank. */
     fun label(track: PlaybackTrackDescriptor, index: Int): String {

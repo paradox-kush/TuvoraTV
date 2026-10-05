@@ -239,11 +239,39 @@ internal object Media3AdapterPlanFactory {
 
 /** Stable normalization of Media3's public error codes. Raw exceptions never leave this package. */
 internal object Media3FailureMapper {
+    /**
+     * The real HTTP status. The vendored lib-datasource localhost data source reports 400 for every
+     * non-2xx but 416 and keeps the real status line only in the message ("… 404 Not Found").
+     */
+    internal fun sourceStatus(code: Int, message: String?): Int {
+        if (code != 400 || message == null) return code
+        return Regex("\\b(404|410)\\b").find(message)?.value?.toIntOrNull() ?: code
+    }
+
     fun map(error: PlaybackException, phase: FailurePhase = FailurePhase.PLAYBACK): PlaybackFailure {
         error.causeChain().filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
             .firstOrNull()
             ?.let { response ->
-                return when (response.responseCode) {
+                return when (sourceStatus(response.responseCode, response.responseMessage)) {
+                    // T10 (W2 device pass): a 404 read "could not be reached over the network" and
+                    // ran the live reconnect loop. The stream is not there: say so, at once.
+                    404 -> failure(
+                        FailureCode.SOURCE_NOT_FOUND,
+                        FailureDomain.NETWORK,
+                        phase,
+                        Retryability.FATAL,
+                        httpStatus = 404,
+                        statusProvenance = com.nuvio.tv.playback.core.HttpStatusProvenance.CONFIRMED,
+                    )
+                    // 410 Gone: an expired provider link; the session re-mints once where it can.
+                    410 -> failure(
+                        FailureCode.SOURCE_NOT_FOUND,
+                        FailureDomain.NETWORK,
+                        phase,
+                        Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                        httpStatus = 410,
+                        statusProvenance = com.nuvio.tv.playback.core.HttpStatusProvenance.CONFIRMED,
+                    )
                     401, 403 -> failure(
                         FailureCode.AUTHORIZATION_REJECTED,
                         FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,

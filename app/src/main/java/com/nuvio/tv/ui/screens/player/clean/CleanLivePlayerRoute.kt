@@ -116,6 +116,7 @@ internal fun CleanLivePlayerRoute(
         // URL-free snapshot.
         trackCatalog = ready?.snapshot?.trackCatalog ?: PlaybackTrackCatalog(),
         streamInfo = ready?.snapshot?.let(LiveTrackChoices::streamInfo).orEmpty(),
+        subtitlesDrawable = LiveTrackChoices.canDrawSubtitles(ready?.snapshot?.graph),
         onSelectAudio = { id -> if (!exitGate.isStarted()) scope.launch { viewModel.selectAudioTrack(id) } },
         onSelectSubtitle = { id -> if (!exitGate.isStarted()) scope.launch { viewModel.selectSubtitleTrack(id) } },
         picture = picture,

@@ -88,6 +88,8 @@ internal fun CleanLivePlayerScreen(
     onExitRequested: () -> Unit,
     trackCatalog: PlaybackTrackCatalog = PlaybackTrackCatalog(),
     streamInfo: List<Pair<String, String>> = emptyList(),
+    /** T6: false when the live picture's output can't draw subtitles ([LiveTrackChoices.canDrawSubtitles]). */
+    subtitlesDrawable: Boolean = true,
     onSelectAudio: (PlaybackTrackId) -> Unit = {},
     onSelectSubtitle: (PlaybackTrackId?) -> Unit = {},
     /** F28: the channel's picture (aspect + manual zoom, lane F's model) and how to change it. */
@@ -117,6 +119,12 @@ internal fun CleanLivePlayerScreen(
     fun showControls() { controlsVisible = true; revealTick++ }
     fun hideControls() { controlsVisible = false; moreOpen = false }
 
+    // T10: an error or a reconnect brings the controls (and the reason) back by itself.
+    val reconnecting = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
+        uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECOVERING
+    LaunchedEffect(failed, reconnecting) {
+        if (LiveControlsPolicy.revealForTrouble(failed, reconnecting, controlsVisible, panel != null)) showControls()
+    }
     LaunchedEffect(revealTick, controlsVisible, paused, failed, panel) {
         if (LiveControlsPolicy.mayAutoHide(controlsVisible, paused, failed, panelOpen = panel != null)) {
             delay(PlayerControlsTiming.AUTO_HIDE_MS)
@@ -245,9 +253,15 @@ internal fun CleanLivePlayerScreen(
         when (panel) {
             LivePanel.SUBTITLES -> LiveTrackDialog(
                 title = stringResource(R.string.cd_subtitles),
-                choices = LiveTrackChoices.subtitles(trackCatalog, stringResource(R.string.live_subtitles_off)),
+                choices = LiveTrackChoices.subtitles(
+                    trackCatalog,
+                    stringResource(R.string.live_subtitles_off),
+                    closedCaptionsLabel = stringResource(R.string.live_subtitles_closed_captions),
+                    drawable = subtitlesDrawable,
+                ),
                 onPick = { onSelectSubtitle(it); panel = null },
                 onDismiss = { panel = null },
+                note = stringResource(R.string.live_subtitles_cannot_draw).takeUnless { subtitlesDrawable },
             )
             LivePanel.AUDIO -> LiveTrackDialog(
                 title = stringResource(R.string.cd_audio_tracks),
@@ -365,6 +379,8 @@ internal object CleanLivePlayerUiPolicy {
         FailureCode.RESOURCE_RELEASE_FAILED -> R.string.clean_live_error_release
         FailureCode.NO_ELIGIBLE_GRAPH -> R.string.clean_live_error_no_graph
         FailureCode.NO_PROGRESS -> R.string.clean_live_error_no_progress
+        // T10: "This channel is no longer available." — not a network problem.
+        FailureCode.SOURCE_NOT_FOUND -> R.string.clean_live_error_stream_expired
         FailureCode.UNKNOWN -> R.string.clean_live_error_unknown
     }
 }

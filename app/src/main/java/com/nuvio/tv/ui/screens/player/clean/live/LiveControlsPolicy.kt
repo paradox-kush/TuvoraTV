@@ -91,6 +91,15 @@ internal object LiveControlsPolicy {
     fun mayAutoHide(controlsVisible: Boolean, paused: Boolean, failed: Boolean, panelOpen: Boolean): Boolean =
         controlsVisible && !paused && !failed && !panelOpen
 
+    /**
+     * T10 (W2 device pass): a failed tune (or a reconnect) on fullscreen live left the picture black
+     * with nothing on screen until OK brought the controls up. Trouble reveals the overlay by itself,
+     * so its status line ("Can't play" + the reason, or "Reconnecting") is seen at once. An open panel
+     * keeps its focus; controls already up stay as they are.
+     */
+    fun revealForTrouble(failed: Boolean, reconnecting: Boolean, controlsVisible: Boolean, panelOpen: Boolean): Boolean =
+        (failed || reconnecting) && !controlsVisible && !panelOpen
+
     enum class Status { LIVE, PAUSED, TUNING, RECONNECTING, FAILED }
 
     /** Tuning first (an error may still belong to the channel being left), then failure. */

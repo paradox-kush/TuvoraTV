@@ -43,4 +43,6 @@
     <string name="live_action_remove_favourite">Remove from Favorites</string>
     <string name="live_action_close">Close</string>
     <string name="live_subtitles_off">Off</string>
+    <string name="live_subtitles_closed_captions">Closed captions</string>
+    <string name="live_subtitles_cannot_draw">This channel plays on the TV\'s direct video path, which can\'t show subtitles.</string>
 </resources>
