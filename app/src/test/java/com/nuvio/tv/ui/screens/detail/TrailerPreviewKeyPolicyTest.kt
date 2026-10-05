@@ -14,8 +14,8 @@ import org.junit.Test
  */
 class TrailerPreviewKeyPolicyTest {
 
-    private fun act(keyCode: Int, action: Int = KeyEvent.ACTION_DOWN, repeat: Int = 0) =
-        TrailerPreviewKeyPolicy.actionFor(keyCode, action, repeat)
+    private fun act(keyCode: Int, action: Int = KeyEvent.ACTION_DOWN, repeat: Int = 0, downSeen: Boolean = false) =
+        TrailerPreviewKeyPolicy.actionFor(keyCode, action, repeat, selectDownSeen = downSeen)
 
     @Test
     fun `OK during the auto preview plays the title`() {
@@ -30,6 +30,11 @@ class TrailerPreviewKeyPolicyTest {
     fun `an OK whose press began before the preview still plays on release`() {
         // DOWN landed on the Play button a beat before the preview started; only UP reaches us.
         assertEquals("DPAD_CENTER up", Action.PLAY, act(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.ACTION_UP))
+    }
+
+    @Test
+    fun `the release of a press already acted on is swallowed, so one press never plays twice`() {
+        assertEquals("UP after its DOWN played", Action.SWALLOW, act(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.ACTION_UP, downSeen = true))
     }
 
     @Test
