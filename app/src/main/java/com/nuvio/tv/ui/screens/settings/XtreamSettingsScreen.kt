@@ -2032,7 +2032,8 @@ private val CATCHUP_CORRECTION_OPTIONS: List<Int> =
         .toList()
 
 private fun catchUpCorrectionLabel(minutes: Int): String {
-    if (minutes == 0) return "None (UTC)"
+    // 0 is not "UTC": replays follow the panel's own measured clock; this only corrects it (B117).
+    if (minutes == 0) return "None"
     val sign = if (minutes < 0) "-" else "+"
     val abs = kotlin.math.abs(minutes)
     return if (abs % 60 == 0) "$sign${abs / 60}h" else "$sign${abs / 60}h ${abs % 60}m"

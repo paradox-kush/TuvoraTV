@@ -52,9 +52,24 @@ object XtreamCatchUp {
             .format(Date(startMs))
     }
 
-    /** STUB (red step) — old behaviour: the manual correction alone. */
-    fun replayOffsetMs(measuredClockOffsetMs: Long?, manualCorrectionMinutes: Int): Long? =
-        manualCorrectionMinutes.takeIf { it != 0 }?.let { it * 60_000L }
+    /**
+     * The offset the replay `start` is formatted with: the panel's measured clock-pair offset
+     * ([ServerClockOffset]) plus the playlist's manual correction (clamped to the settings range), or
+     * null when neither is known — a plain UTC start, byte-identical to what unmeasured panels always got.
+     *
+     * B117 (Onn pass 2026-10-03): "Start over" on a UK channel played a different show. TV sent only
+     * the manual correction (default 0 = UTC), so a Europe/London panel in BST, which reads `start` in
+     * its own wall clock, replayed what aired an hour earlier. The phone, desktop and Apple TV already
+     * used this rule (CatchUpEpgRepository.panelFacts); the correction rides ON TOP of the measurement
+     * because it exists for panels whose own clock pair is wrong.
+     */
+    fun replayOffsetMs(measuredClockOffsetMs: Long?, manualCorrectionMinutes: Int): Long? {
+        val manualMs = manualCorrectionMinutes.coerceIn(
+            XtreamAccount.CATCHUP_CORRECTION_MIN_MINUTES, XtreamAccount.CATCHUP_CORRECTION_MAX_MINUTES,
+        ) * 60_000L
+        if (measuredClockOffsetMs == null && manualMs == 0L) return null
+        return (measuredClockOffsetMs ?: 0L) + manualMs
+    }
 
     /** What the guide can offer for one programme. */
     enum class ProgrammeAction {

@@ -76,6 +76,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
     private val links: ProviderLinkSource,
     private val winnerMemory: CatchUpDialectWalk.WinnerMemory,
     private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
+    private val panelClock: com.nuvio.tv.core.iptv.PanelClockSource = com.nuvio.tv.core.iptv.PanelClockSource.NONE,
 ) : ProviderPlaybackResolverFactory {
 
     @Inject
@@ -84,6 +85,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
         clientFactory: IptvClientFactory,
         winnerStore: CatchUpWinnerStore,
         serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
+        panelClock: com.nuvio.tv.core.iptv.PanelClockSource,
     ) : this(
         accountLookups = ProviderAccountLookupFactory { profileId ->
             val persistedProfileId = profileId.value.toIntOrNull()?.takeIf { it > 0 }
@@ -107,6 +109,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
         },
         winnerMemory = winnerStore,
         activeServer = serverFailover::activeAccount,
+        panelClock = panelClock,
     )
 
     override fun create(profileId: PlaybackProfileId): ProviderPlaybackResolver =
@@ -115,6 +118,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
             links = links,
             winnerMemory = winnerMemory,
             activeServer = activeServer,
+            panelClock = panelClock,
         )
 }
 
@@ -188,7 +192,7 @@ class IptvProviderPlaybackResolver internal constructor(
         }
     }
 
-    private fun resolveCatchUp(
+    private suspend fun resolveCatchUp(
         account: XtreamAccount,
         selection: ProviderPlaybackSelection,
         streamId: Int,
@@ -207,7 +211,10 @@ class IptvProviderPlaybackResolver internal constructor(
             startMs = window.startEpochMs,
             endMs = window.endEpochMs,
             preferM3u8 = account.preferM3u8CatchUp,
-            serverOffsetMs = account.catchUpOffsetMs,
+            // B117: panel-local start (measured clock pair + manual correction), as the guide's replays.
+            serverOffsetMs = com.nuvio.tv.core.iptv.XtreamCatchUp.replayOffsetMs(
+                panelClock.offsetMs(account), account.catchUpCorrectionMinutes,
+            ),
         )
         val key = CatchUpSelectionKey(selection)
         val previous = activeCatchUpByAccount[account.id]
