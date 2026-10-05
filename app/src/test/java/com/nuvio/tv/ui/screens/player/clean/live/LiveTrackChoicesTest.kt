@@ -96,6 +96,12 @@ class LiveTrackChoicesTest {
         )
         assertEquals("direct output cannot draw", false, LiveTrackChoices.canDrawSubtitles(direct))
         assertEquals("gpu render can", true, LiveTrackChoices.canDrawSubtitles(direct.copy(outputProfile = com.nuvio.tv.playback.core.GraphOutputProfile.MPV_RENDER)))
+        assertEquals(
+            "the clean Media3 live path has no cue renderer yet",
+            false,
+            LiveTrackChoices.canDrawSubtitles(direct.copy(engine = com.nuvio.tv.playback.core.EngineType.MEDIA3, outputProfile = com.nuvio.tv.playback.core.GraphOutputProfile.MEDIA3_STANDARD)),
+        )
+        assertEquals("no graph yet -> not offered", false, LiveTrackChoices.canDrawSubtitles(null))
 
         val rows = LiveTrackChoices.subtitles(catalog, offLabel = "Off", drawable = false)
         assertEquals("Off stays pickable and selected", Choice(null, "Off", selected = true), rows[0])

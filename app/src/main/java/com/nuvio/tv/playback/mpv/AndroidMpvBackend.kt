@@ -217,6 +217,11 @@ internal class AndroidMpvBackend(
                     plan.preInitOptions.forEach { (name, value) ->
                         if (!core.setOption(name, value)) throw IllegalStateException("Rejected mpv option: $name")
                     }
+                    // T6: without a font libass draws no subtitle at all (see MpvSubtitleFonts).
+                    // Best effort: a missing font never fails playback.
+                    ensureSubtitleFontsDir()?.let { dir ->
+                        MpvSubtitleFonts.options(dir.absolutePath).forEach { (name, value) -> core.setOption(name, value) }
+                    }
                     core.initialize()
                     // Legacy-proven re-assert (NuvioMpvSurfaceView:135): wrapper/init layers have
                     // historically overwritten idle post-init; idle is runtime-settable and a
@@ -743,6 +748,21 @@ internal class AndroidMpvBackend(
         "dolbyvision", "dovi" -> "video/dolby-vision"
         else -> null
     }
+
+    /** The directory holding the bundled subtitle font, materialized once from the AAR's assets. */
+    private fun ensureSubtitleFontsDir(): File? = runCatching {
+        val directory = File(context.filesDir, MpvSubtitleFonts.DIRECTORY_NAME)
+        val font = File(directory, MpvSubtitleFonts.ASSET_NAME)
+        if (font.isFile && font.length() > 0L) return@runCatching directory
+        directory.mkdirs()
+        val temporary = File(directory, "${MpvSubtitleFonts.ASSET_NAME}.tmp")
+        context.assets.open(MpvSubtitleFonts.ASSET_NAME).use { input ->
+            temporary.outputStream().use(input::copyTo)
+        }
+        check(temporary.renameTo(font) || font.isFile) { "Unable to materialize the subtitle font" }
+        if (temporary.exists()) temporary.delete()
+        directory
+    }.getOrNull()
 
     private fun ensureTlsCaFile(): File {
         val destination = File(context.filesDir, "cacert.pem")
