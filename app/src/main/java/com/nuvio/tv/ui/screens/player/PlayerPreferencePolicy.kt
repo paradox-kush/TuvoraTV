@@ -172,7 +172,11 @@ object PlayerPreferencePolicy {
  * alpha and pads it by `sub-shadow-offset`. `sub-border-*` names are accepted by every mpv we ship.
  */
 object SubtitleStyleMpvMapping {
-    const val BOX_PADDING = 4.0
+    /**
+     * Inner box padding (mpv scaled px, ~0.25 of the default font size). libass pads a background
+     * box UNIFORMLY (`sub-shadow-offset` sets x and y alike) and draws square corners.
+     */
+    const val BOX_PADDING = 12.0
     const val MPV_DEFAULT_MARGIN_X = 19.0
     private const val REFERENCE_WIDTH_16_9 = 1280.0
 
@@ -210,9 +214,44 @@ object SubtitleStyleMpvMapping {
 
 /** Horizontal subtitle padding (F47): percent of the picture width kept clear on each side. */
 object SubtitleSideMargin {
-    const val DEFAULT_PERCENT = 5
+    /** 0 = mpv's own margin. The reporter's padding is INSIDE the box ([SubtitleStyleMpvMapping.BOX_PADDING]). */
+    const val DEFAULT_PERCENT = 0
     const val MAX_PERCENT = 20
 
     fun paddingPx(widthPx: Int, sideMarginPercent: Int): Int =
         (widthPx.coerceAtLeast(0) * sideMarginPercent.coerceIn(0, MAX_PERCENT) / 100f).roundToInt()
+}
+
+/**
+ * F47 default look (owner-approved 2026-10-04): white text, no outline, in a soft translucent dark
+ * box with inner padding — the [com.nuvio.tv.data.local.SubtitleStyleSettings] defaults. NEW users
+ * only: a profile with any stored style field reads it over [LEGACY_*], the look it had. TV stores
+ * each style field separately, so without this a user who only changed the text colour would
+ * suddenly get a box.
+ */
+object SubtitleStyleDefaults {
+    /** The "dim" preset of the background colour picker. */
+    const val BOX_BACKGROUND: Int = 0x80000000.toInt()
+    const val LEGACY_BACKGROUND: Int = 0x00000000
+    const val LEGACY_OUTLINE_ENABLED = true
+
+    fun background(anyFieldStored: Boolean): Int = if (anyFieldStored) LEGACY_BACKGROUND else BOX_BACKGROUND
+    fun outlineEnabled(anyFieldStored: Boolean): Boolean = if (anyFieldStored) LEGACY_OUTLINE_ENABLED else false
+}
+
+/**
+ * F47 inner horizontal padding for ExoPlayer cues: Media3's window box has a fixed 0.125 x text-size
+ * inner padding and no API to change it, so each line gets a FIGURE SPACE (U+2007) on both sides —
+ * not counted as trailing whitespace by the Android line breaker, so it widens the box. Port of the
+ * mobile twin.
+ */
+object SubtitleBoxPadding {
+    const val PAD_CHAR = '\u2007'
+    const val EXO_PAD_CHARS = 1
+
+    fun padLines(text: String, count: Int): String {
+        if (text.isEmpty() || count <= 0) return text
+        val pad = PAD_CHAR.toString().repeat(count)
+        return text.split('\n').joinToString("\n") { line -> if (line.isEmpty()) line else "$pad$line$pad" }
+    }
 }

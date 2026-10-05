@@ -1697,10 +1697,13 @@ private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSe
         }
 
         setStyle(
+            // F47: the background is ONE box per cue (window colour, with inner horizontal padding
+            // from Media3 + SubtitleBoxPadding), like libmpv's background-box, not tight per-line
+            // strips. Media3 draws it with square corners (no corner-radius API).
             androidx.media3.ui.CaptionStyleCompat(
                 subtitleStyle.textColor,
-                subtitleStyle.backgroundColor,
                 android.graphics.Color.TRANSPARENT,
+                subtitleStyle.backgroundColor,
                 edgeType,
                 subtitleStyle.outlineColor,
                 typeface

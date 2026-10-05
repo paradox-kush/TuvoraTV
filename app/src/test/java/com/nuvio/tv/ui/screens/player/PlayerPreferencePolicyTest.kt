@@ -102,7 +102,7 @@ class PlayerPreferencePolicyTest {
         val p = SubtitleStyleMpvMapping.properties("#80000000", 0.5f, "#FF000000", 1.0, 0).toMap()
         assertEquals("background-box", p["sub-border-style"])
         assertEquals("#80000000", p["sub-back-color"])
-        assertEquals("4.0", p["sub-shadow-offset"])
+        assertEquals(SubtitleStyleMpvMapping.BOX_PADDING, p["sub-shadow-offset"]!!.toDouble(), 0.0)
     }
 
     @Test
@@ -118,5 +118,34 @@ class PlayerPreferencePolicyTest {
         assertEquals(64.0, SubtitleStyleMpvMapping.marginX(5), 0.0)
         assertEquals(SubtitleStyleMpvMapping.MPV_DEFAULT_MARGIN_X, SubtitleStyleMpvMapping.marginX(0), 0.0)
         assertEquals(96, SubtitleSideMargin.paddingPx(1920, 5))
+    }
+
+    // --- F47 default look (owner-approved 2026-10-04) ---
+
+    @Test
+    fun `new users get white text in a soft box with no outline and no screen margin`() {
+        val style = com.nuvio.tv.data.local.SubtitleStyleSettings()
+        assertEquals(android.graphics.Color.WHITE, style.textColor)
+        assertFalse(style.outlineEnabled)
+        assertEquals(SubtitleStyleDefaults.BOX_BACKGROUND, style.backgroundColor)
+        val alpha = (style.backgroundColor ushr 24) / 255f
+        assertTrue("soft translucent, not solid", alpha in 0.4f..0.75f)
+        assertEquals(0, style.sideMarginPercent)
+    }
+
+    @Test
+    fun `a profile with any stored style field keeps the pre-F47 look`() {
+        assertEquals(SubtitleStyleDefaults.BOX_BACKGROUND, SubtitleStyleDefaults.background(anyFieldStored = false))
+        assertFalse(SubtitleStyleDefaults.outlineEnabled(anyFieldStored = false))
+        assertEquals(0, SubtitleStyleDefaults.background(anyFieldStored = true))
+        assertTrue(SubtitleStyleDefaults.outlineEnabled(anyFieldStored = true))
+    }
+
+    @Test
+    fun `the default box is padded and the exo cue gets inner padding on every line`() {
+        assertTrue("visible inner padding", SubtitleStyleMpvMapping.BOX_PADDING >= 8.0)
+        val pad = SubtitleBoxPadding.PAD_CHAR.toString()
+        assertEquals("${pad}Hello$pad\n${pad}wide world$pad", SubtitleBoxPadding.padLines("Hello\nwide world", 1))
+        assertEquals("x", SubtitleBoxPadding.padLines("x", 0))
     }
 }

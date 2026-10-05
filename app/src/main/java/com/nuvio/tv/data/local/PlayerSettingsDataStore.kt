@@ -141,8 +141,9 @@ data class SubtitleStyleSettings(
     val verticalOffset: Int = 5, // Percentage from bottom (-20 to 50)
     val bold: Boolean = false,
     val textColor: Int = Color.White.toArgb(),
-    val backgroundColor: Int = Color.Transparent.toArgb(),
-    val outlineEnabled: Boolean = true,
+    /** F47 default look for new users (see SubtitleStyleDefaults for existing customisers). */
+    val backgroundColor: Int = com.nuvio.tv.ui.screens.player.SubtitleStyleDefaults.BOX_BACKGROUND,
+    val outlineEnabled: Boolean = false,
     val outlineColor: Int = Color.Black.toArgb(),
     val outlineWidth: Int = 2, // 1-5
     /** F47: percent of the picture width kept clear on each side (SubtitleSideMargin). */
@@ -969,8 +970,10 @@ class PlayerSettingsDataStore @Inject constructor(
                     verticalOffset = prefs[subtitleVerticalOffsetKey] ?: 5,
                     bold = prefs[subtitleBoldKey] ?: false,
                     textColor = prefs[subtitleTextColorKey] ?: Color.White.toArgb(),
-                    backgroundColor = prefs[subtitleBackgroundColorKey] ?: Color.Transparent.toArgb(),
-                    outlineEnabled = prefs[subtitleOutlineEnabledKey] ?: true,
+                    backgroundColor = prefs[subtitleBackgroundColorKey]
+                        ?: com.nuvio.tv.ui.screens.player.SubtitleStyleDefaults.background(subtitleStyleStored(prefs)),
+                    outlineEnabled = prefs[subtitleOutlineEnabledKey]
+                        ?: com.nuvio.tv.ui.screens.player.SubtitleStyleDefaults.outlineEnabled(subtitleStyleStored(prefs)),
                     outlineColor = prefs[subtitleOutlineColorKey] ?: Color.Black.toArgb(),
                     outlineWidth = prefs[subtitleOutlineWidthKey] ?: 2,
                     sideMarginPercent = (prefs[subtitleSideMarginPercentKey]
@@ -1463,6 +1466,13 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setSubtitleBackgroundColor(color: Int) { store().edit { it[subtitleBackgroundColorKey] = color } }
     suspend fun setSubtitleOutlineEnabled(enabled: Boolean) { store().edit { it[subtitleOutlineEnabledKey] = enabled } }
     suspend fun setSubtitleOutlineColor(color: Int) { store().edit { it[subtitleOutlineColorKey] = color } }
+    /** F47: any stored style field = an existing customiser, who keeps the pre-F47 look. */
+    private fun subtitleStyleStored(prefs: androidx.datastore.preferences.core.Preferences): Boolean =
+        listOf(
+            subtitleSizeKey, subtitleVerticalOffsetKey, subtitleBoldKey, subtitleTextColorKey,
+            subtitleBackgroundColorKey, subtitleOutlineEnabledKey, subtitleOutlineColorKey, subtitleOutlineWidthKey,
+        ).any { prefs.contains(it) }
+
     suspend fun setSubtitleOutlineWidth(width: Int) { store().edit { it[subtitleOutlineWidthKey] = width.coerceIn(1, 5) } }
     suspend fun setSubtitleSideMarginPercent(percent: Int) {
         store().edit {
