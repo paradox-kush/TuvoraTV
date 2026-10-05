@@ -21,6 +21,9 @@ interface SubtitleRepository {
         videoSize: Long? = null,
         filename: String? = null,
         onProgress: ((completed: Int, total: Int, addonName: String?) -> Unit)? = null,
-        onSubtitlesEmitted: ((List<Subtitle>) -> Unit)? = null
+        onSubtitlesEmitted: ((List<Subtitle>) -> Unit)? = null,
+        /** F17: an IPTV episode's season/episode, to build its public `tt…:S:E` id. */
+        season: Int? = null,
+        episode: Int? = null,
     ): List<Subtitle>
 }

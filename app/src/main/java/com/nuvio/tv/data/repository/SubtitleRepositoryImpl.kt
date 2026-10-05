@@ -26,7 +26,8 @@ import javax.inject.Inject
 class SubtitleRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val api: AddonApi,
-    private val addonRepository: AddonRepositoryImpl
+    private val addonRepository: AddonRepositoryImpl,
+    private val iptvSubtitleIdResolver: com.nuvio.tv.core.iptv.IptvSubtitleIdResolver,
 ) : SubtitleRepository {
 
     companion object {
@@ -42,8 +43,30 @@ class SubtitleRepositoryImpl @Inject constructor(
         videoSize: Long?,
         filename: String?,
         onProgress: ((completed: Int, total: Int, addonName: String?) -> Unit)?,
-        onSubtitlesEmitted: ((List<Subtitle>) -> Unit)?
+        onSubtitlesEmitted: ((List<Subtitle>) -> Unit)?,
+        season: Int?,
+        episode: Int?,
     ): List<Subtitle> = withContext(Dispatchers.IO) {
+        // Privacy + F17: an IPTV id embeds the playlist key and must never reach an add-on. Look the
+        // item up under its public IMDb id instead; none -> no request at all.
+        if (com.nuvio.tv.core.player.AddonSubtitleIdPolicy.isProviderScoped(id) ||
+            com.nuvio.tv.core.player.AddonSubtitleIdPolicy.isProviderScoped(videoId)
+        ) {
+            val publicId = iptvSubtitleIdResolver.publicSubtitleVideoId(id, season, episode)
+                ?: return@withContext emptyList()
+            return@withContext getSubtitles(
+                type = com.nuvio.tv.core.player.AddonSubtitleIdPolicy.requestType(type, publicId),
+                id = publicId.substringBefore(':'),
+                videoId = publicId,
+                videoHash = videoHash,
+                videoSize = videoSize,
+                filename = filename,
+                onProgress = onProgress,
+                onSubtitlesEmitted = onSubtitlesEmitted,
+                season = null,
+                episode = null,
+            )
+        }
         val requestType = canonicalSubtitleType(type)
         val startedAtMs = System.currentTimeMillis()
         Log.d(TAG, LogRedaction.text("Fetching subtitles for type=$requestType, id=$id, videoId=$videoId"))
