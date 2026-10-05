@@ -722,6 +722,11 @@ enum class FailureCode {
     NO_ELIGIBLE_GRAPH,
     NO_PROGRESS,
     LIVE_RECONNECT_EXHAUSTED,
+    /**
+     * T10: the source answered 404 Not Found / 410 Gone — the stream is not there, so the network is
+     * fine and retrying the same address cannot help (a provider that mints links may re-mint one).
+     */
+    SOURCE_NOT_FOUND,
     UNKNOWN,
 }
 

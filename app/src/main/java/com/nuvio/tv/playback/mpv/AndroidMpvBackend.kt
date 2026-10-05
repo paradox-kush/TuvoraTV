@@ -958,6 +958,9 @@ internal fun normalizeMpvError(raw: String?): PlaybackFailure {
         "timeout" in value -> Triple(FailureCode.NETWORK_TIMEOUT, FailureDomain.NETWORK, Retryability.RETRYABLE_WITH_FRESH_REQUEST)
         inferredStatus != null ->
             Triple(FailureCode.AUTHORIZATION_REJECTED, FailureDomain.AUTHORIZATION_PROVIDER_LIMIT, Retryability.FATAL)
+        // T10: "HTTP error 404 Not Found" is a missing stream, not an unreachable network.
+        MPV_HTTP_NOT_FOUND.containsMatchIn(value) ->
+            Triple(FailureCode.SOURCE_NOT_FOUND, FailureDomain.NETWORK, Retryability.FATAL)
         "tls" in value || "certificate" in value ->
             Triple(FailureCode.TLS_HANDSHAKE_FAILED, FailureDomain.TLS, Retryability.HANDOFF_ELIGIBLE)
         "network" in value || "resolve" in value || "connect" in value ->
@@ -976,6 +979,11 @@ internal fun normalizeMpvError(raw: String?): PlaybackFailure {
         },
     )
 }
+
+private val MPV_HTTP_NOT_FOUND = Regex(
+    "(?:http(?:\\s+(?:error|status))?|server\\s+returned|status\\s+code)\\s*[:=]?\\s*404\\b|\\b404\\s+not\\s+found\\b",
+    RegexOption.IGNORE_CASE,
+)
 
 private val MPV_HTTP_AUTHORIZATION = Regex(
     "(?:http(?:\\s+(?:error|status))?|server\\s+returned|status\\s+code)\\s*[:=]?\\s*(401|403)\\b|\\b(401\\s+unauthorized|403\\s+forbidden)\\b",

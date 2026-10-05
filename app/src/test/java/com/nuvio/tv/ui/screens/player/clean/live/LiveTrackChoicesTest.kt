@@ -62,6 +62,46 @@ class LiveTrackChoicesTest {
         assertEquals("track selected", true, rows[1].selected)
     }
 
+    /** P3 (W2 device pass): embedded CEA-608/708 captions read "Closed captions", not their codec. */
+    @Test
+    fun `closed caption tracks read Closed captions`() {
+        val mpv = PlaybackTrackDescriptor(PlaybackTrackId("c1"), PlaybackTrackType.SUBTITLE, language = "eia-608", codec = "eia_608")
+        val exo = PlaybackTrackDescriptor(PlaybackTrackId("c2"), PlaybackTrackType.SUBTITLE, label = "Unknown (application/cea-608)", mimeType = "application/cea-608")
+        val spanish = PlaybackTrackDescriptor(PlaybackTrackId("c3"), PlaybackTrackType.SUBTITLE, language = "es", codec = "eia_608")
+        val rows = LiveTrackChoices.subtitles(PlaybackTrackCatalog(subtitles = listOf(mpv, exo, spanish, sub("s1", language = "fr"))), offLabel = "Off")
+        assertEquals(
+            "labels",
+            listOf("Off", "Closed captions", "Closed captions", "Spanish · Closed captions", "French"),
+            rows.map { it.label },
+        )
+    }
+
+    /**
+     * T6 (W2 device pass): live plays on mpv's direct output, which has no subtitle layer; the HLS
+     * subtitle track was listed, picked and never shown. The tracks stay listed but are not pickable.
+     */
+    @Test
+    fun `a direct-output picture lists subtitles but does not offer them`() {
+        val catalog = PlaybackTrackCatalog(
+            subtitles = listOf(sub("s1", language = "en")),
+            selectedSubtitleTrackId = PlaybackTrackId("s1"),
+            subtitlesEnabled = true,
+        )
+        val direct = com.nuvio.tv.playback.core.PlaybackGraph(
+            id = "mpv-direct", engine = com.nuvio.tv.playback.core.EngineType.LIBMPV,
+            outputProfile = com.nuvio.tv.playback.core.GraphOutputProfile.MPV_DIRECT,
+            decoderMode = com.nuvio.tv.playback.core.DecoderMode.HARDWARE,
+            audioMode = com.nuvio.tv.playback.core.AudioMode.DECODE,
+            surfaceMode = com.nuvio.tv.playback.core.SurfaceMode.NATIVE_EMBED,
+        )
+        assertEquals("direct output cannot draw", false, LiveTrackChoices.canDrawSubtitles(direct))
+        assertEquals("gpu render can", true, LiveTrackChoices.canDrawSubtitles(direct.copy(outputProfile = com.nuvio.tv.playback.core.GraphOutputProfile.MPV_RENDER)))
+
+        val rows = LiveTrackChoices.subtitles(catalog, offLabel = "Off", drawable = false)
+        assertEquals("Off stays pickable and selected", Choice(null, "Off", selected = true), rows[0])
+        assertEquals("the track is listed, not pickable", Choice(PlaybackTrackId("s1"), "English", selected = false, enabled = false), rows[1])
+    }
+
     @Test
     fun `an unknown language code is shown as given rather than blank`() {
         assertEquals("code", "qaa", LiveTrackChoices.label(audio("x", language = "qaa"), 0))

@@ -346,6 +346,14 @@ fun LiveGuide(
         // The buttons leave composition: focus waits behind the video for the next key.
         fullscreenAnchor.requestFocusOrFalse()
     }
+    // T10: a failed tune or a reconnect shows the overlay (and its reason) without waiting for OK.
+    val liveReconnecting = playbackUi?.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
+        playbackUi?.bottomStatusCode == LivePlaybackUiStatusCode.RECOVERING
+    LaunchedEffect(fullscreen, liveFailed, liveReconnecting) {
+        if (fullscreen && LiveControlsPolicy.revealForTrouble(liveFailed, liveReconnecting, controlsVisible, livePanelOpen)) {
+            showControls()
+        }
+    }
     // F28: one auto-hide delay shared with VOD; never while paused, on an error, or with a panel open.
     LaunchedEffect(fullscreen, controlsTick, playbackUi?.isPaused, liveFailed, livePanelOpen) {
         if (fullscreen && LiveControlsPolicy.mayAutoHide(controlsVisible, playbackUi?.isPaused == true, liveFailed, livePanelOpen)) {
@@ -721,15 +729,22 @@ fun LiveGuide(
                 )
             }
             when (livePanel.takeIf { fullscreen }) {
-                LivePanel.SUBTITLES -> LiveTrackDialog(
-                    title = stringResource(R.string.cd_subtitles),
-                    choices = LiveTrackChoices.subtitles(
-                        readyPlayback?.snapshot?.trackCatalog ?: PlaybackTrackCatalog(),
-                        stringResource(R.string.live_subtitles_off),
-                    ),
-                    onPick = { playbackViewModel.requestSubtitleTrack(it); livePanel = null },
-                    onDismiss = { livePanel = null },
-                )
+                LivePanel.SUBTITLES -> {
+                    // T6: a direct-output picture can't draw subtitles — say so rather than accept a pick.
+                    val drawable = LiveTrackChoices.canDrawSubtitles(readyPlayback?.snapshot?.graph)
+                    LiveTrackDialog(
+                        title = stringResource(R.string.cd_subtitles),
+                        choices = LiveTrackChoices.subtitles(
+                            readyPlayback?.snapshot?.trackCatalog ?: PlaybackTrackCatalog(),
+                            stringResource(R.string.live_subtitles_off),
+                            closedCaptionsLabel = stringResource(R.string.live_subtitles_closed_captions),
+                            drawable = drawable,
+                        ),
+                        onPick = { playbackViewModel.requestSubtitleTrack(it); livePanel = null },
+                        onDismiss = { livePanel = null },
+                        note = stringResource(R.string.live_subtitles_cannot_draw).takeUnless { drawable },
+                    )
+                }
                 LivePanel.AUDIO -> LiveTrackDialog(
                     title = stringResource(R.string.cd_audio_tracks),
                     choices = LiveTrackChoices.audio(readyPlayback?.snapshot?.trackCatalog ?: PlaybackTrackCatalog()),

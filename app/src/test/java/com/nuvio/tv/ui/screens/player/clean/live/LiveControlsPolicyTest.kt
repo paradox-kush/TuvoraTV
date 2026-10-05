@@ -128,4 +128,14 @@ class LiveControlsPolicyTest {
         assertFalse("a one-off stream has no list", failedOneOff.channelList)
         assertFalse("nor a favourite", failedOneOff.favourite)
     }
+
+    /** T10 (W2 device pass): a failed tune left fullscreen black with no message until OK. */
+    @Test
+    fun `trouble reveals the hidden controls by itself`() {
+        assertEquals("failed, hidden -> reveal", true, LiveControlsPolicy.revealForTrouble(failed = true, reconnecting = false, controlsVisible = false, panelOpen = false))
+        assertEquals("reconnecting, hidden -> reveal", true, LiveControlsPolicy.revealForTrouble(failed = false, reconnecting = true, controlsVisible = false, panelOpen = false))
+        assertEquals("already shown -> nothing", false, LiveControlsPolicy.revealForTrouble(failed = true, reconnecting = false, controlsVisible = true, panelOpen = false))
+        assertEquals("a panel keeps its focus", false, LiveControlsPolicy.revealForTrouble(failed = true, reconnecting = false, controlsVisible = false, panelOpen = true))
+        assertEquals("healthy -> nothing", false, LiveControlsPolicy.revealForTrouble(failed = false, reconnecting = false, controlsVisible = false, panelOpen = false))
+    }
 }
