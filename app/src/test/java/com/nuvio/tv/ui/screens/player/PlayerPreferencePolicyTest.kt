@@ -1,5 +1,14 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.VideoZoomAxis
+import com.nuvio.tv.core.picture.VideoZoomPolicy
+import com.nuvio.tv.core.picture.PictureMemory
+import com.nuvio.tv.core.picture.PictureChoice
+import com.nuvio.tv.core.picture.PlayerPreferencePolicy
+import com.nuvio.tv.core.picture.SubtitleStyleMpvMapping
+import com.nuvio.tv.core.picture.SubtitleSideMargin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

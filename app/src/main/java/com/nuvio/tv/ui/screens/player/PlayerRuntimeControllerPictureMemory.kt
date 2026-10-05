@@ -1,5 +1,8 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.VideoZoomPolicy
+import com.nuvio.tv.core.picture.PlayerPreferencePolicy
 import android.util.Log
 import com.nuvio.tv.R
 import kotlinx.coroutines.delay

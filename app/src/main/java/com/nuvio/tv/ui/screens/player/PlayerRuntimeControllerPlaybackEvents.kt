@@ -1,5 +1,8 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.nextAspectMode
+import com.nuvio.tv.core.picture.aspectModeLabel
+import com.nuvio.tv.ui.components.player.PlayerControlsTiming
 import android.net.Uri
 import android.util.Log
 import androidx.media3.common.Player
@@ -980,7 +983,7 @@ internal fun PlayerRuntimeController.scheduleProgressSyncAfterSeek() {
 fun PlayerRuntimeController.scheduleHideControls() {
     hideControlsJob?.cancel()
     hideControlsJob = scope.launch {
-        delay(3000)
+        delay(PlayerControlsTiming.AUTO_HIDE_MS)
         if (_uiState.value.isPlaying && !_uiState.value.showAudioOverlay &&
             !_uiState.value.showSubtitleOverlay && !_uiState.value.showSubtitleStylePanel &&
             !_uiState.value.showSpeedDialog && !_uiState.value.showMoreDialog &&

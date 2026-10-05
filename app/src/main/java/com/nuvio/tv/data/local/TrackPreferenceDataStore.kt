@@ -48,7 +48,7 @@ class TrackPreferenceDataStore @Inject constructor(
 
     private fun pictureStore() = factory.get(profileManager.activeProfileId.value, PICTURE_FEATURE)
 
-    suspend fun savePicture(contentId: String, memory: com.nuvio.tv.ui.screens.player.PictureMemory) {
+    suspend fun savePicture(contentId: String, memory: com.nuvio.tv.core.picture.PictureMemory) {
         pictureStore().edit { prefs ->
             val aspectKey = key(ASPECT_MODE, contentId)
             if (memory.aspectMode != null) prefs[aspectKey] = memory.aspectMode else prefs.remove(aspectKey)
@@ -65,7 +65,7 @@ class TrackPreferenceDataStore @Inject constructor(
         }
     }
 
-    suspend fun loadPicture(contentId: String): com.nuvio.tv.ui.screens.player.PictureMemory? {
+    suspend fun loadPicture(contentId: String): com.nuvio.tv.core.picture.PictureMemory? {
         val prefs = pictureStore().data.first()
         val aspect = prefs[key(ASPECT_MODE, contentId)]
         val sx = prefs[floatKey(ZOOM_SCALE_X, contentId)]
@@ -75,10 +75,10 @@ class TrackPreferenceDataStore @Inject constructor(
         val zoom = if (sx == null && sy == null && px == null && py == null) {
             null
         } else {
-            com.nuvio.tv.ui.screens.player.VideoZoom(sx ?: 1f, sy ?: 1f, px ?: 0f, py ?: 0f)
+            com.nuvio.tv.core.picture.VideoZoom(sx ?: 1f, sy ?: 1f, px ?: 0f, py ?: 0f)
         }
         if (aspect == null && zoom == null) return null
-        return com.nuvio.tv.ui.screens.player.PictureMemory(aspectMode = aspect, zoom = zoom)
+        return com.nuvio.tv.core.picture.PictureMemory(aspectMode = aspect, zoom = zoom)
     }
 
     private fun key(field: String, contentId: String) =

@@ -1,8 +1,11 @@
 @file:OptIn(ExperimentalTvMaterial3Api::class)
 
-package com.nuvio.tv.ui.screens.player
+package com.nuvio.tv.ui.components.player
 
 import androidx.compose.foundation.background
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.VideoZoomAxis
+import com.nuvio.tv.core.picture.VideoZoomPolicy
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box

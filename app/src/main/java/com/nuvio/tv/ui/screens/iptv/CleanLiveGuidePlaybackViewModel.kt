@@ -1,5 +1,9 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import com.nuvio.tv.core.picture.LivePicturePort
+import com.nuvio.tv.core.picture.PictureChoice
+import com.nuvio.tv.data.local.LivePicturePreferences
+import com.nuvio.tv.ui.screens.player.clean.live.LivePictureFollower
 import android.app.Activity
 import android.content.Context
 import android.util.Log
@@ -9,6 +13,7 @@ import androidx.lifecycle.ViewModel
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.PlaybackSnapshot
+import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.VideoDimensions
@@ -108,6 +113,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private val playedHistory: LivePlayedHistoryPort,
     ownerDispatcher: CoroutineDispatcher,
     private val releaseRetryWait: CleanLiveGuideReleaseRetryWait,
+    picturePort: LivePicturePort,
 ) : ViewModel() {
     @Inject
     internal constructor(
@@ -117,6 +123,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         liveSelection: LiveChannelSelectionPort,
         liveNavigation: LiveChannelNavigationPort,
         playedHistory: LivePlayedHistoryPort,
+        livePicture: LivePicturePreferences,
     ) : this(
         appContext = context.applicationContext,
         profileSource = CleanLiveGuideProfileSource { profileManager.activeProfileId.value },
@@ -126,6 +133,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         playedHistory = playedHistory,
         ownerDispatcher = Dispatchers.Main.immediate,
         releaseRetryWait = CleanLiveGuideReleaseRetryWait { delay(it) },
+        picturePort = livePicture,
     )
 
     internal constructor(
@@ -137,6 +145,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         playedHistory: LivePlayedHistoryPort = LivePlayedHistoryPort {},
         ownerDispatcher: CoroutineDispatcher,
         releaseRetryWait: CleanLiveGuideReleaseRetryWait = CleanLiveGuideReleaseRetryWait {},
+        picturePort: LivePicturePort = LivePicturePort.Unremembered,
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
     ) : this(
         appContext = context.applicationContext,
@@ -147,6 +156,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         playedHistory = playedHistory,
         ownerDispatcher = ownerDispatcher,
         releaseRetryWait = releaseRetryWait,
+        picturePort = picturePort,
     )
 
     private val ownerJob = SupervisorJob()
@@ -159,6 +169,10 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         MutableStateFlow<CleanLiveGuidePlaybackState>(CleanLiveGuidePlaybackState.Detached)
 
     val state: StateFlow<CleanLiveGuidePlaybackState> = mutableState.asStateFlow()
+
+    // F28: the picture (aspect + manual zoom) follows the channel on screen, per channel.
+    private val pictureFollower = LivePictureFollower(picturePort, ownerScope)
+    val picture: StateFlow<PictureChoice> = pictureFollower.picture
 
     private var host: CleanLiveHost? = null
     private var attachedSurfaceOwner: FrameLayout? = null
@@ -488,6 +502,24 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     fun requestResume() = requestCommand { it.resume() }
     fun requestRetry() = requestCommand { it.retry() }
 
+    /** F28: change the picture of the channel on screen (aspect cycle, zoom step, reset). */
+    fun requestPictureChange(update: (PictureChoice) -> PictureChoice) {
+        if (releaseCompleted || clearedReleaseLoopStarted) return
+        pictureFollower.change(update) { choice -> command { it.applyPicture(choice.aspectMode, choice.zoom) } }
+    }
+
+    private fun followPicture(target: LiveChannelTarget) {
+        pictureFollower.follow(target.contentId.value) { choice ->
+            command { it.applyPicture(choice.aspectMode, choice.zoom) }
+        }
+    }
+
+    /** F28: the live overlay's audio/subtitle pickers. Null subtitle = Off. */
+    fun requestAudioTrack(trackId: PlaybackTrackId) = requestCommand { it.selectAudioTrack(trackId) }
+    fun requestSubtitleTrack(trackId: PlaybackTrackId?) = requestCommand {
+        if (trackId == null) it.disableSubtitles() else it.selectSubtitleTrack(trackId)
+    }
+
     private fun requestCommand(action: suspend (CleanLiveHost) -> Unit) {
         if (!releaseCompleted && !clearedReleaseLoopStarted) {
             launchContained(CleanLiveGuideFailure.COMMAND_FAILED) { command(action) }
@@ -569,6 +601,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
         boundProfileId = profile
         activeTarget = target
+        followPicture(target)
         pendingPlayed = LivePlayedIdentity(target, profile, acceptedGeneration)
         publishReady(created)
     }
@@ -597,6 +630,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         }
 
         activeTarget = target
+        followPicture(target)
         pendingPlayed = LivePlayedIdentity(target, profile, acceptedGeneration)
         publishReady(currentHost)
     }

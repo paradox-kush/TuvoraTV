@@ -1,5 +1,7 @@
 package com.nuvio.tv.playback.host
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.VideoZoom
 import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.view.Surface
@@ -84,6 +86,11 @@ internal class CleanLiveSurfaceCoordinator(
     private var shownFrame: Bitmap? = null
     private var frozenScaleX = 1f
     private var frozenScaleY = 1f
+    private var frozenTranslationX = 0f
+    private var frozenTranslationY = 0f
+    /** F28: the viewer's picture (aspect + manual zoom); survives zaps like the display aspect. */
+    private var pictureMode: AspectMode = AspectMode.ORIGINAL
+    private var pictureZoom: VideoZoom = VideoZoom.IDENTITY
     private var capturing = false
 
     init {
@@ -250,6 +257,14 @@ internal class CleanLiveSurfaceCoordinator(
         current?.let(::applyGeometry)
     }
 
+    /** F28: the viewer's aspect mode and manual zoom, on top of the fit. View transform only. */
+    suspend fun applyPicture(mode: AspectMode, zoom: VideoZoom) = withContext(mainDispatcher) {
+        pictureMode = mode
+        pictureZoom = zoom
+        current?.let(::applyGeometry)
+        Unit
+    }
+
     /**
      * Copies the picture currently on the surface into the freeze frame (downscaled). Runs only while
      * real video plays (LiveFreezeFramePolicy.mayCapture); a failed copy keeps the previous frame.
@@ -267,6 +282,8 @@ internal class CleanLiveSurfaceCoordinator(
             ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val scaleX = view.scaleX
         val scaleY = view.scaleY
+        val translationX = view.translationX
+        val translationY = view.translationY
         capturing = true
         val copied = try {
             suspendCancellableCoroutine { continuation ->
@@ -282,6 +299,8 @@ internal class CleanLiveSurfaceCoordinator(
             frozenFrame = target
             frozenScaleX = scaleX
             frozenScaleY = scaleY
+            frozenTranslationX = translationX
+            frozenTranslationY = translationY
         } else {
             spareFrame = target
         }
@@ -307,6 +326,8 @@ internal class CleanLiveSurfaceCoordinator(
                 }
                 view.scaleX = frozenScaleX
                 view.scaleY = frozenScaleY
+                view.translationX = frozenTranslationX
+                view.translationY = frozenTranslationY
                 view.alpha = if (overlay == LiveFreezeFramePolicy.Overlay.DIMMED) DIMMED_ALPHA else 1f
                 view.visibility = View.VISIBLE
             }
@@ -325,14 +346,20 @@ internal class CleanLiveSurfaceCoordinator(
     }
 
     private fun applyGeometry(slot: SurfaceSlot) {
-        // mpv's GPU renderer letterboxes inside its own surface; scaling it again would squash it.
-        val scale = if (slot.mode == SurfaceMode.GPU_RENDER) {
-            LiveVideoFitPolicy.Scale(1f, 1f)
-        } else {
-            LiveVideoFitPolicy.fitScale(videoAspect, owner.width, owner.height) ?: return
-        }
-        if (slot.view.scaleX != scale.x) slot.view.scaleX = scale.x
-        if (slot.view.scaleY != scale.y) slot.view.scaleY = scale.y
+        // mpv's GPU renderer letterboxes inside its own surface, so its base is 1:1; decoder
+        // surfaces get the fit. The viewer's aspect mode and zoom then apply on top (F28).
+        val transform = LivePictureGeometry.transform(
+            gpuRendered = slot.mode == SurfaceMode.GPU_RENDER,
+            videoAspect = videoAspect,
+            boxWidth = owner.width,
+            boxHeight = owner.height,
+            mode = pictureMode,
+            zoom = pictureZoom,
+        ) ?: return
+        if (slot.view.scaleX != transform.scaleX) slot.view.scaleX = transform.scaleX
+        if (slot.view.scaleY != transform.scaleY) slot.view.scaleY = transform.scaleY
+        if (slot.view.translationX != transform.translationX) slot.view.translationX = transform.translationX
+        if (slot.view.translationY != transform.translationY) slot.view.translationY = transform.translationY
     }
 
     private fun canAcquire(mode: SurfaceMode): Boolean =
