@@ -148,4 +148,25 @@ class M3uIngestIdentityTest {
         // And the served catalog is the new one.
         assertEquals(M3uIdentity.sidOf("http://h:8080/live/1.ts"), snapshot(acc).channels["BBC One"])
     }
+
+    /**
+     * Device pass 2026-10-05 (emulator): the login-free ids are hashes, and the catalog tables are keyed
+     * (and so read back) by sid — the guide numbered and listed an M3U playlist in hash order instead of
+     * the file's. Lists keep the file's order (channel numbers included), whatever the ids.
+     */
+    @Test
+    fun `lists keep the file's order although ids are hashes`() = runTest {
+        val acc = account()
+        val names = listOf("UK: BBC One HD", "UK | BBC Two FHD", "UK: ITV1", "|EN| CNN International", "US: ESPN HD", "DE: Das Erste HD", "FR: TF1 4K", "Random Local")
+        val movies = listOf("The Matrix (1999)", "Big Buck Test", "Alien Romulus (2024)", "Zulu (1964)")
+        val text = buildString {
+            appendLine("#EXTM3U")
+            names.forEachIndexed { i, n -> appendLine("#EXTINF:-1 group-title=\"G\",$n"); appendLine("http://h:8080/live/alice/P/${i + 1}.ts") }
+            movies.forEachIndexed { i, n -> appendLine("#EXTINF:-1 group-title=\"M\",$n"); appendLine("http://h:8080/movie/alice/P/${900 + i}.mp4") }
+        }
+        ingest(acc, text)
+        assertEquals("live in file order", names, db.channelsFor(acc.id, null).map { it.name })
+        assertEquals("live in file order within a category", names, db.channelsFor(acc.id, M3uIngestMapping.categoryId("G")).map { it.name })
+        assertEquals("movies in file order", movies, db.vodFor(acc.id, null).map { it.name })
+    }
 }
