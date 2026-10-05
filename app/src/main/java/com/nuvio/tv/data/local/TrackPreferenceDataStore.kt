@@ -32,9 +32,54 @@ class TrackPreferenceDataStore @Inject constructor(
         // almost certainly wrong.
         private const val SUB_DELAY_MS = "sub_delay_ms"
         private const val PLAYBACK_SPEED = "playback_speed"
+
+        // F37/F36 per-series picture memory. A SEPARATE feature store on purpose: "track_preference"
+        // is in ProfileSettingsSyncService.syncedFeatures, and syncing the picture memory is a sync
+        // payload change held for an owner decision. This store is device-local.
+        private const val PICTURE_FEATURE = "picture_preference"
+        private const val ASPECT_MODE = "aspect_mode"
+        private const val ZOOM_SCALE_X = "zoom_scale_x"
+        private const val ZOOM_SCALE_Y = "zoom_scale_y"
+        private const val ZOOM_PAN_X = "zoom_pan_x"
+        private const val ZOOM_PAN_Y = "zoom_pan_y"
     }
 
     private fun store() = factory.get(profileManager.activeProfileId.value, FEATURE)
+
+    private fun pictureStore() = factory.get(profileManager.activeProfileId.value, PICTURE_FEATURE)
+
+    suspend fun savePicture(contentId: String, memory: com.nuvio.tv.ui.screens.player.PictureMemory) {
+        pictureStore().edit { prefs ->
+            val aspectKey = key(ASPECT_MODE, contentId)
+            if (memory.aspectMode != null) prefs[aspectKey] = memory.aspectMode else prefs.remove(aspectKey)
+            val zoom = memory.zoom
+            listOf(
+                ZOOM_SCALE_X to zoom?.scaleX,
+                ZOOM_SCALE_Y to zoom?.scaleY,
+                ZOOM_PAN_X to zoom?.panX,
+                ZOOM_PAN_Y to zoom?.panY,
+            ).forEach { (field, value) ->
+                val k = floatKey(field, contentId)
+                if (value != null) prefs[k] = value else prefs.remove(k)
+            }
+        }
+    }
+
+    suspend fun loadPicture(contentId: String): com.nuvio.tv.ui.screens.player.PictureMemory? {
+        val prefs = pictureStore().data.first()
+        val aspect = prefs[key(ASPECT_MODE, contentId)]
+        val sx = prefs[floatKey(ZOOM_SCALE_X, contentId)]
+        val sy = prefs[floatKey(ZOOM_SCALE_Y, contentId)]
+        val px = prefs[floatKey(ZOOM_PAN_X, contentId)]
+        val py = prefs[floatKey(ZOOM_PAN_Y, contentId)]
+        val zoom = if (sx == null && sy == null && px == null && py == null) {
+            null
+        } else {
+            com.nuvio.tv.ui.screens.player.VideoZoom(sx ?: 1f, sy ?: 1f, px ?: 0f, py ?: 0f)
+        }
+        if (aspect == null && zoom == null) return null
+        return com.nuvio.tv.ui.screens.player.PictureMemory(aspectMode = aspect, zoom = zoom)
+    }
 
     private fun key(field: String, contentId: String) =
         stringPreferencesKey("$field|$contentId")

@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -760,6 +761,7 @@ fun PlayerScreen(
                 viewModel = viewModel,
                 keepScreenOn = keepScreenOnIntent,
                 aspectMode = uiState.aspectMode,
+                videoZoom = uiState.videoZoom,
                 subtitleStyle = uiState.subtitleStyle,
                 modifier = Modifier.fillMaxSize()
             )
@@ -770,6 +772,7 @@ fun PlayerScreen(
                     controller = viewModel.controller,
                     keepScreenOn = keepScreenOnIntent,
                     aspectMode = uiState.aspectMode,
+                    videoZoom = uiState.videoZoom,
                     tunnelingEnabled = uiState.tunnelingEnabled,
                     tunneledSurfaceFill = uiState.tunneledSurfaceFill,
                     useLibass = uiState.useLibass,
@@ -1068,6 +1071,7 @@ fun PlayerScreen(
                     Log.d("PlayerScreen", "onToggleAspectRatio called - dispatching event")
                     viewModel.onEvent(PlayerEvent.OnToggleAspectRatio)
                 },
+                onShowVideoZoom = { viewModel.onEvent(PlayerEvent.OnShowVideoZoomPanel) },
                 onSwitchPlayerEngine = { viewModel.onEvent(PlayerEvent.OnSwitchInternalPlayerEngine) },
                 onReportPlaybackIssue = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
                 onToggleMoreActions = {
@@ -1395,6 +1399,15 @@ fun PlayerScreen(
             )
         }
 
+        if (uiState.showVideoZoomPanel) {
+            VideoZoomDialog(
+                zoom = uiState.videoZoom,
+                onAdjust = { axis, steps -> viewModel.onEvent(PlayerEvent.OnAdjustVideoZoom(axis, steps)) },
+                onReset = { viewModel.onEvent(PlayerEvent.OnResetVideoZoom) },
+                onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissVideoZoomPanel) }
+            )
+        }
+
         if (uiState.showSpeedDialog) {
             SpeedSelectionDialog(
                 currentSpeed = uiState.playbackSpeed,
@@ -1410,6 +1423,7 @@ private fun MpvPlayerSurface(
     viewModel: PlayerViewModel,
     keepScreenOn: Boolean,
     aspectMode: AspectMode,
+    videoZoom: VideoZoom,
     subtitleStyle: SubtitleStyleSettings,
     modifier: Modifier = Modifier
 ) {
@@ -1451,6 +1465,10 @@ private fun MpvPlayerSurface(
         viewModel.applyMpvAspectMode(aspectMode)
     }
 
+    LaunchedEffect(mpvView, videoZoom) {
+        viewModel.applyMpvVideoZoom(videoZoom)
+    }
+
     LaunchedEffect(mpvView, subtitleStyle) {
         viewModel.applyMpvSubtitleStyle(subtitleStyle)
     }
@@ -1462,6 +1480,7 @@ private fun ExoPlayerSurface(
     controller: PlayerRuntimeController,
     keepScreenOn: Boolean,
     aspectMode: AspectMode,
+    videoZoom: VideoZoom,
     tunnelingEnabled: Boolean,
     tunneledSurfaceFill: Boolean,
     useLibass: Boolean,
@@ -1471,6 +1490,7 @@ private fun ExoPlayerSurface(
 ) {
     val context = LocalContext.current
     val latestAspectMode by rememberUpdatedState(aspectMode)
+    val latestVideoZoom by rememberUpdatedState(videoZoom)
     val latestTunnelingEnabled by rememberUpdatedState(tunnelingEnabled)
     val latestTunneledSurfaceFill by rememberUpdatedState(tunneledSurfaceFill)
     val latestSubtitleStyle by rememberUpdatedState(subtitleStyle)
@@ -1529,7 +1549,8 @@ private fun ExoPlayerSurface(
                     playerView.syncExoSurfaceLayout(
                         tunnelingEnabled = latestTunnelingEnabled,
                         tunneledSurfaceFill = latestTunneledSurfaceFill,
-                        aspectMode = latestAspectMode
+                        aspectMode = latestAspectMode,
+                        videoZoom = latestVideoZoom
                     )
                 }
             }
@@ -1539,7 +1560,8 @@ private fun ExoPlayerSurface(
                     playerView.syncExoSurfaceLayout(
                         tunnelingEnabled = latestTunnelingEnabled,
                         tunneledSurfaceFill = latestTunneledSurfaceFill,
-                        aspectMode = latestAspectMode
+                        aspectMode = latestAspectMode,
+                        videoZoom = latestVideoZoom
                     )
                 }
             }
@@ -1557,7 +1579,8 @@ private fun ExoPlayerSurface(
             playerView.syncExoSurfaceLayout(
                 tunnelingEnabled = latestTunnelingEnabled,
                 tunneledSurfaceFill = latestTunneledSurfaceFill,
-                aspectMode = latestAspectMode
+                aspectMode = latestAspectMode,
+                videoZoom = latestVideoZoom
             )
         }
         onDispose {
@@ -1571,7 +1594,8 @@ private fun ExoPlayerSurface(
                 playerView.syncExoSurfaceLayout(
                     tunnelingEnabled = latestTunnelingEnabled,
                     tunneledSurfaceFill = latestTunneledSurfaceFill,
-                    aspectMode = latestAspectMode
+                    aspectMode = latestAspectMode,
+                    videoZoom = latestVideoZoom
                 )
             }
         }
@@ -1587,11 +1611,12 @@ private fun ExoPlayerSurface(
         }
     }
 
-    LaunchedEffect(playerView, aspectMode, tunnelingEnabled, tunneledSurfaceFill) {
+    LaunchedEffect(playerView, aspectMode, videoZoom, tunnelingEnabled, tunneledSurfaceFill) {
         playerView.syncExoSurfaceLayout(
             tunnelingEnabled = tunnelingEnabled,
             tunneledSurfaceFill = tunneledSurfaceFill,
-            aspectMode = aspectMode
+            aspectMode = aspectMode,
+            videoZoom = videoZoom
         )
     }
 
@@ -1616,9 +1641,9 @@ internal fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
     }
 }
 
-private fun PlayerView.applyExoAspectMode(mode: AspectMode) {
+private fun PlayerView.applyExoAspectMode(mode: AspectMode, zoom: VideoZoom) {
     setTag(R.id.player_view_aspect_mode_tag, mode)
-    applyExoAspectMode(this, mode)
+    applyExoAspectMode(this, mode, zoom)
 }
 
 /**
@@ -1628,7 +1653,8 @@ private fun PlayerView.applyExoAspectMode(mode: AspectMode) {
 private fun PlayerView.syncExoSurfaceLayout(
     tunnelingEnabled: Boolean,
     tunneledSurfaceFill: Boolean,
-    aspectMode: AspectMode
+    aspectMode: AspectMode,
+    videoZoom: VideoZoom
 ) {
     val targetResizeMode = PlayerDisplayModeUtils.exoSurfaceResizeMode(
         tunnelingEnabled = tunnelingEnabled,
@@ -1637,7 +1663,11 @@ private fun PlayerView.syncExoSurfaceLayout(
     if (resizeMode != targetResizeMode) {
         resizeMode = targetResizeMode
     }
-    applyExoAspectMode(aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode))
+    // Tunneled video ignores view scale, so manual zoom is held at identity there too.
+    applyExoAspectMode(
+        aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode),
+        if (tunnelingEnabled) VideoZoom.IDENTITY else videoZoom
+    )
 }
 
 private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSettings) {
@@ -1688,7 +1718,9 @@ private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSe
 
         post {
             val extraPadding = (height * (subtitleStyle.verticalOffset / 400f)).toInt().coerceAtLeast(0)
-            setPadding(paddingLeft, paddingTop, paddingRight, extraPadding)
+            // F47: side padding, a percent of the width on each side (SubtitleSideMargin).
+            val side = SubtitleSideMargin.paddingPx(width, subtitleStyle.sideMarginPercent)
+            setPadding(side, paddingTop, side, extraPadding)
         }
     }
 }
@@ -1775,6 +1807,7 @@ private fun PlayerControlsOverlay(
     onShowSubtitleDialog: () -> Unit,
     onShowSpeedDialog: () -> Unit,
     onToggleAspectRatio: () -> Unit,
+    onShowVideoZoom: () -> Unit,
     onSwitchPlayerEngine: () -> Unit,
     onReportPlaybackIssue: () -> Unit,
     onToggleMoreActions: () -> Unit,
@@ -2051,6 +2084,16 @@ private fun PlayerControlsOverlay(
                                 contentDescription = stringResource(R.string.cd_aspect_ratio),
                                 onClick = {
                                     onToggleAspectRatio()
+                                },
+                                upFocusRequester = progressBarFocusRequester,
+                                onDownKey = onHideControls,
+                                onFocused = onResetHideTimer
+                            )
+                            ControlButton(
+                                icon = Icons.Default.ZoomIn,
+                                contentDescription = stringResource(R.string.cd_manual_zoom),
+                                onClick = {
+                                    onShowVideoZoom()
                                 },
                                 upFocusRequester = progressBarFocusRequester,
                                 onDownKey = onHideControls,

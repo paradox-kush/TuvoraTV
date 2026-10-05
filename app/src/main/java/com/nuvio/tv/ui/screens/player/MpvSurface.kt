@@ -76,6 +76,8 @@ interface MpvSurface {
     fun applyAudioAmplificationDb(db: Int)
     fun applyHardwareDecodeMode(mode: MpvHardwareDecodeMode)
     fun applyAspectMode(mode: AspectMode)
+    /** F36 manual zoom, multiplied into the aspect mode's view scale (PlayerPreferencePolicy). */
+    fun applyVideoZoom(zoom: VideoZoom)
 
     // ── Engine config set before the first setMedia (see attachMpvView) ────────
     /** Device demuxer-cache budget; the controller sets it before [setMedia] so initOptions reads it. */

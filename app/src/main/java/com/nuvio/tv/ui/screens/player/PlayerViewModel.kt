@@ -177,6 +177,10 @@ class PlayerViewModel @Inject constructor(
         controller.mpvView?.applyAspectMode(mode)
     }
 
+    fun applyMpvVideoZoom(zoom: VideoZoom) {
+        controller.mpvView?.applyVideoZoom(zoom)
+    }
+
     fun applyMpvSubtitleStyle(style: com.nuvio.tv.data.local.SubtitleStyleSettings) {
         controller.mpvView?.applySubtitleStyle(style)
     }

@@ -114,6 +114,17 @@ internal fun PlaybackSubtitlesSection(
         onValueChange = { offset -> onUpdate { setSubtitleVerticalOffset(offset) } },
         enabled = enabled
     )
+    SliderSettingsItem(
+        title = stringResource(R.string.playback_subtitle_side_padding),
+        subtitle = stringResource(R.string.playback_subtitle_side_padding_sub),
+        value = style.sideMarginPercent,
+        valueText = "${style.sideMarginPercent}%",
+        minValue = 0,
+        maxValue = com.nuvio.tv.ui.screens.player.SubtitleSideMargin.MAX_PERCENT,
+        step = 1,
+        onValueChange = { percent -> onUpdate { setSubtitleSideMarginPercent(percent) } },
+        enabled = enabled
+    )
     SettingsToggleRow(
         title = stringResource(R.string.sub_bold),
         subtitle = stringResource(R.string.sub_bold_sub),
