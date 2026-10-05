@@ -226,9 +226,6 @@ class XtreamStreamSource @Inject constructor(
         }
     }
 
-    private fun yearCompatible(a: Int?, b: Int?): Boolean =
-        a == null || b == null || (if (a > b) a - b else b - a) <= 1
-
     /**
      * Editions of the same title on panels that ship no tmdb ids: items sharing the matched
      * item's normalized name key, year-compatible with the target. The verified match leads.
