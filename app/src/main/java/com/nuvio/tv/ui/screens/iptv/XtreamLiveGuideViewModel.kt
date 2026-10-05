@@ -274,6 +274,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
     // Caches so revisiting an account/category is instant (no spinner flash, no re-fetch).
     private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> RAW provider cats (overlay applied at display)
     private val channelsCache = mutableMapOf<String, List<GuideChannel>>()      // "accountId|categoryId"
+    // B120: catalog twins of Favourites/Recent rows (content id -> real row; a handful, not the catalog),
+    // and the accounts whose lineup was already fetched once to find them.
+    private val syntheticTwins = HashMap<String, GuideChannel>()
+    private val syntheticLineupTried = HashSet<String>()
 
     /**
      * Turns the raw provider channel list into what the user sees: the personalization overlay
@@ -628,13 +632,16 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // null = the panel request FAILED (these panels throw transient 403/500s and
             // rate-limit bursts) — retry once, then surface an error instead of faking "empty".
             val rawChannels: List<GuideChannel>? = when (category.special) {
-                GuideSpecial.FAVORITES -> favoriteChannels(acc)
+                GuideSpecial.FAVORITES -> withCatalogIdentity(acc, favoriteChannels(acc))
                 // Scoped to THIS account: the store keeps one flat profile-wide list (favorites
                 // and recents across every playlist), and these rails live inside a provider's
                 // guide — the auto-resume above already filters the same way.
-                GuideSpecial.RECENT -> liveStore.recents.first()
-                    .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
-                    .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) }
+                GuideSpecial.RECENT -> withCatalogIdentity(
+                    acc,
+                    liveStore.recents.first()
+                        .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
+                        .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) },
+                )
                 // "All channels" honors the category selections too. NOTE: no cap here — the cap is
                 // applied by displayChannels(isAllView = true) AFTER the overlay floats pins, so a
                 // channel pinned past ALL_CAP survives (the "web pin never shows on TV" bug). rawChannels
@@ -924,6 +931,37 @@ class XtreamLiveGuideViewModel @Inject constructor(
             },
             streamIdOf = ::streamIdOf,
         ).map { GuideChannel(it.contentId, it.name, it.logo, it.streamUrl, it.streamId) }
+    }
+
+    /**
+     * B120 / UX148: Favourites/Recent rows take the real channel's archive flag, archive window and
+     * overlay identity, so catch-up, time travel and MENU-hide work there as they do in the channel
+     * list. Looked up first in what this screen already holds (the twins found before, the last
+     * channel list — the full catalog when "All channels" was open — and the cached categories);
+     * only if a row is still unknown is the lineup fetched, once per account per guide session, and
+     * then dropped: only the handful of twins is kept.
+     */
+    private suspend fun withCatalogIdentity(acc: XtreamAccount, rows: List<GuideChannel>): List<GuideChannel> {
+        if (rows.isEmpty()) return rows
+        val wanted = rows.mapTo(HashSet()) { it.contentId }
+        val cachePrefix = "${acc.id}|"
+        val inMemory = sequence {
+            yield(syntheticTwins.values.toList())
+            if (lastOverlayAccountId == acc.id) yield(lastRawChannels)
+            lineupPool?.takeIf { it.first == acc.id }?.let { yield(it.second) }
+            channelsCache.forEach { (key, list) -> if (key.startsWith(cachePrefix)) yield(list) }
+        }
+        syntheticTwins.putAll(GuideSyntheticRows.catalogMatches(wanted, inMemory))
+        var resolved = GuideSyntheticRows.withCatalogIdentity(rows) { syntheticTwins[it] }
+        if (GuideSyntheticRows.shouldFetchLineup(GuideSyntheticRows.unresolved(resolved), acc.id in syntheticLineupTried)) {
+            syntheticLineupTried += acc.id
+            val lineup = retryOnce { fetchChannels(acc, null) }
+            if (lineup != null) {
+                syntheticTwins.putAll(GuideSyntheticRows.catalogMatches(wanted, sequenceOf(lineup)))
+                resolved = GuideSyntheticRows.withCatalogIdentity(rows) { syntheticTwins[it] }
+            }
+        }
+        return resolved
     }
 
     /** Best-effort streamId from a live content id ("xtream:acc:live:<streamId>"). */
