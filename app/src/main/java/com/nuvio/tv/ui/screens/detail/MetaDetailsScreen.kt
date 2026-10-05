@@ -55,6 +55,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRestorer
@@ -1167,6 +1169,22 @@ fun MetaDetailsScreen(
             overlayState = trailerSeekOverlayState,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
+
+        // B118 (device pass 2026-10-05): a playing trailer hides the hero, and with it the focused
+        // Play button, so NOTHING held focus — and a Compose key handler only sees keys while focus
+        // is inside it: OK during the preview reached neither the preview policy above nor anything
+        // else. A 1 dp focus holder keeps keys flowing to this Box while a foreground trailer plays;
+        // Play takes focus back when it stops (restorePlayFocusAfterTrailerBackToken).
+        if (uiState.isTrailerPlaying) {
+            val trailerKeyFocus = remember { FocusRequester() }
+            Box(
+                Modifier
+                    .size(1.dp)
+                    .focusRequester(trailerKeyFocus)
+                    .focusable()
+            )
+            LaunchedEffect(Unit) { runCatching { trailerKeyFocus.requestFocus() } }
+        }
     }
 
     LaunchedEffect(trailerSeekOverlayVisible, uiState.isTrailerPlaying, uiState.showTrailerControls, trailerSeekToken) {
