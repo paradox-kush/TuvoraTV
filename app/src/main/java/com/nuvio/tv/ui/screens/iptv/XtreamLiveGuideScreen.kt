@@ -98,6 +98,7 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.XtreamProgram
 import com.nuvio.tv.ui.components.EmptyScreenState
 import com.nuvio.tv.ui.components.ErrorState
@@ -128,6 +129,8 @@ fun LiveGuide(
      * off has to be carried there.
      */
     onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit = { _, _, _, _, _ -> },
+    /** F03: an All-favorites channel of another playlist was chosen — switch the guide to [accountId]. */
+    onSwitchAccount: (accountId: String) -> Unit = {},
     viewModel: XtreamLiveGuideViewModel = hiltViewModel(),
 ) {
     val playbackViewModel: CleanLiveGuidePlaybackViewModel = hiltViewModel()
@@ -194,6 +197,8 @@ fun LiveGuide(
     var sheetProgramme by remember { mutableStateOf<XtreamProgram?>(null) }
     // F02: the category MENU was pressed on, awaiting "Hide group" / Cancel.
     var hideCategoryAsk by remember { mutableStateOf<GuideCategory?>(null) }
+    // F03: MENU on a favourite or a pinned channel: Move up / Move down / Remove or Hide.
+    var channelMenuAsk by remember { mutableStateOf<Pair<GuideChannel, List<GuideChannelMenuPolicy.Action>>?>(null) }
     // F01: the channel-search keyboard dialog.
     var searchDialogOpen by remember { mutableStateOf(false) }
 
@@ -553,14 +558,20 @@ fun LiveGuide(
                                 // OK: tune the preview; OK on the tuned channel: go fullscreen.
                                 onClick = {
                                     when {
+                                        // F03: another playlist's favourite — the guide switches to it first.
+                                        viewModel.requestCrossTune(ch) -> Unit
                                         !isPlaying -> commitPreview(ch.contentId)
                                         playbackUi?.openFullscreenEnabled == true -> onFullscreenChange(true)
                                         else -> playbackViewModel.requestRetry()
                                     }
                                 },
                                 onLongClick = { viewModel.toggleFavorite(ch) },
-                                // B106: MENU on the row hides it, the same call fullscreen makes.
-                                onHide = { viewModel.hideChannel(ch) },
+                                // B106: MENU on the row hides it, the same call fullscreen makes —
+                                // F03: on a favourite or a pinned channel it opens Move up / down first.
+                                onHide = {
+                                    val menu = viewModel.channelMenu(ch)
+                                    if (menu == null) viewModel.hideChannel(ch) else channelMenuAsk = ch to menu
+                                },
                                 channel = ch,
                                 catchUpSupported = uiState.catchUpSupported,
                                 timelineActive = isTimelineRow,
@@ -810,6 +821,45 @@ fun LiveGuide(
             )
         }
 
+        channelMenuAsk?.let { (channel, actions) ->
+            val firstFocus = remember { FocusRequester() }
+            LaunchedEffect(channel.contentId) { firstFocus.requestFocus() }
+            NuvioDialog(
+                onDismiss = { channelMenuAsk = null },
+                title = channel.name,
+                width = 420.dp
+            ) {
+                actions.forEachIndexed { i, action ->
+                    Button(
+                        onClick = {
+                            channelMenuAsk = null
+                            when (action) {
+                                GuideChannelMenuPolicy.Action.MOVE_UP -> viewModel.moveChannel(channel, -1)
+                                GuideChannelMenuPolicy.Action.MOVE_DOWN -> viewModel.moveChannel(channel, +1)
+                                GuideChannelMenuPolicy.Action.REMOVE_FAVORITE -> viewModel.toggleFavorite(channel)
+                                GuideChannelMenuPolicy.Action.HIDE -> viewModel.hideChannel(channel)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().let { if (i == 0) it.focusRequester(firstFocus) else it }
+                    ) {
+                        Text(
+                            stringResource(
+                                when (action) {
+                                    GuideChannelMenuPolicy.Action.MOVE_UP -> R.string.iptv_guide_move_up
+                                    GuideChannelMenuPolicy.Action.MOVE_DOWN -> R.string.iptv_guide_move_down
+                                    GuideChannelMenuPolicy.Action.REMOVE_FAVORITE -> R.string.iptv_guide_remove_favorite
+                                    GuideChannelMenuPolicy.Action.HIDE -> R.string.iptv_guide_hide_channel
+                                }
+                            )
+                        )
+                    }
+                }
+                Button(onClick = { channelMenuAsk = null }, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        }
+
         hideCategoryAsk?.let { cat ->
             val cancelFocus = remember { FocusRequester() }
             LaunchedEffect(cat.id) { cancelFocus.requestFocus() }
@@ -833,6 +883,45 @@ fun LiveGuide(
                     modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus)
                 ) { Text("Cancel") }
             }
+        }
+
+        // F03: All favorites spans playlists — another playlist's channel switches the guide to that
+        // playlist (the host owns the account), then tunes the channel once it is listed there.
+        LaunchedEffect(uiState.switchAccountRequest) {
+            val target = uiState.switchAccountRequest ?: return@LaunchedEffect
+            viewModel.consumeSwitchAccountRequest()
+            onSwitchAccount(target)
+        }
+        LaunchedEffect(uiState.pendingTune, uiState.channels, uiState.accountId) {
+            val pending = uiState.pendingTune ?: return@LaunchedEffect
+            if (uiState.channels.none { it.contentId == pending }) return@LaunchedEffect
+            if (!pending.startsWith(XtreamItemRegistry.accountPrefix(uiState.accountId ?: return@LaunchedEffect))) return@LaunchedEffect
+            viewModel.consumePendingTune()
+            commitPreview(pending)
+        }
+
+        // F03 (owner 2026-10-04): a favourite toggle is confirmed with Undo, like a hide.
+        uiState.favoriteNotice?.let { notice ->
+            NuvioUndoToast(
+                message = stringResource(
+                    if (notice.added) R.string.iptv_guide_favorite_added else R.string.iptv_guide_favorite_removed,
+                    notice.channel.name,
+                ),
+                actionLabel = stringResource(R.string.iptv_guide_hidden_undo),
+                onAction = {
+                    if (!channelRowFocus.requestFocusOrFalse()) channelListFocus.requestFocusOrFalse()
+                    viewModel.undoFavorite()
+                },
+                onDismiss = {
+                    if (!channelRowFocus.requestFocusOrFalse()) channelListFocus.requestFocusOrFalse()
+                    viewModel.dismissFavoriteNotice(notice)
+                },
+                durationMillis = GuideHideUndoPolicy.UNDO_WINDOW_MS,
+                key = notice,
+                modifier = Modifier
+                    .align(if (fullscreen) Alignment.TopCenter else Alignment.BottomCenter)
+                    .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.xl),
+            )
         }
 
         // UX36/UX73: a hide is confirmed with where to unhide it, and Undo. Undo takes focus (the row

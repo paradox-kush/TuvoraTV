@@ -85,7 +85,7 @@ class IptvPairingPayloadTest {
         assertEquals("My M3U", account.name)
         // Full URL is preserved verbatim in baseUrl (M3UClient fetches it as-is).
         assertEquals("http://host:9000/get.php?username=x&password=y&type=m3u_plus", account.baseUrl)
-        assertEquals("m3u id = the shared Step 0 key", "m3u|http://host:9000/get.php?username=x&password=y&type=m3u_plus", account.id)
+        assertEquals("m3u id = the shared Step 0 key", "m3u|http://host:9000/get.php?type=m3u_plus|ufd0c5087", account.id)
     }
 
     @Test

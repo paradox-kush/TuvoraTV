@@ -31,6 +31,27 @@ data class WatchStateRekeyPlan(
     companion object {
         val EMPTY = WatchStateRekeyPlan(emptyMap(), emptySet(), emptyList(), emptySet())
 
+        /** B64: the synced half of an id REWRITE (no drop) — same rules as [build]. */
+        fun buildRewrite(
+            progress: Map<String, WatchProgress>,
+            watched: Collection<WatchedItem>,
+            progressRewrite: (WatchProgress) -> WatchProgress?,
+            watchedRewrite: (WatchedItem) -> WatchedItem?,
+            fullAccount: Boolean,
+        ): WatchStateRekeyPlan {
+            if (!fullAccount) return EMPTY
+            val moved = rewriteProgressEntries(progress, progressRewrite)
+            val watchedMoves = watched.mapNotNull { w -> watchedRewrite(w)?.let { w to it } }
+            return WatchStateRekeyPlan(
+                progressUpserts = moved.movedEntries.filterValues { !isLiveWatchProgress(it) },
+                progressDeletes = moved.removedKeys.filterTo(mutableSetOf()) { key ->
+                    progress[key]?.let { !isLiveWatchProgress(it) } ?: true
+                },
+                watchedUpserts = watchedMoves.map { it.second },
+                watchedDeletes = watchedMoves.mapTo(mutableSetOf()) { it.first.mutationKey() },
+            )
+        }
+
         fun build(
             progress: Map<String, WatchProgress>,
             watched: Collection<WatchedItem>,
@@ -54,6 +75,29 @@ data class WatchStateRekeyPlan(
             )
         }
     }
+}
+
+/**
+ * B64: the general form — [rewrite] returns an entry's replacement (or null to keep it). The moved
+ * entry is stored under its RE-DERIVED key ([watchProgressKey]); its old key leaves.
+ */
+fun rewriteProgressEntries(
+    entries: Map<String, WatchProgress>,
+    rewrite: (WatchProgress) -> WatchProgress?,
+): ProgressRekey {
+    val kept = linkedMapOf<String, WatchProgress>()
+    val removed = mutableSetOf<String>()
+    val moved = linkedMapOf<String, WatchProgress>()
+    entries.forEach { (key, progress) ->
+        val m = rewrite(progress)
+        if (m == null) {
+            kept[key] = progress
+        } else {
+            removed += key
+            moved[watchProgressKey(m)] = m
+        }
+    }
+    return ProgressRekey(entries = kept + moved, removedKeys = removed, movedEntries = moved)
 }
 
 /** Result of re-keying a progress map: the full new map, the old keys that left, the entries that moved. */

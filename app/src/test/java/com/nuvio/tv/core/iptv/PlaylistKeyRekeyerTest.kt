@@ -49,7 +49,7 @@ class PlaylistKeyRekeyerTest {
         watchProgressSyncService = mockk(relaxed = true),
         watchedItemsSyncService = mockk(relaxed = true),
     )
-    private val rekeyer = PlaylistKeyRekeyer(accountStore, library, liveStore, fileStore, purge, watchState)
+    private val rekeyer = PlaylistKeyRekeyer(accountStore, library, liveStore, fileStore, purge, watchState, dagger.Lazy { mockk<M3uIdRekeyer>(relaxed = true) })
 
     private val oldId = "file:0b8f6c1e-uuid"
     private val newId = "m3u_file|tv.m3u|synced"

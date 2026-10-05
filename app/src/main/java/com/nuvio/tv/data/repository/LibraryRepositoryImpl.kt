@@ -108,7 +108,14 @@ class LibraryRepositoryImpl @Inject constructor(
         .flatMapLatest { mode ->
             val provider = mode.providerId?.let(trackingProviders::provider)
             if (provider != null) {
-                provider.items
+                // B03/D5: the provider's list + the live-channel favourites, which stay local.
+                kotlinx.coroutines.flow.combine(provider.items, libraryPreferences.libraryItems) { remote, local ->
+                    val liveLocal = local
+                        .filter { com.nuvio.tv.core.sync.LiveFavoriteStoragePolicy.storesLocally(it.id, it.type) }
+                        .filter { saved -> remote.none { it.id == saved.id } }
+                        .map { saved -> saved.toLibraryEntry() }
+                    remote + liveLocal
+                }
             } else {
                 libraryPreferences.libraryItems.map { items ->
                     items.map { saved ->
@@ -182,11 +189,20 @@ class LibraryRepositoryImpl @Inject constructor(
         }.distinctUntilChanged()
     }
 
+    override suspend fun setFavoritesOrder(changes: Map<String, Long>): Int {
+        val moved = libraryPreferences.setAddedAt(changes)
+        if (moved > 0) triggerRemoteSync(profileManager.activeProfileId.value)
+        return moved
+    }
+
     override suspend fun toggleDefault(
         item: LibraryEntryInput,
         confirmedRemovalProviders: Set<TrackingProviderId>
     ): TrackingMembershipApplyResult {
-        val provider = sourceMode.first().providerId?.let(trackingProviders::provider)
+        // B03/D5: a live-channel favourite stays in the local synced library under Trakt/Simkl too.
+        val provider = sourceMode.first().providerId
+            ?.takeUnless { com.nuvio.tv.core.sync.LiveFavoriteStoragePolicy.storesLocally(item.itemId, item.itemType) }
+            ?.let(trackingProviders::provider)
         if (provider != null) {
             val currentMembership = provider.getMembershipSnapshot(item).listMembership
             val changes = ListMembershipChanges(
@@ -377,3 +393,20 @@ class LibraryRepositoryImpl @Inject constructor(
         }
     }
 }
+
+private fun com.nuvio.tv.domain.model.SavedLibraryItem.toLibraryEntry() = LibraryEntry(
+    id = id,
+    type = type,
+    name = name,
+    poster = poster,
+    posterShape = posterShape,
+    background = background,
+    logo = logo,
+    description = description,
+    releaseInfo = releaseInfo,
+    imdbRating = imdbRating,
+    genres = genres,
+    addonBaseUrl = addonBaseUrl,
+    listedAt = addedAt,
+    rawPosterUrl = poster
+)

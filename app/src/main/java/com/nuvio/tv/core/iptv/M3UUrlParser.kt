@@ -9,8 +9,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  *    NOT a stripped scheme+host (M3UClient fetches it as-is).
  *  - the optional User-Agent is stored in [XtreamAccount.username] (no dedicated field in the
  *    model; password stays empty). M3UClient reads it back as the request UA.
- *  - [XtreamAccount.id] is the shared Step 0 key `m3u|<url>` ([PlaylistKey.m3uUrl]) — the same id
- *    a phone or the web mints for the same link. (TV used to derive `m3u:` + scheme/host/port/path
+ *  - [XtreamAccount.id] is the shared Step 0 key `m3u|<url minus login>` ([PlaylistKey.m3uUrl], B64)
+ *    — the same id a phone or the web mints for the same link. (TV used to derive `m3u:` + scheme/host/port/path
  *    with the query stripped; that form survives only as [tvLegacyM3uId], the pull fallback for a
  *    server row without a key. An edit never re-derives the id — the caller keeps the old one.)
  *

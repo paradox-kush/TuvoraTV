@@ -77,6 +77,10 @@ class XtreamLiveStore @Inject constructor(
         list.filter { it.playedAt != null }.sortedByDescending { it.playedAt }.take(RECENTS_LIMIT)
     }
 
+    /** B64: the stored channel ids of the active profile under [prefix] (a playlist's). */
+    suspend fun idsWithPrefix(prefix: String): List<String> =
+        parse(store().data.first()[key]).map { it.id }.filter { it.startsWith(prefix) }
+
     /** Synchronous resolution for replaying a favorited/recent channel by id. */
     fun urlFor(id: String): String? = mirror[id]?.streamUrl?.takeIf(String::isNotBlank)
     fun refFor(id: String): LiveChannelRef? = mirror[id]

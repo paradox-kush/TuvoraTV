@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.sync
 
+import android.os.SystemClock
+
 import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.profile.ProfileManager
@@ -21,7 +23,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
@@ -43,6 +44,8 @@ private const val REALTIME_INVALIDATION_COALESCE_MS = 500L
 private const val REALTIME_SUBSCRIBE_TIMEOUT_MS = 15_000L
 private const val REALTIME_RETRY_BASE_DELAY_MS = 1_000L
 private const val REALTIME_RETRY_MAX_DELAY_MS = 10_000L
+/** Local status check only (no network): how often a subscribed channel's health is looked at. */
+private const val REALTIME_HEALTH_CHECK_MS = 5_000L
 
 @Singleton
 class RealtimeSyncInvalidationService @Inject constructor(
@@ -50,7 +53,8 @@ class RealtimeSyncInvalidationService @Inject constructor(
     private val profileManager: ProfileManager,
     private val supabaseClient: SupabaseClient,
     private val syncClientIdentity: SyncClientIdentity,
-    private val startupSyncService: StartupSyncService
+    private val startupSyncService: StartupSyncService,
+    private val surfaceCatchUp: dagger.Lazy<SurfaceCatchUp>,
 ) {
     // Invalidation pulls are a convenience; nothing here is worth taking the process down for.
     private val crashGuard = CoroutineExceptionHandler { _, error ->
@@ -149,7 +153,14 @@ class RealtimeSyncInvalidationService @Inject constructor(
                         newChannel.subscribe(blockUntilSubscribed = true)
                     }
                     Log.i(TAG, "Subscribed to sync invalidations channel=$channelName profile=$profileId")
-                    awaitCancellation()
+                    attempt = 1
+                    // B03: events emitted while this TV was not subscribed are gone (Realtime has no
+                    // replay) — catch up from the version vector on every (re)subscribe.
+                    launch { runCatching { surfaceCatchUp.get().run(profileId, "subscribed") } }
+                    // B03: supervise — a channel the server closed (token expiry, standby) used to park
+                    // here forever; past the grace it is torn down below and rejoined.
+                    superviseUntilUnhealthy(newChannel)
+                    Log.w(TAG, "Sync invalidations channel=$channelName left SUBSCRIBED; resubscribing")
                 } catch (error: TimeoutCancellationException) {
                     Log.e(
                         TAG,
@@ -188,6 +199,17 @@ class RealtimeSyncInvalidationService @Inject constructor(
                     attempt += 1
                 }
             }
+        }
+    }
+
+    private suspend fun superviseUntilUnhealthy(channel: RealtimeChannel) {
+        var notSubscribedSince: Long? = null
+        while (true) {
+            val now = SystemClock.elapsedRealtime()
+            val subscribed = channel.status.value == RealtimeChannel.Status.SUBSCRIBED
+            notSubscribedSince = if (subscribed) null else notSubscribedSince ?: now
+            if (RealtimeChannelHealthPolicy.decide(subscribed, notSubscribedSince, now) == RealtimeChannelHealthPolicy.Action.Resubscribe) return
+            delay(REALTIME_HEALTH_CHECK_MS)
         }
     }
 
