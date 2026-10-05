@@ -1172,7 +1172,9 @@ class WatchProgressRepositoryImpl @Inject constructor(
                 val hasNewData = posterToSave != null || backdropToSave != null
                     || metadata.logo != null || durationMs > 0
                 if (hasNewData) {
-                    watchProgressPreferences.saveProgress(
+                    // T1: patch, never upsert — `progress` is a snapshot from before the fetch; the
+                    // entry may have been re-keyed (B64), removed or replaced since.
+                    watchProgressPreferences.patchExistingDisplay(
                         progress.copy(
                             poster = posterToSave,
                             backdrop = backdropToSave,

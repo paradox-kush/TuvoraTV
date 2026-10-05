@@ -43,7 +43,8 @@ class MetaRepositoryImpl @Inject constructor(
     private val xtreamClient: com.nuvio.tv.core.iptv.XtreamClient,
     private val iptvClientFactory: com.nuvio.tv.core.iptv.IptvClientFactory,
     private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
-    private val tmdbMetadataService: com.nuvio.tv.core.tmdb.TmdbMetadataService
+    private val tmdbMetadataService: com.nuvio.tv.core.tmdb.TmdbMetadataService,
+    private val iptvItemDisplay: com.nuvio.tv.core.iptv.IptvItemDisplayLookup,
 ) : MetaRepository {
     companion object {
         private const val TAG = "MetaRepository"
@@ -324,8 +325,9 @@ class MetaRepositoryImpl @Inject constructor(
         if (xtreamRegistry.isXtreamId(id)) {
             // Registry is process-lifetime; a saved/deep-linked id not browsed this session
             // misses, so rebuild it from the id + account before giving up.
-            val item = xtreamRegistry.get(id)
-                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, iptvClientFactory)
+            // T2: a nameless registry entry (one rebuilt by the play path) is a miss here.
+            val item = xtreamRegistry.get(id)?.takeIf { it.name.isNotBlank() }
+                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, iptvClientFactory, iptvItemDisplay)
             if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
             else emit(NetworkResult.Error("IPTV item is no longer available"))
             return@flow
@@ -591,8 +593,9 @@ class MetaRepositoryImpl @Inject constructor(
         // bypassing addon resolution. Without this the primary lane errors on xtream: ids,
         // so Continue Watching enrichment / next-up for IPTV movies & series never resolves.
         if (xtreamRegistry.isXtreamId(id)) {
-            val item = xtreamRegistry.get(id)
-                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, iptvClientFactory)
+            // T2: a nameless registry entry (one rebuilt by the play path) is a miss here.
+            val item = xtreamRegistry.get(id)?.takeIf { it.name.isNotBlank() }
+                ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, iptvClientFactory, iptvItemDisplay)
             if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
             else emit(NetworkResult.Error("IPTV item is no longer available"))
             return@flow

@@ -145,6 +145,14 @@ fun XtreamResolvedItem.toAddonStreams(): List<AddonStreams> = listOf(
     )
 )
 
+/** T2: the display name + artwork of one catalog item, from what this device already holds. */
+data class XtreamItemDisplay(val name: String, val poster: String?)
+
+/** T2: where [rebuildFromId] reads an item's name/artwork from (the content DB / match index). */
+fun interface XtreamItemDisplaySource {
+    suspend fun display(accountId: String, kind: XtreamKind, streamId: Int): XtreamItemDisplay?
+}
+
 /**
  * Rebuilds and re-registers a resolved item for a saved/deep-linked `xtream:` id that was
  * never browsed this session (so it missed the in-memory registry). Only the account and the
@@ -155,7 +163,8 @@ fun XtreamResolvedItem.toAddonStreams(): List<AddonStreams> = listOf(
 suspend fun XtreamItemRegistry.rebuildFromId(
     id: String,
     store: XtreamAccountStore,
-    clientFactory: IptvClientFactory
+    clientFactory: IptvClientFactory,
+    display: XtreamItemDisplaySource? = null,
 ): XtreamResolvedItem? {
     val parsed = XtreamItemRegistry.parseId(id) ?: return null
     val account = runCatching { store.accounts.first() }.getOrNull()
@@ -172,23 +181,40 @@ suspend fun XtreamItemRegistry.rebuildFromId(
     // catalog (get_ordered_list until the id is found, ~23 requests/item) just to fill a field the
     // meta path discards and the play path re-mints anyway (Stalker create_link URLs are single-use).
     // That scan fired for every Stalker Continue-Watching item on EVERY cold start. See anti-jank F1.
-    val item = when (parsed.kind) {
-        "series" -> XtreamResolvedItem(
-            id = id, type = ContentType.SERIES, name = "", poster = null,
-            streamUrl = "", kind = XtreamKind.SERIES,
-            accountId = account.id, streamId = streamId
-        )
-        "live" -> XtreamResolvedItem(
-            id = id, type = ContentType.TV, name = "", poster = null,
-            streamUrl = "", kind = XtreamKind.LIVE,
-            accountId = account.id, streamId = streamId
-        )
-        else -> XtreamResolvedItem( // "vod"
-            id = id, type = ContentType.MOVIE, name = "", poster = null,
-            streamUrl = "", kind = XtreamKind.VOD,
-            accountId = account.id, streamId = streamId
-        )
+    val item = rebuiltItem(id, parsed.kind, account.id, streamId).let { bare ->
+        // T2 (W2 device pass): a registry miss used to come back with a BLANK name and no artwork, so
+        // an item opened from Library / Continue Watching after the B64 re-key (new ids, never browsed
+        // this session) showed an empty detail page — and a live channel's blank name became the
+        // "Live TV" placeholder in Favourites/Recent (T3). The catalog this device already holds knows
+        // the name; ask it. Best-effort: a failed lookup leaves the bare item as before.
+        val shown = try {
+            display?.display(account.id, bare.kind, streamId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }?.takeIf { it.name.isNotBlank() }
+        if (shown == null) bare else bare.copy(name = shown.name, poster = shown.poster ?: bare.poster)
     }
     register(item)
     return item
 }
+
+private fun rebuiltItem(id: String, kind: String, accountId: String, streamId: Int): XtreamResolvedItem =
+    when (kind) {
+        "series" -> XtreamResolvedItem(
+            id = id, type = ContentType.SERIES, name = "", poster = null,
+            streamUrl = "", kind = XtreamKind.SERIES,
+            accountId = accountId, streamId = streamId
+        )
+        "live" -> XtreamResolvedItem(
+            id = id, type = ContentType.TV, name = "", poster = null,
+            streamUrl = "", kind = XtreamKind.LIVE,
+            accountId = accountId, streamId = streamId
+        )
+        else -> XtreamResolvedItem( // "vod"
+            id = id, type = ContentType.MOVIE, name = "", poster = null,
+            streamUrl = "", kind = XtreamKind.VOD,
+            accountId = accountId, streamId = streamId
+        )
+    }

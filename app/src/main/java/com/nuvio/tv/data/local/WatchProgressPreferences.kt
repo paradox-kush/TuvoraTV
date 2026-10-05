@@ -260,6 +260,25 @@ class WatchProgressPreferences @Inject constructor(
     }
 
     /**
+     * T1: a display-only update (artwork / name / duration) of an entry that still exists — see
+     * [ProgressDisplayPatch]. Never creates an entry, so a hydration that began before a re-key,
+     * a removal or a newer save can't bring a stale key back. True when something was written.
+     */
+    suspend fun patchExistingDisplay(
+        patch: WatchProgress,
+        profileId: Int = profileManager.activeProfileId.value
+    ): Boolean = storageMutex.withLock {
+        ensureStorageLocked(profileId)
+        val current = readBucketsLocked(profileId)
+        val entries = mergeWatchProgressBuckets(current.recent, current.archive)
+        val key = createKey(patch)
+        val updated = ProgressDisplayPatch.apply(entries[key], patch) ?: return@withLock false
+        entries[key] = updated
+        writeBucketsLocked(profileId, current, splitWatchProgressEntries(entries))
+        true
+    }
+
+    /**
      * Save or update watch progress
      */
     suspend fun saveProgress(

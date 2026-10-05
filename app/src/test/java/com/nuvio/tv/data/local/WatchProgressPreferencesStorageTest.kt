@@ -406,6 +406,39 @@ class WatchProgressPreferencesStorageTest {
         assertFalse(harness.preferences.getAllRawEntries().containsKey("boundary"))
     }
 
+    /**
+     * T1 (W2 device pass): Continue Watching artwork hydration starts from a progress snapshot and
+     * writes seconds later. B64 re-keyed the entry in between; the hydration's full upsert brought
+     * the OLD key back, so every M3U item showed twice and the extra card opened an empty page.
+     */
+    @Test
+    fun `a hydration patch after a re-key never brings the old key back`() = runTest {
+        val harness = harness(mapOf("old" to progress("old", lastWatched = 5L)))
+        val stale = harness.preferences.getAllRawEntries().getValue("old")
+        harness.preferences.rewriteEntries(1) { p ->
+            if (p.contentId == "old") p.copy(contentId = "new", videoId = "new") else null
+        }
+
+        val wrote = harness.preferences.patchExistingDisplay(stale.copy(poster = "poster.jpg"))
+
+        assertFalse("a patch of a key that no longer exists writes nothing", wrote)
+        assertEquals("only the re-keyed entry remains", setOf("new"), harness.preferences.getAllRawEntries().keys)
+    }
+
+    @Test
+    fun `a hydration patch fills missing artwork and keeps the stored position`() = runTest {
+        val harness = harness(mapOf("item" to progress("item", lastWatched = 5L)))
+        val stale = harness.preferences.getAllRawEntries().getValue("item")
+        harness.preferences.saveProgress(stale.copy(position = 7_000L, lastWatched = 9L))
+
+        assertTrue(harness.preferences.patchExistingDisplay(stale.copy(poster = "poster.jpg")))
+
+        val stored = harness.preferences.getAllRawEntries().getValue("item")
+        assertEquals("artwork filled in", "poster.jpg", stored.poster)
+        assertEquals("the newer save's position survives the stale patch", 7_000L, stored.position)
+        assertEquals("the newer save's lastWatched survives the stale patch", 9L, stored.lastWatched)
+    }
+
     private fun harness(entries: Map<String, WatchProgress>): Harness {
         val metadata = TestPreferencesDataStore(preferences(entries = entries))
         val recent = TestPreferencesDataStore()
