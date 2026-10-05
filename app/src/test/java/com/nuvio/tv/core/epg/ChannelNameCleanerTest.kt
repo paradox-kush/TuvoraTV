@@ -17,6 +17,9 @@ class ChannelNameCleanerTest {
         "(US) ESPN 2 4K" to "ESPN 2",
         "US| FOX SPORTS UHD" to "FOX SPORTS",
         "IN| Star Plus HD" to "Star Plus",
+        // language labels panels use like a country prefix (T8: "|EN| CNN" read "EN| CNN")
+        "|EN| CNN" to "CNN",
+        "ENG: Sky News" to "Sky News",
         "FR ▎ TF1 HEVC" to "TF1",
         "DE: Das Erste H.265" to "Das Erste",
         "EX-YU: RTS 1" to "RTS 1",

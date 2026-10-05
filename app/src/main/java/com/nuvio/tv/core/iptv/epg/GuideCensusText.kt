@@ -4,7 +4,8 @@ import com.nuvio.tv.core.iptv.content.EpgCensusRow
 
 /**
  * B10 — the playlist screen's one-line answer to "how much of my lineup has a guide?", from the last
- * ingest's census. The denominator is the ELIGIBLE lineup (24/7 loops, PPV, dated event feeds and
+ * ingest's census. The breakdown is the automatic split (it sums to the headline); the user's own
+ * guide picks are a separate sentence. The denominator is the ELIGIBLE lineup (24/7 loops, PPV, dated event feeds and
  * separator rows can never have a guide), which is what a TiviMate comparison is really about.
  * Pure; the KMP twin renders the same words.
  */
@@ -16,7 +17,6 @@ object GuideCensusText {
             if (c.byId > 0) add("${group(c.byId)} by provider id")
             if (c.byName > 0) add("${group(c.byName)} by name")
             if (c.fuzzy > 0) add("${group(c.fuzzy)} by close spelling")
-            if (picks > 0) add("${group(picks)} picked by you")
         }
         val base = if (c.eligible > 0) {
             "Playlist guide: ${group(minOf(matched, c.eligible))} of ${group(c.eligible)} channels matched"
@@ -26,6 +26,9 @@ object GuideCensusText {
         val detail = if (parts.isEmpty()) "." else " (" + parts.joinToString(" · ") + ")."
         val noGuide = c.lineup - c.eligible
         val tail = buildString {
+            // P7: picks are their own sentence. A picked channel may ALSO have an automatic match
+            // (the pick overrides it), so adding picks to the automatic split double-counted it.
+            if (picks > 0) append(" ${group(picks)} ${if (picks == 1) "channel uses" else "channels use"} a guide you picked.")
             if (noGuide > 0) append(" ${group(noGuide)} more are 24/7, PPV or event channels without a guide.")
             if (c.sourcesFailed > 0) append(" ${c.sourcesFailed} of ${c.sources} guide sources failed to download.")
         }

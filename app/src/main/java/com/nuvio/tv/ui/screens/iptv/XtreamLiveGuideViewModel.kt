@@ -199,6 +199,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
+    private val accountStore: com.nuvio.tv.data.local.XtreamAccountStore,
 ) : ViewModel() {
 
     /**
@@ -666,9 +667,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // null = the panel request FAILED (these panels throw transient 403/500s and
             // rate-limit bursts) — retry once, then surface an error instead of faking "empty".
             val rawChannels: List<GuideChannel>? = when (category.special) {
-                GuideSpecial.FAVORITES -> withCatalogIdentity(acc, favoriteChannels(acc))
+                // P6: saved rows carry their stored name — cleaned like the playlist's own rows.
+                GuideSpecial.FAVORITES -> withCatalogIdentity(acc, favoriteChannels(acc)).withSavedDisplayNames(listOf(acc))
                 // F03 spans every playlist; B120's catalog identity only resolves this playlist's rows.
+                // P6: each row is cleaned with ITS playlist's setting.
                 GuideSpecial.ALL_FAVORITES -> withOwnCatalogIdentity(acc, favoriteChannels(null))
+                    .withSavedDisplayNames(accountStore.accounts.first())
                 // Scoped to THIS account: the store keeps one flat profile-wide list (favorites
                 // and recents across every playlist), and these rails live inside a provider's
                 // guide — the auto-resume above already filters the same way.
@@ -677,7 +681,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     liveStore.recents.first()
                         .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
                         .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) },
-                )
+                ).withSavedDisplayNames(listOf(acc))
                 // "All channels" honors the category selections too. NOTE: no cap here — the cap is
                 // applied by displayChannels(isAllView = true) AFTER the overlay floats pins, so a
                 // channel pinned past ALL_CAP survives (the "web pin never shows on TV" bug). rawChannels
@@ -1057,6 +1061,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * mobile has no ref on TV. The policy builds a row for EVERY live favourite from the library
      * entry's own name/logo (the ref is only an optional fast-path), fixing the empty Favorites row.
      */
+    /** P6 / F10: Favorites / Recent rows show the same cleaned names as the playlist's rows. */
+    private fun List<GuideChannel>?.withSavedDisplayNames(accounts: List<XtreamAccount>): List<GuideChannel>? =
+        this?.map { it.copy(name = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.savedChannelDisplayName(it.name, it.contentId, accounts)) }
+
     private suspend fun favoriteChannels(acc: XtreamAccount?): List<GuideChannel> {
         // F03: in the synced favourites order (newest first; reordering rewrites the synced added-at).
         val library = libraryRepository.libraryItems.first()
