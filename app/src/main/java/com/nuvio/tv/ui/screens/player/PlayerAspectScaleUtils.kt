@@ -125,7 +125,7 @@ internal fun resolveAspectScale(mode: AspectMode, viewAspect: Float, videoAspect
     }
 }
 
-internal fun applyExoAspectMode(playerView: PlayerView, mode: AspectMode) {
+internal fun applyExoAspectMode(playerView: PlayerView, mode: AspectMode, zoom: VideoZoom = VideoZoom.IDENTITY) {
     val contentFrame = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
     val surfaceView = resolveVideoSurfaceView(playerView)
     val targetView = contentFrame ?: surfaceView ?: playerView
@@ -136,8 +136,12 @@ internal fun applyExoAspectMode(playerView: PlayerView, mode: AspectMode) {
     contentFrame?.let(::resetAspectTransform)
     surfaceView?.let(::resetAspectTransform)
 
-    applyAspectScale(targetView, mode, viewAspect, videoAspect)
+    applyAspectScale(targetView, mode, viewAspect, videoAspect, zoom)
     centerTargetInPlayer(playerView, targetView)
+    // F36: the pan is added after centring, as a fraction of the on-screen (already scaled) picture.
+    val z = VideoZoomPolicy.normalize(zoom)
+    targetView.translationX += z.panX * targetView.width * targetView.scaleX
+    targetView.translationY += z.panY * targetView.height * targetView.scaleY
 }
 
 internal fun applyAspectMode(playerView: PlayerView, mode: AspectMode) {
@@ -163,14 +167,22 @@ internal fun addExoAspectLayoutChangeListener(
     }
 }
 
-private fun applyAspectScale(targetView: View, mode: AspectMode, viewAspect: Float, videoAspect: Float?) {
+private fun applyAspectScale(
+    targetView: View,
+    mode: AspectMode,
+    viewAspect: Float,
+    videoAspect: Float?,
+    zoom: VideoZoom = VideoZoom.IDENTITY,
+) {
     val scale = resolveAspectScale(
         mode = mode,
         viewAspect = viewAspect,
         videoAspect = videoAspect
     )
-    targetView.scaleX = scale.scaleX
-    targetView.scaleY = scale.scaleY
+    // F36: the manual zoom multiplies the aspect mode's own scale (VideoZoomPolicy).
+    val zoomed = VideoZoomPolicy.surfaceTransform(zoom, targetView.width, targetView.height, scale.scaleX, scale.scaleY)
+    targetView.scaleX = zoomed.scaleX
+    targetView.scaleY = zoomed.scaleY
 }
 
 private fun resetAspectTransform(view: View) {

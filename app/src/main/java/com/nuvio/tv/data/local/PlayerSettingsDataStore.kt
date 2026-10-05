@@ -144,7 +144,9 @@ data class SubtitleStyleSettings(
     val backgroundColor: Int = Color.Transparent.toArgb(),
     val outlineEnabled: Boolean = true,
     val outlineColor: Int = Color.Black.toArgb(),
-    val outlineWidth: Int = 2 // 1-5
+    val outlineWidth: Int = 2, // 1-5
+    /** F47: percent of the picture width kept clear on each side (SubtitleSideMargin). */
+    val sideMarginPercent: Int = com.nuvio.tv.ui.screens.player.SubtitleSideMargin.DEFAULT_PERCENT
 )
 
 /**
@@ -235,6 +237,8 @@ data class PlayerSettings(
     val loadingOverlayEnabled: Boolean = true,
     val showPlayerLoadingStatus: Boolean = true,
     val playbackIssueReportsEnabled: Boolean = false,
+    /** F37 "Remember my player preferences" (PlayerPreferencePolicy). Device-local: see sync service. */
+    val rememberPlayerPreferences: Boolean = com.nuvio.tv.ui.screens.player.PlayerPreferencePolicy.DEFAULT_REMEMBER,
     val pauseOverlayEnabled: Boolean = true,
     val osdClockEnabled: Boolean = true,
     val skipIntroEnabled: Boolean = true,
@@ -479,6 +483,7 @@ class PlayerSettingsDataStore @Inject constructor(
     private val loadingOverlayEnabledKey = booleanPreferencesKey("loading_overlay_enabled")
     private val showPlayerLoadingStatusKey = booleanPreferencesKey("show_player_loading_status")
     private val playbackIssueReportsEnabledKey = booleanPreferencesKey("playback_issue_reports_enabled")
+    private val rememberPlayerPreferencesKey = booleanPreferencesKey("remember_player_preferences")
     private val pauseOverlayEnabledKey = booleanPreferencesKey("pause_overlay_enabled")
     private val osdClockEnabledKey = booleanPreferencesKey("osd_clock_enabled")
     private val skipIntroEnabledKey = booleanPreferencesKey("skip_intro_enabled")
@@ -557,6 +562,7 @@ class PlayerSettingsDataStore @Inject constructor(
     private val subtitleOutlineEnabledKey = booleanPreferencesKey("subtitle_outline_enabled")
     private val subtitleOutlineColorKey = intPreferencesKey("subtitle_outline_color")
     private val subtitleOutlineWidthKey = intPreferencesKey("subtitle_outline_width")
+    private val subtitleSideMarginPercentKey = intPreferencesKey("subtitle_side_margin_percent")
 
     // Buffer settings keys
     private val minBufferMsKey = intPreferencesKey("min_buffer_ms")
@@ -840,6 +846,8 @@ class PlayerSettingsDataStore @Inject constructor(
                 loadingOverlayEnabled = prefs[loadingOverlayEnabledKey] ?: true,
                 showPlayerLoadingStatus = prefs[showPlayerLoadingStatusKey] ?: true,
                 playbackIssueReportsEnabled = prefs[playbackIssueReportsEnabledKey] ?: false,
+                rememberPlayerPreferences = prefs[rememberPlayerPreferencesKey]
+                    ?: com.nuvio.tv.ui.screens.player.PlayerPreferencePolicy.DEFAULT_REMEMBER,
                 pauseOverlayEnabled = prefs[pauseOverlayEnabledKey] ?: true,
                 osdClockEnabled = prefs[osdClockEnabledKey] ?: true,
                 skipIntroEnabled = prefs[skipIntroEnabledKey] ?: true,
@@ -960,7 +968,10 @@ class PlayerSettingsDataStore @Inject constructor(
                     backgroundColor = prefs[subtitleBackgroundColorKey] ?: Color.Transparent.toArgb(),
                     outlineEnabled = prefs[subtitleOutlineEnabledKey] ?: true,
                     outlineColor = prefs[subtitleOutlineColorKey] ?: Color.Black.toArgb(),
-                    outlineWidth = prefs[subtitleOutlineWidthKey] ?: 2
+                    outlineWidth = prefs[subtitleOutlineWidthKey] ?: 2,
+                    sideMarginPercent = (prefs[subtitleSideMarginPercentKey]
+                        ?: com.nuvio.tv.ui.screens.player.SubtitleSideMargin.DEFAULT_PERCENT)
+                        .coerceIn(0, com.nuvio.tv.ui.screens.player.SubtitleSideMargin.MAX_PERCENT)
                 ),
                 bufferSettings = BufferSettings(
                     minBufferMs = prefs[minBufferMsKey] ?: BufferSettings.DEFAULT_MIN_BUFFER_MS,
@@ -1163,6 +1174,12 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setShowPlayerLoadingStatus(enabled: Boolean) {
         store().edit { prefs ->
             prefs[showPlayerLoadingStatusKey] = enabled
+        }
+    }
+
+    suspend fun setRememberPlayerPreferences(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[rememberPlayerPreferencesKey] = enabled
         }
     }
 
@@ -1437,6 +1454,11 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setSubtitleOutlineEnabled(enabled: Boolean) { store().edit { it[subtitleOutlineEnabledKey] = enabled } }
     suspend fun setSubtitleOutlineColor(color: Int) { store().edit { it[subtitleOutlineColorKey] = color } }
     suspend fun setSubtitleOutlineWidth(width: Int) { store().edit { it[subtitleOutlineWidthKey] = width.coerceIn(1, 5) } }
+    suspend fun setSubtitleSideMarginPercent(percent: Int) {
+        store().edit {
+            it[subtitleSideMarginPercentKey] = percent.coerceIn(0, com.nuvio.tv.ui.screens.player.SubtitleSideMargin.MAX_PERCENT)
+        }
+    }
 
     suspend fun setUseForcedSubtitles(enabled: Boolean) {
         store().edit { prefs ->

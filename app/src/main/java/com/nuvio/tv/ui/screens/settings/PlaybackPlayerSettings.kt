@@ -149,6 +149,13 @@ internal fun PlaybackPlayerInterfaceSection(
         enabled = internalPlayer
     )
     SettingsToggleRow(
+        title = stringResource(R.string.playback_remember_preferences),
+        subtitle = stringResource(R.string.playback_remember_preferences_sub),
+        checked = settings.rememberPlayerPreferences,
+        onToggle = { onUpdate { setRememberPlayerPreferences(!settings.rememberPlayerPreferences) } },
+        enabled = internalPlayer
+    )
+    SettingsToggleRow(
         title = stringResource(R.string.playback_osd_clock),
         subtitle = stringResource(R.string.playback_show_clock_sub),
         checked = settings.osdClockEnabled,

@@ -278,7 +278,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     internalPlayerEngine = effectiveInternalPlayerEngine,
                     frameRateMatchingMode = playerSettings.frameRateMatchingMode,
                     resizeMode = playerSettings.resizeMode,
-                    aspectMode = deviceAspectMode,
+                    // F37: a series' remembered aspect (restoreSeriesPicture) survives re-inits.
+                    aspectMode = if (seriesPictureApplied) it.aspectMode else deviceAspectMode,
                     tunneledSurfaceFill = tunneledSurfaceFill,
                     playbackIssueReportsEnabled = playerSettings.playbackIssueReportsEnabled,
                     tunnelingEnabled = playerSettings.tunnelingEnabled &&

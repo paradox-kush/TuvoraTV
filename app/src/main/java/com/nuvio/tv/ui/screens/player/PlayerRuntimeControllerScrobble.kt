@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.player
 import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.os.SystemClock
 import android.util.Log
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -41,9 +42,15 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
             message = context.getString(com.nuvio.tv.R.string.player_loading_preparing)
         )
         refreshScrobbleItem()
+        rememberPlayerPreferences = playerSettingsDataStore.playerSettings.first().rememberPlayerPreferences
+        restoreSeriesPicture()
         if (persistedTrackPreference == null) {
             contentId?.let { id ->
-                val loaded = trackPreferenceDataStore.load(id)?.toTrackPreference()
+                // F37: per-series track memory only while "Remember my player preferences" is on.
+                val loaded = PlayerPreferencePolicy.seriesMemory(
+                    rememberPlayerPreferences,
+                    trackPreferenceDataStore.load(id)?.toTrackPreference(),
+                )
                 logSwitchTrace(
                     stage = "track-pref-load",
                     message = "contentId=$id loadedAudio=${loaded?.audio?.language}/${loaded?.audio?.name} " +
