@@ -93,7 +93,7 @@ fun pairingPayloadToXtreamAccount(payload: JsonElement?): XtreamAccount? {
             XtreamAccount(
                 // Step 0: the shared builder — the id a hand-added (or web-added) playlist would get.
                 id = PlaylistKey.xtream(baseUrl, username) ?: return null,
-                name = name?.ifBlank { null } ?: baseUrl,
+                name = name?.ifBlank { null } ?: PlaylistDisplayPolicy.fallbackName(baseUrl),
                 baseUrl = baseUrl,
                 username = username,
                 password = password,
@@ -123,7 +123,7 @@ fun pairingPayloadToXtreamAccount(payload: JsonElement?): XtreamAccount? {
             val mac = obj.stringField("mac_address")?.takeIf { it.isNotBlank() } ?: return null
             XtreamAccount(
                 id = PlaylistKey.stalker(portal, mac) ?: return null,   // Step 0 shared builder
-                name = name?.ifBlank { null } ?: portal,
+                name = name?.ifBlank { null } ?: PlaylistDisplayPolicy.fallbackName(portal),
                 baseUrl = portal,
                 username = "",
                 password = "",

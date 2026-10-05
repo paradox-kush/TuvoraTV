@@ -214,7 +214,7 @@ fun XtreamHubScreen(
                 onFocusSelect = { if (uiState.section != XtreamSection.SERIES) viewModel.selectSection(XtreamSection.SERIES) }) { viewModel.selectSection(XtreamSection.SERIES) }
             Spacer(Modifier.weight(1f))
             HubChip(
-                label = uiState.selectedAccount?.name ?: stringResource(R.string.iptv_hub_account_fallback),
+                label = uiState.selectedAccount?.name?.let(com.nuvio.tv.core.iptv.PlaylistDisplayPolicy::displayName) ?: stringResource(R.string.iptv_hub_account_fallback),
                 selected = false,
                 focusRequester = firstFocus,
                 showDropdownIcon = uiState.accounts.size > 1,
@@ -261,7 +261,7 @@ fun XtreamHubScreen(
         ) {
             uiState.accounts.forEach { acc ->
                 com.nuvio.tv.ui.screens.settings.SettingsActionRow(
-                    title = acc.name,
+                    title = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(acc.name),
                     subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(acc.baseUrl), // T7
                     value = if (acc.id == uiState.selectedAccountId) stringResource(R.string.iptv_hub_provider_current) else null,
                     onClick = { viewModel.selectAccount(acc.id); showAccountPicker = false }

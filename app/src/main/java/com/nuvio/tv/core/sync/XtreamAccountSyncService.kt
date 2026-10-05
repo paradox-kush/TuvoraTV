@@ -312,7 +312,7 @@ class XtreamAccountSyncService @Inject constructor(
                 val accounts = legacy.sortedBy { it.sortOrder }.map {
                     XtreamAccount(
                         id = "${it.baseUrl}|${it.username}",
-                        name = it.name ?: it.baseUrl,
+                        name = it.name ?: com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.fallbackName(it.baseUrl),
                         baseUrl = it.baseUrl,
                         username = it.username,
                         password = it.password,
@@ -415,7 +415,7 @@ private fun SupabaseIptvPlaylist.toDerivedAccountOrNull(): XtreamAccount? {
             val pass = password ?: return null
             XtreamAccount(
                 id = "$baseUrl|$user",
-                name = name ?: baseUrl,
+                name = name ?: com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.fallbackName(baseUrl),
                 baseUrl = baseUrl,
                 username = user,
                 password = pass,
@@ -455,7 +455,7 @@ private fun SupabaseIptvPlaylist.toDerivedAccountOrNull(): XtreamAccount? {
             val mac = macAddress?.takeIf { it.isNotBlank() } ?: return null
             XtreamAccount(
                 id = "stalker|$portal|$mac",
-                name = name ?: portal,
+                name = name ?: com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.fallbackName(portal),
                 baseUrl = portal,
                 username = "",
                 password = "",

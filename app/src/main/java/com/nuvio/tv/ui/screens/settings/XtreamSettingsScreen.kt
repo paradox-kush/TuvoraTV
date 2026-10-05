@@ -260,7 +260,7 @@ fun XtreamSettingsContent(
                 } else stringResource(R.string.iptv_managed_row_line, m.providerName)
             }
             SettingsActionRow(
-                title = account.name,
+                title = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name),
                 subtitle = listOfNotNull(
                     managedLine,
                     // Step 0.3: say which server is actually answering when it isn't the main one.
@@ -486,7 +486,7 @@ fun XtreamSettingsContent(
             NuvioDialog(
                 onDismiss = { catchUpFor = null },
                 title = stringResource(R.string.iptv_catchup_dialog_title),
-                subtitle = account.name,
+                subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name),
                 scrollable = true
             ) {
                 SettingsActionRow(
@@ -584,7 +584,7 @@ fun XtreamSettingsContent(
         }
         NuvioDialog(
             onDismiss = { hiddenFor = null },
-            title = "Hidden in ${account.name}",
+            title = "Hidden in ${com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name)}",
             subtitle = when {
                 items == null -> "Loading\u2026"
                 items.isEmpty() -> "Nothing is hidden in this playlist. In the Live TV guide, press MENU on a " +
@@ -617,7 +617,7 @@ fun XtreamSettingsContent(
         // stray press can never delete a playlist. For a managed playlist the owner is named.
         val providerName = managedInfos[account.id]?.providerName
         HoldConfirmDialog(
-            title = stringResource(R.string.iptv_remove_title, account.name),
+            title = stringResource(R.string.iptv_remove_title, com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name)),
             message = when (PlaylistRemovalUiPolicy.confirmWording(signedIn)) {
                 PlaylistRemovalUiPolicy.ConfirmWording.ALL_DEVICES -> stringResource(R.string.iptv_remove_playlist_message_all_devices)
                 PlaylistRemovalUiPolicy.ConfirmWording.IF_YOU_SYNC -> stringResource(R.string.iptv_remove_playlist_message_if_you_sync)
@@ -685,7 +685,7 @@ private fun XtreamContentTypesDialog(
     NuvioDialog(
         onDismiss = onDismiss,
         title = "Content & Categories",
-        subtitle = account.name
+        subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name)
     ) {
         CONTENT_TYPES.forEachIndexed { index, (type, label) ->
             val enabled = account.typeEnabled(type)
@@ -1628,7 +1628,7 @@ private fun BackupServerRemoveConfirmDialog(
     NuvioDialog(
         onDismiss = onCancel,
         title = stringResource(R.string.iptv_backup_server_remove_confirm_title, index + 1),
-        subtitle = value.ifBlank { null }?.let { stringResource(R.string.iptv_backup_server_remove_confirm_subtitle, it) },
+        subtitle = value.ifBlank { null }?.let { stringResource(R.string.iptv_backup_server_remove_confirm_subtitle, com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(it)) }, // T7
         width = 460.dp,
     ) {
         Button(

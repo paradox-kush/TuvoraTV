@@ -31,6 +31,44 @@ class PlaylistDisplayPolicyTest {
         assertEquals("nothing to mask", "http://panel.example:8080", PlaylistDisplayPolicy.maskedUrl("http://panel.example:8080"))
     }
 
+    // --- P4: a playlist NAME never carries the login (TV twin of Mobile PlaylistLoginMaskingTest) ---
+
+    private val m3u = "http://host.example:8080/get.php?username=alice&password=s3cret&type=m3u_plus"
+
+    private fun assertNoLogin(what: String, shown: String) {
+        assertFalse("$what shows the username: $shown", shown.contains("alice"))
+        assertFalse("$what shows the password: $shown", shown.contains("s3cret"))
+    }
+
+    @Test
+    fun `a stored name that is a full address displays as its host`() {
+        // The name older builds gave a nameless synced row — and pushed back to the server.
+        assertEquals("whole address -> host", "host.example:8080", PlaylistDisplayPolicy.displayName(m3u))
+        assertNoLogin("name with an address inside", PlaylistDisplayPolicy.displayName("My list $m3u"))
+        assertEquals("ordinary name untouched", "UK Sports", PlaylistDisplayPolicy.displayName("UK Sports"))
+        assertEquals("user-info address -> host", "lists.example", PlaylistDisplayPolicy.displayName("https://alice:s3cret@lists.example/tv.m3u"))
+    }
+
+    @Test
+    fun `a nameless synced row is named after its host not its login`() {
+        assertEquals("m3u link", "host.example:8080", PlaylistDisplayPolicy.fallbackName(m3u))
+        assertEquals("xtream server", "panel.example:8080", PlaylistDisplayPolicy.fallbackName("http://panel.example:8080"))
+        assertNoLogin("user-info link", PlaylistDisplayPolicy.fallbackName("http://alice:s3cret@h.example/l.m3u"))
+    }
+
+    @Test
+    fun `a paired nameless m3u playlist is not named after its link`() {
+        val obj = kotlinx.serialization.json.buildJsonObject {
+            put("source_type", kotlinx.serialization.json.JsonPrimitive("xtream"))
+            put("base_url", kotlinx.serialization.json.JsonPrimitive("http://alice:s3cret@panel.example:8080"))
+            put("username", kotlinx.serialization.json.JsonPrimitive("alice"))
+            put("password", kotlinx.serialization.json.JsonPrimitive("s3cret"))
+        }
+        val account = pairingPayloadToXtreamAccount(obj)!!
+        assertNoLogin("paired fallback name", account.name)
+        assertEquals("host only", "panel.example:8080", account.name)
+    }
+
     // --- P6: favourites / recents show the playlist's cleaned names --------------------------------
 
     private val clean = XtreamAccount(

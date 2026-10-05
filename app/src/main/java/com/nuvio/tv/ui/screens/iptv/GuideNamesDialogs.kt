@@ -40,7 +40,7 @@ internal fun GuideNamesDialog(
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
     val tags = ChannelNameCleaner.parseTags(account.channelNameTags)
-    NuvioDialog(onDismiss = onDismiss, title = "Guide & channel names", subtitle = account.name, width = 620.dp, scrollable = true) {
+    NuvioDialog(onDismiss = onDismiss, title = "Guide & channel names", subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name), width = 620.dp, scrollable = true) {
         Text(census ?: "Checking the guide…")
         SettingsActionRow(
             title = "Assign a channel's guide",
@@ -101,7 +101,7 @@ internal fun GuideAssignDialog(
         var query by remember { mutableStateOf(state?.query.orEmpty()) }
         val field = remember { FocusRequester() }
         LaunchedEffect(Unit) { runCatching { field.requestFocus() } }
-        NuvioDialog(onDismiss = onDismiss, title = "Assign a channel's guide", subtitle = account.name, width = 640.dp, scrollable = true) {
+        NuvioDialog(onDismiss = onDismiss, title = "Assign a channel's guide", subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name), width = 640.dp, scrollable = true) {
             GuideTextField(
                 value = query,
                 onValueChange = { query = it },

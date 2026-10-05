@@ -17,6 +17,29 @@ object PlaylistDisplayPolicy {
     fun maskedUrl(raw: String?): String = if (raw.isNullOrBlank()) raw.orEmpty() else LogRedaction.url(raw.trim())
 
     /**
+     * P4/T7: a playlist NAME as lists, pickers and headers show it. Older builds named a synced row
+     * without a name after its raw address (an M3U link's `username=…&password=…` included) and
+     * pushed that name to the server, so a name that IS an address shows as its host and an address
+     * inside a name is masked. Ordinary names pass through untouched.
+     */
+    fun displayName(name: String): String {
+        if ("://" !in name) return name
+        val trimmed = name.trim()
+        val wholeAddress = trimmed.none { it.isWhitespace() } && trimmed.indexOf("://") > 0
+        return if (wholeAddress) hostOnly(trimmed) ?: maskedUrl(trimmed) else LogRedaction.text(name)
+    }
+
+    /** P4/T7: the name a synced row WITHOUT one gets — its host, never a login. */
+    fun fallbackName(address: String): String = hostOnly(address.trim()) ?: maskedUrl(address)
+
+    /** The address's host[:port] — the part after any `user:pass@`; null when there is none. */
+    private fun hostOnly(address: String): String? {
+        val withoutScheme = address.trim().substringAfter("://", address.trim())
+        val authority = withoutScheme.takeWhile { it != '/' && it != '?' && it != '#' }
+        return authority.substringAfterLast('@').takeIf { it.isNotEmpty() }
+    }
+
+    /**
      * P6 / F10: the name to SHOW for a saved live channel (a favourite or a recent). Those rows carry
      * the name stored with the item, so they get the same clean-up as the playlist's own rows.
      * [contentId] names the playlist; an item of an unknown playlist keeps its stored name.
