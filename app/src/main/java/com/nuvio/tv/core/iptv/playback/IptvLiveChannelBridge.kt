@@ -37,10 +37,11 @@ internal fun interface RelativeLiveSelectionSource {
 }
 
 internal fun interface ExplicitProfileLiveHistorySink {
+    /** [title] null = no real name is known (T3): keep the stored one, never write the stand-in. */
     suspend fun record(
         profileId: Int,
         contentId: String,
-        title: String,
+        title: String?,
         logo: String?,
     )
 }
@@ -123,6 +124,7 @@ class IptvLiveChannelBridge internal constructor(
                 logo = presentation.logo,
                 playlistVersion = null,
                 boundProfileId = request.boundProfileId,
+                titleKnown = presentation.titleKnown,
             ),
         )
     }
@@ -173,6 +175,7 @@ class IptvLiveChannelBridge internal constructor(
                 logo = presentation.logo,
                 playlistVersion = presentation.playlistVersion,
                 boundProfileId = request.boundProfileId,
+                titleKnown = presentation.titleKnown,
             ),
         )
     }
@@ -205,7 +208,8 @@ class IptvLiveChannelBridge internal constructor(
         history.record(
             profileId = profileId,
             contentId = target.contentId.value,
-            title = target.title,
+            // T3: the "Live TV" stand-in is display-only; it must never become the saved name.
+            title = target.title.takeIf { target.titleKnown },
             logo = target.logo,
         )
         // The write is intentionally profile-explicit, so a switch during DataStore I/O cannot

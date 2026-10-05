@@ -51,6 +51,11 @@ class LiveChannelTarget private constructor(
     val logo: String?,
     val playlistVersion: Long?,
     val mediaFingerprint: String,
+    /**
+     * T3: false when [title] is the "Live TV" stand-in (no usable name was known). Display may use
+     * the stand-in; persistence must not — it once replaced real favourite / recent names.
+     */
+    val titleKnown: Boolean = true,
 ) {
     init {
         require(selection.contentType == ContentType.LIVE) { "Live channel target must be LIVE" }
@@ -88,23 +93,29 @@ class LiveChannelTarget private constructor(
             logo: String?,
             playlistVersion: Long?,
             boundProfileId: PlaybackProfileId,
-        ): LiveChannelTarget = LiveChannelTarget(
-            selection = selection,
-            contentId = contentId,
-            title = sanitizeTitle(title),
-            logo = sanitizeLogo(logo),
-            playlistVersion = playlistVersion,
-            mediaFingerprint = LiveMediaFingerprint.create(selection, boundProfileId),
-        )
+            /** False when the caller's [title] is itself a stand-in (T3). */
+            titleKnown: Boolean = true,
+        ): LiveChannelTarget {
+            val usable = usableTitle(title)
+            return LiveChannelTarget(
+                selection = selection,
+                contentId = contentId,
+                title = usable ?: FALLBACK_TITLE,
+                logo = sanitizeLogo(logo),
+                playlistVersion = playlistVersion,
+                mediaFingerprint = LiveMediaFingerprint.create(selection, boundProfileId),
+                titleKnown = titleKnown && usable != null,
+            )
+        }
 
-        private fun sanitizeTitle(value: String): String {
+        /** The cleaned title, or null when there is none worth showing (blank, a URL, a secret). */
+        private fun usableTitle(value: String): String? {
             val normalized = clean(value, MAX_TITLE_LENGTH)?.replace(WHITESPACE, " ")
             return normalized
                 ?.takeUnless { candidate ->
                     val lowercase = candidate.lowercase()
                     "://" in lowercase || SECRET_MARKERS.any(lowercase::contains)
                 }
-                ?: FALLBACK_TITLE
         }
 
         private fun sanitizeLogo(value: String?): String? {

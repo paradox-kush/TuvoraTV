@@ -135,16 +135,17 @@ class XtreamLiveStore @Inject constructor(
     internal suspend fun recordPlayedIdentityForProfile(
         profileId: Int,
         contentId: String,
-        title: String,
+        title: String?,
         logo: String?,
     ) {
         require(profileId > 0) { "Profile id must be positive" }
         require(contentId.isNotBlank()) { "Live content id must not be blank" }
         upsertForProfile(
             profileId = profileId,
-            ref = LiveChannelRef(contentId, title, logo, streamUrl = ""),
+            ref = LiveChannelRef(contentId, title.orEmpty(), logo, streamUrl = ""),
             markPlayed = true,
             preserveExistingTransport = true,
+            keepExistingNameWhenBlank = true,
         )
     }
 
@@ -179,26 +180,38 @@ class XtreamLiveStore @Inject constructor(
         ref: LiveChannelRef,
         markPlayed: Boolean,
         preserveExistingTransport: Boolean,
-    ) = upsertInto(store(profileId), ref, markPlayed, preserveExistingTransport)
+        keepExistingNameWhenBlank: Boolean = false,
+    ) = upsertInto(store(profileId), ref, markPlayed, preserveExistingTransport, keepExistingNameWhenBlank)
 
     private suspend fun upsertInto(
         targetStore: DataStore<Preferences>,
         ref: LiveChannelRef,
         markPlayed: Boolean,
         preserveExistingTransport: Boolean,
+        keepExistingNameWhenBlank: Boolean = false,
     ) {
         targetStore.edit { prefs ->
             val current = parse(prefs[key]).toMutableList()
             val existing = current.firstOrNull { it.id == ref.id }
+            // T3: a play with no known name keeps the stored one; with no stored row there is nothing
+            // worth saving (a nameless Recent row) — the next play that knows the name records it.
+            if (keepExistingNameWhenBlank && ref.name.isBlank()) {
+                if (existing == null) return@edit
+            }
             val playedAt = when {
                 markPlayed -> System.currentTimeMillis()
                 else -> existing?.playedAt
             }
             current.removeAll { it.id == ref.id }
-            val storedRef = if (preserveExistingTransport) {
-                ref.copy(streamUrl = existing?.streamUrl.orEmpty())
+            val named = if (keepExistingNameWhenBlank && ref.name.isBlank() && existing != null) {
+                ref.copy(name = existing.name, logo = ref.logo ?: existing.logo)
             } else {
                 ref
+            }
+            val storedRef = if (preserveExistingTransport) {
+                named.copy(streamUrl = existing?.streamUrl.orEmpty())
+            } else {
+                named
             }
             current.add(0, storedRef.copy(playedAt = playedAt))
             // LRU trim: keep the most recently touched (front = newest).

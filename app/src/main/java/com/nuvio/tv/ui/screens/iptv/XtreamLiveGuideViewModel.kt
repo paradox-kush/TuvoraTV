@@ -69,6 +69,20 @@ internal object GuideRapidZapPolicy {
     }
 }
 
+/**
+ * T4 (W2 device pass): the channels a zap (UP/DOWN, CH+/CH-, LAST, the fullscreen channel list) may
+ * land on. A guide list is normally one playlist's, but F03's "All favorites" mixes every playlist's
+ * favourites; walking it zapped into another playlist's channel, which this guide's playback lineup
+ * does not hold. Zapping stays inside the playing playlist — the published lineup is that playlist's.
+ */
+internal object GuideZapLineupPolicy {
+    fun <T> zappable(channels: List<T>, accountId: String?, contentIdOf: (T) -> String): List<T> {
+        accountId ?: return channels
+        val prefix = XtreamItemRegistry.accountPrefix(accountId)
+        return channels.filter { contentIdOf(it).startsWith(prefix) }
+    }
+}
+
 /** Programs for a channel: now/next plus the raw list feeding the guide's timeline cells. */
 data class GuideEpg(
     val now: XtreamProgram?,
@@ -794,14 +808,20 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** Moves the authoritative highlight synchronously and returns its exact stable identity. */
     fun moveChannelFocus(direction: com.nuvio.tv.playback.live.LiveZapDirection): ProviderSelectionId? {
         val state = _uiState.value
-        if (state.channels.isEmpty()) return null
-        val current = state.channels.indexOfFirst { it.contentId == state.focusedChannelId }
+        // T4: walk the playing playlist's own channels — All favorites lists other playlists' too.
+        val lineup = zapLineup()
+        if (lineup.isEmpty()) return null
+        val current = lineup.indexOfFirst { it.contentId == state.focusedChannelId }
             .takeIf { it >= 0 } ?: 0
-        val nextIndex = GuideRapidZapPolicy.advance(current, state.channels.size, direction)
-        val next = state.channels[nextIndex]
-        onChannelFocused(next, nextIndex)
+        val nextIndex = GuideRapidZapPolicy.advance(current, lineup.size, direction)
+        val next = lineup[nextIndex]
+        onChannelFocused(next, state.channels.indexOfFirst { it.contentId == next.contentId })
         return ProviderSelectionId(next.contentId)
     }
+
+    /** T4: the shown channels a zap may land on — this guide's playlist only ([GuideZapLineupPolicy]). */
+    fun zapLineup(): List<GuideChannel> =
+        GuideZapLineupPolicy.zappable(_uiState.value.channels, account?.id) { it.contentId }
 
     /**
      * F08: aim the guide at one channel of the current lineup (the channel list's pick, the zap-back
