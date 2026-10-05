@@ -397,5 +397,9 @@ private fun XtreamAccount.withDecodeDefaults(
     catchUpCorrectionMinutes = if (hadCatchUpCorrection) catchUpCorrectionMinutes else 0,
     // Guide EPG offset (fix 2): missing = 0 = auto-detect, the default every stored playlist gets.
     guideEpgCorrectionMinutes = if (hadGuideEpgCorrection) guideEpgCorrectionMinutes else 0,
-    backupUrls = backupUrls?.takeIf { it.isNotEmpty() }   // nullable; missing in older JSON -> null
+    backupUrls = backupUrls?.takeIf { it.isNotEmpty() },   // nullable; missing in older JSON -> null
+    // F10: a primitive false when missing is the default; the tags are nullable. Not carrying them
+    // here dropped both on every read (device pass 2026-10-05).
+    cleanChannelNames = cleanChannelNames,
+    channelNameTags = channelNameTags,
 )
