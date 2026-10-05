@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.PlayerPreferencePolicy
 import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.os.SystemClock
 import android.util.Log

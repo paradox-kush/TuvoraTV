@@ -120,7 +120,7 @@ internal fun PlaybackSubtitlesSection(
         value = style.sideMarginPercent,
         valueText = "${style.sideMarginPercent}%",
         minValue = 0,
-        maxValue = com.nuvio.tv.ui.screens.player.SubtitleSideMargin.MAX_PERCENT,
+        maxValue = com.nuvio.tv.core.picture.SubtitleSideMargin.MAX_PERCENT,
         step = 1,
         onValueChange = { percent -> onUpdate { setSubtitleSideMarginPercent(percent) } },
         enabled = enabled

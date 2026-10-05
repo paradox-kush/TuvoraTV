@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.player
+package com.nuvio.tv.core.picture
 
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -6,6 +6,7 @@ import kotlin.math.roundToInt
 /*
  * Player preferences (community plan G7: F37 remember, F36 manual zoom, F47/UX61 subtitle style).
  *
+ * (Moved from ui.screens.player for F28 so the clean live player shares it.)
  * Hand-port of NuvioMobile's commonMain `PlayerPreferencePolicy.kt` — same names, same numbers, so the
  * five apps agree on what a zoom step, a remembered aspect or a "dim" subtitle box means. Pure: no
  * Android, no player, no storage. Persistence is TrackPreferenceDataStore (per series) and

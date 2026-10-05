@@ -5,6 +5,11 @@
 
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.aspectModeAppliedToExoSurface
+import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.core.picture.SubtitleSideMargin
+import com.nuvio.tv.ui.components.player.VideoZoomDialog
 import com.nuvio.tv.ui.theme.NuvioMotion
 
 import com.nuvio.tv.ui.theme.NuvioTheme

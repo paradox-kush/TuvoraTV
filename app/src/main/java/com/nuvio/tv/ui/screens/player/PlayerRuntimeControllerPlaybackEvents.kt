@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.nextAspectMode
+import com.nuvio.tv.core.picture.aspectModeLabel
 import com.nuvio.tv.ui.components.player.PlayerControlsTiming
 import android.net.Uri
 import android.util.Log

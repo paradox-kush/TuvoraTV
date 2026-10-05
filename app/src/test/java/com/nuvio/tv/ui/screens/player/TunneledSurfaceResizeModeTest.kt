@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.picture.aspectModeAppliedToExoSurface
 import androidx.media3.ui.AspectRatioFrameLayout
 import org.junit.Assert.assertEquals
 import org.junit.Test
