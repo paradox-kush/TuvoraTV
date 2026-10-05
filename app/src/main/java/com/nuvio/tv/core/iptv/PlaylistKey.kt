@@ -201,4 +201,11 @@ fun XtreamAccount.asEditOf(old: XtreamAccount): XtreamAccount = copy(
     contentTypes = old.contentTypes,
     categorySelections = old.categorySelections,
     backupUrls = old.backupUrls,
+    // Device-local preferences set from the playlist's own cards, never from the edit form — an
+    // edit used to reset them all (device pass 2026-10-05).
+    preferM3u8CatchUp = old.preferM3u8CatchUp,
+    catchUpCorrectionMinutes = old.catchUpCorrectionMinutes,
+    guideEpgCorrectionMinutes = old.guideEpgCorrectionMinutes,
+    cleanChannelNames = old.cleanChannelNames,
+    channelNameTags = old.channelNameTags,
 )
