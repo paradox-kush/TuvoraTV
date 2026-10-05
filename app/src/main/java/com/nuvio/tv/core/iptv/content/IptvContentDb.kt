@@ -157,8 +157,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
      * [IngestWriter] batches inserts into [CHUNK]-sized transactions. [finish] writes the meta row
      * LAST so a crash mid-ingest leaves [builtAt] null (reads as "not built" -> re-ingest).
      *
-     * Series are grouped by header: [addEpisode] auto-creates the header row on first sight of a
-     * (categoryId, seriesName) and returns the synthetic series sid.
+     * Series are grouped by header: [addEpisode] writes the header row on first sight of its sid.
      */
     inner class IngestWriter internal constructor(private val playlistId: String, private val generation: Long) {
         private val counts = Counts()
@@ -168,46 +167,44 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         private val episodeBatch = ArrayList<ContentEpisode>(CHUNK)
         private val categoryBatch = ArrayList<Triple<String, String, String>>()  // type, id, name
         private val seenCategories = HashSet<String>()   // "type|id"
-        private val seriesSidByKey = HashMap<String, Int>()  // "categoryId|name" -> sid
-        private var nextSeriesSid = 1
-        private var nextEpisodeSeq = 0   // monotonic across chunks (batch index resets on flush)
+        private val seenSeries = HashSet<Int>()   // series sids whose header row is written
         private var tvgUrl: String? = null   // url-tvg/x-tvg-url from the #EXTM3U header, if any
 
         /** Capture the M3U header's default XMLTV EPG url (persisted with the meta row). */
         fun setTvgUrl(url: String) { if (tvgUrl == null && url.isNotBlank()) tvgUrl = url }
 
-        fun addChannel(row: ContentChannel) {
+        /** [categoryName] = the display name of [ContentChannel.categoryId] (defaults to the id itself). */
+        fun addChannel(row: ContentChannel, categoryName: String? = row.categoryId) {
             channelBatch.add(row); counts.live++
-            categoryOf(TYPE_LIVE, row.categoryId)
+            categoryOf(TYPE_LIVE, row.categoryId, categoryName)
             if (channelBatch.size >= CHUNK) flushChannels()
         }
 
-        fun addVod(row: ContentVod) {
+        fun addVod(row: ContentVod, categoryName: String? = row.categoryId) {
             vodBatch.add(row); counts.vod++
-            categoryOf(TYPE_VOD, row.categoryId)
+            categoryOf(TYPE_VOD, row.categoryId, categoryName)
             if (vodBatch.size >= CHUNK) flushVod()
         }
 
-        /** Group an episode under its series header (created on first sight). */
-        fun addEpisode(categoryId: String?, seriesName: String, season: Int, episodeNum: Int, title: String, logo: String?, url: String, ext: String?) {
-            val key = "${categoryId.orEmpty()}|$seriesName"
-            val seriesSid = seriesSidByKey.getOrPut(key) {
-                val sid = nextSeriesSid++
-                seriesBatch.add(ContentSeries(sid, seriesName, logo, categoryId)); counts.series++
-                categoryOf(TYPE_SERIES, categoryId)
+        /**
+         * B64: an episode under its series header, both with their ids already decided
+         * ([com.nuvio.tv.core.iptv.M3uIngestMapping]); the header row is written on first sight of
+         * its sid. Ids are content-derived now, so a repeated id (the same stream listed twice)
+         * replaces its row instead of being numbered apart.
+         */
+        fun addEpisode(series: ContentSeries, episode: ContentEpisode, categoryName: String? = series.categoryId) {
+            if (seenSeries.add(series.sid)) {
+                seriesBatch.add(series); counts.series++
+                categoryOf(TYPE_SERIES, series.categoryId, categoryName)
                 if (seriesBatch.size >= CHUNK) flushSeries()
-                sid
             }
-            // episode_sid must be unique per playlist. A monotonic sequence (not the per-chunk
-            // batch index, which resets on flush) guarantees uniqueness even for duplicate
-            // season/episode numbers across chunks.
-            episodeBatch.add(ContentEpisode(seriesSid, "e${nextEpisodeSeq++}", season, episodeNum, title, logo, url, ext))
+            episodeBatch.add(episode)
             if (episodeBatch.size >= CHUNK) flushEpisodes()
         }
 
-        private fun categoryOf(type: String, id: String?) {
+        private fun categoryOf(type: String, id: String?, name: String?) {
             val catId = id ?: return
-            if (seenCategories.add("$type|$catId")) categoryBatch.add(Triple(type, catId, catId))
+            if (seenCategories.add("$type|$catId")) categoryBatch.add(Triple(type, catId, name ?: catId))
         }
 
         internal fun flushAll() {

@@ -9,6 +9,7 @@ import com.nuvio.tv.core.iptv.content.M3UFileStore
 import com.nuvio.tv.core.iptv.content.M3UKind
 import com.nuvio.tv.core.iptv.content.M3UParser
 import com.nuvio.tv.core.iptv.epg.XmltvClient
+import com.nuvio.tv.core.iptv.identity.M3uIdentity
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -140,7 +141,7 @@ class M3UClient @Inject constructor(
                 val reader = FirstReadFlagReader(checkNotNull(resp.body) { "empty response body" }.charStream()) {
                     delivered = true
                 }.buffered()
-                val writer = db.ingest(acc.id) { w -> parseInto(reader, w) }
+                val writer = db.ingest(acc.id) { w -> parseInto(reader, w, M3uIdentity.loginOf(acc.baseUrl)) }
                 Log.i(TAG, "ingested M3U (url) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
             }
         }
@@ -187,7 +188,7 @@ class M3UClient @Inject constructor(
         }
         openMaybeGzip(file.inputStream()).use { stream ->
             val reader = stream.bufferedReader(Charsets.UTF_8)
-            val writer = db.ingest(acc.id) { w -> parseInto(reader, w) }
+            val writer = db.ingest(acc.id) { w -> parseInto(reader, w, null) }
             Log.i(TAG, "ingested M3U (file) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
         }
     }
@@ -206,19 +207,12 @@ class M3UClient @Inject constructor(
     /** Route each parsed entry to the DB writer. The heavy streaming walk lives in
      *  [M3UParser.parseStream] (reader walked ONCE, never fully materialized). The #EXTM3U header's
      *  url-tvg is captured for XMLTV EPG resolution. */
-    private fun parseInto(reader: BufferedReader, w: IptvContentDb.IngestWriter) {
-        var sid = 1
+    private fun parseInto(reader: BufferedReader, w: IptvContentDb.IngestWriter, login: M3uIdentity.Login?) {
         M3UParser.parseStream(reader, onHeaderTvgUrl = { w.setTvgUrl(it) }) { entry ->
-            when (entry.kind) {
-                M3UKind.LIVE -> w.addChannel(ContentChannel(sid++, entry.name, entry.logo, entry.tvgId, entry.group, entry.url))
-                M3UKind.SERIES -> w.addEpisodeFrom(entry)
-                M3UKind.VOD -> {
-                    // Promote "Show S01E02" .mp4 rows (shipped by many providers under /movie/) into
-                    // the series lane; genuine movies stay VOD.
-                    val ep = M3UParser.seriesEpisodeOf(entry.name)
-                    if (ep != null) w.addEpisode(entry.group, ep.first, ep.second, ep.third, entry.name, entry.logo, entry.url, entry.ext)
-                    else w.addVod(ContentVod(sid++, entry.name, entry.logo, entry.group, entry.url, entry.ext))
-                }
+            when (val row = M3uIngestMapping.map(entry, login)) {
+                is M3uIngestRow.Channel -> w.addChannel(row.row, entry.group)
+                is M3uIngestRow.Movie -> w.addVod(row.row, entry.group)
+                is M3uIngestRow.Episode -> w.addEpisode(row.series, row.row, entry.group)
             }
         }
     }
@@ -327,15 +321,6 @@ class M3UClient @Inject constructor(
         /** The M3U validation probe reads at most this much (Step 0.3b). */
         internal const val M3U_PROBE_BYTES = 1024
     }
-}
-
-/** Add an episode from a parsed /series/ M3U entry (name may or may not carry SxxExx). */
-private fun IptvContentDb.IngestWriter.addEpisodeFrom(entry: com.nuvio.tv.core.iptv.content.M3UEntry) {
-    val se = M3UParser.seriesEpisodeOf(entry.name)
-    val series = se?.first ?: entry.name
-    val season = se?.second ?: 1
-    val episodeNum = se?.third ?: 0
-    addEpisode(entry.group, series, season, episodeNum, entry.name, entry.logo, entry.url, entry.ext)
 }
 
 /**
