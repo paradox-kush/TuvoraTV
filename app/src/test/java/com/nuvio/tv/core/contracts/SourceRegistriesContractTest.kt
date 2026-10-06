@@ -29,6 +29,7 @@ class SourceRegistriesContractTest {
         PlaybackSessionReporterRegistry.resetForTest()
         PlaybackResumeOfferRegistry.resetForTest()
         HomeSectionContributorRegistry.resetForTest()
+        OwnSourceSubtitleRegistry.resetForTest()
     }
 
     @Test
@@ -212,6 +213,24 @@ class SourceRegistriesContractTest {
         assertFalse(HomeSectionContributorRegistry.isContributedKey("k2"))
         assertNull(HomeSectionContributorRegistry.loadSourcePage("nobody", "x", null))
         assertTrue(HomeSectionContributorRegistry.loadSourcePage("src", "x", null)?.items?.isEmpty() == true)
+    }
+
+    @Test
+    fun ownSourceSubtitlesComeOnlyFromTheOwnerAndAFailureCostsNothing() = runBlocking {
+        fun sub(id: String) = com.nuvio.tv.domain.model.Subtitle(id = id, url = "http://x/$id", lang = "en", addonName = "A", addonLogo = null)
+        OwnSourceSubtitleRegistry.register(object : OwnSourceSubtitleProvider {
+            override val name = "a"
+            override fun handles(videoId: String) = videoId.startsWith("a:")
+            override suspend fun subtitles(videoId: String) = listOf(sub("one"), sub("two"))
+        })
+        OwnSourceSubtitleRegistry.register(object : OwnSourceSubtitleProvider {
+            override val name = "boom"
+            override fun handles(videoId: String) = true
+            override suspend fun subtitles(videoId: String): List<com.nuvio.tv.domain.model.Subtitle> = error("boom")
+        })
+        assertEquals(listOf("one", "two"), OwnSourceSubtitleRegistry.subtitlesFor("a:1").map { it.id })
+        assertTrue("nothing owns it but the failing source: still no throw", OwnSourceSubtitleRegistry.subtitlesFor("tt1").isEmpty())
+        assertTrue(OwnSourceSubtitleRegistry.subtitlesFor(null).isEmpty())
     }
 
     private class FakeStream(private val prefix: String) : StreamSourceProvider {

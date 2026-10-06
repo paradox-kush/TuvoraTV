@@ -2,8 +2,13 @@ package com.nuvio.tv.core.contracts
 
 import kotlinx.coroutines.CancellationException
 
-/** "You were further along elsewhere": the position the player may offer to jump to. */
-data class PlaybackResumeOffer(val positionMs: Long)
+/**
+ * "You were further along elsewhere": the position the player may offer to jump to. [autoStart] = Tuvora has no
+ * progress of its own for this item, so the server's position simply IS where playback starts (the reference clients
+ * pass it up front as the start time) - no question asked. When false, Tuvora has its own record that differs and the
+ * viewer is offered the jump.
+ */
+data class PlaybackResumeOffer(val positionMs: Long, val autoStart: Boolean = false)
 
 /**
  * A source that keeps its own resume position and can say when it is NEWER than Tuvora's (a media server the

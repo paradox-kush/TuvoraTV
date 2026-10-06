@@ -146,7 +146,9 @@ class StreamScreenViewModel @Inject constructor(
      * the stored link only ever costs a failed playback.
      */
     private val skipLinkCache: Boolean =
-        videoId.startsWith(com.nuvio.tv.core.iptv.XtreamItemRegistry.PREFIX)
+        videoId.startsWith(com.nuvio.tv.core.iptv.XtreamItemRegistry.PREFIX) ||
+            // another own source's links (a media server's: minted per play, may carry a token) are never cached either
+            com.nuvio.tv.core.contracts.OwnSourcePolicy.isNeverCachedLinkId(videoId)
 
     private val _uiState = MutableStateFlow(
         StreamScreenUiState(
@@ -1153,7 +1155,7 @@ class StreamScreenViewModel @Inject constructor(
     suspend fun resolveStreamForPlayback(stream: Stream): StreamPlaybackInfo? {
         // A matched Stalker source is listed WITHOUT a play link (see XtreamStreamSource): mint it
         // here, for the chosen edition only, so browsing never spends the line's connection budget.
-        if (com.nuvio.tv.core.iptv.match.XtreamStreamSource.isDeferred(stream.url)) {
+        if (streamRepository.isDeferredIptvUrl(stream.url)) {
             val minted = streamRepository.mintDeferredIptvUrl(stream.url.orEmpty())
             if (minted.isNullOrBlank()) {
                 Log.w(TAG, "resolveStreamForPlayback: portal would not issue a link for ${stream.name}")

@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Media servers (Jellyfin / Emby as sources): the settings screens, the add + sign-in flow, one server's screen.
+  Server products are named as plain nouns ("Jellyfin server") - no vendor logos or marks anywhere (design section 6).
+  Other locales fall back to this English until a localisation pass.
+-->
+<resources>
+    <!-- Home / search row titles (the server's name is appended) -->
+    <string name="media_server_row_continue_watching">Continue Watching · %1$s</string>
+    <string name="media_server_row_next_up">Next Up · %1$s</string>
+    <string name="media_server_row_recently_added">Recently Added · %1$s</string>
+    <string name="media_server_search_movies">Movies · %1$s</string>
+    <string name="media_server_search_series">TV Shows · %1$s</string>
+
+    <!-- Settings entry -->
+    <string name="ms_settings_title">Media servers</string>
+    <string name="ms_settings_hub_subtitle">Movies and series from your own Jellyfin or Emby server</string>
+
+    <!-- List -->
+    <string name="ms_list_subtitle">Servers you added here or on another device. Your sign-in stays on this device.</string>
+    <string name="ms_add_row_title">Add a server</string>
+    <string name="ms_add_row_description">Jellyfin or Emby, on your network or online</string>
+    <string name="ms_list_section_servers">Your servers</string>
+    <string name="ms_empty_body">No servers yet. Add your own Jellyfin or Emby server to browse and play it here.</string>
+    <string name="ms_status_signed_in">Signed in</string>
+    <string name="ms_status_sign_in_again">Sign in again</string>
+    <string name="ms_status_needs_sign_in">Sign in on this device</string>
+    <string name="ms_status_offline">Offline</string>
+    <string name="ms_status_disabled">Off</string>
+    <string name="ms_status_checking">Checking…</string>
+    <string name="ms_sign_in_to_title">Sign in to %1$s</string>
+
+    <!-- Add + sign in -->
+    <string name="ms_add_title">Add a server</string>
+    <string name="ms_add_subtitle">Type your server\'s address. Tuvora tries the usual ports and https or http for you.</string>
+    <string name="ms_add_type_auto">Detect</string>
+    <string name="ms_add_type_jellyfin">Jellyfin</string>
+    <string name="ms_add_type_emby">Emby</string>
+    <string name="ms_add_address_label">Server address</string>
+    <string name="ms_add_address_hint">192.168.1.20:8096 or media.example.com</string>
+    <string name="ms_add_connect">Connect</string>
+    <string name="ms_add_checking">Checking…</string>
+    <string name="ms_add_connected">Connected to %1$s (%2$s)</string>
+    <string name="ms_add_type_corrected">You picked %1$s, but this server is %2$s. Continuing as %2$s.</string>
+    <string name="ms_add_choose_title">Sign in</string>
+    <string name="ms_add_quick_connect_row">Quick Connect</string>
+    <string name="ms_add_quick_connect_row_description">Get a code here, then approve it from your phone or computer</string>
+    <string name="ms_add_password_row">Username and password</string>
+    <string name="ms_add_password_row_description">Your password is used once to sign in and is never stored</string>
+    <string name="ms_add_change_address">Use a different address</string>
+    <string name="ms_add_back">Back</string>
+    <string name="ms_add_use_password">Use username and password instead</string>
+    <string name="ms_add_qc_title">Enter this code to sign in</string>
+    <string name="ms_add_qc_steps">On a phone or computer that is already signed in to %1$s, open Quick Connect and enter this code. In the Jellyfin app: Settings, then Quick Connect.</string>
+    <string name="ms_add_qc_expires">Expires in %1$s</string>
+    <string name="ms_add_qc_waiting">Waiting for approval…</string>
+    <string name="ms_add_qc_getting_code">Getting a code…</string>
+    <string name="ms_add_users_label">Users on this server</string>
+    <string name="ms_add_username_label">Username</string>
+    <string name="ms_add_password_label">Password</string>
+    <string name="ms_add_password_note">Your password is sent to the server once and not saved. Only the sign-in it returns is kept, on this device.</string>
+    <string name="ms_add_sign_in">Sign in</string>
+    <string name="ms_add_signing_in">Signing in…</string>
+    <string name="ms_add_error_invalid_address">That does not look like a server address.</string>
+    <string name="ms_add_error_not_a_server">Something answered at that address, but it is not a Jellyfin or Emby server.</string>
+    <string name="ms_add_error_unreachable">Could not reach the server. Check the address, the port and that the server is on.</string>
+    <string name="ms_add_error_wrong_credentials">Wrong username or password.</string>
+    <string name="ms_add_error_quick_connect">Quick Connect did not finish. It may be turned off on the server.</string>
+    <string name="ms_add_error_sign_in_failed">Could not sign in. Try again in a moment.</string>
+    <string name="ms_add_error_different_server">This address now belongs to a different server than the one you added. Remove the old entry and add the new one.</string>
+    <string name="ms_add_error_not_saved">The sign-in could not be stored securely on this device.</string>
+    <string name="ms_add_error_unusable">This server reported an identity Tuvora cannot use.</string>
+    <string name="ms_add_cert_title">Trust this certificate?</string>
+    <string name="ms_add_cert_body">This server\'s certificate was not issued by an authority your device trusts (a self-signed or private certificate). If this fingerprint matches your server, trust it. Tuvora will warn you if it ever changes.</string>
+    <string name="ms_add_cert_fingerprint">Fingerprint</string>
+    <string name="ms_add_cert_trust">Trust</string>
+    <string name="ms_add_cert_cancel">Cancel</string>
+
+    <!-- After a new server signed in -->
+    <string name="ms_done_title">You\'re signed in</string>
+    <string name="ms_done_subtitle">Give this server a name you will recognise, and choose what shows on Home.</string>
+    <string name="ms_done_name_label">Server name</string>
+    <string name="ms_done_recent">Show \"Recently added\" on Home</string>
+    <string name="ms_done_recent_hint">A row of what was just added to this server. Change it any time in the server\'s settings.</string>
+    <string name="ms_done_button">Done</string>
+
+    <!-- Server details -->
+    <string name="ms_details_gone">This server is no longer on your account.</string>
+    <string name="ms_details_sign_in">Sign in</string>
+    <string name="ms_details_sign_in_hint_again">This device\'s sign-in ended (the server refused it). Sign in again to keep using this server.</string>
+    <string name="ms_details_sign_in_hint_new">This server came from your account. Sign in once on this device to use it here.</string>
+    <string name="ms_details_section_home">On Home</string>
+    <string name="ms_details_home_continue">Server\'s Continue Watching</string>
+    <string name="ms_details_home_next_up">Server\'s Next Up</string>
+    <string name="ms_details_home_recent">Recently added</string>
+    <string name="ms_details_home_hint">Tuvora\'s own Continue Watching already includes what you play from this server. These are the server\'s own shelves, off until you turn them on. Reorder or hide them under Settings, Layout, Catalog order.</string>
+    <string name="ms_details_section_libraries">Libraries</string>
+    <string name="ms_details_libraries_hint">Show as a row on Home</string>
+    <string name="ms_details_libraries_empty">No movie or series libraries found.</string>
+    <string name="ms_details_libraries_failed">Could not load the libraries right now.</string>
+    <string name="ms_details_section_manage">Manage</string>
+    <string name="ms_details_name">Name</string>
+    <string name="ms_details_rename_title">Rename server</string>
+    <string name="ms_details_rename_save">Save</string>
+    <string name="ms_details_enabled">Use this server</string>
+    <string name="ms_details_enabled_hint">Turn off to hide it from Home and search without removing it</string>
+    <string name="ms_details_sync_address">Sync address with your account</string>
+    <string name="ms_details_sync_address_hint">Lets your other devices offer to sign in to this server. Only the address and username sync. Passwords and sign-in tokens never leave this device, so each device signs in on its own.</string>
+    <string name="ms_details_address">Address</string>
+    <string name="ms_details_user">Signed in as</string>
+    <string name="ms_details_sign_out">Sign out on this device</string>
+    <string name="ms_details_sign_out_title">Sign out?</string>
+    <string name="ms_details_sign_out_body">This device will be signed out of %1$s. The server stays in your list.</string>
+    <string name="ms_details_sign_out_confirm">Sign out</string>
+    <string name="ms_details_remove">Remove server</string>
+    <string name="ms_details_remove_title">Remove server?</string>
+    <string name="ms_details_remove_body">%1$s will be removed from your account and signed out on this device. Nothing on the server itself changes.</string>
+    <string name="ms_details_remove_purge">Also clear its Continue Watching and library items</string>
+    <string name="ms_details_remove_confirm">Remove</string>
+    <string name="ms_dialog_cancel">Cancel</string>
+
+    <!-- Player -->
+    <string name="ms_resume_from_server_message">You watched further on your server. Continue at %1$s?</string>
+    <string name="ms_resume_from_server_action">Jump</string>
+    <string name="ms_resume_from_server_auto">Continuing from where you stopped on your server (%1$s)</string>
+    <string name="ms_playback_unavailable">This server did not give a playable stream. It may be offline or the sign-in ended.</string>
+</resources>

@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.FastForward
@@ -182,6 +183,7 @@ fun SettingsScreen(
     onNavigateToLicensesAttributions: () -> Unit = {},
     onNavigateToIptvPairing: () -> Unit = {},
     onNavigateToIptvSetupCode: () -> Unit = {},
+    onNavigateToMediaServers: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
     experienceModeViewModel: ExperienceModeSettingsViewModel = hiltViewModel()
 ) {
@@ -648,7 +650,8 @@ fun SettingsScreen(
                                 onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                                 onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
                                 onNavigateToIptvPairing = onNavigateToIptvPairing,
-                                onNavigateToIptvSetupCode = onNavigateToIptvSetupCode
+                                onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
+                                onNavigateToMediaServers = onNavigateToMediaServers
                             )
                         }
                     }
@@ -790,7 +793,8 @@ fun SettingsScreen(
                         onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                         onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
                         onNavigateToIptvPairing = onNavigateToIptvPairing,
-                        onNavigateToIptvSetupCode = onNavigateToIptvSetupCode
+                        onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
+                        onNavigateToMediaServers = onNavigateToMediaServers
                     )
                 }
             }
@@ -821,7 +825,8 @@ private fun SettingsDetailPane(
     onNavigateToSupportersContributors: () -> Unit,
     onNavigateToLicensesAttributions: () -> Unit,
     onNavigateToIptvPairing: () -> Unit,
-    onNavigateToIptvSetupCode: () -> Unit
+    onNavigateToIptvSetupCode: () -> Unit,
+    onNavigateToMediaServers: () -> Unit
 ) {
     when (selectedCategory) {
         SettingsCategory.EXPERIENCE -> EssentialAdvancedSettingsContent(
@@ -907,6 +912,7 @@ private fun SettingsDetailPane(
             iptvFocusRequester = integrationIptvFocusRequester,
             onNavigateToIptvPairing = onNavigateToIptvPairing,
             onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
+            onNavigateToMediaServers = onNavigateToMediaServers,
             autoFocusEnabled = allowDetailAutofocus
         )
         SettingsCategory.ABOUT -> AboutSettingsContent(
@@ -1095,6 +1101,7 @@ private fun IntegrationSettingsContent(
     iptvFocusRequester: FocusRequester,
     onNavigateToIptvPairing: () -> Unit,
     onNavigateToIptvSetupCode: () -> Unit,
+    onNavigateToMediaServers: () -> Unit,
     autoFocusEnabled: Boolean
 ) {
     // Store builds compile Debrid out: its hub row is not rendered, and a stale Debrid selection
@@ -1192,6 +1199,15 @@ private fun IntegrationSettingsContent(
                                     subtitle = stringResource(R.string.iptv_settings_hub_subtitle),
                                     leadingIcon = Icons.Default.LiveTv,
                                     onClick = { onSelectSection(IntegrationSettingsSection.Iptv) }
+                                )
+                            }
+                            // Jellyfin / Emby servers as sources (their own screens - a full-screen route, like the IPTV pairing).
+                            item(key = "integration_hub_media_servers") {
+                                SettingsActionRow(
+                                    title = stringResource(R.string.ms_settings_title),
+                                    subtitle = stringResource(R.string.ms_settings_hub_subtitle),
+                                    leadingIcon = Icons.Default.Dns,
+                                    onClick = onNavigateToMediaServers
                                 )
                             }
                         }

@@ -52,9 +52,12 @@ class SubtitleRepositoryImpl @Inject constructor(
         if (com.nuvio.tv.core.player.AddonSubtitleIdPolicy.isProviderScoped(id) ||
             com.nuvio.tv.core.player.AddonSubtitleIdPolicy.isProviderScoped(videoId)
         ) {
+            // An own source's OWN subtitles for its item (a media server's sidecar files) never touch an add-on;
+            // empty for IPTV and add-on items, so what follows is unchanged for them.
+            val own = com.nuvio.tv.core.contracts.OwnSourceSubtitleRegistry.subtitlesFor(videoId ?: id)
             val publicId = iptvSubtitleIdResolver.publicSubtitleVideoId(id, season, episode)
-                ?: return@withContext emptyList()
-            return@withContext getSubtitles(
+                ?: return@withContext own
+            return@withContext own + getSubtitles(
                 type = com.nuvio.tv.core.player.AddonSubtitleIdPolicy.requestType(type, publicId),
                 id = publicId.substringBefore(':'),
                 videoId = publicId,

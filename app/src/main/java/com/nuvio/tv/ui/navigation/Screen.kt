@@ -173,6 +173,19 @@ sealed class Screen(val route: String) {
     data object IptvPairing : Screen("iptv_pairing")
     /** Step 2: type (or wait for a phone to redeem) a provider's setup code. Carries no argument: the code is never in a route. */
     data object IptvSetupCode : Screen("iptv_setup_code")
+    /** Settings -> Media servers (Jellyfin / Emby): the list, the add / sign-in flow and one server's screen. */
+    data object MediaServers : Screen("media_servers")
+    data object MediaServerAdd : Screen("media_server_add?entryKey={entryKey}") {
+        private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        /** [entryKey] = sign an existing (synced) entry in on this device instead of adding a new server. */
+        fun createRoute(entryKey: String? = null): String = "media_server_add?entryKey=${entryKey?.let { encode(it) } ?: ""}"
+    }
+    data object MediaServerDetails : Screen("media_server_details/{entryKey}") {
+        private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        fun createRoute(entryKey: String): String = "media_server_details/${encode(entryKey)}"
+    }
     data object SportsHub : Screen("sports_hub")
     data object CatalogOrder : Screen("catalog_order")
     data object Plugins : Screen("plugins")

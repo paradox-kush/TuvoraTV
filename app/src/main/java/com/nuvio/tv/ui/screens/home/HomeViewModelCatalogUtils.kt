@@ -136,6 +136,12 @@ internal fun HomeViewModel.replaceCatalogRow(key: String, row: CatalogRow) {
     }
 }
 
+/** Drops a row; call with [HomeViewModel.catalogStateLock] held. */
+internal fun HomeViewModel.removeCatalogRowLocked(key: String) {
+    val previousRow = catalogsMap.remove(key) ?: return
+    reindexCatalogRow(key, previousRow, null)
+}
+
 internal inline fun HomeViewModel.updateCatalogRow(
     key: String,
     transform: (CatalogRow) -> CatalogRow
@@ -224,7 +230,9 @@ internal fun HomeViewModel.removeTruncatedRowCacheEntry(key: String) {
 
 internal fun HomeViewModel.rebuildCatalogOrder(addons: List<Addon>) {
     val defaultOrder = buildDefaultCatalogOrder(addons)
-    val collectionKeys = collectionsCache.map { "collection_${it.id}" }
+    // Rows other sources contribute (a media server's own shelves) take their place like collections do: saved
+    // position first, then the end. They are declared synchronously, so the order is right before their data lands.
+    val collectionKeys = collectionsCache.map { "collection_${it.id}" } + contributedRowKeys()
     val allAvailable = (defaultOrder + collectionKeys).toSet()
 
     if (followAddonsOrderEnabled) {

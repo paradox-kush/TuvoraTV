@@ -23,6 +23,7 @@ object OwnSourcePolicy {
     private val subtitleScoped = NamedRegistry<(String) -> Boolean>("subtitle-scoped id predicate")
     private val scrobbleExclusions = NamedRegistry<(String) -> Boolean>("tracking-scrobble exclusion")
     private val telemetryRewriters = NamedRegistry<(id: String, salt: String) -> String?>("telemetry-id rewriter")
+    private val linkCacheExclusions = NamedRegistry<(String) -> Boolean>("link-cache exclusion")
 
     fun registerContentIdPredicate(name: String, predicate: (String) -> Boolean) =
         contentIdPredicates.register(name, predicate)
@@ -35,6 +36,10 @@ object OwnSourcePolicy {
 
     fun registerScrobbleExclusion(name: String, predicate: (String) -> Boolean) =
         scrobbleExclusions.register(name, predicate)
+
+    /** A source whose minted play links must never be stored for reuse (they are minted per play and may carry a token). */
+    fun registerLinkCacheExclusion(name: String, predicate: (String) -> Boolean) =
+        linkCacheExclusions.register(name, predicate)
 
     /** [rewriter] returns null for "not mine". */
     fun registerTelemetryRewriter(name: String, rewriter: (id: String, salt: String) -> String?) =
@@ -54,6 +59,9 @@ object OwnSourcePolicy {
         return subtitleScoped.all.any { it(trimmed) }
     }
 
+    fun isNeverCachedLinkId(id: String?): Boolean =
+        id != null && linkCacheExclusions.all.any { it(id) }
+
     fun isExcludedFromTrackingScrobble(id: String?): Boolean =
         id != null && scrobbleExclusions.all.any { it(id) }
 
@@ -67,5 +75,6 @@ object OwnSourcePolicy {
         subtitleScoped.resetForTest()
         scrobbleExclusions.resetForTest()
         telemetryRewriters.resetForTest()
+        linkCacheExclusions.resetForTest()
     }
 }

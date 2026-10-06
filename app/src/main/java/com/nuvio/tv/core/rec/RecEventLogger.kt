@@ -148,6 +148,8 @@ class RecEventLogger @Inject constructor(
                 event = event.copy(
                     clientTs = isoTimestamp(now),
                     profileId = activeProfileId(),
+                    // A media-server id embeds the server's and the user's own ids: only its salted hash may leave the device.
+                    itemId = event.itemId?.let { com.nuvio.tv.core.contracts.OwnSourcePolicy.telemetryId(it, identity.deviceId()) },
                 ),
             )
 

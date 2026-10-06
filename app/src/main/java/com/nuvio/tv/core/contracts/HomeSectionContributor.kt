@@ -1,7 +1,11 @@
 package com.nuvio.tv.core.contracts
 
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.domain.model.catalogRowLegacyKey
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.merge
 
 /**
  * A row a contributor WOULD show (its settings say it is on), independent of whether it currently has items -
@@ -51,6 +55,23 @@ interface HomeSectionContributor {
 
     /** The rows this contributor is configured to show, for the Home layout settings. Cheap and synchronous (no network). */
     fun declaredRows(): List<ContributedRowDeclaration> = emptyList()
+
+    /** Emits when the contributor's CONFIGURATION changed (a server added / edited / signed in): Home asks again. */
+    val changes: Flow<Unit> get() = emptyFlow()
+}
+
+/**
+ * How a contributed row is keyed on TV Home: it is a plain catalog row of the pseudo-add-on [ADDON_ID], so it joins
+ * the same order / hide / rename preferences as every add-on catalog (keyed by [homeKey], the catalog row's legacy
+ * key). The contributor's own key (`ms:{type}:{machineId}:{rowId}`) is the catalog id and never carries a user id.
+ */
+object ContributedRows {
+    const val ADDON_ID = "contrib"
+    const val TYPE = "movie"
+
+    fun homeKey(rowKey: String): String = catalogRowLegacyKey(ADDON_ID, TYPE, rowKey)
+
+    fun isContributedHomeKey(key: String): Boolean = key.startsWith("${ADDON_ID}_")
 }
 
 object HomeSectionContributorRegistry {
@@ -75,6 +96,9 @@ object HomeSectionContributorRegistry {
             }
         }.filter { seen.add(it.key) }
     }
+
+    /** Merged configuration-change signals of every contributor. */
+    fun changes(): Flow<Unit> = merge(*all.map { it.changes }.toTypedArray().ifEmpty { arrayOf(emptyFlow()) })
 
     /** Every contributor's declared rows (a failing contributor declares none), first declaration of a key wins. */
     fun declaredRows(): List<ContributedRowDeclaration> {

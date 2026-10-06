@@ -197,6 +197,13 @@ internal suspend fun HomeViewModel.loadAllCatalogsPipeline(
     try {
         if (addons.isEmpty()) {
             catalogsLoadInProgress = false
+            if (contributedRowKeys().isNotEmpty()) {
+                // A server-only Home (no add-ons, e.g. a store build): the rows a media server contributes still render.
+                rebuildCatalogOrder(addons)
+                _uiState.update { it.copy(isLoading = false, error = null) }
+                refreshContributedRowsPipeline(force = false)
+                return
+            }
             _uiState.update { it.copy(isLoading = false, error = appContext.getString(R.string.home_error_no_addons)) }
             return
         }
@@ -333,6 +340,9 @@ internal suspend fun HomeViewModel.loadAllCatalogsPipeline(
         Log.d(HomeViewModel.TAG,
             "Lazy loading: eager=${eagerHomeCatalogs.size} lazy=${lazyHomeCatalogs.size}"
         )
+
+        // Rows other sources contribute (a media server's shelves): the contributor decides whether it must fetch.
+        viewModelScope.launch { refreshContributedRowsPipeline(force = false) }
 
         val eagerCatalogs = eagerHomeCatalogs + heroOnlyCatalogs
         pendingCatalogLoads = eagerCatalogs.size
@@ -653,7 +663,8 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
         // When orderedRows is empty (all catalogs disabled), include any
         // hero-only loaded catalogs as fallback hero sources.
         val allHeroFallbackRows = if (orderedRows.isNotEmpty()) {
-            orderedRows
+            // Rows other sources contribute (a media server's shelves) never feed the hero (owner decision 2026-10-06).
+            orderedRows.filterNot { it.addonId == com.nuvio.tv.core.contracts.ContributedRows.ADDON_ID }
         } else {
             val nonOrderedRows = catalogSnapshot.keys
                 .filter { it !in orderedKeySet }
