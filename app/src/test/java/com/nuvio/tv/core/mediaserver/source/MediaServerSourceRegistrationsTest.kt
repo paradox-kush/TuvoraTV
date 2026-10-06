@@ -83,6 +83,23 @@ class MediaServerSourceRegistrationsTest {
         assertEquals("everything else is untouched", "tt0133093", OwnSourcePolicy.telemetryId("tt0133093", "salt-1"))
     }
 
+    /** Design 6: media servers are an accepted category in store builds, so a server item must stay playable there. */
+    @Test
+    fun aServerItemIsOwnContentSoStoreBuildsStillPlayItAndKeepItsEmbeddedStreams() {
+        registerBoth(rig())
+        assertTrue("store posture recognises a server item as the user's own source", com.nuvio.tv.core.streams.PlaybackAvailability.isIptvId(ms))
+        val stream = com.nuvio.tv.domain.model.Stream(
+            name = "n", title = "t", description = null, url = "ms-deferred:x", ytId = null, infoHash = null, fileIdx = null,
+            externalUrl = null, behaviorHints = null, addonName = "s", addonLogo = null,
+        )
+        assertEquals(
+            "store build (add-on streams off) keeps a server item's own streams",
+            listOf(stream),
+            com.nuvio.tv.core.streams.AddonSourcePolicy.embeddedStreamsForBuild(listOf(stream), streamSourcesEnabled = false, isIptv = com.nuvio.tv.core.streams.PlaybackAvailability.isIptvId(ms)),
+        )
+        assertTrue(com.nuvio.tv.core.streams.AddonSourcePolicy.cachedLinkUsable(streamSourcesEnabled = false, isIptv = com.nuvio.tv.core.streams.PlaybackAvailability.isIptvId(ms)))
+    }
+
     @Test
     fun theRecTelemetryEventCarriesOnlyTheHashedServerItemId() {
         registerBoth(rig())
