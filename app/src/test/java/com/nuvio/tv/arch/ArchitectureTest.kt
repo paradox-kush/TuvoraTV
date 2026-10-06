@@ -45,6 +45,9 @@ class ArchitectureTest {
         "/core/iptv/", "/core/epg/", "/core/radar/", "/core/rec/", "/core/memory/",
         "/core/analytics/", // cross-cutting fork telemetry — its files may reference fork features
         "/ui/screens/iptv/", "/ui/screens/radar/", "/ui/screens/livetv/",
+        // Media servers (Jellyfin/Emby): fork-owned from day one, so the firewall already holds when the
+        // first file lands.
+        "/core/mediaserver/", "/ui/screens/mediaserver/",
     )
     private fun isForkFile(path: String) = forkPaths.any { path.contains(it) }
 
@@ -55,8 +58,8 @@ class ArchitectureTest {
     // Fork-feature references. core.analytics is fork-only but DELIBERATELY EXEMPT (cross-cutting
     // telemetry), so it is not part of this pattern.
     private val forkRef = Regex(
-        """\bcom\.nuvio\.tv\.core\.(iptv|epg|radar|rec|memory)\.""" +
-            """|\bcom\.nuvio\.tv\.ui\.screens\.(iptv|radar|livetv)\.""",
+        """\bcom\.nuvio\.tv\.core\.(iptv|epg|radar|rec|memory|mediaserver)\.""" +
+            """|\bcom\.nuvio\.tv\.ui\.screens\.(iptv|radar|livetv|mediaserver)\.""",
     )
 
     // Strip block + WHOLE-LINE // comments only. A naive //.* eats the // in "https://…" literals and
@@ -107,6 +110,20 @@ class ArchitectureTest {
                 "$productionSourceRoot/java/com/nuvio/tv/playback; the clean firewall must fail closed.",
             files.any { (path, _) -> isCleanPlaybackFile(path) },
         )
+    }
+
+    @Test
+    fun `the fork set names the media-server packages (Wave 3 P0)`() {
+        // The lists are explicit (fork side = upstream absence), so a new fork feature must be ADDED to
+        // both before its first file lands, or upstream-aligned code could reference it unchecked. The
+        // probes are built by concatenation: this file is scanned by the rules below and must not itself
+        // contain a fork FQN.
+        val root = "com.nuvio." + "tv."
+        assertTrue("core/mediaserver is fork", isForkFile("/app/src/main/java/com/nuvio/tv/core/mediaserver/X.kt"))
+        assertTrue("ui/screens/mediaserver is fork", isForkFile("/app/src/main/java/com/nuvio/tv/ui/screens/mediaserver/X.kt"))
+        assertTrue("core ref matches", forkRef.containsMatchIn("import " + root + "core.mediaserver.MediaServerLane"))
+        assertTrue("ui ref matches", forkRef.containsMatchIn("import " + root + "ui.screens.mediaserver.AddServerScreen"))
+        assertFalse("neutral contracts stay reachable", forkRef.containsMatchIn("com.nuvio.tv.core.contracts.IptvStreamSources"))
     }
 
     @Test

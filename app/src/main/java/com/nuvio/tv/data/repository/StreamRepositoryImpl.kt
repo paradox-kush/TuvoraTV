@@ -142,6 +142,9 @@ class StreamRepositoryImpl @Inject constructor(
         }
     }
 
+    override fun isDeferredIptvUrl(url: String?): Boolean =
+        com.nuvio.tv.core.iptv.match.XtreamStreamSource.isDeferred(url)
+
     override suspend fun mintDeferredIptvUrl(url: String): String? {
         if (!com.nuvio.tv.core.iptv.match.XtreamStreamSource.isDeferred(url)) return url
         val accounts = xtreamAccountStore.accounts.first()
