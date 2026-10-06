@@ -135,6 +135,13 @@ internal class MediaServerStreamSourceProvider(
         }
     }
 
+    /** The recovery path: the media source this play was minted for (kept in [MediaServerPlaybackSessions]), minted again. */
+    override suspend fun reissueLink(videoId: String, forceMint: Boolean): String? {
+        val parsed = MediaServerIds.parse(videoId) ?: return null
+        val session = MediaServerPlaybackSessions.forItem(parsed.serverKey, parsed.itemId)
+        return resolveDeferredUrl(MediaServerIds.deferredUrl(parsed.serverKey, parsed.itemId, session?.mediaSourceId), forceMint)
+    }
+
     private fun MediaSourceDto.toFacts() = PlaybackDecisionPolicy.SourceFacts(
         id = id,
         protocol = protocol,

@@ -68,6 +68,18 @@ class MediaServerSessionReporterTest {
     }
 
     @Test
+    fun aServerBuiltPlayEndsItsTranscodeJobWithTheSessionAndADirectPlayHasNone() = runTest {
+        val rig = rig(); minted(PlaybackPlayMethod.TRANSCODE)
+        val r = reporter(rig)
+        r.onStart(state(0)); r.onStop(state(60_000))
+        assertEquals("the ffmpeg job is ended best-effort once the Stopped report is out", listOf("ps1"), client.stoppedEncodings)
+        MediaServerPlaybackSessions.reset(); client.stoppedEncodings.clear(); client.reports.clear(); minted(PlaybackPlayMethod.DIRECT_PLAY)
+        val direct = reporter(rig)
+        direct.onStart(state(0)); direct.onStop(state(60_000))
+        assertTrue("nothing to end for a direct play", client.stoppedEncodings.isEmpty())
+    }
+
+    @Test
     fun thePlayersOwnPlayMethodWinsWhenItKnowsOne() = runTest {
         val rig = rig(); minted(PlaybackPlayMethod.DIRECT_PLAY)
         reporter(rig).onStart(state(0, method = PlaybackPlayMethod.DIRECT_STREAM))

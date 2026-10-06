@@ -41,6 +41,13 @@ interface StreamSourceProvider {
 
     /** Mint the real play URL for a deferred [url], or null. [forceMint] = the previous attempt failed (pick a transcode). */
     suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String?
+
+    /**
+     * A fresh play URL for the item [videoId] that is ALREADY playing and failed (an expired transcode session, a refused
+     * stream): the one-shot recovery the player runs. [forceMint] picks the server's transcode over direct play. Null = this
+     * source cannot (the default), the item is gone or the sign-in ended.
+     */
+    suspend fun reissueLink(videoId: String, forceMint: Boolean): String? = null
 }
 
 object StreamSourceRegistry {
@@ -87,6 +94,9 @@ class CompositeStreamSourceProvider(
 
     override suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String? =
         providers().firstOrNull { it.isDeferredUrl(url) }?.resolveDeferredUrl(url, forceMint)
+
+    override suspend fun reissueLink(videoId: String, forceMint: Boolean): String? =
+        providers().firstOrNull { it.isHandledId(videoId) }?.reissueLink(videoId, forceMint)
 }
 
 /** Thin read facade: the combined view of [StreamSourceRegistry]. Stable instance, empty until a source registers. */

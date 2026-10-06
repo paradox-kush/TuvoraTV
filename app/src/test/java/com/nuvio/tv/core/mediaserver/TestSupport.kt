@@ -146,6 +146,8 @@ internal class FakeClient : com.nuvio.tv.core.mediaserver.client.MediaServerClie
     override suspend fun setPlayed(itemId: String, played: Boolean) { check(); this.played += itemId to played }
     override suspend fun authorizeQuickConnect(code: String) { check(); authorized += code }
     override suspend fun logout() { check(); loggedOut++ }
+    val stoppedEncodings = mutableListOf<String>()
+    override suspend fun stopEncoding(playSessionId: String) { check(); stoppedEncodings += playSessionId }
 }
 
 internal fun item(

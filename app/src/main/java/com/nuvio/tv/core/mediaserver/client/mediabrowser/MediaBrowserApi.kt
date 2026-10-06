@@ -387,6 +387,10 @@ internal class MediaBrowserClient(
         post("/Sessions/Logout")
     }
 
+    override suspend fun stopEncoding(playSessionId: String) {
+        delete("/Videos/ActiveEncodings", listOf("deviceId" to identity.deviceId, "playSessionId" to playSessionId))
+    }
+
     private companion object {
         const val NEXT_UP_WINDOW_MS = 365L * 24 * 3600 * 1000
     }

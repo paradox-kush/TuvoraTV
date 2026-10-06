@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
  *
  * Nothing here touches a source that does not own the item: [reporting] is a cheap synchronous check first.
  */
-private fun PlayerRuntimeController.reportedVideoId(): String? =
+internal fun PlayerRuntimeController.reportedVideoId(): String? =
     currentVideoId?.takeIf { it.isNotBlank() } ?: contentId?.takeIf { it.isNotBlank() }
 
 internal fun PlayerRuntimeController.reporting(): Boolean {
@@ -104,3 +104,7 @@ internal suspend fun PlayerRuntimeController.askSourceForResume(localPositionMs:
     }.getOrNull()
     return ServerResumePolicy.decide(offer)
 }
+
+/** The id of the playing item when an own-source lane (a media server) owns it, else null: what the link-refresh recovery keys on. */
+internal fun PlayerRuntimeController.ownSourceVideoId(): String? =
+    reportedVideoId()?.takeIf { com.nuvio.tv.core.contracts.StreamSourceAccess.current().isHandledId(it) }

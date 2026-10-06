@@ -204,6 +204,21 @@ class MediaServerStreamSourceProviderTest {
     }
 
     @Test
+    fun aFailedPlayIsReissuedForTheMediaSourceItWasMintedForAsATranscode() = runTest {
+        val rig = rig()
+        client.negotiation = PlaybackNegotiation(listOf(source("srcA"), source("srcB")), "ps1")
+        val p = provider(rig)
+        p.resolveDeferredUrl(deferred(source = "srcB"), forceMint = false) // the viewer picked version B
+        client.playbackRequests.clear()
+        val url = p.reissueLink(id(), forceMint = true)
+        assertTrue("the server's own transcode URL", url!!.contains("master.m3u8"))
+        val request = client.playbackRequests.single().second
+        assertEquals("the same version again, not the first one", "srcB", request.mediaSourceId)
+        assertTrue(request.forceTranscode)
+        assertNull("not an item of this source", p.reissueLink("tt0133093", true))
+    }
+
+    @Test
     fun aMalformedOrForeignDeferredUrlMintsNothing() = runTest {
         val rig = rig()
         val p = provider(rig)

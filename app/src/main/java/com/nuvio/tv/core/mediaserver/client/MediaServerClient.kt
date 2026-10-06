@@ -120,4 +120,10 @@ internal interface MediaServerClient {
      * live token behind in the server's device list (owner decision 2026-10-06). Callers treat a failure as best-effort.
      */
     suspend fun logout()
+
+    /**
+     * Ends this device's transcode job for a finished / switched play (`DELETE /Videos/ActiveEncodings`), so no orphan
+     * ffmpeg keeps running on the server (jellyfin-androidtv does the same when it changes a transcode). Best effort.
+     */
+    suspend fun stopEncoding(playSessionId: String) {}
 }
