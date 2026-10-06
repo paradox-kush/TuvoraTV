@@ -6,6 +6,7 @@ import com.nuvio.tv.core.contracts.IptvSearchRow
 import com.nuvio.tv.core.contracts.MetaSourceAccess
 import com.nuvio.tv.core.contracts.MetaSourceRegistry
 import com.nuvio.tv.core.contracts.OwnSourcePolicy
+import com.nuvio.tv.core.rec.withWireItemId
 import com.nuvio.tv.core.contracts.PlaybackResumeOfferRegistry
 import com.nuvio.tv.core.contracts.PlaybackSessionReporterRegistry
 import com.nuvio.tv.core.contracts.SearchProviderRegistry
@@ -80,6 +81,17 @@ class MediaServerSourceRegistrationsTest {
         assertEquals("stable for one install", wire, OwnSourcePolicy.telemetryId(ms, "salt-1"))
         assertTrue("different installs cannot be joined", wire != OwnSourcePolicy.telemetryId(ms, "salt-2"))
         assertEquals("everything else is untouched", "tt0133093", OwnSourcePolicy.telemetryId("tt0133093", "salt-1"))
+    }
+
+    @Test
+    fun theRecTelemetryEventCarriesOnlyTheHashedServerItemId() {
+        registerBoth(rig())
+        fun event(id: String?) = com.nuvio.tv.core.rec.RecEvent(eventType = "play_start", surface = "player", contentType = "movie", itemId = id)
+        val wire = event(ms).withWireItemId("salt-1").itemId.orEmpty()
+        assertFalse("machine and user ids never reach the telemetry wire: $wire", M in wire || U in wire)
+        assertEquals(OwnSourcePolicy.telemetryId(ms, "salt-1"), wire)
+        assertEquals("a public id is untouched", "tt0133093", event("tt0133093").withWireItemId("salt-1").itemId)
+        assertEquals(null, event(null).withWireItemId("salt-1").itemId)
     }
 
     @Test

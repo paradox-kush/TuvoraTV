@@ -148,9 +148,7 @@ class RecEventLogger @Inject constructor(
                 event = event.copy(
                     clientTs = isoTimestamp(now),
                     profileId = activeProfileId(),
-                    // A media-server id embeds the server's and the user's own ids: only its salted hash may leave the device.
-                    itemId = event.itemId?.let { com.nuvio.tv.core.contracts.OwnSourcePolicy.telemetryId(it, identity.deviceId()) },
-                ),
+                ).withWireItemId(identity.deviceId()),
             )
 
             val shouldFlush: Boolean
@@ -362,3 +360,11 @@ class RecEventLogger @Inject constructor(
         }
     }
 }
+
+/**
+ * The item id as it may leave the device: a media-server id embeds the server's and the user's own ids, so only its
+ * salted hash goes out (the registered own-source telemetry rewriter); every other id is untouched. Pure, so the
+ * privacy rule is testable without the logger's Android plumbing.
+ */
+internal fun RecEvent.withWireItemId(installSalt: String): RecEvent =
+    copy(itemId = itemId?.let { com.nuvio.tv.core.contracts.OwnSourcePolicy.telemetryId(it, installSalt) })
