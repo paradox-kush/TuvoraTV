@@ -319,6 +319,13 @@ class MetaRepositoryImpl @Inject constructor(
         id: String,
         sourceAddonBaseUrl: String?
     ): Flow<NetworkResult<Meta>> = flow {
+        // OWN-SOURCE LANE (media server): its ids resolve their own meta, bypassing addon resolution.
+        if (com.nuvio.tv.core.contracts.MetaSourceAccess.handlesId(id)) {
+            val meta = com.nuvio.tv.core.contracts.MetaSourceAccess.meta(type, id)
+            if (meta != null) emit(NetworkResult.Success(meta))
+            else emit(NetworkResult.Error("Item is no longer available"))
+            return@flow
+        }
         // HYBRID LANE: Xtream ids resolve their own meta, bypassing all addon resolution.
         // Enriched with TMDB art/metadata (backdrop, logo, cast) when a tmdb_id is available,
         // so the native detail screen looks identical to addon-backed content.
@@ -589,6 +596,12 @@ class MetaRepositoryImpl @Inject constructor(
         type: String,
         id: String
     ): Flow<NetworkResult<Meta>> = flow {
+        if (com.nuvio.tv.core.contracts.MetaSourceAccess.handlesId(id)) {
+            val meta = com.nuvio.tv.core.contracts.MetaSourceAccess.meta(type, id)
+            if (meta != null) emit(NetworkResult.Success(meta))
+            else emit(NetworkResult.Error("Item is no longer available"))
+            return@flow
+        }
         // HYBRID LANE: Xtream ids resolve their own meta (same as getMetaFromAllAddons),
         // bypassing addon resolution. Without this the primary lane errors on xtream: ids,
         // so Continue Watching enrichment / next-up for IPTV movies & series never resolves.

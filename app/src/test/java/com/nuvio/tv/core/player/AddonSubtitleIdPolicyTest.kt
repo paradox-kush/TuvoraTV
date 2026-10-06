@@ -4,10 +4,22 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 
 /** Port of NuvioMobile commonTest AddonSubtitleIdPolicyTest. JUnit order: (message,) expected, actual. */
 class AddonSubtitleIdPolicyTest {
+    // Provider-scoped ids are registered own-source policy: wire IPTV as NuvioApplication does.
+    @Before
+    fun wireIptv() {
+        com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
+        com.nuvio.tv.core.iptv.IptvSourceRegistrations.register()
+    }
+
+    @After
+    fun unwireIptv() = com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
+
     private val m3uEpisode = "xtream:m3u|http://panel.example/get.php?username=u&password=p:episode:991"
 
     @Test

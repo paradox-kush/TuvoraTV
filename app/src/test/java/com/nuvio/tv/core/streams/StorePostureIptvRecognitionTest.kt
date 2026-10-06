@@ -6,6 +6,8 @@ import com.nuvio.tv.core.iptv.tvLegacyM3uId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -17,6 +19,15 @@ import org.junit.Test
  * play no part in the decision.
  */
 class StorePostureIptvRecognitionTest {
+    // IPTV's "own source" ids are registered policy now: wire it as NuvioApplication does.
+    @Before
+    fun wireIptv() {
+        com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
+        com.nuvio.tv.core.iptv.IptvSourceRegistrations.register()
+    }
+
+    @After
+    fun unwireIptv() = com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
 
     private val accountIds: List<String> = listOfNotNull(
         PlaylistKey.xtream("http://Panel.Example.com:80/player_api.php", "alice"),
