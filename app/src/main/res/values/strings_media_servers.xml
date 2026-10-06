@@ -121,7 +121,6 @@
 
     <!-- Player -->
     <string name="ms_resume_from_server_message">You watched further on your server. Continue at %1$s?</string>
-    <string name="ms_resume_from_server_action">Jump</string>
-    <string name="ms_resume_from_server_auto">Continuing from where you stopped on your server (%1$s)</string>
+    <string name="ms_resume_from_server_action">Continue</string>
     <string name="ms_playback_unavailable">This server did not give a playable stream. It may be offline or the sign-in ended.</string>
 </resources>
