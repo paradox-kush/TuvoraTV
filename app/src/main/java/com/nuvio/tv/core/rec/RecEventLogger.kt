@@ -204,15 +204,26 @@ class RecEventLogger @Inject constructor(
                 return
             }
 
-            // One request per session: the envelope carries a single session_id, and a batch that
+            // Group by session: the envelope carries a single session_id, and a batch that
             // survived a cold start can straddle two.
             for ((sessionId, records) in pending.groupBy { it.sessionId }) {
-                for (chunk in records.chunked(FLUSH_AT_EVENTS)) {
+                val chunks = ArrayDeque(RecBatchPolicy.chunks(records) { chunk ->
+                    encodeBatch(sessionId, chunk.map { it.event }).encodeToByteArray().size
+                })
+                while (chunks.isNotEmpty()) {
+                    val chunk = chunks.removeFirst()
                     if (!settings.isActive(System.currentTimeMillis())) {
                         discardPendingEvents()
                         return
                     }
                     val outcome = send(sessionId, chunk.map { it.event })
+                    if (outcome == SendOutcome.SPLIT && chunk.size > 1) {
+                        // A server with a smaller cap rejected this batch before inserting it.
+                        val half = chunk.size / 2
+                        chunks.addFirst(chunk.drop(half))
+                        chunks.addFirst(chunk.take(half))
+                        continue
+                    }
                     if (outcome == SendOutcome.RETRY) {
                         retryNotBeforeMs = System.currentTimeMillis() + backoffMs
                         backoffMs = (backoffMs * 2).coerceAtMost(BACKOFF_MAX_MS)
@@ -223,6 +234,7 @@ class RecEventLogger @Inject constructor(
                         Log.d(TAG, "flush($reason) sent ${chunk.size} events -> $outcome")
                     }
                     drop(chunk)
+                    persistQueue(synchronized(queueLock) { queue.toList() })
                     if (outcome == SendOutcome.DISABLED) {
                         settings.suppressUntil(System.currentTimeMillis())
                         synchronized(queueLock) { queue.clear() }
@@ -234,6 +246,8 @@ class RecEventLogger @Inject constructor(
             }
             backoffMs = BACKOFF_START_MS
             persistQueue(synchronized(queueLock) { queue.toList() })
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Throwable) {
             Log.d(TAG, "Flush ($reason) failed: ${e.message}")
         } finally {
@@ -249,7 +263,17 @@ class RecEventLogger @Inject constructor(
         }
     }
 
-    private enum class SendOutcome { ACCEPTED, DROP, RETRY, DISABLED }
+    private enum class SendOutcome { ACCEPTED, DROP, RETRY, DISABLED, SPLIT }
+
+    private fun encodeBatch(sessionId: String, events: List<RecEvent>): String {
+        return json.encodeToString(RecEventBatch(
+            deviceId = identity.deviceId(),
+            sessionId = sessionId,
+            app = APP_IDENTIFIER,
+            appVersion = BuildConfig.VERSION_NAME.ifBlank { "dev" }.take(32),
+            events = events,
+        ))
+    }
 
     private suspend fun send(sessionId: String, events: List<RecEvent>): SendOutcome {
         val backend = supabaseProvider.selectedBackend
@@ -259,19 +283,15 @@ class RecEventLogger @Inject constructor(
             Log.d(TAG, "No sync backend configured; discarding batch")
             return SendOutcome.DROP
         }
-        val batch = RecEventBatch(
-            deviceId = identity.deviceId(),
-            sessionId = sessionId,
-            app = APP_IDENTIFIER,
-            appVersion = BuildConfig.VERSION_NAME.ifBlank { "dev" }.take(32),
-            events = events,
-        )
+        val encoded = encodeBatch(sessionId, events)
+        if (encoded.encodeToByteArray().size > RecBatchPolicy.MAX_BYTES) return SendOutcome.DROP
+
         val token = runCatching { supabaseProvider.auth.currentAccessTokenOrNull() }.getOrNull()
         val request = Request.Builder()
             .url("${backend.normalizedSupabaseUrl}/functions/v1/rec-events")
             .header("apikey", backend.anonKey)
             .apply { if (!token.isNullOrBlank()) header("Authorization", "Bearer $token") }
-            .post(json.encodeToString(batch).toRequestBody("application/json".toMediaType()))
+            .post(encoded.toRequestBody("application/json".toMediaType()))
             .build()
 
         return withContext(Dispatchers.IO) {
@@ -280,6 +300,8 @@ class RecEventLogger @Inject constructor(
                     when {
                         response.isSuccessful -> SendOutcome.ACCEPTED
                         response.code == 410 -> SendOutcome.DISABLED
+                        response.code == 413 -> SendOutcome.SPLIT
+                        RecBatchPolicy.retryable(response.code) -> SendOutcome.RETRY
                         response.code in 400..499 -> {
                             Log.w(
                                 TAG,
@@ -290,6 +312,8 @@ class RecEventLogger @Inject constructor(
                         else -> SendOutcome.RETRY
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.d(TAG, "Send failed: ${e.message}")
                 SendOutcome.RETRY

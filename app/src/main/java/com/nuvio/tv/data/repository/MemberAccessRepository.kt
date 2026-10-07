@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.repository
 
+import com.nuvio.tv.core.network.BackendFailurePolicy
 import android.os.SystemClock
 import android.util.Log
 import com.nuvio.tv.BuildConfig
@@ -36,7 +37,8 @@ class MemberAccessRepository @Inject constructor(
     debugSettingsDataStore: DebugSettingsDataStore,
     private val authManager: AuthManager,
     private val remoteDataSource: MemberAccessRemoteDataSource,
-    private val memberAccessDataStore: MemberAccessDataStore
+    private val memberAccessDataStore: MemberAccessDataStore,
+    private val backendProvider: com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val refreshGeneration = MutableStateFlow(0L)
@@ -50,6 +52,8 @@ class MemberAccessRepository @Inject constructor(
 
     @Volatile
     private var lastVerifiedUserId: String? = null
+    private var checkedUserId: String? = null
+    private var nextCheckAtMs = 0L
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val access: StateFlow<MemberAccess> = combine(
@@ -71,6 +75,10 @@ class MemberAccessRepository @Inject constructor(
                 optimisticCachedAccess = cachedAccess ?: MemberAccess.None
                 emit(optimisticCachedAccess)
 
+                val scopeKey = "${backendProvider.selectedBackend.normalizedSupabaseUrl}|${authState.userId}"
+                if (checkedUserId == scopeKey && SystemClock.elapsedRealtime() < nextCheckAtMs) return@transformLatest
+                checkedUserId = scopeKey
+                nextCheckAtMs = SystemClock.elapsedRealtime() + MemberAccessStaleAfterMs
                 try {
                     val remoteAccess = loadRemoteAccessWithRetry()
                     val persistedAccess = runCatching {
@@ -94,6 +102,8 @@ class MemberAccessRepository @Inject constructor(
                     optimisticCachedAccess = MemberAccess.None
                     lastVerifiedUserId = null
                     lastVerifiedAtMs = null
+                    checkedUserId = null
+                    nextCheckAtMs = 0L
                     memberAccessDataStore.clear()
                 }
                 emit(MemberAccess.None)
@@ -114,12 +124,7 @@ class MemberAccessRepository @Inject constructor(
                 refreshGeneration.update { it + 1L }
             }
         }
-        scope.launch {
-            while (true) {
-                delay(MemberAccessStaleAfterMs)
-                refreshIfStale()
-            }
-        }
+
     }
 
     fun refresh() {
@@ -142,6 +147,9 @@ class MemberAccessRepository @Inject constructor(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                val status = BackendFailurePolicy.status(error)
+                nextCheckAtMs = SystemClock.elapsedRealtime() + BackendFailurePolicy.membershipCooldownMs(status)
+                if (!BackendFailurePolicy.retryable(status)) throw error
                 val retryDelayMs = memberAccessRetryDelayMs(failedAttempt) ?: throw error
                 failedAttempt += 1
                 delay(retryDelayMs)
