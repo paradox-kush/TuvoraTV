@@ -142,7 +142,18 @@ class StreamRepositoryImpl @Inject constructor(
         }
     }
 
+    // Other own sources (a media server) register into the plural stream-source port; IPTV keeps its own lane below.
+    private val sourceStreams get() = com.nuvio.tv.core.contracts.StreamSourceAccess.current()
+
+    override fun isDeferredIptvUrl(url: String?): Boolean =
+        com.nuvio.tv.core.iptv.match.XtreamStreamSource.isDeferred(url) || sourceStreams.isDeferredUrl(url)
+
     override suspend fun mintDeferredIptvUrl(url: String): String? {
+        if (sourceStreams.isDeferredUrl(url)) {
+            return runCatching { sourceStreams.resolveDeferredUrl(url, forceMint = false) }
+                .onFailure { if (it is CancellationException) throw it; Log.w(TAG, "deferred source mint failed: ${LogRedaction.text(it.message)}") }
+                .getOrNull()
+        }
         if (!com.nuvio.tv.core.iptv.match.XtreamStreamSource.isDeferred(url)) return url
         val accounts = xtreamAccountStore.accounts.first()
         return runCatching { xtreamStreamSource.resolveDeferredUrl(url, accounts) }
@@ -196,6 +207,11 @@ class StreamRepositoryImpl @Inject constructor(
         forceRefresh: Boolean
     ): Flow<NetworkResult<List<AddonStreams>>> = flow {
         emit(NetworkResult.Loading)
+        // OWN-SOURCE LANE (media server): its ids play their own deferred streams - skip addon + debrid.
+        if (sourceStreams.isHandledId(videoId)) {
+            emit(NetworkResult.Success(sourceStreams.directStreams(videoId)))
+            return@flow
+        }
         // HYBRID LANE: Xtream ids play their own single direct stream — skip addon + debrid.
         if (xtreamRegistry.isXtreamId(videoId)) {
             // Rebuild from the id on a registry miss (saved/deep-linked item not browsed this session).
@@ -244,6 +260,9 @@ class StreamRepositoryImpl @Inject constructor(
                 emptyList()
             }
             Log.d(TAG, "Xtream match targets: ${xtreamMatchTargets.size} type=$type")
+            // Matched lane of the other own sources (a media server's copy of this TMDB title): one group each.
+            // Empty until a source offers match groups (media servers: P3); nothing about IPTV changes.
+            val sourceMatchGroups = if (type == "movie" || type == "series") sourceStreams.matchSourceGroups(type) else emptyList()
 
             coroutineScope {
                 // Channel to receive results as they complete
@@ -252,12 +271,13 @@ class StreamRepositoryImpl @Inject constructor(
                 // Track number of pending jobs
                 val totalJobs = streamAddons.size +
                     (if (pluginRequest != null) 1 else 0) +
-                    xtreamMatchTargets.size
+                    xtreamMatchTargets.size +
+                    sourceMatchGroups.size
                 val completedJobs = java.util.concurrent.atomic.AtomicInteger(0)
 
                 // B63: the IPTV jobs wait past their budget only while these (addon + plugin)
                 // sources are still loading — see IptvSourceWaitPolicy.
-                val nonIptvJobs = totalJobs - xtreamMatchTargets.size
+                val nonIptvJobs = totalJobs - xtreamMatchTargets.size - sourceMatchGroups.size
                 val nonIptvDone = java.util.concurrent.atomic.AtomicInteger(0)
                 val othersSettled = kotlinx.coroutines.Job()
                 if (nonIptvJobs == 0) othersSettled.complete()
@@ -347,6 +367,33 @@ class StreamRepositoryImpl @Inject constructor(
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             Log.e(TAG, "Xtream match failed for ${acc.name}: ${e.message}")
+                        } finally {
+                            if (completedJobs.incrementAndGet() >= totalJobs) {
+                                resultChannel.close()
+                            }
+                        }
+                    }
+                }
+
+                // Launch the matched-lane jobs of the other own sources (one group per signed-in server)
+                sourceMatchGroups.forEach { group ->
+                    launch {
+                        try {
+                            val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
+                                sourceStreams.resolveMatchStreams(group.sourceId, type, videoId, season, episode)
+                            } ?: emptyList()
+                            if (streams.isNotEmpty()) {
+                                resultChannel.send(
+                                    AddonStreams(
+                                        addonName = group.addonName,
+                                        addonLogo = null,
+                                        streams = streams.map { it.copy(addonName = group.addonName, sourceId = it.sourceId ?: group.sourceId) }
+                                    )
+                                )
+                            }
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            Log.e(TAG, "Source match failed for ${group.addonName}: ${LogRedaction.text(e.message)}")
                         } finally {
                             if (completedJobs.incrementAndGet() >= totalJobs) {
                                 resultChannel.close()

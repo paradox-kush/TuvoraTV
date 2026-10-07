@@ -49,4 +49,40 @@ class PostHogPrivacyTest {
         )
         assertEquals("[redacted-url] failed with [redacted-auth]", sanitized["network"])
     }
+
+    // Wave 3 / P0: media-server clients carry credentials under their own names (Jellyfin/Emby
+    // ApiKey / api_key query values, Plex X-Plex-Token, the MediaBrowser Authorization header's
+    // Token="..." and the X-Emby-Token header). None of them may reach an analytics event.
+    @Test
+    fun `media server credential shapes are redacted`() {
+        val sanitized = PostHogPrivacy.sanitize(
+            mapOf(
+                "apiKeyValue" to "request failed ApiKey=jf-secret-1&Limit=10",
+                "queryValue" to "request failed api_key=emby-secret-2&x=1",
+                "plexValue" to "request failed X-Plex-Token=plex-secret-3&x=1",
+                "header" to "MediaBrowser Client=\"Tuvora\", Device=\"Pixel\", DeviceId=\"d1\", Version=\"1\", Token=\"mb-secret-4\"",
+                "embyHeader" to "X-Emby-Token: emby-secret-5 sent",
+                "plexHeader" to "X-Plex-Token: plex-secret-6 sent",
+            ),
+        )
+
+        assertEquals("request failed ApiKey=[redacted]&Limit=10", sanitized["apiKeyValue"])
+        assertEquals("request failed api_key=[redacted]&x=1", sanitized["queryValue"])
+        assertEquals("request failed X-Plex-Token=[redacted]&x=1", sanitized["plexValue"])
+        assertEquals(
+            "MediaBrowser Client=\"Tuvora\", Device=\"Pixel\", DeviceId=\"d1\", Version=\"1\", Token=\"[redacted]\"",
+            sanitized["header"],
+        )
+        assertEquals("X-Emby-Token: [redacted] sent", sanitized["embyHeader"])
+        assertEquals("X-Plex-Token: [redacted] sent", sanitized["plexHeader"])
+    }
+
+    @Test
+    fun `ordinary text that mentions keys and tokens is kept`() {
+        val sanitized = PostHogPrivacy.sanitize(
+            mapOf("note" to "api key rotation token refresh ok monkey=banana", "phase" to "apikey length 32"),
+        )
+        assertEquals("api key rotation token refresh ok monkey=banana", sanitized["note"])
+        assertEquals("apikey length 32", sanitized["phase"])
+    }
 }

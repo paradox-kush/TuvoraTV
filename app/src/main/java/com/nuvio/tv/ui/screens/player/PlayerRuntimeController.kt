@@ -388,6 +388,11 @@ class PlayerRuntimeController(
     internal var stillWatchingPromptJob: Job? = null
     internal var startupLoadingReportJob: Job? = null
     internal var startOverOfferJob: Job? = null
+    /** A source's own playback reports (a media server): the ~5 s tick that lets its policy decide what to send. */
+    internal var sessionReportJob: Job? = null
+    /** The server's resume position held until the first frame, then offered ([showPendingServerResumeOffer]). */
+    internal var pendingServerResumeOfferMs: Long? = null
+    internal var serverResumeOfferJob: Job? = null
     internal var sourceStreamsJob: Job? = null
     internal var sourceBadgeJob: Job? = null
     internal var sourceBadgedAddonNames: Set<String> = emptySet()
@@ -691,6 +696,8 @@ class PlayerRuntimeController(
         torrentService.shutdown()
         startupLoadingReportJob?.cancel()
         startOverOfferJob?.cancel()
+        sessionReportJob?.cancel()
+        serverResumeOfferJob?.cancel()
         vodTelemetryJob?.cancel()
         mediaSourceFactory.shutdown()
         sourceChipErrorDismissJob?.cancel()

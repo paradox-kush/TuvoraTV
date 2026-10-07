@@ -105,6 +105,9 @@ data class PlayerUiState(
     // Set when a resume has shown no frame for ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS: the
     // position it is trying to reach; the loading screen offers "Start from beginning".
     val startOverOfferPositionMs: Long? = null,
+    // "You watched further on your server": the position another app left there, offered over the picture
+    // for a few seconds (a media server's resume position - owner decisions 2026-10-06). Null = no offer.
+    val serverResumeOfferMs: Long? = null,
     val pauseOverlayEnabled: Boolean = true,
     val osdClockEnabled: Boolean = true,
     val showPauseOverlay: Boolean = false,
@@ -345,6 +348,8 @@ sealed class PlayerEvent {
     data object OnRetry : PlayerEvent()
     data object OnReportPlaybackIssue : PlayerEvent()
     data object OnStartOverFromBeginning : PlayerEvent()
+    data object OnApplyServerResume : PlayerEvent()
+    data object OnDismissServerResume : PlayerEvent()
     data object OnReportFrozen : PlayerEvent()
     data object OnParentalGuideHide : PlayerEvent()
     data class OnShowDisplayModeInfo(val info: DisplayModeInfo) : PlayerEvent()

@@ -21,6 +21,8 @@ package com.nuvio.tv.core.iptv
  *  |          | username/password query params dropped, `|u<hex8>` appended when a username was present.
  *  |          | A URL without a login keeps its pre-B64 key byte-for-byte.
  *  | Stalker  | `stalker|` + `scheme://host[:port]` (as Xtream) + `|` + MAC trimmed and uppercased
+ *  | Media server (Wave 3) | `{type}|{machineId}|{userId}` (jellyfin / emby) - ids as the server reported them, never an
+ *  |          | address; see [com.nuvio.tv.core.mediaserver.api.MediaServerSyncCodec.playlistKey] (golden vectors shared with web + SQL)
  *  | M3U file | `m3u_file|` + file name (trimmed) + `|` + the creation epoch ms
  *
  * Every builder returns null when its required parts are blank / unparseable.
@@ -41,6 +43,10 @@ object PlaylistKey {
         val mac = macAddress.trim().uppercase().takeIf { it.isNotEmpty() } ?: return null
         return "stalker|$origin|$mac"
     }
+
+    /** A Jellyfin / Emby server entry's permanent key (the one implementation lives with its feature; this is the shared-builder entry point). */
+    fun mediaServer(type: String, machineId: String, userId: String): String? =
+        com.nuvio.tv.core.mediaserver.api.MediaServerSyncCodec.playlistKey(type, machineId, userId)
 
     fun m3uFile(fileName: String, creationEpochMs: Long): String? {
         val name = fileName.trim().takeIf { it.isNotEmpty() } ?: return null

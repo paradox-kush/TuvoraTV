@@ -40,10 +40,10 @@ internal data class PlaybackAvailability(
         scrapers.any { it.enabled && it.supportsType(type) }
 
     companion object {
-        // IPTV items (Xtream/Stalker "xtream:…", M3U "m3u:…") are played by the IPTV resolver directly and
-        // never need an addon or scraper. Without this, upstream's play-disable check greys out Play/Resume
-        // for IPTV-only users (store builds hide addons).
-        private val IPTV_ID_PREFIXES = listOf("xtream:", "m3u:")
-        fun isIptvId(id: String): Boolean = IPTV_ID_PREFIXES.any { id.startsWith(it) }
+        // Items of an own source (IPTV Xtream/Stalker "xtream:…", M3U "m3u:…", a media server's namespace) are
+        // played by that source's resolver directly and never need an addon or scraper. Without this, upstream's
+        // play-disable check greys out Play/Resume for IPTV-only users (store builds hide addons). Which ids are
+        // "own" is the registered [OwnSourcePolicy], not a literal here.
+        fun isIptvId(id: String): Boolean = com.nuvio.tv.core.contracts.OwnSourcePolicy.isOwnContentId(id)
     }
 }

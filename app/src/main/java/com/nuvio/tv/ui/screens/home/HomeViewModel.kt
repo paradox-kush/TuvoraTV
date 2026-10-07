@@ -354,6 +354,7 @@ class HomeViewModel @Inject constructor(
         }
 
         observeStartupAuthNotice()
+        observeContributedRowsPipeline()
         viewModelScope.launch {
             profileManager.activeProfileReady.first { it }
             observeLayoutPreferences()
@@ -843,6 +844,9 @@ class HomeViewModel @Inject constructor(
     }
 
     fun refreshHomeCatalogsIfStale() {
+        // Rows other sources contribute: asked on every return to Home - the contributor's own TTL / backoff
+        // decides whether that costs a request (never a timer, never a loop).
+        viewModelScope.launch { refreshContributedRowsPipeline(force = false) }
         if (addonsCache.isEmpty()) return
         val now = android.os.SystemClock.elapsedRealtime()
         if (now - lastHomeCatalogRefreshAtMs < HOME_CATALOG_REFRESH_TTL_MS) return

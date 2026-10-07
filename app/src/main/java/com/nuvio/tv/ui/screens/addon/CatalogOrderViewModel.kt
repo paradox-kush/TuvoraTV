@@ -2,6 +2,8 @@ package com.nuvio.tv.ui.screens.addon
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.core.contracts.ContributedRows
+import com.nuvio.tv.core.contracts.HomeSectionContributorRegistry
 import com.nuvio.tv.core.sync.HomeCatalogSettingsSyncService
 import com.nuvio.tv.core.sync.homeCatalogKey
 import com.nuvio.tv.core.sync.homeLegacyDisabledCatalogKey
@@ -18,9 +20,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/** A key that is not an add-on catalog: a collection, or a row another source contributes to Home. */
+private fun isNonAddonKey(key: String): Boolean = key.startsWith("collection_") || ContributedRows.isContributedHomeKey(key)
 
 @HiltViewModel
 class CatalogOrderViewModel @Inject constructor(
@@ -95,7 +101,7 @@ class CatalogOrderViewModel @Inject constructor(
      * Moving down means jumping below the next addon block.
      */
     private fun moveCollectionBetweenAddons(key: String, direction: Int) {
-        if (!key.startsWith("collection_")) return
+        if (!isNonAddonKey(key)) return
 
         val items = _uiState.value.items
         val currentIndex = items.indexOfFirst { it.key == key }
@@ -108,14 +114,14 @@ class CatalogOrderViewModel @Inject constructor(
             // Moving up: find the start of the previous addon block
             // Skip any adjacent collections above
             var scanIdx = currentIndex - 1
-            while (scanIdx >= 0 && currentKeys[scanIdx].startsWith("collection_")) {
+            while (scanIdx >= 0 && isNonAddonKey(currentKeys[scanIdx])) {
                 scanIdx--
             }
             if (scanIdx < 0) return // already at top
 
             // scanIdx is now pointing at an addon catalog. Find the start of its addon block.
             val targetAddonName = items[scanIdx].addonName
-            while (scanIdx > 0 && !currentKeys[scanIdx - 1].startsWith("collection_") &&
+            while (scanIdx > 0 && !isNonAddonKey(currentKeys[scanIdx - 1]) &&
                 items[scanIdx - 1].addonName == targetAddonName) {
                 scanIdx--
             }
@@ -123,14 +129,14 @@ class CatalogOrderViewModel @Inject constructor(
         } else {
             // Moving down: find the end of the next addon block
             var scanIdx = currentIndex + 1
-            while (scanIdx < currentKeys.size && currentKeys[scanIdx].startsWith("collection_")) {
+            while (scanIdx < currentKeys.size && isNonAddonKey(currentKeys[scanIdx])) {
                 scanIdx++
             }
             if (scanIdx >= currentKeys.size) return // already at bottom
 
             // scanIdx is now pointing at an addon catalog. Find the end of its addon block.
             val targetAddonName = items[scanIdx].addonName
-            while (scanIdx < currentKeys.lastIndex && !currentKeys[scanIdx + 1].startsWith("collection_") &&
+            while (scanIdx < currentKeys.lastIndex && !isNonAddonKey(currentKeys[scanIdx + 1]) &&
                 items[scanIdx + 1].addonName == targetAddonName) {
                 scanIdx++
             }
@@ -164,7 +170,8 @@ class CatalogOrderViewModel @Inject constructor(
                 layoutPreferenceDataStore.homeCatalogOrderKeys,
                 layoutPreferenceDataStore.disabledHomeCatalogKeys,
                 layoutPreferenceDataStore.customCatalogTitles,
-                layoutPreferenceDataStore.followAddonsOrder
+                layoutPreferenceDataStore.followAddonsOrder,
+                HomeSectionContributorRegistry.changes().onStart { emit(Unit) }
             ) { values ->
                 @Suppress("UNCHECKED_CAST")
                 val addons = values[0] as List<Addon>
@@ -218,7 +225,19 @@ class CatalogOrderViewModel @Inject constructor(
                 typeLabel = "collection"
             )
         }
-        val allEntries = defaultEntries + collectionEntries
+        // Rows other sources contribute to Home (a media server's own shelves) are listed here - orderable and hideable
+        // like a collection - whether or not they currently have items (an offline server's row must stay reorderable).
+        val contributedEntries = HomeSectionContributorRegistry.declaredRows().map { declared ->
+            val key = ContributedRows.homeKey(declared.key)
+            CatalogOrderEntry(
+                key = key,
+                disableKey = key,
+                catalogName = declared.title,
+                addonName = declared.subtitle,
+                typeLabel = "server"
+            )
+        }
+        val allEntries = defaultEntries + collectionEntries + contributedEntries
         val availableMap = allEntries.associateBy { it.key }
         val defaultOrderKeys = allEntries.map { it.key }
 
@@ -227,7 +246,7 @@ class CatalogOrderViewModel @Inject constructor(
             // In follow mode, addon catalogs stay in manifest order.
             // Collections are positioned based on their relative position in savedOrderKeys.
             val addonKeys = defaultEntries.map { it.key }
-            val collectionKeys = collectionEntries.map { it.key }.toSet()
+            val collectionKeys = (collectionEntries + contributedEntries).map { it.key }.toSet()
 
             val savedValid = savedOrderKeys.filter { it in availableMap }.distinct()
 
@@ -294,7 +313,7 @@ class CatalogOrderViewModel @Inject constructor(
         return effectiveOrder.mapIndexedNotNull { index, key ->
             val entry = availableMap[key] ?: return@mapIndexedNotNull null
             val displayName = customTitles[key]?.takeIf { it.isNotBlank() } ?: entry.catalogName
-            val isCollection = key.startsWith("collection_")
+            val isCollection = isNonAddonKey(key)
 
             val canMoveUp: Boolean
             val canMoveDown: Boolean
@@ -341,7 +360,7 @@ class CatalogOrderViewModel @Inject constructor(
             var i = 0
             while (i < result.size) {
                 val key = result[i]
-                if (!key.startsWith("collection_")) {
+                if (!isNonAddonKey(key)) {
                     i++
                     continue
                 }
@@ -351,7 +370,7 @@ class CatalogOrderViewModel @Inject constructor(
                     result.removeAt(i)
                     var insertPos = i
                     while (insertPos < result.size &&
-                        !result[insertPos].startsWith("collection_") &&
+                        !isNonAddonKey(result[insertPos]) &&
                         availableMap[result[insertPos]]?.addonName == prevAddon
                     ) {
                         insertPos++
@@ -373,7 +392,7 @@ class CatalogOrderViewModel @Inject constructor(
         availableMap: Map<String, CatalogOrderEntry>
     ): String? {
         for (j in index - 1 downTo 0) {
-            if (!order[j].startsWith("collection_")) {
+            if (!isNonAddonKey(order[j])) {
                 return availableMap[order[j]]?.addonName
             }
         }
@@ -386,7 +405,7 @@ class CatalogOrderViewModel @Inject constructor(
         availableMap: Map<String, CatalogOrderEntry>
     ): String? {
         for (j in index + 1 until order.size) {
-            if (!order[j].startsWith("collection_")) {
+            if (!isNonAddonKey(order[j])) {
                 return availableMap[order[j]]?.addonName
             }
         }

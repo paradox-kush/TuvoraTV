@@ -60,7 +60,18 @@ data class TrackingMediaReference(
     val posterUrl: String? = null
 ) {
     val hasResolvableIdentity: Boolean
-        get() = ids.hasAny || !title.isNullOrBlank()
+        get() = !isFromExcludedSource && (ids.hasAny || !title.isNullOrBlank())
+
+    /**
+     * Built from an own source whose items never reach a tracking provider (a media server's, v1 - owner decision
+     * 2026-10-06): not resolvable even by title, so no writer (scrobble, history, list) sends it anywhere.
+     */
+    val isFromExcludedSource: Boolean
+        get() {
+            val c = catalog ?: return false
+            return com.nuvio.tv.core.contracts.OwnSourcePolicy.isExcludedFromTrackingScrobble(c.contentId) ||
+                com.nuvio.tv.core.contracts.OwnSourcePolicy.isExcludedFromTrackingScrobble(c.videoId)
+        }
 
     val stableKey: String
         get() = buildString {

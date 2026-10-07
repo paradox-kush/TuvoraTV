@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
+import com.nuvio.tv.core.streams.DeferredStreamPolicy
 import com.nuvio.tv.core.debrid.DirectDebridPlayableResult
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.player.StreamAutoPlaySelector
@@ -724,6 +725,50 @@ private fun PlayerRuntimeController.openExternalStreamInBrowser(
     return true
 }
 
+/**
+ * A matched source can be LISTED with a deferred (not yet minted) play url - a Stalker edition. Every
+ * pick site mints first, for the chosen edition only ([DeferredStreamPolicy]); this is the in-player one
+ * (source switch + episode switch). Returns true when [stream] was deferred and the mint has started:
+ * [onMinted] then re-enters the switch with the real url. A failed mint reports "invalid url" through the
+ * panel's own error line and leaves the playing source alone - the engine never sees the placeholder.
+ */
+private fun PlayerRuntimeController.mintDeferredStreamThen(
+    stream: Stream,
+    fromEpisodePanel: Boolean,
+    onMinted: (Stream) -> Unit,
+): Boolean {
+    if (!streamRepository.isDeferredIptvUrl(stream.url)) return false
+    debridResolveJob?.cancel()
+    _uiState.update {
+        if (fromEpisodePanel) {
+            it.copy(isLoadingEpisodeStreams = true, episodeStreamsError = null)
+        } else {
+            it.copy(isLoadingSourceStreams = true, sourceStreamsError = null)
+        }
+    }
+    debridResolveJob = scope.launch {
+        val outcome = DeferredStreamPolicy.resolve(
+            stream = stream,
+            isDeferred = streamRepository::isDeferredIptvUrl,
+            mint = { url -> streamRepository.mintDeferredIptvUrl(url) },
+        )
+        debridResolveJob = null
+        if (outcome is DeferredStreamPolicy.Outcome.Minted) {
+            onMinted(outcome.stream)
+        } else {
+            val message = context.getString(com.nuvio.tv.R.string.player_stream_error_invalid_url)
+            _uiState.update {
+                if (fromEpisodePanel) {
+                    it.copy(isLoadingEpisodeStreams = false, episodeStreamsError = message)
+                } else {
+                    it.copy(isLoadingSourceStreams = false, sourceStreamsError = message)
+                }
+            }
+        }
+    }
+    return true
+}
+
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun PlayerRuntimeController.switchToSourceStream(
     stream: Stream
@@ -732,6 +777,11 @@ internal fun PlayerRuntimeController.switchToSourceStream(
     sourceStreamsScope = null
     sourceStreamsJob = null
     if (openExternalStreamInBrowser(stream = stream, fromEpisodePanel = false)) {
+        return
+    }
+
+    // A matched Stalker source is listed without a play link - mint it for the picked edition first.
+    if (mintDeferredStreamThen(stream, fromEpisodePanel = false) { minted -> switchToSourceStream(minted) }) {
         return
     }
 
@@ -1363,6 +1413,14 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     isAutoPlay: Boolean = false
 ) {
     if (openExternalStreamInBrowser(stream = stream, fromEpisodePanel = true)) {
+        return
+    }
+
+    // A matched Stalker source is listed without a play link - mint it for the picked edition first.
+    if (mintDeferredStreamThen(stream, fromEpisodePanel = true) { minted ->
+            switchToEpisodeStream(minted, forcedTargetVideo, isAutoPlay)
+        }
+    ) {
         return
     }
 

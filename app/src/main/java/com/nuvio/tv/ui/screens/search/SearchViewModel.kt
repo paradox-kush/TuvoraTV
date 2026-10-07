@@ -879,7 +879,7 @@ class SearchViewModel @Inject constructor(
         val contentType = ContentType.fromString(rawType)
         return CatalogRow(
             addonId = IPTV_ROW_ADDON_ID,
-            addonName = IPTV_ROW_ADDON_NAME,
+            addonName = searchRowSourceLabel(),
             addonBaseUrl = "",
             catalogId = catalogId,
             catalogName = name,
@@ -1335,3 +1335,6 @@ internal fun resolveDiscoverCatalog(
     catalogs.firstOrNull { it.key == preferredKey }
         ?: catalogs.firstOrNull { it.key == currentKey }
         ?: catalogs.firstOrNull()
+
+/** The "from ..." label of an own-source search row: its source's own label (a media server's product), else "IPTV". */
+internal fun IptvSearchRow.searchRowSourceLabel(): String = sourceLabel ?: "IPTV"

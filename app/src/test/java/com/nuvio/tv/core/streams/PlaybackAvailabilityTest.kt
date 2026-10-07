@@ -11,9 +11,22 @@ import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 
 class PlaybackAvailabilityTest {
+    // Which ids are "own sources" is registered policy now (media-servers design 5.1): wire IPTV the way
+    // NuvioApplication does, and put the process back as found.
+    @Before
+    fun wireIptv() {
+        com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
+        com.nuvio.tv.core.iptv.IptvSourceRegistrations.register()
+    }
+
+    @After
+    fun unwireIptv() = com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
+
     @Test
     fun `no sources or metadata-only addons cannot play`() {
         assertFalse(PlaybackAvailability().canStream("movie", "tt123"))

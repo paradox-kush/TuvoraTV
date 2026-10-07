@@ -200,6 +200,13 @@ class SearchViewModelIptvLaneTest {
         assertEquals("one addon fetch", 1, catalogs.calls)
     }
 
+    @Test
+    fun aMediaServerRowIsNotLabelledFromIptv() {
+        val hit = IptvSearchHit(contentId = "ms:x", name = "n", poster = null, isLive = false)
+        assertEquals("Jellyfin", IptvSearchRow("c", "Movies", "movie", listOf(hit), sourceLabel = "Jellyfin").searchRowSourceLabel())
+        assertEquals("an IPTV row keeps its label", "IPTV", IptvSearchRow("c", "Movies", "movie", listOf(hit)).searchRowSourceLabel())
+    }
+
     private fun iptvItemNames(viewModel: SearchViewModel): List<String> =
         viewModel.uiState.value.catalogRows.filter { it.addonId == "xtream" }.flatMap { row -> row.items.map { it.name } }
 

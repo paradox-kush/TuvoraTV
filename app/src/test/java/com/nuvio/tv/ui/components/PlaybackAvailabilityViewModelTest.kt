@@ -31,6 +31,9 @@ import org.junit.Test
 class PlaybackAvailabilityViewModelTest {
     @Test
     fun `source changes update availability without fetching metadata or executing sources`() = runTest {
+        // IPTV's own-source ids are registered policy: wire it as NuvioApplication does.
+        com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
+        com.nuvio.tv.core.iptv.IptvSourceRegistrations.register()
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val viewModelStore = ViewModelStore()
         try {
@@ -99,6 +102,7 @@ class PlaybackAvailabilityViewModelTest {
             verify(exactly = 0) { metaRepository.getMetaFromAllAddons(any(), any(), any()) }
             verify(exactly = 0) { metaRepository.getMeta(any(), any(), any()) }
         } finally {
+            com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
             viewModelStore.clear()
             runCurrent()
             Dispatchers.resetMain()

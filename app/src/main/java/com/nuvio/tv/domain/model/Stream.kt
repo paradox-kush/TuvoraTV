@@ -25,7 +25,13 @@ data class Stream(
     val clientResolve: StreamClientResolve? = null,
     val debridCacheStatus: StreamDebridCacheStatus? = null,
     val badges: List<StreamBadge> = emptyList(),
-    val subtitles: List<Subtitle> = emptyList()
+    val subtitles: List<Subtitle> = emptyList(),
+    /**
+     * The own source that produced this stream ("ms" for a media server's direct lane, "ms-match:{serverKey}" for
+     * the matched lane); null for add-on / plugin / IPTV streams. Refresh and filtering key on it, falling back
+     * to [addonName] for streams that predate it.
+     */
+    val sourceId: String? = null
 ) {
     /**
      * Returns the primary stream source URL

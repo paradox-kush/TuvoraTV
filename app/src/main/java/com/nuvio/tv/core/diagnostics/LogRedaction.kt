@@ -41,7 +41,7 @@ object LogRedaction {
      * are everyday diagnostic labels there (focus keys, HTTP codes), so only unmistakable names mask.
      */
     private val FREE_TEXT_SENSITIVE_NAMES = setOf(
-        "username", "password", "pass", "passwd", "pwd", "token", "apikey", "secret", "mac",
+        "username", "password", "pass", "passwd", "pwd", "pw", "token", "apikey", "secret", "mac",
         "authorization", "cookie", "stalker_password",
         "realdebrid", "alldebrid", "premiumize", "debridlink", "torbox", "offcloud", "putio", "easydebrid",
     )
@@ -55,7 +55,18 @@ object LogRedaction {
     private val HEX_OR_UUID = Regex("^[0-9A-Fa-f\\-]{32,}$")
     private val JWT = Regex("\\beyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]*")
     private val HEADER_VALUE = Regex(
-        "(?i)\\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-access-token)(\\s*[:=]\\s*)([^\\r\\n,}\\]]+)",
+        "(?i)\\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-access-token|" +
+            "x-emby-token|x-emby-authorization|x-plex-token|x-mediabrowser-token)(\\s*[:=]\\s*)((?!\\s*MediaBrowser \\*\\*\\*)[^\\r\\n,}\\]]+)",
+    )
+    // Jellyfin/Emby `Authorization: MediaBrowser Client="..", Device="..", DeviceId="..", Version="..", Token=".."`:
+    // a comma-separated run of quoted pairs, so the header regex above (which stops at the first comma)
+    // would leave the Token behind. The whole run goes - the DeviceId is install-identifying too.
+    private val MEDIABROWSER_PAIRS = Regex("(?i)\\bMediaBrowser\\s+(?:[A-Za-z]+=\"[^\"]*\"\\s*,?\\s*)+")
+    // A bare quoted credential pair (a MediaBrowser header echoed without its scheme).
+    private val QUOTED_CREDENTIAL = Regex("(?i)\\b(token|accesstoken|apikey|api_key|secret|pw)(=\")[^\"]*(\")")
+    // JSON credential members of media-server auth traffic: {"AccessToken":".."}, {"Pw":".."}, {"Secret":".."}.
+    private val JSON_CREDENTIAL = Regex(
+        "(?i)(\"(?:access_?token|refresh_?token|token|secret|pw|password|api_?key)\"\\s*:\\s*\")[^\"]*(\")",
     )
     private val BEARER = Regex("(?i)\\b(bearer)\\s+[A-Za-z0-9._~+/=\\-]+")
     private val BASIC = Regex("\\b(Basic)\\s+[A-Za-z0-9+/]{8,}={0,2}")
@@ -104,7 +115,10 @@ object LogRedaction {
             while (end > 0 && value[end - 1] in TRAILING_PUNCTUATION) end--
             url(value.substring(0, end)) + value.substring(end)
         }
+        out = MEDIABROWSER_PAIRS.replace(out, "MediaBrowser $MASK")
         out = HEADER_VALUE.replace(out) { it.groupValues[1] + it.groupValues[2] + MASK }
+        out = QUOTED_CREDENTIAL.replace(out) { it.groupValues[1] + it.groupValues[2] + MASK + it.groupValues[3] }
+        out = JSON_CREDENTIAL.replace(out) { it.groupValues[1] + MASK + it.groupValues[2] }
         out = BEARER.replace(out) { it.groupValues[1] + " " + MASK }
         out = BASIC.replace(out) { it.groupValues[1] + " " + MASK }
         out = JWT.replace(out, MASK)
@@ -122,7 +136,9 @@ object LogRedaction {
     private fun mightCarrySecret(message: String): Boolean =
         "://" in message || '=' in message || "earer" in message || "Basic " in message ||
             "eyJ" in message || message.count { it == ':' || it == '-' } >= 5 ||
-            message.contains("authorization", ignoreCase = true) || message.contains("cookie", ignoreCase = true)
+            message.contains("authorization", ignoreCase = true) || message.contains("cookie", ignoreCase = true) ||
+            message.contains("token", ignoreCase = true) || message.contains("secret", ignoreCase = true) ||
+            message.contains("\"pw\"", ignoreCase = true) || message.contains("mediabrowser", ignoreCase = true)
 
     private fun redactPath(path: String): String {
         if (path.length <= 1) return path

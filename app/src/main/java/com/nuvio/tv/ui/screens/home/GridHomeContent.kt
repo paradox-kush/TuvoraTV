@@ -716,7 +716,8 @@ fun GridHomeContent(
                             "series" -> strTypeSeries
                             else -> gridItem.type.replaceFirstChar { it.uppercase() }
                         }
-                        val displayName = if (uiState.catalogTypeSuffixEnabled && typeLabel.isNotBlank()) {
+                        val displayName = if (uiState.catalogTypeSuffixEnabled && typeLabel.isNotBlank() &&
+                            gridItem.addonId != com.nuvio.tv.core.contracts.ContributedRows.ADDON_ID) {
                             "${gridItem.catalogName.replaceFirstChar { it.uppercase() }} - $typeLabel"
                         } else {
                             gridItem.catalogName.replaceFirstChar { it.uppercase() }

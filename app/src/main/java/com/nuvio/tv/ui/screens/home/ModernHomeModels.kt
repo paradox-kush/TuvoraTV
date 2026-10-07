@@ -601,7 +601,8 @@ internal fun catalogRowTitle(
     strTypeSeries: String = ""
 ): String {
     val catalogName = row.catalogName.replaceFirstChar { it.uppercase() }
-    if (!showCatalogTypeSuffix) return catalogName
+    // a contributed row (a media server's) is already named by its contributor: no add-on style type suffix
+    if (!showCatalogTypeSuffix || row.addonId == com.nuvio.tv.core.contracts.ContributedRows.ADDON_ID) return catalogName
     val typeLabel = when (row.apiType.lowercase()) {
         "movie" -> strTypeMovie.ifBlank { row.apiType.replaceFirstChar { it.uppercase() } }
         "series" -> strTypeSeries.ifBlank { row.apiType.replaceFirstChar { it.uppercase() } }

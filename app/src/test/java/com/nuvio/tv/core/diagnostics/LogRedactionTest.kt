@@ -133,4 +133,74 @@ class LogRedactionTest {
             assertNoSecret(LogRedaction.text("failed to open $vector: HTTP 401"))
         }
     }
+
+    // Wave 3 / J4: Jellyfin / Emby / Plex credentials travel under their own names. A media-server request or
+    // response that reaches a log line (a failed call, a debug dump of headers) must never carry the session
+    // token, the Quick Connect secret or the MediaBrowser DeviceId. The KMP twin carries the same vectors.
+    private val mediaSecrets = listOf("MBTOK-9f8e7d", "EMBYTOK-1a2b3c", "PLEXTOK-4d5e6f", "QCSECRET-77aa88", "pw-hunter2", "dev-install-0042")
+
+    private fun assertNoMediaSecret(value: String) {
+        mediaSecrets.forEach { assertFalse("media-server secret '$it' leaked in: $value", value.contains(it)) }
+    }
+
+    @Test
+    fun mediaBrowserAuthorizationHeaderIsMaskedWholesale() {
+        val header = "Authorization: MediaBrowser Client=\"Tuvora\", Device=\"Pixel 8\", DeviceId=\"dev-install-0042\", " +
+            "Version=\"1.10.0\", Token=\"MBTOK-9f8e7d\""
+        val out = LogRedaction.text("request failed: $header (HTTP 500)")
+        assertNoMediaSecret(out)
+        assertTrue("the rest of the line survives: $out", out.contains("HTTP 500"))
+        // a bare quoted Token="..." pair (a header echoed without its scheme) is masked too
+        assertNoMediaSecret(LogRedaction.text("sent Client=\"Tuvora\", Token=\"MBTOK-9f8e7d\" to server"))
+        // ...and the tokenless Quick Connect form still hides the device id
+        assertNoMediaSecret(LogRedaction.text("Authorization: MediaBrowser Client=\"Tuvora\", Device=\"TV\", DeviceId=\"dev-install-0042\", Version=\"1\""))
+    }
+
+    @Test
+    fun embyAndPlexTokenHeadersAreMasked() {
+        assertNoMediaSecret(LogRedaction.text("X-Emby-Token: EMBYTOK-1a2b3c"))
+        assertNoMediaSecret(LogRedaction.text("headers={x-emby-token=EMBYTOK-1a2b3c, accept=application/json}"))
+        assertNoMediaSecret(LogRedaction.text("X-Emby-Authorization: MediaBrowser Token=\"EMBYTOK-1a2b3c\", Client=\"Tuvora\""))
+        assertNoMediaSecret(LogRedaction.text("X-Plex-Token: PLEXTOK-4d5e6f"))
+        assertNoMediaSecret(LogRedaction.text("X-MediaBrowser-Token: MBTOK-9f8e7d"))
+    }
+
+    @Test
+    fun mediaServerUrlsMaskApiKeyAndTokenQueryValues() {
+        assertEquals(
+            "Jellyfin ApiKey",
+            "http://nas.local:8096/Videos/abc123/stream?Static=true&ApiKey=***&MediaSourceId=abc123",
+            LogRedaction.url("http://nas.local:8096/Videos/abc123/stream?Static=true&ApiKey=MBTOK-9f8e7d&MediaSourceId=abc123"),
+        )
+        assertEquals(
+            "Emby api_key",
+            "https://emby.example.com/Videos/9/stream?api_key=***&Static=true",
+            LogRedaction.url("https://emby.example.com/Videos/9/stream?api_key=EMBYTOK-1a2b3c&Static=true"),
+        )
+        assertEquals(
+            "Plex token",
+            "http://plex.local:32400/library/parts/5/1/file.mkv?X-Plex-Token=***",
+            LogRedaction.url("http://plex.local:32400/library/parts/5/1/file.mkv?X-Plex-Token=PLEXTOK-4d5e6f"),
+        )
+        assertNoMediaSecret(LogRedaction.text("player error for http://nas.local:8096/Videos/1/master.m3u8?ApiKey=MBTOK-9f8e7d: 403"))
+    }
+
+    @Test
+    fun mediaServerAuthBodiesAreMasked() {
+        val response = "{\"User\":{\"Name\":\"kid\",\"Id\":\"0f1e\"},\"AccessToken\":\"MBTOK-9f8e7d\",\"ServerId\":\"6f3c\"}"
+        val out = LogRedaction.text("auth response: $response")
+        assertNoMediaSecret(out)
+        assertTrue("non-secret fields stay legible: $out", out.contains("ServerId"))
+        assertNoMediaSecret(LogRedaction.text("{\"Username\":\"kid\",\"Pw\":\"pw-hunter2\"}"))
+        assertNoMediaSecret(LogRedaction.text("quick connect {\"Secret\":\"QCSECRET-77aa88\",\"Code\":\"123456\"}"))
+        assertNoMediaSecret(LogRedaction.text("Secret=QCSECRET-77aa88"))
+    }
+
+    @Test
+    fun mediaServerRedactionKeepsOrdinaryProse() {
+        val line = "Jellyfin server 12.1 answered in 85 ms; user picked the Token Ring documentary"
+        assertEquals("prose", line, LogRedaction.text(line))
+        val idLine = "playing ms:jellyfin:6f3c1a9e:0f1e2d3c:movie:abc via ms-deferred"
+        assertEquals("ids", idLine, LogRedaction.text(idLine))
+    }
 }

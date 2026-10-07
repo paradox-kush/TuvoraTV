@@ -1304,6 +1304,40 @@ private fun PlaybackNavHost(
             )
         }
 
+        composable(Screen.MediaServers.route) {
+            com.nuvio.tv.ui.screens.mediaserver.MediaServersScreen(
+                onBack = { navController.popBackStack() },
+                onAddServer = { navController.navigate(Screen.MediaServerAdd.createRoute()) },
+                onOpenServer = { key -> navController.navigate(Screen.MediaServerDetails.createRoute(key)) },
+            )
+        }
+
+        composable(
+            route = Screen.MediaServerAdd.route,
+            arguments = listOf(navArgument("entryKey") { type = NavType.StringType; defaultValue = "" }),
+        ) {
+            com.nuvio.tv.ui.screens.mediaserver.MediaServerAddScreen(
+                onBack = { navController.popBackStack() },
+                // Signed in: back to the server list (a plain back would return to the form).
+                onFinished = {
+                    navController.navigate(Screen.MediaServers.route) {
+                        popUpTo(Screen.MediaServers.route) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+
+        composable(
+            route = Screen.MediaServerDetails.route,
+            arguments = listOf(navArgument("entryKey") { type = NavType.StringType }),
+        ) {
+            com.nuvio.tv.ui.screens.mediaserver.MediaServerDetailsScreen(
+                onBack = { navController.popBackStack() },
+                onSignIn = { key -> navController.navigate(Screen.MediaServerAdd.createRoute(key)) },
+            )
+        }
+
         composable(Screen.IptvSettings.route) {
             com.nuvio.tv.ui.screens.settings.XtreamSettingsContent(
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
@@ -1326,7 +1360,8 @@ private fun PlaybackNavHost(
                     navController.navigate(Screen.LicensesAttributions.route)
                 },
                 onNavigateToIptvPairing = { navController.navigate(Screen.IptvPairing.route) },
-                onNavigateToIptvSetupCode = { navController.navigate(Screen.IptvSetupCode.route) }
+                onNavigateToIptvSetupCode = { navController.navigate(Screen.IptvSetupCode.route) },
+                onNavigateToMediaServers = { navController.navigate(Screen.MediaServers.route) }
             )
         }
 

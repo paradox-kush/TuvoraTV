@@ -529,7 +529,34 @@ internal suspend fun PlayerRuntimeController.loadSavedProgressSuspend(season: In
             )
         }
     }
+
+    // A source that keeps its own resume position (a media server): with no record of ours its position IS the start;
+    // with one, a newer position elsewhere is offered after the first frame (never applied silently).
+    val local = progress?.takeIf { shouldRestoreSavedProgress(it) }
+    resolveServerResume(local?.position, local?.lastWatched)?.let { serverPosition ->
+        pendingResumeProgress = syntheticResumeProgress(serverPosition)
+        requestedStartPositionMs = serverPosition
+    }
 }
+
+/** A resume target that came from a source's own record (there is no local entry to restore from). */
+private fun PlayerRuntimeController.syntheticResumeProgress(positionMs: Long): com.nuvio.tv.domain.model.WatchProgress =
+    com.nuvio.tv.domain.model.WatchProgress(
+        contentId = contentId.orEmpty(),
+        contentType = contentType ?: "movie",
+        name = contentName ?: title,
+        poster = null,
+        backdrop = null,
+        logo = null,
+        videoId = currentVideoId ?: contentId.orEmpty(),
+        season = currentSeason,
+        episode = currentEpisode,
+        episodeTitle = null,
+        position = positionMs,
+        duration = 0L,
+        lastWatched = System.currentTimeMillis(),
+        source = com.nuvio.tv.domain.model.WatchProgress.SOURCE_REMOTE_PLAYBACK,
+    )
 
 /**
  * Continue Watching intentionally surfaces any real local checkpoint, including one below the
