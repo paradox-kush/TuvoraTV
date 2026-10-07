@@ -69,6 +69,7 @@ internal class MediaServerSearchProvider(
             name = title,
             rawType = contentType,
             hits = items.map { IptvSearchHit(contentId = it.id, name = it.name, poster = it.poster, isLive = false) },
+            sourceLabel = entry.type.productName,
         )
 
     /** Enabled + signed-in servers and the credential state, as a digest - never a credential. Null while nothing is searchable. */

@@ -52,4 +52,12 @@ class ContributedHomeRowsTest {
         assertFalse("see-all on TV is an open item: the row is its own page of cards", catalogRow.hasMore)
         assertEquals(ContributedRows.ADDON_ID, catalogRow.addonId)
     }
+
+    @Test
+    fun aContributedRowTitleNeverGetsTheAddOnTypeSuffix() {
+        // "Recently Added - Den - Movie" read like an add-on catalog; the contributor already named the row.
+        val catalogRow = row.toCatalogRow()
+        assertEquals("Recently Added · Den", catalogRowTitle(catalogRow, showCatalogTypeSuffix = true, strTypeMovie = "Movie", strTypeSeries = "Series"))
+        assertEquals("an add-on row keeps its suffix", "Top - Movie", catalogRowTitle(catalogRow.copy(addonId = "com.addon", catalogName = "top"), true, "Movie", "Series"))
+    }
 }
