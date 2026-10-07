@@ -672,6 +672,7 @@ internal fun PlayerRuntimeController.handleNaturalPlaybackEnded() {
         return
     }
 
+    reportSessionStop()
     emitCompletionScrobbleStop(progressPercent = 99.5f)
     saveWatchProgress()
     resetPostPlayStateAfterPlaybackEnded()
@@ -780,6 +781,9 @@ internal fun PlayerRuntimeController.buildScrobbleItem(): TrackingMediaReference
 }
 
 internal fun PlayerRuntimeController.emitScrobbleStart() {
+    // A source that owns this item (a media server) is told first: its items have no scrobble identity, so the
+    // pipeline below bails out for them (see ExcludedSourceTrackingTest).
+    reportSessionStart()
     logScrobbleDiagnostic("start_evaluated")
     if (isShortPlaceholderStream()) {
         logScrobbleDiagnostic("start_skipped", "reason=short_placeholder")
@@ -871,6 +875,7 @@ internal fun PlayerRuntimeController.emitScrobbleStop(progressPercent: Float? = 
 }
 
 internal fun PlayerRuntimeController.emitScrobblePause(progressPercent: Float? = null) {
+    reportSessionProgress(paused = true)
     logScrobbleDiagnostic("pause_evaluated", "providedProgress=${progressPercent ?: "none"}")
     if (isShortPlaceholderStream()) {
         logScrobbleDiagnostic("pause_skipped", "reason=short_placeholder")
@@ -952,6 +957,7 @@ internal fun PlayerRuntimeController.emitSeekScrobbleRestart(progressPercent: Fl
 
 internal fun PlayerRuntimeController.flushPlaybackSnapshotForSwitchOrExit() {
     logScrobbleDiagnostic("flush_switch_or_exit")
+    reportSessionStop()
     emitStopScrobbleForCurrentProgress()
     saveWatchProgress()
 }
@@ -1611,6 +1617,8 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             }
         }
         PlayerEvent.OnStartOverFromBeginning -> startOverFromBeginning()
+        PlayerEvent.OnApplyServerResume -> applyServerResumeOffer()
+        PlayerEvent.OnDismissServerResume -> dismissServerResumeOffer()
         PlayerEvent.OnReportPlaybackIssue -> {
             submitPlaybackIssueReport()
         }

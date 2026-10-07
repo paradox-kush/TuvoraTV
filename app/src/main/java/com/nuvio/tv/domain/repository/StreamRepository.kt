@@ -73,6 +73,12 @@ interface StreamRepository {
      */
     suspend fun mintDeferredIptvUrl(url: String): String?
 
+    /**
+     * True when [url] is a deferred (not yet minted) matched-source play url - the player and the stream
+     * screen mint it ([mintDeferredIptvUrl]) before handing it to an engine.
+     */
+    fun isDeferredIptvUrl(url: String?): Boolean
+
     suspend fun refreshMatchedIptvStreamUrl(
         type: String,
         videoId: String,

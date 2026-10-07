@@ -38,7 +38,8 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(
     detailedError: String
 ): Boolean {
     val code = error.findInvalidResponseCodeException()?.responseCode ?: return false
-    if (!isIptvRefreshableHttpStatus(code)) return false
+    // An own source's server-built stream (a transcode session) also dies with a 404 once the server dropped the session.
+    if (!isIptvRefreshableHttpStatus(code) && !(code == 404 && ownSourceVideoId() != null)) return false
     return attemptIptvLinkRefresh(detailedError)
 }
 
@@ -52,11 +53,13 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(
  */
 internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: String): Boolean {
     val refreshId = refreshableIptvVideoId()
+    // An own source's item (a media server's): it re-issues its own link, no IPTV account involved.
+    val ownId = ownSourceVideoId()
     // TMDB-matched lane: the content id is a tmdb/imdb id, but the failing stream may still be an
     // iptv one — matched-lane streams carry the ACCOUNT NAME as addonName, which the repository
     // uses to decide (cheaply, no network for foreign labels) whether a re-match can mint a fresh
     // link. Without at least an addon label there is nothing to re-match against.
-    val matchedLane = refreshId == null
+    val matchedLane = refreshId == null && ownId == null
     if (matchedLane && currentAddonName.isNullOrBlank()) return false
     if (hasAttemptedIptvLinkRefresh) return false
     hasAttemptedIptvLinkRefresh = true
@@ -101,14 +104,17 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
     Log.w(
         PlayerRuntimeController.TAG,
         "IPTV_LINK_REFRESH: stream rejected (${LogRedaction.text(detailedError)}) — minting a fresh link for " +
-            (refreshId ?: "matched:$matchedVideoId via $currentAddonName")
+            (refreshId ?: ownId?.let { "own-source item" } ?: "matched:$matchedVideoId via $currentAddonName")
     )
 
     errorRetryJob?.cancel()
     errorRetryJob = scope.launch {
         showRecoveryOverlay()
         val freshUrl = runCatching {
-            if (refreshId != null) {
+            if (ownId != null) {
+                // forceMint: the link that just failed was a direct play (or a session the server dropped): ask for the transcode.
+                com.nuvio.tv.core.contracts.StreamSourceAccess.current().reissueLink(ownId, forceMint = true)
+            } else if (refreshId != null) {
                 // forceFresh: with static-cmd playback the plain resolve would rebuild the very
                 // URL that just 401'd — the one-shot recovery must mint a genuinely new link.
                 streamRepository.refreshIptvStreamUrl(refreshId, forceFresh = true)

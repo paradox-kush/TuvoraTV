@@ -778,6 +778,8 @@ dependencies {
     // Compose UI tests on Robolectric (JVM) — focus/key behaviour of guide cells (B114).
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
+    // Media-server client tests run the real Ktor client against canned responses (no network).
+    testImplementation(libs.ktor.client.mock)
     testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     debugImplementation("androidx.compose.ui:ui-tooling")

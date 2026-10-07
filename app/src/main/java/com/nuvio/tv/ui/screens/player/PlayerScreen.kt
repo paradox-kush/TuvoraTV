@@ -800,6 +800,20 @@ fun PlayerScreen(
                 .zIndex(2f)
         )
 
+        // "You watched further on your server" (a media server's resume position): a choice over the picture for a few seconds.
+        uiState.serverResumeOfferMs?.let { serverAt ->
+            if (!uiState.showLoadingOverlay && uiState.error == null) {
+                ServerResumeOfferAction(
+                    positionLabel = formatTime(serverAt),
+                    onJump = { viewModel.onEvent(PlayerEvent.OnApplyServerResume) },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 72.dp)
+                        .zIndex(2.4f)
+                )
+            }
+        }
+
         val startOverAt = uiState.startOverOfferPositionMs
         if (startOverAt != null && uiState.showLoadingOverlay && uiState.error == null) {
             StartOverAction(

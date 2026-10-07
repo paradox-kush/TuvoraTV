@@ -75,6 +75,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
     @Inject lateinit var imagePerformancePreferences: ImagePerformancePreferences
     @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
+    @Inject lateinit var xtreamIptvSearchProvider: com.nuvio.tv.core.iptv.XtreamIptvSearchProvider
+    @Inject lateinit var mediaServerRegistrations: com.nuvio.tv.core.mediaserver.source.MediaServerSourceRegistrations
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -118,6 +120,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
 
     override fun onCreate() {
         super.onCreate()
+        // Own sources register into the plural source ports (id predicates, search) before anything asks.
+        com.nuvio.tv.core.iptv.IptvSourceRegistrations.register(xtreamIptvSearchProvider)
+        mediaServerRegistrations.register()
         // Resolve the memory tier once, before anything sizes a cache from it.
         com.nuvio.tv.core.memory.AndroidMemoryTierProbe.tier(this)
         // Startup journal — foundational to the durable resolver backoff and the crash-loop recovery

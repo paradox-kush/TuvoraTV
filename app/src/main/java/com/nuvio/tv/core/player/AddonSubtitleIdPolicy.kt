@@ -11,10 +11,12 @@ package com.nuvio.tv.core.player
  * and with no public id nothing is requested.
  */
 object AddonSubtitleIdPolicy {
-    private const val PROVIDER_PREFIX = "xtream:"
     private val IMDB_ID = Regex("^tt\\d{5,10}$")
 
-    fun isProviderScoped(id: String?): Boolean = id?.trim()?.startsWith(PROVIDER_PREFIX) == true
+    // Which ids are provider-scoped is the registered own-source policy (IPTV's "xtream:" literal, a media
+    // server's machine/user-bearing "ms:" ids), not a literal here.
+    fun isProviderScoped(id: String?): Boolean =
+        com.nuvio.tv.core.contracts.OwnSourcePolicy.isSubtitleScopedId(id)
 
     fun publicVideoId(imdbId: String?, isSeries: Boolean, season: Int?, episode: Int?): String? {
         val imdb = imdbId?.trim()?.lowercase()?.takeIf { IMDB_ID.matches(it) } ?: return null

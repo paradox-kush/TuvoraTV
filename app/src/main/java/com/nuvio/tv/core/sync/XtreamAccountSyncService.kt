@@ -6,6 +6,8 @@ import com.nuvio.tv.core.iptv.CategorySelections
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.PulledPlaylist
 import com.nuvio.tv.core.iptv.m3uAccountFromUrl
+import com.nuvio.tv.core.mediaserver.api.MediaServerEntry
+import com.nuvio.tv.core.mediaserver.api.MediaServerSyncCodec
 import com.nuvio.tv.core.iptv.tvLegacyM3uId
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.core.profile.ProfileManager
@@ -57,6 +59,7 @@ class XtreamAccountSyncService @Inject constructor(
     private val rekeyer: com.nuvio.tv.core.iptv.PlaylistKeyRekeyer,
     private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
     private val managedRefresher: com.nuvio.tv.core.iptv.ManagedInfoRefresher,
+    private val mediaServerSync: com.nuvio.tv.core.mediaserver.MediaServerSyncAccess,
 ) {
     private val postgrest get() = supabaseProvider.postgrest
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -146,22 +149,28 @@ class XtreamAccountSyncService @Inject constructor(
                 runCatching { pullJson.decodeFromJsonElement(SupabaseIptvPlaylist.serializer(), el) }.getOrNull()
             }
             val pulled = pulledPlaylists(rows)
-            return com.nuvio.tv.core.iptv.PlaylistPullResponse(revision, pulled.map { it.account }, generation, pulled.keyedIds())
+            return com.nuvio.tv.core.iptv.PlaylistPullResponse(revision, pulled.map { it.account }, generation, pulled.keyedIds(), mediaServers = mediaServerEntries(rows))
         }
 
         override suspend fun push(
             profileId: Int, expectedRevision: Long?, accounts: List<XtreamAccount>, deleteAll: Boolean, mutationId: String,
             expectedGeneration: Long?,
+        ): com.nuvio.tv.core.iptv.PlaylistPushResponse =
+            pushV2(profileId, expectedRevision, accounts, emptyList(), deleteAll, mutationId, expectedGeneration, SYNCED_SOURCE_TYPES)
+
+        override suspend fun pushWithMediaServers(
+            profileId: Int, expectedRevision: Long?, accounts: List<XtreamAccount>, mediaServers: List<MediaServerEntry>,
+            deleteAll: Boolean, mutationId: String, expectedGeneration: Long?,
+        ): com.nuvio.tv.core.iptv.PlaylistPushResponse =
+            pushV2(profileId, expectedRevision, accounts, mediaServers, deleteAll, mutationId, expectedGeneration, V2_SYNCED_SOURCE_TYPES)
+
+        private suspend fun pushV2(
+            profileId: Int, expectedRevision: Long?, accounts: List<XtreamAccount>, mediaServers: List<MediaServerEntry>,
+            deleteAll: Boolean, mutationId: String, expectedGeneration: Long?, sourceTypes: List<String>,
         ): com.nuvio.tv.core.iptv.PlaylistPushResponse {
-            val params = buildJsonObject {
-                put("p_profile_id", profileId)
-                put("p_expected_revision", if (expectedRevision == null) JsonNull else JsonPrimitive(expectedRevision))
-                put("p_playlists", buildJsonArray { accounts.forEachIndexed { i, acc -> add(playlistPushJson(acc, i)) } })
-                put("p_source_types", buildJsonArray { SYNCED_SOURCE_TYPES.forEach { add(it) } })
-                put("p_delete_all", deleteAll)
-                put("p_mutation_id", mutationId)
-                put("p_expected_generation", if (expectedGeneration == null) JsonNull else JsonPrimitive(expectedGeneration))
-            }
+            val params = playlistPushV2Params(
+                profileId, expectedRevision, accounts, mediaServers, deleteAll, mutationId, expectedGeneration, sourceTypes,
+            )
             val result: JsonObject = withJwtRefreshRetry {
                 postgrest.rpc("sync_push_iptv_playlists_v2", params).decodeAs()
             }
@@ -178,6 +187,7 @@ class XtreamAccountSyncService @Inject constructor(
                         currentRevision = (result["current_revision"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
                         currentRows = pulled.map { it.account },
                         currentKeyedIds = pulled.keyedIds(),
+                        currentMediaServers = mediaServerEntries(curRows),
                     )
                 }
                 else -> com.nuvio.tv.core.iptv.PlaylistPushResponse.Rejected(result.toString())
@@ -217,6 +227,8 @@ class XtreamAccountSyncService @Inject constructor(
             syncedKey = { playlistPushJson(it, sortOrder = 0) },
             // The mutation id is bound to exactly what the push sends (B68).
             wirePayload = { accounts -> buildJsonArray { accounts.forEachIndexed { i, acc -> add(playlistPushJson(acc, i)) } }.toString() },
+            // Wave 3: the profile's Jellyfin/Emby server entries ride this same engine (one revision counter).
+            mediaServers = mediaServerSync.binding(),
             // Step 0: adopt server playlist keys (re-keys local ids + their saved data, once).
             adoptKeys = { p, pulled, keyed ->
                 rekeyer.adoptFromPull(p, pulled.map { PulledPlaylist(it, it.id in keyed) }).also { r ->
@@ -400,6 +412,20 @@ internal fun SupabaseIptvPlaylist.toXtreamAccountOrNull(): XtreamAccount? {
     )
 }
 
+/**
+ * The SECOND row mapper (Wave 3, design 5.3): a Jellyfin/Emby server entry, or null for any other source type.
+ * [toXtreamAccountOrNull] drops these rows (unknown type), so the two mappers partition the table with no overlap.
+ */
+internal fun SupabaseIptvPlaylist.toMediaServerEntryOrNull(): MediaServerEntry? = MediaServerSyncCodec.entryFromRow(
+    MediaServerSyncCodec.RowColumns(
+        playlistKey = playlistKey, sourceType = sourceType, name = name, enabled = enabled,
+        baseUrl = baseUrl, url = url, username = username,
+    ),
+)
+
+internal fun mediaServerEntries(rows: List<SupabaseIptvPlaylist>): List<MediaServerEntry> =
+    rows.sortedBy { it.sortOrder }.mapNotNull { it.toMediaServerEntryOrNull() }
+
 /** The pull's view of [rows]: each usable row's account and whether its id is the server's key. */
 internal fun pulledPlaylists(rows: List<SupabaseIptvPlaylist>): List<PulledPlaylist> =
     rows.mapNotNull { row -> row.toXtreamAccountOrNull()?.let { PulledPlaylist(it, serverKeyed = !row.playlistKey.isNullOrBlank()) } }
@@ -519,6 +545,40 @@ internal fun preserveDeviceLocalPrefs(
 internal val SYNCED_SOURCE_TYPES = listOf(
     XtreamAccount.SOURCE_XTREAM, WIRE_M3U_URL, WIRE_M3U_FILE, XtreamAccount.SOURCE_STALKER
 )
+
+/**
+ * The v2 push's full-replace scope: the playlist types plus the media-server types (Wave 3). Kept separate from
+ * [SYNCED_SOURCE_TYPES] on purpose - the v1 push and the legacy migration must NEVER name a media-server type in
+ * their scope (their payload carries none, so the replace would delete the server's rows).
+ */
+internal val V2_SYNCED_SOURCE_TYPES: List<String> = SYNCED_SOURCE_TYPES + MediaServerSyncCodec.SOURCE_TYPES
+
+/**
+ * The parameter object of `sync_push_iptv_playlists_v2`: the playlists, then the media-server entries (positions continue,
+ * each through its own row mapper - credential-free, an explicit key), and the full-replace SCOPE [sourceTypes], which is
+ * ALWAYS a list (never null: a null scope deletes every row of every type, including other clients' rows).
+ */
+internal fun playlistPushV2Params(
+    profileId: Int,
+    expectedRevision: Long?,
+    accounts: List<XtreamAccount>,
+    mediaServers: List<MediaServerEntry>,
+    deleteAll: Boolean,
+    mutationId: String,
+    expectedGeneration: Long?,
+    sourceTypes: List<String>,
+): JsonObject = buildJsonObject {
+    put("p_profile_id", profileId)
+    put("p_expected_revision", if (expectedRevision == null) JsonNull else JsonPrimitive(expectedRevision))
+    put("p_playlists", buildJsonArray {
+        accounts.forEachIndexed { i, acc -> add(playlistPushJson(acc, i)) }
+        mediaServers.forEachIndexed { i, entry -> add(MediaServerSyncCodec.pushRow(entry, accounts.size + i)) }
+    })
+    put("p_source_types", buildJsonArray { sourceTypes.forEach { add(it) } })
+    put("p_delete_all", deleteAll)
+    put("p_mutation_id", mutationId)
+    put("p_expected_generation", if (expectedGeneration == null) JsonNull else JsonPrimitive(expectedGeneration))
+}
 
 /**
  * Full parameter object for `sync_push_iptv_playlists`. Every push scopes the full-replace with

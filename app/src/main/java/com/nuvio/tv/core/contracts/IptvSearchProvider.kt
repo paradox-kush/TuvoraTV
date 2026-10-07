@@ -36,6 +36,8 @@ data class IptvSearchRow(
     val name: String,
     val rawType: String,
     val hits: List<IptvSearchHit>,
+    /** What the row says it is "from" under its title; null = the IPTV default (a media server names its product). */
+    val sourceLabel: String? = null,
 )
 
 /** One IPTV search hit. [contentId] is opaque here; the detail pipeline resolves it. */
