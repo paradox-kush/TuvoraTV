@@ -75,7 +75,7 @@ class SurfaceCatchUp @Inject constructor(
     /** Pull whatever advanced since this TV last pulled it. Returns the surfaces pulled. */
     suspend fun run(profileId: Int, reason: String): List<String> = mutex.withLock {
         val userId = (authManager.authState.value as? AuthState.FullAccount)?.userId ?: return@withLock emptyList()
-        val server = fetch(profileId) ?: return@withLock emptyList()
+        val server = fetch(profileId) ?: error("Surface versions unavailable; catch-up was not completed")
         val seen = loadSeen(userId)
         val sync = startupSyncService.get()
         val plan = SurfaceCatchUpPolicy.plan(seen, server, sync.pullableSurfaces())
@@ -83,6 +83,7 @@ class SurfaceCatchUp @Inject constructor(
         Log.i(TAG, "catch-up ($reason) profile=$profileId surfaces=${plan.map { it.surface }}")
         val pulled = plan.filter { sync.pullSurface(profileId, it.surface) }
         saveSeen(userId, SurfaceCatchUpPolicy.advance(seen, pulled))
+        check(pulled.size == plan.size) { "Some sync surfaces failed; their versions remain unseen" }
         pulled.map { it.surface }
     }
 

@@ -15,6 +15,7 @@ import io.github.jan.supabase.realtime.postgresChangeFlow
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -42,8 +43,6 @@ import kotlinx.serialization.json.jsonPrimitive
 private const val TAG = "RealtimeSyncInvalidation"
 private const val REALTIME_INVALIDATION_COALESCE_MS = 500L
 private const val REALTIME_SUBSCRIBE_TIMEOUT_MS = 15_000L
-private const val REALTIME_RETRY_BASE_DELAY_MS = 1_000L
-private const val REALTIME_RETRY_MAX_DELAY_MS = 10_000L
 /** Local status check only (no network): how often a subscribed channel's health is looked at. */
 private const val REALTIME_HEALTH_CHECK_MS = 5_000L
 
@@ -126,6 +125,7 @@ class RealtimeSyncInvalidationService @Inject constructor(
                 var changesJob: Job? = null
                 var realtimeStatusJob: Job? = null
                 var channelStatusJob: Job? = null
+                var catchUpJob: Job? = null
 
                 try {
                     val newChannel = supabaseClient.channel(channelName)
@@ -153,13 +153,26 @@ class RealtimeSyncInvalidationService @Inject constructor(
                         newChannel.subscribe(blockUntilSubscribed = true)
                     }
                     Log.i(TAG, "Subscribed to sync invalidations channel=$channelName profile=$profileId")
-                    attempt = 1
+                    val subscribedAt = SystemClock.elapsedRealtime()
                     // B03: events emitted while this TV was not subscribed are gone (Realtime has no
                     // replay) — catch up from the version vector on every (re)subscribe.
-                    launch { runCatching { surfaceCatchUp.get().run(profileId, "subscribed") } }
+                    catchUpJob = launch {
+                        repeat(3) { catchUpAttempt ->
+                            try {
+                                surfaceCatchUp.get().run(profileId, "subscribed")
+                                return@launch
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                Log.w(TAG, "Realtime catch-up failed; retrying", error)
+                                if (catchUpAttempt < 2) delay(RealtimeRetryPolicy.delayMs(catchUpAttempt + 1, Random.nextDouble()))
+                            }
+                        }
+                    }
                     // B03: supervise — a channel the server closed (token expiry, standby) used to park
                     // here forever; past the grace it is torn down below and rejoined.
                     superviseUntilUnhealthy(newChannel)
+                    if (SystemClock.elapsedRealtime() - subscribedAt >= RealtimeRetryPolicy.STABLE_CONNECTION_MS) attempt = 1
                     Log.w(TAG, "Sync invalidations channel=$channelName left SUBSCRIBED; resubscribing")
                 } catch (error: TimeoutCancellationException) {
                     Log.e(
@@ -176,6 +189,7 @@ class RealtimeSyncInvalidationService @Inject constructor(
                         error
                     )
                 } finally {
+                    catchUpJob?.cancel()
                     changesJob?.cancel()
                     realtimeStatusJob?.cancel()
                     channelStatusJob?.cancel()
@@ -192,8 +206,7 @@ class RealtimeSyncInvalidationService @Inject constructor(
                 }
 
                 if (isActive) {
-                    val retryDelay = (REALTIME_RETRY_BASE_DELAY_MS * attempt)
-                        .coerceAtMost(REALTIME_RETRY_MAX_DELAY_MS)
+                    val retryDelay = RealtimeRetryPolicy.delayMs(attempt, Random.nextDouble())
                     Log.w(TAG, "Retrying sync invalidations subscription in ${retryDelay}ms profile=$profileId nextAttempt=${attempt + 1}")
                     delay(retryDelay)
                     attempt += 1
