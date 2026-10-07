@@ -126,6 +126,11 @@ data class RadarFixture(
     val sport: String? = null,
     val home: String? = null,
     val away: String? = null,
+    /** Optional stable identities/aliases; old cached fixtures remain readable. */
+    val homeId: String? = null,
+    val awayId: String? = null,
+    val homeAliases: List<String> = emptyList(),
+    val awayAliases: List<String> = emptyList(),
     /** Full event name — the display fallback when home/away are absent (motorsport, golf…). */
     val event: String? = null,
     val homeBadge: String? = null,

@@ -80,6 +80,7 @@ class RadarChannelMatcherReplayTest {
             // tiers underneath it.
             contentDb = mockk(relaxed = true),
             clientFactory = mockk(relaxed = true),
+            refreshStore = mockk(relaxed = true),
             catchUp = CatchUpPlaybackCoordinator(
                 CatchUpWinnerStore(object : CatchUpWinnerStore.Persistence {
                     private var stored: Map<String, String> = emptyMap()

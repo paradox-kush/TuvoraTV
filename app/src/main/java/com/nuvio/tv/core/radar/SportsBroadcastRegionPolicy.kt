@@ -77,16 +77,12 @@ internal object SportsBroadcastRegionPolicy {
         return channelRegion == stationRegion
     }
 
-    /**
-     * A home-country broadcaster (or one whose region we can't tell) genuinely airs the fixture, so it
-     * confirms it; an out-of-country listing (ESPN NL for a US game) only proves the channel carries the
-     * competition somewhere, so it drops to LEAGUE — the sheet shows it under "Carries <league>".
-     */
-    fun listingConfidence(stationRegion: String?, homeRegion: String?): MatchConfidence =
-        if (homeRegion != null && stationRegion != null && stationRegion != homeRegion) MatchConfidence.LEAGUE
-        else MatchConfidence.CONFIRMED
+    /** A fixture listing confirms a known matching national feed, regardless of fixture country. */
+    fun listingConfidence(stationRegion: String?, channelRegion: String?): MatchConfidence =
+        if (stationRegion != null && channelRegion == stationRegion) MatchConfidence.CONFIRMED
+        else MatchConfidence.POSSIBLE
 
-    /** Rank nudge so the home broadcaster leads and out-of-country listings sink below the confirmed tier. */
+    /** Rank nudge so the home broadcaster leads and out-of-country listings follow preferred feeds within their evidence tier. */
     fun listingScoreDelta(stationRegion: String?, homeRegion: String?): Int = when {
         homeRegion == null || stationRegion == null -> 0
         stationRegion == homeRegion -> HOME_LISTING_BOOST

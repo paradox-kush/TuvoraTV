@@ -1,12 +1,7 @@
 package com.nuvio.tv.core.radar
 
-/**
- * Whether a channel match proves THIS fixture is on the channel (CONFIRMED — both teams named, the
- * specific event title, or a broadcaster listing) or only that the channel carries the competition
- * (LEAGUE — a league keyword or a single team word). The matcher threads this onto [ChannelMatch] so
- * the sheet can honestly say "Showing this match" vs "Carries <league>" instead of guessing from a score.
- */
-enum class MatchConfidence { CONFIRMED, LEAGUE }
+/** Guide/listing evidence, unresolved event identity, or competition-only evidence. */
+enum class MatchConfidence { CONFIRMED, POSSIBLE, LEAGUE }
 
 /**
  * Pure name/programme scoring for the Sports Centre channel matcher, with the cross-sport guard.
@@ -19,6 +14,7 @@ enum class MatchConfidence { CONFIRMED, LEAGUE }
  *
  * [matches] is the caller's word-boundary membership test over the already-normalised text.
  */
+/** Legacy token-score compatibility; live channel decisions use SportsEventMatchEngine. */
 internal object SportsChannelMatchPolicy {
 
     /** A scored hit: how strongly it ranks, and whether it confirms the fixture or only the league. */
@@ -116,5 +112,5 @@ internal object SportsChannelMatchPolicy {
 
     /** The stronger of two confidences — CONFIRMED wins when merging signals for one channel. */
     fun stronger(a: MatchConfidence, b: MatchConfidence): MatchConfidence =
-        if (a == MatchConfidence.CONFIRMED || b == MatchConfidence.CONFIRMED) MatchConfidence.CONFIRMED else MatchConfidence.LEAGUE
+        if (SportsEventMatchEngine.rank(a) >= SportsEventMatchEngine.rank(b)) a else b
 }

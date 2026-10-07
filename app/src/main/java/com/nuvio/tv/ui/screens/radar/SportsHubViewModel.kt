@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -137,6 +138,12 @@ class SportsHubViewModel @Inject constructor(
         // viewer leaves the Sports tab — the same way the live guide's copy was, which the Onn
         // telemetry caught downloading nothing at all (2026-08-18).
         epgMirror.warm()
+        viewModelScope.launch {
+            profileManager.activeProfileId.drop(1).collect {
+                closeMatch()
+                matcher.resetForProfile()
+            }
+        }
     }
 
     fun ensureLoaded() = repository.ensureLoaded()
@@ -244,22 +251,10 @@ class SportsHubViewModel @Inject constructor(
                     }
                     updateMatchSheet(fixture, generation) { it.copy(recordings = recordings) }
                 }
-                // Broadcaster listings are one cached edge-fn call; bounded so a slow network
-                // can't hold the whole sheet hostage (matching proceeds without them).
-                val stations = try {
-                    kotlinx.coroutines.withTimeoutOrNull(4_000) {
-                        repository.tvStations(fixture.id)
-                    } ?: emptyList()
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    Log.w(TAG, "Broadcaster lookup failed", error)
-                    emptyList()
-                }
-                // Render ONCE, when the fully-ranked result is ready (set below) — no name-only partial;
-                // the fast name pass and the EPG tiers score on different scales, so showing the partial
-                // then replacing it made the list visibly reorder and grow.
-                val result = matcher.match(fixture, league, stations)
+                val result = matcher.match(fixture, league,
+                    stationLookup = { repository.tvStations(fixture.id) },
+                    onPartial = { partial -> updateMatchSheet(fixture, generation) { it.copy(matches = partial) } },
+                )
                 val replays = buildMap {
                     result.forEach { match ->
                         val replay = try {

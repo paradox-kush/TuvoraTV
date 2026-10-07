@@ -139,6 +139,7 @@ class RadarSportsReplayTest {
             contentDb = mockk(relaxed = true),
             clientFactory = mockk(relaxed = true),
             catchUp = coordinator,
+            refreshStore = mockk(relaxed = true),
         )
     }
 

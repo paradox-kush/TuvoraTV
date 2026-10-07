@@ -728,16 +728,17 @@ private fun MatchChannelsOverlay(
                         )
                     }
                 }
-                // Three honest tiers by evidence strength: the channel's own GUIDE names the teams
+                // Evidence tiers keep schedule, listings, possible event feeds and competition separate.
+                    // The channel's own GUIDE names the teams
                 // (Showing) > a broadcaster listing or the channel name names the match (Broadcasting) >
                 // a sport/league channel that only carries the competition (Carries). Dedup by contentId
                 // first: a duplicate Compose key is a hard crash.
                 val deduped = state.matches.distinctBy { it.channel.contentId }
                 val showing = deduped.filter { it.confidence == MatchConfidence.CONFIRMED && it.via == RadarChannelMatcher.MatchVia.EPG }
                 val broadcasting = deduped.filter { it.confidence == MatchConfidence.CONFIRMED && it.via != RadarChannelMatcher.MatchVia.EPG }
-                val carries = deduped.filter { it.confidence == MatchConfidence.LEAGUE }
+                val possible = deduped.filter { it.confidence == MatchConfidence.POSSIBLE }
+                    val carries = deduped.filter { it.confidence == MatchConfidence.LEAGUE }
                 val leagueLabel = fixture.league?.takeIf { it.isNotBlank() }
-                val labeled = listOf(showing, broadcasting, carries).count { it.isNotEmpty() } >= 2
                 fun label(text: String, key: String) {
                     item(key = key) {
                         Text(
@@ -748,11 +749,13 @@ private fun MatchChannelsOverlay(
                         )
                     }
                 }
-                if (labeled && showing.isNotEmpty()) label("SHOWING THIS MATCH", "grp-showing")
+                if ( showing.isNotEmpty()) label("SCHEDULED FOR THIS EVENT", "grp-showing")
                 channelMatchRows(showing, state.replays, onPlay, onPlayReplay)
-                if (labeled && broadcasting.isNotEmpty()) label("BROADCASTING THIS MATCH", "grp-broadcasting")
+                if ( broadcasting.isNotEmpty()) label("LISTED BROADCASTER", "grp-broadcasting")
                 channelMatchRows(broadcasting, state.replays, onPlay, onPlayReplay)
-                if (labeled && carries.isNotEmpty()) label((leagueLabel?.let { "CARRIES $it" } ?: "CARRIES THIS COMPETITION").uppercase(), "grp-carries")
+                if (possible.isNotEmpty()) label("POSSIBLE EVENT FEEDS", "grp-possible")
+                channelMatchRows(possible, state.replays, onPlay, onPlayReplay)
+                if ( carries.isNotEmpty()) label((leagueLabel?.let { "CARRIES $it" } ?: "CARRIES THIS COMPETITION").uppercase(), "grp-carries")
                 channelMatchRows(carries, state.replays, onPlay, onPlayReplay)
                 if (state.matching) {
                     item {

@@ -8,9 +8,13 @@ import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.content.EpgProgramme
 import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.data.local.XtreamAccountStore
+import io.mockk.coVerify
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -145,12 +149,48 @@ class RadarChannelMatcherSourcesTest {
         assertEquals("Canal 5", match.channel.name)
     }
 
+    @Test
+    fun shared_guide_id_retains_all_stream_variants() = runTest {
+        val db = mockk<IptvContentDb>(relaxed = true)
+        coEvery { db.epgSearch(any(), any(), any(), any(), any()) } returns listOf(
+            EpgProgramme("shared", FIXTURE.startEpochMs!!, FIXTURE.startEpochMs!! + 2 * 60 * 60_000L, "Spain vs Austria", null))
+        val matcher = matcher(xtreamAccount() to clientWith(
+            channel(1,"Canal 5 HD",XTREAM_URL).copy(epgChannelId="shared"),
+            channel(2,"Canal 5 SD",XTREAM_URL).copy(epgChannelId="shared"),
+            channel(3,"Canal 7",XTREAM_URL).copy(epgChannelId="other")), contentDb=db)
+        assertEquals(setOf(1,2),matcher.match(FIXTURE,null).map { it.channel.streamId }.toSet())
+    }
+
+    @Test
+    fun committed_catalog_revision_reloads_renamed_event_feeds() = runTest {
+        var revision=1L
+        var channels=listOf(channel(1,"Spain vs Austria",XTREAM_URL))
+        val client=clientWith(*channels.toTypedArray())
+        coEvery { client.liveChannels(any(),any()) } coAnswers { Result.success(channels) }
+        val matcher=matcher(xtreamAccount() to client,catalogRevision={revision})
+        assertEquals("Spain vs Austria",matcher.match(FIXTURE,null).single().channel.name)
+        revision=2L;channels=listOf(channel(1,"Austria v Spain Live",XTREAM_URL))
+        assertEquals("Austria v Spain Live",matcher.match(FIXTURE,null).single().channel.name)
+    }
+
+    @Test
+    fun fallback_is_bounded_coalesced_and_negative_cached() = runTest {
+        val client=clientWith(*(1..12).map { channel(it,"Sky Sports $it",XTREAM_URL) }.toTypedArray())
+        val matcher=matcher(xtreamAccount() to client)
+        val results=coroutineScope { listOf(async { matcher.match(FIXTURE,null) },async { matcher.match(FIXTURE,null) }).awaitAll() }
+        assertTrue(results.all { it.isEmpty() })
+        assertTrue(matcher.match(FIXTURE,null).isEmpty())
+        coVerify(exactly=6) { client.shortEpg(any(),any(),any()) }
+    }
+
     // --- helpers ---------------------------------------------------------------
 
     private fun matcher(
         vararg playlists: Pair<XtreamAccount, IptvClient>,
         contentDb: IptvContentDb = mockk(relaxed = true),
+        catalogRevision: () -> Long? = { null },
     ): RadarChannelMatcher {
+        coEvery { contentDb.builtAt(any()) } coAnswers { catalogRevision() }
         val store = mockk<XtreamAccountStore>()
         every { store.accounts } returns flowOf(playlists.map { it.first })
         val factory = mockk<IptvClientFactory>()
@@ -167,6 +207,7 @@ class RadarChannelMatcherSourcesTest {
             contentDb = contentDb,
             clientFactory = factory,
             catchUp = mockk(relaxed = true),
+            refreshStore = mockk(relaxed = true),
         )
     }
 
