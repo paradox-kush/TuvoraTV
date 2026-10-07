@@ -100,6 +100,8 @@ internal class FakeClient : com.nuvio.tv.core.mediaserver.client.MediaServerClie
     var shelves = com.nuvio.tv.core.mediaserver.client.HomeShelves()
     var negotiation = com.nuvio.tv.core.mediaserver.client.PlaybackNegotiation(emptyList(), null)
     var failWith: com.nuvio.tv.core.mediaserver.client.MediaServerException? = null
+    /** When set, answers each PlaybackInfo by its request (a server that behaves differently when asked to transcode). */
+    var negotiationFor: ((com.nuvio.tv.core.mediaserver.client.PlaybackInfoRequest) -> com.nuvio.tv.core.mediaserver.client.PlaybackNegotiation)? = null
     val reports = mutableListOf<com.nuvio.tv.core.mediaserver.client.PlaybackReport>()
     val played = mutableListOf<Pair<String, Boolean>>()
     val playbackRequests = mutableListOf<Pair<String, com.nuvio.tv.core.mediaserver.client.PlaybackInfoRequest>>()
@@ -140,7 +142,7 @@ internal class FakeClient : com.nuvio.tv.core.mediaserver.client.MediaServerClie
     override suspend fun lookup(query: com.nuvio.tv.core.mediaserver.policy.MatchLookupPolicy.Query, limit: Int) = emptyList<com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto>()
     override suspend fun playbackInfo(itemId: String, request: com.nuvio.tv.core.mediaserver.client.PlaybackInfoRequest): com.nuvio.tv.core.mediaserver.client.PlaybackNegotiation {
         check(); playbackRequests += itemId to request
-        return negotiation
+        return negotiationFor?.invoke(request) ?: negotiation
     }
     override suspend fun report(report: com.nuvio.tv.core.mediaserver.client.PlaybackReport) { check(); reports += report }
     override suspend fun setPlayed(itemId: String, played: Boolean) { check(); this.played += itemId to played }

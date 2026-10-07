@@ -82,6 +82,7 @@ class MediaServerSourceRegistrations @Inject internal constructor(
             },
             changes = runtime.changeVersion.drop(1).map { },
             audioPreference = playerAudioPreference(),
+            onMintFailure = { reason -> MediaServerMintNotices.show(appContext, reason) },
         )
         runtime.homeContributor = home
         // A profile switch reloads the entries and drops everything the previous profile's session cached.
@@ -114,11 +115,12 @@ internal fun registerMediaServerSources(
     tuvoraContinueWatchingIds: suspend () -> Set<String> = { emptySet() },
     changes: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
     audioPreference: ServerAudioChoicePolicy.Preference? = null,
+    onMintFailure: (com.nuvio.tv.core.mediaserver.policy.MintFailurePolicy.Reason) -> Unit = {},
 ): MediaServerHomeContributor {
     val name = MediaServerSourceRegistrations.NAME
     val home = MediaServerHomeContributor(store, services, nowMs, tuvoraContinueWatchingIds, titles, changes)
     val meta = MediaServerMetaSource(store, services, enrich = enrich)
-    StreamSourceRegistry.register(name, MediaServerStreamSourceProvider(store, services, ensureRegistered = { id -> meta.ensureStreamRegistered(id) }, audioPreference = audioPreference))
+    StreamSourceRegistry.register(name, MediaServerStreamSourceProvider(store, services, ensureRegistered = { id -> meta.ensureStreamRegistered(id) }, audioPreference = audioPreference, onMintFailure = onMintFailure))
     MetaSourceRegistry.register(name, meta)
     SearchProviderRegistry.register(name, MediaServerSearchProvider(store, services, titles))
     OwnSourcePolicy.registerContentIdPredicate(name, MediaServerIds::isOwnContentId)
