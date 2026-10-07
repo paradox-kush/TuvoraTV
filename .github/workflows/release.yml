@@ -19,9 +19,8 @@ name: Release
 #
 # The playstore AAB is then published to Google Play automatically via the Play
 # Developer API (service account json in PLAY_SERVICE_ACCOUNT_JSON). A tag push
-# publishes to `internal`; pick another track on a manual run to promote further.
-# Production uploads stay blocked by Google until the closed-test requirement is
-# met and production access is granted — the pipeline is ready for that day.
+# publishes to the single production track.
+# Production access is already enabled for these apps.
 
 on:
   push:
@@ -34,9 +33,13 @@ on:
       play_track:
         description: 'Google Play track to publish the AAB to'
         required: true
-        default: alpha
+        default: production
         type: choice
-        options: [internal, alpha, beta, production]
+        options: [production]
+      announce:
+        description: Send community announcements
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -195,18 +198,8 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.tuvora.tv
           releaseFiles: app/build/outputs/bundle/playstoreRelease/*.aab
-          # Tag push -> internal AND alpha, in one edit.
-          #
-          # alpha is what the production-access gate measures (12 testers, 14 continuous days),
-          # so it must never go stale. But alpha needs Google review, which means a release can
-          # sit for hours before any tester sees it — internal testing publishes with no review
-          # at all, so the team gets the build in minutes. Publishing to internal used to be
-          # skipped entirely and it drifted a week behind (1.4.23 while alpha was on 1.4.32).
-          #
-          # `tracks` (plural) assigns the SAME uploaded bundle to both tracks inside one edit.
-          # Do NOT do this as two invocations of the action: the second upload re-sends the same
-          # version code and Play rejects it outright.
-          tracks: ${{ github.event.inputs.play_track || 'internal,alpha' }}
+          # All releases use the single production track.
+          tracks: ${{ github.event.inputs.play_track || 'production' }}
           status: completed
 
       # The download links people actually use — tuvora.co/tv, and the aftv.news Downloader code
@@ -244,6 +237,7 @@ jobs:
       # Community announcements — no-ops until the DISCORD_/TELEGRAM_ secrets exist.
       # Never fails the release (all curl errors are swallowed).
       - name: Announce release (Discord + Telegram)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.announce }}
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
