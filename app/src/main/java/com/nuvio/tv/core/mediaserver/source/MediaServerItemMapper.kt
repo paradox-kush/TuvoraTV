@@ -214,10 +214,21 @@ internal object MediaServerItemMapper {
         }
         val codec = video?.codec?.uppercase()?.let { if (it == "H264") "H.264" else it }
         val size = s.size?.takeIf { it > 0 }?.let(::sizeLabel)
+        // Nothing probed yet (an on-demand library lists versions before it has opened a file): the server's own name for the
+        // version is the only description there is - better than a bare container.
+        if (video == null) {
+            s.name?.let(::flattenName)?.takeIf { it.isNotBlank() }?.let { return it }
+        }
         return listOfNotNull(resolution, codec, s.container?.uppercase()?.takeIf { video == null }, size)
             .joinToString(" · ")
-            .ifBlank { s.name ?: "Direct play" }
+            .ifBlank { "Direct play" }
     }
+
+    /**
+     * A server that prepares streams on demand may give a version a name of several lines ("Server A\n1080p\nWEB-DL 4.2 GB"; name and
+     * description joined with a newline) - one line for a button label.
+     */
+    fun flattenName(name: String): String = name.lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · ")
 
     fun sizeLabel(bytes: Long): String {
         val gb = bytes / 1_073_741_824.0

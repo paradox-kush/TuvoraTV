@@ -90,6 +90,8 @@ internal data class MediaSourceDto(
     @SerialName("Id") val id: String? = null,
     @SerialName("Name") val name: String? = null,
     @SerialName("Container") val container: String? = null,
+    /** The server-side path; only read to recognise a server's own placeholder (never shown, never fetched). */
+    @SerialName("Path") val path: String? = null,
     @SerialName("Protocol") val protocol: String? = null,
     @SerialName("Size") val size: Long? = null,
     @SerialName("Bitrate") val bitrate: Long? = null,

@@ -123,4 +123,9 @@
     <string name="ms_resume_from_server_message">You watched further on your server. Continue at %1$s?</string>
     <string name="ms_resume_from_server_action">Continue</string>
     <string name="ms_playback_unavailable">This server did not give a playable stream. It may be offline or the sign-in ended.</string>
+    <string name="ms_play_unavailable">This title isn’t available from the server right now. Try again later or pick another version.</string>
+    <string name="ms_play_timed_out">The server took too long to start this title. Try again in a moment.</string>
+    <string name="ms_play_unreachable">Could not reach the server.</string>
+    <string name="ms_play_sign_in_again">Your sign-in to this server has expired. Sign in again in Settings.</string>
+    <string name="ms_play_server_error">The server could not start this title.</string>
 </resources>

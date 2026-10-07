@@ -202,8 +202,8 @@ internal class MediaBrowserClient(
     private suspend fun get(path: String, query: List<Pair<String, String>> = emptyList(), timeoutMs: Long = MediaServerRequest.DEFAULT_TIMEOUT_MS) =
         sendChecked(http, base, "GET", path, query, headers(), null, timeoutMs)
 
-    private suspend fun post(path: String, query: List<Pair<String, String>> = emptyList(), body: JsonElement? = null) =
-        sendChecked(http, base, "POST", path, query, headers(), body?.toString(), MediaServerRequest.DEFAULT_TIMEOUT_MS)
+    private suspend fun post(path: String, query: List<Pair<String, String>> = emptyList(), body: JsonElement? = null, timeoutMs: Long = MediaServerRequest.DEFAULT_TIMEOUT_MS) =
+        sendChecked(http, base, "POST", path, query, headers(), body?.toString(), timeoutMs)
 
     private suspend fun delete(path: String, query: List<Pair<String, String>> = emptyList()) =
         sendChecked(http, base, "DELETE", path, query, headers(), null, MediaServerRequest.DEFAULT_TIMEOUT_MS)
@@ -244,7 +244,7 @@ internal class MediaBrowserClient(
             fields?.let { add("Fields" to dialect.withRowFields(it)) }
         }
         return try {
-            decodeBody<ItemDto>(get(paths.item(itemId), params)).takeIf { !it.id.isNullOrBlank() }
+            decodeBody<ItemDto>(get(paths.item(itemId), params, timeoutMs = if (fields.orEmpty().contains("MediaSources", ignoreCase = true)) MediaServerRequest.SLOW_RESOLVE_TIMEOUT_MS else MediaServerRequest.DEFAULT_TIMEOUT_MS)).takeIf { !it.id.isNullOrBlank() }
         } catch (e: MediaServerException.Http) {
             if (e.isNotFound) null else throw e
         }
@@ -288,7 +288,7 @@ internal class MediaBrowserClient(
                 "userId" to userId, "Limit" to limit.toString(), "Fields" to rowFields,
                 "MediaTypes" to "Video", "Recursive" to "true", "EnableTotalRecordCount" to "false",
             )
-            decodeBody<ItemsEnvelopeDto>(get(paths.resumeItems, params)).items
+            optionalShelf { decodeBody<ItemsEnvelopeDto>(get(paths.resumeItems, params)).items }
         } else null
         val nextUp = if (MediaServerHomeRow.NEXT_UP in rows && dialect.supportsGlobalNextUp) async {
             val params = listOf(
@@ -296,14 +296,14 @@ internal class MediaBrowserClient(
                 "EnableResumable" to "false", "EnableTotalRecordCount" to "false",
                 "NextUpDateCutoff" to IsoTime.format(nowMs() - NEXT_UP_WINDOW_MS),
             )
-            decodeBody<ItemsEnvelopeDto>(get("/Shows/NextUp", params)).items
+            optionalShelf { decodeBody<ItemsEnvelopeDto>(get("/Shows/NextUp", params)).items }
         } else null
         val latest = if (MediaServerHomeRow.RECENTLY_ADDED in rows) async {
             val params = listOf(
                 "userId" to userId, "Limit" to limit.toString(), "Fields" to rowFields, "IncludeItemTypes" to "Movie,Series",
                 "GroupItems" to "true", "ImageTypeLimit" to "1", "EnableImageTypes" to "Primary,Backdrop,Thumb",
             )
-            decodeBody<List<ItemDto>>(get(paths.latest, params))
+            optionalShelf { decodeBody<List<ItemDto>>(get(paths.latest, params)) }
         } else null
 
         val resumeItems = resume?.await().orEmpty()
@@ -317,6 +317,19 @@ internal class MediaBrowserClient(
             } else emptyList(),
             recentlyAdded = latest?.await().orEmpty(),
         )
+    }
+
+    /**
+     * A shelf is optional: a server that implements only part of the Jellyfin API (early builds, other compatible servers)
+     * may answer a route with 400/404/405/501 or an HTML page. That empties THAT shelf; the others still show. A revoked token
+     * (401/403) and an unreachable server are not "missing route" and still surface so the session state is right.
+     */
+    private suspend fun <T> optionalShelf(block: suspend () -> List<T>): List<T> = try {
+        block()
+    } catch (e: MediaServerException.Http) {
+        if (e.isUnauthorized || e.status >= 500 && e.status != 501) throw e else emptyList()
+    } catch (e: MediaServerException.Malformed) {
+        emptyList()
     }
 
     override suspend fun playbackInfo(itemId: String, request: PlaybackInfoRequest): PlaybackNegotiation {
@@ -339,7 +352,7 @@ internal class MediaBrowserClient(
             if (request.forceTranscode) { put("EnableDirectPlay", false); put("EnableDirectStream", false) }
             put("DeviceProfile", MediaBrowserDeviceProfile.build(request.maxStreamingBitrate, request.burnSubtitles))
         }
-        val dto = decodeBody<PlaybackInfoDto>(post("/Items/${MediaBrowserPaths.segment(itemId)}/PlaybackInfo", query, body))
+        val dto = decodeBody<PlaybackInfoDto>(post("/Items/${MediaBrowserPaths.segment(itemId)}/PlaybackInfo", query, body, MediaServerRequest.SLOW_RESOLVE_TIMEOUT_MS))
         if (dto.errorCode != null && dto.mediaSources.isEmpty()) throw MediaServerException.Malformed("playback refused: ${dto.errorCode}")
         return PlaybackNegotiation(dto.mediaSources, dto.playSessionId)
     }

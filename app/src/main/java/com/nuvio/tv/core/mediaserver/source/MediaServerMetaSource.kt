@@ -35,7 +35,12 @@ internal class MediaServerMetaSource(
         return try {
             val item = client.item(parsed.itemId, fields = DETAIL_FIELDS) ?: return null
             val episodes = if (parsed.kind == Kind.SERIES) client.episodes(parsed.itemId, fields = EPISODE_FIELDS) else emptyList()
-            MediaServerItemMapper.registered(entry, item)?.let(MediaServerItemRegistry::register)
+            MediaServerItemMapper.registered(entry, item)?.let { registered ->
+                MediaServerItemRegistry.register(registered)
+                // A search result is a stub: opening it answers with the canonical item under ANOTHER id (recorded). The id the
+                // viewer arrived with must keep resolving (Continue Watching, a reload), so register it too - same item.
+                if (!item.id.equals(parsed.itemId, ignoreCase = true)) MediaServerItemRegistry.register(registered.copy(contentId = id))
+            }
             episodes.forEach { ep -> MediaServerItemMapper.registered(entry, ep)?.let(MediaServerItemRegistry::register) }
             val meta = MediaServerItemMapper.details(entry, item, episodes) ?: return null
             val tmdbId = item.providerIds.entries.firstOrNull { it.key.equals("Tmdb", ignoreCase = true) }?.value?.takeIf { it.isNotBlank() }

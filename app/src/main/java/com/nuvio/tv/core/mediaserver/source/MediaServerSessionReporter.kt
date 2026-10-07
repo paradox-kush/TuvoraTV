@@ -107,7 +107,7 @@ internal class MediaServerSessionReporter(
             )
             if (kind == PlaybackReportKind.STOPPED) {
                 MediaServerIds.parse(session.videoId)?.let { onReported(it.sourceKey) }
-                // a server-built (transcoded / remuxed) play leaves an ffmpeg job behind: end it with the session
+                // a server-built (transcoded / repackaged) play leaves an ffmpeg job behind: end it with the session
                 if (method != PlaybackPlayMethod.DIRECT_PLAY) target.playSessionId?.let { runCatching { client.stopEncoding(it) } }
             }
         } catch (e: CancellationException) {

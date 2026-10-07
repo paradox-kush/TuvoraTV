@@ -54,7 +54,7 @@ class PlaybackDecisionPolicyTest {
     }
 
     @Test
-    fun aRemuxableButNotDirectPlayableFileIsADirectStream() {
+    fun aRepackageableButNotDirectPlayableFileIsADirectStream() {
         val d = PlaybackDecisionPolicy.decide(source(direct = false, stream = true), null, false)
         assertEquals(PlaybackPlayMethod.DIRECT_STREAM, d.method)
         assertEquals(Plan.ServerUrl("/videos/1/master.m3u8?MediaSourceId=src1&ApiKey=server-built"), d.plan)

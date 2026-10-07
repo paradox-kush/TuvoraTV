@@ -23,6 +23,13 @@ internal data class MediaServerRequest(
 ) {
     companion object {
         const val DEFAULT_TIMEOUT_MS = 15_000L
+
+        /**
+         * A server whose library is filled on demand fetches and probes the file while
+         * the request waits: preparing the stream (up to ~30 s on the server side) plus the probe. Reference: Plezy waits 120 s for
+         * a server's answer; only best-effort shelves get short deadlines.
+         */
+        const val SLOW_RESOLVE_TIMEOUT_MS = 90_000L
     }
 }
 

@@ -55,7 +55,7 @@ class MediaServerStreamSourceProviderTest {
     }
 
     @Test
-    fun ownershipIsBySourceIdPrefixAndNeverClaimsIptvOrAddons() {
+    fun ownershipIsBySourceIdPrefixAndNeverClaimsOtherSources() {
         val p = provider(rig())
         assertTrue(p.isHandledId(id())); assertFalse(p.isHandledId("xtream:http://a|b:vod:1")); assertFalse(p.isHandledId("tt0133093")); assertFalse(p.isHandledId(null))
         assertTrue(p.isMatchSourceId("ms-match:jellyfin:$M:$U")); assertFalse(p.isMatchSourceId("ms")); assertFalse(p.isMatchSourceId("xtream-match:x"))

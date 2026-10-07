@@ -11,6 +11,7 @@ import com.nuvio.tv.core.mediaserver.client.PlaybackNegotiation
 import com.nuvio.tv.core.mediaserver.client.mediabrowser.MediaBrowserUrls
 import com.nuvio.tv.core.mediaserver.client.mediabrowser.MediaSourceDto
 import com.nuvio.tv.core.mediaserver.policy.MediaServerIds
+import com.nuvio.tv.core.mediaserver.policy.MintFailurePolicy
 import com.nuvio.tv.core.mediaserver.policy.PlaybackDecisionPolicy
 import com.nuvio.tv.core.mediaserver.policy.ServerAudioChoicePolicy
 import com.nuvio.tv.core.mediaserver.store.MediaServerEntryStore
@@ -35,6 +36,8 @@ internal class MediaServerStreamSourceProvider(
     private val ensureRegistered: suspend (id: String) -> Boolean = { false },
     /** Tuvora's audio-language preference for server-built streams; null = leave the server's choice alone. */
     private val audioPreference: ServerAudioChoicePolicy.Preference? = null,
+    /** Told why a mint failed, so the viewer hears it instead of a silent return to the list (the app shows a toast). */
+    private val onMintFailure: (MintFailurePolicy.Reason) -> Unit = {},
 ) : StreamSourceProvider {
     private val log = MsLog.withTag("MediaServerStreamSource")
 
@@ -106,22 +109,34 @@ internal class MediaServerStreamSourceProvider(
         val address = entry.address?.takeIf { it.isNotBlank() } ?: return null
         val client = services.clientFor(entry) ?: return null
         return try {
-            suspend fun negotiate(audioStreamIndex: Int?) = client.playbackInfo(
+            suspend fun negotiate(audioStreamIndex: Int?, forceTranscode: Boolean = forceMint) = client.playbackInfo(
                 deferred.itemId,
-                PlaybackInfoRequest(mediaSourceId = deferred.mediaSourceId, audioStreamIndex = audioStreamIndex, forceTranscode = forceMint),
+                PlaybackInfoRequest(mediaSourceId = deferred.mediaSourceId, audioStreamIndex = audioStreamIndex, forceTranscode = forceTranscode),
             )
             fun pick(n: PlaybackNegotiation) = n.sources.firstOrNull { s -> deferred.mediaSourceId != null && s.id.equals(deferred.mediaSourceId, ignoreCase = true) }
                 ?: n.sources.firstOrNull()
+            fun usable(s: MediaSourceDto?) = s != null && !MintFailurePolicy.isServerPlaceholder(s.path)
             var negotiation = negotiate(null)
-            var chosen = pick(negotiation) ?: return null
-            var decision = PlaybackDecisionPolicy.decide(chosen.toFacts(), userBitrateCap = null, directPlayFailed = forceMint)
+            var chosen = pick(negotiation)
+            if (!usable(chosen)) return fail(MintFailurePolicy.noPlayableSource)
+            var decision = PlaybackDecisionPolicy.decide(chosen!!.toFacts(), userBitrateCap = null, directPlayFailed = forceMint)
+            if (decision.plan is PlaybackDecisionPolicy.Plan.NotPlayable && forceMint) {
+                // The retry asked the server to transcode and it cannot (a direct-play-only deployment answers with nothing
+                // playable): play the original again rather than give up - the failure may have been transient.
+                val again = negotiate(null, forceTranscode = false)
+                val source = pick(again)
+                if (usable(source)) {
+                    val directAgain = PlaybackDecisionPolicy.decide(source!!.toFacts(), userBitrateCap = null, directPlayFailed = false)
+                    if (directAgain.plan !is PlaybackDecisionPolicy.Plan.NotPlayable) { negotiation = again; chosen = source; decision = directAgain }
+                }
+            }
             // A stream the server builds carries ONE audio track and the player cannot switch it: ask for the one Tuvora's
             // language preferences pick (the server's default stands when none matches). Direct play needs no asking - the
             // player sees every track.
             val preference = audioPreference
             if (preference != null && decision.method == PlaybackPlayMethod.TRANSCODE) {
                 val wanted = preference.languages()
-                val tracks = chosen.mediaStreams.filter { it.type.equals("Audio", ignoreCase = true) }.map { ServerAudioChoicePolicy.Track(it.index, it.language) }
+                val tracks = chosen!!.mediaStreams.filter { it.type.equals("Audio", ignoreCase = true) }.map { ServerAudioChoicePolicy.Track(it.index, it.language) }
                 val index = ServerAudioChoicePolicy.choose(tracks, chosen.defaultAudioStreamIndex, wanted, preference.matches)
                 if (index != null) {
                     val asked = negotiate(index)
@@ -132,17 +147,18 @@ internal class MediaServerStreamSourceProvider(
                     }
                 }
             }
+            val picked = chosen!!
             val minted = when (val plan = decision.plan) {
                 is PlaybackDecisionPolicy.Plan.StaticStream ->
-                    MediaBrowserUrls.directStream(address, deferred.itemId, plan.mediaSourceId ?: chosen.id, chosen.container, negotiation.playSessionId)
+                    MediaBrowserUrls.directStream(address, deferred.itemId, plan.mediaSourceId ?: picked.id, picked.container, negotiation.playSessionId)
                 is PlaybackDecisionPolicy.Plan.ServerUrl -> MediaBrowserUrls.resolve(address, plan.pathOrUrl)
-                is PlaybackDecisionPolicy.Plan.NotPlayable -> return null
+                is PlaybackDecisionPolicy.Plan.NotPlayable -> return fail(MintFailurePolicy.noPlayableSource)
             }
             MediaServerPlaybackSessions.record(
                 MediaServerPlaybackSessions.Session(
                     serverKey = deferred.serverKey,
                     itemId = deferred.itemId,
-                    mediaSourceId = chosen.id,
+                    mediaSourceId = picked.id,
                     playSessionId = negotiation.playSessionId,
                     playMethod = decision.method ?: PlaybackPlayMethod.DIRECT_PLAY,
                 ),
@@ -153,11 +169,17 @@ internal class MediaServerStreamSourceProvider(
         } catch (e: MediaServerException.Http) {
             if (e.isUnauthorized) services.onUnauthorized(entry.serverKey)
             log.w { "mint failed: HTTP ${e.status}" }
-            null
+            fail(MintFailurePolicy.forException(e))
         } catch (e: MediaServerException) {
             log.w { "mint failed: ${e::class.simpleName}" }
-            null
+            fail(MintFailurePolicy.forException(e))
         }
+    }
+
+    /** Tells the viewer why (never the URL or a token), then the null every caller already handles. */
+    private fun fail(reason: MintFailurePolicy.Reason): String? {
+        onMintFailure(reason)
+        return null
     }
 
     /** The recovery path: the media source this play was minted for (kept in [MediaServerPlaybackSessions]), minted again. */
