@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.map
 import com.nuvio.tv.core.mediaserver.source.MediaServerMetaSource
 import com.nuvio.tv.domain.model.Meta
 import kotlinx.coroutines.launch
+import com.nuvio.tv.core.mediaserver.policy.ServerAudioChoicePolicy
+import kotlinx.coroutines.flow.first
 
 /**
  * Media servers register into every plural source port as ONE entry each (design 5.1) under the name
@@ -42,9 +44,23 @@ class MediaServerSourceRegistrations @Inject internal constructor(
     private val watchProgressPreferences: WatchProgressPreferences,
     private val tmdbEnricher: MediaServerTmdbEnricher,
     private val syncSink: com.nuvio.tv.core.iptv.PlaylistMediaServerSyncSink,
+    private val playerSettingsDataStore: com.nuvio.tv.data.local.PlayerSettingsDataStore,
 ) {
     private val registered = AtomicBoolean(false)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Tuvora's own audio-language setting, read at mint time (owner decision 2026-10-06; see [ServerAudioChoicePolicy]). */
+    private fun playerAudioPreference() = ServerAudioChoicePolicy.Preference(
+        languages = {
+            val settings = playerSettingsDataStore.playerSettings.first()
+            com.nuvio.tv.ui.screens.player.resolvePreferredAudioLanguages(
+                preferredAudioLanguage = settings.preferredAudioLanguage,
+                secondaryPreferredAudioLanguage = settings.secondaryPreferredAudioLanguage,
+                deviceLanguages = com.nuvio.tv.ui.screens.player.resolveDeviceAudioLanguages(),
+            )
+        },
+        matches = { trackLanguage, wanted -> com.nuvio.tv.ui.screens.player.PlayerSubtitleUtils.matchesLanguageCode(trackLanguage, wanted) },
+    )
 
     fun register() {
         if (!registered.compareAndSet(false, true)) return
@@ -65,6 +81,7 @@ class MediaServerSourceRegistrations @Inject internal constructor(
                     .toSet()
             },
             changes = runtime.changeVersion.drop(1).map { },
+            audioPreference = playerAudioPreference(),
         )
         runtime.homeContributor = home
         // A profile switch reloads the entries and drops everything the previous profile's session cached.
@@ -96,11 +113,12 @@ internal fun registerMediaServerSources(
     enrich: suspend (Meta, tmdbId: String) -> Meta = { meta, _ -> meta },
     tuvoraContinueWatchingIds: suspend () -> Set<String> = { emptySet() },
     changes: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
+    audioPreference: ServerAudioChoicePolicy.Preference? = null,
 ): MediaServerHomeContributor {
     val name = MediaServerSourceRegistrations.NAME
     val home = MediaServerHomeContributor(store, services, nowMs, tuvoraContinueWatchingIds, titles, changes)
     val meta = MediaServerMetaSource(store, services, enrich = enrich)
-    StreamSourceRegistry.register(name, MediaServerStreamSourceProvider(store, services, ensureRegistered = { id -> meta.ensureStreamRegistered(id) }))
+    StreamSourceRegistry.register(name, MediaServerStreamSourceProvider(store, services, ensureRegistered = { id -> meta.ensureStreamRegistered(id) }, audioPreference = audioPreference))
     MetaSourceRegistry.register(name, meta)
     SearchProviderRegistry.register(name, MediaServerSearchProvider(store, services, titles))
     OwnSourcePolicy.registerContentIdPredicate(name, MediaServerIds::isOwnContentId)

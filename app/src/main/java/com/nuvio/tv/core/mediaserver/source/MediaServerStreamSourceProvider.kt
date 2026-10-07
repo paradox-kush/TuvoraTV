@@ -7,10 +7,12 @@ import com.nuvio.tv.core.mediaserver.MsLog
 import com.nuvio.tv.core.mediaserver.client.MediaServerException
 import com.nuvio.tv.core.mediaserver.client.MediaServerServices
 import com.nuvio.tv.core.mediaserver.client.PlaybackInfoRequest
+import com.nuvio.tv.core.mediaserver.client.PlaybackNegotiation
 import com.nuvio.tv.core.mediaserver.client.mediabrowser.MediaBrowserUrls
 import com.nuvio.tv.core.mediaserver.client.mediabrowser.MediaSourceDto
 import com.nuvio.tv.core.mediaserver.policy.MediaServerIds
 import com.nuvio.tv.core.mediaserver.policy.PlaybackDecisionPolicy
+import com.nuvio.tv.core.mediaserver.policy.ServerAudioChoicePolicy
 import com.nuvio.tv.core.mediaserver.store.MediaServerEntryStore
 import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.ProxyHeaders
@@ -31,6 +33,8 @@ internal class MediaServerStreamSourceProvider(
     private val services: MediaServerServices,
     /** Rebuilds an item's registry record after a cold start (Continue Watching / a deep link): one item fetch. */
     private val ensureRegistered: suspend (id: String) -> Boolean = { false },
+    /** Tuvora's audio-language preference for server-built streams; null = leave the server's choice alone. */
+    private val audioPreference: ServerAudioChoicePolicy.Preference? = null,
 ) : StreamSourceProvider {
     private val log = MsLog.withTag("MediaServerStreamSource")
 
@@ -102,11 +106,32 @@ internal class MediaServerStreamSourceProvider(
         val address = entry.address?.takeIf { it.isNotBlank() } ?: return null
         val client = services.clientFor(entry) ?: return null
         return try {
-            val negotiation = client.playbackInfo(deferred.itemId, PlaybackInfoRequest(mediaSourceId = deferred.mediaSourceId, forceTranscode = forceMint))
-            val chosen = negotiation.sources.firstOrNull { s -> deferred.mediaSourceId != null && s.id.equals(deferred.mediaSourceId, ignoreCase = true) }
-                ?: negotiation.sources.firstOrNull()
-                ?: return null
-            val decision = PlaybackDecisionPolicy.decide(chosen.toFacts(), userBitrateCap = null, directPlayFailed = forceMint)
+            suspend fun negotiate(audioStreamIndex: Int?) = client.playbackInfo(
+                deferred.itemId,
+                PlaybackInfoRequest(mediaSourceId = deferred.mediaSourceId, audioStreamIndex = audioStreamIndex, forceTranscode = forceMint),
+            )
+            fun pick(n: PlaybackNegotiation) = n.sources.firstOrNull { s -> deferred.mediaSourceId != null && s.id.equals(deferred.mediaSourceId, ignoreCase = true) }
+                ?: n.sources.firstOrNull()
+            var negotiation = negotiate(null)
+            var chosen = pick(negotiation) ?: return null
+            var decision = PlaybackDecisionPolicy.decide(chosen.toFacts(), userBitrateCap = null, directPlayFailed = forceMint)
+            // A stream the server builds carries ONE audio track and the player cannot switch it: ask for the one Tuvora's
+            // language preferences pick (the server's default stands when none matches). Direct play needs no asking - the
+            // player sees every track.
+            val preference = audioPreference
+            if (preference != null && decision.method == PlaybackPlayMethod.TRANSCODE) {
+                val wanted = preference.languages()
+                val tracks = chosen.mediaStreams.filter { it.type.equals("Audio", ignoreCase = true) }.map { ServerAudioChoicePolicy.Track(it.index, it.language) }
+                val index = ServerAudioChoicePolicy.choose(tracks, chosen.defaultAudioStreamIndex, wanted, preference.matches)
+                if (index != null) {
+                    val asked = negotiate(index)
+                    val askedSource = pick(asked)
+                    if (askedSource != null) {
+                        val askedDecision = PlaybackDecisionPolicy.decide(askedSource.toFacts(), userBitrateCap = null, directPlayFailed = forceMint)
+                        if (askedDecision.plan !is PlaybackDecisionPolicy.Plan.NotPlayable) { negotiation = asked; chosen = askedSource; decision = askedDecision }
+                    }
+                }
+            }
             val minted = when (val plan = decision.plan) {
                 is PlaybackDecisionPolicy.Plan.StaticStream ->
                     MediaBrowserUrls.directStream(address, deferred.itemId, plan.mediaSourceId ?: chosen.id, chosen.container, negotiation.playSessionId)
