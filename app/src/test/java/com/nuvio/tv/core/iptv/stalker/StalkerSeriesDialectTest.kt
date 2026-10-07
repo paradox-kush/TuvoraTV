@@ -57,4 +57,20 @@ class StalkerSeriesDialectTest {
         assertEquals(StalkerSeriesDialect.Node(500203, 3), StalkerSeriesDialect.episode(obj("""{"id":"500203","series_number":"3"}""")))
         assertNull("no id", StalkerSeriesDialect.episode(obj("""{"series_number":"3"}""")))
     }
+
+    @Test fun legacyEpisodesIdentifySeriesEvenWithAnAbsentOrZeroFlag() {
+        assertEquals(listOf(1, 2, 7), StalkerSeriesDialect.legacyEpisodeNumbers(obj("""{"series":["7",2,1,2,0,"bad"]}""")))
+        assertEquals(true, StalkerSeriesDialect.isSeriesRow(obj("""{"is_series":0,"series":[1,2]}""")))
+        assertEquals(false, StalkerSeriesDialect.isSeriesRow(obj("""{"series":[],"name":"Series of unfortunate movies"}""")))
+        assertEquals(true, StalkerSeriesDialect.isSeriesRow(obj("""{"series":"[1,2]"}""")))
+    }
+    @Test fun failedProbeDoesNotProveMinistra() {
+        assertEquals(false, StalkerSeriesDialect.allowsVodFallback(true, false))
+        assertEquals(true, StalkerSeriesDialect.allowsVodFallback(true, true))
+        assertEquals(true, StalkerSeriesDialect.allowsVodFallback(false, false))
+    }
+    @Test fun movieFilesAreRequestedWithoutEpisodeArguments() {
+        assertEquals(mapOf("type" to "vod", "action" to "get_ordered_list", "movie_id" to "42", "p" to "1"),
+            StalkerSeriesDialect.movieFilesParams(42))
+    }
 }

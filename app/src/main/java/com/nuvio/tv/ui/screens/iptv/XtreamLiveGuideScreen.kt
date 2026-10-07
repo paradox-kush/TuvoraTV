@@ -344,7 +344,7 @@ fun LiveGuide(
     }
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
     val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected
-    val livePanelOpen = channelListOpen || livePanel != null || uiState.hideNotice != null
+    val livePanelOpen = channelListOpen || livePanel != null || uiState.hideNotice != null || uiState.favoriteNotice != null
     fun hideControls() {
         controlsVisible = false
         moreOpen = false
@@ -367,8 +367,8 @@ fun LiveGuide(
         }
     }
     // Shown controls take the D-pad, starting on Retry (when offered) or play/pause.
-    LaunchedEffect(fullscreen, controlsVisible) {
-        if (fullscreen && controlsVisible) controlsPrimaryFocus.requestFocusOrFalse()
+    LaunchedEffect(fullscreen, controlsVisible, livePanelOpen) {
+        if (fullscreen && controlsVisible && !livePanelOpen) controlsPrimaryFocus.requestFocusOrFalse()
     }
     LaunchedEffect(fullscreen) { if (!fullscreen) { controlsVisible = false; moreOpen = false; livePanel = null } }
     // F28 BACK: the channel list and the pickers answer it themselves; then hide the controls; then
@@ -919,6 +919,12 @@ fun LiveGuide(
 
         // F03 (owner 2026-10-04): a favourite toggle is confirmed with Undo, like a hide.
         uiState.favoriteNotice?.let { notice ->
+            fun restoreFavoriteFocus() {
+                if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
+                else if (!channelRowFocus.requestFocusOrFalse() && !channelListFocus.requestFocusOrFalse()) {
+                    categoryListFocus.requestFocusOrFalse()
+                }
+            }
             NuvioUndoToast(
                 message = stringResource(
                     if (notice.added) R.string.iptv_guide_favorite_added else R.string.iptv_guide_favorite_removed,
@@ -926,11 +932,11 @@ fun LiveGuide(
                 ),
                 actionLabel = stringResource(R.string.iptv_guide_hidden_undo),
                 onAction = {
-                    if (!channelRowFocus.requestFocusOrFalse()) channelListFocus.requestFocusOrFalse()
+                    restoreFavoriteFocus()
                     viewModel.undoFavorite()
                 },
                 onDismiss = {
-                    if (!channelRowFocus.requestFocusOrFalse()) channelListFocus.requestFocusOrFalse()
+                    restoreFavoriteFocus()
                     viewModel.dismissFavoriteNotice(notice)
                 },
                 durationMillis = GuideHideUndoPolicy.UNDO_WINDOW_MS,

@@ -622,31 +622,28 @@ class XtreamClient @Inject constructor(
     }
 
     /** Full episode list (across seasons) for a series, each with its built stream URL. */
-    override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail> = call {
+    override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail> = withContext(Dispatchers.IO) { call {
         // Fails over (Step 0.3); episode URLs are built on the server that served the list.
-        val (served, resp) = panel(acc, { api, a -> api.getSeriesInfo(seriesInfoUrl(a, seriesId)) }) { a, body -> a to body }
-        val episodes = resp.episodes.orEmpty().flatMap { (seasonKey, list) ->
-            list.mapNotNull { e ->
-                val epId = e.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val ext = e.containerExtension?.takeIf { it.isNotBlank() } ?: "mp4"
-                XtreamEpisode(
-                    episodeId = epId,
-                    season = e.season ?: seasonKey.toIntOrNull() ?: 1,
-                    episodeNum = e.episodeNum ?: 0,
-                    title = e.title.orEmpty().ifBlank { "Episode" },
-                    plot = e.info?.plot,
-                    still = e.info?.movieImage?.takeIf { it.isNotBlank() },
-                    streamUrl = seriesEpisodeUrl(served, epId, ext)
-                )
-            }
-        }.sortedWith(compareBy({ it.season }, { it.episodeNum }))
+        val (served, root) = panel(acc, { api, a -> api.getRawCatalog(seriesInfoUrl(a, seriesId)) }) { a, body ->
+            a to body.use { com.google.gson.JsonParser.parseString(it.string()).asJsonObject }
+        }
+        val episodes = XtreamEpisodeRows.parse(root.get("episodes")).map { e ->
+            XtreamEpisode(e.id, e.season, e.number, e.title, e.plot, e.still,
+                seriesEpisodeUrl(served, e.id, e.extension ?: "mp4"))
+        }
+        val info = root.get("info") as? com.google.gson.JsonObject
+        fun text(key: String): String? = (info?.get(key) as? com.google.gson.JsonPrimitive)?.asString
         XtreamSeriesDetail(
-            tmdbId = resp.info?.tmdbId?.takeIf { it > 0 },
-            plot = resp.info?.plot,
-            backdrop = resp.info?.backdropPath?.firstOrNull(),
-            releaseDate = resp.info?.releaseDate ?: resp.info?.releaseDateAlt,
+            tmdbId = (text("tmdb_id") ?: text("tmdb"))?.toIntOrNull()?.takeIf { it > 0 },
+            plot = text("plot"),
+            backdrop = (info?.get("backdrop_path") as? com.google.gson.JsonArray)?.firstOrNull()?.let {
+                (it as? com.google.gson.JsonPrimitive)?.asString
+            },
+            releaseDate = text("releaseDate") ?: text("release_date"),
             episodes = episodes
         )
+    }
+
     }
 
     private fun seriesEpisodeUrl(acc: XtreamAccount, episodeId: String, ext: String): String =

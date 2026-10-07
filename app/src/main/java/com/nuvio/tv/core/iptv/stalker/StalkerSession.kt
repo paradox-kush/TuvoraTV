@@ -59,7 +59,7 @@ class StalkerDeviceConflictException(message: String) : StalkerPortalRefusedExce
  * Typed because it is the one browse failure with a user-facing explanation that is neither "the
  * portal is down" nor "your MAC is wrong" — see [com.nuvio.tv.core.iptv.IptvLoadFailurePolicy].
  */
-class StalkerSessionUnavailableException(message: String) : IllegalStateException(message)
+class StalkerSessionUnavailableException(message: String, val emptySection: Boolean = false) : IllegalStateException(message)
 
 /**
  * A stateful Stalker-portal (MAG/Ministra) session for ONE playlist. Owns:
@@ -174,7 +174,8 @@ class StalkerSession(
             val kind = StalkerEmptyReplyPolicy.classify(retryBody)
             if (StalkerEmptyReplyPolicy.startsCooldown(kind)) lastFailedReauthAtMs = now
             throw StalkerSessionUnavailableException(
-                StalkerEmptyReplyPolicy.message(kind, account.name, params, retryBody)
+                StalkerEmptyReplyPolicy.message(kind, account.name, params, retryBody),
+                emptySection = kind == StalkerEmptyReplyPolicy.Kind.NOTHING_FOR_SECTION,
             )
         }
         lastFailedReauthAtMs = 0L
