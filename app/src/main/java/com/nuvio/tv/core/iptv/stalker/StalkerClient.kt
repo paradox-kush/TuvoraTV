@@ -155,6 +155,10 @@ class StalkerClient @Inject constructor(
             seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.XC
             return xc
         }
+        val failure = xc.exceptionOrNull()
+        if (failure is kotlinx.coroutines.CancellationException) throw failure
+        // An unavailable series module is capability evidence; a network/auth failure is not.
+        if (!StalkerSeriesDialect.allowsVodFallback(failure != null, (failure as? StalkerSessionUnavailableException)?.emptySection == true)) return xc
         val vod = categories(acc, "vod", "get_categories")
         return when (StalkerSeriesDialect.decide(false, vod.getOrNull()?.isNotEmpty() == true)) {
             StalkerSeriesDialect.Dialect.MINISTRA -> {
@@ -560,7 +564,10 @@ class StalkerClient @Inject constructor(
      * [forceFresh] is the one-shot 401/403/410 refresh ladder's entry: it bypasses the static
      * verdict so a static play that died still gets exactly one fresh create_link.
      */
-    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String? {
+    override suspend fun resolveStreamUrl(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String? =
+        kotlinx.coroutines.withTimeoutOrNull(30_000) { resolveStreamWithinDeadline(acc, kind, streamId, forceFresh) }
+
+    private suspend fun resolveStreamWithinDeadline(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String? {
         // Playback: the ACTIVE portal only — a create_link failure never walks to a backup (Step 0.3).
         val session = playbackSession(acc)
         return when {
@@ -570,9 +577,14 @@ class StalkerClient @Inject constructor(
                 createLink(session, "itv", cmd)
             }
             kind == "movie" -> {
-                val cmd = vodCmd(acc, streamId) ?: return null
-                staticUrlOrNull(acc, "vod", streamId, cmd, forceFresh)?.let { return it }
-                createLink(session, "vod", cmd)
+                val cmd = vodCmd(acc, streamId)
+                if (!forceFresh && cmd != null) {
+                    staticUrlOrNull(acc, "vod", streamId, cmd, false)?.let { return it }
+                    createLink(session, "vod", cmd)?.let { return it }
+                }
+                val fileCmd = movieFileCmd(acc, streamId)
+                if (fileCmd != null) createLink(session, "vod", fileCmd)
+                else if (forceFresh) cmd?.let { createLink(session, "vod", it) } else null
             }
             else -> null
         }
@@ -616,7 +628,10 @@ class StalkerClient @Inject constructor(
      * Episodes ALWAYS mint: the `series={n}` parameter is create_link's argument — the season cmd
      * is a container reference, not a playable address, so the static-cmd policy never applies.
      */
-    suspend fun resolveEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
+    suspend fun resolveEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? =
+        kotlinx.coroutines.withTimeoutOrNull(30_000) { resolveEpisodeWithinDeadline(acc, seriesId, season, episodeNum) }
+
+    private suspend fun resolveEpisodeWithinDeadline(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
         // Season cmd resolution, cheapest first: this session's cache -> the write-through rows
         // (cold-start Continue Watching plays with ZERO portal requests before create_link) ->
         // the portal's season fetch.
@@ -653,7 +668,14 @@ class StalkerClient @Inject constructor(
 
     /** Every episode of a Ministra series: seasons (`movie_id`), then each season's pages (`season_id`). */
     private suspend fun ministraSeriesInfo(acc: XtreamAccount, seriesId: Int): XtreamSeriesDetail {
-        val row = rowCache[rowKey(acc.id, "vod", seriesId)]
+        val row = rowCache[rowKey(acc.id, "vod", seriesId)] ?: row(acc, "vod", seriesId)
+        val legacyNumbers = row?.let(StalkerSeriesDialect::legacyEpisodeNumbers).orEmpty()
+        val legacyCmd = row?.str("cmd")?.takeIf { it.isNotBlank() }
+        if (legacyNumbers.isNotEmpty() && legacyCmd != null) {
+            seasonCache["${acc.id}:$seriesId"] = listOf(StalkerSeason(1, legacyCmd, legacyNumbers))
+            return XtreamSeriesDetail(tmdbId = null, plot = row?.str("description"), backdrop = null,
+                episodes = legacyNumbers.map { n -> XtreamEpisode("$seriesId:1:$n", 1, n, "Episode $n", null, null, "") })
+        }
         val plot = row?.str("description")
         val backdrop = (row?.str("screenshot_uri") ?: row?.str("cover"))?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) }
         val episodes = ministraSeasonsOf(acc, seriesId).flatMap { season ->
@@ -679,6 +701,12 @@ class StalkerClient @Inject constructor(
      * that is the XC season-container convention. Always mints, like XC episodes.
      */
     private suspend fun ministraEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
+        val parent = rowCache[rowKey(acc.id, "vod", seriesId)] ?: row(acc, "vod", seriesId)
+        val legacy = parent?.let(StalkerSeriesDialect::legacyEpisodeNumbers).orEmpty()
+        if (episodeNum in legacy && (season == null || season == 1)) {
+            val cmd = parent?.str("cmd") ?: return null
+            return createLink(playbackSession(acc), "vod", cmd, extraParams = mapOf("series" to episodeNum.toString()))
+        }
         val seasons = ministraSeasonsOf(acc, seriesId)
         val s = (season?.let { n -> seasons.firstOrNull { it.number == n } } ?: seasons.firstOrNull()) ?: return null
         val ep = ministraEpisodesOf(acc, seriesId, s.id).firstOrNull { it.node.number == episodeNum } ?: return null
@@ -804,6 +832,19 @@ class StalkerClient @Inject constructor(
 
     // --- create_link ----------------------------------------------------------
 
+    private suspend fun movieFileCmd(acc: XtreamAccount, movieId: Int): String? {
+        val reply = try { browse(acc, StalkerSeriesDialect.movieFilesParams(movieId)) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { return null }
+        val rows = (reply as? JsonObject)?.get("data") as? com.google.gson.JsonArray ?: return null
+        return rows.mapNotNull { it as? JsonObject }.firstNotNullOfOrNull { file ->
+            val flag = file.str("is_file")?.trim()
+            file.str("cmd")?.takeIf { cmd ->
+                cmd.isNotBlank() && (flag == "1" || flag.equals("true", true) || cmd.contains("/media/file_"))
+            }
+        }
+    }
+
     private suspend fun createLink(
         session: StalkerSession,
         type: String,
@@ -819,7 +860,7 @@ class StalkerClient @Inject constructor(
             put("JsHttpRequest", "1-xml")   // harmless dup; StalkerSession adds it too
             putAll(extraParams)
         }.filterKeys { it != "JsHttpRequest" }   // let the session own JsHttpRequest
-        val js = runCatching { session.request(params) }.getOrNull() ?: return null
+        val js = try { session.request(params) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) { return null }
         val obj = js as? JsonObject ?: return null
         // The portal's two documented refusals. `{error:'limit'}` is the account's session cap —
         // surfaced as its own message because "couldn't open this channel" sends the viewer to

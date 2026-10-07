@@ -30,9 +30,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -242,10 +244,17 @@ class XtreamLiveGuideViewModel @Inject constructor(
         overlayRepository.ensureLoaded()
         overlayRepository.pull()
         viewModelScope.launch {
-            overlayRepository.uiState.collect {
+            overlayRepository.uiState
+                .map { Triple(it.channels, it.categories, it.groups) }
+                .distinctUntilChanged()
+                .collect {
                 if (lastRawChannels.isNotEmpty()) {
-                    val shown = displayChannels(lastOverlayAccountId, lastRawChannels, lastAllChannelsView)
-                    _uiState.update { st -> st.copy(channels = shown) }
+                    val raw = lastRawChannels
+                    val accountId = lastOverlayAccountId
+                    val shown = displayChannels(accountId, raw, lastAllChannelsView)
+                    if (lastRawChannels === raw && lastOverlayAccountId == accountId) {
+                        _uiState.update { st -> st.copy(channels = shown) }
+                    }
                 }
                 // The overlay pull is async, so the category column is often built before the website's
                 // edits land — re-apply the category overlay whenever the snapshot changes.
@@ -317,50 +326,54 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * edit arriving via sync while the guide is open) re-applies through here without a re-fetch —
      * including re-floating a beyond-cap pin, because the FULL pre-cap list is what is kept here.
      */
-    private fun displayChannels(accountId: String?, channels: List<GuideChannel>, isAllView: Boolean): List<GuideChannel> {
+    private suspend fun displayChannels(accountId: String?, channels: List<GuideChannel>, isAllView: Boolean): List<GuideChannel> {
         lastRawChannels = channels; lastOverlayAccountId = accountId; lastAllChannelsView = isAllView
         // F10: cleaned names when the user opted in for this playlist — before the overlay, so an
         // explicit rename still wins. The raw list above stays raw (identity is computed from it).
         val cleanFor = account?.takeIf { it.id == accountId && it.cleanChannelNames }
-        @Suppress("NAME_SHADOWING")
-        val channels = if (cleanFor == null) channels else channels.map { it.copy(name = cleanFor.displayChannelName(it.name)) }
-        return try {
-            val overlay = overlayRepository.uiState.value.channels
-            val displayed = if (isAllView) {
-                // B65: "All channels" also drops the channels of a category hidden on the website or
-                // on this TV, as the category column already drops the category itself. (Categories
-                // switched off in the playlist's settings were filtered when the list was fetched.)
-                val hiddenIds = if (accountId == null) emptySet() else com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.hiddenCategoryIds(
-                    playlistId = accountId,
-                    contentType = XtreamAccount.TYPE_LIVE,
-                    categories = categoriesCache[accountId].orEmpty().map { com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.NamedCategory(it.id, it.name) },
-                    overlay = overlayRepository.uiState.value.categories,
+        val overlaySnapshot = overlayRepository.uiState.value
+        val categorySnapshot = categoriesCache[accountId].orEmpty()
+        return withContext(Dispatchers.Default) {
+            @Suppress("NAME_SHADOWING")
+            val channels = if (cleanFor == null) channels else channels.map { it.copy(name = cleanFor.displayChannelName(it.name)) }
+            try {
+                val overlay = overlaySnapshot.channels
+                val displayed = if (isAllView) {
+                    // B65: "All channels" also drops the channels of a category hidden on the website or
+                    // on this TV, as the category column already drops the category itself. (Categories
+                    // switched off in the playlist's settings were filtered when the list was fetched.)
+                    val hiddenIds = if (accountId == null) emptySet() else com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.hiddenCategoryIds(
+                        playlistId = accountId,
+                        contentType = XtreamAccount.TYPE_LIVE,
+                        categories = categorySnapshot.map { com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.NamedCategory(it.id, it.name) },
+                        overlay = overlaySnapshot.categories,
+                    )
+                    com.nuvio.tv.core.iptv.GuideAllChannelsCapPolicy.capped(
+                        channels = com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.guideChannels(
+                            channels, hiddenIds, allowedBySelection = { true }, categoryOf = { it.categoryId },
+                        ),
+                        overlay = overlay,
+                        cap = ALL_CAP,
+                        entityId = { it.entityId },
+                        withName = { row, newName -> row.copy(name = newName) },
+                    )
+                } else if (overlay.isEmpty()) {
+                    channels
+                } else {
+                    val tagged = channels.mapIndexed { i, c -> com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.Tagged(c.entityId, i, c) }
+                    com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.displayed(
+                        tagged, overlay, honorOrder = true, withName = { row, newName -> row.copy(name = newName) },
+                    )
+                }
+                // Stamp the visible pin marker's source onto each displayed row (pure; a row without an
+                // entity id — the synthetic Favorites/Recent rows — stays pinned=false).
+                com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.withPinned(
+                    displayed, overlay, entityId = { it.entityId }, setPinned = { row, pinned -> row.copy(pinned = pinned) },
                 )
-                com.nuvio.tv.core.iptv.GuideAllChannelsCapPolicy.capped(
-                    channels = com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.guideChannels(
-                        channels, hiddenIds, allowedBySelection = { true }, categoryOf = { it.categoryId },
-                    ),
-                    overlay = overlay,
-                    cap = ALL_CAP,
-                    entityId = { it.entityId },
-                    withName = { row, newName -> row.copy(name = newName) },
-                )
-            } else if (overlay.isEmpty()) {
+            } catch (e: Throwable) {
+                android.util.Log.w("IptvOverlay", "displayChannels failed: ${e.message}", e)
                 channels
-            } else {
-                val tagged = channels.mapIndexed { i, c -> com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.Tagged(c.entityId, i, c) }
-                com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.displayed(
-                    tagged, overlay, honorOrder = true, withName = { row, newName -> row.copy(name = newName) },
-                )
             }
-            // Stamp the visible pin marker's source onto each displayed row (pure; a row without an
-            // entity id — the synthetic Favorites/Recent rows — stays pinned=false).
-            com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.withPinned(
-                displayed, overlay, entityId = { it.entityId }, setPinned = { row, pinned -> row.copy(pinned = pinned) },
-            )
-        } catch (e: Throwable) {
-            android.util.Log.w("IptvOverlay", "displayChannels failed: ${e.message}", e)
-            channels
         }
     }
 
@@ -655,10 +668,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // + loadingChannels spinner flash on revisit. (FAVORITES/RECENT stay dynamic — not cached here.)
         if (category.special == null || category.special == GuideSpecial.ALL) {
             channelsCache["${acc.id}|${categoryId}"]?.let { cached ->
-                val shown = displayChannels(acc.id, cached, isAllView = category.special == GuideSpecial.ALL)
-                if (!publishPlaybackLineup(acc.id, token, shown)) return
-                _uiState.update { it.copy(selectedCategoryId = categoryId, channels = shown, loadingChannels = false, error = null, focusedChannelId = shown.firstOrNull()?.contentId) }
-                if (isCurrentAccount(token)) primeEpgFor(shown)
+                channelsJob = viewModelScope.launch {
+                    val shown = displayChannels(acc.id, cached, isAllView = category.special == GuideSpecial.ALL)
+                    if (!publishPlaybackLineup(acc.id, token, shown)) return@launch
+                    _uiState.update { it.copy(selectedCategoryId = categoryId, channels = shown, loadingChannels = false, error = null, focusedChannelId = shown.firstOrNull()?.contentId) }
+                    if (isCurrentAccount(token)) primeEpgFor(shown)
+                }
                 return
             }
         }
@@ -911,24 +926,31 @@ class XtreamLiveGuideViewModel @Inject constructor(
     fun consumePendingTune() = _uiState.update { it.copy(pendingTune = null) }
 
     /** Add/remove a channel from the platform Library (same store as movies). */
+    private val favoriteMutationMutex = kotlinx.coroutines.sync.Mutex()
+
     fun toggleFavorite(channel: GuideChannel) = toggleFavorite(channel, withNotice = true)
 
     private fun toggleFavorite(channel: GuideChannel, withNotice: Boolean) {
-        val adding = channel.contentId !in favoriteLiveIds.value
-        // F03 (owner 2026-10-04): confirmed with Undo, like a hide — not a confirmation popup.
-        if (withNotice) _uiState.update { it.copy(favoriteNotice = FavoriteNotice(channel, added = adding)) }
         viewModelScope.launch {
-            libraryRepository.toggleDefault(
-                LibraryEntryInput(
-                    itemId = channel.contentId,
-                    itemType = "tv",
-                    title = channel.name,
-                    poster = channel.logo,
-                    posterShape = PosterShape.LANDSCAPE,
-                    logo = channel.logo
+            favoriteMutationMutex.withLock {
+                // Live favourites stay local even when the movie library uses Trakt/Simkl.
+                val adding = libraryRepository.libraryItems.first().none { it.id == channel.contentId }
+                libraryRepository.toggleDefault(
+                    LibraryEntryInput(
+                        itemId = channel.contentId,
+                        itemType = "tv",
+                        title = channel.name,
+                        poster = channel.logo,
+                        posterShape = PosterShape.LANDSCAPE,
+                        logo = channel.logo
+                    )
                 )
-            )
-            if (adding) liveStore.remember(LiveChannelRef(channel.contentId, channel.name, channel.logo, channel.streamUrl))
+                if (adding) liveStore.remember(LiveChannelRef(channel.contentId, channel.name, channel.logo, channel.streamUrl))
+                // Publish Undo only after the mutation commits. Its inverse cannot overtake the write.
+                if (withNotice) _uiState.update { it.copy(favoriteNotice = FavoriteNotice(channel, added = adding)) }
+                val special = _uiState.value.categories.firstOrNull { it.id == _uiState.value.selectedCategoryId }?.special
+                if (special == GuideSpecial.FAVORITES || special == GuideSpecial.ALL_FAVORITES) reloadSelected()
+            }
         }
     }
 

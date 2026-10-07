@@ -106,6 +106,18 @@ class LibraryPreferences @Inject constructor(
         }
     }
 
+    /** Membership is read and changed in one DataStore transaction, including rapid Undo taps. */
+    suspend fun toggleItem(item: SavedLibraryItem, profileId: Int) {
+        store(profileId).edit { preferences ->
+            val state = preferences.toLibrarySyncState()
+            val saved = state.items.any { it.id == item.id && it.type.equals(item.type, ignoreCase = true) }
+            preferences.writeLibrarySyncState(
+                if (saved) LibrarySyncReducer.deleteLocal(state, item.id, item.type)
+                else LibrarySyncReducer.upsertLocal(state, item, System.currentTimeMillis())
+            )
+        }
+    }
+
     suspend fun addItem(
         item: SavedLibraryItem,
         profileId: Int = profileManager.activeProfileId.value

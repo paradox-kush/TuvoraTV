@@ -224,23 +224,7 @@ class LibraryRepositoryImpl @Inject constructor(
         }
 
         val profileId = profileManager.activeProfileId.value
-        val isInLocal = libraryPreferences.containsItem(
-            itemId = item.itemId,
-            itemType = item.itemType,
-            profileId = profileId
-        )
-        if (isInLocal) {
-            libraryPreferences.removeItem(
-                itemId = item.itemId,
-                itemType = item.itemType,
-                profileId = profileId
-            )
-        } else {
-            libraryPreferences.addItem(
-                item = item.toSavedLibraryItem(),
-                profileId = profileId
-            )
-        }
+        libraryPreferences.toggleItem(item.toSavedLibraryItem(), profileId)
         triggerRemoteSync(profileId)
         return TrackingMembershipApplyResult()
     }

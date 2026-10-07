@@ -39,6 +39,8 @@ class StalkerMinistraSeriesTest {
     private lateinit var server: MockWebServer
     private val requests = CopyOnWriteArrayList<Map<String, String>>()
     @Volatile private var ministra = true
+    @Volatile private var legacy = false
+    @Volatile private var fileOnlyMovie = false
 
     private val episodesPerSeason = 16   // > one 14-row page: episodes must be paged
 
@@ -77,6 +79,7 @@ class StalkerMinistraSeriesTest {
         if (action == "handshake") return """{"js":{"token":"T"}}"""
         if (action == "get_profile") return """{"js":{"id":"1","status":0}}"""
         if (action == "get_modules") return """{"js":{"all_modules":[],"disabled_modules":[]}}"""
+        if (action == "create_link" && fileOnlyMovie && q["cmd"] == "/media/101.mpg") return """{"js":{"cmd":""}}"""
         if (action == "create_link") return """{"js":{"cmd":"ffmpeg http://media.test/play?c=${q["cmd"]}&s=${q["series"].orEmpty()}"}}"""
         if (type == "series") {
             if (ministra) return """{"js":null}"""
@@ -93,6 +96,8 @@ class StalkerMinistraSeriesTest {
             val seasonId = q["season_id"].orEmpty()
             val episodeId = q["episode_id"].orEmpty()
             val page = q["p"]?.toIntOrNull() ?: 1
+            if (legacy && movieId.isEmpty()) return page(listOf("""{"id":"600","name":"Legacy Show","is_series":0,"series":[1,2,3],"cmd":"/media/600.mpg"}"""), 1)
+            if (fileOnlyMovie && movieId == "101") return page(listOf("""{"id":"1010","is_file":1,"cmd":"/media/file_1010.mpg"}"""), 1)
             return when {
                 episodeId.isNotEmpty() ->
                     page(listOf("""{"id":"$episodeId","name":"English / HD","is_file":true,"cmd":"/media/file_$episodeId.mpg"}"""), 1)
@@ -207,5 +212,29 @@ class StalkerMinistraSeriesTest {
         assertEquals("season cmd", "auto /media/series/900/s1", mint["cmd"])
         assertEquals("episode rides as series=n", "2", mint["series"])
         assertTrue("never walked the vod tree on an XC portal", requests.none { it["type"] == "vod" && it.containsKey("season_id") })
+    }
+
+    @Test
+    fun legacyEpisodesAreSeriesAndUseTheParentCommandWithEpisodeNumber() = runBlocking {
+        legacy = true
+        val c = client()
+        assertEquals(emptyList<Int>(), c.vodMovies(acc, "1").getOrThrow().map { it.streamId })
+        assertEquals(listOf(600), c.series(acc, "1").getOrThrow().map { it.seriesId })
+        assertEquals(listOf(1,2,3), c.seriesInfo(acc,600).getOrThrow().episodes.map { it.episodeNum })
+        assertNotNull(c.resolveEpisodeUrl(acc,600,1,2))
+        val mint = requests.last { it["action"] == "create_link" }
+        assertEquals("/media/600.mpg", mint["cmd"])
+        assertEquals("2", mint["series"])
+    }
+
+    @Test
+    fun movieFallsBackToItsFileWithoutWalkingASeasonTree() = runBlocking {
+        fileOnlyMovie = true
+        val c = client()
+        c.vodMovies(acc, "1").getOrThrow()
+        assertNotNull(c.resolveStreamUrl(acc,"movie",101,false))
+        assertEquals(listOf("/media/101.mpg","/media/file_1010.mpg"),
+            requests.filter { it["action"] == "create_link" }.map { it["cmd"] })
+        assertEquals(1, requests.count { it["action"] == "get_ordered_list" && it["movie_id"] == "101" })
     }
 }

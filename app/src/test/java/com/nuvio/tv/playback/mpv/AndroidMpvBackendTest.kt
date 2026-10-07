@@ -444,6 +444,25 @@ class AndroidMpvBackendTest {
         )
     }
 
+    @Test
+    fun `wedged metrics return a failure and do not hold the caller forever`() {
+        val wedge = java.util.concurrent.CountDownLatch(1)
+        val core = FakeCore()
+        val backend = realLaneBackend(core)
+        try {
+            runBlocking {
+                assertSuccess(backend.attachSurface(FakeLease()))
+                assertSuccess(backend.start())
+                core.metricsBlocksOn = wedge
+                val result = withTimeout(6_000) { backend.metrics() }
+                assertTrue(result is PlaybackResult.Failure)
+                // Later commands are rejected immediately, without joining the blocked native lane.
+                assertTrue(withTimeout(500) { backend.setPaused(true) } is PlaybackResult.Failure)
+                assertSuccess(withTimeout(10_000) { backend.hardAbort() })
+            }
+        } finally { wedge.countDown() }
+    }
+
     /** Backend on a REAL single-thread lane so a blocking native call genuinely occupies it. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun realLaneBackend(core: FakeCore): AndroidMpvBackend {
@@ -580,7 +599,8 @@ class AndroidMpvBackendTest {
             callOrder += "set:$name=$value"
         }
         override fun setBoolean(name: String, value: Boolean) = Unit
-        override fun long(name: String): Long? = 0L
+        var metricsBlocksOn: java.util.concurrent.CountDownLatch? = null
+        override fun long(name: String): Long? { metricsBlocksOn?.await(); return 0L }
         override fun node(name: String): MPVNode = MPVNode.None
         var destroyEnteredLatch: java.util.concurrent.CountDownLatch? = null
         var destroyBlocksOn: java.util.concurrent.CountDownLatch? = null

@@ -148,14 +148,14 @@ internal interface MpvNativeObserver {
 internal class AndroidMpvBackendFactory(
     context: Context,
     private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
-    private val dispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1),
+    private val dispatcher: CoroutineDispatcher? = null,
     private val coreFactory: () -> MpvNativeCore = { AndroidMpvNativeCore(MPV()) },
 ) : MpvBackendFactory {
     private val appContext = context.applicationContext
 
     override suspend fun create(plan: MpvAdapterPlan): PlaybackResult<MpvBackend> =
         PlaybackResult.Success(
-            AndroidMpvBackend(appContext, plan, dispatcher, coreFactory(), externalSubtitleResolver),
+            AndroidMpvBackend(appContext, plan, dispatcher ?: Dispatchers.IO.limitedParallelism(1), coreFactory(), externalSubtitleResolver),
         )
 }
 
@@ -200,10 +200,28 @@ internal class AndroidMpvBackend(
     private var manualSubtitleSelection = false
     private var appliedSubtitlesEnabled = plan.preInitOptions["sid"] != "no"
 
+    @Volatile private var nativeLaneFailed = false
+
+    private suspend fun <T> onNativeLane(phase: FailurePhase, action: suspend () -> PlaybackResult<T>): PlaybackResult<T> {
+        fun failure() = PlaybackResult.Failure(PlaybackFailure(
+            code = FailureCode.NO_PROGRESS, domain = FailureDomain.DEVICE_RESOURCE,
+            phase = phase, retryability = Retryability.HANDOFF_ELIGIBLE,
+        ))
+        if (nativeLaneFailed) return failure()
+        val task = scope.async { if (nativeLaneFailed) failure() else action() }
+        return withTimeoutOrNull(NATIVE_CALL_ABANDON_TIMEOUT_MS) { task.await() } ?: run {
+            nativeLaneFailed = true
+            terminalEventsSuppressed = true
+            // Cancels queued work. A JNI call already running is contained until hardAbort proves death.
+            task.cancel()
+            failure()
+        }
+    }
+
     override suspend fun attachSurface(lease: MpvSurfaceLease): PlaybackResult<Unit> =
-        withContext(dispatcher) {
+        onNativeLane(FailurePhase.SURFACE_ATTACHMENT) {
             if (this@AndroidMpvBackend.lease != null) {
-                return@withContext stateFailure(FailurePhase.SURFACE_ATTACHMENT)
+                return@onNativeLane stateFailure(FailurePhase.SURFACE_ATTACHMENT)
             }
             try {
                 if (lifecycle == MpvBackendLifecycle.CREATED) {
@@ -231,7 +249,7 @@ internal class AndroidMpvBackend(
                     observeFacts()
                     lifecycle = MpvBackendLifecycle.INITIALIZED
                 } else if (lifecycle !in activeStates) {
-                    return@withContext stateFailure(FailurePhase.SURFACE_ATTACHMENT)
+                    return@onNativeLane stateFailure(FailurePhase.SURFACE_ATTACHMENT)
                 }
                 if (!core.attachSurface(lease.surface)) throw IllegalStateException("mpv surface rejected")
                 lease.markAttached()
@@ -243,8 +261,8 @@ internal class AndroidMpvBackend(
             }
         }
 
-    override suspend fun start(): PlaybackResult<Unit> = withContext(dispatcher) {
-        if (lifecycle != MpvBackendLifecycle.ATTACHED) return@withContext stateFailure(FailurePhase.ENGINE_START)
+    override suspend fun start(): PlaybackResult<Unit> = onNativeLane(FailurePhase.ENGINE_START) {
+        if (lifecycle != MpvBackendLifecycle.ATTACHED) return@onNativeLane stateFailure(FailurePhase.ENGINE_START)
         try {
             applyRuntime(plan)
             core.setBoolean("pause", plan.startPaused)
@@ -268,8 +286,8 @@ internal class AndroidMpvBackend(
         }
     }
 
-    override suspend fun setPaused(paused: Boolean): PlaybackResult<Unit> = withContext(dispatcher) {
-        if (lifecycle !in activeStates) return@withContext stateFailure(FailurePhase.PLAYBACK)
+    override suspend fun setPaused(paused: Boolean): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
+        if (lifecycle !in activeStates) return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         try {
             core.setBoolean("pause", paused)
             this@AndroidMpvBackend.paused = paused
@@ -279,8 +297,8 @@ internal class AndroidMpvBackend(
         }
     }
 
-    override suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = withContext(dispatcher) {
-        if (lifecycle !in activeStates || positionMs < 0) return@withContext stateFailure(FailurePhase.PLAYBACK)
+    override suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
+        if (lifecycle !in activeStates || positionMs < 0) return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         runCatching {
             core.command("seek", (positionMs / 1_000.0).toString(), "absolute+exact")
             this@AndroidMpvBackend.positionMs = positionMs
@@ -291,9 +309,9 @@ internal class AndroidMpvBackend(
         )
     }
 
-    override suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = withContext(dispatcher) {
+    override suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
         if (lifecycle !in activeStates || !rate.isFinite() || rate !in 0.25f..4f) {
-            return@withContext stateFailure(FailurePhase.PLAYBACK)
+            return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         }
         runCatching {
             core.setString("speed", rate.toString())
@@ -314,10 +332,10 @@ internal class AndroidMpvBackend(
         trackId: PlaybackTrackId,
         type: PlaybackTrackType,
         property: String,
-    ): PlaybackResult<Unit> = withContext(dispatcher) {
+    ): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
         val reference = trackReferences[trackId]
             ?.takeIf { it.type == type }
-            ?: return@withContext stateFailure(FailurePhase.PLAYBACK)
+            ?: return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         runCatching { core.setString(property, reference.nativeId) }.fold(
             onSuccess = {
                 if (type == PlaybackTrackType.SUBTITLE) manualSubtitleSelection = true
@@ -328,7 +346,7 @@ internal class AndroidMpvBackend(
     }
 
     override suspend fun setSubtitlesEnabled(enabled: Boolean): PlaybackResult<Unit> =
-        withContext(dispatcher) {
+        onNativeLane(FailurePhase.PLAYBACK) {
             runCatching { core.setString("sid", if (enabled) "auto" else "no") }.fold(
                 onSuccess = {
                     manualSubtitleSelection = true
@@ -339,7 +357,7 @@ internal class AndroidMpvBackend(
             )
         }
 
-    override suspend fun setVolume(volume: Float): PlaybackResult<Unit> = withContext(dispatcher) {
+    override suspend fun setVolume(volume: Float): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
         runCatching { core.setString("volume", (volume.coerceIn(0f, 1f) * 100f).toString()) }.fold(
             onSuccess = { PlaybackResult.Success(Unit) },
             onFailure = { stateFailure(FailurePhase.PLAYBACK) },
@@ -348,10 +366,10 @@ internal class AndroidMpvBackend(
 
     override suspend fun attachExternalSubtitle(
         subtitleId: ExternalSubtitleId,
-    ): PlaybackResult<Unit> = withContext(dispatcher) {
-        if (lifecycle !in activeStates) return@withContext stateFailure(FailurePhase.PLAYBACK)
+    ): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
+        if (lifecycle !in activeStates) return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         val registration = externalSubtitleResolver.resolve(subtitleId)
-            ?: return@withContext stateFailure(FailurePhase.PLAYBACK)
+            ?: return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         runCatching {
             val command = mutableListOf("sub-add", registration.uri, "select")
             registration.label?.let(command::add)
@@ -364,8 +382,8 @@ internal class AndroidMpvBackend(
         )
     }
 
-    override suspend fun apply(plan: MpvAdapterPlan): PlaybackResult<Unit> = withContext(dispatcher) {
-        if (lifecycle !in activeStates) return@withContext stateFailure(FailurePhase.PLAYBACK)
+    override suspend fun apply(plan: MpvAdapterPlan): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
+        if (lifecycle !in activeStates) return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         try {
             this@AndroidMpvBackend.plan = plan
             applyRuntime(plan)
@@ -395,8 +413,8 @@ internal class AndroidMpvBackend(
         return PlaybackResult.Success(Unit)
     }
 
-    override suspend fun metrics(): PlaybackResult<MpvMetrics> = withContext(dispatcher) {
-        if (lifecycle !in activeStates) return@withContext stateFailure(FailurePhase.PLAYBACK)
+    override suspend fun metrics(): PlaybackResult<MpvMetrics> = onNativeLane(FailurePhase.PLAYBACK) {
+        if (lifecycle !in activeStates) return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         PlaybackResult.Success(
             MpvMetrics(
                 videoRendered = core.long(PRESENTED_VIDEO_FRAMES),
