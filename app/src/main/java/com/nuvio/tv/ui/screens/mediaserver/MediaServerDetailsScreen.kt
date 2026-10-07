@@ -84,6 +84,16 @@ internal fun MediaServerDetailsScreen(
             )
             SettingsGroupCard(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 val listState = rememberLazyListState()
+                // Signing out inserts the "Sign in" row ABOVE the scrolled position: bring it into view and focus it, or the
+                // screen looks unchanged (the row is out of sight) while the sign-out has happened.
+                var wasNeedingSignIn by remember { mutableStateOf(needsSignIn) }
+                LaunchedEffect(needsSignIn) {
+                    if (needsSignIn && !wasNeedingSignIn) {
+                        listState.scrollToItem(0)
+                        firstFocus.requestFocusAfterFrames(frames = 2)
+                    }
+                    wasNeedingSignIn = needsSignIn
+                }
                 LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (needsSignIn) {
                         item(key = "sign-in") {

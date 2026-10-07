@@ -88,7 +88,7 @@
     <string name="ms_details_gone">This server is no longer on your account.</string>
     <string name="ms_details_sign_in">Sign in</string>
     <string name="ms_details_sign_in_hint_again">This device\'s sign-in ended (the server refused it). Sign in again to keep using this server.</string>
-    <string name="ms_details_sign_in_hint_new">This server came from your account. Sign in once on this device to use it here.</string>
+    <string name="ms_details_sign_in_hint_new">Sign in on this device to use this server here.</string>
     <string name="ms_details_section_home">On Home</string>
     <string name="ms_details_home_continue">Server\'s Continue Watching</string>
     <string name="ms_details_home_next_up">Server\'s Next Up</string>
