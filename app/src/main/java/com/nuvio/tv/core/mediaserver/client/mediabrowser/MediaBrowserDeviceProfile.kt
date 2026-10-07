@@ -19,7 +19,9 @@ import kotlinx.serialization.json.put
  */
 internal object MediaBrowserDeviceProfile {
     private const val DIRECT_PLAY_CONTAINERS = "mp4,mkv,m4v,webm,mov,ts"
-    private const val DIRECT_PLAY_VIDEO = "hevc,h264,h265,vp8,vp9,av1,mpeg4,mpeg2video"
+    // No mpeg2video: owner decision 2026-10-06. J2 saw black video with no fallback when an MPEG-2 file was direct-played,
+    // so such files are left out of the claim and the server transcodes them (the HLS profile below).
+    private const val DIRECT_PLAY_VIDEO = "hevc,h264,h265,vp8,vp9,av1,mpeg4"
     private const val DIRECT_PLAY_AUDIO = "aac,mp3,mp2,ac3,eac3,flac,opus,vorbis,dts"
     private const val TRANSCODE_VIDEO = "hevc,h264"
     private const val TRANSCODE_AUDIO = "aac,mp3,ac3,eac3,flac,opus"
