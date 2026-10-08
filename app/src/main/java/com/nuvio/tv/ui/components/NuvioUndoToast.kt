@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +53,9 @@ fun NuvioUndoToast(
     key: Any? = message,
 ) {
     val actionFocus = remember { FocusRequester() }
+    // A long OK on the channel can create this toast before that same OK is released.
+    // The newly focused TV Button otherwise treats the orphan release as a click on Undo.
+    var selectPressedHere by remember(key) { mutableStateOf(false) }
     val latestDismiss by rememberUpdatedState(onDismiss)
     LaunchedEffect(key) {
         runCatching { actionFocus.requestFocus() }
@@ -80,6 +85,20 @@ fun NuvioUndoToast(
                 .focusRequester(actionFocus)
                 // Arrows leave the notice rather than wander the screen behind it.
                 .onPreviewKeyEvent { event ->
+                    val select = event.key == Key.DirectionCenter || event.key == Key.Enter ||
+                        event.key == Key.NumPadEnter
+                    if (select) {
+                        if (event.type == KeyEventType.KeyDown) {
+                            // Repeats from the original held key are not a new press either.
+                            if (event.nativeKeyEvent.repeatCount > 0 && !selectPressedHere) return@onPreviewKeyEvent true
+                            selectPressedHere = true
+                        } else if (event.type == KeyEventType.KeyUp) {
+                            val hadDown = selectPressedHere
+                            selectPressedHere = false
+                            if (!hadDown) return@onPreviewKeyEvent true
+                        }
+                        return@onPreviewKeyEvent false
+                    }
                     val arrow = event.key == Key.DirectionUp || event.key == Key.DirectionDown ||
                         event.key == Key.DirectionLeft || event.key == Key.DirectionRight
                     if (!arrow) return@onPreviewKeyEvent false

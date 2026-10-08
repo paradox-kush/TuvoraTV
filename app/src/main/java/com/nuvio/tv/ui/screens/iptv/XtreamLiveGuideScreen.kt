@@ -1158,7 +1158,7 @@ private fun GuideCategoryRow(
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun GuideChannelRow(
+internal fun GuideChannelRow(
     number: Int,
     name: String,
     isPlaying: Boolean,

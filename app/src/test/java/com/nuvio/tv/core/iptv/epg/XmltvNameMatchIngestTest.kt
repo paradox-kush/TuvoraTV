@@ -129,4 +129,27 @@ class XmltvNameMatchIngestTest {
 
         assertTrue("an unmatched guide channel's rows are not kept", db.epgNowNext(acc.id, "zzz.xx", System.currentTimeMillis()).isEmpty())
     }
+    @Test
+    fun `plain HTTP gzip and raw gzip all populate matched programmes`() = runBlocking {
+        for (mode in listOf("plain", "http-gzip", "raw-gzip")) {
+            val xml = guide("bbc1.uk" to "BBC One")
+            val response = MockResponse().setHeader("Content-Type", "application/octet-stream")
+            if (mode == "plain") response.setBody(xml) else {
+                val bytes = java.io.ByteArrayOutputStream().also { out ->
+                    java.util.zip.GZIPOutputStream(out).use { it.write(xml.toByteArray()) }
+                }.toByteArray()
+                response.setBody(okio.Buffer().write(bytes))
+                if (mode == "http-gzip") response.setHeader("Content-Encoding", "gzip")
+            }
+            // No .gz extension: detection must depend on bytes rather than the URL.
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest) = response
+            }
+            val acc = account("m3u|gzip-$mode", server.url("/guide").toString())
+            db.replaceLiveLineup(acc.id, listOf(row(1, "BBC One", "bbc1.uk")), listOf("1" to "UK"))
+            xmltv.refreshIfStale(acc, force = true)
+            assertEquals(mode, "BBC One now", xmltv.storedNowNext(acc, 1, System.currentTimeMillis()).firstOrNull()?.title)
+        }
+    }
+
 }
