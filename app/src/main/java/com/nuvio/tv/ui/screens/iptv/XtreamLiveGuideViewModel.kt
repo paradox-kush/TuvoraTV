@@ -15,8 +15,6 @@ import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.LiveChannelRef
 import com.nuvio.tv.data.local.XtreamLiveStore
 import com.nuvio.tv.domain.model.ContentType
-import com.nuvio.tv.domain.model.LibraryEntryInput
-import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.repository.LibraryRepository
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.ProviderSelectionId
@@ -144,8 +142,13 @@ data class LiveGuideUiState(
     val focusedChannel: GuideChannel? get() = channels.firstOrNull { it.contentId == focusedChannelId }
 }
 
-/** F03: "“X” added to / removed from Favorites", with Undo (the toggle back). */
-data class FavoriteNotice(val channel: GuideChannel, val added: Boolean)
+/** F03: "“X” added to / removed from Favorites", with Undo preserving its previous order. */
+data class FavoriteNotice(
+    val channel: GuideChannel,
+    val added: Boolean,
+    val previousSavedAt: Long? = null,
+    val profileId: Int = 0,
+)
 
 /** Immutable authority carried by account-scoped guide work across suspension points. */
 internal data class LiveGuideAccountCommitToken(
@@ -897,11 +900,15 @@ class XtreamLiveGuideViewModel @Inject constructor(
         selectCategoryFor(acc, _uiState.value.selectedCategoryId, force = true, token = token)
     }
 
-    /** F03: Undo on the favourite notice — the same toggle back. */
+    /** Undo restores membership and the original synced favourites order. */
     fun undoFavorite() {
         val notice = _uiState.value.favoriteNotice ?: return
         _uiState.update { it.copy(favoriteNotice = null) }
-        toggleFavorite(notice.channel, withNotice = false)
+        viewModelScope.launch {
+            favoriteMutationMutex.withLock {
+                if (favoriteMutations.undo(notice)) reloadFavoriteCategory()
+            }
+        }
     }
 
     fun dismissFavoriteNotice(notice: FavoriteNotice) {
@@ -928,30 +935,24 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** Add/remove a channel from the platform Library (same store as movies). */
     private val favoriteMutationMutex = kotlinx.coroutines.sync.Mutex()
 
-    fun toggleFavorite(channel: GuideChannel) = toggleFavorite(channel, withNotice = true)
+    private val favoriteMutations = GuideFavoriteMutations(libraryRepository) { profileManager.activeProfileId.value }
 
-    private fun toggleFavorite(channel: GuideChannel, withNotice: Boolean) {
+    fun toggleFavorite(channel: GuideChannel) {
         viewModelScope.launch {
             favoriteMutationMutex.withLock {
-                // Live favourites stay local even when the movie library uses Trakt/Simkl.
-                val adding = libraryRepository.libraryItems.first().none { it.id == channel.contentId }
-                libraryRepository.toggleDefault(
-                    LibraryEntryInput(
-                        itemId = channel.contentId,
-                        itemType = "tv",
-                        title = channel.name,
-                        poster = channel.logo,
-                        posterShape = PosterShape.LANDSCAPE,
-                        logo = channel.logo
-                    )
-                )
-                if (adding) liveStore.remember(LiveChannelRef(channel.contentId, channel.name, channel.logo, channel.streamUrl))
-                // Publish Undo only after the mutation commits. Its inverse cannot overtake the write.
-                if (withNotice) _uiState.update { it.copy(favoriteNotice = FavoriteNotice(channel, added = adding)) }
-                val special = _uiState.value.categories.firstOrNull { it.id == _uiState.value.selectedCategoryId }?.special
-                if (special == GuideSpecial.FAVORITES || special == GuideSpecial.ALL_FAVORITES) reloadSelected()
+                val notice = favoriteMutations.toggle(channel)
+                if (notice.profileId != profileManager.activeProfileId.value) return@withLock
+                if (notice.added) liveStore.remember(LiveChannelRef(channel.contentId, channel.name, channel.logo, channel.streamUrl))
+                // Publish Undo only after commit, so its inverse cannot overtake the write.
+                _uiState.update { it.copy(favoriteNotice = notice) }
+                reloadFavoriteCategory()
             }
         }
+    }
+
+    private fun reloadFavoriteCategory() {
+        val special = _uiState.value.categories.firstOrNull { it.id == _uiState.value.selectedCategoryId }?.special
+        if (special == GuideSpecial.FAVORITES || special == GuideSpecial.ALL_FAVORITES) reloadSelected()
     }
 
     /** Record the live channel associated with a catch-up launch. */
