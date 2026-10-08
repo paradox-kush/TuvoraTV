@@ -61,6 +61,39 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], application = android.app.Application::class)
 class CleanLiveGuidePlaybackViewModelTest {
     @Test
+    fun `rejected selection clears pending fullscreen intent and preserves the current host`() = runTest {
+        val fixture = fixture(ownerDispatcher = StandardTestDispatcher(testScheduler))
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        val missing = ProviderSelectionId("missing-channel")
+        fixture.viewModel.requestTune(missing)
+        assertEquals(missing, fixture.viewModel.pendingSelection.value)
+        advanceUntilIdle()
+        assertEquals(null, fixture.viewModel.pendingSelection.value)
+        assertTrue(fixture.firstHost.zapSelections.isEmpty())
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `fullscreen requested during initial lookup survives host creation`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val proceed = CompletableDeferred<Unit>()
+        val fixture = fixture(selectionBeforeResult = {
+            started.complete(Unit)
+            proceed.await()
+        })
+        fixture.viewModel.attachGuide(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        started.await()
+        assertEquals(fixture.initial.contentId, fixture.viewModel.pendingSelection.value)
+        fixture.viewModel.requestPromote()
+        runCurrent()
+        proceed.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(SessionProfile.FULLSCREEN), fixture.firstHost.tuneProfiles)
+        assertEquals(null, fixture.viewModel.pendingSelection.value)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
     fun `attach selects once and tunes one viewport-bound host in guide profile`() = runTest {
         val fixture = fixture()
         val viewport = VideoDimensions(640, 360)

@@ -169,6 +169,12 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         MutableStateFlow<CleanLiveGuidePlaybackState>(CleanLiveGuidePlaybackState.Detached)
 
     val state: StateFlow<CleanLiveGuidePlaybackState> = mutableState.asStateFlow()
+    private val mutablePendingSelection = MutableStateFlow<ProviderSelectionId?>(null)
+    val pendingSelection: StateFlow<ProviderSelectionId?> = mutablePendingSelection.asStateFlow()
+
+    private fun finishSelection(contentId: ProviderSelectionId) {
+        mutablePendingSelection.compareAndSet(contentId, null)
+    }
 
     // F28: the picture (aspect + manual zoom) follows the channel on screen, per channel.
     private val pictureFollower = LivePictureFollower(picturePort, ownerScope)
@@ -189,7 +195,14 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private var lastAttachInput: GuideAttachInput? = null
 
     private val tuneWorker = ownerScope.launch {
-        for (contentId in tuneRequests) performTune(contentId)
+        for (contentId in tuneRequests) {
+            try {
+                performTune(contentId)
+            } finally {
+                // A request deferred until initial host creation still belongs to attach().
+                if (host != null || pendingTuneContentId != contentId) finishSelection(contentId)
+            }
+        }
     }
 
     private val settledTuneWorker = ownerScope.launch {
@@ -216,6 +229,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         previewViewport: VideoDimensions? = null,
     ) {
         if (releaseCompleted || clearedReleaseLoopStarted) return
+        mutablePendingSelection.value = initialContentId
         launchContained(CleanLiveGuideFailure.HOST_CREATION_FAILED) {
             attach(initialContentId, activity, lifecycle, surfaceOwner, previewViewport)
         }
@@ -227,6 +241,20 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         lifecycle: Lifecycle,
         surfaceOwner: FrameLayout,
         previewViewport: VideoDimensions? = null,
+    ) {
+        try {
+            performAttach(initialContentId, activity, lifecycle, surfaceOwner, previewViewport)
+        } finally {
+            finishSelection(initialContentId)
+        }
+    }
+
+    private suspend fun performAttach(
+        initialContentId: ProviderSelectionId,
+        activity: Activity,
+        lifecycle: Lifecycle,
+        surfaceOwner: FrameLayout,
+        previewViewport: VideoDimensions?,
     ) {
         val basis = ownershipMutex.withLock {
             if (releaseCompleted) return
@@ -318,7 +346,10 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
     /** Accepted direct-channel work is independent of a Compose caller's coroutine lifetime. */
     fun requestTune(contentId: ProviderSelectionId) {
-        if (!releaseCompleted && !clearedReleaseLoopStarted) tuneRequests.trySend(contentId)
+        if (!releaseCompleted && !clearedReleaseLoopStarted) {
+            mutablePendingSelection.value = contentId
+            tuneRequests.trySend(contentId)
+        }
     }
 
     /** Exact highlighted destinations are debounced; relative D-pad deltas never enter playback. */
@@ -340,6 +371,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         if (releaseCompleted) return@withLock
         attachGeneration += 1
         pendingTuneContentId = null
+        mutablePendingSelection.value = null
         activeTarget = null
         pendingPlayed = null
         val current = host
@@ -475,7 +507,12 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
     private suspend fun changeSessionProfile(next: SessionProfile) = ownershipMutex.withLock {
         if (releaseCompleted || sessionProfile == next) return@withLock
-        val currentHost = host ?: return@withLock
+        val currentHost = host ?: run {
+            // The viewer can ask for fullscreen while initial provider selection is suspended.
+            // createAndTune consumes this profile when the single host becomes available.
+            sessionProfile = next
+            return@withLock
+        }
         val profile = boundProfileId ?: return@withLock
         if (!profileMatches(profile)) {
             rejectAfterRelease(currentHost, CleanLiveGuideFailure.PROFILE_CHANGED)
@@ -762,6 +799,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             if (releaseCompleted) return@withLock
             attachGeneration += 1
             pendingTuneContentId = null
+            mutablePendingSelection.value = null
             presentationJob?.cancelAndJoin()
             presentationJob = null
             val current = host
@@ -793,6 +831,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             if (releaseCompleted) return@withLock
             attachGeneration += 1
             pendingTuneContentId = null
+            mutablePendingSelection.value = null
             presentationJob?.cancelAndJoin()
             presentationJob = null
             val current = host
@@ -837,6 +876,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         zapWorker.cancel()
         pendingPlayed = null
         pendingTuneContentId = null
+        mutablePendingSelection.value = null
         historyRecordTail = null
         presentationJob?.cancel()
         presentationJob = null

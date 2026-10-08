@@ -265,6 +265,12 @@ fun LiveGuide(
     val readyPlayback = playbackState as? CleanLiveGuidePlaybackState.Ready
     val playbackUi = readyPlayback?.presentation
     val playingContentId = readyPlayback?.target?.contentId?.value
+    var requestedContentId by remember(account.id) { mutableStateOf<String?>(null) }
+    val pendingSelection by playbackViewModel.pendingSelection.collectAsStateWithLifecycle()
+    val pendingContentId = pendingSelection?.value
+    val playbackError = playbackErrorText(playbackState, playbackUi?.bottomErrorCode)
+    val errorChannelId = if (pendingContentId != null && pendingContentId != playingContentId) null
+        else playingContentId ?: requestedContentId
     val context = LocalContext.current
     val activity = context.findActivity()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -287,6 +293,7 @@ fun LiveGuide(
     fun commitPreview(contentId: String) {
         val selection = ProviderSelectionId(contentId)
         val hostActivity = activity ?: return
+        requestedContentId = contentId
         if (readyPlayback == null) {
             playbackViewModel.attachGuide(
                 initialContentId = selection,
@@ -297,6 +304,14 @@ fun LiveGuide(
             )
         } else {
             playbackViewModel.requestTune(selection)
+        }
+    }
+    fun selectChannel(contentId: String) {
+        when (GuidePlaybackInteractionPolicy.click(contentId, playingContentId, pendingContentId,
+            playbackUi?.openFullscreenEnabled == true)) {
+            GuidePlaybackInteractionPolicy.Click.TUNE -> commitPreview(contentId)
+            GuidePlaybackInteractionPolicy.Click.FULLSCREEN -> onFullscreenChange(true)
+            GuidePlaybackInteractionPolicy.Click.RETRY -> playbackViewModel.requestRetry()
         }
     }
     DisposableEffect(playbackViewModel) {
@@ -491,8 +506,9 @@ fun LiveGuide(
                         nowMs = nowMs,
                         // A playback notice (stopped / can't open / no recording) shows here beside the
                         // channel name instead of over the channel grid, so the list stays visible.
-                        previewError = playbackErrorText(playbackState, playbackUi?.bottomErrorCode)
-                            ?: uiState.actionError,
+                        previewError = (playbackError.takeIf {
+                            GuidePlaybackInteractionPolicy.showFocusedError(uiState.focusedChannelId, errorChannelId)
+                        }) ?: uiState.actionError,
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
@@ -569,9 +585,7 @@ fun LiveGuide(
                                     when {
                                         // F03: another playlist's favourite — the guide switches to it first.
                                         viewModel.requestCrossTune(ch) -> Unit
-                                        !isPlaying -> commitPreview(ch.contentId)
-                                        playbackUi?.openFullscreenEnabled == true -> onFullscreenChange(true)
-                                        else -> playbackViewModel.requestRetry()
+                                        else -> selectChannel(ch.contentId)
                                     }
                                 },
                                 onLongClick = { viewModel.toggleFavorite(ch) },
@@ -615,11 +629,7 @@ fun LiveGuide(
                                     )) {
                                         GuideCellIntent.Intent.REPLAY -> viewModel.startReplay(ch, programme)
                                         GuideCellIntent.Intent.OPEN_SHEET -> sheetProgramme = programme
-                                        GuideCellIntent.Intent.PLAY_LIVE -> when {
-                                            !isPlaying -> commitPreview(ch.contentId)
-                                            playbackUi?.openFullscreenEnabled == true -> onFullscreenChange(true)
-                                            else -> playbackViewModel.requestRetry()
-                                        }
+                                        GuideCellIntent.Intent.PLAY_LIVE -> selectChannel(ch.contentId)
                                         GuideCellIntent.Intent.NONE -> Unit
                                     }
                                 },
@@ -663,6 +673,10 @@ fun LiveGuide(
                     .focusProperties { canFocus = fullscreen }
                     .focusable()
             )
+            // Cover a retained decoder frame without removing the persistent surface owner.
+            if (GuidePlaybackInteractionPolicy.coverFailedFrame(playbackError != null)) {
+                Box(Modifier.fillMaxSize().background(Color.Black))
+            }
             if (playbackUi?.spinnerVisible == true) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
