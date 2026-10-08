@@ -832,6 +832,9 @@ private class AndroidMedia3Backend(
         PlaybackResult.Success(Unit)
     }
 
+    override fun canReplaceSource(plan: Media3AdapterPlan): Boolean =
+        media3SourceReplacementCompatible(this.plan, plan)
+
     override suspend fun replaceSource(
         plan: Media3AdapterPlan,
         paused: Boolean,
