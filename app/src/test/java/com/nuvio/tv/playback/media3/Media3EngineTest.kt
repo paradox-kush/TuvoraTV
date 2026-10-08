@@ -4,6 +4,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.playback.core.AudioMode
 import com.nuvio.tv.playback.core.AudioOutputPreference
 import com.nuvio.tv.playback.core.BufferingPreference
+import com.nuvio.tv.playback.core.ContainerType
+import com.nuvio.tv.playback.core.DeliveryType
+import com.nuvio.tv.playback.core.EvidenceFact
+import com.nuvio.tv.playback.core.EvidenceProvenance
 import com.nuvio.tv.playback.core.ContentType
 import com.nuvio.tv.playback.core.DecoderMode
 import com.nuvio.tv.playback.core.DecoderPreference
@@ -252,6 +256,76 @@ class Media3EngineTest {
         assertEquals(0, backend.releaseCalls)
     }
 
+    @Test
+    fun `mixed HLS and TS zaps rebuild incompatible backend before starting next channel`() = runTest {
+        val backends = mutableListOf<FakeBackend>()
+        val host = CountingSurfaceHost()
+        val engine = Media3Engine(backgroundScope, host, Media3BackendFactory { plan ->
+            assertTrue("old player must be released before creating another", backends.all { it.releaseCalls == 1 })
+            PlaybackResult.Success(FakeBackend().also { it.lastPlan = plan; backends += it })
+        })
+        val sources = listOf("application/x-mpegURL", "video/mp2t", "application/x-mpegURL")
+        sources.forEachIndexed { index, mime ->
+            val generation = 30L + index
+            assertSuccess(engine.attachSurface(generation, graph()))
+            assertSuccess(engine.start(start(generation).copy(
+                request = PlaybackRequest("https://example.test/channel/$index", contentType = ContentType.LIVE),
+                evidence = StreamEvidence(
+                    delivery = EvidenceFact(
+                        if (mime == "video/mp2t") DeliveryType.PROGRESSIVE else DeliveryType.HLS,
+                        EvidenceProvenance.PROVIDER_DECLARED),
+                    container = EvidenceFact(ContainerType.MPEG_TS,
+                        EvidenceProvenance.PROVIDER_DECLARED),
+                ),
+            )))
+            if (index < sources.lastIndex) assertSuccess(engine.releaseSource(generation))
+        }
+        assertEquals(3, backends.size)
+        assertEquals(listOf(1, 1, 0), backends.map { it.releaseCalls })
+        assertEquals(listOf(1, 1, 1), backends.map { it.startCalls })
+        assertEquals(1, host.acquireCalls)
+    }
+
+    @Test
+    fun `changed source headers cannot reuse stale factory and failed release blocks recreation`() = runTest {
+        val backends = mutableListOf<FakeBackend>()
+        val engine = Media3Engine(backgroundScope, CountingSurfaceHost(), Media3BackendFactory { plan ->
+            PlaybackResult.Success(FakeBackend().also { it.lastPlan = plan; backends += it })
+        })
+        assertSuccess(engine.attachSurface(40, graph()))
+        assertSuccess(engine.start(start(40)))
+        assertSuccess(engine.releaseSource(40))
+        backends.single().releaseSucceeds = false
+        assertSuccess(engine.attachSurface(41, graph()))
+        val changed = start(41).copy(request = PlaybackRequest("https://example.test/other", contentType = ContentType.LIVE, headers = mapOf("User-Agent" to "other")))
+        assertTrue(engine.start(changed) is PlaybackResult.Failure)
+        assertEquals(1, backends.single().releaseCalls)
+        assertEquals(1, backends.size)
+        backends.single().releaseSucceeds = true
+        assertSuccess(engine.release(41))
+    }
+
+    @Test
+    fun `different provider headers construct a new backend with the new identity`() = runTest {
+        val backends = mutableListOf<FakeBackend>()
+        val engine = Media3Engine(backgroundScope, CountingSurfaceHost(), Media3BackendFactory { plan ->
+            assertTrue(backends.all { it.releaseCalls == 1 })
+            PlaybackResult.Success(FakeBackend().also { it.lastPlan = plan; backends += it })
+        })
+        for (index in 0..1) {
+            val generation = 50L + index
+            assertSuccess(engine.attachSurface(generation, graph()))
+            assertSuccess(engine.start(start(generation).copy(request = PlaybackRequest(
+                "https://example.test/channel/$index", contentType = ContentType.LIVE,
+                headers = mapOf("Authorization" to "fixture-token-$index"),
+            ))))
+            if (index == 0) assertSuccess(engine.releaseSource(generation))
+        }
+        assertEquals(2, backends.size)
+        assertEquals("fixture-token-1", backends.last().lastPlan!!.request.headers["Authorization"])
+        assertEquals(listOf(1, 0), backends.map { it.releaseCalls })
+    }
+
     private fun engine(backend: FakeBackend, scope: kotlinx.coroutines.CoroutineScope) = Media3Engine(
         scope = scope,
         surfaceHost = FakeSurfaceHost(),
@@ -382,6 +456,8 @@ class Media3EngineTest {
             operations += "stop-source"
             return PlaybackResult.Success(Unit)
         }
+        override fun canReplaceSource(plan: Media3AdapterPlan): Boolean =
+            lastPlan?.let { media3SourceReplacementCompatible(it, plan) } ?: true
         override suspend fun replaceSource(
             plan: Media3AdapterPlan,
             paused: Boolean,
@@ -390,6 +466,12 @@ class Media3EngineTest {
             restorationCheckpoint: com.nuvio.tv.playback.core.VodRestorationCheckpoint?,
         ): PlaybackResult<Unit> {
             operations += "replace-source"
+            if (lastPlan != null && !media3SourceReplacementCompatible(lastPlan!!, plan)) {
+                return PlaybackResult.Failure(surfaceFailure().copy(
+                    code = com.nuvio.tv.playback.core.FailureCode.NO_ELIGIBLE_GRAPH,
+                    phase = com.nuvio.tv.playback.core.FailurePhase.ENGINE_START,
+                ))
+            }
             lastPlan = plan
             return PlaybackResult.Success(Unit)
         }

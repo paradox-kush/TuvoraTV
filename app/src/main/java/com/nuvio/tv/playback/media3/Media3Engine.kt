@@ -87,6 +87,8 @@ internal interface Media3Backend {
     suspend fun apply(plan: Media3AdapterPlan): PlaybackResult<Unit>
     suspend fun detachSurface(): PlaybackResult<Unit>
     suspend fun stopSource(): PlaybackResult<Unit>
+    /** Reuse only when this backend's immutable factories can serve the next plan. */
+    fun canReplaceSource(plan: Media3AdapterPlan): Boolean = false
     suspend fun replaceSource(
         plan: Media3AdapterPlan,
         paused: Boolean,
@@ -230,25 +232,39 @@ class Media3Engine internal constructor(
             if (!sourceReleased || activeGraph != input.graph) {
                 return@withLock failure(FailurePhase.ENGINE_START, FailureCode.RESOURCE_BUDGET_EXCEEDED)
             }
-            eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                retained.events.collect { event -> publish(input.generation, event) }
-            }
-            val replaced = retained.replaceSource(
-                plan,
-                input.startPaused,
-                input.startPositionMs,
-                input.playbackRate,
-                input.restorationCheckpoint,
-            )
-            if (replaced is PlaybackResult.Success) {
-                sourceReleased = false
-                activeRequest = input.request
-                activeEvidence = input.evidence
+            if (!retained.canReplaceSource(plan)) {
+                // stopSource releases the provider connection but retains decoder/network factories.
+                // Format, credentials or construction settings can differ on the next channel.
+                // Keep the surface lease, but require proof of player death before creating another.
+                when (val released = retained.release()) {
+                    is PlaybackResult.Failure -> return@withLock released
+                    is PlaybackResult.Success -> Unit
+                }
+                backend = null
+                activeRequest = null
+                activeGraph = null
+                activeEvidence = null
             } else {
-                eventJob?.cancelAndJoin()
-                eventJob = null
+                eventJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    retained.events.collect { event -> publish(input.generation, event) }
+                }
+                val replaced = retained.replaceSource(
+                    plan,
+                    input.startPaused,
+                    input.startPositionMs,
+                    input.playbackRate,
+                    input.restorationCheckpoint,
+                )
+                if (replaced is PlaybackResult.Success) {
+                    sourceReleased = false
+                    activeRequest = input.request
+                    activeEvidence = input.evidence
+                } else {
+                    eventJob?.cancelAndJoin()
+                    eventJob = null
+                }
+                return@withLock replaced
             }
-            return@withLock replaced
         }
         when (val created = backendFactory.create(plan)) {
             is PlaybackResult.Failure -> created
