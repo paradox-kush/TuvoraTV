@@ -22,6 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import okhttp3.OkHttpClient
 import com.nuvio.tv.core.iptv.isXtream
 import okhttp3.Request
+import okio.GzipSource
+import okio.buffer
 import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Singleton
@@ -328,12 +330,19 @@ class XmltvClient @Inject constructor(
         playlistDns.clientFor(http, acc.dnsProvider).forFailoverAttempt().newCall(request).executeCancellable { resp ->
             // Typed (message unchanged) so the failover walk can tell a dead panel (5xx/404) from a refusal.
             if (!resp.isSuccessful) throw com.nuvio.tv.core.iptv.HttpStatusException(resp.code, "HTTP ${resp.code}")
-            // charStream() decodes the (possibly gunzipped) body incrementally — never fully buffered.
-            // checkNotNull: body is nullable on OkHttp 4 (playstore flavor) but not on 5 (full).
-            val reader = com.nuvio.tv.core.iptv.FirstReadFlagReader(
-                checkNotNull(resp.body) { "empty response body" }.charStream(), onFirstBytes,
-            ).buffered()
-            parse(reader)
+            // HTTP Content-Encoding is handled by OkHttp. A raw .xml.gz download has no
+            // encoding header: inspect the decoded body's magic, without buffering the feed.
+            val body = checkNotNull(resp.body) { "empty response body" }
+            val raw = body.source()
+            val gzipped = raw.request(2) && raw.buffer[0] == 0x1f.toByte() && raw.buffer[1] == 0x8b.toByte()
+            val source = if (gzipped) GzipSource(raw).buffer() else raw
+            source.use {
+                val reader = com.nuvio.tv.core.iptv.FirstReadFlagReader(
+                    it.inputStream().reader(body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8),
+                    onFirstBytes,
+                ).buffered()
+                parse(reader)
+            }
         }
     }
 
