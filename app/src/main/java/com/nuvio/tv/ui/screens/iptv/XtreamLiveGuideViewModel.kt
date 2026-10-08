@@ -278,11 +278,34 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // If programmes land while this screen is still open, the "nothing for this channel"
         // verdicts taken before them are stale — retire them so rows can resolve.
         viewModelScope.launch {
-            epgMirror.programmesCommitted.collect {
-                epgAdmission.invalidate()
-                epgRequested.clear()
-            }
+            epgMirror.programmesCommitted.collect { onGuideDataCommitted(playlistId = null) }
         }
+        // Same for the playlist's own XMLTV ingest (F4): a guide opened while it was still
+        // downloading asked its rows, got "nothing stored", and must re-ask when the swap lands.
+        viewModelScope.launch {
+            xmltv.guideCommitted.collect { onGuideDataCommitted(playlistId = it) }
+        }
+    }
+
+    /**
+     * New guide data landed ([playlistId] null = mirror, any playlist): retire the stale "no guide"
+     * verdicts and re-ask the focused row plus the visible rows that still show nothing — see
+     * [GuideDataRefreshPolicy]. Without the re-ask an idle open guide stays on "No information".
+     */
+    private fun onGuideDataCommitted(playlistId: String?) {
+        if (!GuideDataRefreshPolicy.appliesTo(playlistId, account?.id)) return
+        epgAdmission.invalidate()
+        epgRequested.clear()
+        val state = _uiState.value
+        val focused = state.channels.indexOfFirst { it.contentId == state.focusedChannelId }
+        val ids = GuideDataRefreshPolicy.streamIdsToReask(
+            focusedIndex = focused,
+            streamIds = state.channels.map { it.streamId },
+            hasProgramme = { state.epg[it]?.now != null },
+        )
+        ids.forEach(::ensureEpg)
+        // A travelled window reads its cells from the store, which just changed under it.
+        if (!GuideTimeTravel.isAtLiveEdge(state.windowStartMs, System.currentTimeMillis())) publishVisibleWindows()
     }
 
     /** Live channel ids currently in the platform Library (drives the ★ + add/remove). */
