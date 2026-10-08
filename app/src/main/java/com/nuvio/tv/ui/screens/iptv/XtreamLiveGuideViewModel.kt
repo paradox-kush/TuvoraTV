@@ -801,7 +801,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     fun onChannelFocused(channel: GuideChannel, index: Int = -1) {
         if (channel.contentId == _uiState.value.focusedChannelId) return
         // Moving to a different channel clears the previous channel's playback notice.
-        _uiState.update { it.copy(focusedChannelId = channel.contentId) }
+        _uiState.update { GuidePlaybackInteractionPolicy.focus(it, channel.contentId) }
         epgFocusJob?.cancel()
         epgFocusJob = viewModelScope.launch {
             delay(EPG_FOCUS_DEBOUNCE_MS)
