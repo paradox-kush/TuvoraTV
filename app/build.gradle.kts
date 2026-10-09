@@ -785,3 +785,18 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
+
+// JVM tests need JDK 21 for Robolectric's current Android SDK and more than Gradle's
+// default 512 MiB heap. Keep this separate from application bytecode/toolchain settings.
+val testJavaLauncher = extensions.getByType<org.gradle.jvm.toolchain.JavaToolchainService>().launcherFor {
+    languageVersion.set(JavaLanguageVersion.of(21))
+}
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    javaLauncher.set(testJavaLauncher)
+    maxHeapSize = "4g"
+    maxParallelForks = 1
+    testLogging {
+        events("failed", "skipped")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
