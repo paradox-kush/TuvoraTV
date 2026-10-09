@@ -17,10 +17,7 @@ import com.nuvio.tv.core.mediaserver.policy.ServerAudioChoicePolicy
 import com.nuvio.tv.core.mediaserver.policy.VersionPickPolicy
 import com.nuvio.tv.core.mediaserver.store.MediaServerEntryStore
 import com.nuvio.tv.domain.model.AddonStreams
-import com.nuvio.tv.domain.model.ProxyHeaders
 import com.nuvio.tv.domain.model.Stream
-import com.nuvio.tv.domain.model.StreamBehaviorHints
-import com.nuvio.tv.domain.model.Subtitle
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -28,13 +25,16 @@ import kotlinx.coroutines.CancellationException
  * resolves to deferred streams - one per `MediaSource` ("1080p · HEVC · 4.2 GB"), each
  * `ms-deferred:{serverKey}|{itemId}|{mediaSourceId}` - and the real play URL is minted at pick time from the
  * server's PlaybackInfo through [PlaybackDecisionPolicy]. The list never holds a token or a playable URL.
- * The matched lane (a TMDB title found on a server) is P3: [matchSourceGroups] is empty until then.
+ * The matched lane (a TMDB title found on a server, `ms-match:{serverKey}` groups) is [MediaServerMatchLane]'s; its
+ * streams are the same deferred shape and mint through the same path.
  */
 internal class MediaServerStreamSourceProvider(
     private val store: MediaServerEntryStore,
     private val services: MediaServerServices,
     /** Rebuilds an item's registry record after a cold start (Continue Watching / a deep link): one item fetch. */
     private val ensureRegistered: suspend (id: String) -> Boolean = { false },
+    /** The matched lane (a TMDB title found on a server, `ms-match:{serverKey}` groups); null = direct lane only. */
+    private val matchLane: MediaServerMatchLane? = null,
     /** Tuvora's audio-language preference for server-built streams; null = leave the server's choice alone. */
     private val audioPreference: ServerAudioChoicePolicy.Preference? = null,
     /** Told why a mint failed, so the viewer hears it instead of a silent return to the list (the app shows a toast). */
@@ -52,49 +52,19 @@ internal class MediaServerStreamSourceProvider(
         }
         if (item == null) return emptyList()
         val entry = store.entryByServerKey(item.serverKey) ?: return emptyList()
-        val sources = item.sources.ifEmpty { listOf(MediaServerItemRegistry.Source(id = "", label = "Direct play", container = null)) }
         // Emby authenticates a player request by header; Jellyfin's direct stream needs none (design 5.5).
         val headers = authHeaders(entry, services)
-        val streams = sources.map { source ->
-            Stream(
-                name = source.label,
-                title = item.name,
-                description = source.description,
-                url = MediaServerIds.deferredUrl(item.serverKey, item.itemId, source.id.takeIf { it.isNotBlank() }),
-                ytId = null,
-                infoHash = null,
-                fileIdx = null,
-                externalUrl = null,
-                behaviorHints = StreamBehaviorHints(
-                    notWebReady = null,
-                    bingeGroup = null,
-                    countryWhitelist = null,
-                    proxyHeaders = headers?.let { ProxyHeaders(request = it, response = null) },
-                ),
-                addonName = entry.name,
-                addonLogo = null,
-                // Sidecar text subtitles ride with the stream; the engines list the container's own tracks by themselves.
-                subtitles = source.subtitles.map { sub ->
-                    Subtitle(
-                        id = "${item.itemId}:${source.id}:${sub.index}",
-                        url = MediaBrowserUrls.subtitle(entry.address.orEmpty(), item.itemId, source.id, sub.index),
-                        lang = sub.language,
-                        addonName = entry.name,
-                        addonLogo = null,
-                        isStreamProvided = true,
-                        headers = headers,
-                    )
-                },
-                sourceId = MediaServerIds.DIRECT_GROUP_ID,
-            )
+        val streams = item.sources.ifEmpty { listOf(null) }.map { source ->
+            MediaServerStreamItems.build(entry, item.itemId, item.name, source, MediaServerIds.DIRECT_GROUP_ID, headers)
         }
         return listOf(AddonStreams(addonName = entry.name, addonLogo = null, streams = streams))
     }
 
-    // The matched lane is P3 (design 7): no match sources yet.
-    override fun matchSourceGroups(type: String): List<StreamSourceGroup> = emptyList()
+    // The matched lane (design 5.6, P3): a TMDB/IMDb title page offers each signed-in server that has the title.
+    override fun matchSourceGroups(type: String): List<StreamSourceGroup> = matchLane?.groups(type).orEmpty()
 
-    override suspend fun resolveMatchStreams(sourceId: String, type: String, videoId: String, season: Int?, episode: Int?): List<Stream> = emptyList()
+    override suspend fun resolveMatchStreams(sourceId: String, type: String, videoId: String, season: Int?, episode: Int?): List<Stream> =
+        matchLane?.streams(sourceId, type, videoId, season, episode).orEmpty()
 
     override fun isMatchSourceId(providerAddonId: String): Boolean = providerAddonId.startsWith(MediaServerIds.MATCH_GROUP_PREFIX)
 

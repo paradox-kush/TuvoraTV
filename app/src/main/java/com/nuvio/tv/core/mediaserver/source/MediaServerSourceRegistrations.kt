@@ -45,6 +45,7 @@ class MediaServerSourceRegistrations @Inject internal constructor(
     private val tmdbEnricher: MediaServerTmdbEnricher,
     private val syncSink: com.nuvio.tv.core.iptv.PlaylistMediaServerSyncSink,
     private val playerSettingsDataStore: com.nuvio.tv.data.local.PlayerSettingsDataStore,
+    private val matchTitleFacts: TmdbMatchTitleFacts,
 ) {
     private val registered = AtomicBoolean(false)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -83,6 +84,7 @@ class MediaServerSourceRegistrations @Inject internal constructor(
             changes = runtime.changeVersion.drop(1).map { },
             audioPreference = playerAudioPreference(),
             onMintFailure = { reason -> MediaServerMintNotices.show(appContext, reason) },
+            matchTitleFacts = matchTitleFacts,
         )
         runtime.homeContributor = home
         // A profile switch reloads the entries and drops everything the previous profile's session cached.
@@ -116,11 +118,14 @@ internal fun registerMediaServerSources(
     changes: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
     audioPreference: ServerAudioChoicePolicy.Preference? = null,
     onMintFailure: (com.nuvio.tv.core.mediaserver.policy.MintFailurePolicy.Reason) -> Unit = {},
+    /** Where a title page's TMDB/IMDb ids and titles come from; null = no matched lane (the direct lane only). */
+    matchTitleFacts: MatchTitleFacts? = null,
 ): MediaServerHomeContributor {
     val name = MediaServerSourceRegistrations.NAME
     val home = MediaServerHomeContributor(store, services, nowMs, tuvoraContinueWatchingIds, titles, changes)
     val meta = MediaServerMetaSource(store, services, enrich = enrich)
-    StreamSourceRegistry.register(name, MediaServerStreamSourceProvider(store, services, ensureRegistered = { id -> meta.ensureStreamRegistered(id) }, audioPreference = audioPreference, onMintFailure = onMintFailure))
+    val matchLane = matchTitleFacts?.let { MediaServerMatchLane(store, services, nowMs, it) }
+    StreamSourceRegistry.register(name, MediaServerStreamSourceProvider(store, services, ensureRegistered = { id -> meta.ensureStreamRegistered(id) }, matchLane = matchLane, audioPreference = audioPreference, onMintFailure = onMintFailure))
     MetaSourceRegistry.register(name, meta)
     SearchProviderRegistry.register(name, MediaServerSearchProvider(store, services, titles))
     OwnSourcePolicy.registerContentIdPredicate(name, MediaServerIds::isOwnContentId)

@@ -51,4 +51,33 @@ class MatchLookupPolicyTest {
         assertEquals(emptyList<Any>(), MatchLookupPolicy.verify(listOf(item("1", "Tmdb" to "")), ExternalIds(tmdb = "")))
         assertEquals(emptyList<Any>(), MatchLookupPolicy.verify(listOf(item("1", "Tmdb" to null)), ExternalIds(tmdb = "603")))
     }
+
+    private val facts = MatchLookupPolicy.TitleFacts(
+        ids = ids, primary = "The Matrix", original = "The Matrix", alternatives = listOf("Matrix", "Matrix 1"), year = 1999,
+    )
+
+    @Test
+    fun embyAsksOnceByIdWhateverTheTitles() {
+        val qs = MatchLookupPolicy.queries(MediaBrowserDialect.EMBY, ItemKind.MOVIE, facts)
+        assertEquals(listOf<Query>(Query.ByProviderId(listOf("tmdb.603", "imdb.tt0133093"), "Movie")), qs)
+    }
+
+    @Test
+    fun jellyfinSearchesEachDistinctTitleOncePrimaryFirstAndCapsTheCount() {
+        val qs = MatchLookupPolicy.queries(MediaBrowserDialect.JELLYFIN, ItemKind.MOVIE, facts)
+        // primary == original (case-insensitive duplicate) is asked once; then ONE alternative; never more than the cap
+        assertEquals(listOf("The Matrix", "Matrix"), qs.map { (it as Query.ByTitle).searchTerm })
+        assertEquals(listOf(1998, 1999, 2000), (qs.first() as Query.ByTitle).years)
+        val many = facts.copy(primary = "A", original = "B", alternatives = listOf("C", "D", "E"))
+        assertEquals(listOf("A", "B", "C"), MatchLookupPolicy.queries(MediaBrowserDialect.JELLYFIN, ItemKind.MOVIE, many).map { (it as Query.ByTitle).searchTerm })
+        assertEquals(MatchLookupPolicy.MAX_TITLE_QUERIES, 3)
+    }
+
+    @Test
+    fun noQueriesWithoutIdsOrWithoutAnyTitleOnJellyfin() {
+        assertEquals(emptyList<Any>(), MatchLookupPolicy.queries(MediaBrowserDialect.JELLYFIN, ItemKind.MOVIE, facts.copy(ids = ExternalIds())))
+        assertEquals(emptyList<Any>(), MatchLookupPolicy.queries(MediaBrowserDialect.JELLYFIN, ItemKind.MOVIE, facts.copy(primary = null, original = " ", alternatives = emptyList())))
+        // Emby does not need a title at all
+        assertEquals(1, MatchLookupPolicy.queries(MediaBrowserDialect.EMBY, ItemKind.MOVIE, facts.copy(primary = null, original = null)).size)
+    }
 }
