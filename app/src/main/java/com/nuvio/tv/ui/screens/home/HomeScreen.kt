@@ -2,6 +2,9 @@ package com.nuvio.tv.ui.screens.home
 
 import com.nuvio.tv.core.announcements.AnnouncementPolicy
 import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.build.NoAddonsHint
+import com.nuvio.tv.core.build.NoAddonsHintPolicy
+import com.nuvio.tv.ui.components.hasAnyIptvPlaylist
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.activity.compose.ReportDrawnWhen
@@ -241,6 +244,10 @@ fun HomeScreen(
         )
     }
 
+    val noAddonsHint = NoAddonsHintPolicy.hint(
+        addonsEnabled = AppFeaturePolicy.addonsEnabled,
+        hasAnyIptvPlaylist = hasAnyIptvPlaylist(),
+    )
     val noAddonsError = stringResource(R.string.home_error_no_addons)
     val noCatalogAddonsError = stringResource(R.string.home_error_no_catalog_addons)
     val hasAnyContent = uiState.catalogRows.isNotEmpty() ||
@@ -318,10 +325,14 @@ fun HomeScreen(
                     Unit
                 } else {
                     ErrorState(
-                        // Store builds hide the addon system, so point at IPTV setup instead.
+                        // Store builds hide the addon system, so point at IPTV setup — unless a
+                        // playlist is already there (UX38).
                         message = stringResource(
-                            if (AppFeaturePolicy.addonsEnabled) R.string.home_no_addons
-                            else R.string.home_empty_iptv_hint
+                            when (noAddonsHint) {
+                                NoAddonsHint.INSTALL_ADDONS -> R.string.home_no_addons
+                                NoAddonsHint.ADD_IPTV_PLAYLIST -> R.string.home_empty_iptv_hint
+                                NoAddonsHint.PLAYLIST_PRESENT -> R.string.home_empty_playlist_present_hint
+                            }
                         ),
                         onRetry = { viewModel.onEvent(HomeEvent.OnRetry) },
                         requestInitialFocus = true
@@ -335,8 +346,11 @@ fun HomeScreen(
                 } else {
                     ErrorState(
                         message = stringResource(
-                            if (AppFeaturePolicy.addonsEnabled) R.string.home_no_catalog_addons
-                            else R.string.home_empty_iptv_hint
+                            when (noAddonsHint) {
+                                NoAddonsHint.INSTALL_ADDONS -> R.string.home_no_catalog_addons
+                                NoAddonsHint.ADD_IPTV_PLAYLIST -> R.string.home_empty_iptv_hint
+                                NoAddonsHint.PLAYLIST_PRESENT -> R.string.home_empty_playlist_present_hint
+                            }
                         ),
                         onRetry = { viewModel.onEvent(HomeEvent.OnRetry) },
                         requestInitialFocus = true

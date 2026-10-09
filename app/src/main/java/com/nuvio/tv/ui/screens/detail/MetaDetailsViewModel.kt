@@ -12,6 +12,8 @@ import com.nuvio.tv.ui.util.sliceForBucket
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.poster.withCustomPosterUrls
+import com.nuvio.tv.core.tmdb.TmdbFallbackId
+import com.nuvio.tv.core.tmdb.TmdbFallbackIdPolicy
 import com.nuvio.tv.core.tmdb.TmdbMetadataService
 import com.nuvio.tv.core.tmdb.TmdbMovieCollection
 import com.nuvio.tv.core.tmdb.TmdbService
@@ -842,12 +844,11 @@ class MetaDetailsViewModel @Inject constructor(
     }
 
     private suspend fun tryApplyTmdbFallbackMeta(): Boolean {
-        val tmdbId = itemId
-            .takeIf { it.startsWith("tmdb:", ignoreCase = true) }
-            ?.substringAfter(':')
-            ?.substringBefore(':')
-            ?.toIntOrNull()
-            ?: return false
+        val fallbackId = TmdbFallbackIdPolicy.classify(itemId) ?: return false
+        val tmdbId = when (fallbackId) {
+            is TmdbFallbackId.Tmdb -> fallbackId.tmdbId
+            is TmdbFallbackId.Imdb -> tmdbService.ensureTmdbId(fallbackId.imdbId, itemType)?.toIntOrNull() ?: return false
+        }
         val type = ContentType.fromString(itemType)
         val settings = tmdbSettingsDataStore.settings.first()
         val enrichment = tmdbMetadataService.fetchEnrichment(
@@ -859,6 +860,7 @@ class MetaDetailsViewModel @Inject constructor(
             id = itemId,
             type = type,
             rawType = itemType,
+            imdbId = (fallbackId as? TmdbFallbackId.Imdb)?.imdbId,
             name = enrichment.localizedTitle ?: enrichment.originalTitle
                 ?: context.getString(R.string.detail_tmdb_fallback_title, tmdbId),
             poster = enrichment.poster,

@@ -3392,6 +3392,7 @@
     <string name="account_sync_now_title">Sync now</string>
     <string name="account_sync_now_subtitle">Get the latest from your other devices and send anything that hasn\'t synced yet</string>
     <string name="stream_no_streams_hint_iptv">Add your IPTV playlist in Settings to play titles from your provider</string>
+    <string name="stream_no_streams_hint_playlist_present">None of your playlists have this title</string>
     <string name="stream_p2p_unavailable">P2P (torrent) streams are not supported in this version of Tuvora. Pick another source.</string>
     <string name="player_loading_resuming_slow">Resuming at %1$s — the provider is slow to jump there</string>
     <string name="player_start_from_beginning">Start from beginning</string>
@@ -3421,6 +3422,7 @@
     <string name="profile_make_primary_ok">OK</string>
     <string name="player_error_stream_provider_firewall">\n\nYour provider\'s firewall blocked this stream. Set a custom User-Agent for this playlist (for example VLC), or ask your provider to allow this device.</string>
     <string name="home_empty_iptv_hint">No content yet. Add your IPTV playlist in Settings to get started.</string>
+    <string name="home_empty_playlist_present_hint">Nothing to show yet. Your playlist\'s channels, movies, and series are in the IPTV tab, and Search finds them too.</string>
     <string name="theme_color_marigold">Marigold</string>
     <string name="iptv_pairing_entry_title">Add from phone</string>
     <string name="iptv_pairing_entry_subtitle">Scan a QR on your phone and enter a playlist — no typing on the TV</string>

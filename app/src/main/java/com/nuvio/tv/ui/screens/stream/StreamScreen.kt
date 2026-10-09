@@ -82,6 +82,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.build.NoAddonsHint
+import com.nuvio.tv.core.build.NoAddonsHintPolicy
+import com.nuvio.tv.ui.components.hasAnyIptvPlaylist
 import com.nuvio.tv.core.torrent.TorrentGateDecision
 import com.nuvio.tv.core.torrent.TorrentPlaybackGate
 import com.nuvio.tv.core.player.ExternalPlayerLauncher
@@ -1009,10 +1012,18 @@ private fun EmptyState() {
 
         Text(
             // Store builds never use add-ons as stream sources, so "install more addons" would be a
-            // dead end there; point at IPTV instead.
+            // dead end there; point at IPTV instead — unless a playlist is already there (UX38).
             text = stringResource(
-                if (AppFeaturePolicy.addonStreamSourcesEnabled) R.string.stream_no_streams_hint
-                else R.string.stream_no_streams_hint_iptv
+                when (
+                    NoAddonsHintPolicy.hint(
+                        addonsEnabled = AppFeaturePolicy.addonStreamSourcesEnabled,
+                        hasAnyIptvPlaylist = hasAnyIptvPlaylist(),
+                    )
+                ) {
+                    NoAddonsHint.INSTALL_ADDONS -> R.string.stream_no_streams_hint
+                    NoAddonsHint.ADD_IPTV_PLAYLIST -> R.string.stream_no_streams_hint_iptv
+                    NoAddonsHint.PLAYLIST_PRESENT -> R.string.stream_no_streams_hint_playlist_present
+                }
             ),
             style = MaterialTheme.typography.bodyMedium,
             color = NuvioTheme.extendedColors.textSecondary,
