@@ -93,6 +93,8 @@ internal data class MediaSourceDto(
     /** The server-side path; only read to recognise a server's own placeholder (never shown, never fetched). */
     @SerialName("Path") val path: String? = null,
     @SerialName("Protocol") val protocol: String? = null,
+    /** `Default`, or `Placeholder` for a stand-in that is not a playable version ("Load versions", "No streams found"). */
+    @SerialName("Type") val type: String? = null,
     @SerialName("Size") val size: Long? = null,
     @SerialName("Bitrate") val bitrate: Long? = null,
     @SerialName("RunTimeTicks") val runTimeTicks: Long? = null,

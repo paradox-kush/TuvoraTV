@@ -14,6 +14,7 @@ import com.nuvio.tv.core.mediaserver.policy.MediaServerIds
 import com.nuvio.tv.core.mediaserver.policy.MintFailurePolicy
 import com.nuvio.tv.core.mediaserver.policy.PlaybackDecisionPolicy
 import com.nuvio.tv.core.mediaserver.policy.ServerAudioChoicePolicy
+import com.nuvio.tv.core.mediaserver.policy.VersionPickPolicy
 import com.nuvio.tv.core.mediaserver.store.MediaServerEntryStore
 import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.ProxyHeaders
@@ -58,7 +59,7 @@ internal class MediaServerStreamSourceProvider(
             Stream(
                 name = source.label,
                 title = item.name,
-                description = null,
+                description = source.description,
                 url = MediaServerIds.deferredUrl(item.serverKey, item.itemId, source.id.takeIf { it.isNotBlank() }),
                 ytId = null,
                 infoHash = null,
@@ -117,7 +118,7 @@ internal class MediaServerStreamSourceProvider(
             fun pick(n: PlaybackNegotiation) = if (deferred.mediaSourceId != null)
                 n.sources.firstOrNull { s -> s.id.equals(deferred.mediaSourceId, ignoreCase = true) }
                 else n.sources.firstOrNull()
-            fun usable(s: MediaSourceDto?) = s != null && !MintFailurePolicy.isServerPlaceholder(s.path)
+            fun usable(s: MediaSourceDto?) = s != null && !MintFailurePolicy.isServerPlaceholder(s.path) && !VersionPickPolicy.isPlaceholder(s.type)
             var retryTranscode = forceMint
             var negotiation = negotiate(null)
             var chosen = pick(negotiation)

@@ -35,7 +35,8 @@ internal class MediaServerMetaSource(
         return try {
             val item = client.item(parsed.itemId, fields = DETAIL_FIELDS) ?: return null
             val episodes = if (parsed.kind == Kind.SERIES) client.episodes(parsed.itemId, fields = EPISODE_FIELDS) else emptyList()
-            MediaServerItemMapper.registered(entry, item)?.let { registered ->
+            val versions = if (parsed.kind == Kind.MOVIE) MediaServerVersions.of(client, item) else item.mediaSources
+            MediaServerItemMapper.registered(entry, item, versions)?.let { registered ->
                 MediaServerItemRegistry.register(registered.copy(sourcesLoaded = true))
                 // A search result is a stub: opening it answers with the canonical item under ANOTHER id (recorded). The id the
                 // viewer arrived with must keep resolving (Continue Watching, a reload), so register it too - same item.
@@ -69,7 +70,7 @@ internal class MediaServerMetaSource(
         val client = services.clientFor(entry) ?: return false
         return try {
             val item = client.item(parsed.itemId, fields = "Overview,MediaSources") ?: return false
-            val registered = MediaServerItemMapper.registered(entry, item) ?: return false
+            val registered = MediaServerItemMapper.registered(entry, item, MediaServerVersions.of(client, item)) ?: return false
             // the registry key is the id the caller asked with (its kind is authoritative, not the server type's guess)
             MediaServerItemRegistry.register(registered.copy(contentId = id, sourcesLoaded = true))
             true

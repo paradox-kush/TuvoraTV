@@ -13,7 +13,14 @@ internal object MediaServerItemRegistry {
     /** A text subtitle that lives beside the file (not inside the container): the engines list embedded tracks themselves, these must be handed over. */
     data class SidecarSubtitle(val index: Int, val language: String, val label: String)
 
-    data class Source(val id: String, val label: String, val container: String?, val subtitles: List<SidecarSubtitle> = emptyList())
+    data class Source(
+        val id: String,
+        val label: String,
+        val container: String?,
+        val subtitles: List<SidecarSubtitle> = emptyList(),
+        /** The server's own words for this version (an add-on result's name and release), shown under [label]; null when they add nothing. */
+        val description: String? = null,
+    )
 
     data class Item(
         val contentId: String,
