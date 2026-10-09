@@ -125,7 +125,8 @@ internal class FakeClient : com.nuvio.tv.core.mediaserver.client.MediaServerClie
         check(); itemRequests += itemId
         return items[itemId]
     }
-    override suspend fun seasons(seriesId: String) = emptyList<com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto>()
+    var seasonsOf = mutableMapOf<String, List<com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto>>()
+    override suspend fun seasons(seriesId: String): List<com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto> { check(); return seasonsOf[seriesId].orEmpty() }
     override suspend fun episodes(seriesId: String, seasonId: String?, fields: String?): List<com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto> {
         check()
         return episodesOf[seriesId].orEmpty()
@@ -139,7 +140,12 @@ internal class FakeClient : com.nuvio.tv.core.mediaserver.client.MediaServerClie
         check()
         return shelves
     }
-    override suspend fun lookup(query: com.nuvio.tv.core.mediaserver.policy.MatchLookupPolicy.Query, limit: Int) = emptyList<com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto>()
+    val lookups = mutableListOf<com.nuvio.tv.core.mediaserver.policy.MatchLookupPolicy.Query>()
+    var lookupAnswer: (com.nuvio.tv.core.mediaserver.policy.MatchLookupPolicy.Query) -> List<com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto> = { emptyList() }
+    override suspend fun lookup(query: com.nuvio.tv.core.mediaserver.policy.MatchLookupPolicy.Query, limit: Int): List<com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto> {
+        check(); lookups += query
+        return lookupAnswer(query)
+    }
     override suspend fun playbackInfo(itemId: String, request: com.nuvio.tv.core.mediaserver.client.PlaybackInfoRequest): com.nuvio.tv.core.mediaserver.client.PlaybackNegotiation {
         check(); playbackRequests += itemId to request
         return negotiationFor?.invoke(request) ?: negotiation

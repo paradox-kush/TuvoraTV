@@ -13,6 +13,7 @@ import com.nuvio.tv.core.mediaserver.client.mediabrowser.MediaSourceDto
 import com.nuvio.tv.core.mediaserver.policy.MediaServerIds
 import com.nuvio.tv.core.mediaserver.policy.MediaServerIds.Kind
 import com.nuvio.tv.core.mediaserver.policy.PlaybackDecisionPolicy
+import com.nuvio.tv.core.mediaserver.policy.VersionPickPolicy
 
 /**
  * Server DTOs -> Tuvora's neutral models (design 5.4). Pure: no I/O, no state - a server entry (for ids and
@@ -163,11 +164,11 @@ internal object MediaServerItemMapper {
     private fun runtimeMinutes(ms: Long): Int? = (ms / 60_000L).toInt().takeIf { it > 0 }
 
     /** The registry record of a playable item (movie / episode): what the direct lane needs to offer streams without another request. */
-    fun registered(entry: MediaServerEntry, item: ItemDto, ): MediaServerItemRegistry.Item? {
+    fun registered(entry: MediaServerEntry, item: ItemDto, versions: List<MediaSourceDto> = item.mediaSources): MediaServerItemRegistry.Item? {
         val kind = kindOf(item.type) ?: return null
         val id = item.id ?: return null
         if (kind != Kind.MOVIE && kind != Kind.EPISODE && kind != Kind.SERIES) return null
-        val sources = item.mediaSources.mapNotNull { s -> s.id?.let { sourceFacts(s) } }
+        val sources = sourcesOf(id, versions)
         return MediaServerItemRegistry.Item(
             contentId = MediaServerIds.contentId(entry, kind, id),
             serverKey = entry.serverKey,
@@ -182,12 +183,20 @@ internal object MediaServerItemMapper {
         )
     }
 
-    fun sourceFacts(s: MediaSourceDto): MediaServerItemRegistry.Source = MediaServerItemRegistry.Source(
-        id = s.id.orEmpty(),
-        label = sourceLabel(s),
-        container = s.container,
-        subtitles = sidecarSubtitles(s),
-    )
+    /** The versions of item [itemId] a viewer can pick, in the server's order (stand-ins left out, see [VersionPickPolicy.isPlaceholder]). */
+    fun sourcesOf(itemId: String, versions: List<MediaSourceDto>): List<MediaServerItemRegistry.Source> =
+        versions.filterNot { VersionPickPolicy.isPlaceholder(it.type) }.mapNotNull { s -> s.id?.let { sourceFacts(itemId, s) } }
+
+    fun sourceFacts(itemId: String, s: MediaSourceDto): MediaServerItemRegistry.Source {
+        val label = sourceLabel(s)
+        return MediaServerItemRegistry.Source(
+            id = VersionPickPolicy.pickId(itemId, s.id.orEmpty(), s.path),
+            label = label,
+            container = s.container,
+            subtitles = sidecarSubtitles(s),
+            description = VersionPickPolicy.description(s.name, label),
+        )
+    }
 
     /** External TEXT subtitles of [s] (a bitmap sidecar - `.sup`, `.sub` image - cannot be converted to text and is left out). */
     fun sidecarSubtitles(s: MediaSourceDto): List<MediaServerItemRegistry.SidecarSubtitle> = s.mediaStreams.mapNotNull { m ->
