@@ -14,6 +14,9 @@ import com.nuvio.tv.core.iptv.executeCancellable
 import com.nuvio.tv.core.iptv.forFailoverAttempt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -95,6 +98,18 @@ class XmltvClient @Inject constructor(
         scope.launch { runCatching { refreshIfStale(acc) } }
     }
 
+    /**
+     * Emits the playlist id each time an ingest has swapped new programmes into the store. An open
+     * guide that asked its rows before the ingest landed (and was told "nothing stored") re-asks on
+     * this — see GuideDataRefreshPolicy. `DROP_OLDEST` + a buffer of 8: a collector that is gone
+     * never blocks the ingest, and a burst keeps the latest ids.
+     */
+    private val _guideCommitted = MutableSharedFlow<String>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val guideCommitted: SharedFlow<String> = _guideCommitted.asSharedFlow()
+
     private val lock = Mutex()
     private val inFlight = mutableSetOf<String>()      // playlist ids fetching now
     private val lastFailedMs = mutableMapOf<String, Long>()
@@ -142,6 +157,9 @@ class XmltvClient @Inject constructor(
             lock.withLock { lineupNotReadyMs.remove(id) }
             fetchAndStore(acc, sources, lineup, picked)
             lock.withLock { lastFailedMs.remove(id) }
+            // The swap committed (fetchAndStore throws before it when every source failed): tell any
+            // open guide its "nothing stored" verdicts are stale.
+            _guideCommitted.tryEmit(id)
         } catch (t: Throwable) {
             Log.w(TAG, "EPG fetch failed for ${acc.name}", t)
             lock.withLock { lastFailedMs[id] = System.currentTimeMillis() }
