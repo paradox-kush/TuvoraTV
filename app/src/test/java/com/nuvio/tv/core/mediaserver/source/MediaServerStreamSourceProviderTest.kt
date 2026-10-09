@@ -40,7 +40,7 @@ class MediaServerStreamSourceProviderTest {
     private fun id(type: String = "jellyfin", kind: String = "movie", item: String = "m1") = "ms:$type:$M:$U:$kind:$item"
     private fun register(rig: TestRig, vararg dto: com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto) {
         val e = rig.store.current().single()
-        dto.forEach { MediaServerItemMapper.registered(e, it)?.let(MediaServerItemRegistry::register) }
+        dto.forEach { MediaServerItemMapper.registered(e, it)?.copy(sourcesLoaded = true)?.let(MediaServerItemRegistry::register) }
     }
 
     @Test
@@ -98,9 +98,10 @@ class MediaServerStreamSourceProviderTest {
     }
 
     @Test
-    fun anItemWithNoKnownSourcesStillGetsADeferredUrl() = runTest {
+    fun aFullyHydratedItemWithNoKnownSourcesStillGetsADeferredUrl() = runTest {
         val rig = rig()
-        register(rig, item("ep1", type = "Episode") { it.copy(seriesId = "s") })
+        val full = MediaServerItemMapper.registered(rig.store.current().single(), item("ep1", type = "Episode") { it.copy(seriesId = "s") })!!
+        MediaServerItemRegistry.register(full.copy(sourcesLoaded = true))
         val p = MediaServerStreamSourceProvider(rig.store, rig.services, ensureRegistered = { false })
         val s = p.directStreams(id(kind = "episode", item = "ep1")).single().streams.single()
         assertEquals("ms-deferred:jellyfin:$M:$U|ep1|", s.url)
@@ -227,5 +228,28 @@ class MediaServerStreamSourceProviderTest {
         assertNull("no entry for that user", p.resolveDeferredUrl(MediaServerIds.deferredUrl("jellyfin:$M:other-user", "m1", null), false))
         val noAddress = TestRig(clientFactory = { client }).also { r -> val e = entry(address = null); r.store.applyFromRemote(1, listOf(e)); r.credentials.save(e.serverKey, StoredCredential("t")) }
         assertNull(provider(noAddress).resolveDeferredUrl(deferred(), false))
+    }
+    @Test
+    fun aSelectedVersionThatDisappearsCannotSilentlyPlayAnotherVersion() = runTest {
+        val rig = rig()
+        client.negotiation = PlaybackNegotiation(listOf(source("other-version")), "ps")
+        assertNull(provider(rig).resolveDeferredUrl(deferred(source = "selected-version"), false))
+        assertNull(MediaServerPlaybackSessions.latestFor("jellyfin:$M:$U"))
+    }
+
+    @Test
+    fun anEmptyForcedTranscodeResponseFallsBackToTheSameOriginalVersionOnce() = runTest {
+        val rig = rig()
+        client.negotiationFor = { request -> PlaybackNegotiation(if (request.forceTranscode) emptyList() else listOf(source("srcA")), "ps") }
+        val url = provider(rig).resolveDeferredUrl(deferred(), true)
+        assertTrue(url!!.contains("Static=true&MediaSourceId=srcA"))
+        assertEquals(listOf(true, false), client.playbackRequests.map { it.second.forceTranscode })
+    }
+    @Test
+    fun aLightEpisodeWhoseFullFetchFailsCannotPretendItsSourcesWereLoaded() = runTest {
+        val rig = rig()
+        MediaServerItemMapper.registered(rig.store.current().single(), item("ep1", type = "Episode"))?.let(MediaServerItemRegistry::register)
+        val p = MediaServerStreamSourceProvider(rig.store, rig.services, ensureRegistered = { false })
+        assertTrue(p.directStreams(id(kind = "episode", item = "ep1")).isEmpty())
     }
 }

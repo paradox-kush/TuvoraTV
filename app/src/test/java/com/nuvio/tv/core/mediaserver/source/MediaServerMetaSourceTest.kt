@@ -115,4 +115,14 @@ class MediaServerMetaSourceTest {
         assertTrue(MediaServerMetaSource(rig.store, rig.services).ensureStreamRegistered(id("episode", "e1"), false))
         assertEquals(id("episode", "e1"), MediaServerItemRegistry.get(id("episode", "e1"))!!.contentId)
     }
+    @Test
+    fun aHydratedEmptySourceListDoesNotCauseAnotherFullItemFetch() = runTest {
+        val rig = rig()
+        client.items["m1"] = item("m1", "Prepared on demand")
+        val src = MediaServerMetaSource(rig.store, rig.services)
+        assertTrue(src.ensureStreamRegistered(id("movie", "m1"), false))
+        assertTrue(src.ensureStreamRegistered(id("movie", "m1"), false))
+        assertEquals(1, client.itemRequests.size)
+        assertTrue(MediaServerItemRegistry.get(id("movie", "m1"))!!.sourcesLoaded)
+    }
 }

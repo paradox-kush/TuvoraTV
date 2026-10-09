@@ -36,10 +36,10 @@ internal class MediaServerMetaSource(
             val item = client.item(parsed.itemId, fields = DETAIL_FIELDS) ?: return null
             val episodes = if (parsed.kind == Kind.SERIES) client.episodes(parsed.itemId, fields = EPISODE_FIELDS) else emptyList()
             MediaServerItemMapper.registered(entry, item)?.let { registered ->
-                MediaServerItemRegistry.register(registered)
+                MediaServerItemRegistry.register(registered.copy(sourcesLoaded = true))
                 // A search result is a stub: opening it answers with the canonical item under ANOTHER id (recorded). The id the
                 // viewer arrived with must keep resolving (Continue Watching, a reload), so register it too - same item.
-                if (!item.id.equals(parsed.itemId, ignoreCase = true)) MediaServerItemRegistry.register(registered.copy(contentId = id))
+                if (!item.id.equals(parsed.itemId, ignoreCase = true)) MediaServerItemRegistry.register(registered.copy(contentId = id, sourcesLoaded = true))
             }
             episodes.forEach { ep -> MediaServerItemMapper.registered(entry, ep)?.let(MediaServerItemRegistry::register) }
             val meta = MediaServerItemMapper.details(entry, item, episodes) ?: return null
@@ -63,7 +63,7 @@ internal class MediaServerMetaSource(
     suspend fun ensureStreamRegistered(id: String, forceFresh: Boolean = false): Boolean {
         // A row / episode list registers cards WITHOUT media sources (a light fetch); play needs them (labels, sidecar subtitles), so such a record is refetched once.
         val cached = MediaServerItemRegistry.get(id)
-        if (!forceFresh && cached != null && (cached.sources.isNotEmpty() || cached.kind == Kind.SERIES)) return true
+        if (!forceFresh && cached != null && (cached.sourcesLoaded || cached.sources.isNotEmpty() || cached.kind == Kind.SERIES)) return true
         val parsed = MediaServerIds.parse(id) ?: return false
         val entry = store.entryByServerKey(parsed.serverKey) ?: return false
         val client = services.clientFor(entry) ?: return false
@@ -71,7 +71,7 @@ internal class MediaServerMetaSource(
             val item = client.item(parsed.itemId, fields = "Overview,MediaSources") ?: return false
             val registered = MediaServerItemMapper.registered(entry, item) ?: return false
             // the registry key is the id the caller asked with (its kind is authoritative, not the server type's guess)
-            MediaServerItemRegistry.register(registered.copy(contentId = id))
+            MediaServerItemRegistry.register(registered.copy(contentId = id, sourcesLoaded = true))
             true
         } catch (e: CancellationException) {
             throw e

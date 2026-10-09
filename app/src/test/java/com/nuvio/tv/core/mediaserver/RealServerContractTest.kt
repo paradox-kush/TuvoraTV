@@ -265,7 +265,7 @@ class RealServerContractTest {
     fun embyDirectPlayMintsAStaticUrlWithoutATokenAndTheHeaderCarriesIt() = runTest {
         val http = server("/PlaybackInfo" to RealServerFixtures.E_PLAYBACKINFO_DIRECT)
         val rig = rigFor(MediaServerType.EMBY, embyUser, "embymachine", http)
-        MediaServerItemRegistry.register(MediaServerItemMapper.registered(rig.store.current().single(), com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto(id = "10", name = "Test Movie", type = "Movie"))!!)
+        MediaServerItemRegistry.register(MediaServerItemMapper.registered(rig.store.current().single(), com.nuvio.tv.core.mediaserver.client.mediabrowser.ItemDto(id = "10", name = "Test Movie", type = "Movie"))!!.copy(sourcesLoaded = true))
         val provider = MediaServerStreamSourceProvider(rig.store, rig.services)
         val url = provider.resolveDeferredUrl("ms-deferred:emby:embymachine:$embyUser|10|mediasource_10", forceMint = false)!!
         assertEquals("http://nas:8096/Videos/10/stream?Static=true&MediaSourceId=mediasource_10&Container=mkv&PlaySessionId=${url.substringAfter("PlaySessionId=")}", url)

@@ -6,6 +6,7 @@ import com.nuvio.tv.core.mediaserver.policy.PlaybackDecisionPolicy.SourceFacts
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 
 class PlaybackDecisionPolicyTest {
     private fun source(
@@ -13,6 +14,15 @@ class PlaybackDecisionPolicyTest {
         direct: Boolean = true, stream: Boolean = true, transcode: Boolean = true,
         directUrl: String? = null, transcodeUrl: String? = "/videos/1/master.m3u8?MediaSourceId=src1&ApiKey=server-built",
     ) = SourceFacts(id, protocol, container, direct, stream, transcode, directUrl, transcodeUrl)
+
+    @Test
+    fun jellyfinHttpDirectPlayUsesTheServerProxyWithoutOptionalUrls() {
+        val decision = PlaybackDecisionPolicy.decide(source(protocol="Http", directUrl=null, transcodeUrl=null), null, false, supportsStaticHttp=true)
+        assertEquals(Plan.StaticStream("src1"), decision.plan)
+        assertEquals(PlaybackPlayMethod.DIRECT_PLAY, decision.method)
+        val other = PlaybackDecisionPolicy.decide(source(protocol="Rtmp", directUrl=null, transcodeUrl=null), null, false, supportsStaticHttp=true)
+        assertTrue(other.plan is Plan.NotPlayable)
+    }
 
     @Test
     fun directPlayIsTheDefaultAndPinsTheMediaSource() {

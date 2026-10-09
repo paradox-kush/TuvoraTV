@@ -93,16 +93,17 @@ class StreamRepositoryImpl @Inject constructor(
         videoId: String,
         item: com.nuvio.tv.core.iptv.XtreamResolvedItem
     ): List<AddonStreams> {
-        if (item.streamUrl.isNotBlank()) {
-            // Step 0.3: a registered item keeps the URL of the server that served its catalog at the
-            // time; play from the playlist's ACTIVE server now (no-op without backups, M3U, Stalker).
-            val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == item.accountId }
-                ?: return item.toAddonStreams()
-            val rebased = serverFailover.rebaseStreamUrl(account, item.streamUrl)
-            return (if (rebased == item.streamUrl) item else item.copy(streamUrl = rebased)).toAddonStreams()
+        val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == item.accountId }
+        val playable = if (item.streamUrl.isNotBlank()) {
+            val rebased = account?.let { serverFailover.rebaseStreamUrl(it, item.streamUrl) } ?: item.streamUrl
+            item.copy(streamUrl = rebased)
+        } else {
+            val freshUrl = refreshIptvStreamUrl(videoId) ?: return emptyList()
+            item.copy(streamUrl = freshUrl)
         }
-        val freshUrl = refreshIptvStreamUrl(videoId) ?: return emptyList()
-        return item.copy(streamUrl = freshUrl).toAddonStreams()
+        return playable.toAddonStreams().map { group -> group.copy(streams = group.streams.map { stream ->
+            account?.let { com.nuvio.tv.core.iptv.StreamUserAgentPolicy.applyTo(stream, it) } ?: stream
+        }) }
     }
 
     /**

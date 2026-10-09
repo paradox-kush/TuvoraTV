@@ -30,4 +30,12 @@ object StreamUserAgentPolicy {
     /** M3U URL/file playlists reuse the (credential-less) username slot to hold the UA. */
     private fun XtreamAccount.stashesUserAgentInUsername(): Boolean =
         sourceType == XtreamAccount.SOURCE_URL || sourceType == XtreamAccount.SOURCE_FILE
+    fun applyTo(stream: com.nuvio.tv.domain.model.Stream, account: XtreamAccount): com.nuvio.tv.domain.model.Stream {
+        val ua = resolve(account) ?: return stream
+        val hints = stream.behaviorHints ?: com.nuvio.tv.domain.model.StreamBehaviorHints(null, null, null, null)
+        val old = hints.proxyHeaders
+        return stream.copy(behaviorHints = hints.copy(proxyHeaders = com.nuvio.tv.domain.model.ProxyHeaders(
+            request = old?.request.orEmpty().filterKeys { !it.equals("User-Agent", true) } + ("User-Agent" to ua),
+            response = old?.response)))
+    }
 }

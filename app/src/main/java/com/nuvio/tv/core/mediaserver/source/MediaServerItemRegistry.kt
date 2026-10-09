@@ -27,6 +27,7 @@ internal object MediaServerItemRegistry {
         /** The server's own resume position (`UserData.PlaybackPositionTicks`) as of this fetch - for the "resume from server" offer (D3). */
         val serverPositionMs: Long?,
         val serverLastPlayedAt: String?,
+        val sourcesLoaded: Boolean = false,
     )
 
     private val lock = Any()
