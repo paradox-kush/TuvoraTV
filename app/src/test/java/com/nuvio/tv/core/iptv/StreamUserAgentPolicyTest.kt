@@ -93,4 +93,13 @@ class StreamUserAgentPolicyTest {
             StreamUserAgentPolicy.resolve(account(XtreamAccount.SOURCE_FILE, username = "")),
         )
     }
+    @Test
+    fun applyingAccountUserAgentPreservesExistingRequestHeaders() {
+        val stream = com.nuvio.tv.domain.model.Stream(name = "Episode", title = null, description = null, addonName = "IPTV", addonLogo = null, url = "https://stream", ytId = null, infoHash = null, fileIdx = null, externalUrl = null,
+            behaviorHints = com.nuvio.tv.domain.model.StreamBehaviorHints(null, null, null,
+                proxyHeaders = com.nuvio.tv.domain.model.ProxyHeaders(request = mapOf("user-agent" to "old", "Referer" to "https://portal"), response = mapOf("x-test" to "keep"))))
+        val result = StreamUserAgentPolicy.applyTo(stream, account(XtreamAccount.SOURCE_XTREAM, userAgent = " VLC/3 "))
+        assertEquals(mapOf("User-Agent" to "VLC/3", "Referer" to "https://portal"), result.behaviorHints?.proxyHeaders?.request)
+        assertEquals(mapOf("x-test" to "keep"), result.behaviorHints?.proxyHeaders?.response)
+    }
 }

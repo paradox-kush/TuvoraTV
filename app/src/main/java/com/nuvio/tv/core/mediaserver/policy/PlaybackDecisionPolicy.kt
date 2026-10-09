@@ -38,15 +38,19 @@ internal object PlaybackDecisionPolicy {
 
     data class Decision(val plan: Plan, val method: PlaybackPlayMethod?)
 
-    fun decide(source: SourceFacts, userBitrateCap: Long?, directPlayFailed: Boolean): Decision {
+    fun decide(source: SourceFacts, userBitrateCap: Long?, directPlayFailed: Boolean, supportsStaticHttp: Boolean = false): Decision {
         val transcodeUrl = source.transcodingUrl?.takeIf { it.isNotBlank() }
         val directUrl = source.directStreamUrl?.takeIf { it.isNotBlank() }
         val wantsTranscode = userBitrateCap != null || directPlayFailed
         if (wantsTranscode && source.supportsTranscoding && transcodeUrl != null) {
             return Decision(Plan.ServerUrl(transcodeUrl), PlaybackPlayMethod.TRANSCODE)
         }
+        // Jellyfin proxies static HTTP inputs. Other remote protocols, and Emby without a
+        // verified equivalent contract, still require an explicit server-built URL.
+        if (supportsStaticHttp && source.protocol.equals("Http", ignoreCase = true) && source.supportsDirectPlay) {
+            return Decision(Plan.StaticStream(source.id), PlaybackPlayMethod.DIRECT_PLAY)
+        }
         if (!source.isFile) {
-            // Static=true is rejected for non-file protocols (.strm, remote): the server's own URL is the way in.
             return when {
                 directUrl != null -> Decision(Plan.ServerUrl(directUrl), PlaybackPlayMethod.DIRECT_STREAM)
                 transcodeUrl != null -> Decision(Plan.ServerUrl(transcodeUrl), PlaybackPlayMethod.TRANSCODE)

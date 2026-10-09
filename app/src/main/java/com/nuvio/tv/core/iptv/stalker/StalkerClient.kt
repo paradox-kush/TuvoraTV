@@ -860,8 +860,12 @@ class StalkerClient @Inject constructor(
             put("JsHttpRequest", "1-xml")   // harmless dup; StalkerSession adds it too
             putAll(extraParams)
         }.filterKeys { it != "JsHttpRequest" }   // let the session own JsHttpRequest
-        val js = try { session.request(params) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) { return null }
-        val obj = js as? JsonObject ?: return null
+        val js = try { session.request(params) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (error: Exception) {
+            val status = (error as? com.nuvio.tv.core.iptv.HttpStatusException)?.status
+            Log.w(TAG, "create_link failed: ${error::class.simpleName}, HTTP=$status")
+            return null
+        }
+        val obj = js as? JsonObject ?: run { Log.w(TAG, "create_link failed: invalid response shape"); return null }
         // The portal's two documented refusals. `{error:'limit'}` is the account's session cap —
         // surfaced as its own message because "couldn't open this channel" sends the viewer to
         // Discord blaming the app when the fix is to close the other device.

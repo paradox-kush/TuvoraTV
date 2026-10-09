@@ -82,7 +82,7 @@ class OnDemandServerTest {
         val rig = rig()
         negotiation?.let { client.negotiation = it }
         client.failWith = failWith
-        val url = MediaServerStreamSourceProvider(rig.store, rig.services, onMintFailure = { seen += it }).resolveDeferredUrl(deferred(), forceMint = false)
+        val url = MediaServerStreamSourceProvider(rig.store, rig.services, onMintFailure = { seen += it }).resolveDeferredUrl(deferred(source = negotiation?.sources?.firstOrNull()?.id), forceMint = false)
         return if (url == null) seen.singleOrNull() else null
     }
 

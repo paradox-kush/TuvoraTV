@@ -45,8 +45,9 @@ internal class MediaServerStreamSourceProvider(
 
     override suspend fun directStreams(videoId: String): List<AddonStreams> {
         var item = MediaServerItemRegistry.get(videoId)
-        if (item == null || (item.sources.isEmpty() && item.kind != MediaServerIds.Kind.SERIES)) {
-            if (ensureRegistered(videoId)) item = MediaServerItemRegistry.get(videoId)
+        if (item == null || (!item.sourcesLoaded && item.sources.isEmpty() && item.kind != MediaServerIds.Kind.SERIES)) {
+            if (!ensureRegistered(videoId)) return emptyList()
+            item = MediaServerItemRegistry.get(videoId)
         }
         if (item == null) return emptyList()
         val entry = store.entryByServerKey(item.serverKey) ?: return emptyList()
@@ -113,20 +114,27 @@ internal class MediaServerStreamSourceProvider(
                 deferred.itemId,
                 PlaybackInfoRequest(mediaSourceId = deferred.mediaSourceId, audioStreamIndex = audioStreamIndex, forceTranscode = forceTranscode),
             )
-            fun pick(n: PlaybackNegotiation) = n.sources.firstOrNull { s -> deferred.mediaSourceId != null && s.id.equals(deferred.mediaSourceId, ignoreCase = true) }
-                ?: n.sources.firstOrNull()
+            fun pick(n: PlaybackNegotiation) = if (deferred.mediaSourceId != null)
+                n.sources.firstOrNull { s -> s.id.equals(deferred.mediaSourceId, ignoreCase = true) }
+                else n.sources.firstOrNull()
             fun usable(s: MediaSourceDto?) = s != null && !MintFailurePolicy.isServerPlaceholder(s.path)
+            var retryTranscode = forceMint
             var negotiation = negotiate(null)
             var chosen = pick(negotiation)
+            if (chosen == null && forceMint) {
+                negotiation = negotiate(null, forceTranscode = false)
+                retryTranscode = false
+                chosen = pick(negotiation)
+            }
             if (!usable(chosen)) return fail(MintFailurePolicy.noPlayableSource)
-            var decision = PlaybackDecisionPolicy.decide(chosen!!.toFacts(), userBitrateCap = null, directPlayFailed = forceMint)
-            if (decision.plan is PlaybackDecisionPolicy.Plan.NotPlayable && forceMint) {
+            var decision = PlaybackDecisionPolicy.decide(chosen!!.toFacts(), userBitrateCap = null, directPlayFailed = retryTranscode, supportsStaticHttp = entry.type.wire == "jellyfin")
+            if (decision.plan is PlaybackDecisionPolicy.Plan.NotPlayable && retryTranscode) {
                 // The retry asked the server to transcode and it cannot (a direct-play-only deployment answers with nothing
                 // playable): play the original again rather than give up - the failure may have been transient.
                 val again = negotiate(null, forceTranscode = false)
                 val source = pick(again)
                 if (usable(source)) {
-                    val directAgain = PlaybackDecisionPolicy.decide(source!!.toFacts(), userBitrateCap = null, directPlayFailed = false)
+                    val directAgain = PlaybackDecisionPolicy.decide(source!!.toFacts(), userBitrateCap = null, directPlayFailed = false, supportsStaticHttp = entry.type.wire == "jellyfin")
                     if (directAgain.plan !is PlaybackDecisionPolicy.Plan.NotPlayable) { negotiation = again; chosen = source; decision = directAgain }
                 }
             }
@@ -142,7 +150,7 @@ internal class MediaServerStreamSourceProvider(
                     val asked = negotiate(index)
                     val askedSource = pick(asked)
                     if (askedSource != null) {
-                        val askedDecision = PlaybackDecisionPolicy.decide(askedSource.toFacts(), userBitrateCap = null, directPlayFailed = forceMint)
+                        val askedDecision = PlaybackDecisionPolicy.decide(askedSource.toFacts(), userBitrateCap = null, directPlayFailed = retryTranscode, supportsStaticHttp = entry.type.wire == "jellyfin")
                         if (askedDecision.plan !is PlaybackDecisionPolicy.Plan.NotPlayable) { negotiation = asked; chosen = askedSource; decision = askedDecision }
                     }
                 }

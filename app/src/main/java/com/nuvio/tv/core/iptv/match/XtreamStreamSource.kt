@@ -29,7 +29,10 @@ class XtreamStreamSource @Inject constructor(
     suspend fun currentLiveSid(acc: XtreamAccount, savedSid: Int): Int? =
         if (acc.sourceType == XtreamAccount.SOURCE_XTREAM) index.resolveLiveSid(acc.id, savedSid) else null
 
-    suspend fun streamsFor(acc: XtreamAccount, type: String, videoId: String, season: Int?, episode: Int?): List<Stream> {
+    suspend fun streamsFor(acc: XtreamAccount, type: String, videoId: String, season: Int?, episode: Int?): List<Stream> =
+        streamsWithoutHeaders(acc, type, videoId, season, episode).map { com.nuvio.tv.core.iptv.StreamUserAgentPolicy.applyTo(it, acc) }
+
+    private suspend fun streamsWithoutHeaders(acc: XtreamAccount, type: String, videoId: String, season: Int?, episode: Int?): List<Stream> {
         val kind = when (type) {
             "movie" -> MatchKind.MOVIE
             "series", "tv" -> MatchKind.SERIES
