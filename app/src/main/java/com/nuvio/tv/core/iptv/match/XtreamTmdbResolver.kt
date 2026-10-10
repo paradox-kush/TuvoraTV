@@ -350,6 +350,9 @@ class XtreamTmdbResolver @Inject constructor(
                         Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
                     }
                     reportBuild(kind, itemCount, startedMs, outcome = "ok", detail = null)
+                    // The catalog is local now: an IPTV page that gave up waiting re-shows, and its failed
+                    // rows are asked once more (BoundedLoad self-heal — an event, never a poll).
+                    com.nuvio.tv.core.iptv.IptvImportProgress.finished(acc.id)
                     StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.COMPLETED)
                     buildLock.withLock { clearLastFailure(key) }
                 } catch (c: CancellationException) {

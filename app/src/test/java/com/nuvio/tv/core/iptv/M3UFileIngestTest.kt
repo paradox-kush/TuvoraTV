@@ -4,6 +4,7 @@ import android.net.Uri
 import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.core.iptv.content.M3UFileStore
 import com.nuvio.tv.core.iptv.epg.XmltvClient
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
@@ -89,6 +90,25 @@ class M3UFileIngestTest {
         val series = db.seriesFor(acc.id, null)
         assertEquals(listOf("The Grand Tour"), series.map { it.name })
         assertEquals(1, db.episodesFor(acc.id, series[0].sid).size)
+    }
+
+    /**
+     * BoundedLoad self-heal: an IPTV page that stopped waiting on this import (its stall deadline passed)
+     * learns the catalog landed from this event and re-shows — event-driven, never a poll.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun `a finished import tells a page that gave up waiting that the catalog landed`() = runTest {
+        val acc = fileAccount()
+        importSource(acc, SAMPLE.toByteArray(Charsets.UTF_8))
+        val landed = mutableListOf<String>()
+        backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+            IptvImportProgress.completed.collect { landed += it }
+        }
+
+        client.ensureIngested(acc, force = true)
+
+        assertTrue("the import announced it landed (got $landed)", acc.id in landed)
     }
 
     @Test

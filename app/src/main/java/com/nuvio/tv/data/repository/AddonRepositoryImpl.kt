@@ -8,6 +8,7 @@ import com.google.gson.reflect.TypeToken
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
 import com.nuvio.tv.data.local.AddonPreferences
+import com.nuvio.tv.core.addons.AddonLoadRetryPolicy
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.streams.AddonSourcePolicy
 import com.nuvio.tv.data.mapper.toDomain
@@ -27,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -137,6 +139,18 @@ class AddonRepositoryImpl(
     private var lastManifestRefreshAttemptTime = 0L
     private var manifestRefreshJob: Job? = null
     private val manifestRefreshLock = Any()
+
+    // Canonical manifest URLs whose last fetch failed / is running. A failed manifest used to stay a
+    // catalog-less placeholder until the app restarted (Home showed only Continue Watching); these
+    // drive the bounded retry in [AddonLoadRetryPolicy]. Declared before installedAddonsFlow, which
+    // starts collecting (and fetching) during construction.
+    private val failedManifestUrls = MutableStateFlow<Set<String>>(emptySet())
+    private val inFlightManifestUrls = MutableStateFlow<Set<String>>(emptySet())
+    /** True while the automatic ladder still owns the failures, so Home does not report them yet. */
+    private val manifestRetryPending = MutableStateFlow(false)
+    /** The ladder or a visit pass - one at a time, so retries never stack. */
+    private var manifestRetryJob: Job? = null
+    private val manifestRetryLock = Any()
 
     init {
         syncScope.launch { loadManifestCacheFromDisk() }
@@ -294,6 +308,12 @@ class AddonRepositoryImpl(
                     if (fresh != cached) {
                         emit(applyDisplayNames(fresh, userNames, enabledByUrl))
                     }
+                    // Still a miss after fetching means a fetch failed: retry just those, on the ladder.
+                    val stillMissing = urls.any { url ->
+                        val canonical = canonicalizeUrl(url)
+                        (enabledByUrl[canonical] ?: true) && getCachedManifest(canonical) == null
+                    }
+                    if (stillMissing) scheduleManifestRetryLadder()
                 } else if (isCacheStale() && urls.isNotEmpty()) {
                     scheduleManifestRefresh(
                         urls.filter { url -> enabledByUrl[canonicalizeUrl(url)] ?: true }
@@ -312,6 +332,24 @@ class AddonRepositoryImpl(
         val baseQuery = if (queryStart >= 0) cleanBaseUrl.substring(queryStart) else ""
         val manifestUrl = "$basePath/manifest.json$baseQuery"
 
+        inFlightManifestUrls.update { it + cleanBaseUrl }
+        try {
+            return recordManifestOutcome(cleanBaseUrl, fetchManifest(cleanBaseUrl, manifestUrl))
+        } finally {
+            inFlightManifestUrls.update { it - cleanBaseUrl }
+        }
+    }
+
+    private fun recordManifestOutcome(cleanBaseUrl: String, result: NetworkResult<Addon>): NetworkResult<Addon> {
+        when (result) {
+            is NetworkResult.Success -> failedManifestUrls.update { it - cleanBaseUrl }
+            is NetworkResult.Error -> failedManifestUrls.update { it + cleanBaseUrl }
+            NetworkResult.Loading -> Unit
+        }
+        return result
+    }
+
+    private suspend fun fetchManifest(cleanBaseUrl: String, manifestUrl: String): NetworkResult<Addon> {
         return when (val result = safeApiCall(context) { api.getManifest(manifestUrl) }) {
             is NetworkResult.Success -> {
                 val addon = AddonSourcePolicy.manifestForBuild(
@@ -329,6 +367,62 @@ class AddonRepositoryImpl(
             }
             NetworkResult.Loading -> NetworkResult.Loading
         }
+    }
+
+    override fun unresolvedManifestFailures(): Flow<Set<String>> =
+        combine(
+            failedManifestUrls,
+            manifestRetryPending,
+            preferences.installedAddonUrls,
+            preferences.addonEnabledStates,
+            manifestCacheRevision
+        ) { failed, retryPending, urls, enabledStates, _ ->
+            if (retryPending || failed.isEmpty()) return@combine emptySet()
+            val enabledByUrl = enabledStates.mapKeys { (url, _) -> canonicalizeUrl(url) }
+            urls.map(::canonicalizeUrl)
+                .filter { it in failed && (enabledByUrl[it] ?: true) && getCachedManifest(it) == null }
+                .toSet()
+        }.distinctUntilChanged()
+
+    /** One pass over the failed manifests (Home resumed, or Retry); no request when none failed. */
+    override fun retryFailedManifests() {
+        synchronized(manifestRetryLock) {
+            if (manifestRetryJob?.isActive == true) return
+            if (failedManifestUrls.value.isEmpty()) return
+            manifestRetryJob = syncScope.launch { retryFailedManifestsOnce() }
+        }
+    }
+
+    private fun scheduleManifestRetryLadder() {
+        synchronized(manifestRetryLock) {
+            if (manifestRetryJob?.isActive == true) return
+            manifestRetryPending.value = true
+            manifestRetryJob = syncScope.launch {
+                try {
+                    val retries = AddonLoadRetryPolicy.runLadder { retryFailedManifestsOnce() }
+                    Log.d(TAG, "Manifest retry ladder finished after $retries retr(y/ies)")
+                } finally {
+                    manifestRetryPending.value = false
+                }
+            }
+        }
+    }
+
+    /** Fetches what is still failing once; true when something is still failing afterwards. */
+    private suspend fun retryFailedManifestsOnce(): Boolean {
+        val installed = preferences.installedAddonUrls.first().map(::canonicalizeUrl)
+        val enabledByUrl = preferences.addonEnabledStates.first().mapKeys { (url, _) -> canonicalizeUrl(url) }
+        val loaded = synchronized(manifestCacheLock) { manifestCache.keys.toSet() }
+        val toRetry = AddonLoadRetryPolicy.manifestsToRetry(
+            enabledUrls = installed.filter { enabledByUrl[it] ?: true },
+            loadedUrls = loaded,
+            failedUrls = failedManifestUrls.value,
+            inFlightUrls = inFlightManifestUrls.value
+        )
+        if (toRetry.isEmpty()) return false
+        Log.d(TAG, "Retrying ${toRetry.size} failed addon manifest(s)")
+        coroutineScope { toRetry.map { url -> async { fetchAddon(url) } }.awaitAll() }
+        return toRetry.any { getCachedManifest(it) == null }
     }
 
     override suspend fun addAddon(url: String) {

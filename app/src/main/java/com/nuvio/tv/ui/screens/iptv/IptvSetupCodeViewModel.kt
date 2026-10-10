@@ -169,7 +169,16 @@ class IptvSetupCodeViewModel @Inject constructor(
         if (s.phase != SetupPhase.ENTRY && s.phase != SetupPhase.NEEDS_SIGN_IN) return
         if (!s.continueEnabled) return
         _ui.update { it.copy(phase = SetupPhase.CHECKING, message = null) }
-        viewModelScope.launch { handlePreview(repository.preview(_ui.value.typed)) }
+        val typed = _ui.value.typed
+        viewModelScope.launch {
+            // Bounded (BoundedLoad, SETTINGS): a backend that never answers ends as the existing Network
+            // outcome (its message + Continue to retry) instead of CHECKING forever.
+            val outcome = com.nuvio.tv.core.iptv.BoundedLoad.run(
+                surface = com.nuvio.tv.core.iptv.LoadSurface.SETTINGS,
+                report = mapOf("row" to "setup_code_preview"),
+            ) { repository.preview(typed) }.valueOrNull() ?: SetupCodeOutcome.Network
+            handlePreview(outcome)
+        }
     }
 
     private fun handlePreview(outcome: SetupCodeOutcome) {

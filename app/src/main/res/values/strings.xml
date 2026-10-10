@@ -3411,6 +3411,8 @@
     <string name="auth_signup_email_notice">We\'ll email you about your account, plus occasional tips and updates. You can unsubscribe anytime. Privacy Policy: tuvora.co/privacy</string>
     <string name="home_announcement_dismiss">Dismiss</string>
     <string name="home_announcement_qr_instruction">Scan with your phone to open this link</string>
+    <string name="home_rows_failed_title">Some rows didn’t load</string>
+    <string name="home_rows_failed_message">Tuvora tries again each time you come back to Home.</string>
     <string name="link_qr_no_browser_instruction">No web browser on this TV. Scan with your phone to open this page</string>
     <string name="auth_signup_confirm_create">I confirm — create account</string>
     <string name="profile_make_primary">Make Main Profile</string>
@@ -3465,6 +3467,9 @@
     <string name="iptv_hub_add_provider">Add IPTV provider</string>
     <string name="iptv_hub_empty_title">Nothing here</string>
     <string name="iptv_hub_empty_subtitle">This playlist has no content in this section.</string>
+    <string name="iptv_hub_row_failed">Couldn’t load · Retry</string>
+    <string name="iptv_hub_error_timeout">This playlist didn’t answer in time. Check the portal is up and try again.</string>
+    <string name="iptv_settings_load_failed">Couldn’t load this from the provider.</string>
     <string name="iptv_hub_types_hidden_title">All content types are hidden</string>
     <string name="iptv_hub_types_hidden_subtitle">Enable them for this playlist in Settings → IPTV → Content &amp; Categories.</string>
     <string name="iptv_hub_error_file_missing">Playlist file not on this device — re-import it in Settings → IPTV</string>

@@ -46,6 +46,8 @@ class IptvAccountPurge @Inject constructor(
     private val profileManager: ProfileManager,
     private val serverFailover: PlaylistServerFailover,
     private val watchState: WatchStatePrefixMover,
+    /** Stops a still-running M3U import of the removed playlist before its rows are dropped. */
+    private val m3uClient: M3UClient? = null,
 ) {
     suspend fun purge(accountId: String, origin: PlaylistRemovalOrigin) {
         val prefix = XtreamItemRegistry.accountPrefix(accountId)
@@ -63,7 +65,11 @@ class IptvAccountPurge @Inject constructor(
     private suspend fun purgeTarget(target: PlaylistRemovalTarget, accountId: String, prefix: String) {
         when (target) {
             // Every source type: Xtream fills the per-playlist EPG tables too (xmltv lane + refills).
-            PlaylistRemovalTarget.ContentDb -> contentDb.purge(accountId)
+            PlaylistRemovalTarget.ContentDb -> {
+                // An import still streaming would otherwise commit rows for a playlist that no longer exists.
+                m3uClient?.cancelIngest(accountId)
+                contentDb.purge(accountId)
+            }
             PlaylistRemovalTarget.MatchIndex -> matchIndex.purge(accountId)
             // Mapping rows AND the schedule meta (mapped generation / last attempt).
             PlaylistRemovalTarget.EpgMirror -> epgMirror.purgeProvider(accountId)

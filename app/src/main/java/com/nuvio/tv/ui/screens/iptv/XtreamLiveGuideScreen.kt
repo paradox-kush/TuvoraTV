@@ -519,13 +519,29 @@ fun LiveGuide(
                     labelWidth = CHANNEL_LABEL_WIDTH,
                 )
 
+                // Both waits end at their own deadline even if the work never returns (BoundedLoad).
+                val channelsStatus = rememberEffectiveLoadStatus(uiState.channelsLoad)
+                val categoriesStatus = rememberEffectiveLoadStatus(uiState.categoriesLoad)
                 when {
-                    uiState.loadingChannels -> GuideChannelListSkeleton()
                     uiState.error != null -> ErrorState(
                         message = uiState.error!!,
-                        // Retry = re-run the current category load (same path as re-selecting it).
-                        onRetry = { viewModel.selectCategory(uiState.selectedCategoryId, force = true) }
+                        // Retry = re-run what failed: the category column, else the current category.
+                        onRetry = viewModel::retry
                     )
+                    channelsStatus is com.nuvio.tv.core.iptv.LoadStatus.Failed ||
+                        (categoriesStatus is com.nuvio.tv.core.iptv.LoadStatus.Failed && uiState.channels.isEmpty()) -> ErrorState(
+                        message = stringResource(
+                            if ((channelsStatus as? com.nuvio.tv.core.iptv.LoadStatus.Failed ?: categoriesStatus as? com.nuvio.tv.core.iptv.LoadStatus.Failed)?.timedOut == true) {
+                                R.string.iptv_hub_error_timeout
+                            } else {
+                                R.string.iptv_hub_error_unreachable
+                            }
+                        ),
+                        onRetry = viewModel::retry
+                    )
+                    channelsStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading -> GuideChannelListSkeleton()
+                    // Before the category column lands there is nothing selected yet: still loading, not empty.
+                    categoriesStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading && uiState.channels.isEmpty() -> GuideChannelListSkeleton()
                     uiState.selectedCategoryId == XtreamLiveGuideViewModel.SEARCH_ID && uiState.channels.isEmpty() -> EmptyScreenState(
                         title = if (uiState.searchQuery.isBlank()) "Search channels" else "No channels match \u201C${uiState.searchQuery}\u201D",
                         subtitle = "Press OK on Search to type a channel name",

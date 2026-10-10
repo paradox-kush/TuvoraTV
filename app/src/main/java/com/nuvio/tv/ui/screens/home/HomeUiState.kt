@@ -22,6 +22,12 @@ data class HomeUiState(
     val isLoading: Boolean = true,
     val layoutPreferencesReady: Boolean = false,
     val error: String? = null,
+    /** Home rows whose last fetch failed with nothing on screen (see AddonLoadRetryPolicy). */
+    val failedRowCount: Int = 0,
+    /** Enabled add-ons whose manifest failed and that no automatic retry is still working on. */
+    val failedManifestCount: Int = 0,
+    /** An automatic or visit retry of failed rows is running, so the failure card waits. */
+    val homeLoadRetryPending: Boolean = false,
     val selectedItemId: String? = null,
     val installedAddonsCount: Int = 0,
     val homeLayout: HomeLayout = HomeLayout.MODERN,

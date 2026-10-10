@@ -54,8 +54,12 @@ class M3UClient @Inject constructor(
     private val failover: PlaylistServerFailover,
 ) : IptvClient {
 
+    // One ingest per playlist, owned HERE rather than by whoever asked first: a second caller (an add + a
+    // first browse, the hub + the guide) awaits the same import instead of reading a half-built catalog,
+    // and a caller that stops waiting (the IPTV page's stall deadline, BoundedLoad) never cancels it.
     private val ingestLock = Mutex()
     private val inFlight = mutableMapOf<String, CompletableDeferred<Unit>>()
+    private val ingestJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
     private val lastFailedMs = mutableMapOf<String, Long>()
 
     private val _catalogRebuilt = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 16)
@@ -76,11 +80,13 @@ class M3UClient @Inject constructor(
     suspend fun ensureIngested(acc: XtreamAccount, force: Boolean = false) {
         val id = acc.id
         val builtAt = db.builtAt(id)
+        // B64: a catalog built under the pre-B64 ids rebuilds once (its legacy ids are kept first) —
+        // when it can: a file playlist whose local copy is gone keeps serving what it has.
+        val idSchemeUpgrade = builtAt != null &&
+            db.idScheme(id) < M3U_ID_SCHEME && (!acc.isM3UFile() || fileStore.exists(id))
         val stale = builtAt == null ||
             (acc.autoRefreshHours > 0 && System.currentTimeMillis() - builtAt > acc.autoRefreshHours * 3_600_000L) ||
-            // B64: a catalog built under the pre-B64 ids rebuilds once (its legacy ids are kept first) —
-            // when it can: a file playlist whose local copy is gone keeps serving what it has.
-            (db.idScheme(id) < M3U_ID_SCHEME && (!acc.isM3UFile() || fileStore.exists(id)))
+            idSchemeUpgrade
         if (!force && !stale) return
 
         val (deferred, isOwner) = ingestLock.withLock {
@@ -92,20 +98,44 @@ class M3UClient @Inject constructor(
         }
 
         if (isOwner) {
-            ingestScope.launch {
+            val job = ingestScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                 try {
                     ingest(acc)
                     ingestLock.withLock { lastFailedMs.remove(id) }
+                    // The IPTV page that gave up waiting (BoundedLoad) re-shows; failed rows ask once more.
+                    IptvImportProgress.finished(id)
+                } catch (c: kotlinx.coroutines.CancellationException) {
+                    // Cancelled = the playlist was removed (cancelIngest), not a failure to back off from.
+                    throw c
                 } catch (t: Throwable) {
                     Log.w(TAG, "M3U ingest failed for ${acc.name}", t)
                     ingestLock.withLock { lastFailedMs[id] = System.currentTimeMillis() }
                 } finally {
-                    ingestLock.withLock { inFlight.remove(id) }
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        ingestLock.withLock {
+                            inFlight.remove(id)
+                            ingestJobs.remove(id)
+                        }
+                    }
                     deferred.complete(Unit)
                 }
             }
+            ingestLock.withLock { ingestJobs[id] = job }
+            job.start()
         }
+        // Stale (past the playlist's auto-refresh) but usable: serve the stored copy NOW and refresh behind
+        // it. The served generation stays readable until the new one commits (IptvContentDb's generation
+        // swap), and IptvImportProgress.finished tells the page when the fresh one lands. Waiting on the
+        // whole re-download was the auto-refresh variant of "the IPTV page never finishes loading".
+        // Not for the one-time B64 id-scheme rebuild: callers must read the new ids, so they wait for it
+        // (still bounded — the page's stall deadline runs on this import's progress ticks).
+        if (!force && builtAt != null && !idSchemeUpgrade) return
         deferred.await()
+    }
+
+    /** Stops [accountId]'s import (the playlist was removed) so it cannot write rows for a deleted playlist. */
+    suspend fun cancelIngest(accountId: String) {
+        ingestLock.withLock { ingestJobs[accountId] }?.cancel()
     }
 
     /**
@@ -160,7 +190,7 @@ class M3UClient @Inject constructor(
                 val reader = FirstReadFlagReader(checkNotNull(resp.body) { "empty response body" }.charStream()) {
                     delivered = true
                 }.buffered()
-                val writer = db.ingest(acc.id) { w -> parseInto(reader, w, M3uIdentity.loginOf(acc.baseUrl)) }
+                val writer = db.ingest(acc.id) { w -> parseInto(reader, w, M3uIdentity.loginOf(acc.baseUrl), acc.id) }
                 Log.i(TAG, "ingested M3U (url) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
             }
         }
@@ -207,7 +237,7 @@ class M3UClient @Inject constructor(
         }
         openMaybeGzip(file.inputStream()).use { stream ->
             val reader = stream.bufferedReader(Charsets.UTF_8)
-            val writer = db.ingest(acc.id) { w -> parseInto(reader, w, null) }
+            val writer = db.ingest(acc.id) { w -> parseInto(reader, w, null, acc.id) }
             Log.i(TAG, "ingested M3U (file) for ${acc.name}: live=${writer.liveCount} vod=${writer.vodCount} series=${writer.seriesCount}")
         }
         return true
@@ -227,8 +257,12 @@ class M3UClient @Inject constructor(
     /** Route each parsed entry to the DB writer. The heavy streaming walk lives in
      *  [M3UParser.parseStream] (reader walked ONCE, never fully materialized). The #EXTM3U header's
      *  url-tvg is captured for XMLTV EPG resolution. */
-    private fun parseInto(reader: BufferedReader, w: IptvContentDb.IngestWriter, login: M3uIdentity.Login?) {
+    private fun parseInto(reader: BufferedReader, w: IptvContentDb.IngestWriter, login: M3uIdentity.Login?, accountId: String) {
+        var parsed = 0
         M3UParser.parseStream(reader, onHeaderTvgUrl = { w.setTvgUrl(it) }) { entry ->
+            // A progress tick per PROGRESS_EVERY_ENTRIES: restarts the waiting page's stall deadline, so a
+            // big but healthy import is never cut off (BoundedLoad). Cheap: one map update per 2k rows.
+            if (++parsed % PROGRESS_EVERY_ENTRIES == 0) IptvImportProgress.tick(accountId)
             when (val row = M3uIngestMapping.map(entry, login)) {
                 is M3uIngestRow.Channel -> w.addChannel(row.row, M3uIngestMapping.categoryName(entry.group))
                 is M3uIngestRow.Movie -> w.addVod(row.row, M3uIngestMapping.categoryName(entry.group))
@@ -340,6 +374,7 @@ class M3UClient @Inject constructor(
         const val M3U_ID_SCHEME = 2
         private const val TAG = "M3UClient"
         private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
+        private const val PROGRESS_EVERY_ENTRIES = 2_000
         /** The M3U validation probe reads at most this much (Step 0.3b). */
         internal const val M3U_PROBE_BYTES = 1024
     }

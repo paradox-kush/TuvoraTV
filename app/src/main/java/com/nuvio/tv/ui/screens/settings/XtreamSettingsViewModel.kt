@@ -5,7 +5,10 @@ import androidx.lifecycle.viewModelScope
 import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.CancellationException
+import com.nuvio.tv.core.iptv.BoundedLoad
 import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.LoadStatus
+import com.nuvio.tv.core.iptv.LoadSurface
 import com.nuvio.tv.core.iptv.PlaylistEditVerifyPolicy
 import com.nuvio.tv.core.iptv.PlaylistSaveError
 import com.nuvio.tv.core.iptv.PlaylistSaveErrorPolicy
@@ -70,6 +73,8 @@ data class XtreamSettingsUiState(
     val error: String? = null,
     /** "accountId|type" -> that type's category list (for the Content & Categories checklist). */
     val categoryLists: Map<String, List<XtreamCategory>> = emptyMap(),
+    /** "accountId|type" -> that list's load. Entered only through [BoundedLoad]; Failed shows Retry, not "Loading…". */
+    val categoryListLoads: Map<String, LoadStatus> = emptyMap(),
     /** accountId -> "Active · 0/1 connections · Expires 2027-01-11" (lazily fetched, silent on failure). */
     val accountStatus: Map<String, String> = emptyMap(),
     /** accountIds whose panel account check failed (the details page says "Couldn't check expiry", not "not reported"). */
@@ -88,6 +93,8 @@ data class XtreamSettingsUiState(
     val saveWarnings: Map<String, String> = emptyMap(),
     /** F02: the open "Hidden channels & groups" list; null while it loads. */
     val hiddenItems: List<com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.HiddenItem>? = null,
+    /** That list's load. Failed = the playlist could not be read, which is NOT "nothing is hidden". */
+    val hiddenItemsLoad: LoadStatus = LoadStatus.Idle,
 )
 
 @HiltViewModel
@@ -829,28 +836,48 @@ class XtreamSettingsViewModel @Inject constructor(
                 catalogCounts = it.catalogCounts - ids,
                 accountInfoFailed = it.accountInfoFailed - ids,
                 categoryLists = it.categoryLists - typeKeys,
+                categoryListLoads = it.categoryListLoads - typeKeys,
                 guideEpgCoverage = it.guideEpgCoverage - ids,
             )
         }
     }
 
-    /** Fetch the three category lists for the Content & Categories dialog (cached, silent on failure). */
+    /**
+     * Fetch the three category lists for the Content & Categories dialog (cached). Bounded (BoundedLoad,
+     * SETTINGS): a provider that never answers ends as Failed — the checklist offers Retry instead of
+     * "Loading categories…" forever.
+     */
     fun loadCategoryLists(account: XtreamAccount) {
         for (type in listOf(XtreamAccount.TYPE_LIVE, XtreamAccount.TYPE_MOVIES, XtreamAccount.TYPE_SERIES)) {
             val key = "${account.id}|$type"
             if (!categoryRequests.add(key)) continue
+            _uiState.update { it.copy(categoryListLoads = it.categoryListLoads + (key to BoundedLoad.begin(LoadSurface.SETTINGS))) }
             viewModelScope.launch {
                 // clientFor dispatches per source type — M3U reads the ingested catalog's
                 // categories, Stalker asks the portal; raw XtreamClient would 404 on both.
                 val sourceClient = clientFactory.clientFor(account)
-                val result = when (type) {
-                    XtreamAccount.TYPE_LIVE -> sourceClient.liveCategories(account)
-                    XtreamAccount.TYPE_MOVIES -> sourceClient.vodCategories(account)
-                    else -> sourceClient.seriesCategories(account)
+                val outcome = BoundedLoad.run(
+                    surface = LoadSurface.SETTINGS,
+                    isEmpty = { it.isEmpty() },
+                    // An M3U/Stalker list read here can be the import itself: let it finish in the background.
+                    cancelOnTimeout = account.isXtream(),
+                    report = mapOf("source_type" to account.sourceType, "row" to "content_categories"),
+                ) {
+                    when (type) {
+                        XtreamAccount.TYPE_LIVE -> sourceClient.liveCategories(account)
+                        XtreamAccount.TYPE_MOVIES -> sourceClient.vodCategories(account)
+                        else -> sourceClient.seriesCategories(account)
+                    }.getOrThrow()
                 }
-                result
-                    .onSuccess { cats -> _uiState.update { it.copy(categoryLists = it.categoryLists + (key to cats)) } }
-                    .onFailure { categoryRequests.remove(key) }   // allow a retry on next dialog open
+                val cats = outcome.valueOrNull()
+                if (cats != null) {
+                    _uiState.update {
+                        it.copy(categoryLists = it.categoryLists + (key to cats), categoryListLoads = it.categoryListLoads + (key to outcome.status))
+                    }
+                } else {
+                    categoryRequests.remove(key)   // Retry (or the next dialog open) asks again
+                    _uiState.update { it.copy(categoryListLoads = it.categoryListLoads + (key to outcome.status)) }
+                }
             }
         }
     }
@@ -859,15 +886,23 @@ class XtreamSettingsViewModel @Inject constructor(
      * F02: everything hidden in [account] (on any device or the website), resolved to names. The overlay
      * stores only hashed keys, so the playlist's channels are read only when some channel is hidden,
      * and its categories only when some category is.
+     *
+     * Bounded (BoundedLoad, SETTINGS), and a failure is NOT "nothing is hidden": a playlist that could not be
+     * read used to say exactly that (getOrDefault(emptyList())), hiding the very rows the viewer came to unhide.
      */
     fun loadHiddenItems(account: XtreamAccount) {
-        _uiState.update { it.copy(hiddenItems = null) }
+        _uiState.update { it.copy(hiddenItems = null, hiddenItemsLoad = BoundedLoad.begin(LoadSurface.SETTINGS)) }
         viewModelScope.launch {
-            val items = runCatching {
+            val outcome = BoundedLoad.run(
+                surface = LoadSurface.SETTINGS,
+                isEmpty = { it.isEmpty() },
+                cancelOnTimeout = account.isXtream(),
+                report = mapOf("source_type" to account.sourceType, "row" to "hidden_items"),
+            ) {
                 val overlay = overlayRepository.freshSnapshot()
                 val source = clientFactory.clientFor(account)
                 val channels = if (overlay.channels.values.any { it.hidden }) {
-                    source.liveChannels(account).getOrDefault(emptyList()).map {
+                    source.liveChannels(account).getOrThrow().map {
                         com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.CatalogChannel(
                             com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(account.id, it.name, it.epgChannelId), it.name,
                         )
@@ -875,11 +910,14 @@ class XtreamSettingsViewModel @Inject constructor(
                 } else emptyList()
                 val categories = if (overlay.categories.values.any { it.hidden }) {
                     listOf(XtreamAccount.TYPE_LIVE, XtreamAccount.TYPE_MOVIES, XtreamAccount.TYPE_SERIES).flatMap { type ->
-                        when (type) {
+                        val read = when (type) {
                             XtreamAccount.TYPE_LIVE -> source.liveCategories(account)
                             XtreamAccount.TYPE_MOVIES -> source.vodCategories(account)
                             else -> source.seriesCategories(account)
-                        }.getOrDefault(emptyList()).map {
+                        }
+                        // Live groups are what TV hides (MENU in the guide): failing to read them fails the
+                        // list. A VOD/series list some portals cannot serve at all must not block the rest.
+                        (if (type == XtreamAccount.TYPE_LIVE) read.getOrThrow() else read.getOrDefault(emptyList())).map {
                             com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.CatalogCategory(
                                 type, com.nuvio.tv.core.iptv.identity.IptvIdentity.categoryKey(account.id, type, it.name), it.name,
                             )
@@ -887,8 +925,8 @@ class XtreamSettingsViewModel @Inject constructor(
                     }
                 } else emptyList()
                 com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.hiddenItems(channels, categories, overlay)
-            }.getOrDefault(emptyList())
-            _uiState.update { it.copy(hiddenItems = items) }
+            }
+            _uiState.update { it.copy(hiddenItems = outcome.valueOrNull(), hiddenItemsLoad = outcome.status) }
         }
     }
 

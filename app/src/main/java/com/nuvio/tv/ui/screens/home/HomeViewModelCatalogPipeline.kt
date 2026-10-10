@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.home
 
 import android.util.Log
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import com.nuvio.tv.R
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.domain.model.Addon
@@ -159,6 +160,8 @@ internal suspend fun HomeViewModel.loadAllCatalogsPipeline(
     catalogLoadGeneration += 1
     val generation = catalogLoadGeneration
     cancelInFlightCatalogLoads()
+    // A full load re-requests every row, so earlier failures and their retry no longer apply.
+    resetCatalogLoadFailures()
 
     // On reload (not first load), keep existing UI data visible while new
     // catalogs load in the background to avoid a flash of empty content.
@@ -422,7 +425,7 @@ internal fun HomeViewModel.loadCatalogPipeline(
     isRefresh: Boolean = false,
     requestedByUser: Boolean = false,
     forceReplace: Boolean = false
-) {
+): Job {
     val loadJob = viewModelScope.launch {
         var hasCountedCompletion = false
         catalogLoadSemaphore.withPermit {
@@ -461,6 +464,7 @@ internal fun HomeViewModel.loadCatalogPipeline(
                         synchronized(catalogStateLock) {
                             placeholderDescriptors.removeAll { it.catalogKey == key }
                         }
+                        clearCatalogLoadFailure(key)
                         if (!hasCountedCompletion) {
                             pendingCatalogLoads = (pendingCatalogLoads - 1).coerceAtLeast(0)
                             hasCountedCompletion = true
@@ -496,6 +500,9 @@ internal fun HomeViewModel.loadCatalogPipeline(
                         synchronized(catalogStateLock) {
                             placeholderDescriptors.removeAll { it.catalogKey == errorKey }
                         }
+                        // This used to be final until the app restarted: fetch the row again on the
+                        // short ladder, then on each return to Home.
+                        recordCatalogLoadFailure(errorKey, addon, catalog, generation)
                         if (!hasCountedCompletion) {
                             pendingCatalogLoads = (pendingCatalogLoads - 1).coerceAtLeast(0)
                             hasCountedCompletion = true
@@ -520,6 +527,7 @@ internal fun HomeViewModel.loadCatalogPipeline(
         }
     }
     registerCatalogLoadJob(loadJob)
+    return loadJob
 }
 
 internal fun HomeViewModel.loadMoreCatalogItemsPipeline(catalogId: String, addonId: String, type: String) {

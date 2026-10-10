@@ -629,7 +629,9 @@ class StalkerSession(
                     throw StalkerBrowseAbandonedException()
                 }
                 // Step 0.3b: a failover attempt's 8 s connect timeout + header signal; cancel closes the socket.
-                http.forFailoverAttempt().newCall(builder.build()).executeCancellable { resp ->
+                // A whole-call limit on this TEXT request (TextCallTimeout): a portal that trickles bytes
+                // never trips the read timeout, and held the IPTV page waiting on it forever.
+                com.nuvio.tv.core.network.TextCallTimeout.apply(http.forFailoverAttempt().newCall(builder.build())).executeCancellable { resp ->
                 val bodyStr = resp.body?.string().orEmpty()
                 if (resp.code == 401 || resp.code == 403) {
                     // Signal a stale token to the retry path by returning an empty envelope.

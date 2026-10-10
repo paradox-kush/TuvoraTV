@@ -358,7 +358,7 @@ class XtreamClient @Inject constructor(
         return apiByProvider.getOrPut(acc.dnsProvider) {
             Retrofit.Builder()
                 .baseUrl("https://placeholder.nuvio.tv/")
-                .client(playlistDns.clientFor(baseClient, acc.dnsProvider))
+                .callFactory(com.nuvio.tv.core.network.TextCallTimeout.callFactory(playlistDns.clientFor(baseClient, acc.dnsProvider)))
                 .addConverterFactory(MoshiConverterFactory.create(moshi))
                 .build()
                 .create(XtreamApi::class.java)
@@ -379,7 +379,7 @@ class XtreamClient @Inject constructor(
         val signal = coroutineContext[HttpAttemptSignal] ?: return apiFor(acc)
         return Retrofit.Builder()
             .baseUrl("https://placeholder.nuvio.tv/")
-            .callFactory(clientFor(acc).failoverCallFactory(signal))
+            .callFactory(com.nuvio.tv.core.network.TextCallTimeout.callFactory(clientFor(acc).failoverCallFactory(signal)))
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(XtreamApi::class.java)
@@ -397,7 +397,7 @@ class XtreamClient @Inject constructor(
     internal suspend fun failoverProbe(a: XtreamAccount) {
         val body = withContext(Dispatchers.IO) {
             val request = Request.Builder().url(playerApi(a)).build()
-            clientFor(a).forFailoverAttempt().newCall(request).executeCancellable { resp ->
+            com.nuvio.tv.core.network.TextCallTimeout.apply(clientFor(a).forFailoverAttempt().newCall(request)).executeCancellable { resp ->
                 if (!resp.isSuccessful) throw HttpStatusException(resp.code, "HTTP ${resp.code}: ${resp.message}")
                 readAtMost(resp.body?.source(), PROBE_MAX_BYTES)
             }

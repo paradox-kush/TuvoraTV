@@ -64,6 +64,7 @@ import com.nuvio.tv.domain.model.LibraryListTab
 import com.nuvio.tv.domain.model.localizedMembershipTitle
 import com.nuvio.tv.domain.model.LibrarySourceMode
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.core.addons.AddonLoadRetryPolicy
 import com.nuvio.tv.ui.components.ErrorState
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.LocalStartupLoadingState
@@ -122,6 +123,8 @@ fun HomeScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.beginShuffleHomeVisit()
                 viewModel.refreshHomeCatalogsIfStale()
+                // Only what failed earlier (a manifest, a row) is fetched again; nothing when nothing did.
+                viewModel.retryFailedHomeLoads()
                 // Lifecycle-bound, not a timer: the policy allows at most one request per 6 h.
                 announcementViewModel.onHomeResumed()
             }
@@ -279,7 +282,23 @@ fun HomeScreen(
         }
     }
 
-    val announcementVisible = announcement != null && !showStartupLoader
+    // Rows (or a manifest) failed and the automatic retries gave up. Shown only over real Home content;
+    // the full-screen states below carry their own Retry. Dismiss hides it until the failure changes.
+    val homeContentShown = !showStartupLoader && hasAnyContent &&
+        !(uiState.error != null && uiState.catalogRows.isEmpty())
+    val rowsFailedSignature = "${uiState.failedRowCount}:${uiState.failedManifestCount}"
+    var dismissedRowsFailedSignature by rememberSaveable { mutableStateOf<String?>(null) }
+    val rowsFailedVisible = homeContentShown &&
+        dismissedRowsFailedSignature != rowsFailedSignature &&
+        AddonLoadRetryPolicy.showsPartialFailure(
+            failedRowCount = uiState.failedRowCount,
+            failedManifestCount = uiState.failedManifestCount,
+            isLoading = uiState.isLoading || uiState.homeLoadRetryPending
+        )
+    // One floating card at a time, in the announcement's slot; the failure is about the viewer's own
+    // content, so it goes first and the announcement comes back once the rows load.
+    val announcementVisible = announcement != null && !showStartupLoader && !rowsFailedVisible
+    val noticeCardVisible = announcementVisible || rowsFailedVisible
     var announcementCardHasFocus by remember { mutableStateOf(false) }
     val homeFocusManager = LocalFocusManager.current
     val focusAnnouncementCard = remember(announcementCtaFocusRequester) {
@@ -287,7 +306,7 @@ fun HomeScreen(
     }
     // UX80: lets a layout that consumes Up itself (Modern's expanded first row) still hand it to the card.
     CompositionLocalProvider(
-        LocalHomeAnnouncementFocus provides if (announcementVisible) focusAnnouncementCard else null
+        LocalHomeAnnouncementFocus provides if (noticeCardVisible) focusAnnouncementCard else null
     ) {
     Box(
         modifier = Modifier
@@ -297,11 +316,11 @@ fun HomeScreen(
             // focus nowhere lands on the card.
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionUp) return@onKeyEvent false
-                if (!announcementVisible || announcementCardHasFocus) return@onKeyEvent false
+                if (!noticeCardVisible || announcementCardHasFocus) return@onKeyEvent false
                 val moved = homeFocusManager.moveFocus(FocusDirection.Up)
                 if (
                     HomeAnnouncementFocusPolicy.focusCardOnUp(
-                        cardVisible = announcementVisible,
+                        cardVisible = noticeCardVisible,
                         cardHasFocus = announcementCardHasFocus,
                         movedUp = moved,
                     )
@@ -345,7 +364,12 @@ fun HomeScreen(
                     Unit
                 } else {
                     ErrorState(
-                        message = stringResource(
+                        // A failed manifest leaves its add-on without catalogs; say so instead of
+                        // claiming no catalog add-on is installed (Retry now refetches the manifest).
+                        message = if (uiState.failedManifestCount > 0) {
+                            stringResource(R.string.home_rows_failed_title) + "\n\n" +
+                                stringResource(R.string.home_rows_failed_message)
+                        } else stringResource(
                             when (noAddonsHint) {
                                 NoAddonsHint.INSTALL_ADDONS -> R.string.home_no_catalog_addons
                                 NoAddonsHint.ADD_IPTV_PLAYLIST -> R.string.home_empty_iptv_hint
@@ -500,6 +524,17 @@ fun HomeScreen(
             }
         }
 
+        if (rowsFailedVisible) {
+            HomeRowsFailedCard(
+                onRetry = { viewModel.retryFailedHomeLoads() },
+                onDismiss = { dismissedRowsFailedSignature = rowsFailedSignature },
+                retryFocusRequester = announcementCtaFocusRequester,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl)
+                    .onFocusChanged { announcementCardHasFocus = it.hasFocus }
+            )
+        }
         val currentAnnouncement = announcement
         if (currentAnnouncement != null && announcementVisible) {
             HomeAnnouncementCard(

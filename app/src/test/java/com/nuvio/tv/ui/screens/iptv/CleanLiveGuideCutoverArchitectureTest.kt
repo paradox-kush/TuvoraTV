@@ -58,7 +58,7 @@ class CleanLiveGuideCutoverArchitectureTest {
     fun `catalog publishes the profile-bound URL-free lineup before exposing channels`() {
         val networkCommit = catalog.indexOf("publishPlaybackLineup(acc.id, token, channels)")
         val stateCommit = catalog.indexOf(
-            "_uiState.update { it.copy(channels = channels, loadingChannels = false",
+            "_uiState.update { it.copy(channels = channels, channelsLoad =",
             startIndex = networkCommit,
         )
         assertTrue(networkCommit >= 0)
@@ -84,11 +84,11 @@ class CleanLiveGuideCutoverArchitectureTest {
             startIndex = categoryFence,
         )
         val publish = catalog.indexOf(
-            "if (!publishPlaybackLineup(acc.id, token, channels)) return@launch",
+            "if (!publishPlaybackLineup(acc.id, token, channels))",
             startIndex = channelFence,
         )
         val expose = catalog.indexOf(
-            "_uiState.update { it.copy(channels = channels, loadingChannels = false",
+            "_uiState.update { it.copy(channels = channels, channelsLoad =",
             startIndex = publish,
         )
         val epg = catalog.indexOf("primeEpgFor(channels)", startIndex = expose)

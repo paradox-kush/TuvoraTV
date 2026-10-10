@@ -447,4 +447,54 @@ class ArchitectureTest {
             violations.isEmpty(),
         )
     }
+
+    // ── R7: every IPTV / Live TV loading state has a deadline and a terminal outcome ─────────────
+
+    /** The IPTV / Live TV sources R7 covers: the fork's IPTV packages, live-channel playback, and the IPTV
+     *  settings screens (TV keeps those under ui/screens/settings, named for the playlist feature). */
+    private fun isIptvOrLiveTvFile(path: String): Boolean {
+        val relative = rel(path)
+        val name = relative.substringAfterLast('/')
+        return relative.startsWith("com/nuvio/tv/core/iptv/") ||
+            relative.startsWith("com/nuvio/tv/ui/screens/iptv/") ||
+            relative.startsWith("com/nuvio/tv/ui/screens/livetv/") ||
+            relative.startsWith("com/nuvio/tv/playback/live/") ||
+            (relative.startsWith("com/nuvio/tv/ui/screens/settings/") &&
+                (name.startsWith("Xtream") || name.startsWith("Iptv") || name.startsWith("Playlist")))
+    }
+
+    /**
+     * R7 — the TV twin of the KMP repos' ArchitectureTest R7 (repo-root CLAUDE.md, "every loading state has a
+     * deadline and a terminal outcome"). "Live TV spins forever" was fixed path by path three times and came
+     * back each time, because any code could switch a loading flag on with nothing guaranteeing it ever
+     * switched off. So a loading state is entered only through BoundedLoad (core/iptv/BoundedLoad.kt:
+     * deadline + Loaded/Empty/Failed, failure never "empty"): this forbids a raw Boolean loading flag set to
+     * true, a `loading by remember { mutableStateOf(true) }`, and building a LoadStatus.Loading anywhere but
+     * BoundedLoad.kt. Main sources only; tests may build any state. No baseline — every hit was migrated when
+     * the rule landed, so there is nothing to grandfather.
+     */
+    @Test
+    fun `IPTV and Live TV loading states are entered only through BoundedLoad (R7)`() {
+        assertProductionFilesCollected()
+        val scoped = files.filter { (p, _) -> isIptvOrLiveTvFile(p) }
+        assertTrue("R7 found no IPTV sources to scan; it must fail closed", scoped.size > 20)
+        val rawFlagOn = Regex("""\b\w*[lL]oading\w*\s*=\s*true\b""")
+        val rememberedOn = Regex("""\b\w*[lL]oading\w*\s+by\s+remember[^\n]*mutableStateOf\(\s*true\s*\)""")
+        val builtLoading = Regex("""\bLoadStatus\.Loading\s*\(""")
+        val violations = scoped
+            .filterNot { (p, _) -> rel(p) == "com/nuvio/tv/core/iptv/BoundedLoad.kt" }
+            .flatMap { (p, text) ->
+                // Comments blanked line-for-line, so a hit reports its real line number.
+                text.replace(Regex("""/\*[\s\S]*?\*/""")) { m -> "\n".repeat(m.value.count { it == '\n' }) }
+                    .replace(Regex("""(?m)^\s*//.*$"""), "")
+                    .lines().withIndex()
+                    .filter { (_, line) -> rawFlagOn.containsMatchIn(line) || rememberedOn.containsMatchIn(line) || builtLoading.containsMatchIn(line) }
+                    .map { (i, line) -> "${rel(p)}:${i + 1}: ${line.trim()}" }
+            }
+        assertTrue(
+            "IPTV/Live TV loading state entered outside BoundedLoad — use BoundedLoad.begin/run so it always ends:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
 }
