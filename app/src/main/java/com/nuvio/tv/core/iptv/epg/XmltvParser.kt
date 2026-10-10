@@ -155,11 +155,11 @@ object XmltvParser {
     }
 
     /**
-     * B10 — one pass over a whole guide that ALSO hands over the channel list: every `<channel>` with
-     * all its `<display-name>`s goes to [onChannel]; when the first `<programme>` opens (the DTD puts
-     * every channel first) — or the document ends — [onChannelsDone] runs ONCE and returns the set of
-     * normalized channel ids whose programmes to keep. Unlike [parseProgrammes], an EMPTY returned set
-     * keeps nothing (a guide that matched no channel stores no rows).
+     * Every channel and all its display names go to [onChannel], including entries after programmes.
+     * [onChannelsDone] runs once before the first programme (or at EOF) and supplies its allow-set.
+     * That boundary is a complete census only for channel-first feeds; interleaved ingest first
+     * harvests the full census, then replays a local spool with the final allow-set.
+     * Unlike [parseProgrammes], an empty allow-set keeps nothing.
      */
     fun parseGuide(
         parser: XmlPullParser,
@@ -186,7 +186,7 @@ object XmltvParser {
         while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
                 XmlPullParser.START_TAG -> when (parser.name) {
-                    "channel" -> if (keepSet == null) {
+                    "channel" -> {
                         channelId = parser.getAttributeValue(null, "id")?.trim()?.takeIf { it.isNotEmpty() }
                         names.clear()
                     }
