@@ -178,7 +178,9 @@ class StalkerClient @Inject constructor(
         }
 
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = runCatching {
-        if (!ensureLineup(acc)) return@runCatching emptyList()
+        // No lineup = the portal could not be read (nothing stored, nothing fetched). That is a FAILURE the
+        // page shows with Retry — it used to read as "this category has no channels" and the row vanished.
+        if (!ensureLineup(acc)) throw StalkerLineupUnavailableException()
         contentDb.channelsFor(acc.id, categoryId).map { r ->
             XtreamChannel(
                 streamId = r.sid,
@@ -194,7 +196,7 @@ class StalkerClient @Inject constructor(
 
     /** Windowed lineup read for the hub (item 5). Ensures the mirror, then a paged indexed read. */
     suspend fun liveChannelsPage(acc: XtreamAccount, categoryId: String?, offset: Int, limit: Int): List<XtreamChannel> {
-        if (!ensureLineup(acc)) return emptyList()
+        if (!ensureLineup(acc)) throw StalkerLineupUnavailableException()   // a failure, never "empty"
         return contentDb.pageChannels(acc.id, categoryId, offset, limit).map { r ->
             XtreamChannel(
                 streamId = r.sid,
@@ -231,14 +233,17 @@ class StalkerClient @Inject constructor(
                 return@withLock contentDb.liveCount(acc.id) > 0
             }
             val cats = runCatching { categories(acc, "itv", "get_genres").getOrThrow() }.getOrNull()
+            // Each answered step is progress for the page waiting on this import (BoundedLoad's stall deadline).
+            com.nuvio.tv.core.iptv.IptvImportProgress.tick(acc.id)
             val js = runCatching {
                 browse(acc, mapOf("type" to "itv", "action" to "get_all_channels"))
             }.getOrNull()
+            com.nuvio.tv.core.iptv.IptvImportProgress.tick(acc.id)
             val arr = (js as? JsonObject)?.get("data") as? com.google.gson.JsonArray
                 ?: js as? com.google.gson.JsonArray
             var items = arr?.mapNotNull { it as? JsonObject }.orEmpty()
             // A portal without get_all_channels: bounded paged fetch (rowCache keeps the raw rows).
-            if (items.isEmpty()) items = orderedList(acc, "itv", null)
+            if (items.isEmpty()) items = orderedList(acc, "itv", null, onPage = { com.nuvio.tv.core.iptv.IptvImportProgress.tick(acc.id) })
             val rows = items.mapNotNull { item ->
                 val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
                 // The raw 13MB rows are dropped after this mapping, so the static-vs-mint flags
@@ -263,6 +268,8 @@ class StalkerClient @Inject constructor(
             // not stamp freshness — the next browse retries.
             if (rows.isEmpty()) return@withLock contentDb.liveCount(acc.id) > 0
             contentDb.replaceLiveLineup(acc.id, rows, cats.orEmpty().map { it.id to it.name })
+            // The page that gave up waiting re-shows, and its failed rows ask once more (event, not poll).
+            com.nuvio.tv.core.iptv.IptvImportProgress.finished(acc.id)
             true
         }
     }
@@ -973,6 +980,7 @@ class StalkerClient @Inject constructor(
         search: String? = null,
         maxItems: Int = MAX_ITEMS,
         stopWhen: ((JsonObject) -> Boolean)? = null,
+        onPage: (() -> Unit)? = null,
     ): List<JsonObject> {
         val out = ArrayList<JsonObject>()
         var page = 1
@@ -988,6 +996,7 @@ class StalkerClient @Inject constructor(
             // Every row carries its `cmd` — keep them so play/detail never re-pages to find one.
             cacheRows(acc.id, type, rows)
             out += rows
+            onPage?.invoke()
             if (stopWhen != null && rows.any(stopWhen)) break   // found the target — stop paging
             page++
         }
@@ -1066,3 +1075,6 @@ class StalkerClient @Inject constructor(
 
 /** URL-encode a Stalker cmd for the create_link query (kept as a helper for testability parity). */
 internal fun encodeStalkerCmd(cmd: String): String = URLEncoder.encode(cmd, "UTF-8")
+
+/** The portal's live lineup could not be read and none is stored: a failure, shown with Retry — never "empty". */
+class StalkerLineupUnavailableException : java.io.IOException("Stalker live lineup unavailable")

@@ -235,6 +235,10 @@ class HomeViewModel @Inject constructor(
     internal var activeCatalogLoadSignature: String? = null
     internal var catalogLoadGeneration: Long = 0L
     internal var catalogsLoadInProgress: Boolean = false
+    /** Rows whose last fetch failed with nothing on screen, by catalog key; retried by AddonLoadRetryPolicy. */
+    internal val failedCatalogLoads = linkedMapOf<String, Pair<Addon, CatalogDescriptor>>()
+    /** The retry ladder or a visit pass over [failedCatalogLoads] - one at a time. */
+    internal var catalogRetryJob: Job? = null
     internal data class TruncatedRowCacheEntry(
         val sourceRow: CatalogRow,
         val truncatedRow: CatalogRow
@@ -374,6 +378,7 @@ class HomeViewModel @Inject constructor(
             observeProgressSourceChanges()
             observeCollections()
             observeInstalledAddons()
+            observeManifestFailures()
             observeManualAddonRefresh()
 
             // Clear CW state when profile changes so items don't leak between profiles.
@@ -692,7 +697,12 @@ class HomeViewModel @Inject constructor(
                 episode = event.episode,
                 isNextUp = event.isNextUp
             )
-            HomeEvent.OnRetry -> viewModelScope.launch { loadAllCatalogs(addonsCache, forceReload = true) }
+            HomeEvent.OnRetry -> viewModelScope.launch {
+                // A failed manifest is what leaves an add-on without catalogs; reloading the rows alone
+                // never fetched it again.
+                addonRepository.retryFailedManifests()
+                loadAllCatalogs(addonsCache, forceReload = true)
+            }
         }
     }
 
@@ -839,6 +849,22 @@ class HomeViewModel @Inject constructor(
                 if (addonsCache.isEmpty()) return@collect
                 lastHomeCatalogRefreshAtMs = android.os.SystemClock.elapsedRealtime()
                 refreshVisibleCatalogsPipeline(requestedByUser = true)
+            }
+        }
+    }
+
+    /**
+     * Home was resumed: fetch again only what failed earlier (an add-on manifest, a catalog row).
+     * Lifecycle-bound, never a timer, and no request at all when nothing failed.
+     */
+    fun retryFailedHomeLoads() = retryFailedHomeLoadsPipeline()
+
+    private fun observeManifestFailures() {
+        viewModelScope.launch {
+            addonRepository.unresolvedManifestFailures().collect { failed ->
+                _uiState.update { state ->
+                    if (state.failedManifestCount == failed.size) state else state.copy(failedManifestCount = failed.size)
+                }
             }
         }
     }

@@ -130,6 +130,34 @@ class IptvProviderPlaybackResolverTest {
         assertFalse(result.toString().contains(account.portalUrl))
     }
 
+    /**
+     * Regression ("Live TV spins forever", resolve lane): a Stalker portal that never answers create_link —
+     * or trickles it — held the clean player in REQUEST_RESOLUTION, a spinner over black, for as long as the
+     * viewer waited. The resolve is now bounded (BoundedLoad LIVE_RESOLVE, 20 s): it ends as the same
+     * retryable unavailable failure a null link gives, and the resolver is usable again straight after.
+     */
+    @Test
+    fun `a create_link that never answers ends as unavailable at the live-resolve deadline`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        var calls = 0
+        val resolver = resolver(account) { _, _, streamId, _ ->
+            calls++
+            if (calls == 1) kotlinx.coroutines.awaitCancellation()
+            ProviderLinkResult.Resolved("http://portal.invalid/live/$streamId.ts")
+        }
+        val selection = selection(account, ProviderSourceType.STALKER, ContentType.LIVE)
+
+        val stalled = resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL))
+
+        assertTrue("a hung create_link must end as a failure, was $stalled", stalled is PlaybackResult.Failure)
+        assertEquals(FailurePhase.REQUEST_RESOLUTION, (stalled as PlaybackResult.Failure).failure.phase)
+        assertFalse("a stall is not a deterministic dead channel", stalled.failure.deterministic)
+        assertEquals(20_000L, testScheduler.currentTime)
+        // The serialization mutex was released: the viewer's Retry resolves.
+        val retried = resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.RECOVERY))
+        assertTrue("the next resolve after a stall works, was $retried", retried is PlaybackResult.Success)
+    }
+
     @Test
     fun `catch-up advances only on eligible transport feedback and handoff keeps the dialect`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_XTREAM)

@@ -408,7 +408,9 @@ object NetworkModule {
     ): Retrofit =
         Retrofit.Builder()
             .baseUrl("https://placeholder.nuvio.tv/")
-            .client(okHttpClient)
+            // Addon + panel TEXT calls get a whole-call limit, per call; @Streaming endpoints (the
+            // catalog-index body, an EPG table) do not — see TextCallTimeout.
+            .callFactory(com.nuvio.tv.core.network.TextCallTimeout.callFactory(okHttpClient))
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
 

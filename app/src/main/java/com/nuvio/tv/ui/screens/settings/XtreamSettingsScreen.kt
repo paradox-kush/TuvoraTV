@@ -576,6 +576,12 @@ fun XtreamSettingsContent(
         val firstHiddenFocus = remember { FocusRequester() }
         val hiddenDoneFocus = remember { FocusRequester() }
         val hiddenFocusTarget = HiddenItemsDialogFocusPolicy.initialFocus(items?.size)
+        // The wait ends at its deadline even if the read never returns; a failure offers Retry, never
+        // "Nothing is hidden" (BoundedLoad).
+        val hiddenStatus = com.nuvio.tv.ui.screens.iptv.rememberEffectiveLoadStatus(uiState.hiddenItemsLoad)
+        val hiddenFailed = items == null && hiddenStatus is com.nuvio.tv.core.iptv.LoadStatus.Failed
+        val hiddenRetryFocus = remember { FocusRequester() }
+        LaunchedEffect(hiddenFailed) { if (hiddenFailed) runCatching { hiddenRetryFocus.requestFocus() } }
         LaunchedEffect(account.id, hiddenFocusTarget, items?.size) {
             when (hiddenFocusTarget) {
                 HiddenItemsDialogFocusPolicy.Target.FIRST_ROW -> runCatching { firstHiddenFocus.requestFocus() }
@@ -587,6 +593,7 @@ fun XtreamSettingsContent(
             onDismiss = { hiddenFor = null },
             title = "Hidden in ${com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name)}",
             subtitle = when {
+                hiddenFailed -> stringResource(R.string.iptv_settings_load_failed)
                 items == null -> "Loading\u2026"
                 items.isEmpty() -> "Nothing is hidden in this playlist. In the Live TV guide, press MENU on a " +
                     "channel or a group to hide it."
@@ -595,6 +602,13 @@ fun XtreamSettingsContent(
             width = 520.dp,
             scrollable = true
         ) {
+            if (hiddenFailed) {
+                Button(
+                    onClick = { viewModel.loadHiddenItems(account) },
+                    modifier = Modifier.fillMaxWidth().focusRequester(hiddenRetryFocus),
+                    scale = ButtonDefaults.scale(focusedScale = 1f)
+                ) { Text(stringResource(R.string.action_retry)) }
+            }
             items.orEmpty().forEachIndexed { index, item ->
                 SettingsActionRow(
                     title = item.name,
@@ -653,6 +667,8 @@ fun XtreamSettingsContent(
                     account = account,
                     type = type,
                     categories = uiState.categoryLists["$id|$type"],
+                    load = uiState.categoryListLoads["$id|$type"] ?: com.nuvio.tv.core.iptv.LoadStatus.Idle,
+                    onRetry = { viewModel.loadCategoryLists(account) },
                     onSetSelection = { selection -> viewModel.setCategorySelection(id, type, selection) },
                     onToggleCategory = { categoryId, isChecked -> viewModel.toggleCategory(id, type, categoryId, isChecked) },
                     onDismiss = { checklistType = null }
@@ -855,6 +871,8 @@ private fun XtreamCategoryChecklistDialog(
     account: XtreamAccount,
     type: String,
     categories: List<com.nuvio.tv.core.iptv.XtreamCategory>?,
+    load: com.nuvio.tv.core.iptv.LoadStatus,
+    onRetry: () -> Unit,
     onSetSelection: (List<String>?) -> Unit,
     onToggleCategory: (categoryId: String, isChecked: Boolean) -> Unit,
     onDismiss: () -> Unit
@@ -862,15 +880,29 @@ private fun XtreamCategoryChecklistDialog(
     val label = CONTENT_TYPES.firstOrNull { it.first == type }?.second ?: type
     val selection = account.categorySelections.forType(type)
     val selectAllFocus = remember { FocusRequester() }
-    LaunchedEffect(categories != null) { selectAllFocus.requestFocusAfterFrames() }
+    // The wait ends at its deadline even if the read never returns; a failure offers Retry (BoundedLoad).
+    val status = com.nuvio.tv.ui.screens.iptv.rememberEffectiveLoadStatus(load)
+    val failed = categories == null && status is com.nuvio.tv.core.iptv.LoadStatus.Failed
+    val retryFocus = remember { FocusRequester() }
+    LaunchedEffect(categories != null) { if (categories != null) selectAllFocus.requestFocusAfterFrames() }
+    LaunchedEffect(failed) { if (failed) retryFocus.requestFocusAfterFrames() }
     NuvioDialog(
         onDismiss = onDismiss,
         title = "$label categories",
         subtitle = when {
+            failed -> stringResource(R.string.iptv_settings_load_failed)
             categories == null -> "Loading categories…"
             else -> "${selection?.size ?: categories.size}/${categories.size} selected"
         }
     ) {
+        if (failed) {
+            Button(
+                onClick = onRetry,
+                modifier = Modifier.fillMaxWidth().focusRequester(retryFocus),
+                // Full-width: a focus scale would overhang the dialog padding (UX32).
+                scale = ButtonDefaults.scale(focusedScale = 1f)
+            ) { Text(stringResource(R.string.action_retry)) }
+        }
         if (categories == null) return@NuvioDialog
         Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
             SettingsDialogActionRow(horizontalAlignment = Alignment.Start) {

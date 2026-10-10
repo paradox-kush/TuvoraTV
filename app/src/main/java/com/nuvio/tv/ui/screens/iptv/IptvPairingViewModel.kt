@@ -73,7 +73,17 @@ class IptvPairingViewModel @Inject constructor(
         secret = null
         _uiState.value = IptvPairingUiState(status = IptvPairingStatus.LOADING)
         viewModelScope.launch {
-            pairingManager.createPairing(BuildConfig.IPTV_PAIRING_WEB_BASE_URL).fold(
+            // Bounded (BoundedLoad, SETTINGS): a backend that never answers ends as ERROR + "Try again",
+            // not a code screen that spins forever.
+            val created = com.nuvio.tv.core.iptv.BoundedLoad.run(
+                surface = com.nuvio.tv.core.iptv.LoadSurface.SETTINGS,
+                report = mapOf("row" to "phone_pairing"),
+            ) { pairingManager.createPairing(BuildConfig.IPTV_PAIRING_WEB_BASE_URL) }
+            val result = when (created) {
+                is com.nuvio.tv.core.iptv.LoadOutcome.Failed -> Result.failure(created.error ?: IllegalStateException("pairing failed"))
+                else -> created.valueOrNull() ?: Result.failure(IllegalStateException("pairing failed"))
+            }
+            result.fold(
                 onSuccess = { pairing ->
                     secret = pairing.secret
                     pollIntervalSeconds = pairing.pollIntervalSeconds

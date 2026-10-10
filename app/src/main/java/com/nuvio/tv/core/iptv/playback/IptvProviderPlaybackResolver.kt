@@ -179,13 +179,25 @@ class IptvProviderPlaybackResolver internal constructor(
         context: ProviderResolutionContext,
     ): PlaybackResult<ResolvedPlaybackRequest> {
         val kind = if (selection.contentType == ContentType.LIVE) "live" else "movie"
-        return when (
-            val link = links.resolve(
+        // Bounded (BoundedLoad, LIVE_RESOLVE 20 s): a portal that never answers create_link — or trickles
+        // it — used to hold the session in REQUEST_RESOLUTION, a spinner over black, for as long as the
+        // viewer waited. A stall ends as the same retryable "unavailable" a null link gives; the work runs
+        // detached, so the serialization mutex is released at the deadline even if the call ignores
+        // cancellation.
+        val bounded = com.nuvio.tv.core.iptv.BoundedLoad.run(
+            surface = com.nuvio.tv.core.iptv.LoadSurface.LIVE_RESOLVE,
+            isEmpty = { it is ProviderLinkResult.Unavailable },
+            report = mapOf("source_type" to account.sourceType, "kind" to kind),
+        ) {
+            links.resolve(
                 account = account,
                 kind = kind,
                 streamId = streamId,
                 forceFresh = context.trigger != ProviderResolutionTrigger.INITIAL,
             )
+        }
+        return when (
+            val link = bounded.valueOrNull() ?: ProviderLinkResult.Unavailable(ProviderLinkFailureReason.UNKNOWN)
         ) {
             is ProviderLinkResult.Resolved -> mapped(account, selection, link.url, dialect = null)
             is ProviderLinkResult.Unavailable -> unavailable(link.reason)

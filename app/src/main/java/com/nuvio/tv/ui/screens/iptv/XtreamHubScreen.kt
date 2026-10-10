@@ -30,6 +30,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -69,6 +70,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
+import com.nuvio.tv.core.iptv.LoadStatus
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.model.MetaPreview
@@ -149,8 +151,10 @@ fun XtreamHubScreen(
         hit.contentId?.let { onOpenDetail(it, hit.detailType) }
     }
 
-    // Empty state -> prompt to add a provider in Settings.
-    if (!uiState.loading && uiState.accounts.isEmpty()) {
+    // Empty state -> prompt to add a provider in Settings. The initial wait for the accounts store is
+    // bounded too: past its deadline the page stops waiting (BoundedLoad).
+    val pageStatus = rememberEffectiveLoadStatus(uiState.categoriesLoad)
+    if (pageStatus !is LoadStatus.Loading && uiState.accounts.isEmpty()) {
         HubNoProviderState(
             firstFocus = firstFocus,
             onAddProvider = onAddProvider,
@@ -246,6 +250,7 @@ fun XtreamHubScreen(
                 onActivate = onActivate,
                 onRetry = viewModel::retry,
                 onLoadCategory = viewModel::loadCategory,
+                onRetryCategory = viewModel::retryCategory,
                 onPrefetchCategory = viewModel::prefetchCategory,
                 onLoadMoreCategory = viewModel::loadMoreCategory,
                 onOpenCategory = { openCategoryId = it },
@@ -282,6 +287,7 @@ private fun HubBrowseContent(
     onActivate: (XtreamHubItem) -> Unit,
     onRetry: () -> Unit,
     onLoadCategory: (String) -> Unit,
+    onRetryCategory: (String) -> Unit,
     onPrefetchCategory: (String) -> Unit,
     onLoadMoreCategory: (String) -> Unit,
     onOpenCategory: (String) -> Unit,
@@ -305,9 +311,13 @@ private fun HubBrowseContent(
         )
     }
 
+    // The wait ends at the load's own deadline even if the work never returns (BoundedLoad).
+    val pageStatus = rememberEffectiveLoadStatus(uiState.categoriesLoad)
     when {
         uiState.error != null -> ErrorState(message = uiState.error, onRetry = onRetry)
-        uiState.loading && uiState.categories.isEmpty() -> HubSkeletonRows(cardStyle = portraitStyle)
+        pageStatus is LoadStatus.Failed && uiState.categories.isEmpty() ->
+            ErrorState(message = stringResource(R.string.iptv_hub_error_timeout), onRetry = onRetry)
+        pageStatus is LoadStatus.Loading && uiState.categories.isEmpty() -> HubSkeletonRows(cardStyle = portraitStyle)
         uiState.categories.isEmpty() -> EmptyScreenState(
             title = stringResource(R.string.iptv_hub_empty_title),
             subtitle = stringResource(R.string.iptv_hub_empty_subtitle)
@@ -334,7 +344,16 @@ private fun HubBrowseContent(
                     }
                     val loaded = uiState.itemsByCategory.containsKey(category.id)
                     val items = uiState.itemsByCategory[category.id].orEmpty()
-                    if (!loaded || items.isNotEmpty()) {
+                    val rowStatus = rememberEffectiveLoadStatus(uiState.rowLoads[category.id] ?: LoadStatus.Idle)
+                    if (!loaded && rowStatus is LoadStatus.Failed) {
+                        // The row stays, with Retry: a failure used to read as "empty" and the row vanished.
+                        HubFailedRow(
+                            title = category.name,
+                            cardStyle = portraitStyle,
+                            onRetry = { onRetryCategory(category.id) },
+                            upFocusRequester = if (index == 0) selectedTabRequester else null,
+                        )
+                    } else if (!loaded || items.isNotEmpty()) {
                         HubPosterRow(
                             title = category.name,
                             rowKey = "${uiState.section}_${category.id}",
@@ -532,6 +551,75 @@ private fun HubPosterRow(
                             )
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * A row whose fetch failed or timed out: its real title over ONE focusable tile, poster-sized so the rail
+ * keeps its rhythm, that says it couldn't load and retries on OK. Focus is unmistakable (TV focus rule):
+ * the fill brightens to the focus surface, the FocusRing border appears and the tile scales like a card.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun HubFailedRow(
+    title: String,
+    cardStyle: PosterCardStyle,
+    onRetry: () -> Unit,
+    upFocusRequester: FocusRequester?,
+) {
+    val titleMediumStyle = MaterialTheme.typography.titleMedium
+    val rowTitleStyle = remember(titleMediumStyle) { titleMediumStyle.copy(fontWeight = FontWeight.SemiBold) }
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(cardStyle.cornerRadius)
+    Column {
+        Text(
+            text = title,
+            style = rowTitleStyle,
+            color = NuvioTheme.colors.TextPrimary,
+            modifier = Modifier.padding(start = HubRowStartPadding, bottom = HubRowTitleBottom),
+        )
+        Card(
+            onClick = onRetry,
+            modifier = Modifier
+                .padding(start = HubRowStartPadding)
+                .width(cardStyle.width)
+                .height(cardStyle.height)
+                .onFocusChanged { focused = it.isFocused }
+                .then(upFocusRequester?.let { Modifier.focusProperties { up = it } } ?: Modifier),
+            shape = CardDefaults.shape(shape = shape),
+            colors = CardDefaults.colors(
+                containerColor = NuvioTheme.colors.BackgroundCard,
+                focusedContainerColor = NuvioTheme.colors.FocusBackground,
+            ),
+            border = CardDefaults.border(
+                focusedBorder = Border(
+                    border = BorderStroke(cardStyle.focusedBorderWidth, NuvioTheme.colors.FocusRing),
+                    shape = shape,
+                ),
+            ),
+            scale = CardDefaults.scale(focusedScale = cardStyle.focusedScale),
+        ) {
+            val contentColor = if (focused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.TextSecondary
+            Column(
+                modifier = Modifier.fillMaxSize().padding(NuvioTheme.spacing.md),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(NuvioTheme.spacing.xl),
+                )
+                Spacer(Modifier.height(NuvioTheme.spacing.sm))
+                Text(
+                    text = stringResource(R.string.iptv_hub_row_failed),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = contentColor,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
             }
         }
     }

@@ -75,8 +75,18 @@ internal fun PlayerRuntimeController.onLiveStreamEnded(reason: String) {
             showLoadingOverlay = it.loadingOverlayEnabled,
         )
     }
-    if (!livePlaybackFreezeReporter.isFreezeOpen) {
-        armLiveFreezeReporter()
+    when (
+        LiveStreamEndPolicy.bookkeepingOnLiveEnd(
+            hasRenderedFirstFrame = hasRenderedFirstFrame,
+            isFreezeOpen = livePlaybackFreezeReporter.isFreezeOpen,
+        )
+    ) {
+        LiveStreamEndPolicy.Bookkeeping.ARM_WATCHER -> armLiveFreezeReporter()
+        LiveStreamEndPolicy.Bookkeeping.KEEP_INCIDENT -> Unit
+        // A reconnect's rebuilt player ended without rendering, so that attempt is over. Release
+        // the in-flight hold (the render timeout would otherwise pace the next try) but keep the
+        // attempt count, so the ladder's backoff — not attempt 0 again — decides when to retry.
+        LiveStreamEndPolicy.Bookkeeping.END_UNRENDERED_ATTEMPT -> liveRecoveryInFlight = false
     }
     maybeReconnectLiveStream(LivePlaybackFreezePolicy.Kind.ENDED)
 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,8 +62,75 @@ internal fun HomeAnnouncementCard(
 ) {
     val focusManager = LocalFocusManager.current
     val cta = remember(announcement) { AnnouncementPolicy.cta(announcement) }
-    val shape = RoundedCornerShape(NuvioTheme.radii.md)
 
+    HomeNoticeCard(title = announcement.title, body = announcement.body, modifier = modifier) {
+        if (cta != null) {
+            AnnouncementButton(
+                text = cta.label,
+                onClick = { onShowCta(cta) },
+                modifier = Modifier.focusRequester(ctaFocusRequester),
+            )
+        }
+        AnnouncementButton(
+            text = stringResource(R.string.home_announcement_dismiss),
+            modifier = if (cta == null) Modifier.focusRequester(ctaFocusRequester) else Modifier,
+            onClick = {
+                // Hand focus to the content below before this card leaves the tree, so the
+                // D-pad never ends up on a removed node.
+                focusManager.moveFocus(FocusDirection.Down)
+                onDismiss()
+            },
+        )
+    }
+}
+
+/**
+ * Some Home rows (or an add-on's manifest) failed to load and the automatic retries gave up. Same
+ * floating card, slot and D-pad reach as the announcement (Up from the top row, UX80); Tuvora retries
+ * on every return to Home, Retry does it now, and Dismiss hides the card for this failure. Never takes
+ * focus by itself.
+ */
+@Composable
+internal fun HomeRowsFailedCard(
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+    retryFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+) {
+    val focusManager = LocalFocusManager.current
+    HomeNoticeCard(
+        title = stringResource(R.string.home_rows_failed_title),
+        body = stringResource(R.string.home_rows_failed_message),
+        modifier = modifier,
+    ) {
+        AnnouncementButton(
+            text = stringResource(R.string.action_retry),
+            modifier = Modifier.focusRequester(retryFocusRequester),
+            onClick = {
+                // The card hides while the retry runs; hand focus to the rows first, as Dismiss does.
+                focusManager.moveFocus(FocusDirection.Down)
+                onRetry()
+            },
+        )
+        AnnouncementButton(
+            text = stringResource(R.string.home_announcement_dismiss),
+            onClick = {
+                focusManager.moveFocus(FocusDirection.Down)
+                onDismiss()
+            },
+        )
+    }
+}
+
+/** The floating card shell shared by the announcement and the rows-failed notice. */
+@Composable
+private fun HomeNoticeCard(
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier,
+    buttons: @Composable RowScope.() -> Unit,
+) {
+    val shape = RoundedCornerShape(NuvioTheme.radii.md)
     Column(
         modifier = modifier
             .width(460.dp)
@@ -72,41 +140,23 @@ internal fun HomeAnnouncementCard(
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
     ) {
         Text(
-            text = announcement.title,
+            text = title,
             style = MaterialTheme.typography.titleSmall,
             color = NuvioTheme.colors.TextPrimary,
             fontWeight = FontWeight.Bold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        if (announcement.body.isNotBlank()) {
+        if (body.isNotBlank()) {
             Text(
-                text = announcement.body,
+                text = body,
                 style = MaterialTheme.typography.bodySmall,
                 color = NuvioTheme.colors.TextSecondary,
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
-            if (cta != null) {
-                AnnouncementButton(
-                    text = cta.label,
-                    onClick = { onShowCta(cta) },
-                    modifier = Modifier.focusRequester(ctaFocusRequester),
-                )
-            }
-            AnnouncementButton(
-                text = stringResource(R.string.home_announcement_dismiss),
-                modifier = if (cta == null) Modifier.focusRequester(ctaFocusRequester) else Modifier,
-                onClick = {
-                    // Hand focus to the content below before this card leaves the tree, so the
-                    // D-pad never ends up on a removed node.
-                    focusManager.moveFocus(FocusDirection.Down)
-                    onDismiss()
-                },
-            )
-        }
+        Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm), content = buttons)
     }
 }
 

@@ -4,9 +4,14 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
+import com.nuvio.tv.core.iptv.BoundedLoad
 import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.IptvImportProgress
 import com.nuvio.tv.core.iptv.IptvLoadFailurePolicy
 import com.nuvio.tv.core.iptv.IptvPanelGuard
+import com.nuvio.tv.core.iptv.LoadOutcome
+import com.nuvio.tv.core.iptv.LoadStatus
+import com.nuvio.tv.core.iptv.LoadSurface
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
@@ -68,7 +73,14 @@ data class XtreamHubUiState(
     val itemsByCategory: Map<String, List<XtreamHubItem>> = emptyMap(),
     /** categoryId -> more rows exist past the loaded window (item 5). */
     val hasMoreByCategory: Map<String, Boolean> = emptyMap(),
-    val loading: Boolean = true,
+    /** The category-list load. Entered only through [BoundedLoad], so it always ends (see that file). */
+    val categoriesLoad: LoadStatus = LoadStatus.Idle,
+    /**
+     * Each row's load, by category id. [LoadStatus.Failed] keeps the row on the page with its Retry tile
+     * (a failure used to read as an empty category and the row vanished); a failed row is asked again only
+     * by that Retry or a "catalog landed" event — never by composing it again.
+     */
+    val rowLoads: Map<String, LoadStatus> = emptyMap(),
     val error: String? = null,
     // The user's poster-size preference (Layout settings) — the hub's rails derive their card
     // size from the SAME source as the Modern home rows so the two surfaces always match.
@@ -78,6 +90,7 @@ data class XtreamHubUiState(
     val posterLabelsEnabled: Boolean = true
 ) {
     val selectedAccount: XtreamAccount? get() = accounts.firstOrNull { it.id == selectedAccountId }
+    val loading: Boolean get() = categoriesLoad is LoadStatus.Loading
 }
 
 /**
@@ -120,7 +133,9 @@ class XtreamHubViewModel @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(XtreamHubUiState())
+    // Starts in a bounded Loading (the accounts store has not answered yet), so even a store that never
+    // emits ends the wait at the page deadline instead of an indefinite blank page.
+    private val _uiState = MutableStateFlow(XtreamHubUiState(categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES)))
     val uiState: StateFlow<XtreamHubUiState> = _uiState.asStateFlow()
 
     /** Recently-watched channels, newest first — the hub's "Recent Channels" row. */
@@ -194,6 +209,11 @@ class XtreamHubViewModel @Inject constructor(
             posterEnricher.updates.collect { u -> applyPosterUpdate(u) }
         }
         viewModelScope.launch {
+            // Self-heal, event-driven (never a poll): an import the page gave up waiting on has landed, or
+            // a playlist's catalog index finished building — show it, and ask the failed rows once more.
+            IptvImportProgress.completed.collect { onCatalogLanded(it) }
+        }
+        viewModelScope.launch {
             // Fix 1 (sticky provider): what the last visit left on screen, read BEFORE the first
             // accounts emission so a fresh entry restores it instead of resetting to the first
             // account. The section seeds once; after that the in-memory state is the truth.
@@ -216,7 +236,7 @@ class XtreamHubViewModel @Inject constructor(
                     val section = coerceSection(wanted, accounts.firstOrNull { it.id == selected })
                     _uiState.update { it.copy(accounts = accounts, selectedAccountId = selected, section = section) }
                     if (accounts.isEmpty()) {
-                        _uiState.update { it.copy(loading = false) }
+                        _uiState.update { it.copy(categoriesLoad = LoadStatus.Idle) }
                     } else {
                         loadCategories()
                     }
@@ -233,14 +253,14 @@ class XtreamHubViewModel @Inject constructor(
         com.nuvio.tv.core.iptv.stalker.StalkerPlaybackTraffic.onProviderSwitched()
         posterEnricher.onProviderSwitched(accountId)
         val section = coerceSection(_uiState.value.section, _uiState.value.accounts.firstOrNull { it.id == accountId })
-        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap()) }
+        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap()) }
         rememberSelection()
         loadCategories()
     }
 
     fun selectSection(section: XtreamSection) {
         if (section == _uiState.value.section) return
-        _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap()) }
+        _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap()) }
         rememberSelection()
         loadCategories()
     }
@@ -266,6 +286,31 @@ class XtreamHubViewModel @Inject constructor(
         loadCategories()
     }
 
+    private fun isCurrent(accountId: String, section: XtreamSection): Boolean =
+        _uiState.value.selectedAccountId == accountId && _uiState.value.section == section
+
+    /**
+     * [accountId]'s catalog is now local (an import landed, or its catalog index finished building): a page
+     * that ended Failed — or empty — re-shows, and the rows that failed are asked once more. Driven by
+     * [IptvImportProgress.completed] only, so a dead provider never becomes a request loop.
+     */
+    private fun onCatalogLanded(accountId: String) {
+        val st = _uiState.value
+        if (st.selectedAccountId != accountId) return
+        if (st.categoriesLoad is LoadStatus.Failed ||
+            (st.categories.isEmpty() && st.categoriesLoad !is LoadStatus.Loading)
+        ) {
+            categoriesCache.remove("$accountId|${st.section}")   // an empty answer cached mid-import is stale now
+            _uiState.update { it.copy(error = null) }
+            loadCategories()
+            return
+        }
+        val failed = st.rowLoads.filterValues { it is LoadStatus.Failed }.keys
+        if (failed.isEmpty()) return
+        _uiState.update { it.copy(rowLoads = it.rowLoads - failed) }
+        failed.forEach { requestCategory(it, prefetch = false, explicit = true) }
+    }
+
     private fun loadCategories() {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
@@ -274,7 +319,7 @@ class XtreamHubViewModel @Inject constructor(
         if (acc.isM3UFile() && !fileStore.exists(acc.id)) {
             _uiState.update {
                 it.copy(
-                    categories = emptyList(), itemsByCategory = emptyMap(), loading = false,
+                    categories = emptyList(), itemsByCategory = emptyMap(), categoriesLoad = LoadStatus.Failed(timedOut = false),
                     error = context.getString(R.string.iptv_hub_error_file_missing)
                 )
             }
@@ -282,7 +327,13 @@ class XtreamHubViewModel @Inject constructor(
         }
         // Disabled content type: hidden section, and its data is never fetched.
         if (!acc.typeEnabled(section.typeKey)) {
-            _uiState.update { it.copy(categories = emptyList(), itemsByCategory = emptyMap(), loading = false, error = null) }
+            _uiState.update { it.copy(categories = emptyList(), itemsByCategory = emptyMap(), categoriesLoad = LoadStatus.Idle, error = null) }
+            return
+        }
+        // Live TV is the guide (XtreamLiveGuideViewModel), which loads its own category column. Fetching the
+        // same list here too was a duplicate panel call per visit whose result nothing on screen read.
+        if (section == XtreamSection.LIVE) {
+            _uiState.update { it.copy(categoriesLoad = LoadStatus.Idle, error = null) }
             return
         }
         val catKey = "${acc.id}|$section"
@@ -291,10 +342,16 @@ class XtreamHubViewModel @Inject constructor(
         categoriesCache[catKey]?.let { cached ->
             val visible = cached.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
             val items = visible.mapNotNull { c -> itemsCache["$catKey|${c.id}"]?.let { c.id to it } }.toMap()
-            _uiState.update { it.copy(categories = visible, itemsByCategory = items, loading = false, error = null) }
+            _uiState.update {
+                it.copy(
+                    categories = visible, itemsByCategory = items,
+                    rowLoads = items.mapValues { (_, list) -> if (list.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded },
+                    categoriesLoad = if (visible.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded, error = null,
+                )
+            }
             return
         }
-        _uiState.update { it.copy(loading = true, error = null) }
+        _uiState.update { it.copy(categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES), error = null) }
         viewModelScope.launch {
             // Xtream reads its section rows from the local catalog once it's built (P7, item 4) —
             // no per-session category fetch. Index absent (first run): fall through to the live
@@ -306,50 +363,70 @@ class XtreamHubViewModel @Inject constructor(
                 if (stored.isNotEmpty()) {
                     categoriesCache[catKey] = stored
                     val visible = stored.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
-                    _uiState.update { it.copy(categories = visible, loading = false) }
+                    if (isCurrent(acc.id, section)) {
+                        _uiState.update { it.copy(categories = visible, categoriesLoad = LoadStatus.Loaded) }
+                    }
                     return@launch
                 }
             }
             val client = clientFactory.clientFor(acc)
-            val result = when (section) {
-                XtreamSection.LIVE -> client.liveCategories(acc)
-                XtreamSection.MOVIES -> client.vodCategories(acc)
-                XtreamSection.SERIES -> client.seriesCategories(acc)
+            // Bounded (BoundedLoad): a provider that never answers — or trickles bytes so no socket timeout
+            // ever fires — ends as the error card with Retry. For M3U/Stalker this call IS the playlist
+            // import: its progress keeps the deadline open, and if the deadline still passes the import
+            // keeps running and IptvImportProgress.completed brings the page back when it lands.
+            val outcome = BoundedLoad.run(
+                surface = LoadSurface.HUB_CATEGORIES,
+                progress = IptvImportProgress.of(acc.id),
+                onProgress = { loading -> if (isCurrent(acc.id, section)) _uiState.update { it.copy(categoriesLoad = loading) } },
+                isEmpty = { it.isEmpty() },
+                cancelOnTimeout = acc.isXtream(),
+                report = mapOf("source_type" to acc.sourceType, "section" to section.name.lowercase()),
+            ) {
+                when (section) {
+                    XtreamSection.LIVE -> client.liveCategories(acc)
+                    XtreamSection.MOVIES -> client.vodCategories(acc)
+                    XtreamSection.SERIES -> client.seriesCategories(acc)
+                }.getOrThrow()
             }
-            result
-                .onSuccess { cats ->
-                    categoriesCache[catKey] = cats
-                    val visible = cats.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
-                    _uiState.update { it.copy(categories = visible, loading = false) }
-                }
-                .onFailure { e ->
-                    // The raw message used to land on screen verbatim: a provider's Cloudflare block
-                    // read as "HTTP 403", which explains nothing and looks like a portal outage.
-                    // Classify it, then append the breadcrumb so a photo of the TV is debuggable.
-                    // The server that actually failed last (Step 0.3b) — with backups that is not always the main one.
-                    val failedHost = failover.lastFailedServerUrl(acc)
-                    val failure = IptvLoadFailurePolicy.classify(
-                        e,
-                        if (failedHost != null) IptvPanelGuard.panelOriginUrlOf(acc, failedHost) else IptvPanelGuard.panelOriginUrlOf(acc),
-                    )
-                    val text = when (failure.kind) {
-                        IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER ->
-                            context.getString(R.string.iptv_hub_error_blocked, failure.status ?: 0)
-                        IptvLoadFailurePolicy.Kind.REFUSED ->
-                            failure.portalText ?: context.getString(R.string.iptv_hub_error_unreachable)
-                        IptvLoadFailurePolicy.Kind.UNREACHABLE ->
-                            context.getString(R.string.iptv_hub_error_unreachable)
-                    }
-                    _uiState.update {
-                        it.copy(loading = false, error = "$text\n\n${failure.detail}")
-                    }
-                }
+            // A slow answer for a section the viewer already left must not paint over the new one.
+            if (!isCurrent(acc.id, section)) return@launch
+            val cats = outcome.valueOrNull()
+            if (cats != null) {
+                categoriesCache[catKey] = cats
+                val visible = cats.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
+                _uiState.update { it.copy(categories = visible, categoriesLoad = if (visible.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded) }
+                return@launch
+            }
+            // The raw message used to land on screen verbatim: a provider's Cloudflare block
+            // read as "HTTP 403", which explains nothing and looks like a portal outage.
+            // Classify it, then append the breadcrumb so a photo of the TV is debuggable.
+            // The server that actually failed last (Step 0.3b) — with backups that is not always the main one.
+            val failedHost = failover.lastFailedServerUrl(acc)
+            val failure = IptvLoadFailurePolicy.classify(
+                (outcome as? LoadOutcome.Failed)?.error,
+                if (failedHost != null) IptvPanelGuard.panelOriginUrlOf(acc, failedHost) else IptvPanelGuard.panelOriginUrlOf(acc),
+            )
+            val text = when (failure.kind) {
+                IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER ->
+                    context.getString(R.string.iptv_hub_error_blocked, failure.status ?: 0)
+                IptvLoadFailurePolicy.Kind.REFUSED ->
+                    failure.portalText ?: context.getString(R.string.iptv_hub_error_unreachable)
+                IptvLoadFailurePolicy.Kind.UNREACHABLE ->
+                    context.getString(R.string.iptv_hub_error_unreachable)
+            }
+            _uiState.update { it.copy(categoriesLoad = outcome.status, error = "$text\n\n${failure.detail}") }
         }
     }
 
     /** Fetch one category's items — called when its row composes. Never dropped. */
     fun loadCategory(categoryId: String) {
         requestCategory(categoryId, prefetch = false)
+    }
+
+    /** A failed row's Retry tile: the one way (besides a landed catalog) a failed row is asked again. */
+    fun retryCategory(categoryId: String) {
+        _uiState.value.selectedAccount?.let { IptvPanelGuard.resetForAccount(it) }
+        requestCategory(categoryId, prefetch = false, explicit = true)
     }
 
     /**
@@ -361,26 +438,42 @@ class XtreamHubViewModel @Inject constructor(
         requestCategory(categoryId, prefetch = true)
     }
 
-    private fun requestCategory(categoryId: String, prefetch: Boolean) {
+    private fun requestCategory(categoryId: String, prefetch: Boolean, explicit: Boolean = false) {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
         val key = "${acc.id}|$section|$categoryId"
         // Cache hit: restore items instantly without a network round-trip.
         itemsCache[key]?.let { cached ->
             if (categoryId !in _uiState.value.itemsByCategory) {
-                _uiState.update { it.copy(itemsByCategory = it.itemsByCategory + (categoryId to cached)) }
+                _uiState.update {
+                    it.copy(
+                        itemsByCategory = it.itemsByCategory + (categoryId to cached),
+                        rowLoads = it.rowLoads + (categoryId to if (cached.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded),
+                    )
+                }
             }
             return
         }
+        // A failed row is re-asked only by its Retry or a landed catalog — composing it again (a scroll, a
+        // prefetch lookahead) must not turn a dead provider into a request loop.
+        if (!explicit && _uiState.value.rowLoads[categoryId] is LoadStatus.Failed) return
         // Claim the fetch: a visible row always gets one, a prefetch only while the pipe has room.
         if (key in inFlightCategories) return
         if (prefetch && inFlightCategories.size >= MAX_OUTSTANDING_CATEGORY_LOADS) return
         inFlightCategories.add(key)
         viewModelScope.launch {
+            var settled = false
             try {
-                categoryLoadGate.withPermit { fetchCategoryItems(acc, section, categoryId, key, prefetch) }
+                categoryLoadGate.withPermit {
+                    fetchCategoryItems(acc, section, categoryId, key, prefetch)
+                    settled = true
+                }
             } finally {
                 inFlightCategories.remove(key)
+                // Cancelled before it settled: never strand the row as "loading".
+                if (!settled && isCurrent(acc.id, section) && _uiState.value.rowLoads[categoryId] is LoadStatus.Loading) {
+                    _uiState.update { it.copy(rowLoads = it.rowLoads - categoryId) }
+                }
             }
         }
     }
@@ -406,7 +499,10 @@ class XtreamHubViewModel @Inject constructor(
             try {
                 val existing = itemsCache[key].orEmpty()
                 val offset = existing.size
-                val (more, hasMore) = fetchWindow(acc, section, categoryId, offset)
+                // Bounded like the row's first window; a stalled page just ends paging for now.
+                val (more, hasMore) = BoundedLoad.run(LoadSurface.HUB_ROW) {
+                    fetchWindow(acc, section, categoryId, offset)
+                }.valueOrNull() ?: return@launch
                 // Dedup + no-progress guard. The row triggers loadMore as focus nears its end, so a
                 // window that returns rows ALREADY loaded (a stale index, or a tied ORDER BY
                 // overlapping its pages) would append dupes, grow the row, re-trigger, and spin
@@ -607,16 +703,34 @@ class XtreamHubViewModel @Inject constructor(
         key: String,
         prefetch: Boolean = false,
     ) {
-        val (items, hasMore) = fetchWindow(acc, section, categoryId, offset = 0, prefetch = prefetch)
+        // The row's deadline starts with its permit: rows queued behind the slots wait on us, not the provider.
+        if (isCurrent(acc.id, section)) {
+            _uiState.update { it.copy(rowLoads = it.rowLoads + (categoryId to BoundedLoad.begin(LoadSurface.HUB_ROW))) }
+        }
+        val outcome = BoundedLoad.run(
+            surface = LoadSurface.HUB_ROW,
+            isEmpty = { it.first.isEmpty() },
+            report = mapOf("source_type" to acc.sourceType, "section" to section.name.lowercase()),
+        ) { fetchWindow(acc, section, categoryId, offset = 0, prefetch = prefetch) }
+        val window = outcome.valueOrNull()
+        if (window == null) {
+            // Failed or timed out: the row STAYS, with its Retry tile. Not cached — the next Retry asks again.
+            if (isCurrent(acc.id, section)) {
+                _uiState.update { it.copy(rowLoads = it.rowLoads + (categoryId to outcome.status)) }
+            }
+            return
+        }
+        val (items, hasMore) = window
         itemsCache[key] = items
         // Publish only while this account/section is still on screen: a prefetch that lands after
         // a switch would otherwise inject its items under a category id the new section may reuse.
         // Nothing is lost — the cache above serves them the moment the user comes back.
-        if (_uiState.value.selectedAccountId == acc.id && _uiState.value.section == section) {
+        if (isCurrent(acc.id, section)) {
             _uiState.update {
                 it.copy(
                     itemsByCategory = it.itemsByCategory + (categoryId to items),
                     hasMoreByCategory = it.hasMoreByCategory + (categoryId to hasMore),
+                    rowLoads = it.rowLoads + (categoryId to outcome.status),
                 )
             }
         }
@@ -634,7 +748,7 @@ class XtreamHubViewModel @Inject constructor(
         fun <T> List<T>.bounded(): List<T> = if (acc.isXtream()) take(PAGE_SIZE) else this
         val client = clientFactory.clientFor(acc)
         val items: List<XtreamHubItem> = when (section) {
-            XtreamSection.LIVE -> client.liveChannels(acc, categoryId).getOrDefault(emptyList()).bounded().map { ch ->
+            XtreamSection.LIVE -> client.liveChannels(acc, categoryId).getOrThrow().bounded().map { ch ->
                 val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
                 registry.register(
                     XtreamResolvedItem(
@@ -645,7 +759,7 @@ class XtreamHubViewModel @Inject constructor(
                 )
                 XtreamHubItem(id, ch.name, ch.logo, isLive = true, contentId = id, streamUrl = ch.streamUrl)
             }
-            XtreamSection.MOVIES -> client.vodMovies(acc, categoryId).getOrDefault(emptyList()).bounded().map { m ->
+            XtreamSection.MOVIES -> client.vodMovies(acc, categoryId).getOrThrow().bounded().map { m ->
                 val id = XtreamItemRegistry.vodId(acc.id, m.streamId)
                 registry.register(
                     XtreamResolvedItem(
@@ -656,7 +770,7 @@ class XtreamHubViewModel @Inject constructor(
                 )
                 XtreamHubItem(id, m.name, m.poster, isLive = false, contentId = id, streamUrl = null)
             }
-            XtreamSection.SERIES -> client.series(acc, categoryId).getOrDefault(emptyList()).bounded().map { s ->
+            XtreamSection.SERIES -> client.series(acc, categoryId).getOrThrow().bounded().map { s ->
                 val id = XtreamItemRegistry.seriesId(acc.id, s.seriesId)
                 registry.register(
                     XtreamResolvedItem(

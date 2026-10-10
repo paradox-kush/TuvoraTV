@@ -186,9 +186,10 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(detailedError: Strin
 
 /**
  * Handles typed mpv END_FILE events. STOP/QUIT/REDIRECT are expected during zapping, teardown, or
- * playlist redirects and must never reopen the old channel. A live EOF is not completion: it enters
- * the same backed-off recovery ladder as a detected dead pipe. Non-live ERROR keeps the existing
- * fresh-link/failover/error behavior. Fires on mpv's event thread, so hop to the controller scope.
+ * playlist redirects and must never reopen the old channel. A live EOF after playback started is not
+ * completion: it enters the same backed-off recovery ladder as a detected dead pipe. A live end
+ * before the first frame — and any non-live ERROR — takes the fresh-link/failover/error path
+ * ([LiveStreamEndPolicy]). Fires on mpv's event thread, so hop to the controller scope.
  */
 internal fun PlayerRuntimeController.onMpvPlaybackEnded(event: com.nuvio.tv.player.mpv.MpvEndFileEvent) {
     scope.launch {
@@ -196,25 +197,22 @@ internal fun PlayerRuntimeController.onMpvPlaybackEnded(event: com.nuvio.tv.play
         // In background the live demux is stopped deliberately; resume reloads the stream and a
         // genuinely dead link will re-error in the foreground where we can recover visibly.
         if (isInBackground) return@launch
-        when (event.reason) {
-            com.nuvio.tv.player.mpv.MpvEndFileReason.STOP,
-            com.nuvio.tv.player.mpv.MpvEndFileReason.QUIT,
-            com.nuvio.tv.player.mpv.MpvEndFileReason.REDIRECT,
-            com.nuvio.tv.player.mpv.MpvEndFileReason.UNKNOWN -> return@launch
-
-            com.nuvio.tv.player.mpv.MpvEndFileReason.EOF -> {
-                if (isLiveFeed()) {
-                    onLiveStreamEnded("eof")
-                }
+        // A live end before anything rendered is a startup failure, not a freeze: it falls through
+        // to the error path below rather than the indefinitely-retrying live ladder.
+        when (
+            LiveStreamEndPolicy.onMpvEndFile(
+                reason = event.reason,
+                isLiveFeed = isLiveFeed(),
+                hasRenderedFirstFrame = hasRenderedFirstFrame,
+                liveRecoveryInFlight = liveRecoveryInFlight,
+            )
+        ) {
+            LiveStreamEndPolicy.Action.IGNORE -> return@launch
+            LiveStreamEndPolicy.Action.RECONNECT_LIVE -> {
+                onLiveStreamEnded(if (event.reason == com.nuvio.tv.player.mpv.MpvEndFileReason.EOF) "eof" else "error")
                 return@launch
             }
-
-            com.nuvio.tv.player.mpv.MpvEndFileReason.ERROR -> {
-                if (isLiveFeed() && hasRenderedFirstFrame) {
-                    onLiveStreamEnded("error")
-                    return@launch
-                }
-            }
+            LiveStreamEndPolicy.Action.FAIL_PLAYBACK -> Unit
         }
         val fileError = event.fileError
         val detailedError = context.getString(com.nuvio.tv.R.string.player_error_mpv_playback_failed) +

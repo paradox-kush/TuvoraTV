@@ -2,7 +2,13 @@ package com.nuvio.tv.ui.screens.iptv
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.core.iptv.BoundedLoad
 import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.IptvImportProgress
+import com.nuvio.tv.core.iptv.IptvLoadFailurePolicy
+import com.nuvio.tv.core.iptv.LoadOutcome
+import com.nuvio.tv.core.iptv.LoadStatus
+import com.nuvio.tv.core.iptv.LoadSurface
 import com.nuvio.tv.core.iptv.IptvPanelGuard
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
@@ -111,8 +117,11 @@ data class LiveGuideUiState(
     val searchQuery: String = "",
     val epg: Map<Int, GuideEpg> = emptyMap(),
     val focusedChannelId: String? = null,
-    val loadingChannels: Boolean = false,
-    /** Channel-list load failure, rendered in place of the grid. */
+    /** The category column's load (the playlist import for M3U/Stalker). Entered only through [BoundedLoad]. */
+    val categoriesLoad: LoadStatus = LoadStatus.Idle,
+    /** The selected category's channel-list load. Entered only through [BoundedLoad], so it always ends. */
+    val channelsLoad: LoadStatus = LoadStatus.Idle,
+    /** Channel-list (or category-column) load failure, rendered in place of the grid with Retry. */
     val error: String? = null,
     /** Non-playback action notice, currently used by catch-up availability. */
     val actionError: String? = null,
@@ -140,6 +149,7 @@ data class LiveGuideUiState(
     val pendingTune: String? = null,
 ) {
     val focusedChannel: GuideChannel? get() = channels.firstOrNull { it.contentId == focusedChannelId }
+    val loadingChannels: Boolean get() = channelsLoad is LoadStatus.Loading
 }
 
 /** F03: "“X” added to / removed from Favorites", with Undo preserving its previous order. */
@@ -275,6 +285,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // the guide. Measured on an Onn (2026-08-18): it reached the match phase and was then
         // cancelled, twice, so the mirror downloaded nothing at all.
         epgMirror.warm()
+        viewModelScope.launch {
+            // Self-heal, event-driven (never a poll): the catalog the guide gave up waiting on landed.
+            IptvImportProgress.completed.collect { onCatalogLanded(it) }
+        }
         // If programmes land while this screen is still open, the "nothing for this channel"
         // verdicts taken before them are stale — retire them so rows can resolve.
         viewModelScope.launch {
@@ -616,7 +630,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 channels = emptyList(),
                 epg = emptyMap(),
                 focusedChannelId = null,
-                loadingChannels = false,
+                categoriesLoad = LoadStatus.Idle,
+                channelsLoad = LoadStatus.Idle,
                 error = null,
                 actionError = null,
                 catchUpSupported = catchUp.supports(acc),
@@ -628,7 +643,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         categoriesCache[acc.id]?.let { rawCats ->
             val full = withCategoryOverlay(acc.id, rawCats)
             val visible = filteredCategories(acc, full)
-            _uiState.update { it.copy(categories = visible) }
+            _uiState.update { it.copy(categories = visible, categoriesLoad = LoadStatus.Loaded) }
             selectCategoryFor(
                 acc = acc,
                 categoryId = defaultCategoryId(visible),
@@ -637,16 +652,50 @@ class XtreamLiveGuideViewModel @Inject constructor(
             )
             return
         }
+        loadCategoryColumn(acc, accountToken)
+    }
+
+    /**
+     * The category column. Bounded (BoundedLoad): a provider that never answers ends as the error card with
+     * Retry, and a failure is never read as "this playlist has no groups" (it used to be getOrDefault(empty):
+     * the column showed only Favorites/Recent/All and the grid said "No channels"). For M3U/Stalker this is
+     * the import itself — progress keeps it open, and if the page still gives up the import keeps going and
+     * [IptvImportProgress.completed] brings the column back when it lands.
+     */
+    private fun loadCategoryColumn(acc: XtreamAccount, accountToken: LiveGuideAccountCommitToken) {
+        categoriesJob?.cancel()
+        _uiState.update { it.copy(categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES), error = null) }
         categoriesJob = viewModelScope.launch {
-            val cats = clientFactory.clientFor(acc).liveCategories(acc).getOrDefault(emptyList())
+            val outcome = BoundedLoad.run(
+                surface = LoadSurface.HUB_CATEGORIES,
+                progress = IptvImportProgress.of(acc.id),
+                onProgress = { loading -> if (isCurrentAccount(accountToken)) _uiState.update { it.copy(categoriesLoad = loading) } },
+                isEmpty = { it.isEmpty() },
+                cancelOnTimeout = acc.sourceType == XtreamAccount.SOURCE_XTREAM,
+                report = mapOf("source_type" to acc.sourceType, "section" to "live"),
+            ) { clientFactory.clientFor(acc).liveCategories(acc).getOrThrow() }
             if (!isCurrentAccount(accountToken)) return@launch
+            val cats = outcome.valueOrNull()
+            if (cats == null) {
+                // Favorites / Recent still work offline, so the synthetic rows stay; the grid says why the
+                // provider's groups are missing and offers Retry.
+                val visible = filteredCategories(acc, withCategoryOverlay(acc.id, emptyList()))
+                _uiState.update {
+                    it.copy(
+                        categories = visible,
+                        categoriesLoad = outcome.status,
+                        error = failureText(acc, (outcome as? LoadOutcome.Failed)?.error),
+                    )
+                }
+                return@launch
+            }
             // Cache the RAW provider categories; the overlay (reorder/hide/rename) + synthetic rows are
             // applied on every display, so a later website edit is reflected without a re-fetch.
             val rawCats = cats.map { GuideCategory(it.id, it.name) }
             categoriesCache[acc.id] = rawCats
             val full = withCategoryOverlay(acc.id, rawCats)
             val visible = filteredCategories(acc, full)
-            _uiState.update { it.copy(categories = visible) }
+            _uiState.update { it.copy(categories = visible, categoriesLoad = outcome.status) }
             // Default to "All channels" so the guide isn't empty for a fresh account.
             selectCategoryFor(
                 acc = acc,
@@ -662,6 +711,41 @@ class XtreamLiveGuideViewModel @Inject constructor(
         (if (_uiState.value.pendingTune != null) visible.firstOrNull { it.special == GuideSpecial.ALL_FAVORITES } else null)?.id
             ?: visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
             ?: visible.firstOrNull()?.id
+
+    /** The classified, photograph-friendly failure line (same wording as the hub's error card). */
+    private fun failureText(acc: XtreamAccount, error: Throwable?): String {
+        val failure = IptvLoadFailurePolicy.classify(error, IptvPanelGuard.panelOriginUrlOf(acc))
+        val text = when (failure.kind) {
+            IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER ->
+                "This provider is blocking us (HTTP ${failure.status ?: 0}). This usually clears by itself."
+            IptvLoadFailurePolicy.Kind.REFUSED -> failure.portalText ?: "Couldn't reach this playlist."
+            IptvLoadFailurePolicy.Kind.UNREACHABLE -> "Couldn't reach this playlist. Check the portal is up and try again."
+        }
+        return "$text\n\n${failure.detail}"
+    }
+
+    /** The error card's Retry: the category column if that is what failed, else the selected category. */
+    fun retry() {
+        val acc = account ?: return
+        val token = accountCommitFence.capture(acc.id) ?: return
+        IptvPanelGuard.resetForAccount(acc)
+        if (_uiState.value.categoriesLoad is LoadStatus.Failed) {
+            loadCategoryColumn(acc, token)
+        } else {
+            selectCategoryFor(acc, _uiState.value.selectedCategoryId, force = true, token = token)
+        }
+    }
+
+    /** [accountId]'s catalog is local now: a column or channel list that ended Failed is asked once more. */
+    private fun onCatalogLanded(accountId: String) {
+        val acc = account?.takeIf { it.id == accountId } ?: return
+        val token = accountCommitFence.capture(acc.id) ?: return
+        val st = _uiState.value
+        when {
+            st.categoriesLoad is LoadStatus.Failed -> loadCategoryColumn(acc, token)
+            st.channelsLoad is LoadStatus.Failed -> selectCategoryFor(acc, st.selectedCategoryId, force = false, token = token)
+        }
+    }
 
     /** Category selections hide deselected provider categories; the synthetic ones
      *  (Favorites/Recent/All channels) are always shown. */
@@ -696,83 +780,113 @@ class XtreamLiveGuideViewModel @Inject constructor(
             channelsCache["${acc.id}|${categoryId}"]?.let { cached ->
                 channelsJob = viewModelScope.launch {
                     val shown = displayChannels(acc.id, cached, isAllView = category.special == GuideSpecial.ALL)
-                    if (!publishPlaybackLineup(acc.id, token, shown)) return@launch
-                    _uiState.update { it.copy(selectedCategoryId = categoryId, channels = shown, loadingChannels = false, error = null, focusedChannelId = shown.firstOrNull()?.contentId) }
+                    if (!publishPlaybackLineup(acc.id, token, shown)) {
+                        // Never strand a cancelled load's spinner: this path does not load, so nothing is waiting.
+                        _uiState.update { it.copy(channelsLoad = LoadStatus.Idle) }
+                        return@launch
+                    }
+                    _uiState.update { it.copy(selectedCategoryId = categoryId, channels = shown, channelsLoad = LoadStatus.Loaded, error = null, focusedChannelId = shown.firstOrNull()?.contentId) }
                     if (isCurrentAccount(token)) primeEpgFor(shown)
                 }
                 return
             }
         }
-        _uiState.update { it.copy(selectedCategoryId = categoryId, channels = emptyList(), focusedChannelId = null, loadingChannels = true, error = null) }
+        _uiState.update { it.copy(selectedCategoryId = categoryId, channels = emptyList(), focusedChannelId = null, channelsLoad = BoundedLoad.begin(LoadSurface.GUIDE_CHANNELS), error = null) }
         channelsJob = viewModelScope.launch {
             // null = the panel request FAILED (these panels throw transient 403/500s and
             // rate-limit bursts) — retry once, then surface an error instead of faking "empty".
-            val rawChannels: List<GuideChannel>? = when (category.special) {
-                // P6: saved rows carry their stored name — cleaned like the playlist's own rows.
-                GuideSpecial.FAVORITES -> withCatalogIdentity(acc, favoriteChannels(acc)).withSavedDisplayNames(listOf(acc))
-                // F03 spans every playlist; B120's catalog identity only resolves this playlist's rows.
-                // P6: each row is cleaned with ITS playlist's setting.
-                GuideSpecial.ALL_FAVORITES -> withOwnCatalogIdentity(acc, favoriteChannels(null))
-                    .withSavedDisplayNames(accountStore.accounts.first())
-                // Scoped to THIS account: the store keeps one flat profile-wide list (favorites
-                // and recents across every playlist), and these rails live inside a provider's
-                // guide — the auto-resume above already filters the same way.
-                GuideSpecial.RECENT -> withCatalogIdentity(
-                    acc,
-                    liveStore.recents.first()
-                        .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
-                        .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) },
-                ).withSavedDisplayNames(listOf(acc))
-                // "All channels" honors the category selections too. NOTE: no cap here — the cap is
-                // applied by displayChannels(isAllView = true) AFTER the overlay floats pins, so a
-                // channel pinned past ALL_CAP survives (the "web pin never shows on TV" bug). rawChannels
-                // is therefore the FULL category-filtered catalog. Favorites/Recent stay unfiltered.
-                GuideSpecial.ALL -> retryOnce { fetchChannels(acc, null) }
-                    ?.filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) }
-                null -> retryOnce { fetchChannels(acc, category.id) }
-                GuideSpecial.SEARCH -> searchResults(acc)
-                GuideSpecial.GROUP -> groupChannels(acc, category.id)
-            }
+            // Bounded (BoundedLoad): a provider that never answers ends the spinner as that same error.
+            val outcome = BoundedLoad.run(
+                surface = LoadSurface.GUIDE_CHANNELS,
+                report = mapOf("source_type" to acc.sourceType, "view" to (category.special?.name?.lowercase() ?: "category")),
+            ) { loadRawChannels(acc, category) }
+            val rawChannels: List<GuideChannel>? = outcome.valueOrNull()
             if (!isCurrentAccount(token)) return@launch
             if (rawChannels == null) {
                 _uiState.update {
-                    it.copy(loadingChannels = false, error = "Provider error loading \"${category.name}\" — re-select to retry")
+                    it.copy(
+                        channelsLoad = (outcome as? LoadOutcome.Failed)?.status ?: LoadStatus.Failed(timedOut = false),
+                        error = failureText(acc, (outcome as? LoadOutcome.Failed)?.error),
+                    )
                 }
                 return@launch
             }
-            // Apply the personalization overlay (hide/pin/reorder) — and, for "All channels", the
-            // ALL_CAP after the pins float — BEFORE publishing, so the playback lineup and the guide
-            // agree and EPG is primed only for what's shown.
-            val isAllView = category.special == GuideSpecial.ALL
-            // F03: the favourites views keep the favourites order (the overlay's pin/reorder would
-            // scramble it), like Search and a custom group.
-            val keepsOwnOrder = category.special == GuideSpecial.SEARCH || category.special == GuideSpecial.GROUP ||
-                category.special == GuideSpecial.FAVORITES || category.special == GuideSpecial.ALL_FAVORITES
-            val channels = if (keepsOwnOrder) {
-                // Search results keep their ranking and a group its own order (the overlay's pin/reorder
-                // would scramble either); hidden
-                // rows were already dropped, so only the pin marker is stamped. Clearing lastRawChannels
-                // stops an overlay change from swapping the previous category back in.
-                lastRawChannels = emptyList()
-                com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.withPinned(
-                    rawChannels, overlayRepository.uiState.value.channels,
-                    entityId = { it.entityId }, setPinned = { row, pinned -> row.copy(pinned = pinned) },
-                )
-            } else {
-                displayChannels(acc.id, rawChannels, isAllView = isAllView)
-            }
-            // Cache network-backed lists so revisiting the category is instant. Never cache an empty
-            // list: a transient panel failure must not pin a category empty all session. "All channels"
-            // caches the CAPPED display list (not the full catalog) to bound memory on weak TV boxes;
-            // a single category is already small so it caches its raw list. The FULL pre-cap list stays
-            // alive in lastRawChannels only while this ALL view is on screen (for live overlay re-apply).
-            if ((category.special == null || isAllView) && rawChannels.isNotEmpty()) {
-                channelsCache["${acc.id}|${category.id}"] = if (isAllView) channels else rawChannels
-            }
-            if (!publishPlaybackLineup(acc.id, token, channels)) return@launch
-            _uiState.update { it.copy(channels = channels, loadingChannels = false, focusedChannelId = channels.firstOrNull()?.contentId) }
-            if (isCurrentAccount(token)) primeEpgFor(channels)
+            publishChannels(acc, category, rawChannels, token)
         }
+    }
+
+    /** The selected view's raw channels. Throws on a failed panel request — a failure is never "empty". */
+    private suspend fun loadRawChannels(acc: XtreamAccount, category: GuideCategory): List<GuideChannel> {
+        val raw: List<GuideChannel>? = when (category.special) {
+            // P6: saved rows carry their stored name — cleaned like the playlist's own rows.
+            GuideSpecial.FAVORITES -> withCatalogIdentity(acc, favoriteChannels(acc)).withSavedDisplayNames(listOf(acc))
+            // F03 spans every playlist; B120's catalog identity only resolves this playlist's rows.
+            // P6: each row is cleaned with ITS playlist's setting.
+            GuideSpecial.ALL_FAVORITES -> withOwnCatalogIdentity(acc, favoriteChannels(null))
+                .withSavedDisplayNames(accountStore.accounts.first())
+            // Scoped to THIS account: the store keeps one flat profile-wide list (favorites
+            // and recents across every playlist), and these rails live inside a provider's
+            // guide — the auto-resume above already filters the same way.
+            GuideSpecial.RECENT -> withCatalogIdentity(
+                acc,
+                liveStore.recents.first()
+                    .filter { it.id.startsWith(XtreamItemRegistry.accountPrefix(acc.id)) }
+                    .map { GuideChannel(it.id, it.name, it.logo, it.streamUrl, streamIdOf(it.id)) },
+            ).withSavedDisplayNames(listOf(acc))
+            // "All channels" honors the category selections too. NOTE: no cap here — the cap is
+            // applied by displayChannels(isAllView = true) AFTER the overlay floats pins, so a
+            // channel pinned past ALL_CAP survives (the "web pin never shows on TV" bug). rawChannels
+            // is therefore the FULL category-filtered catalog. Favorites/Recent stay unfiltered.
+            GuideSpecial.ALL -> retryOnce { fetchChannels(acc, null) }
+                ?.filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) }
+            null -> retryOnce { fetchChannels(acc, category.id) }
+            GuideSpecial.SEARCH -> searchResults(acc)
+            GuideSpecial.GROUP -> groupChannels(acc, category.id)
+        }
+        return raw ?: throw java.io.IOException("channel list unavailable")
+    }
+
+    private suspend fun publishChannels(
+        acc: XtreamAccount,
+        category: GuideCategory,
+        rawChannels: List<GuideChannel>,
+        token: LiveGuideAccountCommitToken,
+    ) {
+        // Apply the personalization overlay (hide/pin/reorder) — and, for "All channels", the
+        // ALL_CAP after the pins float — BEFORE publishing, so the playback lineup and the guide
+        // agree and EPG is primed only for what's shown.
+        val isAllView = category.special == GuideSpecial.ALL
+        // F03: the favourites views keep the favourites order (the overlay's pin/reorder would
+        // scramble it), like Search and a custom group.
+        val keepsOwnOrder = category.special == GuideSpecial.SEARCH || category.special == GuideSpecial.GROUP ||
+            category.special == GuideSpecial.FAVORITES || category.special == GuideSpecial.ALL_FAVORITES
+        val channels = if (keepsOwnOrder) {
+            // Search results keep their ranking and a group its own order (the overlay's pin/reorder
+            // would scramble either); hidden
+            // rows were already dropped, so only the pin marker is stamped. Clearing lastRawChannels
+            // stops an overlay change from swapping the previous category back in.
+            lastRawChannels = emptyList()
+            com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.withPinned(
+                rawChannels, overlayRepository.uiState.value.channels,
+                entityId = { it.entityId }, setPinned = { row, pinned -> row.copy(pinned = pinned) },
+            )
+        } else {
+            displayChannels(acc.id, rawChannels, isAllView = isAllView)
+        }
+        // Cache network-backed lists so revisiting the category is instant. Never cache an empty
+        // list: a transient panel failure must not pin a category empty all session. "All channels"
+        // caches the CAPPED display list (not the full catalog) to bound memory on weak TV boxes;
+        // a single category is already small so it caches its raw list. The FULL pre-cap list stays
+        // alive in lastRawChannels only while this ALL view is on screen (for live overlay re-apply).
+        if ((category.special == null || isAllView) && rawChannels.isNotEmpty()) {
+            channelsCache["${acc.id}|${category.id}"] = if (isAllView) channels else rawChannels
+        }
+        if (!publishPlaybackLineup(acc.id, token, channels)) {
+            if (isCurrentAccount(token)) _uiState.update { it.copy(channelsLoad = LoadStatus.Failed(timedOut = false)) }
+            return
+        }
+        _uiState.update { it.copy(channels = channels, channelsLoad = if (channels.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded, focusedChannelId = channels.firstOrNull()?.contentId) }
+        if (isCurrentAccount(token)) primeEpgFor(channels)
     }
 
     /** Publishes a profile-fenced URL-free lineup before the clean guide can select or zap. */
