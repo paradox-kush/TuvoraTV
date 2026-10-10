@@ -98,4 +98,16 @@ class GuideChannelMatcherTest {
         println("TV GuideChannelMatcher: 50,000 x 30,000 in $ms ms")
         assert(ms < 10_000) { "B10 matcher took $ms ms" }
     }
+
+    @Test
+    fun unicodeNamesKeepTheirIdentity() {
+        assertEquals("itv +1", EpgNorm.baseNorm("ITV +1"))
+        val names = listOf("Суспільне Спорт", "Футбол 1", "Інтер", "ΕΡΤ", "日本テレビ")
+        val lineup = names.mapIndexed { i, n -> GuideChannelMatcher.LineupChannel(i, "$n HD", null) }
+        val guide = names.mapIndexed { i, n -> GuideChannelMatcher.GuideChannel("guide-$i", listOf(n)) }
+        val result = GuideChannelMatcher.match(lineup, guide)
+        assertEquals(names.size, result.assignments.size)
+        names.indices.forEach { i -> assertEquals("guide-$i", result.assignments.single { it.streamId == i }.guideId) }
+        assertEquals("інтер", EpgNorm.coreNorm("Інтер HD"))
+    }
 }

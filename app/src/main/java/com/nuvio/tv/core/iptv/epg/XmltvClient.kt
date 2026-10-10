@@ -290,52 +290,76 @@ class XmltvClient @Inject constructor(
         guideRows: MutableList<EpgGuideChannelRow>,
         emit: (EpgProgramme) -> Unit,
     ): GuideChannelMatcher.Result {
-        var result: GuideChannelMatcher.Result? = null
-        val parse: (java.io.Reader) -> Unit = { reader ->
+        // Spool once and replay locally. Matching after the complete census handles interleaved
+        // feeds and programmes before their channel without repeated downloads or an O(n²) index.
+        val file = java.io.File.createTempFile("xmltv-replay-", ".xml")
+        try {
             val guide = ArrayList<GuideChannelMatcher.GuideChannel>()
-            val parser = android.util.Xml.newPullParser().apply {
-                setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
-                setInput(reader)
+            val download: (java.io.Reader) -> Unit = { reader ->
+                file.bufferedWriter().use { writer ->
+                    var chars = 0L
+                    val tee = object : java.io.FilterReader(reader) {
+                        override fun read(): Int {
+                            val value = super.read()
+                            if (value >= 0) {
+                                chars++
+                                check(chars <= MAX_REPLAY_CHARS) { "XMLTV replay size limit exceeded" }
+                                writer.write(value)
+                            }
+                            return value
+                        }
+                        override fun read(buffer: CharArray, offset: Int, length: Int): Int {
+                            val n = super.read(buffer, offset, length)
+                            if (n > 0) {
+                                chars += n
+                                check(chars <= MAX_REPLAY_CHARS) { "XMLTV replay size limit exceeded" }
+                                writer.write(buffer, offset, n)
+                            }
+                            return n
+                        }
+                    }
+                    val parser = android.util.Xml.newPullParser().apply {
+                        setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+                        setInput(tee)
+                    }
+                    XmltvParser.parseGuide(parser,
+                        onChannel = { id, names -> if (guide.size < MAX_GUIDE_CHANNELS) guide.add(GuideChannelMatcher.GuideChannel(id, names)) },
+                        onChannelsDone = { emptySet() }, onProgramme = {},
+                    )
+                }
             }
-            // Bounded on the way IN ([XmltvIngestWindow]): a week of schedule for thousands of
-            // channels must never reach the disk on a 1 GB box.
+            if (source.kind == EpgSourceKind.XTREAM_DERIVED) {
+                var delivered = false
+                failover.run(acc, canRetry = { !delivered }, probe = xtream?.let { x -> { a -> x.failoverProbe(a) } }) { a ->
+                    fetchInto(acc, derivedXmltvUrl(a) ?: source.url, { delivered = true }, download)
+                }
+            } else {
+                fetchInto(acc, source.url, {}, download)
+            }
+            val result = GuideChannelMatcher.match(lineup, guide, rules)
+            val keep = result.assignments.mapTo(HashSet()) { it.guideId }
+            guide.forEach { g -> normalizeChannelId(g.id).let { if (it in picked) keep.add(it) } }
             val nowMs = System.currentTimeMillis()
-            XmltvParser.parseGuide(
-                parser,
-                onChannel = { id, names -> if (guide.size < MAX_GUIDE_CHANNELS) guide.add(GuideChannelMatcher.GuideChannel(id, names)) },
-                // The DTD puts every <channel> before the first <programme>: match here, once.
-                onChannelsDone = {
-                    val r = GuideChannelMatcher.match(lineup, guide, rules)
-                    result = r
-                    val keep = HashSet<String>(r.assignments.size + picked.size)
-                    r.assignments.forEach { keep.add(it.guideId) }
-                    if (picked.isNotEmpty()) guide.forEach { g -> normalizeChannelId(g.id).let { if (it in picked) keep.add(it) } }
-                    keep
-                },
-                onProgramme = { p ->
+            file.bufferedReader().use { reader ->
+                val parser = android.util.Xml.newPullParser().apply {
+                    setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+                    setInput(reader)
+                }
+                XmltvParser.parseGuide(parser, onChannel = { _, _ -> }, onChannelsDone = { keep }, onProgramme = { p ->
                     if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs)) {
                         emit(p.copy(channelId = EpgSourcePlan.storedKey(index, p.channelId)))
                     }
-                },
-            )
+                })
+            }
             for (g in guide) {
                 val gid = normalizeChannelId(g.id)
                 if (gid.isEmpty()) continue
                 guideRows.add(EpgGuideChannelRow(EpgSourcePlan.storedKey(index, gid), gid, g.names.firstOrNull() ?: g.id, index))
             }
+            return result
+        } finally {
+            file.delete()
         }
-        if (source.kind == EpgSourceKind.XTREAM_DERIVED) {
-            // The panel's own xmltv.php is an EPG catalog call: it fails over with the playlist's
-            // servers (Step 0.3) — until the first bytes reached the parser, never mid-guide.
-            var delivered = false
-            failover.run(acc, canRetry = { !delivered }, probe = xtream?.let { x -> { a -> x.failoverProbe(a) } }) { a ->
-                fetchInto(acc, derivedXmltvUrl(a) ?: source.url, { delivered = true }, parse)
-            }
-        } else {
-            // A custom EPG URL or the playlist's url-tvg lives on its own host — nothing to fail over to.
-            fetchInto(acc, source.url, {}, parse)
-        }
-        return result ?: GuideChannelMatcher.Result(emptyList(), GuideChannelMatcher.Census(lineup.size, 0, 0, 0, 0))
     }
 
     private suspend fun fetchInto(acc: XtreamAccount, url: String, onFirstBytes: () -> Unit, parse: (java.io.Reader) -> Unit) {
@@ -467,5 +491,6 @@ class XmltvClient @Inject constructor(
         private const val LINEUP_RETRY_MS = 2 * 60 * 1000L
         /** Guide `<channel>` entries harvested per source; a bigger guide is parsed, just not all offered. */
         private const val MAX_GUIDE_CHANNELS = 100_000
+        private const val MAX_REPLAY_CHARS = 256L * 1024 * 1024
     }
 }

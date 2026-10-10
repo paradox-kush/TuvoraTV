@@ -152,4 +152,24 @@ class XmltvNameMatchIngestTest {
         }
     }
 
+
+    @Test
+    fun interleavedChannelsAndProgrammesAreMatchedAfterCompleteCensus() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = fmt.format(Date(now - 30 * 60_000L))
+        val stop = fmt.format(Date(now + 30 * 60_000L))
+        fun channel(id: String, name: String) = "<channel id=\"$id\"><display-name>$name</display-name></channel>"
+        fun programme(id: String, title: String) = "<programme start=\"$start\" stop=\"$stop\" channel=\"$id\"><title>$title</title></programme>"
+        guides["/interleaved.xml"] = "<tv>" +
+            channel("early", "CNN") + programme("early", "Wrong name match") +
+            programme("late", "Correct late id") + channel("late", "CNN") +
+            channel("bbc", "BBC One") + programme("bbc", "Late BBC") +
+            channel("unused", "Unrelated") + programme("unused", "Drop me") + "</tv>"
+        val acc = account("interleaved-regression", server.url("/interleaved.xml").toString())
+        db.replaceLiveLineup(acc.id, listOf(row(1, "CNN", "late"), row(2, "BBC One", null)), listOf("1" to "UK"))
+        xmltv.refreshIfStale(acc, force = true)
+        assertEquals("Correct late id", xmltv.storedNowNext(acc, 1, now).firstOrNull()?.title)
+        assertEquals("Late BBC", xmltv.storedNowNext(acc, 2, now).firstOrNull()?.title)
+        assertEquals("one network fetch", 1, hits["/interleaved.xml"]?.get())
+    }
 }
