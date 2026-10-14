@@ -276,6 +276,18 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     val full = withCategoryOverlay(lastCategoryAccountId, lastRawCategories)
                     _uiState.update { st -> st.copy(categories = filteredCategories(acc, full)) }
                 }
+                // Custom groups bypass the normal provider-order path. Rebuild an open group from
+                // its already-loaded lineup when names, hides or membership change: no panel fetch.
+                val group = _uiState.value.categories.firstOrNull {
+                    it.id == _uiState.value.selectedCategoryId && it.special == GuideSpecial.GROUP
+                }
+                val token = acc?.let { accountCommitFence.capture(it.id) }
+                if (acc != null && group != null && token != null && lineupPool?.first == acc.id) {
+                    val raw = groupChannels(acc, group.id)
+                    if (raw != null && isCurrentAccount(token) && _uiState.value.selectedCategoryId == group.id) {
+                        publishChannels(acc, group, raw, token, preserveFocus = true)
+                    }
+                }
             }
         }
         // Warm the canonical-EPG mirror (12h TTL, no-op when fresh) — it backs the guide's
@@ -881,6 +893,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         category: GuideCategory,
         rawChannels: List<GuideChannel>,
         token: LiveGuideAccountCommitToken,
+        preserveFocus: Boolean = false,
     ) {
         // Apply the personalization overlay (hide/pin/reorder) — and, for "All channels", the
         // ALL_CAP after the pins float — BEFORE publishing, so the playback lineup and the guide
@@ -893,11 +906,15 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val channels = if (keepsOwnOrder) {
             // Search results keep their ranking and a group its own order (the overlay's pin/reorder
             // would scramble either); hidden
-            // rows were already dropped, so only the pin marker is stamped. Clearing lastRawChannels
+            // rows were already dropped. Custom groups also apply channel renames before stamping pins. Clearing lastRawChannels
             // stops an overlay change from swapping the previous category back in.
             lastRawChannels = emptyList()
+            val overlay = overlayRepository.uiState.value.channels
+            val displayed = if (category.special == GuideSpecial.GROUP) {
+                GuideCustomGroupDisplayPolicy.displayed(rawChannels, overlay)
+            } else rawChannels
             com.nuvio.tv.core.iptv.overlay.IptvChannelOverlayPolicy.withPinned(
-                rawChannels, overlayRepository.uiState.value.channels,
+                displayed, overlay,
                 entityId = { it.entityId }, setPinned = { row, pinned -> row.copy(pinned = pinned) },
             )
         } else {
@@ -915,7 +932,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
             if (isCurrentAccount(token)) _uiState.update { it.copy(channelsLoad = LoadStatus.Failed(timedOut = false)) }
             return
         }
-        _uiState.update { it.copy(channels = channels, channelsLoad = if (channels.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded, focusedChannelId = channels.firstOrNull()?.contentId) }
+        _uiState.update {
+            it.copy(
+                channels = channels,
+                channelsLoad = if (channels.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded,
+                focusedChannelId = if (preserveFocus) GuideCustomGroupDisplayPolicy.focusAfterRefresh(it.focusedChannelId, channels)
+                    else channels.firstOrNull()?.contentId,
+            )
+        }
         if (isCurrentAccount(token)) primeEpgFor(channels)
     }
 
