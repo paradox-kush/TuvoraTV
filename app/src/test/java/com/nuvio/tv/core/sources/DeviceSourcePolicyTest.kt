@@ -54,4 +54,13 @@ class DeviceSourcePolicyTest {
         assertEquals(DevicePreferenceRefresh.DELTA, DevicePreferenceRefreshPolicy.decide(true,true,true,4,null,true))
         assertEquals(DevicePreferenceRefresh.SNAPSHOT, DevicePreferenceRefreshPolicy.decide(true,true,true,null,9))
     }
+
+    @Test fun explicitInstallationOnlyPermitsItsOwnManifest() {
+        val request = AddonInstallationRequest("https://addon.example/config?token=A")
+        org.junit.Assert.assertTrue(request.permitsManifest("https://addon.example/config/manifest.json?token=A"))
+        org.junit.Assert.assertFalse(request.permitsManifest("https://addon.example/config/catalog/movie/top.json?token=A"))
+        org.junit.Assert.assertFalse(request.permitsManifest("https://addon.example/config/stream/movie/id.json?token=A"))
+        org.junit.Assert.assertFalse(request.permitsManifest("https://addon.example/config/manifest.json?token=B"))
+        org.junit.Assert.assertFalse(request.permitsManifest("https://addon.example/other/manifest.json?token=A"))
+    }
 }

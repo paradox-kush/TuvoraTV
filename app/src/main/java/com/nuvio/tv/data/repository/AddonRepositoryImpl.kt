@@ -346,11 +346,12 @@ class AddonRepositoryImpl(
 
 
     override suspend fun fetchAddon(baseUrl: String): NetworkResult<Addon> {
+        val installation = kotlinx.coroutines.currentCoroutineContext()[com.nuvio.tv.core.sources.AddonInstallationRequest]
         val cleanBaseUrl = canonicalizeUrl(baseUrl)
         val request = manifestRequestLock.withLock {
             manifestRequests[cleanBaseUrl]?.let { return@withLock it }
             lateinit var work: kotlinx.coroutines.Deferred<NetworkResult<Addon>>
-            work = syncScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            work = syncScope.async(context = installation ?: kotlin.coroutines.EmptyCoroutineContext, start = kotlinx.coroutines.CoroutineStart.LAZY) {
                 val queryStart = cleanBaseUrl.indexOf('?')
                 val basePath = if (queryStart >= 0) cleanBaseUrl.substring(0, queryStart).trimEnd('/') else cleanBaseUrl
                 val baseQuery = if (queryStart >= 0) cleanBaseUrl.substring(queryStart) else ""

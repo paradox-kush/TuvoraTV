@@ -138,4 +138,40 @@ class DeviceSourceEngineTest {
         assertEquals("storage_error",device.state.value.mode)
         assertFalse(device.allows(1,"iptv",source.sourceRef))
     }
+
+    @Test fun guestChoicesSurviveEmptyStartupListsAndFreshUiIds() {
+        val addon = source.copy(sourceId = "addon-id",kind = "addon",sourceRef = "https://guest.example/manifest.json")
+        val disk = Memory(json.encodeToString(DevicePreferenceDisk(sources = mapOf(1 to listOf(source,addon)))))
+        val before = engine(disk,local = true)
+        before.setChoice(1,source.sourceId,false)
+        before.setChoice(1,addon.sourceId,false)
+        before.localSources(1,emptyList()) // DataStore's initial value before the real source list arrives.
+        assertFalse(before.allows(1,"iptv",source.sourceRef))
+        assertFalse(before.allowsAddonRequest(1,"https://guest.example/catalog/movie/top.json"))
+        val restarted = engine(disk,local = true)
+        restarted.localSources(1,listOf(source.copy(sourceId = "new-ui-id"),addon.copy(sourceId = "new-addon-ui-id")))
+        assertEquals(listOf(source.sourceId,addon.sourceId),restarted.state.value.disk.sources[1]!!.map { it.sourceId })
+        assertFalse(restarted.allows(1,"iptv",source.sourceRef))
+        assertFalse(restarted.allowsAddonRequest(1,addon.sourceRef))
+        restarted.setChoice(1,source.sourceId,true)
+        assertTrue(restarted.allows(1,"iptv",source.sourceRef))
+        assertFalse(restarted.allowsAddonRequest(1,addon.sourceRef))
+    }
+
+    @Test fun configuredAddonsOnTheSameHostKeepIndependentChoices() {
+        val root = source.copy(sourceId = "root",kind = "addon",sourceRef = "https://addon.example")
+        val path = root.copy(sourceId = "path",sourceRef = "https://addon.example/config")
+        val query = root.copy(sourceId = "query",sourceRef = "https://addon.example?token=B")
+        val disk = Memory(json.encodeToString(DevicePreferenceDisk(binding = SavedDeviceBinding("setup","Phone","secret"),
+            cursor = 0,sources = mapOf(1 to listOf(root,path,query)))))
+        val device = engine(disk)
+        device.setChoice(1,root.sourceId,false)
+        assertFalse(device.allowsAddonRequest(1,root.sourceRef + "/manifest.json"))
+        assertTrue(device.allowsAddonRequest(1,path.sourceRef + "/manifest.json"))
+        assertTrue(device.allowsAddonRequest(1,path.sourceRef + "/catalog/movie/top.json"))
+        assertTrue(device.allowsAddonRequest(1,"https://addon.example/catalog/movie/top.json?token=B"))
+        device.setChoice(1,query.sourceId,false)
+        assertFalse(device.allowsAddonRequest(1,"https://addon.example/stream/movie/id.json?token=B"))
+        assertTrue(device.allowsAddonRequest(1,path.sourceRef + "/catalog/movie/top.json"))
+    }
 }

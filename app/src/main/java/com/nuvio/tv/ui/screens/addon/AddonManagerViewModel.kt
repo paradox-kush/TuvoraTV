@@ -192,7 +192,7 @@ class AddonManagerViewModel @Inject constructor(
             return
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(com.nuvio.tv.core.sources.AddonInstallationRequest(normalizedUrl)) {
             _uiState.update { it.copy(isInstalling = true, error = null, transientMessage = null) }
 
             when (val result = addonRepository.fetchAddon(normalizedUrl)) {

@@ -40,6 +40,8 @@ data class DevicePreferenceDisk(
     val values: List<DevicePreferenceValue> = emptyList(),
     val pending: List<PendingDeviceChoice> = emptyList(),
     val sources: Map<Int, List<DeviceSourceDescriptor>> = emptyMap(),
+    // Guest identities outlive transient empty repository emissions during startup. Encrypted at rest.
+    val localRegistry: List<DeviceSourceDescriptor> = emptyList(),
 )
 
 data class DeviceSourceView(
@@ -95,8 +97,9 @@ class DeviceSourceEngine(
     private fun publish(transform: (DeviceSourceView) -> DeviceSourceView) = synchronized(lock) {
         update(transform(mutable.value))
     }
-    private fun commit(transform: (DevicePreferenceDisk) -> DevicePreferenceDisk) = synchronized(lock) {
+    private fun commit(onlyIfChanged: Boolean = false, transform: (DevicePreferenceDisk) -> DevicePreferenceDisk) = synchronized(lock) {
         val disk = transform(mutable.value.disk)
+        if (onlyIfChanged && disk == mutable.value.disk) return@synchronized
         store.write(json.encodeToString(disk))
         update(mutable.value.copy(disk = disk))
     }
@@ -109,11 +112,22 @@ class DeviceSourceEngine(
             pendingChoice = pending?.desired, hasPendingChoice = pending != null, pendingConflict = pending?.conflict == true))
     }
 
+    private fun knownSources(profile: Int): List<DeviceSourceDescriptor> {
+        val d = state.value.disk
+        val current = d.sources[profile].orEmpty()
+        if (!localOnly) return current
+        val currentKeys = current.map { it.kind to it.sourceRef }.toSet()
+        val history = (d.localRegistry + d.sources.values.flatten()).distinctBy { it.kind to it.sourceRef }
+        // A loading list must not temporarily permit a source whose saved guest choice is off.
+        return current + history.filter { (it.kind to it.sourceRef) !in currentKeys }
+            .map { it.copy(accountEnabled = true, storageProfile = profile) }
+    }
+
     fun allows(profile: Int, kind: String, ref: String): Boolean {
         val view = state.value
         if (view.mode == "unavailable") return true // Old/self-hosted backend: existing behavior, no false controls.
         if (!view.ready || (!localOnly && profile !in view.disk.sources)) return false
-        val sources = view.disk.sources[profile].orEmpty().filter { it.kind == kind && it.sourceRef == ref }
+        val sources = knownSources(profile).filter { it.kind == kind && it.sourceRef == ref }
         return sources.all { it.accountEnabled && choice(profile,it.sourceId) }
     }
 
@@ -133,16 +147,26 @@ class DeviceSourceEngine(
     fun allowsAddonRequest(profile: Int, url: String): Boolean {
         if (state.value.mode == "unavailable") return true
         if (!state.value.ready || (!localOnly && profile !in state.value.disk.sources)) return false
-        val matches = state.value.disk.sources[profile].orEmpty().filter {
+        val rawRequest = url.trim().substringBefore('#')
+        val requested = DeviceSourcePolicy.addonReference(rawRequest)
+        val matches = knownSources(profile).filter {
             if (it.kind != "addon") false else {
                 val base = DeviceSourcePolicy.addonReference(it.sourceRef)
-                val request = DeviceSourcePolicy.addonReference(url)
                 val query = base.substringAfter('?', "")
-                request == base || (url.substringBefore('?').startsWith(base.substringBefore('?') + "/") &&
-                    (query.isEmpty() || url.substringAfter('?', "") == query))
+                requested == base || (rawRequest.substringBefore('?').startsWith(base.substringBefore('?') + "/") &&
+                    ('?' !in base || ('?' in rawRequest && rawRequest.substringAfter('?', "") == query)))
             }
         }
-        return matches.all { it.accountEnabled && choice(profile,it.sourceId) }
+        // Configured addons on one host are independent. Prefer an exact source, then the
+        // longest configured path and its matching query, rather than a broader host/root addon.
+        fun specificity(source: DeviceSourceDescriptor): Int {
+            val base = DeviceSourcePolicy.addonReference(source.sourceRef)
+            return base.substringBefore('?').length * 2 + if ('?' in base) 1 else 0
+        }
+        val exact = matches.filter { DeviceSourcePolicy.addonReference(it.sourceRef) == requested }
+        val longest = matches.maxOfOrNull(::specificity)
+        val selected = if (exact.isNotEmpty()) exact else matches.filter { specificity(it) == longest }
+        return selected.all { it.accountEnabled && choice(profile,it.sourceId) }
     }
 
     fun setChoice(profile: Int, source: String, enabled: Boolean?) {
@@ -171,7 +195,16 @@ class DeviceSourceEngine(
     }
 
     fun localSources(profile: Int, sources: List<DeviceSourceDescriptor>) {
-        if (localOnly && state.value.disk.sources[profile] != sources) commit { it.copy(sources = it.sources + (profile to sources)) }
+        if (!localOnly) return
+        commit(onlyIfChanged = true) { d ->
+            val registry = (d.localRegistry + d.sources.values.flatten()).distinctBy { it.kind to it.sourceRef }
+            val stable = sources.map { incoming ->
+                val saved = registry.firstOrNull { it.kind == incoming.kind && it.sourceRef == incoming.sourceRef }
+                incoming.copy(sourceId = saved?.sourceId ?: incoming.sourceId)
+            }
+            d.copy(sources = d.sources + (profile to stable),
+                localRegistry = (registry + stable).distinctBy { it.kind to it.sourceRef })
+        }
     }
     fun startLocal() {
         check(localOnly)
