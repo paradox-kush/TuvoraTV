@@ -38,7 +38,8 @@ class MediaServerSyncService @Inject constructor(
     private val authManager: AuthManager,
     private val profileManager: ProfileManager,
     private val repository: ServerRepository,
-    private val syncClientIdentity: SyncClientIdentity
+    private val syncClientIdentity: SyncClientIdentity,
+    private val managedBridge: com.nuvio.tv.data.mediaserver.ManagedAddonBridge
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncMutex = Mutex()
@@ -95,6 +96,7 @@ class MediaServerSyncService @Inject constructor(
 
     private suspend fun runSync(profileId: Int, pushOnly: Boolean): Result<Boolean> =
         try {
+            if (!pushOnly && canSync(profileId)) managedBridge.refresh(profileId)
             Result.success(sync(profileId, pushOnly))
         } catch (error: CancellationException) {
             throw error

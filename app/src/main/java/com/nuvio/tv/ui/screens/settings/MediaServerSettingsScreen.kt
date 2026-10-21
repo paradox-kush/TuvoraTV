@@ -150,22 +150,26 @@ internal fun MediaServerSettingsContent(
                     if (provider != null) {
                         item(key = "server_sign_in") {
                             SettingsActionRow(
-                                title = stringResource(R.string.servers_sign_in_again),
+                                title = stringResource(if (connection.managedBridgeId == null) R.string.servers_sign_in_again else R.string.servers_managed_reconnect),
                                 subtitle = null,
                                 leadingIcon = Icons.Default.Lock,
                                 onClick = {
-                                    signIn = ServerSignInRequest(provider, address = connection.address, username = connection.userName)
+                                    if (connection.managedBridgeId != null) viewModel.reconnectManaged()
+                                    else signIn = ServerSignInRequest(provider, address = connection.address, username = connection.userName)
                                 }
                             )
                         }
                     }
-                    item(key = "server_remove") {
+                    if (connection.managedBridgeId == null) item(key = "server_remove") {
                         SettingsActionRow(
                             title = stringResource(R.string.servers_remove),
                             subtitle = null,
                             leadingIcon = Icons.Default.Delete,
                             onClick = { confirmRemove = true }
                         )
+                    }
+                    else item(key = "managed_help") {
+                        Text(stringResource(R.string.servers_managed_help), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
                 SettingsVerticalScrollIndicators(state = listState)

@@ -47,7 +47,7 @@ class ServerCatalog @Inject constructor(
     val detailsLoaded = MutableSharedFlow<ServerItemDetails>(extraBufferCapacity = DETAILS_BUFFER)
 
     val addons: Flow<List<Addon>> = repository.uiState
-        .map { state -> state.enabledConnections.mapNotNull(::addonFor) }
+        .map { state -> state.enabledConnections.filter { it.managedBridgeId == null }.mapNotNull(::addonFor) }
         .distinctUntilChanged()
 
     val searchAddons: Flow<List<Addon>> = addons.map { addons ->
@@ -63,7 +63,7 @@ class ServerCatalog @Inject constructor(
     }
 
     fun libraries(): List<ServerLibraryRef> =
-        repository.enabledConnections().flatMap { connection ->
+        repository.enabledConnections().filter { it.managedBridgeId == null }.flatMap { connection ->
             connection.selectedLibraries.map { ServerLibraryRef(connection, it) }
         }
 

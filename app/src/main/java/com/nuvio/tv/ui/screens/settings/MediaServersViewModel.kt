@@ -153,5 +153,7 @@ class MediaServersViewModel @Inject constructor(
     fun setLibrarySelected(connectionId: String, libraryId: String, selected: Boolean) =
         repository.setLibrarySelected(connectionId, libraryId, selected)
 
+    fun reconnectManaged() { viewModelScope.launch { repository.reconnectManaged() } }
+
     fun remove(connectionId: String) = repository.remove(connectionId)
 }

@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -74,7 +75,17 @@ class ServerMatcher @Inject constructor(
 
     suspend fun match(connection: ServerConnection, request: MatchRequest, forceRefresh: Boolean): List<ServerItemRef> {
         val ids = withConvertedIds(request)
-        val itemIds = connection.selectedLibraries(request.kind)
+        val itemIds = if (connection.managedBridgeId != null) {
+            val meta = metaRepository.getCachedMeta(request.kind.contentType, request.parentId) ?: withTimeoutOrNull(15_000) {
+                (metaRepository.getMetaFromAllAddons(request.kind.contentType, request.parentId)
+                    .first { it !is com.nuvio.tv.core.network.NetworkResult.Loading } as? com.nuvio.tv.core.network.NetworkResult.Success<com.nuvio.tv.domain.model.Meta>)?.data
+            }
+            val title = meta?.name?.trim()?.takeIf { it.isNotEmpty() } ?: throw ServerException(ServerFailure.INCOMPLETE)
+            val results = repository.call(connection.id) { provider, session ->
+                provider.search(session, request.kind, connection.selectedLibraries(request.kind), title, 25)
+            }
+            managedItemIds(connection.id, results, ids)
+        } else connection.selectedLibraries(request.kind)
             .flatMap { library -> index(connection, library, forceRefresh).lookup(ids) }
             .distinct()
         if (request.kind == ServerMediaKind.MOVIE) return itemIds.map { ServerItemRef(connection.id, it) }
@@ -99,7 +110,7 @@ class ServerMatcher @Inject constructor(
     }
 
     fun warm() {
-        repository.enabledConnections().forEach { connection ->
+        repository.enabledConnections().filter { it.managedBridgeId == null }.forEach { connection ->
             listOf(ServerMediaKind.MOVIE, ServerMediaKind.SERIES).filter { supports(connection, it) }.forEach { kind ->
                 connection.selectedLibraries(kind).forEach { library -> build(connection, library, forceRefresh = false) }
             }
@@ -221,3 +232,9 @@ private fun TrackingExternalIds.conflictsWith(other: TrackingExternalIds): Boole
 }
 
 private const val MAX_AIR_DATE_DRIFT_DAYS = 2L
+
+internal fun managedItemIds(connectionId: String, titles: List<ServerTitle>, ids: TrackingExternalIds): List<String> =
+    LibraryIndex(titles.mapNotNull { title ->
+        val ref = ServerItemRef.parse(title.preview.id)?.takeIf { it.connectionId == connectionId } ?: return@mapNotNull null
+        ServerIndexEntry(ref.itemId, title.externalIds)
+    }).lookup(ids)

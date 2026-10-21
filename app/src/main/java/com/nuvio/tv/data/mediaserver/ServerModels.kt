@@ -54,9 +54,12 @@ data class ServerConnection(
     val libraries: List<ServerLibrary> = emptyList(),
     val enabled: Boolean = true,
     val useCatalogMetadata: Boolean = false,
-    val importWatchState: Boolean = false
+    val importWatchState: Boolean = false,
+    val managedBridgeId: String? = null,
+    val managedExpiresAtMs: Long = 0,
+    val managedRevision: Long = 0
 ) {
-    val availableOnDevice: Boolean get() = enabled && com.nuvio.tv.core.sources.DeviceSources.allows("media_server","$providerId|$remoteServerId|$remoteUserId")
+    val availableOnDevice: Boolean get() = enabled && (managedBridgeId == null || !com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) && com.nuvio.tv.core.sources.DeviceSources.allows("media_server","$providerId|$remoteServerId|$remoteUserId")
     val selectedLibraries: List<ServerLibrary>
         get() = libraries.filter { it.selected }
 

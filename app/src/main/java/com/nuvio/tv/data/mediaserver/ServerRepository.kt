@@ -37,6 +37,7 @@ class ServerRepository(
     initialProfileId: Int = 1,
     private val trust: ServerTrust? = null
 ) : ProfileScopedCredentialStore {
+    internal var managedSessionRefresher: (suspend (Int, Boolean) -> Unit)? = null
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
     private val mutableState = MutableStateFlow(ServersUiState())
@@ -102,6 +103,11 @@ class ServerRepository(
         connectionId: String,
         block: suspend (ServerProvider, ServerSession) -> T
     ): T {
+        connection(connectionId)?.takeIf { it.managedBridgeId != null && it.availableOnDevice &&
+            (it.managedExpiresAtMs < System.currentTimeMillis() + 15 * 60_000 ||
+                synchronized(lock) { tokens[it.credentialRef].isNullOrBlank() } || mutableState.value.failures[it.id] == ServerFailure.AUTH_REQUIRED) }?.let {
+            managedSessionRefresher?.invoke(activeProfileId, mutableState.value.failures[it.id] == ServerFailure.AUTH_REQUIRED)
+        }
         val connection = connection(connectionId) ?: throw ServerException(ServerFailure.NOT_FOUND)
         if (!connection.availableOnDevice) throw ServerException(ServerFailure.UNREACHABLE)
         val session = session(connectionId) ?: throw ServerException(ServerFailure.AUTH_REQUIRED)
@@ -138,11 +144,30 @@ class ServerRepository(
         return storeSignIn(provider, signIn, generation, loadedProfileId ?: activeProfileId)
     }
 
+    suspend fun reconnectManaged() { managedSessionRefresher?.invoke(activeProfileId, true) }
+
+    suspend fun connectManaged(signIn: ServerSignIn, bridgeId: String, expiresAtMs: Long, revision: Long): ServerConnection {
+        ensureLoaded()
+        return storeSignIn(checkNotNull(providers.firstOrNull { it.id == "jellyfin" }), signIn, generation,
+            loadedProfileId ?: activeProfileId, bridgeId, expiresAtMs, revision)
+    }
+
+    fun forgetManaged(exceptId: String? = null) {
+        ensureLoaded()
+        val removed = mutableState.value.connections.filter { it.managedBridgeId != null && it.managedBridgeId != exceptId }
+        if (removed.isEmpty()) return
+        val refs = removed.map { it.credentialRef }.toSet()
+        save(mutableState.value.connections - removed.toSet(), synchronized(lock) { tokens.filterKeys { it !in refs } }, local = false)
+    }
+
     private suspend fun storeSignIn(
         provider: ServerProvider,
         signIn: ServerSignIn,
         startedGeneration: Long,
-        profileId: Int
+        profileId: Int,
+        managedBridgeId: String? = null,
+        managedExpiresAtMs: Long = 0,
+        managedRevision: Long = 0
     ): ServerConnection {
         val existing = mutableState.value.connections.firstOrNull {
             it.providerId == provider.id &&
@@ -159,7 +184,10 @@ class ServerRepository(
             userName = signIn.userName,
             credentialRef = newId("k"),
             libraries = existing?.libraries.orEmpty(),
-            enabled = true,
+            enabled = if (managedBridgeId != null) existing?.enabled ?: true else true,
+            managedBridgeId = managedBridgeId,
+            managedExpiresAtMs = managedExpiresAtMs,
+            managedRevision = managedRevision,
             useCatalogMetadata = existing?.useCatalogMetadata ?: false,
             importWatchState = existing?.importWatchState ?: false
         )
@@ -168,18 +196,18 @@ class ServerRepository(
             throw CancellationException("Server scope changed")
         }
         val connection = draft.copy(libraries = mergeLibraries(existing?.libraries.orEmpty(), libraries))
-        store(connection, signIn.token, replacedCredential = existing?.credentialRef)
+        store(connection, signIn.token, replacedCredential = existing?.credentialRef, local = managedBridgeId == null)
         return connection
     }
 
-    internal fun store(connection: ServerConnection, token: String, replacedCredential: String? = null) {
+    internal fun store(connection: ServerConnection, token: String, replacedCredential: String? = null, local: Boolean = true) {
         ensureLoaded()
         val updatedTokens = synchronized(lock) {
             (tokens - listOfNotNull(replacedCredential)) + (connection.credentialRef to token)
         }
         save(
             mutableState.value.connections.filterNot { it.id == connection.id } + connection,
-            updatedTokens
+            updatedTokens, local = local
         )
         setFailure(connection.id, null)
     }
@@ -241,7 +269,7 @@ class ServerRepository(
             version = localVersion,
             // Tokenless servers (arrived from another device, not yet signed in here) stay in the set, or the
             // next push would delete them for every device.
-            servers = mutableState.value.connections.map { connection ->
+            servers = mutableState.value.connections.filter { it.managedBridgeId == null }.map { connection ->
                 connection.toSynced(currentTokens[connection.credentialRef].orEmpty())
             },
             pendingPush = pendingPush,
@@ -271,13 +299,15 @@ class ServerRepository(
             }
             server.toConnection(id, credentialRef)
         }
-        (current.map { it.id } - usedIds).forEach { setFailure(it, null) }
+        val managed = current.filter { it.managedBridgeId != null }
+        managed.forEach { currentTokens[it.credentialRef]?.let { token -> updatedTokens[it.credentialRef] = token } }
+        (current.filter { it.managedBridgeId == null }.map { it.id } - usedIds).forEach { setFailure(it, null) }
         pendingPush = false
         syncedKeys = keys
-        if (connections == current && updatedTokens == currentTokens) {
+        if (connections + managed == current && updatedTokens == currentTokens) {
             persist(current, currentTokens)
         } else {
-            save(connections, updatedTokens, local = false)
+            save(connections + managed, updatedTokens, local = false)
         }
         return true
     }

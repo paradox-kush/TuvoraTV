@@ -86,4 +86,6 @@
     <string name="servers_qc_retry">Try again</string>
     <string name="servers_qc_use_password">Use password instead</string>
     <string name="servers_mpv_unsupported">This server uses a certificate you trusted, which this player cannot use directly. Try the other player in the player settings.</string>
+    <string name="servers_managed_reconnect">Reconnect this device</string>
+    <string name="servers_managed_help">Manage this connection at addon.thekush.dev. To turn it off only on this device, use Settings → Content &amp; Discovery.</string>
 </resources>
