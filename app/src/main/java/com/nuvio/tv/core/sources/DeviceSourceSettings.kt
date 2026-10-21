@@ -6,6 +6,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -97,7 +99,7 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
         Surface(shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(24.dp).widthIn(max = 520.dp).verticalScroll(rememberScrollState()),verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Sources on this device",style = MaterialTheme.typography.titleLarge)
-                Text("${view.disk.binding?.label ?: "Choose a setup"} · Profile $profile")
+                Text("${view.disk.binding?.label ?: if (view.mode == "local") "Local setup" else "Choose a setup"} · Profile $profile")
                 Text("Changes here affect only this device and profile. Your current video keeps playing.")
                 Text(error ?: view.message ?: when {
                     view.mode == "local" -> "Saved only on this device · account setups are separate"
@@ -116,7 +118,8 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
                                         Text(source.name)
                                         if (!source.accountEnabled) Text("Disabled for all devices")
                                     }
-                                    Switch(checked = source.accountEnabled && engine.choice(profile,source.sourceId),
+                                    Switch(modifier = Modifier.semantics { contentDescription = source.name + " on this device" },
+                                        checked = source.accountEnabled && engine.choice(profile,source.sourceId),
                                         enabled = source.accountEnabled, onCheckedChange = { on -> action {
                                             engine.setChoice(profile,source.sourceId,on)
                                             engine.refresh(profile,refreshSources = false,forceDelta = false)

@@ -157,6 +157,7 @@ fun XtreamHubScreen(
     val pageStatus = rememberEffectiveLoadStatus(uiState.categoriesLoad)
     if (pageStatus !is LoadStatus.Loading && uiState.accounts.isEmpty()) {
         HubNoProviderState(
+            hasConfiguredAccounts = uiState.hasConfiguredAccounts,
             firstFocus = firstFocus,
             onAddProvider = onAddProvider,
             onPairFromPhone = onPairFromPhone,
@@ -773,6 +774,7 @@ private fun HubSkeletonRows(cardStyle: PosterCardStyle) {
 /** "No IPTV provider yet": the shared empty-state visuals plus the two provider-adding actions. */
 @Composable
 private fun HubNoProviderState(
+    hasConfiguredAccounts: Boolean,
     firstFocus: FocusRequester,
     onAddProvider: () -> Unit,
     onPairFromPhone: () -> Unit,
@@ -785,18 +787,20 @@ private fun HubNoProviderState(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         EmptyScreenState(
-            title = stringResource(R.string.iptv_hub_no_provider_title),
-            subtitle = stringResource(R.string.iptv_hub_no_provider_subtitle),
+            title = if (hasConfiguredAccounts) "No IPTV playlists enabled" else stringResource(R.string.iptv_hub_no_provider_title),
+            subtitle = if (hasConfiguredAccounts) "Your playlists are still saved. Check Sources on this device or manage their account settings." else stringResource(R.string.iptv_hub_no_provider_subtitle),
             icon = Icons.Default.LiveTv,
             height = 240.dp
         )
         Spacer(Modifier.height(NuvioTheme.spacing.lg))
         Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
             HubActionButton(
-                text = stringResource(R.string.iptv_hub_add_provider),
+                text = if (hasConfiguredAccounts) "Sources on this device" else stringResource(R.string.iptv_hub_add_provider),
                 focusRequester = firstFocus,
-                onClick = onAddProvider
+                onClick = if (hasConfiguredAccounts) ({ com.nuvio.tv.core.sources.DeviceSources.showSettings.value = true }) else onAddProvider
             )
+            if (hasConfiguredAccounts) HubActionButton(text = "Manage playlists", onClick = onAddProvider)
+            else {
             // Typing on a TV is painful (and the TV may be signed out) — offer the phone-pairing
             // path as an equal-weight alternative right on the empty state (P5).
             HubActionButton(
@@ -808,6 +812,7 @@ private fun HubNoProviderState(
                 text = stringResource(R.string.iptv_setup_entry_title),
                 onClick = onEnterSetupCode
             )
+            }
         }
     }
 }

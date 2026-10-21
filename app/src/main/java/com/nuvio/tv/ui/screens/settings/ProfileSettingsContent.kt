@@ -30,8 +30,6 @@ internal fun ProfileSettingsContent(
             subtitle = stringResource(R.string.profile_subtitle)
         )
         SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
-            SettingsActionRow(title = "Sources on this device", subtitle = "Addons, media servers and IPTV playlists",
-                onClick = { com.nuvio.tv.core.sources.DeviceSources.showSettings.value = true })
             SettingsActionRow(
                 title = stringResource(R.string.profile_manage_button),
                 subtitle = null,

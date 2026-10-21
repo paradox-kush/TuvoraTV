@@ -67,6 +67,7 @@ data class XtreamHubItem(
 
 data class XtreamHubUiState(
     val accounts: List<XtreamAccount> = emptyList(),
+    val hasConfiguredAccounts: Boolean = accounts.isNotEmpty(),
     val selectedAccountId: String? = null,
     val section: XtreamSection = XtreamSection.MOVIES,
     val categories: List<XtreamCategory> = emptyList(),
@@ -240,9 +241,9 @@ class XtreamHubViewModel @Inject constructor(
             // Keep observing so playlist edits/enables from Settings refresh a hub VM that
             // stayed on the backstack (a one-shot first() served stale accounts until death).
             store.accounts
-                .map { list -> list.filter { it.availableOnDevice } }
+                .map { list -> list.isNotEmpty() to list.filter { it.availableOnDevice } }
                 .distinctUntilChanged()
-                .collect { accounts ->
+                .collect { (hasConfiguredAccounts, accounts) ->
                     val selected = resolveStickyAccount(_uiState.value.selectedAccountId, remembered.accountId, accounts)
                     val wanted = if (restoreSection) {
                         restoreSection = false
@@ -252,7 +253,7 @@ class XtreamHubViewModel @Inject constructor(
                     }
                     // A disabled content type hides its tab — never leave the section on one.
                     val section = coerceSection(wanted, accounts.firstOrNull { it.id == selected })
-                    _uiState.update { it.copy(accounts = accounts, selectedAccountId = selected, section = section) }
+                    _uiState.update { it.copy(accounts = accounts, hasConfiguredAccounts = hasConfiguredAccounts, selectedAccountId = selected, section = section) }
                     if (accounts.isEmpty()) {
                         _uiState.update { it.copy(categoriesLoad = LoadStatus.Idle) }
                     } else {

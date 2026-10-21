@@ -97,18 +97,18 @@ private fun ContentDiscoveryHub(
             subtitle = stringResource(R.string.settings_content_discovery_subtitle)
         )
         SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
-            // Store builds hide add-ons; the first visible row then takes the initial D-pad focus.
+            SettingsActionRow(
+                title = "Sources on this device",
+                subtitle = "Choose addons, media servers and IPTV for this device and profile.",
+                onClick = { com.nuvio.tv.core.sources.DeviceSources.showSettings.value = true },
+                modifier = initialFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier
+            )
             if (showAddons) {
                 SettingsActionRow(
                     title = stringResource(R.string.addon_title),
                     subtitle = stringResource(R.string.settings_content_discovery_addons_subtitle),
                     onClick = onNavigateToAddons,
-                    leadingIcon = Icons.Default.Extension,
-                    modifier = if (initialFocusRequester != null) {
-                        Modifier.focusRequester(initialFocusRequester)
-                    } else {
-                        Modifier
-                    }
+                    leadingIcon = Icons.Default.Extension
                 )
             }
             SettingsActionRow(
@@ -116,11 +116,7 @@ private fun ContentDiscoveryHub(
                 subtitle = stringResource(R.string.settings_media_servers_subtitle),
                 onClick = onNavigateToServers,
                 leadingIcon = Icons.Default.Dns,
-                modifier = if (!showAddons && initialFocusRequester != null) {
-                    Modifier.focusRequester(serversFocusRequester).focusRequester(initialFocusRequester)
-                } else {
-                    Modifier.focusRequester(serversFocusRequester)
-                }
+                modifier = Modifier.focusRequester(serversFocusRequester)
             )
             if (showPlugins) {
                 SettingsActionRow(
