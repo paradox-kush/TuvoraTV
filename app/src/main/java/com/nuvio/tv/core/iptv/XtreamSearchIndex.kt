@@ -100,7 +100,7 @@ class XtreamSearchIndex @Inject constructor(
     )
 
     private suspend fun ensureLoaded() = coroutineScope {
-        val accounts = store.accounts.first().filter { it.enabled }
+        val accounts = store.accounts.first().filter { it.availableOnDevice }
         accounts.map { acc ->
             async {
                 // M3U (url or file): the whole catalog (live/vod/series) is in IptvContentDb once
@@ -136,7 +136,7 @@ class XtreamSearchIndex @Inject constructor(
         val q = query.trim()
         if (q.length < 2) return Results(emptyList(), emptyList(), emptyList())
         ensureLoaded()
-        val accounts = store.accounts.first().filter { it.enabled }
+        val accounts = store.accounts.first().filter { it.availableOnDevice }
         // F01: what the viewer hid (a channel, or a whole group, on any device or the website) stays out.
         val overlay = runCatching { overlayRepository.freshSnapshot() }.getOrDefault(OverlaySnapshot())
         val channels = ArrayList<Hit>()

@@ -77,6 +77,7 @@ class StartupSyncService @Inject constructor(
     // Fork surfaces (e.g. the IPTV overlay) bound at the composition root — this file names none of them.
     private val realtimeParticipants: Set<@JvmSuppressWildcards com.nuvio.tv.core.contracts.RealtimeSyncParticipant>,
     private val surfaceCatchUp: dagger.Lazy<SurfaceCatchUp>,
+    private val deviceSources: dagger.Lazy<com.nuvio.tv.core.sources.DeviceSources>,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startupPullJob: Job? = null
@@ -221,7 +222,7 @@ class StartupSyncService @Inject constructor(
     /** Surfaces [pullSurface] knows by name; fork surfaces come from [realtimeParticipants]. */
     private val namedSurfaces = setOf(
         "addons", "plugins", "library", "watch_progress", "watched_items", "profile_settings",
-        "provider_credentials", "collections", "home_catalog_settings", "profiles", "media_servers",
+        "provider_credentials", "collections", "home_catalog_settings", "profiles", "media_servers", "device_preferences", "device_sources",
     )
 
     /** B03: every surface this client can pull (what a version-vector catch-up may plan). */
@@ -242,6 +243,8 @@ class StartupSyncService @Inject constructor(
                 false
             }
         return when (surface) {
+            "device_preferences" -> attempt("device preferences") { deviceSources.get().engine().refresh(profileId,false); true }
+            "device_sources" -> attempt("device sources") { deviceSources.get().engine().refresh(profileId,true); true }
             "addons" -> attempt("addons") { pullRealtimeAddons(profileId); true }
             "plugins" -> attempt("plugins") { pullRealtimePlugins(profileId); true }
             "library" -> attempt("library") { pullNuvioLibrary(profileId) }

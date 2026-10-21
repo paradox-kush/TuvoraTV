@@ -20,7 +20,7 @@ class XtreamIptvSearchProvider @Inject constructor(
     private val overlayRepository: IptvOverlayRepository,
 ) : IptvSearchProvider {
 
-    override suspend fun hasSearchableSources(): Boolean = accountStore.accounts.first().any { it.enabled }
+    override suspend fun hasSearchableSources(): Boolean = accountStore.accounts.first().any { it.availableOnDevice }
 
     override suspend fun search(query: String): List<IptvSearchRow> = rowsOf(searchIndex.search(query))
 
@@ -38,7 +38,7 @@ class XtreamIptvSearchProvider @Inject constructor(
          * is included because search drops hidden groups — a hide refreshes shown results.
          */
         fun signatureOf(accounts: List<XtreamAccount>, hiddenKeys: Set<String> = emptySet()): String? {
-            val enabled = accounts.filter { it.enabled }
+            val enabled = accounts.filter { it.availableOnDevice }
             if (enabled.isEmpty()) return null
             fun sel(list: List<String>?) = list?.sorted()?.joinToString(",", "[", "]") ?: "all"
             return enabled.map { acc ->

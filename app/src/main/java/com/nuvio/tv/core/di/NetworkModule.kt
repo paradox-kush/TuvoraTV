@@ -444,8 +444,8 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideAddonApi(retrofit: Retrofit): AddonApi =
-        retrofit.create(AddonApi::class.java)
+    fun provideAddonApi(retrofit: Retrofit, deviceSources: com.nuvio.tv.core.sources.DeviceSources): AddonApi =
+        com.nuvio.tv.data.remote.api.DeviceGuardedAddonApi(retrofit.create(AddonApi::class.java))
 
     @Provides
     @Singleton

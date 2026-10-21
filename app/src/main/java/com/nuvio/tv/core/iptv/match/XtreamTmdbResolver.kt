@@ -126,7 +126,7 @@ class XtreamTmdbResolver @Inject constructor(
         // finishes first.
         val lowRam = DeviceClass.isLowRam(context)
         val delayMs = if (lowRam) startDelayMs * 2 else startDelayMs
-        accounts.filter { it.enabled && it.isXtream() }.forEach { acc ->
+        accounts.filter { it.availableOnDevice && it.isXtream() }.forEach { acc ->
             buildScope.launch {
                 if (delayMs > 0) delay(delayMs)
                 // Contain every failure at the task boundary — this is a bare launch on a

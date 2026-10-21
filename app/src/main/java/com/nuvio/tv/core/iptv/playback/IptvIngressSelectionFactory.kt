@@ -211,7 +211,7 @@ class IptvIngressSelectionFactory internal constructor(
         }
         val account = availableAccounts().firstOrNull { it.id == parsed.accountId }
             ?: return rejected(IptvIngressSelectionFailure.ACCOUNT_MISSING)
-        if (!account.enabled) return rejected(IptvIngressSelectionFailure.ACCOUNT_DISABLED)
+        if (!account.availableOnDevice) return rejected(IptvIngressSelectionFailure.ACCOUNT_DISABLED)
         val sourceType = account.providerSourceType()
             ?: return rejected(IptvIngressSelectionFailure.SOURCE_UNSUPPORTED)
         if (requestedType == ContentType.CATCH_UP && sourceType != ProviderSourceType.XTREAM) {

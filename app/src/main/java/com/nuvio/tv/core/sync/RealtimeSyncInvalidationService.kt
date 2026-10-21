@@ -54,6 +54,7 @@ class RealtimeSyncInvalidationService @Inject constructor(
     private val syncClientIdentity: SyncClientIdentity,
     private val startupSyncService: StartupSyncService,
     private val surfaceCatchUp: dagger.Lazy<SurfaceCatchUp>,
+    private val deviceSources: dagger.Lazy<com.nuvio.tv.core.sources.DeviceSources>,
 ) {
     // Invalidation pulls are a convenience; nothing here is worth taking the process down for.
     private val crashGuard = CoroutineExceptionHandler { _, error ->
@@ -160,6 +161,7 @@ class RealtimeSyncInvalidationService @Inject constructor(
                         repeat(3) { catchUpAttempt ->
                             try {
                                 surfaceCatchUp.get().run(profileId, "subscribed")
+                                deviceSources.get().engine().refresh(profileId,false,false)
                                 return@launch
                             } catch (error: CancellationException) {
                                 throw error
@@ -248,6 +250,8 @@ class RealtimeSyncInvalidationService @Inject constructor(
             return
         }
 
+        val targetSetup = record["device_setup_id"]?.jsonPrimitive?.contentOrNull
+        if (targetSetup != null && targetSetup != deviceSources.get().engine().state.value.disk.binding?.id) return
         val surface = record["surface"]?.jsonPrimitive?.contentOrNull
         if (surface == null) {
             Log.w(TAG, "Received sync invalidation without surface id=$eventId createdAt=$createdAt keys=${record.keys}")

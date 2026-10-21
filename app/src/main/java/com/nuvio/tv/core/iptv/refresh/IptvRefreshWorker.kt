@@ -61,7 +61,7 @@ class IptvRefreshWorker @AssistedInject constructor(
         }
 
         val accounts = runCatching { accountStore.accounts.first() }.getOrDefault(emptyList())
-        val enabled = accounts.filter { it.enabled }
+        val enabled = accounts.filter { it.availableOnDevice }
         val now = System.currentTimeMillis()
 
         val candidates = enabled.map { acc ->

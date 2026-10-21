@@ -16,7 +16,7 @@ internal fun resolveStickyAccount(
     remembered: String?,
     accounts: List<XtreamAccount>,
 ): String? {
-    val enabled = accounts.filter { it.enabled }
+    val enabled = accounts.filter { it.availableOnDevice }
     return (current ?: remembered)?.takeIf { id -> enabled.any { it.id == id } }
         ?: enabled.firstOrNull()?.id
 }

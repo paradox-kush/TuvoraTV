@@ -78,6 +78,7 @@ class M3UClient @Inject constructor(
      * first hub/search access if the DB has no ingest yet.
      */
     suspend fun ensureIngested(acc: XtreamAccount, force: Boolean = false) {
+        com.nuvio.tv.core.sources.DeviceSources.guard("iptv",acc.id)
         val id = acc.id
         val builtAt = db.builtAt(id)
         // B64: a catalog built under the pre-B64 ids rebuilds once (its legacy ids are kept first) —

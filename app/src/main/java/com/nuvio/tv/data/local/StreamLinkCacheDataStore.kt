@@ -24,8 +24,17 @@ data class CachedStreamLink(
     val sources: List<String>? = null,
     val bingeGroup: String? = null,
     val contentLanguage: String? = null,
-    val year: String? = null
-)
+    val year: String? = null,
+    val deviceSourceKind: String? = null,
+    val deviceSourceId: String? = null,
+) {
+    // Legacy entries have no provenance: discover again once instead of bypassing a device choice.
+    val availableOnDevice: Boolean get() = when (val kind = deviceSourceKind) {
+        "unmanaged" -> true
+        null -> false
+        else -> deviceSourceId?.let { com.nuvio.tv.core.sources.DeviceSources.allowsSourceId(it) } == true
+    }
+}
 
 @Singleton
 class StreamLinkCacheDataStore @Inject constructor(
@@ -52,11 +61,15 @@ class StreamLinkCacheDataStore @Inject constructor(
         sources: List<String>? = null,
         bingeGroup: String? = null,
         contentLanguage: String? = null,
-        year: String? = null
+        year: String? = null,
+        deviceSourceKind: String? = null,
+        deviceSourceId: String? = null,
     ) {
         val payload = JSONObject().apply {
             put("url", url)
             put("streamName", streamName)
+            put("deviceSourceKind",deviceSourceKind)
+            deviceSourceId?.let { put("deviceSourceId",it) }
             put("cachedAtMs", System.currentTimeMillis())
             put("headers", JSONObject(headers ?: emptyMap<String, String>()))
             put("filename", filename)
@@ -71,7 +84,17 @@ class StreamLinkCacheDataStore @Inject constructor(
         }.toString()
 
         store().edit { prefs ->
-            prefs[cachePrefKey(contentKey)] = payload
+            val key = cachePrefKey(contentKey)
+            // Hash observers update the same playback URL without knowing its source. Preserve
+            // existing opaque provenance only for that exact URL; otherwise rediscover next time.
+            val previous = prefs[key]?.let { runCatching { JSONObject(it) }.getOrNull() }
+            val next = JSONObject(payload)
+            if (deviceSourceKind == null && previous != null && previous.optString("url") == url &&
+                (url.isNotBlank() || (infoHash != null && previous.optString("infoHash") == infoHash))) {
+                previous.optString("deviceSourceKind", "").takeIf { it.isNotBlank() && it != "null" }?.let { next.put("deviceSourceKind",it) }
+                previous.optString("deviceSourceId", "").takeIf { it.isNotBlank() && it != "null" }?.let { next.put("deviceSourceId",it) }
+            }
+            prefs[key] = next.toString()
         }
     }
 
@@ -121,7 +144,9 @@ class StreamLinkCacheDataStore @Inject constructor(
                 sources = sources,
                 bingeGroup = json.optString("bingeGroup", "").ifBlank { null },
                 contentLanguage = json.optString("contentLanguage", "").ifBlank { null },
-                year = json.optString("year", "").ifBlank { null }
+                year = json.optString("year", "").ifBlank { null },
+                deviceSourceKind = json.optString("deviceSourceKind", "").ifBlank { null },
+                deviceSourceId = json.optString("deviceSourceId", "").ifBlank { null }
             )
         }.getOrNull()
 

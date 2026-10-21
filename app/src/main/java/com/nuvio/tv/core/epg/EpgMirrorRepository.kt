@@ -296,7 +296,7 @@ class EpgMirrorRepository @Inject constructor(
      * on row presence made all-24/7 accounts re-run the episode on every surface visit.
      */
     private suspend fun mapAccountsIfNeeded(nowMs: Long, force: Boolean, generation: String) {
-        val accounts = accountStore.accounts.first().filter { it.enabled }
+        val accounts = accountStore.accounts.first().filter { it.availableOnDevice }
         if (accounts.isEmpty()) return
         var agedBudgetLeft = true
         val due = accounts.filter { acc ->

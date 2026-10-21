@@ -47,7 +47,7 @@ class IptvRefreshScheduler @Inject constructor(
 
     private fun reschedule(accounts: List<XtreamAccount>) {
         val candidates = accounts.map {
-            RefreshCandidate(it.id, it.enabled, it.autoRefreshHours, lastRefreshMs = null)
+            RefreshCandidate(it.id, it.availableOnDevice, it.autoRefreshHours, lastRefreshMs = null)
         }
         val shortestHours = IptvRefreshDue.shortestIntervalHours(candidates)
         val wm = WorkManager.getInstance(context)

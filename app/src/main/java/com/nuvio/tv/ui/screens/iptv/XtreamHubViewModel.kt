@@ -240,7 +240,7 @@ class XtreamHubViewModel @Inject constructor(
             // Keep observing so playlist edits/enables from Settings refresh a hub VM that
             // stayed on the backstack (a one-shot first() served stale accounts until death).
             store.accounts
-                .map { list -> list.filter { it.enabled } }
+                .map { list -> list.filter { it.availableOnDevice } }
                 .distinctUntilChanged()
                 .collect { accounts ->
                     val selected = resolveStickyAccount(_uiState.value.selectedAccountId, remembered.accountId, accounts)

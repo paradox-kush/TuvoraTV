@@ -480,7 +480,7 @@ class StreamScreenViewModel @Inject constructor(
                         streamSourcesEnabled = AppFeaturePolicy.addonStreamSourcesEnabled,
                         isIptv = isIptvContent()
                     )
-                }
+                }?.takeIf { it.availableOnDevice }
                 if (cached != null) {
                     autoPlayHandledForSession = true
                     resolvedAutoPlayTarget = true
@@ -1280,6 +1280,7 @@ class StreamScreenViewModel @Inject constructor(
     }
 
     suspend fun resolveStreamForPlayback(stream: Stream, saveLastLink: Boolean = true): StreamPlaybackInfo? {
+        if (!stream.availableOnDevice) return null
         stream.serverTarget?.let { target -> return prepareServerStream(stream, target) }
         // A matched Stalker source is listed WITHOUT a play link (see XtreamStreamSource): mint it
         // here, for the chosen edition only, so browsing never spends the line's connection budget.
@@ -1344,7 +1345,7 @@ class StreamScreenViewModel @Inject constructor(
                     videoSize = result.videoSize ?: basePlaybackInfo.videoSize
                 )
                 // Save resolved URL to cache for reuse last link
-                if (!result.url.isNullOrBlank() && !skipLinkCache) {
+                if (!result.url.isNullOrBlank() && !skipLinkCache && stream.serverTarget == null && stream.deviceSourceKind != "iptv") {
                     pendingCacheSaveJob = viewModelScope.launch {
                         streamLinkCacheDataStore.save(
                             contentKey = streamCacheKey,
@@ -1356,7 +1357,9 @@ class StreamScreenViewModel @Inject constructor(
                             videoSize = resolved.videoSize,
                             bingeGroup = resolved.bingeGroup,
                             contentLanguage = contentLanguage,
-                            year = year
+                            year = year,
+                            deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
+                            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef)
                         )
                     }
                 }
@@ -1541,6 +1544,7 @@ class StreamScreenViewModel @Inject constructor(
      * Gets the selected stream for playback
      */
     fun getStreamForPlayback(stream: Stream, saveLastLink: Boolean = true): StreamPlaybackInfo {
+        if (!stream.availableOnDevice) throw kotlinx.coroutines.CancellationException("Source disabled on this device")
         cancelStreamsLoad()
         val playbackInfo = StreamPlaybackInfo(
             url = stream.getStreamUrl(),
@@ -1575,7 +1579,7 @@ class StreamScreenViewModel @Inject constructor(
         )
 
         val url = playbackInfo.url
-        if (saveLastLink && !url.isNullOrBlank() && !playbackInfo.isExternal && !skipLinkCache) {
+        if (saveLastLink && !url.isNullOrBlank() && !playbackInfo.isExternal && !skipLinkCache && stream.serverTarget == null && stream.deviceSourceKind != "iptv") {
             pendingCacheSaveJob = viewModelScope.launch {
                 streamLinkCacheDataStore.save(
                     contentKey = streamCacheKey,
@@ -1587,7 +1591,9 @@ class StreamScreenViewModel @Inject constructor(
                     videoSize = playbackInfo.videoSize,
                     bingeGroup = playbackInfo.bingeGroup,
                     contentLanguage = contentLanguage,
-                    year = year
+                    year = year,
+                    deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
+                    deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef)
                 )
             }
         }

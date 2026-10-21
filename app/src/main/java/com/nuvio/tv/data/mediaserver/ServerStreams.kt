@@ -24,7 +24,7 @@ class ServerStreams @Inject constructor(
     fun isNativeRequest(videoId: String): Boolean = ServerItemRef.isServerId(videoId)
 
     fun canServe(type: String, videoId: String): Boolean {
-        ServerItemRef.parse(videoId)?.let { ref -> return repository.connection(ref.connectionId)?.enabled == true }
+        ServerItemRef.parse(videoId)?.let { ref -> return repository.connection(ref.connectionId)?.availableOnDevice == true }
         val connections = repository.enabledConnections().ifEmpty { return false }
         val request = matcher.request(type, videoId, season = 0, episode = 0) ?: return false
         return connections.any { eligible(it, request.kind) }
@@ -96,6 +96,8 @@ class ServerStreams @Inject constructor(
                     ),
                     addonName = label,
                     addonLogo = null,
+                    deviceSourceKind = "media_server",
+                    deviceSourceRef = "${connection.providerId}|${connection.remoteServerId}|${connection.remoteUserId}",
                     serverTarget = candidate.target
                 )
             }

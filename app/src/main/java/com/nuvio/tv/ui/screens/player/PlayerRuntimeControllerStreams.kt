@@ -623,7 +623,7 @@ private fun PlayerRuntimeController.persistSelectedStreamForReuse(
     url: String,
     headers: Map<String, String>
 ) {
-    if (!streamReuseLastLinkEnabled || stream.serverTarget != null) return
+    if (!streamReuseLastLinkEnabled || stream.serverTarget != null || stream.deviceSourceKind == "iptv") return
 
     val key = streamCacheKey ?: return
     val streamName = (stream.name?.takeIf { it.isNotBlank() } ?: stream.addonName)?.takeIf { it.isNotBlank() }
@@ -640,13 +640,15 @@ private fun PlayerRuntimeController.persistSelectedStreamForReuse(
             videoSize = currentVideoSize,
             bingeGroup = stream.behaviorHints?.bingeGroup,
             contentLanguage = contentLanguage,
-            year = year
+            year = year,
+            deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
+            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef)
         )
     }
 }
 
 private fun PlayerRuntimeController.persistTorrentStreamForReuse(stream: Stream) {
-    if (!streamReuseLastLinkEnabled) return
+    if (!streamReuseLastLinkEnabled || stream.deviceSourceKind == "iptv") return
 
     val key = streamCacheKey ?: return
     val infoHash = stream.getEffectiveInfoHash() ?: return
@@ -667,7 +669,9 @@ private fun PlayerRuntimeController.persistTorrentStreamForReuse(stream: Stream)
             sources = stream.sources,
             bingeGroup = stream.behaviorHints?.bingeGroup,
             contentLanguage = contentLanguage,
-            year = year
+            year = year,
+            deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
+            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef)
         )
     }
 }
@@ -774,6 +778,7 @@ private fun PlayerRuntimeController.mintDeferredStreamThen(
 internal fun PlayerRuntimeController.switchToSourceStream(
     stream: Stream
 ) {
+    if (!stream.availableOnDevice) return
     sourceStreamsScope?.cancel()
     sourceStreamsScope = null
     sourceStreamsJob = null
@@ -1021,6 +1026,7 @@ internal fun PlayerRuntimeController.selectEpisodesRange(label: String) {
 private fun PlayerRuntimeController.switchToTorrentSourceStream(
     stream: Stream
 ) {
+    if (!stream.availableOnDevice) return
     val infoHash = stream.getEffectiveInfoHash() ?: return
     sourceStreamsScope?.cancel()
     sourceStreamsScope = null
@@ -1069,6 +1075,7 @@ private fun PlayerRuntimeController.switchToTorrentEpisodeStream(
     forcedTargetVideo: Video?,
     isAutoPlay: Boolean
 ) {
+    if (!stream.availableOnDevice) return
     val infoHash = stream.getEffectiveInfoHash() ?: return
     consecutiveAutoPlayCount = nextConsecutiveAutoPlayCount(
         currentCount = consecutiveAutoPlayCount,
@@ -1429,6 +1436,7 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     forcedTargetVideo: Video? = null,
     isAutoPlay: Boolean = false
 ) {
+    if (!stream.availableOnDevice) return
     if (openExternalStreamInBrowser(stream = stream, fromEpisodePanel = true)) {
         return
     }
@@ -1662,6 +1670,7 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
     stream: Stream,
     forcedTargetVideo: Video? = null
 ) {
+    if (!stream.availableOnDevice) return
     episodeStreamsScope?.cancel()
     episodeStreamsScope = null
     episodeStreamsJob = null

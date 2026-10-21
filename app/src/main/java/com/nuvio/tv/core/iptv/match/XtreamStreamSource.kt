@@ -253,6 +253,7 @@ class XtreamStreamSource @Inject constructor(
         externalUrl = null,
         behaviorHints = null,
         addonName = acc.name,
+        deviceSourceKind = "iptv", deviceSourceRef = acc.id,
         addonLogo = null,
     )
 

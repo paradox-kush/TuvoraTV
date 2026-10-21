@@ -122,6 +122,7 @@ class XmltvClient @Inject constructor(
      * immediately.
      */
     suspend fun refreshIfStale(acc: XtreamAccount, force: Boolean = false): Unit = withContext(Dispatchers.IO) {
+        com.nuvio.tv.core.sources.DeviceSources.guard("iptv",acc.id)
         val id = acc.id
         knownAccounts[id] = acc
         val partition = partitionOf(acc)

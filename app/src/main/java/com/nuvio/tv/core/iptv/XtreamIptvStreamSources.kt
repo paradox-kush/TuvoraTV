@@ -14,7 +14,7 @@ class XtreamIptvStreamSources @Inject constructor(
 
     companion object {
         fun servedContentTypesOf(accounts: List<XtreamAccount>): Set<String> =
-            accounts.filter { it.enabled }.flatMap { account ->
+            accounts.filter { it.availableOnDevice }.flatMap { account ->
                 buildList {
                     if (XtreamAccount.TYPE_MOVIES in account.contentTypes) add("movie")
                     if (XtreamAccount.TYPE_SERIES in account.contentTypes) add("series")

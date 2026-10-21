@@ -12,6 +12,7 @@ import com.nuvio.tv.core.iptv.withoutDeviceLocalPrefs
 import com.nuvio.tv.core.iptv.recordUpdate
 import com.nuvio.tv.core.iptv.recordDelete
 import com.nuvio.tv.core.profile.ProfileManager
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
@@ -29,7 +30,8 @@ import javax.inject.Singleton
 @Singleton
 class XtreamAccountStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val deviceSources: com.nuvio.tv.core.sources.DeviceSources? = null,
 ) {
     private val gson = Gson()
     private val accountsKey = stringPreferencesKey("xtream_accounts")
@@ -37,7 +39,9 @@ class XtreamAccountStore @Inject constructor(
     private fun store(pid: Int = profileManager.activeProfileId.value) = factory.get(pid, FEATURE)
 
     val accounts: Flow<List<XtreamAccount>> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { prefs -> parse(prefs[accountsKey]) }
+        combine(factory.get(pid, FEATURE).data,com.nuvio.tv.core.sources.DeviceSources.changes) { prefs, epoch ->
+            parse(prefs[accountsKey]).map { it.copy(devicePreferenceEpoch = epoch) }
+        }
     }
 
     /** One explicit-profile read for playback owners that must never follow the active-profile flow. */

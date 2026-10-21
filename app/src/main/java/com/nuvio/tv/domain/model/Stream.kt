@@ -34,8 +34,16 @@ data class Stream(
      * to [addonName] for streams that predate it.
      */
     val sourceId: String? = null,
-    val serverTarget: ServerPlaybackTarget? = null
+    val serverTarget: ServerPlaybackTarget? = null,
+    val deviceSourceKind: String? = null,
+    val deviceSourceRef: String? = null
 ) {
+    val availableOnDevice: Boolean get() {
+        val kind = deviceSourceKind ?: return true
+        val ref = deviceSourceRef ?: return true
+        return if (kind == "addon") com.nuvio.tv.core.sources.DeviceSources.addonAllowed(ref)
+            else com.nuvio.tv.core.sources.DeviceSources.allows(kind,ref)
+    }
     /**
      * Returns the primary stream source URL
      */

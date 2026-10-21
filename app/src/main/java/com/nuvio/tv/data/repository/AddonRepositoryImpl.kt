@@ -139,6 +139,7 @@ class AddonRepositoryImpl(
     private val manifestCache = mutableMapOf<String, Addon>()
     private val manifestCacheLock = Any()
     private val manifestCacheRevision = MutableStateFlow(0L)
+    fun onDeviceSourcesChanged() { manifestCacheRevision.update { it + 1 } }
     @Volatile
     private var lastManifestRefreshAttemptTime = 0L
     private var manifestRefreshJob: Job? = null
@@ -279,7 +280,7 @@ class AddonRepositoryImpl(
                         ?: if (!enabled) placeholderAddon(canonical, userNames, enabled) else null
                 }
                 val pending = urls.map(::canonicalizeUrl).filterTo(linkedSetOf()) {
-                    (enabledByUrl[it] ?: true) && getCachedManifest(it) == null
+                    (enabledByUrl[it] ?: true) && com.nuvio.tv.core.sources.DeviceSources.addonAllowed(it) && getCachedManifest(it) == null
                 }
                 emit(AddonDiscoveryState(
                     addons = applyDisplayNames(cached, userNames, enabledByUrl),
@@ -289,7 +290,7 @@ class AddonRepositoryImpl(
 
                 val hasCacheMiss = urls.any { url ->
                     val canonical = canonicalizeUrl(url)
-                    (enabledByUrl[canonical] ?: true) && getCachedManifest(canonical) == null
+                    (enabledByUrl[canonical] ?: true) && com.nuvio.tv.core.sources.DeviceSources.addonAllowed(canonical) && getCachedManifest(canonical) == null
                 }
                 if (hasCacheMiss) {
                     val fresh = coroutineScope {
@@ -297,10 +298,10 @@ class AddonRepositoryImpl(
                             async {
                                 val canonical = canonicalizeUrl(url)
                                 val enabled = enabledByUrl[canonical] ?: true
-                                if (!enabled) {
+                                if (!enabled || !com.nuvio.tv.core.sources.DeviceSources.addonAllowed(canonical)) {
                                     return@async getCachedManifest(canonical)
-                                        ?.copy(enabled = false)
-                                        ?: placeholderAddon(canonical, userNames, enabled = false)
+                                        ?.copy(enabled = enabled)
+                                        ?: placeholderAddon(canonical, userNames, enabled = enabled)
                                 }
                                 // On failure fall back to a placeholder rather than null. Returning
                                 // null drops the addon from the emitted list entirely, so an installed
@@ -328,7 +329,7 @@ class AddonRepositoryImpl(
                     // Still a miss after fetching means a fetch failed: retry just those, on the ladder.
                     val stillMissing = urls.any { url ->
                         val canonical = canonicalizeUrl(url)
-                        (enabledByUrl[canonical] ?: true) && getCachedManifest(canonical) == null
+                        (enabledByUrl[canonical] ?: true) && com.nuvio.tv.core.sources.DeviceSources.addonAllowed(canonical) && getCachedManifest(canonical) == null
                     }
                     if (stillMissing) scheduleManifestRetryLadder()
                 } else if (isCacheStale() && urls.isNotEmpty()) {
@@ -414,7 +415,7 @@ class AddonRepositoryImpl(
             if (retryPending || failed.isEmpty()) return@combine emptySet()
             val enabledByUrl = enabledStates.mapKeys { (url, _) -> canonicalizeUrl(url) }
             urls.map(::canonicalizeUrl)
-                .filter { it in failed && (enabledByUrl[it] ?: true) && getCachedManifest(it) == null }
+                .filter { it in failed && (enabledByUrl[it] ?: true) && com.nuvio.tv.core.sources.DeviceSources.addonAllowed(it) && getCachedManifest(it) == null }
                 .toSet()
         }.distinctUntilChanged()
 
@@ -595,9 +596,9 @@ class AddonRepositoryImpl(
             val userSetName = userSetNames[canonical] ?: userSetNames[addon.baseUrl]
             val enabled = enabledStates[canonical] ?: addon.enabled
             if (!userSetName.isNullOrBlank() && userSetName != addon.name) {
-                addon.copy(displayName = userSetName, enabled = enabled)
+                addon.copy(displayName = userSetName, enabled = enabled, devicePreferenceEpoch = com.nuvio.tv.core.sources.DeviceSources.epoch)
             } else {
-                addon.copy(enabled = enabled)
+                addon.copy(enabled = enabled, devicePreferenceEpoch = com.nuvio.tv.core.sources.DeviceSources.epoch)
             }
         }
 

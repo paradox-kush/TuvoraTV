@@ -124,6 +124,7 @@ class StreamRepositoryImpl @Inject constructor(
         item: com.nuvio.tv.core.iptv.XtreamResolvedItem
     ): List<AddonStreams> {
         val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == item.accountId }
+        if (account?.availableOnDevice != true) return emptyList()
         val playable = if (item.streamUrl.isNotBlank()) {
             val rebased = account?.let { serverFailover.rebaseStreamUrl(it, item.streamUrl) } ?: item.streamUrl
             item.copy(streamUrl = rebased)
@@ -133,7 +134,7 @@ class StreamRepositoryImpl @Inject constructor(
         }
         com.nuvio.tv.core.iptv.IptvPanelHosts.note(playable.streamUrl)
         return playable.toAddonStreams().map { group -> group.copy(streams = group.streams.map { stream ->
-            account?.let { com.nuvio.tv.core.iptv.StreamUserAgentPolicy.applyTo(stream, it) } ?: stream
+            com.nuvio.tv.core.iptv.StreamUserAgentPolicy.applyTo(stream, account).copy(deviceSourceKind = "iptv", deviceSourceRef = account.id)
         }) }
     }
 
@@ -211,7 +212,7 @@ class StreamRepositoryImpl @Inject constructor(
         // Matched-lane streams carry the account's display name as addonName — an unknown label
         // means the failing stream isn't ours (addon/debrid), so bail before any network.
         val candidates = xtreamAccountStore.accounts.first()
-            .filter { it.enabled && it.name == addonName }
+            .filter { it.availableOnDevice && it.name == addonName }
         if (candidates.isEmpty()) return null
         for (account in candidates) {
             val streams = runCatching { xtreamStreamSource.streamsFor(account, type, videoId, season, episode) }
@@ -287,7 +288,7 @@ class StreamRepositoryImpl @Inject constructor(
     }.withSourceQueryDeadline { NetworkResult.Error(context.getString(R.string.stream_source_query_timed_out)) }
 
     private suspend fun hasForkMatchSources(type: String): Boolean =
-        xtreamAccountStore.accounts.first().any { it.enabled } || sourceStreams.matchSourceGroups(type).isNotEmpty()
+        xtreamAccountStore.accounts.first().any { it.availableOnDevice } || sourceStreams.matchSourceGroups(type).isNotEmpty()
 
     override suspend fun getCachedStreamsFromAllAddons(
         type: String, videoId: String, season: Int?, episode: Int?
@@ -395,7 +396,7 @@ class StreamRepositoryImpl @Inject constructor(
             // takes a different route inside XtreamStreamSource (the portal's own search endpoint).
             val xtreamMatchTargets = if (type == "movie" || type == "series") {
                 xtreamAccountStore.accounts.first().filter {
-                    it.enabled && (it.isXtream() || it.sourceType == XtreamAccount.SOURCE_STALKER)
+                    it.availableOnDevice && (it.isXtream() || it.sourceType == XtreamAccount.SOURCE_STALKER)
                 }
             } else {
                 emptyList()
@@ -437,7 +438,7 @@ class StreamRepositoryImpl @Inject constructor(
                                 is NetworkResult.Success -> {
                                     if (streamsResult.data.isNotEmpty()) {
                                         val namedStreams = streamsResult.data.map {
-                                            it.copy(addonName = addon.displayName, addonLogo = addon.logo)
+                                            it.copy(addonName = addon.displayName, addonLogo = addon.logo, deviceSourceKind = "addon", deviceSourceRef = addon.baseUrl)
                                         }
                                         resultChannel.send(
                                             AddonStreams(
@@ -527,7 +528,7 @@ class StreamRepositoryImpl @Inject constructor(
                             }
                             val addon = if (url in ready.failedUrls && forceRefresh) {
                                 (addonRepository.fetchAddon(url) as? NetworkResult.Success)?.data
-                            } else ready.addons.firstOrNull { it.baseUrl == url && it.enabled }
+                            } else ready.addons.firstOrNull { it.baseUrl == url && it.availableOnDevice }
                             if (addon == null || url in ready.failedUrls && !forceRefresh) {
                                 attemptedFailures += StreamAttemptFailure(label, StreamFailureKind.REQUEST_FAILED,
                                     context.getString(R.string.stream_source_configuration_failed))
@@ -535,7 +536,7 @@ class StreamRepositoryImpl @Inject constructor(
                                 when (val result = getStreamsFromAddon(addon, type, videoId)) {
                                     is NetworkResult.Success -> if (result.data.isNotEmpty()) {
                                         resultChannel.send(AddonStreams(addon.displayName, addon.logo,
-                                            result.data.map { it.copy(addonName = addon.displayName, addonLogo = addon.logo) }))
+                                            result.data.map { it.copy(addonName = addon.displayName, addonLogo = addon.logo, deviceSourceKind = "addon", deviceSourceRef = addon.baseUrl) }))
                                     }
                                     is NetworkResult.Error -> attemptedFailures += buildAddonFailure(addon, result)
                                     NetworkResult.Loading -> Unit

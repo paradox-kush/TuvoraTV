@@ -191,6 +191,7 @@ class PlaylistServerFailover(
 
     /** [acc] as seen on its active server — what stream/catch-up/create_link URLs are built from. */
     fun activeAccount(acc: XtreamAccount): XtreamAccount {
+        com.nuvio.tv.core.sources.DeviceSources.guard("iptv",acc.id)
         val servers = servers(acc)
         if (servers.size <= 1) return acc
         return onServer(acc, servers, activeIndex(acc))
@@ -239,15 +240,15 @@ class PlaylistServerFailover(
         evidence: (T) -> ServedFrom = { ServedFrom.NETWORK },
         probe: (suspend (XtreamAccount) -> Unit)? = null,
         attempt: suspend (XtreamAccount) -> T,
-    ): T {
+    ): T = com.nuvio.tv.core.sources.DeviceSources.guarded("iptv",acc.id) {
         val servers = servers(acc)
-        if (servers.size <= 1) return attempt(acc)
+        if (servers.size <= 1) return@guarded attempt(acc)
         val pid = profileId()
         val wallMs = clock()
         val state = ServerFailoverPolicy.clamp(store.read(pid, acc.id), servers.size)
         val order = ServerFailoverPolicy.order(state, servers.size, wallMs)
         val walk = Walk(acc, servers, pid, state, wallMs, canRetry, evidence, probe, attempt)
-        return if (probe == null) walk.sequential(order) else walk.race(order)
+        if (probe == null) walk.sequential(order) else walk.race(order)
     }
 
     /** One call of [run]: its inputs, and what the walk has learned so far. */

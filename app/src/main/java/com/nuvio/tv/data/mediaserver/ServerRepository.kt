@@ -27,7 +27,7 @@ data class ServersUiState(
     val loadingLibraries: Set<String> = emptySet()
 ) {
     val enabledConnections: List<ServerConnection>
-        get() = connections.filter { it.enabled }
+        get() = connections.filter { it.availableOnDevice }
 }
 
 class ServerRepository(
@@ -58,6 +58,13 @@ class ServerRepository(
     private val mutableLocalChanges = MutableSharedFlow<Int>(extraBufferCapacity = 8)
     val localChanges: SharedFlow<Int> = mutableLocalChanges.asSharedFlow()
 
+    fun onDeviceSourcesChanged() {
+        synchronized(lock) {
+            generation += 1
+            libraryLoadEpoch += 1
+            mutableState.update { it.copy(revision = it.revision + 1) }
+        }
+    }
     fun ensureLoaded() {
         synchronized(lock) {
             val profileId = activeProfileId
@@ -86,7 +93,7 @@ class ServerRepository(
         "${provider(connection)?.displayName ?: connection.providerId} · ${connection.name}"
 
     fun session(connectionId: String): ServerSession? {
-        val connection = connection(connectionId)?.takeIf { it.enabled } ?: return null
+        val connection = connection(connectionId)?.takeIf { it.availableOnDevice } ?: return null
         val token = synchronized(lock) { tokens[connection.credentialRef] } ?: return null
         return ServerSession(connection, token)
     }
@@ -96,14 +103,14 @@ class ServerRepository(
         block: suspend (ServerProvider, ServerSession) -> T
     ): T {
         val connection = connection(connectionId) ?: throw ServerException(ServerFailure.NOT_FOUND)
-        if (!connection.enabled) throw ServerException(ServerFailure.UNREACHABLE)
+        if (!connection.availableOnDevice) throw ServerException(ServerFailure.UNREACHABLE)
         val session = session(connectionId) ?: throw ServerException(ServerFailure.AUTH_REQUIRED)
         val provider = provider(session.connection) ?: throw ServerException(ServerFailure.UNSUPPORTED)
         val startedScope = libraryLoadEpoch
         fun isCurrent() = startedScope == libraryLoadEpoch &&
             mutableState.value.connections.firstOrNull { it.id == connectionId } == connection
         return try {
-            block(provider, session).also {
+            com.nuvio.tv.core.sources.DeviceSources.guarded("media_server","${connection.providerId}|${connection.remoteServerId}|${connection.remoteUserId}") { block(provider, session) }.also {
                 if (!isCurrent()) throw CancellationException("Server scope changed")
                 setFailure(connectionId, null, startedScope, connection)
             }

@@ -414,7 +414,7 @@ class RadarChannelMatcher @Inject constructor(
         if (queries.isEmpty()) return emptyList()
 
         // Only real Xtream panels: the match index + player_api VOD URLs don't exist for M3U/Stalker.
-        val accounts = accountStore.accounts.first().filter { it.enabled && it.isXtream() }
+        val accounts = accountStore.accounts.first().filter { it.availableOnDevice && it.isXtream() }
         val hits = LinkedHashMap<String, RecordingHit>()
         for (account in accounts) {
             kotlinx.coroutines.withTimeoutOrNull(INDEX_WAIT_MS) {
@@ -458,7 +458,7 @@ class RadarChannelMatcher @Inject constructor(
             catch (_: Exception) { OverlaySnapshot.EMPTY }
         val accounts = withContext(Dispatchers.IO) {
             accountStore.accounts.first().filter {
-                it.enabled && it.typeEnabled(com.nuvio.tv.core.iptv.XtreamAccount.TYPE_LIVE) &&
+                it.availableOnDevice && it.typeEnabled(com.nuvio.tv.core.iptv.XtreamAccount.TYPE_LIVE) &&
                     it.categorySelections.live?.isEmpty() != true
             }
         }

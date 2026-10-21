@@ -148,8 +148,11 @@ data class XtreamAccount(
      * yet). Nullable rather than an empty-list default because Gson (Unsafe, no constructor) decodes
      * every JSON written before this field existed — accounts and pending-op logs alike — with null.
      */
-    val backupUrls: List<String>? = null
+    val backupUrls: List<String>? = null,
+    @Transient val devicePreferenceEpoch: Long = 0
 ) {
+    val availableOnDevice: Boolean get() = enabled && com.nuvio.tv.core.sources.DeviceSources.allows("iptv",id)
+
     /**
      * The manual correction alone, in ms; null = unset. NOT what a replay sends any more: since B117
      * the start is [XtreamCatchUp.replayOffsetMs] = the panel's measured clock + this correction.

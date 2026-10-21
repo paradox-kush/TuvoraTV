@@ -14,7 +14,7 @@ internal object SportsChannelVisibilityPolicy {
         categories: List<IptvHiddenItemsPolicy.NamedCategory>,
         overlay: OverlaySnapshot,
     ): List<XtreamChannel> {
-        if (!account.enabled || !account.typeEnabled(XtreamAccount.TYPE_LIVE)) return emptyList()
+        if (!account.availableOnDevice || !account.typeEnabled(XtreamAccount.TYPE_LIVE)) return emptyList()
         val selection = account.categorySelections.live
         if (selection != null && selection.isEmpty()) return emptyList()
         val selected = if (selection == null) channels else {

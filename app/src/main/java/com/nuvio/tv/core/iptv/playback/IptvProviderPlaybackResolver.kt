@@ -160,7 +160,7 @@ class IptvProviderPlaybackResolver internal constructor(
     ): PlaybackResult<ResolvedPlaybackRequest> {
         val account = accounts.find(selection.accountId.value)
             ?: return unavailable(deterministic = true)
-        if (!account.enabled || !account.matches(selection.sourceType) || !account.enables(selection.contentType)) {
+        if (!account.availableOnDevice || !account.matches(selection.sourceType) || !account.enables(selection.contentType)) {
             return unavailable(deterministic = true)
         }
         val streamId = validatedStreamId(selection) ?: return unavailable(deterministic = true)

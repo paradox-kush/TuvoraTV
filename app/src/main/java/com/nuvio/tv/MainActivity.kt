@@ -622,6 +622,7 @@ open class MainActivity : ComponentActivity() {
                 amoledSurfacesMode = mainUiPrefs.amoledSurfacesMode,
                 settingsUiStyle = mainUiPrefs.settingsUiStyle
             ) {
+                com.nuvio.tv.core.sources.DeviceSourcesHost()
                 val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
                 val bringIntoViewSpec = if (mainUiPrefs.smoothBringIntoViewEnabled) {
                     NuvioScrollDefaults.smoothScrollSpec

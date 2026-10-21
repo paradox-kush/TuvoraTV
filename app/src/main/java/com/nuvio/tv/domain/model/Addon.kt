@@ -22,14 +22,16 @@ data class Addon(
     val manifestLanguage: String? = null,
     val configVersion: Long? = null,
     val timestamp: Long? = null,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    @Transient val devicePreferenceEpoch: Long = 0
 ) {
+    val availableOnDevice: Boolean get() = enabled && com.nuvio.tv.core.sources.DeviceSources.addonAllowed(baseUrl)
     val isActive: Boolean
-        get() = enabled
+        get() = availableOnDevice
 }
 
 fun List<Addon>.enabledAddons(): List<Addon> =
-    filter { it.enabled }
+    filter { it.availableOnDevice }
 
 @Immutable
 data class CatalogDescriptor(
