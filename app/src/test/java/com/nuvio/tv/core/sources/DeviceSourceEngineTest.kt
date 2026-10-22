@@ -36,6 +36,29 @@ class DeviceSourceEngineTest {
     }
     private fun page() = json.encodeToJsonElement(DevicePreferencePage(false,1,0,0,false,emptyList()))
 
+    @Test fun firstSetupMakesExistingProfileSourcesAvailableWithoutAnotherProfileLoad() = runTest {
+        val disk = Memory()
+        val profilesRead = mutableListOf<Int>()
+        val device = engine(disk) { name, args -> when (name) {
+            "device_sources_list" -> {
+                profilesRead += args["p_profile"]!!.jsonPrimitive.int
+                json.encodeToJsonElement(listOf(source.copy(storageProfile = 2)))
+            }
+            "device_setups_list" -> JsonArray(emptyList())
+            "device_setup_create" -> json.encodeToJsonElement(DeviceSetupResult("created", 1))
+            "device_preferences_read" -> page()
+            else -> error("Unexpected RPC: $name")
+        } }
+        device.refresh(2)
+        assertEquals("select", device.state.value.mode)
+        assertFalse(device.allows(2, "iptv", source.sourceRef))
+        device.select("This phone", profile = 2)
+        assertEquals("ready", device.state.value.mode)
+        assertTrue(device.allows(2, "iptv", source.sourceRef))
+        assertEquals(listOf(2, 2), profilesRead)
+        assertTrue(engine(disk).allows(2, "iptv", source.sourceRef))
+    }
+
     @Test fun iptvOffIsDurableAndIsolatedFromAnotherDeviceAndProfile() {
         val first = cached(); val phone = engine(first); val tv = engine(cached())
         phone.setChoice(1, source.sourceId, false)

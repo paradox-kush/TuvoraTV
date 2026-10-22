@@ -40,6 +40,10 @@ on:
         description: Send community announcements
         type: boolean
         default: false
+      play_manual_review:
+        description: Save Play changes for review in Play Console when automatic submission is unavailable
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -180,6 +184,7 @@ jobs:
           ls -la dist
 
       - name: Publish GitHub Release
+        id: github_release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -201,12 +206,14 @@ jobs:
           # All releases use the single production track.
           tracks: ${{ github.event.inputs.play_track || 'production' }}
           status: completed
+          changesNotSentForReview: ${{ inputs.play_manual_review || false }}
 
       # The download links people actually use — tuvora.co/tv, and the aftv.news Downloader code
       # pointing at it — are not a lookup. The site serves whatever a release last told it, so tell
       # it now. This is the step that makes a released build reachable; if it fails the release is
       # published but the short URL still serves the previous build, so it fails the job loudly.
       - name: Publish the download pointer to tuvora.co
+        if: ${{ !cancelled() && steps.github_release.outcome == 'success' }}
         env:
           RELEASE_TOKEN: ${{ secrets.TUVORA_RELEASE_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
