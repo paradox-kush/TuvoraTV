@@ -1,0 +1,43 @@
+name: Submit existing Play bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published GitHub release version (e.g. 1.16.2)
+        type: string
+        required: true
+      play_manual_review:
+        description: Save changes for manual review instead of automatic submission
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-existing-bundle
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the existing signed Play bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Expected a release version" >&2; exit 1; }
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern "Tuvora-TV-$VERSION-playstore.aab" --dir bundle
+      - name: Submit to Google Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.tuvora.tv
+          releaseFiles: bundle/*.aab
+          tracks: production
+          status: completed
+          releaseName: ${{ inputs.version }}
+          changesNotSentForReview: ${{ inputs.play_manual_review }}
