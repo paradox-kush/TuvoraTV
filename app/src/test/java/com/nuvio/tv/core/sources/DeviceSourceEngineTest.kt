@@ -105,6 +105,32 @@ class DeviceSourceEngineTest {
         assertEquals(listOf("id-1", "id-1"), ids)
     }
 
+    @Test fun automaticBootstrapNeverResetsAnExistingOffChoice() = runTest {
+        val disk = cached(listOf(DevicePreferenceValue(1, source.sourceId, false, 0)))
+        val device = DeviceSourceEngine(disk, { name, _ -> when (name) {
+            "device_sources_list" -> json.encodeToJsonElement(listOf(source))
+            "device_setups_list" -> JsonArray(emptyList())
+            "device_preferences_read" -> page()
+            else -> error("Must not create another setup: $name")
+        } }, { "new-id" }, { "secret" }, { 1000L }, "android",
+            automaticSetupName = "OS device name", existingInstallation = true)
+        device.refresh(1)
+        assertEquals("setup", device.state.value.disk.binding?.id)
+        assertFalse(device.allows(1, "iptv", source.sourceRef))
+    }
+
+    @Test fun unreadableStorageNeverAutomaticallyCreatesDefaultChoices() = runTest {
+        val device = DeviceSourceEngine(Memory("not-json"), { name, _ -> when (name) {
+            "device_sources_list" -> json.encodeToJsonElement(listOf(source))
+            "device_setups_list" -> JsonArray(emptyList())
+            else -> error("Must require recovery: $name")
+        } }, { "id" }, { "secret" }, { 1000L }, "android",
+            automaticSetupName = "OS device name", existingInstallation = true)
+        device.refresh(1)
+        assertEquals(null, device.state.value.disk.binding)
+        assertFalse(device.allows(1, "iptv", source.sourceRef))
+    }
+
     @Test fun firstSetupMakesExistingProfileSourcesAvailableWithoutAnotherProfileLoad() = runTest {
         val disk = Memory()
         val profilesRead = mutableListOf<Int>()
