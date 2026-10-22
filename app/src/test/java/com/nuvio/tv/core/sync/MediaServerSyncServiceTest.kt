@@ -51,7 +51,8 @@ class MediaServerSyncServiceTest {
         authManager = mockk<AuthManager>(relaxed = true) { every { authState } returns this@MediaServerSyncServiceTest.authState },
         profileManager = mockk<ProfileManager> { every { activeProfileId } returns this@MediaServerSyncServiceTest.activeProfileId },
         repository = repository,
-        syncClientIdentity = mockk { every { currentClientId() } returns "tv-test" }
+        syncClientIdentity = mockk { every { currentClientId() } returns "tv-test" },
+        managedBridge = mockk(relaxed = true)
     )
 
     @Test
