@@ -21,6 +21,11 @@ class SyncClientIdentity @Inject constructor(
         "nuvio_sync_client_identity",
         Context.MODE_PRIVATE
     )
+    val sourceSetupUpgradeEligible: Boolean =
+        preferences.getString("source_setup_upgrade_eligible", null)?.toBooleanStrictOrNull()
+            ?: (preferences.getString("client_instance_id", null)?.trim()?.isNotEmpty() == true).also {
+                preferences.edit().putString("source_setup_upgrade_eligible", it.toString()).apply()
+            }
     private var cachedClientId: String? = null
 
     @Synchronized

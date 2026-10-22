@@ -166,8 +166,8 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
                         Button(modifier = Modifier.focusRequester(continueFocus),
                             enabled = !view.busy && !actionBusy && name.isNotBlank(),onClick = {
                                 keyboard?.hide()
-                                action { engine.select(name,profile = profile); if (engine.state.value.ready) { onSetupComplete(); onClose() } }
-                            }) { Text("Continue") }
+                                action { if (view.disk.binding?.registration != null) engine.refresh(profile) else engine.select(name,profile = profile); if (engine.state.value.ready) { onSetupComplete(); onClose() } }
+                            }) { Text(if (view.disk.binding?.registration != null) "Retry" else "Continue") }
                         TextButton(onClick = { editingName = !editingName }) { Text(if (editingName) "Keep this name" else "Change device name") }
                         if (view.setups.isNotEmpty()) {
                             TextButton(onClick = { savedSetupsExpanded = !savedSetupsExpanded }) {

@@ -20,7 +20,8 @@ import javax.inject.Singleton
 
 @Singleton
 class DeviceSources @Inject constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
+    private val identity: com.nuvio.tv.core.sync.SyncClientIdentity,
     private val backend: SyncBackendSupabaseProvider,
     private val auth: dagger.Lazy<AuthManager>,
     private val profiles: dagger.Lazy<ProfileManager>,
@@ -45,7 +46,9 @@ class DeviceSources @Inject constructor(
             }, rpc = { name,args -> checkNotNull(client).postgrest.rpc(name,args).decodeAs<JsonElement>() },
                 uuid = { UUID.randomUUID().toString() }, credential = {
                     ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it.toInt() and 255) }
-                }, now = { System.currentTimeMillis() }, platform = "tv", localOnly = account == null)
+                }, now = { System.currentTimeMillis() }, platform = "tv", localOnly = account == null,
+                automaticSetupName = com.nuvio.tv.core.auth.currentDeviceClientMetadata(context).deviceName.take(120),
+                existingInstallation = identity.sourceSetupUpgradeEligible)
             key = next
         }
         return controller!!

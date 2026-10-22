@@ -65,6 +65,8 @@ class DeviceSourceEngine(
     private val now: () -> Long,
     private val platform: String,
     private val localOnly: Boolean = false,
+    private val automaticSetupName: String? = null,
+    private val existingInstallation: Boolean = false,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
@@ -233,15 +235,7 @@ class DeviceSourceEngine(
                 var b = state.value.disk.binding
                 val draft = b
                 if (draft?.registration != null) {
-                    val result = if (draft.registration == "restore") call<DeviceSetupResult>("device_setup_restore", buildJsonObject {
-                        put("p_setup",draft.id); put("p_expected_generation",draft.generation); put("p_binding",draft.secret)
-                    }) else call<DeviceSetupResult>("device_setup_create", buildJsonObject {
-                        put("p_setup",draft.id); put("p_label",draft.label); put("p_platform",platform); put("p_binding",draft.secret)
-                        put("p_copy_from",draft.copyFrom?.let(::JsonPrimitive) ?: JsonNull)
-                    })
-                    b = draft.copy(generation = result.generation, registration = null)
-                    val registered = b
-                    commit { it.copy(binding = registered) }
+                    b = registerBinding(draft)
                 }
                 var sourcesRead = false
                 if (refreshSources || profile !in state.value.disk.sources) {
@@ -250,6 +244,14 @@ class DeviceSourceEngine(
                     sourcesRead = true
                     val setups = call<List<DeviceSetupSummary>>("device_setups_list", buildJsonObject {})
                     publish { it.copy(setups = setups) }
+                }
+                // A genuine upgrade keeps account defaults. A clean install only skips the
+                // choice when there are no saved setups to restore. Never guess by device name.
+                if (b == null && loaded.isSuccess && !automaticSetupName.isNullOrBlank() &&
+                    (existingInstallation || state.value.setups.isEmpty())) {
+                    val automatic = SavedDeviceBinding(uuid(), automaticSetupName.trim(), credential(), registration = "create")
+                    commit { it.copy(binding = automatic) } // Persist identity before the network for safe retries.
+                    b = registerBinding(automatic)
                 }
                 if (b == null) { publish { it.copy(mode = "select") }; return@withTimeout }
                 val active = checkNotNull(b)
@@ -280,6 +282,18 @@ class DeviceSourceEngine(
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { failure(e) }
         finally { publish { it.copy(busy = false) } }
+    }
+
+    private suspend fun registerBinding(draft: SavedDeviceBinding): SavedDeviceBinding {
+        val result = if (draft.registration == "restore") call<DeviceSetupResult>("device_setup_restore", buildJsonObject {
+            put("p_setup",draft.id); put("p_expected_generation",draft.generation); put("p_binding",draft.secret)
+        }) else call<DeviceSetupResult>("device_setup_create", buildJsonObject {
+            put("p_setup",draft.id); put("p_label",draft.label); put("p_platform",platform); put("p_binding",draft.secret)
+            put("p_copy_from",draft.copyFrom?.let(::JsonPrimitive) ?: JsonNull)
+        })
+        val registered = draft.copy(generation = result.generation, registration = null)
+        commit { it.copy(binding = registered) }
+        return registered
     }
 
     private suspend fun flush(b: SavedDeviceBinding) {
@@ -323,7 +337,7 @@ class DeviceSourceEngine(
             "binding_replaced" in text || "setup_not_found" in text -> view.copy(mode = "replaced", message = "This setup was restored or removed elsewhere. Choose a setup again.")
             view.disk.binding == null && ("PGRST202" in text || "Could not find the function" in text) ->
                 view.copy(mode = "unavailable", message = "Device controls need a server update.")
-            else -> view.copy(message = if (view.disk.pending.isNotEmpty()) "Saved on this device · waiting to sync" else "Could not reach your account. Retry.")
+            else -> view.copy(mode = if (view.mode == "loading") "select" else view.mode, message = if (view.disk.pending.isNotEmpty()) "Saved on this device · waiting to sync" else "Could not reach your account. Retry.")
         } }
     }
 

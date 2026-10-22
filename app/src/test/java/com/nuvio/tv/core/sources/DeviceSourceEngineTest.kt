@@ -36,6 +36,75 @@ class DeviceSourceEngineTest {
     }
     private fun page() = json.encodeToJsonElement(DevicePreferencePage(false,1,0,0,false,emptyList()))
 
+    @Test fun upgradeRegistersAutomaticallyEvenWhenOtherDevicesHaveSavedSettings() = runTest {
+        val disk = Memory()
+        var creates = 0
+        val device = DeviceSourceEngine(disk, { name, _ -> when (name) {
+            "device_sources_list" -> json.encodeToJsonElement(listOf(source))
+            "device_setups_list" -> json.encodeToJsonElement(listOf(DeviceSetupSummary("other", "Other TV", "tv", 1, 0, "")))
+            "device_setup_create" -> { creates++; json.encodeToJsonElement(DeviceSetupResult("created", 1)) }
+            "device_preferences_read" -> page()
+            else -> error(name)
+        } }, { "automatic-id" }, { "automatic-secret" }, { 1000L }, "android",
+            automaticSetupName = "OS device name", existingInstallation = true)
+        device.refresh(1)
+        assertEquals("ready", device.state.value.mode)
+        assertEquals("OS device name", device.state.value.disk.binding?.label)
+        assertEquals(1, creates)
+        device.refresh(1)
+        assertEquals(1, creates)
+        assertTrue(device.allows(1, "iptv", source.sourceRef))
+    }
+
+    @Test fun freshInstallWithSavedSetupsWaitsForRestoreChoice() = runTest {
+        val disk = Memory()
+        val device = DeviceSourceEngine(disk, { name, _ -> when (name) {
+            "device_sources_list" -> json.encodeToJsonElement(listOf(source))
+            "device_setups_list" -> json.encodeToJsonElement(listOf(DeviceSetupSummary("other", "Other TV", "tv", 1, 0, "")))
+            else -> error("Must not auto-register: $name")
+        } }, { "id" }, { "secret" }, { 1000L }, "android",
+            automaticSetupName = "OS device name", existingInstallation = false)
+        device.refresh(1)
+        assertEquals("select", device.state.value.mode)
+        assertEquals(null, device.state.value.disk.binding)
+        assertFalse(device.allows(1, "iptv", source.sourceRef))
+    }
+
+    @Test fun freshAccountWithoutSavedSetupsRegistersWithoutASetupScreen() = runTest {
+        val device = DeviceSourceEngine(Memory(), { name, _ -> when (name) {
+            "device_sources_list" -> json.encodeToJsonElement(listOf(source))
+            "device_setups_list" -> JsonArray(emptyList())
+            "device_setup_create" -> json.encodeToJsonElement(DeviceSetupResult("created", 1))
+            "device_preferences_read" -> page()
+            else -> error(name)
+        } }, { "id" }, { "secret" }, { 1000L }, "android",
+            automaticSetupName = "OS device name")
+        device.refresh(1)
+        assertEquals("ready", device.state.value.mode)
+    }
+
+    @Test fun failedAutomaticRegistrationRetriesThePersistedIdentity() = runTest {
+        val ids = mutableListOf<String>()
+        var sequence = 0
+        val device = DeviceSourceEngine(Memory(), { name, args -> when (name) {
+            "device_sources_list" -> json.encodeToJsonElement(listOf(source))
+            "device_setups_list" -> JsonArray(emptyList())
+            "device_setup_create" -> {
+                ids += args["p_setup"]!!.jsonPrimitive.content
+                if (ids.size == 1) error("connection lost")
+                json.encodeToJsonElement(DeviceSetupResult("created", 1))
+            }
+            "device_preferences_read" -> page()
+            else -> error(name)
+        } }, { "id-${++sequence}" }, { "secret" }, { 1000L }, "android",
+            automaticSetupName = "OS device name")
+        device.refresh(1)
+        assertEquals("select", device.state.value.mode)
+        device.refresh(1)
+        assertEquals("ready", device.state.value.mode)
+        assertEquals(listOf("id-1", "id-1"), ids)
+    }
+
     @Test fun firstSetupMakesExistingProfileSourcesAvailableWithoutAnotherProfileLoad() = runTest {
         val disk = Memory()
         val profilesRead = mutableListOf<Int>()
