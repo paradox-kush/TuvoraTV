@@ -206,7 +206,9 @@ jobs:
           # All releases use the single production track.
           tracks: ${{ github.event.inputs.play_track || 'production' }}
           status: completed
-          changesNotSentForReview: ${{ inputs.play_manual_review || false }}
+          # Play no longer accepts automatic submission for review on this app ("Changes cannot be sent
+          # for review automatically"), so the change is saved and sent for review from the Play Console.
+          changesNotSentForReview: true
 
       # The download links people actually use — tuvora.co/tv, and the aftv.news Downloader code
       # pointing at it — are not a lookup. The site serves whatever a release last told it, so tell
