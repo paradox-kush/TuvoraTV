@@ -260,7 +260,8 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
                             badgePreserved.filter { stream -> stream.addonName == selectedAddon }
                         }
                         it.copy(
-                            isLoadingSourceStreams = false,
+                            // Keep the list live until every addon has answered (upstream ba0db4900).
+                            isLoadingSourceStreams = true,
                             sourceAllStreams = badgePreserved,
                             sourceFilteredStreams = filteredStreams,
                             sourceAvailableAddons = mergedAvailableAddons,
@@ -296,6 +297,7 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
             }
         }
         sourceStreamsFetchCompleted = true
+        _uiState.update { it.copy(isLoadingSourceStreams = false) }
         markRemainingSourceChipsAsError()
     }
 }

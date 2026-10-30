@@ -8,6 +8,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -168,14 +174,6 @@ fun AuthQrSignInScreen(
         }
     }
 
-    val nowMillis by produceState(initialValue = System.currentTimeMillis(), key1 = uiState.qrLoginCode) {
-        while (true) {
-            value = System.currentTimeMillis()
-            delay(1_000)
-        }
-    }
-    val remainingMillis = uiState.qrLoginExpiresAtMillis?.let { (it - nowMillis).coerceAtLeast(0L) } ?: 0L
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -214,7 +212,6 @@ fun AuthQrSignInScreen(
                 isSignedIn = isSignedIn,
                 isOnboardingMode = isOnboardingMode,
                 selfHosted = BuildConfig.SELF_HOSTED,
-                remainingMillis = remainingMillis,
                 onSignIn = viewModel::signIn,
                 onRefreshOrSignOut = {
                     if (isSignedIn) {
@@ -321,7 +318,6 @@ private fun AuthQrLoginPane(
     isSignedIn: Boolean,
     isOnboardingMode: Boolean,
     selfHosted: Boolean,
-    remainingMillis: Long,
     onSignIn: (String, String) -> Unit,
     onRefreshOrSignOut: () -> Unit,
     onBackOrContinue: () -> Unit,
@@ -384,7 +380,7 @@ private fun AuthQrLoginPane(
                 onSignIn = onSignIn
             )
         } else {
-            AuthQrCodeBlock(uiState = uiState, remainingMillis = remainingMillis)
+            AuthQrCodeBlock(uiState = uiState)
         }
 
         Spacer(modifier = Modifier.height(28.dp))
@@ -547,13 +543,12 @@ private fun AuthEmailLoginForm(
 
 @Composable
 private fun AuthQrCodeBlock(
-    uiState: AccountUiState,
-    remainingMillis: Long
+    uiState: AccountUiState
 ) {
-    val qrBitmap = uiState.qrLoginBitmap
+    val qrBitmap = remember(uiState.qrLoginBitmap) { uiState.qrLoginBitmap?.asImageBitmap() }
     if (qrBitmap != null) {
         Image(
-            bitmap = qrBitmap.asImageBitmap(),
+            bitmap = qrBitmap,
             contentDescription = stringResource(R.string.cd_qr_login),
             modifier = Modifier
                 .size(206.dp)
@@ -583,7 +578,6 @@ private fun AuthQrCodeBlock(
         verificationUri = manualCode?.verificationUri,
         qrLoginCode = manualCode?.code,
         expiresAtMillis = uiState.qrLoginExpiresAtMillis,
-        remainingMillis = remainingMillis,
         isLoading = uiState.isLoading
     )
 
@@ -616,7 +610,6 @@ private fun AuthQrManualCodeDetails(
     verificationUri: String?,
     qrLoginCode: String?,
     expiresAtMillis: Long?,
-    remainingMillis: Long,
     isLoading: Boolean
 ) {
     val displayUri = verificationUri?.takeIf { it.isNotBlank() }
@@ -647,11 +640,7 @@ private fun AuthQrManualCodeDetails(
             )
             if (expiresAtMillis != null) {
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = stringResource(R.string.auth_qr_expires, formatDuration(remainingMillis)),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AuthTextSecondary
-                )
+                AuthQrExpiresText(expiresAtMillis = expiresAtMillis)
             }
         } else if (isLoading) {
             val shimmerBrush = rememberShimmerBrush(backdropAware = true)
@@ -684,6 +673,23 @@ private fun AuthQrManualCodeDetails(
             }
         }
     }
+}
+
+// Owns the 1 s ticker so only this line recomposes while the code counts down.
+@Composable
+private fun AuthQrExpiresText(expiresAtMillis: Long) {
+    val nowMillis by produceState(initialValue = System.currentTimeMillis(), key1 = expiresAtMillis) {
+        while (true) {
+            value = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val remainingMillis = (expiresAtMillis - nowMillis).coerceAtLeast(0L)
+    Text(
+        text = stringResource(R.string.auth_qr_expires, formatDuration(remainingMillis)),
+        style = MaterialTheme.typography.bodySmall,
+        color = AuthTextSecondary
+    )
 }
 
 private fun formatDeviceLoginCode(value: String): String =
@@ -748,7 +754,8 @@ private fun StatusPill(
             .fillMaxWidth()
             .border(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border.copy(alpha = 0.35f), RoundedCornerShape(NuvioTheme.radii.md))
             .background(containerColor, RoundedCornerShape(NuvioTheme.radii.md))
-            .padding(horizontal = NuvioTheme.spacing.md, vertical = 10.dp),
+            .padding(horizontal = NuvioTheme.spacing.md, vertical = 10.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
         contentAlignment = Alignment.Center
     ) {
         Text(

@@ -494,6 +494,8 @@ androidComponents {
     }
     // Only the full flavor ships the in-app updater.
     onVariants(selector().withFlavor("distribution" to "full")) { variant ->
+        // AGP makes no ART profile for debuggable variants, and ART ignores .dm files for them anyway.
+        if (variant.debuggable) return@onVariants
         val variantName = variant.name.replaceFirstChar { it.uppercase() }
         val embedTask = tasks.register<EmbedUpdateDexMetadataTask>("embed${variantName}UpdateDexMetadata") {
             dexMetadataDirectory.from(provider {

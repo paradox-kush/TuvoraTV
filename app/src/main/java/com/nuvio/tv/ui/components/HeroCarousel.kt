@@ -1,5 +1,11 @@
 package com.nuvio.tv.ui.components
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import android.graphics.ColorSpace
@@ -52,6 +58,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
@@ -133,9 +141,19 @@ fun HeroCarousel(
             )
             .height(400.dp)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            // ponytail: onFocusChanged must precede focusable to observe it, else isFocused is dead.
-            .onFocusChanged { isFocused = it.hasFocus || it.isFocused }
+            .onFocusChanged {
+                isFocused = it.hasFocus || it.isFocused
+            }
+            .semantics { this.contentDescription = items.getOrNull(activeIndex)?.name.orEmpty() }
             .focusable()
+            .semantics {
+                role = Role.Button
+                contentDescription = items[activeIndex].name
+                onClick {
+                    currentOnItemClick(items[activeIndex])
+                    true
+                }
+            }
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     when (event.key) {

@@ -165,7 +165,7 @@ private fun SidebarNavItem(
         ) {
             Icon(
                 imageVector = item.icon,
-                contentDescription = item.label,
+                contentDescription = null,
                 tint = NuvioTheme.colors.TextPrimary,
                 modifier = Modifier.size(NuvioTheme.sizes.icons.sm)
             )

@@ -41,6 +41,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.clipToBounds
@@ -425,6 +427,7 @@ fun ContentCard(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .semantics { this.contentDescription = item.name }
                             .placeholderCardShimmer(
                                 shimmerOffsetState = effectivePlaceholderShimmerOffsetState,
                                 backgroundColor = NuvioTheme.colors.BackgroundCard
@@ -444,7 +447,7 @@ fun ContentCard(
                         contentScale = ContentScale.Crop
                     )
                 } else {
-                    MonochromePosterPlaceholder(showPlayIcon = isPlaceholderItem || isBackdropExpanded)
+                    MonochromePosterPlaceholder(showPlayIcon = isPlaceholderItem || isBackdropExpanded, contentDescription = item.name)
                 }
 
                 // Read after the image composes, so an onError write lands as a forward

@@ -5,6 +5,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nuvio.tv.R
@@ -149,7 +152,10 @@ internal fun LayoutStreamsSection(
     onShowFileSizeBadgesChange: (Boolean) -> Unit,
     onShowAddonLogoChange: (Boolean) -> Unit,
     onBadgePlacementSelected: (StreamBadgePlacement) -> Unit,
-    onConfigureBadges: () -> Unit
+    onConfigureBadges: () -> Unit,
+    onShowInPlayerChange: (Boolean) -> Unit,
+    onPlayerBadgeSourceSelected: (String) -> Unit,
+    configureBadgesFocusRequester: FocusRequester
 ) {
     var showPositionDialog by rememberSaveable { mutableStateOf(false) }
 
@@ -169,7 +175,8 @@ internal fun LayoutStreamsSection(
     SettingsActionRow(
         title = stringResource(R.string.settings_stream_badge_urls_title),
         subtitle = streamBadgeRulesPreview(streamBadgeUiState),
-        onClick = onConfigureBadges
+        onClick = onConfigureBadges,
+        modifier = Modifier.focusRequester(configureBadgesFocusRequester)
     )
 
     SettingsSectionLabel(text = stringResource(R.string.settings_stream_display_section))

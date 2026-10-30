@@ -437,6 +437,8 @@ class PlayerRuntimeController(
     internal val saveThresholdMs = 5000L
     internal var hasMarkedCurrentEpisodeCompleted: Boolean = false
     internal var lastKnownDuration: Long = 0L
+    /** libmpv live-in-cache detection (duration keeps growing); see [MpvLiveDurationPolicy]. */
+    internal var mpvDurationGrowth = MpvLiveDurationPolicy.DurationGrowth()
 
     internal var playbackStartedForParentalGuide = false
     internal var hasRenderedFirstFrame = false

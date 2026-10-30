@@ -375,6 +375,12 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     if (playerDuration > lastKnownDuration) {
                         lastKnownDuration = playerDuration
                     }
+                    mpvDurationGrowth = MpvLiveDurationPolicy.nextDurationGrowth(
+                        previous = mpvDurationGrowth,
+                        mediaKey = currentStreamUrl,
+                        durationMs = playerDuration,
+                        fromRequestedMedia = firstFrameReady
+                    )
                     // mpv exposes no buffered-ahead equivalent, so position doubles as both:
                     // the freeze signal here is the playhead standing still.
                     sampleLiveFreeze(positionMs = pos, bufferedPositionMs = pos)
@@ -754,6 +760,9 @@ private fun String.reportSafeHost(): String {
 
 internal fun PlayerRuntimeController.saveWatchProgressIfNeeded() {
     if (!hasRenderedFirstFrame) return
+    // A live stream's position is no point to come back to: resuming there seeks past what the
+    // stream holds and nothing plays (upstream b4e47d6d6).
+    if (mpvDurationGrowth.isLiveFor(currentStreamUrl)) return
     val currentPosition = currentPlaybackPositionMs() ?: return
     val duration = getEffectiveDuration(currentPosition)
     // Don't save progress for very short streams (< 2:01) — these are
@@ -769,6 +778,7 @@ internal fun PlayerRuntimeController.saveWatchProgressIfNeeded() {
 
 internal fun PlayerRuntimeController.saveWatchProgress() {
     if (!hasRenderedFirstFrame) return
+    if (mpvDurationGrowth.isLiveFor(currentStreamUrl)) return
     val currentPosition = currentPlaybackPositionMs() ?: return
     val duration = getEffectiveDuration(currentPosition)
     if (isShortPlaceholderDuration(duration)) return

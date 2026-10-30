@@ -16,6 +16,8 @@ import com.nuvio.tv.core.sync.AddonSyncService
 import com.nuvio.tv.core.sync.XtreamAccountSyncService
 import com.nuvio.tv.core.sync.LibrarySyncService
 import com.nuvio.tv.core.sync.PluginSyncService
+import com.nuvio.tv.data.local.PluginSyncProfile
+import com.nuvio.tv.data.local.effectivePluginProfileId
 import com.nuvio.tv.core.sync.WatchProgressSyncService
 import com.nuvio.tv.core.sync.WatchedItemsSyncService
 import com.nuvio.tv.core.sync.ProfileSettingsSyncService
@@ -41,10 +43,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.security.SecureRandom
 import java.time.Instant
 import java.util.Base64
@@ -682,6 +686,10 @@ class AccountViewModel @Inject constructor(
             // Capture profile ID once to prevent cross-profile data leaks
             // if the user switches profiles during this long-running operation.
             val profileId = profileManager.activeProfileId.value
+            val pluginProfileId = effectivePluginProfileId(
+                usesPrimaryPlugins = profileManager.activeProfile?.usesPrimaryPlugins == true,
+                activeProfileId = profileId
+            )
             profileSettingsSyncService.pullCurrentProfileFromRemote()
             pluginManager.isSyncingFromRemote = true
             val remotePlugins = pluginSyncService.getRemoteRepoUrls().getOrElse { throw it }
@@ -757,6 +765,16 @@ class AccountViewModel @Inject constructor(
                     Log.d("AccountViewModel", "pullRemoteData: detected unsynced watched items in Trakt mode, pushing")
                     watchedItemsSyncService.pushToRemote(profileId)
                 }
+            }
+            withContext(PluginSyncProfile(pluginProfileId)) {
+                pluginManager.isSyncingFromRemote = true
+                val remotePlugins = pluginSyncService.getRemoteRepoUrls().getOrElse { throw it }
+                pluginManager.reconcileWithRemoteRepoUrls(
+                    remotePlugins = remotePlugins,
+                    removeMissingLocal = true
+                )
+                pluginManager.isSyncingFromRemote = false
+                pluginManager.flushPendingSync()
             }
             return Result.success(Unit)
         } catch (e: Exception) {
