@@ -155,6 +155,9 @@ fun XtreamHubScreen(
     val searchChip = remember { FocusRequester() }
     var showSearchDialog by remember { mutableStateOf(false) }
     val searchApplies = anyTypeEnabled && account != null && IptvHubSearchPolicy.contentTypeFor(uiState.section) != null
+    // Live: the guide owns channel search (its Search row); the same chip asks it to open, so Search sits in one place on every section.
+    val liveSearchApplies = anyTypeEnabled && account != null && uiState.section == XtreamSection.LIVE
+    var liveSearchRequest by remember { mutableStateOf(0) }
     LaunchedEffect(uiState.selectedAccountId, uiState.section) {
         showSearchDialog = false
         searchViewModel.close()
@@ -294,11 +297,11 @@ fun XtreamHubScreen(
             if (showSeries) HubChip(stringResource(R.string.type_series), uiState.section == XtreamSection.SERIES, focusRequester = seriesTab,
                 onFocusSelect = { if (uiState.section != XtreamSection.SERIES) viewModel.selectSection(XtreamSection.SERIES) }) { viewModel.selectSection(XtreamSection.SERIES) }
             Spacer(Modifier.weight(1f))
-            if (searchApplies) HubChip(
+            if (searchApplies || liveSearchApplies) HubChip(
                 label = stringResource(R.string.iptv_hub_search),
                 selected = false,
                 focusRequester = searchChip,
-                onClick = { showSearchDialog = true }
+                onClick = { if (liveSearchApplies) liveSearchRequest++ else showSearchDialog = true }
             )
             HubChip(
                 label = uiState.selectedAccount?.name?.let(com.nuvio.tv.core.iptv.PlaylistDisplayPolicy::displayName) ?: stringResource(R.string.iptv_hub_account_fallback),
@@ -326,6 +329,7 @@ fun XtreamHubScreen(
                 selectedTabRequester = selectedTabRequester,
                 onPlayCatchUp = onPlayCatchUp,
                 onSwitchAccount = viewModel::selectAccount,
+                searchRequest = liveSearchRequest,
             )
         } else {
             HubBrowseContent(

@@ -137,6 +137,8 @@ fun LiveGuide(
     onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit = { _, _, _, _, _ -> },
     /** F03: an All-favorites channel of another playlist was chosen — switch the guide to [accountId]. */
     onSwitchAccount: (accountId: String) -> Unit = {},
+    /** F48: the hub header's Search chip was pressed on Live — opens this guide's own channel search (bumped per press). */
+    searchRequest: Int = 0,
     viewModel: XtreamLiveGuideViewModel = hiltViewModel(),
 ) {
     val playbackViewModel: CleanLiveGuidePlaybackViewModel = hiltViewModel()
@@ -239,6 +241,7 @@ fun LiveGuide(
     var channelMenuAsk by remember { mutableStateOf<Pair<GuideChannel, List<GuideChannelMenuPolicy.Action>>?>(null) }
     // F01: the channel-search keyboard dialog.
     var searchDialogOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(searchRequest) { if (searchRequest > 0) searchDialogOpen = true }
 
     // Launch a replay in the full player, once.
     val replayLaunch = uiState.replayLaunch
