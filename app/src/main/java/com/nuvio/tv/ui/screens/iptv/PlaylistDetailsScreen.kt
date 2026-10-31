@@ -31,11 +31,16 @@ import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,7 +68,12 @@ import com.nuvio.tv.core.iptv.ManagedDetailsModel
 import com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction
 import com.nuvio.tv.core.iptv.ManagedDetailsModel.Expiry
 import com.nuvio.tv.core.iptv.ManagedDetailsModel.ShelfGroup
+import com.nuvio.tv.core.iptv.IptvManualRefreshPolicy
+import com.nuvio.tv.core.iptv.LoadStatus
 import com.nuvio.tv.core.iptv.ManagedPlaylistInfo
+import com.nuvio.tv.core.iptv.ManualRefreshResult
+import com.nuvio.tv.core.iptv.refresh.IptvManualRefreshController
+import com.nuvio.tv.core.iptv.refresh.ManualRefreshUiState
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
@@ -88,6 +98,8 @@ data class PlaylistDetailsState(
     /** The panel was asked for the account info and did not answer. */
     val expiryCheckFailed: Boolean = false,
     val nowEpochSec: Long,
+    /** UX179: the "Refresh now" card's status; filled by the page itself, so callers leave the default. */
+    val refresh: ManualRefreshUiState = ManualRefreshUiState(),
 )
 
 private val FocusOutline = Color.White
@@ -112,6 +124,18 @@ fun PlaylistDetailsScreen(
     onAction: (DetailsAction) -> Unit,
     onClose: () -> Unit,
 ) {
+    // UX179: "Refresh now" is handled here (the controller owns the work; the cooldown lives in the engine).
+    val refresher = hiltViewModel<PlaylistRefreshHostViewModel>().refresher
+    val refreshScope = rememberCoroutineScope()
+    val refreshController = remember(state.account.id, refreshScope) {
+        IptvManualRefreshController(refreshScope, refresher::refreshNow, refresher::lastRefreshAt)
+    }
+    val refreshState by refreshController.state.collectAsStateWithLifecycle()
+    LaunchedEffect(state.account.id) { refreshController.load(state.account) }
+    val shownState = state.copy(refresh = refreshState)
+    val dispatch: (DetailsAction) -> Unit = { action ->
+        if (action == DetailsAction.REFRESH) refreshController.start(state.account) else onAction(action)
+    }
     val shelves = remember(state.account.id, state.account.sourceType, state.managed, state.needsReimport) {
         ManagedDetailsModel.shelves(state.account, state.managed, state.needsReimport)
     }
@@ -147,10 +171,10 @@ fun PlaylistDetailsScreen(
                                 ShelfGroup.REMOVE -> stringResource(R.string.iptv_shelf_remove)
                             },
                             cards = shelf.cards,
-                            state = state,
+                            state = shownState,
                             // Initial focus: the first card of the first shelf.
                             firstCardFocus = if (shelfIndex == 0) firstCardFocus else null,
-                            onAction = onAction,
+                            onAction = dispatch,
                         )
                     }
                 }
@@ -355,6 +379,32 @@ private fun cardSpec(action: DetailsAction, state: PlaylistDetailsState): CardSp
         stringResource(if (state.rematchStarted) R.string.iptv_card_rematch_started else R.string.iptv_card_rematch_sub),
         Icons.Default.Refresh,
     )
+    DetailsAction.REFRESH -> {
+        val r = state.refresh
+        // The wait ends at the load's own deadline even if the work never returns (BoundedLoad).
+        val status = rememberEffectiveLoadStatus(r.load)
+        val subtitle = when {
+            status is LoadStatus.Loading -> stringResource(R.string.iptv_card_refresh_running)
+            // A stall deadline is "outcome unknown", not "failed": the rebuild keeps going behind the screen.
+            status is LoadStatus.Failed && status.timedOut -> stringResource(R.string.iptv_card_refresh_slow)
+            status is LoadStatus.Failed -> stringResource(
+                if (r.result == ManualRefreshResult.PARTIAL) R.string.iptv_card_refresh_partial else R.string.iptv_card_refresh_failed,
+            )
+            r.result == ManualRefreshResult.COOLDOWN -> stringResource(R.string.iptv_card_refresh_cooldown)
+            r.result == ManualRefreshResult.RELOAD_ON_OPEN -> stringResource(R.string.iptv_card_refresh_reload_on_open)
+            r.result == ManualRefreshResult.NEEDS_LOCAL_FILE -> stringResource(R.string.iptv_card_refresh_needs_file)
+            else -> when (val age = r.age) {
+                null -> stringResource(R.string.iptv_card_refresh_sub)
+                else -> when (age.unit) {
+                    IptvManualRefreshPolicy.AgeUnit.JUST_NOW -> stringResource(R.string.iptv_card_refresh_updated_now)
+                    IptvManualRefreshPolicy.AgeUnit.MINUTES -> stringResource(R.string.iptv_card_refresh_updated_minutes, age.count.toString())
+                    IptvManualRefreshPolicy.AgeUnit.HOURS -> stringResource(R.string.iptv_card_refresh_updated_hours, age.count.toString())
+                    IptvManualRefreshPolicy.AgeUnit.DAYS -> stringResource(R.string.iptv_card_refresh_updated_days, age.count.toString())
+                }
+            }
+        }
+        CardSpec(stringResource(R.string.iptv_card_refresh), subtitle, Icons.Default.Sync)
+    }
     DetailsAction.CATCHUP -> CardSpec(stringResource(R.string.iptv_card_catchup), stringResource(R.string.iptv_card_catchup_sub), Icons.Default.History)
     DetailsAction.GUIDE -> CardSpec(stringResource(R.string.iptv_card_guide), stringResource(R.string.iptv_card_guide_sub), Icons.Default.DateRange)
     DetailsAction.EDIT -> CardSpec(

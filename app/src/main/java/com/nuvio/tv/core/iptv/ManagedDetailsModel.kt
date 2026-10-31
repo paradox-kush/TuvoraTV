@@ -11,7 +11,7 @@ package com.nuvio.tv.core.iptv
 object ManagedDetailsModel {
 
     enum class DetailsAction {
-        CONTACT, CONTENT, HIDDEN, GUIDE, REMATCH, CATCHUP, EDIT, REIMPORT, TOGGLE_ENABLED, DETACH, REMOVE
+        CONTACT, CONTENT, HIDDEN, GUIDE, REFRESH, REMATCH, CATCHUP, EDIT, REIMPORT, TOGGLE_ENABLED, DETACH, REMOVE
     }
 
     enum class ShelfGroup { PROVIDER, LIBRARY, REMOVE }
@@ -129,6 +129,8 @@ object ManagedDetailsModel {
                 add(DetailsAction.HIDDEN)
                 // Lane G (B10/F10/F14): every playlist type has a guide and channel names.
                 add(DetailsAction.GUIDE)
+                // UX179: every playlist type gets the card; what it does differs (Stalker reloads on open).
+                add(DetailsAction.REFRESH)
                 if (account.isXtream()) {
                     add(DetailsAction.REMATCH)
                     add(DetailsAction.CATCHUP)

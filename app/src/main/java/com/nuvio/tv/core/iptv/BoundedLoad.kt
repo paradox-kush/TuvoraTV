@@ -54,6 +54,11 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
     LIVE_RESOLVE("live_resolve", 20_000L, reportsEveryOutcome = false),
     /** IPTV settings: hidden items, content categories, setup-code preview, phone pairing. */
     SETTINGS("settings", 25_000L, reportsEveryOutcome = false),
+    /**
+     * A manual "Refresh now" of one playlist (UX179). A big M3U or catalog legitimately takes minutes, so this is a
+     * STALL deadline fed by import progress; past it the screen stops waiting (the rebuild keeps going behind it).
+     */
+    PLAYLIST_REFRESH("playlist_refresh", 90_000L, reportsEveryOutcome = true),
 }
 
 sealed interface LoadStatus {

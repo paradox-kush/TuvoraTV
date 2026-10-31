@@ -426,6 +426,15 @@ class XtreamTmdbResolver @Inject constructor(
         buildBackoffPrefs.edit().putLong(key, now).commit()
     }
 
+    /**
+     * UX179: a manual "Refresh now" is the viewer asking again, so it must not be swallowed by the 1 h backoff that
+     * follows a failed build (kept in memory AND in prefs here). Clears only this playlist's stamps; the
+     * crash-protection journal is untouched.
+     */
+    fun clearFailureBackoff(accountId: String) {
+        MatchKind.entries.forEach { clearLastFailure("$accountId#${it.slug}") }
+    }
+
     private fun clearLastFailure(key: String) {
         lastFailedBuildMs.remove(key)
         buildBackoffPrefs.edit().remove(key).commit()
