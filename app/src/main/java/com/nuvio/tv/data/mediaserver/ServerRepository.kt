@@ -383,16 +383,18 @@ class ServerRepository(
             loadedProfileId = profileId
             mutableState.value = ServersUiState(
                 connections = stored.connections,
-                loadingLibraries = if (libraryRefreshPending) stored.connections.filter {
-                    it.enabled && !stored.tokens[it.credentialRef].isNullOrBlank()
-                }.mapTo(mutableSetOf()) { it.id } else emptySet(),
+                loadingLibraries = stored.connections.filter {
+                    val hasToken = !stored.tokens[it.credentialRef].isNullOrBlank()
+                    (libraryRefreshPending && it.availableOnDevice && hasToken) ||
+                        ServerLibraryBootstrapPolicy.needsRefresh(it, hasToken)
+                }.mapTo(mutableSetOf()) { it.id },
                 // A server that has no token on this device (synced from another one) is a sign-in, not a mystery.
                 failures = stored.connections
                     .filter { stored.tokens[it.credentialRef].isNullOrBlank() }
                     .associate { it.id to ServerFailure.AUTH_REQUIRED },
                 revision = mutableState.value.revision + 1
             )
-            if (libraryRefreshPending) scheduleLibraryRefresh(profileId)
+            if (mutableState.value.loadingLibraries.isNotEmpty()) scheduleLibraryRefresh(profileId)
         }
     }
 
