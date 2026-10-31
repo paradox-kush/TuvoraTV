@@ -53,6 +53,8 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
      *  resolves, so only failures are reported; a started channel is already a playback event. */
     LIVE_RESOLVE("live_resolve", 20_000L, reportsEveryOutcome = false),
     /** IPTV settings: hidden items, content categories, setup-code preview, phone pairing. */
+    /** The IPTV hub's Movies/Series search inside one playlist. Every query would report, so only failures do. */
+    HUB_SEARCH("hub_search", 20_000L, reportsEveryOutcome = false),
     SETTINGS("settings", 25_000L, reportsEveryOutcome = false),
 }
 

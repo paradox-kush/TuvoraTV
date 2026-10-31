@@ -106,9 +106,11 @@ fun XtreamHubScreen(
     /** Opens a catch-up replay in the full player — see LiveGuide's parameter of the same name. */
     onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit =
         { _, _, _, _, _ -> },
-    viewModel: XtreamHubViewModel = hiltViewModel()
+    viewModel: XtreamHubViewModel = hiltViewModel(),
+    searchViewModel: XtreamHubSearchViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val search by searchViewModel.state.collectAsStateWithLifecycle()
     var showAccountPicker by remember { mutableStateOf(false) }
     // B10: the Live guide's preview player expanded to fullscreen — hide the header row so the
     // video really covers the whole screen. Focus is locked inside the guide while true.
@@ -147,6 +149,40 @@ fun XtreamHubScreen(
     // With every type disabled no tab requester is attached — restore focus to the account chip.
     val headerRestoreTarget = if (anyTypeEnabled) selectedTabRequester else firstFocus
 
+    // F48: search inside the selected playlist's Movies / Series. OK on the chip opens the keyboard dialog;
+    // submitting shows the results page; Back closes it and focus returns to the chip (checked, with the tab
+    // restorer as the fallback), so the remote never lands nowhere.
+    val searchChip = remember { FocusRequester() }
+    var showSearchDialog by remember { mutableStateOf(false) }
+    val searchApplies = anyTypeEnabled && account != null && IptvHubSearchPolicy.contentTypeFor(uiState.section) != null
+    LaunchedEffect(uiState.selectedAccountId, uiState.section) {
+        showSearchDialog = false
+        searchViewModel.close()
+    }
+    var searchWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(search.open) {
+        val wasOpen = searchWasOpen
+        searchWasOpen = search.open
+        if (wasOpen && !search.open) {
+            repeat(5) {
+                if (runCatching { searchChip.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                kotlinx.coroutines.delay(50)
+            }
+        }
+    }
+    if (showSearchDialog && account != null) {
+        HubSearchDialog(
+            playlistName = account.name,
+            section = uiState.section,
+            initialQuery = search.query,
+            onSubmit = { q ->
+                showSearchDialog = false
+                searchViewModel.submit(account.id, uiState.section, q)
+            },
+            onDismiss = { showSearchDialog = false },
+        )
+    }
+
     // Movies/Series tile -> native detail. (Live is handled by the TiViMate guide below.)
     val onActivate: (XtreamHubItem) -> Unit = { hit ->
         hit.contentId?.let { onOpenDetail(it, hit.detailType) }
@@ -163,6 +199,45 @@ fun XtreamHubScreen(
             onPairFromPhone = onPairFromPhone,
             onEnterSetupCode = onEnterSetupCode
         )
+        return
+    }
+
+    if (search.open && account != null) {
+        val searchStatus = rememberEffectiveLoadStatus(search.load)
+        val searchPortraitStyle = remember(uiState.posterCardWidthDp, uiState.posterCardHeightDp, uiState.posterCardCornerRadiusDp) {
+            PosterCardDefaults.Style.copy(
+                width = uiState.posterCardWidthDp.dp * HUB_PORTRAIT_CARD_SCALE,
+                height = uiState.posterCardHeightDp.dp * HUB_PORTRAIT_CARD_SCALE,
+                cornerRadius = uiState.posterCardCornerRadiusDp.dp,
+            )
+        }
+        if (searchStatus == LoadStatus.Loaded) {
+            HubCategoryPage(
+                title = stringResource(
+                    R.string.iptv_hub_search_results_title, search.query,
+                    com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(account.name),
+                ),
+                rowKey = "search_${account.id}_${uiState.section}_${search.query}",
+                items = search.items,
+                hasMore = false,
+                portraitStyle = searchPortraitStyle,
+                landscapeStyle = searchPortraitStyle,
+                showLabels = uiState.posterLabelsEnabled,
+                onNearEnd = {},
+                onActivate = onActivate,
+                onBack = searchViewModel::close,
+            )
+        } else {
+            HubSearchStatePage(
+                playlistName = account.name,
+                search = search,
+                status = searchStatus,
+                skeleton = { HubSkeletonRows(cardStyle = searchPortraitStyle) },
+                onSearchAgain = { showSearchDialog = true },
+                onRetry = searchViewModel::retry,
+                onBack = searchViewModel::close,
+            )
+        }
         return
     }
 
@@ -219,6 +294,12 @@ fun XtreamHubScreen(
             if (showSeries) HubChip(stringResource(R.string.type_series), uiState.section == XtreamSection.SERIES, focusRequester = seriesTab,
                 onFocusSelect = { if (uiState.section != XtreamSection.SERIES) viewModel.selectSection(XtreamSection.SERIES) }) { viewModel.selectSection(XtreamSection.SERIES) }
             Spacer(Modifier.weight(1f))
+            if (searchApplies) HubChip(
+                label = stringResource(R.string.iptv_hub_search),
+                selected = false,
+                focusRequester = searchChip,
+                onClick = { showSearchDialog = true }
+            )
             HubChip(
                 label = uiState.selectedAccount?.name?.let(com.nuvio.tv.core.iptv.PlaylistDisplayPolicy::displayName) ?: stringResource(R.string.iptv_hub_account_fallback),
                 selected = false,

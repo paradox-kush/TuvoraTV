@@ -156,7 +156,7 @@ internal fun GuideAssignDialog(
 }
 
 @Composable
-private fun GuideTextField(
+internal fun GuideTextField(
     value: String,
     onValueChange: (String) -> Unit,
     onSubmit: () -> Unit,

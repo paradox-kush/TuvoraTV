@@ -132,24 +132,32 @@ class XtreamSearchIndex @Inject constructor(
         }.awaitAll()
     }
 
-    suspend fun search(query: String): Results {
+    suspend fun search(
+        query: String,
+        onlyAccountId: String? = null,
+        cap: Int = PER_ACCOUNT,
+        display: Int = DISPLAY,
+        includeLive: Boolean = true,
+        strict: Boolean = false,
+    ): Results {
         val q = query.trim()
         if (q.length < 2) return Results(emptyList(), emptyList(), emptyList())
-        ensureLoaded()
-        val accounts = store.accounts.first().filter { it.availableOnDevice }
+        // The live lineup of every playlist is only needed when live hits are wanted (the IPTV hub's VOD search skips it).
+        if (includeLive) ensureLoaded()
+        val accounts = store.accounts.first().filter { it.availableOnDevice && (onlyAccountId == null || it.id == onlyAccountId) }
         // F01: what the viewer hid (a channel, or a whole group, on any device or the website) stays out.
         val overlay = runCatching { overlayRepository.freshSnapshot() }.getOrDefault(OverlaySnapshot())
         val channels = ArrayList<Hit>()
         val movies = ArrayList<Hit>()
         val series = ArrayList<Hit>()
         for (acc in accounts) {
-            if (acc.isM3UBacked()) { searchM3U(acc, q, overlay, channels, movies, series); continue }
+            if (acc.isM3UBacked()) { searchM3U(acc, q, overlay, channels, movies, series, cap, includeLive); continue }
             // Live hits carry a categoryId -> category selections filter them per item; a
             // disabled content type (or an explicit "Deselect All") contributes nothing.
-            if (acc.searchIncludesType(XtreamAccount.TYPE_LIVE)) visibleLiveHits(
+            if (includeLive && acc.searchIncludesType(XtreamAccount.TYPE_LIVE)) visibleLiveHits(
                 acc, q, overlay,
                 liveCache[acc.id].orEmpty().asSequence().filter { acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.categoryId) },
-            ).take(PER_ACCOUNT).forEach { ch ->
+            ).take(cap).forEach { ch ->
                     val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
                     registry.register(
                         XtreamResolvedItem(
@@ -163,9 +171,9 @@ class XtreamSearchIndex @Inject constructor(
             // filter every hit BEFORE the per-account cap; F01: so do hidden groups.
             if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) when {
                 acc.isXtream() -> keepCapped(
-                    acc, XtreamAccount.TYPE_MOVIES,
+                    acc, XtreamAccount.TYPE_MOVIES, cap,
                     withoutHiddenGroups(acc, XtreamAccount.TYPE_MOVIES, overlay,
-                        matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, scanLimit(acc, XtreamAccount.TYPE_MOVIES))) { it.categoryId },
+                        matchIndex.searchByName(acc.id, MatchKind.MOVIE, q, scanLimit(acc, XtreamAccount.TYPE_MOVIES, cap))) { it.categoryId },
                 ) { it.categoryId }.forEach { m ->
                     val id = XtreamItemRegistry.vodId(acc.id, m.sid)
                     val streamUrl = xtreamClient.buildStreamUrl(acc, "movie", m.sid, m.ext ?: "mp4")
@@ -181,8 +189,8 @@ class XtreamSearchIndex @Inject constructor(
                 // ask the portal itself (get_ordered_list&search=), as the source lane and Mobile do.
                 // The play link is minted at play time (streamUrl "" = create_link on play).
                 acc.sourceType == XtreamAccount.SOURCE_STALKER -> keepCapped(
-                    acc, XtreamAccount.TYPE_MOVIES,
-                    withoutHiddenGroups(acc, XtreamAccount.TYPE_MOVIES, overlay, clientFactory.stalker().searchMovies(acc, q)) { it.categoryId },
+                    acc, XtreamAccount.TYPE_MOVIES, cap,
+                    withoutHiddenGroups(acc, XtreamAccount.TYPE_MOVIES, overlay, (if (strict) clientFactory.stalker().searchMoviesOrThrow(acc, q) else clientFactory.stalker().searchMovies(acc, q))) { it.categoryId },
                 ) { it.categoryId }.forEach { m ->
                     val id = XtreamItemRegistry.vodId(acc.id, m.streamId)
                     registry.register(
@@ -197,21 +205,21 @@ class XtreamSearchIndex @Inject constructor(
             }
             if (acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) when {
                 acc.isXtream() -> keepCapped(
-                    acc, XtreamAccount.TYPE_SERIES,
+                    acc, XtreamAccount.TYPE_SERIES, cap,
                     withoutHiddenGroups(acc, XtreamAccount.TYPE_SERIES, overlay,
-                        matchIndex.searchByName(acc.id, MatchKind.SERIES, q, scanLimit(acc, XtreamAccount.TYPE_SERIES))) { it.categoryId },
+                        matchIndex.searchByName(acc.id, MatchKind.SERIES, q, scanLimit(acc, XtreamAccount.TYPE_SERIES, cap))) { it.categoryId },
                 ) { it.categoryId }.forEach { s ->
                     registerSeries(acc, s.sid, s.name, s.poster, series)
                 }
                 acc.sourceType == XtreamAccount.SOURCE_STALKER -> keepCapped(
-                    acc, XtreamAccount.TYPE_SERIES,
-                    withoutHiddenGroups(acc, XtreamAccount.TYPE_SERIES, overlay, clientFactory.stalker().searchSeries(acc, q)) { it.categoryId },
+                    acc, XtreamAccount.TYPE_SERIES, cap,
+                    withoutHiddenGroups(acc, XtreamAccount.TYPE_SERIES, overlay, (if (strict) clientFactory.stalker().searchSeriesOrThrow(acc, q) else clientFactory.stalker().searchSeries(acc, q))) { it.categoryId },
                 ) { it.categoryId }.forEach { s ->
                     registerSeries(acc, s.seriesId, s.name, s.poster, series, description = s.plot, rating = s.rating)
                 }
             }
         }
-        return Results(channels.take(DISPLAY), movies.take(DISPLAY), series.take(DISPLAY))
+        return Results(channels.take(display), movies.take(display), series.take(display))
     }
 
     private fun registerSeries(
@@ -229,10 +237,40 @@ class XtreamSearchIndex @Inject constructor(
         into += Hit(id, name, poster, isLive = false, streamUrl = null, detailType = "series")
     }
 
-    private fun scanLimit(acc: XtreamAccount, type: String) = IptvSourceCategoryPolicy.scanLimit(acc, type, PER_ACCOUNT)
+    /**
+     * F48: movies or series ([type]) of ONE playlist matching [query], for the IPTV hub's search box. Same filters as
+     * global search (content toggles, category selections, hidden groups), a wider cap ([HUB_RESULT_CAP]) because the
+     * viewer is browsing a single playlist, and no live-lineup fetch. A failed fetch throws so the caller shows Retry.
+     */
+    suspend fun searchPlaylist(accountId: String, type: String, query: String): List<Hit> {
+        if (query.trim().length < 2) return emptyList()
+        // The scoped search skips the all-playlists warm-up, so make sure THIS playlist's catalog exists — and say so
+        // when it does not: an unreachable playlist has no index, and an empty index must never read as "no matches".
+        val acc = store.accounts.first().firstOrNull { it.id == accountId && it.availableOnDevice } ?: return emptyList()
+        when {
+            acc.isM3UBacked() -> {
+                val ingested = withTimeoutOrNull(INDEX_WAIT_MS) { clientFactory.m3u().ensureIngested(acc); true } == true
+                IptvSearchReadiness.require(if (ingested) 1L else null, "Catalog of ${acc.name}")
+            }
+            acc.isXtream() -> {
+                val kind = if (type == XtreamAccount.TYPE_SERIES) MatchKind.SERIES else MatchKind.MOVIE
+                withTimeoutOrNull(INDEX_WAIT_MS) { resolver.ensureIndexed(acc, kind) }
+                IptvSearchReadiness.require(matchIndex.builtAt(acc.id, kind), "${kind.slug} index of ${acc.name}")
+            }
+            // Stalker asks the portal itself; a failed request throws and the search ends Failed.
+        }
+        val r = search(query, onlyAccountId = accountId, cap = HUB_RESULT_CAP, display = HUB_RESULT_CAP, includeLive = false, strict = true)
+        return when (type) {
+            XtreamAccount.TYPE_MOVIES -> r.movies
+            XtreamAccount.TYPE_SERIES -> r.series
+            else -> emptyList()
+        }
+    }
 
-    private fun <T> keepCapped(acc: XtreamAccount, type: String, items: List<T>, categoryOf: (T) -> String?): List<T> =
-        IptvSourceCategoryPolicy.keepCapped(acc, type, items, PER_ACCOUNT, categoryOf)
+    private fun scanLimit(acc: XtreamAccount, type: String, cap: Int = PER_ACCOUNT) = IptvSourceCategoryPolicy.scanLimit(acc, type, cap)
+
+    private fun <T> keepCapped(acc: XtreamAccount, type: String, cap: Int, items: List<T>, categoryOf: (T) -> String?): List<T> =
+        IptvSourceCategoryPolicy.keepCapped(acc, type, items, cap, categoryOf)
 
     /**
      * M3U search reads the ingested catalog from [IptvContentDb] (substring name match per type),
@@ -240,12 +278,12 @@ class XtreamSearchIndex @Inject constructor(
      * content-type toggles and per-category selections for every type (all rows carry a categoryId),
      * filtered before the per-account cap.
      */
-    private suspend fun searchM3U(acc: XtreamAccount, q: String, overlay: OverlaySnapshot, channels: MutableList<Hit>, movies: MutableList<Hit>, series: MutableList<Hit>) {
-        if (acc.searchIncludesType(XtreamAccount.TYPE_LIVE)) {
+    private suspend fun searchM3U(acc: XtreamAccount, q: String, overlay: OverlaySnapshot, channels: MutableList<Hit>, movies: MutableList<Hit>, series: MutableList<Hit>, cap: Int, includeLive: Boolean) {
+        if (includeLive && acc.searchIncludesType(XtreamAccount.TYPE_LIVE)) {
             // F01: the DB narrows on the query's longest word; every word must then match (any order),
             // ranked, without hidden channels or groups.
             val probe = IptvChannelSearchPolicy.normalize(q).split(' ').maxByOrNull { it.length } ?: q
-            val rows = contentDb.searchChannels(acc.id, probe, maxOf(scanLimit(acc, XtreamAccount.TYPE_LIVE), IptvSourceCategoryPolicy.FILTERED_SCAN_LIMIT))
+            val rows = contentDb.searchChannels(acc.id, probe, maxOf(scanLimit(acc, XtreamAccount.TYPE_LIVE, cap), IptvSourceCategoryPolicy.FILTERED_SCAN_LIMIT))
             val shown = IptvHiddenItemsPolicy.visibleHits(
                 IptvChannelSearchPolicy.search(rows, q) { it.name },
                 hiddenCategoryIds(acc, XtreamAccount.TYPE_LIVE, overlay.categories),
@@ -253,7 +291,7 @@ class XtreamSearchIndex @Inject constructor(
                 categoryOf = { it.categoryId },
                 entityOf = { IptvIdentity.entityId(acc.id, it.name, it.tvgId) },
             )
-            keepCapped(acc, XtreamAccount.TYPE_LIVE, shown) { it.categoryId }
+            keepCapped(acc, XtreamAccount.TYPE_LIVE, cap, shown) { it.categoryId }
                 .forEach { ch ->
                     val id = XtreamItemRegistry.liveId(acc.id, ch.sid)
                     registry.register(
@@ -266,8 +304,8 @@ class XtreamSearchIndex @Inject constructor(
                 }
         }
         if (acc.searchIncludesType(XtreamAccount.TYPE_MOVIES)) keepCapped(
-            acc, XtreamAccount.TYPE_MOVIES,
-            withoutHiddenGroups(acc, XtreamAccount.TYPE_MOVIES, overlay, contentDb.searchVod(acc.id, q, scanLimit(acc, XtreamAccount.TYPE_MOVIES))) { it.categoryId },
+            acc, XtreamAccount.TYPE_MOVIES, cap,
+            withoutHiddenGroups(acc, XtreamAccount.TYPE_MOVIES, overlay, contentDb.searchVod(acc.id, q, scanLimit(acc, XtreamAccount.TYPE_MOVIES, cap))) { it.categoryId },
         ) { it.categoryId }.forEach { m ->
             val id = XtreamItemRegistry.vodId(acc.id, m.sid)
             registry.register(
@@ -279,8 +317,8 @@ class XtreamSearchIndex @Inject constructor(
             movies += Hit(id, m.name, m.logo, isLive = false, streamUrl = null, detailType = "movie")
         }
         if (acc.searchIncludesType(XtreamAccount.TYPE_SERIES)) keepCapped(
-            acc, XtreamAccount.TYPE_SERIES,
-            withoutHiddenGroups(acc, XtreamAccount.TYPE_SERIES, overlay, contentDb.searchSeries(acc.id, q, scanLimit(acc, XtreamAccount.TYPE_SERIES))) { it.categoryId },
+            acc, XtreamAccount.TYPE_SERIES, cap,
+            withoutHiddenGroups(acc, XtreamAccount.TYPE_SERIES, overlay, contentDb.searchSeries(acc.id, q, scanLimit(acc, XtreamAccount.TYPE_SERIES, cap))) { it.categoryId },
         ) { it.categoryId }.forEach { s ->
             val id = XtreamItemRegistry.seriesId(acc.id, s.sid)
             registry.register(
@@ -297,6 +335,7 @@ class XtreamSearchIndex @Inject constructor(
         private const val TAG = "XtreamSearchIndex"
         private const val PER_ACCOUNT = 60
         private const val DISPLAY = 60
+        const val HUB_RESULT_CAP = 120
         private const val INDEX_WAIT_MS = 12_000L
     }
 }

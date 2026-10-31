@@ -336,12 +336,16 @@ class StalkerClient @Inject constructor(
      * into backoff, and paging a 63k-movie catalog at 14 rows/page is a DoS — so the TMDB->stream
      * bridge asks the portal directly. Never throws.
      */
-    suspend fun searchMovies(acc: XtreamAccount, query: String): List<XtreamMovie> = runCatching {
-        val items = orderedList(acc, "vod", null, search = query, maxItems = SEARCH_ITEMS)
+    suspend fun searchMovies(acc: XtreamAccount, query: String): List<XtreamMovie> =
+        runCatching { searchMoviesOrThrow(acc, query) }.getOrDefault(emptyList())
+
+    /** F48: the same search, but a failed request throws — the IPTV hub's search ends Failed + Retry instead of "no matches". */
+    suspend fun searchMoviesOrThrow(acc: XtreamAccount, query: String): List<XtreamMovie> = run {
+        val items = orderedList(acc, "vod", null, search = query, maxItems = SEARCH_ITEMS, failFast = true)
             .filterNot(StalkerSeriesDialect::isSeriesRow)   // B02: a Ministra series is not a movie source
         writeThroughVod(acc, items)   // a searched-then-favorited movie must survive a cold start too
         items.map { movieOf(acc, it) }.filter { it.streamId > 0 }
-    }.getOrDefault(emptyList())
+    }
 
     private fun movieOf(acc: XtreamAccount, item: JsonObject) = XtreamMovie(
         streamId = item.int("id") ?: 0,
@@ -667,11 +671,11 @@ class StalkerClient @Inject constructor(
      * the `vod` rows flagged `is_series` (the cap counts every row walked, so a category heavy on
      * movies shows fewer series — the same bound the Movies tab has).
      */
-    private suspend fun seriesRows(acc: XtreamAccount, categoryId: String?, search: String?, maxItems: Int): List<JsonObject> =
+    private suspend fun seriesRows(acc: XtreamAccount, categoryId: String?, search: String?, maxItems: Int, failFast: Boolean = false): List<JsonObject> =
         if (seriesDialect(acc) == StalkerSeriesDialect.Dialect.MINISTRA) {
-            orderedList(acc, "vod", categoryId, search = search, maxItems = maxItems).filter(StalkerSeriesDialect::isSeriesRow)
+            orderedList(acc, "vod", categoryId, search = search, maxItems = maxItems, failFast = failFast).filter(StalkerSeriesDialect::isSeriesRow)
         } else {
-            orderedList(acc, "series", categoryId, search = search, maxItems = maxItems)
+            orderedList(acc, "series", categoryId, search = search, maxItems = maxItems, failFast = failFast)
         }
 
     /** Every episode of a Ministra series: seasons (`movie_id`), then each season's pages (`season_id`). */
@@ -821,8 +825,12 @@ class StalkerClient @Inject constructor(
         }
 
     /** Portal-side series search — same rationale as [searchMovies]. */
-    suspend fun searchSeries(acc: XtreamAccount, query: String): List<XtreamSeriesItem> = runCatching {
-        val fetched = seriesRows(acc, null, search = query, maxItems = SEARCH_ITEMS)
+    suspend fun searchSeries(acc: XtreamAccount, query: String): List<XtreamSeriesItem> =
+        runCatching { searchSeriesOrThrow(acc, query) }.getOrDefault(emptyList())
+
+    /** F48: the same search, but a failed request throws — the IPTV hub's search ends Failed + Retry instead of "no matches". */
+    suspend fun searchSeriesOrThrow(acc: XtreamAccount, query: String): List<XtreamSeriesItem> = run {
+        val fetched = seriesRows(acc, null, search = query, maxItems = SEARCH_ITEMS, failFast = true)
         writeThroughSeries(acc, fetched)
         fetched.map { item ->
             XtreamSeriesItem(
@@ -836,7 +844,7 @@ class StalkerClient @Inject constructor(
                 year = item.str("year")?.trim()?.take(4)?.toIntOrNull()
             )
         }.filter { it.seriesId > 0 }
-    }.getOrDefault(emptyList())
+    }
 
     // --- create_link ----------------------------------------------------------
 
@@ -982,13 +990,17 @@ class StalkerClient @Inject constructor(
         maxItems: Int = MAX_ITEMS,
         stopWhen: ((JsonObject) -> Boolean)? = null,
         onPage: (() -> Unit)? = null,
+        /** F48: a failed FIRST page throws (the hub search shows Failed + Retry) instead of reading as an empty list. */
+        failFast: Boolean = false,
     ): List<JsonObject> {
         val out = ArrayList<JsonObject>()
         var page = 1
         var total = Int.MAX_VALUE
         while (out.size < total && out.size < maxItems && page <= MAX_PAGES) {
             val params = StalkerListParams.forPage(type, categoryId, search, page)
-            val js = runCatching { browse(acc, params) }.getOrNull() ?: break
+            val browsed = runCatching { browse(acc, params) }
+            if (failFast && page == 1) browsed.exceptionOrNull()?.let { throw it }
+            val js = browsed.getOrNull() ?: break
             val obj = js as? JsonObject ?: break
             total = obj.int("total_items") ?: obj.int("max_page_items")?.let { it * MAX_PAGES } ?: out.size
             val data = obj.get("data") as? com.google.gson.JsonArray ?: break

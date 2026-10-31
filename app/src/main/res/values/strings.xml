@@ -3511,6 +3511,16 @@
     <string name="iptv_settings_hub_subtitle">Add a live TV / VOD provider by URL</string>
     <string name="iptv_hub_tab_live">Live TV</string>
     <string name="iptv_hub_account_fallback">Account</string>
+    <string name="iptv_hub_search">Search</string>
+    <string name="iptv_hub_search_dialog_title">Search this playlist</string>
+    <string name="iptv_hub_search_hint_movies">Movie title, like “matrix”</string>
+    <string name="iptv_hub_search_hint_series">Series title, like “office”</string>
+    <string name="iptv_hub_search_action">Search</string>
+    <string name="iptv_hub_search_again">Search again</string>
+    <string name="iptv_hub_search_results_title">“%1$s” in %2$s</string>
+    <string name="iptv_hub_search_empty_title">No matches</string>
+    <string name="iptv_hub_search_empty_message">Nothing in %1$s matches “%2$s”. Check the spelling or try a shorter word.</string>
+    <string name="iptv_hub_search_failed_message">Couldn’t search %1$s right now. Check the connection and try again.</string>
     <string name="iptv_hub_choose_provider">Playlists</string>
     <string name="iptv_hub_provider_current">Current</string>
     <string name="iptv_hub_no_provider_title">No IPTV playlist yet</string>
