@@ -56,6 +56,11 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
     /** The IPTV hub's Movies/Series search inside one playlist. Every query would report, so only failures do. */
     HUB_SEARCH("hub_search", 20_000L, reportsEveryOutcome = false),
     SETTINGS("settings", 25_000L, reportsEveryOutcome = false),
+    /**
+     * A manual "Refresh now" of one playlist (UX179). A big M3U or catalog legitimately takes minutes, so this is a
+     * STALL deadline fed by import progress; past it the screen stops waiting (the rebuild keeps going behind it).
+     */
+    PLAYLIST_REFRESH("playlist_refresh", 90_000L, reportsEveryOutcome = true),
 }
 
 sealed interface LoadStatus {

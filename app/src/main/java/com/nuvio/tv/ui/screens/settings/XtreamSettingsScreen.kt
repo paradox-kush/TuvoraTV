@@ -428,6 +428,8 @@ fun XtreamSettingsContent(
                 onAction = { action ->
                     when (action) {
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.CONTACT -> contactFor = id
+                        // UX179: "Refresh now" is run by the details page itself (its own controller), so it never reaches here.
+                        com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.REFRESH -> Unit
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.CONTENT -> contentForId = id
                         com.nuvio.tv.core.iptv.ManagedDetailsModel.DetailsAction.HIDDEN -> {
                             hiddenFor = account

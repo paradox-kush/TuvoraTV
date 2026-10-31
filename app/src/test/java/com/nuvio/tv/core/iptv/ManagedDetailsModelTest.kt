@@ -133,4 +133,12 @@ class ManagedDetailsModelTest {
         assertEquals(listOf("12000 channels", "5 movies"), CatalogCountsPolicy.parts(12000, 5, 0))
         assertEquals(listOf("3 series"), CatalogCountsPolicy.parts(null, null, 3))
     }
+
+    @Test
+    fun `every playlist type that is not waiting on a re-import gets the Refresh now card`() {
+        val xt = ManagedDetailsModel.shelves(xtream(), null, needsReimport = false).flatMap { it.cards }
+        assertTrue("refresh on a normal playlist", DetailsAction.REFRESH in xt)
+        val reimport = ManagedDetailsModel.shelves(xtream(), null, needsReimport = true).flatMap { it.cards }
+        assertFalse("no refresh while a file needs re-importing", DetailsAction.REFRESH in reimport)
+    }
 }
