@@ -197,7 +197,14 @@ jobs:
       # so a Play rejection (a re-run reuses github.run_number, and Play refuses a
       # duplicate version code) skipped the release upload entirely and the artifacts
       # were silently never replaced. Artifacts first; Play failures still fail the job.
+      # Play decides per edit whether it can send changes for review by itself, and the Edits API documents no rule
+      # for it: it has refused `changesNotSentForReview: true` ("must not be set") and, on other releases, refused
+      # its absence ("cannot be sent for review automatically"). So try the automatic path first and fall back to
+      # saving the change for manual review only when Play refuses (a failed attempt commits nothing, so the retry
+      # starts from a clean edit).
       - name: Publish AAB to Google Play
+        id: play_auto
+        continue-on-error: true
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -206,10 +213,24 @@ jobs:
           # All releases use the single production track.
           tracks: ${{ github.event.inputs.play_track || 'production' }}
           status: completed
-          # Play has flipped on this app twice: it refused automatic submission (so this was set to true), then
-          # refused the flag itself on v1.16.7 ("Changes are sent for review automatically ... must not be set").
-          # Left unset so the release follows Play's current behaviour; if Play flips again, re-run the
-          # "Submit existing Play bundle" workflow with play_manual_review set to match.
+
+      - name: Publish AAB to Google Play (save for manual review)
+        if: ${{ steps.play_auto.outcome == 'failure' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.tuvora.tv
+          releaseFiles: app/build/outputs/bundle/playstoreRelease/*.aab
+          tracks: ${{ github.event.inputs.play_track || 'production' }}
+          status: completed
+          changesNotSentForReview: true
+
+      - name: Play needs a manual send for review
+        if: ${{ steps.play_auto.outcome == 'failure' }}
+        run: |
+          echo "::warning title=Play: manual step::Play refused automatic submission, so the change was saved. Open Play Console > Publishing overview and press Send changes for review."
+          echo "### Play: manual step needed" >> "$GITHUB_STEP_SUMMARY"
+          echo "The bundle is committed but not sent for review. Play Console > Publishing overview > Send changes for review." >> "$GITHUB_STEP_SUMMARY"
 
       # The download links people actually use — tuvora.co/tv, and the aftv.news Downloader code
       # pointing at it — are not a lookup. The site serves whatever a release last told it, so tell
