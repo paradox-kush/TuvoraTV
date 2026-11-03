@@ -22,6 +22,7 @@ import com.nuvio.tv.core.util.Guarded
 import com.nuvio.tv.core.util.containTask
 import com.nuvio.tv.core.util.guarded
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -430,12 +431,22 @@ class XtreamTmdbResolver @Inject constructor(
 
     private class BuildEnd(val complete: Boolean, val itemCount: Int, val outcome: String, val detail: String? = null)
 
-    private suspend fun fetchInto(acc: XtreamAccount, kind: MatchKind, session: XtreamMatchIndex.SyncSession, categoryId: String?): Int =
-        when (kind) {
-            MatchKind.MOVIE -> client.vodIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
-            MatchKind.SERIES -> client.seriesIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
-            MatchKind.LIVE -> client.liveIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
-        }
+    /**
+     * One catalog request under its whole-call deadline (P4 item 5). Expiry cancels the transport (the
+     * client wires coroutine cancellation to the OkHttp call) and surfaces as [CatalogDeadlineExceededException],
+     * an ordinary failure — NOT a CancellationException, which the build rethrows as "the caller left".
+     * A cancel from outside still propagates: withTimeoutOrNull only swallows its own timeout.
+     */
+    private suspend fun fetchInto(acc: XtreamAccount, kind: MatchKind, session: XtreamMatchIndex.SyncSession, categoryId: String?): Int {
+        val limit = deadlineOverrideMsForTests ?: CatalogResiliencePolicy.deadlineMs(fullList = categoryId == null)
+        return withTimeoutOrNull(limit) {
+            when (kind) {
+                MatchKind.MOVIE -> client.vodIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
+                MatchKind.SERIES -> client.seriesIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
+                MatchKind.LIVE -> client.liveIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
+            }
+        } ?: throw CatalogDeadlineExceededException(limit)
+    }
 
     /**
      * P4. The resilient build. STREAMED: each parsed row goes straight into the SQLite session and is then
@@ -595,6 +606,9 @@ class XtreamTmdbResolver @Inject constructor(
     }
 
     companion object {
+        /** Test seam: shortens both catalog request deadlines. */
+        @Volatile internal var deadlineOverrideMsForTests: Long? = null
+
         // Passive staleness ceiling (resolve/search/app-start paths). The auto-refresh worker
         // drives the USER-configured cadence (playlist autoRefreshHours, default 24h) with a
         // cheap incremental sync; this TTL is just the fallback when that's off or never ran.
@@ -652,3 +666,6 @@ class XtreamTmdbResolver @Inject constructor(
         private fun rankDistance(a: Int?, b: Int?): Int = if (a == null || b == null) 999 else yearDistance(a, b)
     }
 }
+
+/** A catalog request outlived its whole-call deadline. A plain failure (not a cancellation): the build goes on. */
+internal class CatalogDeadlineExceededException(limitMs: Long) : RuntimeException("catalog request exceeded $limitMs ms")

@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.network
 
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.asContextElement
 import okhttp3.Call
 import retrofit2.Invocation
 import retrofit2.http.Streaming
@@ -33,6 +34,24 @@ object TextCallTimeout {
     fun callFactory(delegate: Call.Factory): Call.Factory = Call.Factory { request ->
         val call = delegate.newCall(request)
         val streaming = request.tag(Invocation::class.java)?.method()?.isAnnotationPresent(Streaming::class.java) == true
-        if (streaming) call else apply(call)
+        if (streaming) call.also { StreamedCallCapture.register(it) } else apply(call)
+    }
+}
+
+/**
+ * Lets a coroutine that owns a [Streaming] request cancel its OkHttp [Call] when the coroutine is
+ * cancelled. A streamed body is parsed by a blocking okio read that coroutine cancellation never
+ * interrupts, and once Retrofit has returned the response nobody holds the [Call] any more. The owner
+ * installs [element] around the request; [TextCallTimeout.callFactory] (which runs synchronously on that
+ * same coroutine when Retrofit enqueues the call) records the call it creates in the owner's list.
+ */
+internal object StreamedCallCapture {
+    private val current = ThreadLocal<java.util.concurrent.CopyOnWriteArrayList<Call>?>()
+
+    fun element(sink: java.util.concurrent.CopyOnWriteArrayList<Call>): kotlin.coroutines.CoroutineContext.Element =
+        current.asContextElement(sink)
+
+    fun register(call: Call) {
+        current.get()?.add(call)
     }
 }

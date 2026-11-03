@@ -23,6 +23,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -64,6 +65,11 @@ class CatalogResilienceIntegrationTest {
         coEvery { sync.pullOnce(any()) } just runs
         index = XtreamMatchIndex(context)
         resolver = XtreamTmdbResolver(context, client, index, sync, accountStore)
+    }
+
+    @After
+    fun tearDown() {
+        XtreamTmdbResolver.deadlineOverrideMsForTests = null
     }
 
     /** The journal is a process-wide singleton that may already have initialised unhealthy in another test. */
@@ -141,5 +147,27 @@ class CatalogResilienceIntegrationTest {
         assertNull("a walk that stopped is never reported built", index.builtAt(acc.id, MatchKind.SERIES))
         assertEquals("what arrived stays searchable", listOf(5), index.searchByName(acc.id, MatchKind.SERIES, "Undekhi", 5).map { it.sid })
         assertFalse("partial rows are something to search, so not 'pending'", resolver.catalogPending(acc.id, MatchKind.SERIES))
+    }
+
+    @Test
+    fun `a full list that never finishes hits its deadline and the category walk completes the catalog`() = runBlocking {
+        val acc = account("trickle")
+        XtreamTmdbResolver.deadlineOverrideMsForTests = 500L
+        seriesCategories(acc, "1", "2")
+        coEvery { client.seriesIndexItemsInto(acc, any(), any()) } coAnswers {
+            val onItem = thirdArg<(IndexedItem) -> Unit>()
+            when (secondArg<String?>()) {
+                // A provider that trickles: the full list never finishes and no read timeout ever trips.
+                null -> awaitCancellation()
+                "1" -> { onItem(IndexedItem(1, "Alpha Show", null, null, null, categoryId = "1")); Result.success(1) }
+                else -> { onItem(IndexedItem(5, "Undekhi", null, null, null, categoryId = "2")); Result.success(1) }
+            }
+        }
+
+        val finished = withTimeoutOrNull(8_000) { resolver.ensureIndexed(acc, MatchKind.SERIES); true }
+
+        assertEquals("the build must not wait forever on a full list that never finishes", true, finished)
+        assertNotNull("the category walk completes and stamps the catalog built", index.builtAt(acc.id, MatchKind.SERIES))
+        assertEquals("the title the hung list never reached is found", listOf(5), index.searchByName(acc.id, MatchKind.SERIES, "Undekhi", 5).map { it.sid })
     }
 }

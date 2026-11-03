@@ -8,6 +8,8 @@ import com.nuvio.tv.data.remote.dto.XtreamEpgEntryDto
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import kotlin.coroutines.coroutineContext
@@ -732,6 +734,7 @@ class XtreamClient @Inject constructor(
      * last week's lineup would win over a backup that answers live. It is parsed only if it ends up
      * the last resort; every held copy is closed either way.
      */
+    @OptIn(InternalCoroutinesApi::class)
     private suspend fun <T> streamedPanel(
         acc: XtreamAccount,
         fetch: suspend (XtreamApi, XtreamAccount) -> Response<okhttp3.ResponseBody>,
@@ -739,7 +742,14 @@ class XtreamClient @Inject constructor(
     ): T {
         var delivered = false
         val held = mutableListOf<okhttp3.ResponseBody>()
+        // A blocking okio read never observes coroutine cancellation (a deadline, a lost race, a screen
+        // leaving): cancel the OkHttp call itself, which closes the socket and unblocks the read.
+        val calls = java.util.concurrent.CopyOnWriteArrayList<okhttp3.Call>()
+        val cancelHook = coroutineContext.job.invokeOnCompletion(onCancelling = true, invokeImmediately = true) { cause ->
+            if (cause != null) calls.forEach { it.cancel() }
+        }
         try {
+          return withContext(com.nuvio.tv.core.network.StreamedCallCapture.element(calls)) {
             val outcome = failover.run(acc, canRetry = { !delivered }, evidence = { it.second }, probe = ::failoverProbe) { a ->
                 val response = fetch(apiForRequest(a), a)
                 val servedFrom = response.servedFrom()
@@ -756,11 +766,13 @@ class XtreamClient @Inject constructor(
                     StreamedAttempt.Parsed(parsed) to servedFrom
                 }
             }.first
-            return when (outcome) {
+            when (outcome) {
                 is StreamedAttempt.Parsed -> outcome.value
                 is StreamedAttempt.Stale -> outcome.body.use { parse(it.source()) }
             }
+          }
         } finally {
+            cancelHook.dispose()
             held.forEach { runCatching { it.close() } }
         }
     }

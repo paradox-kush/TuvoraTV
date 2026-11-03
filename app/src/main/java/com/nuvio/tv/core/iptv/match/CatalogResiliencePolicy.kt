@@ -13,6 +13,17 @@ internal object CatalogResiliencePolicy {
     /** After a full list fails part-way, the provider is asked category by category for this long. */
     const val AVOID_FULL_MS = 6 * 60 * 60 * 1000L
 
+    /**
+     * P4 item 5. Whole-request deadlines. The 60 s per-read socket timeout never trips on a body that
+     * trickles (~0.45 KB/s), so without these one dead panel holds a build slot for hours (P5 starved).
+     * Per call, never client-wide: a legitimate full list streams for minutes.
+     */
+    const val FULL_LIST_DEADLINE_MS = 10 * 60_000L
+    const val CATEGORY_DEADLINE_MS = 60_000L
+
+    /** The deadline for one catalog request: the streamed full list or a single category. */
+    fun deadlineMs(fullList: Boolean): Long = if (fullList) FULL_LIST_DEADLINE_MS else CATEGORY_DEADLINE_MS
+
     /** Pause between per-category requests, so a one-connection account isn't hammered. */
     const val CATEGORY_GAP_MS = 250L
 
