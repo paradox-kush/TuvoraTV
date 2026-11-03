@@ -4,8 +4,14 @@ import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.iptv.IptvCatalogFreshness
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.HttpStatusException
+import com.nuvio.tv.core.iptv.PanelHostFastFailException
+import com.nuvio.tv.core.iptv.PanelHostFastFailIOException
+import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.isXtream
+import com.nuvio.tv.core.memory.AppMemory
+import com.nuvio.tv.core.memory.MemoryTier
 import com.nuvio.tv.core.util.DeviceClass
 import com.nuvio.tv.core.tmdb.TmdbTitleBundle
 import com.nuvio.tv.data.local.XtreamAccountStore
@@ -31,6 +37,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -80,8 +87,34 @@ class XtreamTmdbResolver @Inject constructor(
     // kill (and backoff-poison) the build
     private val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** Serializes catalog builds across every account — see the use site in [ensureIndexed]. */
-    private val buildSlot = Semaphore(1)
+    /**
+     * P5. One catalog build per PROVIDER at a time (requests to one panel stay sequential — a
+     * one-connection account must not see overlapping downloads), so a dead playlist no longer
+     * queues every other playlist behind it.
+     */
+    private val providerSlots = ConcurrentHashMap<String, Mutex>()
+
+    /**
+     * P5. Global cap on concurrent builds, for memory: each build peaks at one flush chunk, and the old
+     * single slot kept a TV stick's heap safe. [CatalogResiliencePolicy.globalBuildPermits] gives 2 normally
+     * and 1 on the low tier; the tier can change at runtime, so the low-tier gate is a second, 1-permit slot
+     * taken only while [AppMemory.effectiveTier] is LOW.
+     */
+    private val buildSlot = Semaphore(CatalogResiliencePolicy.globalBuildPermits(lowMemoryDevice = false))
+    private val lowTierSlot = Semaphore(CatalogResiliencePolicy.globalBuildPermits(lowMemoryDevice = true))
+
+    private suspend fun <T> withBuildSlots(provider: String, block: suspend () -> T): T =
+        providerSlots.getOrPut(provider) { Mutex() }.withLock {
+            if (AppMemory.effectiveTier() == MemoryTier.LOW) lowTierSlot.withPermit { buildSlot.withPermit { block() } }
+            else buildSlot.withPermit { block() }
+        }
+
+    /**
+     * True while this playlist has nothing local to search for [kind] — no complete index and no partial
+     * rows. A lookup that found nothing in that state must say "still loading", not "not on this playlist".
+     */
+    suspend fun catalogPending(provider: String, kind: MatchKind): Boolean =
+        index.builtAt(provider, kind) == null && !index.hasItems(provider, kind)
 
     /**
      * Reports how a catalog index build went, so the memory profile of this path is visible
@@ -159,7 +192,9 @@ class XtreamTmdbResolver @Inject constructor(
     }
 
     suspend fun resolve(acc: XtreamAccount, kind: MatchKind, tmdbId: Int, titles: TmdbTitleBundle): XtreamMatch? {
-        ensureIndexed(acc, kind)
+        // P2: a lookup never waits for a catalog download. It starts (or joins) the build and answers from
+        // what is local; refresh/worker callers still await.
+        ensureIndexed(acc, kind, waitIfMissing = false)
         val provider = acc.id
         val indexExists = index.builtAt(provider, kind) != null
 
@@ -171,18 +206,28 @@ class XtreamTmdbResolver @Inject constructor(
         // tier 2: previously verified (possibly on another device, via Supabase)
         sync.pullOnce(provider)
         index.cachedMapping(provider, kind, tmdbId)?.let { cached ->
-            if (cached.sid != null) {
-                index.item(provider, kind, cached.sid)?.let { return XtreamMatch(it, "cache") }
-                // sid vanished from the catalog — stale mapping, fall through to re-match
-            } else if (System.currentTimeMillis() - cached.updatedAtMs < NEGATIVE_TTL_MS &&
-                cached.updatedAtMs > index.lastAddedAt(provider, kind)
+            val row = cached.sid?.let { index.item(provider, kind, it) }
+            when (
+                CatalogResiliencePolicy.remembered(
+                    sid = cached.sid, rowPresent = row != null, catalogComplete = indexExists,
+                    updatedAtMs = cached.updatedAtMs, nowMs = System.currentTimeMillis(),
+                    lastAddedAtMs = index.lastAddedAt(provider, kind), negativeTtlMs = NEGATIVE_TTL_MS,
+                )
             ) {
-                // Fresh "not on this provider" — and the catalog hasn't gained titles since the
-                // verdict. A panel that added items (daily on real providers) falsifies every
-                // older miss, so those fall through to a re-match instead of hiding new content
-                // for NEGATIVE_TTL_MS (measured: a title the panel added 3 days after the synced
-                // verdict stayed invisible on every device).
-                return null
+                CatalogResiliencePolicy.Remembered.USE_ROW -> return XtreamMatch(row!!, "cache")
+                // P1: a match verified on this or another device plays without the catalog. Movies need
+                // only the sid (+ the "mp4" fallback extension), series go straight to get_series_info(sid).
+                CatalogResiliencePolicy.Remembered.USE_SID -> return XtreamMatch(
+                    IndexedItem(sid = cached.sid!!, name = cached.matchedName.orEmpty(), year = null, tmdb = tmdbId, ext = null),
+                    "cache-synced",
+                )
+                // Fresh "not on this provider" — and the catalog hasn't gained titles since the verdict. A
+                // panel that added items (daily on real providers) falsifies every older miss, so those
+                // fall through to a re-match instead of hiding new content for NEGATIVE_TTL_MS (measured: a
+                // title added 3 days after the synced verdict stayed invisible on every device).
+                CatalogResiliencePolicy.Remembered.NOT_ON_PROVIDER -> return null
+                // Vanished from a COMPLETE catalog (stale mapping) or nothing usable: re-match below.
+                CatalogResiliencePolicy.Remembered.UNKNOWN -> {}
             }
         }
 
@@ -263,11 +308,18 @@ class XtreamTmdbResolver @Inject constructor(
     /**
      * Syncs the SQLite index from the full bulk list when missing or older than the TTL
      * (incremental diff — unchanged titles are validated by fingerprint, not re-indexed).
-     * [force] skips the freshness check; [awaitRefresh] waits for a due refresh to finish.
+     * [force] skips the freshness check; [awaitRefresh] waits for a due refresh to finish; [waitIfMissing]
+     * (default true) waits for a MISSING index — a title lookup passes false and answers from what is local.
      * The worker awaits only stale kinds and never forces fresh data to download again. Single-flight per provider+kind; failures
      * back off for an hour. Never throws — resolve degrades to whatever index exists.
      */
-    suspend fun ensureIndexed(acc: XtreamAccount, kind: MatchKind, force: Boolean = false, awaitRefresh: Boolean = false) {
+    suspend fun ensureIndexed(
+        acc: XtreamAccount,
+        kind: MatchKind,
+        force: Boolean = false,
+        awaitRefresh: Boolean = false,
+        waitIfMissing: Boolean = true,
+    ) {
         val key = "${acc.id}#${kind.slug}"
         // The index-state read is a SQLite query BEFORE the build's own try/catch, on the caller's
         // coroutine (a warm-up launch, a resolve() call, or a headless refresh worker). A
@@ -319,45 +371,26 @@ class XtreamTmdbResolver @Inject constructor(
                 val startedMs = System.currentTimeMillis()
                 var itemCount = 0
                 try {
-                    // One catalog build at a time across ALL accounts. Each build peaks at the
-                    // size of one catalog; letting several accounts warm up concurrently stacked
-                    // those peaks in the same heap, which a TV stick's 192 MB ceiling can't take.
-                    buildSlot.withPermit {
-                        // STREAMED: each parsed row goes straight into the SQLite session and is
-                        // then garbage, so a build peaks at one 5k flush-chunk instead of the
-                        // whole catalog (~40-50 MB of IndexedItem on a 175k panel — the
-                        // allocation this resolver's own OOM handler below exists for).
-                        // The category list rides along (P7): stored on success so the hub can
-                        // serve section rows without a per-session network fetch.
-                        val cats = when (kind) {
-                            MatchKind.MOVIE -> client.vodCategories(acc)
-                            MatchKind.SERIES -> client.seriesCategories(acc)
-                            MatchKind.LIVE -> client.liveCategories(acc)
-                        }.getOrThrow()
-                        val session = index.beginSync(acc.id, kind)
-                        val fetched = when (kind) {
-                            MatchKind.MOVIE -> client.vodIndexItemsInto(acc, session::accept).getOrThrow()
-                            MatchKind.SERIES -> client.seriesIndexItemsInto(acc, session::accept).getOrThrow()
-                            MatchKind.LIVE -> client.liveIndexItemsInto(acc, session::accept).getOrThrow()
-                        }
-                        itemCount = fetched
-                        // An empty list where we previously indexed content is a panel glitch, not a
-                        // real catalog — fail into the 1h backoff instead of re-fetching every
-                        // resolve. Checked BEFORE finish() so built_at stays untouched.
-                        check(fetched > 0 || index.builtAt(acc.id, kind) == null) {
-                            "panel returned an empty ${kind.slug} list"
-                        }
-                        // Category failures must not advance the catalogue freshness stamp.
-                        index.replaceCategories(acc.id, kind, cats.map { c -> c.id to c.name })
-                        val stats = session.finish()
-                        Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
+                    // P5: one build per provider, and a global cap (2; 1 on the low tier). Each build peaks
+                    // at one flush chunk, but several stacked in one heap is what a TV stick's 192 MB ceiling
+                    // can't take.
+                    val end = withBuildSlots(acc.id) { buildCatalog(acc, kind, key) }
+                    itemCount = end.itemCount
+                    reportBuild(kind, itemCount, startedMs, outcome = end.outcome, detail = end.detail)
+                    // The catalog (or what arrived of it) is local now: an IPTV page that gave up waiting
+                    // re-shows, and its failed rows are asked once more (BoundedLoad self-heal — an event,
+                    // never a poll).
+                    if (end.complete || index.hasItems(acc.id, kind)) {
+                        com.nuvio.tv.core.iptv.IptvCatalogChanges.changed(acc.id, kind.name)
                     }
-                    reportBuild(kind, itemCount, startedMs, outcome = "ok", detail = null)
-                    // The catalog is local now: an IPTV page that gave up waiting re-shows, and its failed
-                    // rows are asked once more (BoundedLoad self-heal — an event, never a poll).
-                    com.nuvio.tv.core.iptv.IptvCatalogChanges.changed(acc.id, kind.name)
-                    StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.COMPLETED)
-                    buildLock.withLock { clearLastFailure(key) }
+                    if (end.complete) {
+                        StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.COMPLETED)
+                        buildLock.withLock { clearLastFailure(key) }
+                    } else {
+                        // A partial catalog is a failed build for backoff purposes (1 h), never "built".
+                        StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.EXPECTED_FAILURE)
+                        buildLock.withLock { recordFailure(key) }
+                    }
                 } catch (c: CancellationException) {
                     // Preserve cancellation — do NOT swallow it or treat it as a failure/backoff.
                     // Record it as a non-failure so it is not mistaken for an abnormal death next run,
@@ -390,9 +423,118 @@ class XtreamTmdbResolver @Inject constructor(
         // A stale-but-present index serves immediately — yesterday's catalog still
         // resolves, and the sync lands in the background. Only a MISSING index (or a
         // forced refresh, which wants the fresh result) is worth blocking the caller for.
-        if (existing != null && !force && !awaitRefresh) return
+        if (!CatalogResiliencePolicy.shouldAwaitBuild(existing, force, awaitRefresh, waitIfMissing)) return
         // await is cancellable (the caller's request may die); the build itself is not
         deferred.await()
+    }
+
+    private class BuildEnd(val complete: Boolean, val itemCount: Int, val outcome: String, val detail: String? = null)
+
+    private suspend fun fetchInto(acc: XtreamAccount, kind: MatchKind, session: XtreamMatchIndex.SyncSession, categoryId: String?): Int =
+        when (kind) {
+            MatchKind.MOVIE -> client.vodIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
+            MatchKind.SERIES -> client.seriesIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
+            MatchKind.LIVE -> client.liveIndexItemsInto(acc, categoryId, session::accept).getOrThrow()
+        }
+
+    /**
+     * P4. The resilient build. STREAMED: each parsed row goes straight into the SQLite session and is then
+     * garbage, so a build peaks at one 5k flush-chunk instead of the whole catalog.
+     *
+     * 1. Categories first (cheap; stored on success so the hub serves section rows without a fetch).
+     * 2. The full list, unless the provider failed it within [CatalogResiliencePolicy.AVOID_FULL_MS].
+     * 3. A full list that is cut off keeps the rows that arrived ([XtreamMatchIndex.SyncSession.keepPartial]),
+     *    marks the provider "avoid full" for 6 h and falls back to one category at a time.
+     * 4. The walk finalises (built stamp + deletes) ONLY after a complete single pass; otherwise the rows
+     *    stay searchable but the index is not "built". 429 / 5xx / host-guard refusal stop the walk.
+     */
+    private suspend fun buildCatalog(acc: XtreamAccount, kind: MatchKind, key: String): BuildEnd {
+        val cats = when (kind) {
+            MatchKind.MOVIE -> client.vodCategories(acc)
+            MatchKind.SERIES -> client.seriesCategories(acc)
+            MatchKind.LIVE -> client.liveCategories(acc)
+        }.getOrThrow()
+
+        var fullFailure: Throwable? = null
+        if (CatalogResiliencePolicy.useFullList(avoidFullUntil(key), System.currentTimeMillis())) {
+            val session = index.beginSync(acc.id, kind)
+            val fetched: Int? = try {
+                fetchInto(acc, kind, session, categoryId = null)
+            } catch (c: CancellationException) {
+                session.keepPartial()
+                throw c
+            } catch (oom: OutOfMemoryError) {
+                throw oom
+            } catch (t: Throwable) {
+                // Cut off / stalled / refused: keep what arrived, then ask category by category.
+                session.keepPartial()
+                recordAvoidFull(key)
+                Log.w(TAG, "full ${kind.slug} list failed for ${acc.name}; walking categories", t)
+                fullFailure = t
+                null
+            }
+            if (fetched != null) {
+                // An empty list where we previously indexed content is a panel glitch, not a real catalog —
+                // fail into the 1h backoff instead of re-fetching every resolve. Checked BEFORE finish() so
+                // built_at stays untouched.
+                check(fetched > 0 || index.builtAt(acc.id, kind) == null) { "panel returned an empty ${kind.slug} list" }
+                index.replaceCategories(acc.id, kind, cats.map { c -> c.id to c.name })
+                val stats = session.finish()
+                clearAvoidFull(key)
+                Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
+                return BuildEnd(complete = true, itemCount = fetched, outcome = "ok")
+            }
+        }
+        // Nothing to walk: surface the real failure (1 h backoff) rather than inventing a result.
+        if (cats.isEmpty()) throw (fullFailure ?: IllegalStateException("panel returned no ${kind.slug} categories"))
+        return walkCategories(acc, kind, cats, fullFailure)
+    }
+
+    private suspend fun walkCategories(acc: XtreamAccount, kind: MatchKind, cats: List<XtreamCategory>, fullFailure: Throwable?): BuildEnd {
+        val session = index.beginSync(acc.id, kind)
+        var done = 0
+        var rows = 0
+        var stopped: Throwable? = null
+        try {
+            for ((i, cat) in cats.withIndex()) {
+                if (i > 0) delay(CatalogResiliencePolicy.CATEGORY_GAP_MS)
+                try {
+                    rows += fetchInto(acc, kind, session, categoryId = cat.id)
+                    done++
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (oom: OutOfMemoryError) {
+                    throw oom
+                } catch (t: Throwable) {
+                    // The rows this category delivered before the cut are already in the session; keep them.
+                    val causes = generateSequence(t) { it.cause }.take(8).toList()
+                    val status = causes.filterIsInstance<HttpStatusException>().firstOrNull()?.status
+                    val refused = causes.any { it is PanelHostFastFailException || it is PanelHostFastFailIOException }
+                    Log.w(TAG, "category ${cat.id} failed for ${acc.name} ${kind.slug}", t)
+                    if (CatalogResiliencePolicy.afterCategoryFailure(status, refused) == CatalogResiliencePolicy.CategoryStep.STOP_AND_BACK_OFF) {
+                        stopped = t
+                        break
+                    }
+                }
+            }
+        } catch (c: CancellationException) {
+            session.keepPartial()
+            throw c
+        }
+        if (CatalogResiliencePolicy.walkCompletes(cats.size, done, startedAtCategory = 0)) {
+            // Same glitch guard as the full list: an all-empty walk against an existing index is a panel glitch.
+            check(rows > 0 || index.builtAt(acc.id, kind) == null) { "panel returned an empty ${kind.slug} list" }
+            index.replaceCategories(acc.id, kind, cats.map { c -> c.id to c.name })
+            val stats = session.finish()
+            Log.i(TAG, "synced ${kind.slug} index by category for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
+            return BuildEnd(complete = true, itemCount = rows, outcome = "category_fallback")
+        }
+        session.keepPartial()
+        val why = stopped ?: fullFailure
+        return BuildEnd(
+            complete = false, itemCount = rows, outcome = "partial",
+            detail = "$done/${cats.size} categories${why?.let { ": ${it::class.java.simpleName}: ${it.message}" }.orEmpty()}",
+        )
     }
 
     /** Callers hold [buildLock]. Tracks per-account in-flight build counts for [indexing]. */
@@ -435,6 +577,18 @@ class XtreamTmdbResolver @Inject constructor(
         MatchKind.entries.forEach { clearLastFailure("$accountId#${it.slug}") }
     }
 
+    /** P4: until when this provider+kind is asked per category instead of for the whole list (0/absent = never failed). */
+    private fun avoidFullUntil(key: String): Long? =
+        buildBackoffPrefs.getLong(AVOID_FULL_PREFIX + key, 0L).takeIf { it > 0L }
+
+    private fun recordAvoidFull(key: String) {
+        buildBackoffPrefs.edit().putLong(AVOID_FULL_PREFIX + key, System.currentTimeMillis() + CatalogResiliencePolicy.AVOID_FULL_MS).commit()
+    }
+
+    private fun clearAvoidFull(key: String) {
+        if (buildBackoffPrefs.contains(AVOID_FULL_PREFIX + key)) buildBackoffPrefs.edit().remove(AVOID_FULL_PREFIX + key).commit()
+    }
+
     private fun clearLastFailure(key: String) {
         lastFailedBuildMs.remove(key)
         buildBackoffPrefs.edit().remove(key).commit()
@@ -446,6 +600,7 @@ class XtreamTmdbResolver @Inject constructor(
         // cheap incremental sync; this TTL is just the fallback when that's off or never ran.
             private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
         private const val BUILD_BACKOFF_PREFS = "xtream_index_build_backoff"
+        private const val AVOID_FULL_PREFIX = "avoidFull#"
         private const val STARTUP_WARM_DELAY_MS = 10_000L
         private const val NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000L
         private const val MAX_VERIFY_CALLS = 3

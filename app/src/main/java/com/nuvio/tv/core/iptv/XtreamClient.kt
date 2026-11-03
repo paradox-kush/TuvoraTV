@@ -551,23 +551,25 @@ class XtreamClient @Inject constructor(
      * [vodIndexItems], streamed: rows go to [onItem] as they parse and are then garbage — the
      * catalog never exists in heap as one list. Returns the delivered count; throws (like the
      * list variant) on a truncated body, so a partial catalog can't finalize a sync.
+     * [categoryId] (before [onItem], so trailing-lambda callers are unchanged) narrows the request to one category (`&category_id=`) — the fallback for a panel
+     * that cuts the whole list off.
      */
-    suspend fun vodIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_vod_streams")) }) { source ->
+    suspend fun vodIndexItemsInto(acc: XtreamAccount, categoryId: String? = null, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_vod_streams", categoryId)) }) { source ->
             XtreamCatalogIndexParser.parseVodInto(source, onItem)
         }
     }
 
     /** Series half of [vodIndexItemsInto]. */
-    suspend fun seriesIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_series")) }) { source ->
+    suspend fun seriesIndexItemsInto(acc: XtreamAccount, categoryId: String? = null, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_series", categoryId)) }) { source ->
             XtreamCatalogIndexParser.parseSeriesInto(source, onItem)
         }
     }
 
     /** Live half of [vodIndexItemsInto] (P7: the index doubles as the browse catalog). */
-    suspend fun liveIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_live_streams")) }) { source ->
+    suspend fun liveIndexItemsInto(acc: XtreamAccount, categoryId: String? = null, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        streamedPanel(acc, { api, a -> api.getRawCatalog(playerApi(a, "get_live_streams", categoryId)) }) { source ->
             XtreamCatalogIndexParser.parseLiveInto(source, onItem)
         }
     }

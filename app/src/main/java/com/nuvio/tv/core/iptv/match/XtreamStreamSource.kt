@@ -54,6 +54,32 @@ class XtreamStreamSource @Inject constructor(
         // the PORTAL to find the title (get_ordered_list&search=, 1-2 requests).
         if (acc.sourceType == XtreamAccount.SOURCE_STALKER) return stalkerStreams(acc, kind, titles, season, episode)
 
+        val streams = xtreamStreams(acc, kind, tmdbId, titles, season, episode)
+        // P3: nothing found AND nothing local to search yet is "this playlist is still loading", not "not on
+        // this playlist". The stream repository reports it as such instead of folding it into "No streams found".
+        if (streams.isEmpty() && resolver.catalogPending(acc.id, kind)) throw IptvCatalogPendingException(acc.name)
+        return streams
+    }
+
+    /** True when [acc] is an Xtream playlist with no local catalog for [type] yet (see [IptvCatalogPendingException]). */
+    suspend fun catalogPending(acc: XtreamAccount, type: String): Boolean {
+        if (acc.sourceType == XtreamAccount.SOURCE_STALKER) return false
+        val kind = when (type) {
+            "movie" -> MatchKind.MOVIE
+            "series", "tv" -> MatchKind.SERIES
+            else -> return false
+        }
+        return resolver.catalogPending(acc.id, kind)
+    }
+
+    private suspend fun xtreamStreams(
+        acc: XtreamAccount,
+        kind: MatchKind,
+        tmdbId: Int,
+        titles: com.nuvio.tv.core.tmdb.TmdbTitleBundle,
+        season: Int?,
+        episode: Int?,
+    ): List<Stream> {
         // Series need season-aware gathering across entries (split-season panels give each season
         // its own id), so they don't go through the single-match movie path.
         if (kind == MatchKind.SERIES) return seriesStreams(acc, tmdbId, titles, season, episode)

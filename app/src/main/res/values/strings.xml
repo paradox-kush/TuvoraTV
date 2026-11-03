@@ -3718,6 +3718,7 @@
     <string name="cd_iptv_setup_qr">QR code that opens the setup page on your phone</string>
     <string name="playback_net_http2">Enable HTTP/2</string>
     <string name="playback_net_http2_sub">Enable HTTP/2 protocol for network connections, allowing request multiplexing and faster handshake times.</string>
+    <string name="stream_source_catalog_loading">Still loading its catalog on this device. Try again in a minute.</string>
     <string name="stream_source_query_timed_out">Source search timed out. Some sources did not finish. Try again.</string>
     <string name="playback_build_restricted_message">This version plays from IPTV playlists and media servers. Add-on playback is not available in this version.</string>
     <string name="stream_discovering_source">Discovering source</string>

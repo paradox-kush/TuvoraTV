@@ -562,8 +562,17 @@ class StreamRepositoryImpl @Inject constructor(
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
                                 xtreamStreamSource.streamsFor(acc, type, videoId, season, episode)
                             } ?: emptyList<Stream>().also {
+                                // Cut at the budget: if the playlist had nothing local to search, say it is still
+                                // loading its catalog (the cause) instead of "timed out".
+                                val loading = try {
+                                    xtreamStreamSource.catalogPending(acc, type)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    false
+                                }
                                 attemptedFailures += StreamAttemptFailure(acc.name, StreamFailureKind.REQUEST_FAILED,
-                                    context.getString(R.string.stream_source_query_timed_out))
+                                    context.getString(if (loading) R.string.stream_source_catalog_loading else R.string.stream_source_query_timed_out))
                             }
                             streams.forEach { com.nuvio.tv.core.iptv.IptvPanelHosts.note(it.url) }
                             if (streams.isNotEmpty()) {
@@ -577,8 +586,11 @@ class StreamRepositoryImpl @Inject constructor(
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
+                            // Nothing to search yet is a pending catalog, not a failure and not "no streams".
+                            val detail = if (e is com.nuvio.tv.core.iptv.match.IptvCatalogPendingException)
+                                R.string.stream_source_catalog_loading else R.string.stream_error_fetch_failed
                             attemptedFailures += StreamAttemptFailure(acc.name, StreamFailureKind.REQUEST_FAILED,
-                                context.getString(R.string.stream_error_fetch_failed))
+                                context.getString(detail))
                             Log.e(TAG, "Xtream match failed for ${acc.name}: ${e.message}")
                         } finally {
                             if (completedJobs.incrementAndGet() >= totalJobs) {
