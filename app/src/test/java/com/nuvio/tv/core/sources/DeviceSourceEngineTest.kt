@@ -56,18 +56,23 @@ class DeviceSourceEngineTest {
         assertTrue(device.allows(1, "iptv", source.sourceRef))
     }
 
-    @Test fun freshInstallWithSavedSetupsWaitsForRestoreChoice() = runTest {
-        val disk = Memory()
-        val device = DeviceSourceEngine(disk, { name, _ -> when (name) {
+    // Owner decision 2026-11-02: a new device never asks. It uses the account's sources; restoring another
+    // device's setup stays available under "Sources on this device".
+    @Test fun freshInstallWithSavedSetupsStillSetsItselfUpWithoutAsking() = runTest {
+        var creates = 0
+        val device = DeviceSourceEngine(Memory(), { name, _ -> when (name) {
             "device_sources_list" -> json.encodeToJsonElement(listOf(source))
             "device_setups_list" -> json.encodeToJsonElement(listOf(DeviceSetupSummary("other", "Other TV", "tv", 1, 0, "")))
-            else -> error("Must not auto-register: $name")
+            "device_setup_create" -> { creates++; json.encodeToJsonElement(DeviceSetupResult("created", 1)) }
+            "device_preferences_read" -> page()
+            else -> error(name)
         } }, { "id" }, { "secret" }, { 1000L }, "android",
             automaticSetupName = "OS device name", existingInstallation = false)
         device.refresh(1)
-        assertEquals("select", device.state.value.mode)
-        assertEquals(null, device.state.value.disk.binding)
-        assertFalse(device.allows(1, "iptv", source.sourceRef))
+        assertEquals("ready", device.state.value.mode)
+        assertEquals(1, creates)
+        assertEquals("OS device name", device.state.value.disk.binding?.label)
+        assertTrue(device.allows(1, "iptv", source.sourceRef))
     }
 
     @Test fun freshAccountWithoutSavedSetupsRegistersWithoutASetupScreen() = runTest {

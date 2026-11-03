@@ -71,7 +71,9 @@ fun DeviceSourcesHost() {
             deps.servers().onDeviceSourcesChanged()
         }
     }
-    LaunchedEffect(view.mode) { if (view.mode in listOf("select","replaced","storage_error")) visible = true }
+    // "select" is no longer a question for the viewer: a new device sets itself up, and a failed first
+    // attempt retries on the next resume. Only states that need a decision open the dialog.
+    LaunchedEffect(view.mode) { if (view.mode in listOf("replaced","storage_error")) visible = true }
     LaunchedEffect(requested) { if (requested) { visible = true; engine.refresh(profile) } }
     LaunchedEffect(engine,profile,addons,playlists,servers.connections) {
         if (engine.state.value.mode == "local") {

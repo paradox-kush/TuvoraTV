@@ -66,7 +66,8 @@ class DeviceSourceEngine(
     private val platform: String,
     private val localOnly: Boolean = false,
     private val automaticSetupName: String? = null,
-    private val existingInstallation: Boolean = false,
+    // No longer changes the outcome (every device sets itself up); kept so callers and old tests compile.
+    @Suppress("unused") private val existingInstallation: Boolean = false,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
@@ -245,10 +246,10 @@ class DeviceSourceEngine(
                     val setups = call<List<DeviceSetupSummary>>("device_setups_list", buildJsonObject {})
                     publish { it.copy(setups = setups) }
                 }
-                // A genuine upgrade keeps account defaults. A clean install only skips the
-                // choice when there are no saved setups to restore. Never guess by device name.
-                if (b == null && loaded.isSuccess && !automaticSetupName.isNullOrBlank() &&
-                    (existingInstallation || state.value.setups.isEmpty())) {
+                // A device with no setup of its own uses the account's sources without asking (owner
+                // decision 2026-11-02), even when other devices saved setups: restoring one stays
+                // available under "Sources on this device". Never guess by device name.
+                if (b == null && loaded.isSuccess && !automaticSetupName.isNullOrBlank()) {
                     val automatic = SavedDeviceBinding(uuid(), automaticSetupName.trim(), credential(), registration = "create")
                     commit { it.copy(binding = automatic) } // Persist identity before the network for safe retries.
                     b = registerBinding(automatic)
