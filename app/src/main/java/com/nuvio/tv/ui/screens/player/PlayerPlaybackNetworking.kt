@@ -4,6 +4,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import com.nuvio.tv.core.contracts.PlaybackTlsClass
+import com.nuvio.tv.core.contracts.PlaybackTrustHosts
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.core.network.PlaybackSocketFactory
 import okhttp3.OkHttpClient
@@ -30,7 +32,13 @@ internal object PlayerPlaybackNetworking {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
-    private val playbackHostnameVerifier = HostnameVerifier { _, _ -> true }
+    // Unverified TLS is only ever used for an IPTV panel host (panels commonly present self-signed or
+    // mismatched certificates). The verifier runs on EVERY hop, redirects included, so a panel redirecting
+    // to a media server, an add-on or any other host is refused.
+    private fun isPermissivePanel(host: String?): Boolean =
+        PlaybackTrustHosts.classify(host) == PlaybackTlsClass.PermissivePanel
+
+    private val playbackHostnameVerifier = HostnameVerifier { host, _ -> isPermissivePanel(host) }
 
     private val sslContext: SSLContext by lazy {
         SSLContext.getInstance("TLS").apply {
@@ -39,8 +47,8 @@ internal object PlayerPlaybackNetworking {
     }
 
     /**
-     * Fallback OkHttpClient equipped with trust-all SSL configuration for self-signed
-     * or untrusted local media servers (e.g. self-signed WebDAV / Plex / Jellyfin).
+     * Fallback OkHttpClient with unverified certificates, for IPTV panel hosts only
+     * ([PlaybackTrustHosts]); its hostname verifier refuses every other host.
      */
     internal val trustAllPlaybackHttpClient: OkHttpClient by lazy {
         val dispatcher = okhttp3.Dispatcher().apply {
@@ -66,8 +74,8 @@ internal object PlayerPlaybackNetworking {
 
     /**
      * Primary OkHttpClient using standard system SSL certificates and full SNI support.
-     * Includes an automatic fallback to [trustAllPlaybackHttpClient] if an [SSLException]
-     * occurs on self-signed local media servers.
+     * Falls back to [trustAllPlaybackHttpClient] after an [SSLException] only when the host is an
+     * IPTV panel; every other host (media servers, add-ons, CDNs, unknown) keeps its SSL failure.
      */
     internal val playbackHttpClient: OkHttpClient by lazy {
         val dispatcher = okhttp3.Dispatcher().apply {
@@ -91,10 +99,7 @@ internal object PlayerPlaybackNetworking {
                 try {
                     chain.proceed(request)
                 } catch (e: SSLException) {
-                    // TODO(vod-converge C3): SECURITY, open seam. This retries EVERY host with a
-                    //  trust-all manager + hostname verifier. Gate it on PlaybackTrustHosts (IPTV panel
-                    //  hosts only), as the fork did (76d16ea88); test: legacy PlaybackTlsFixtureTest.
-                    // Fallback to trust-all client if standard system SSL fails (e.g. self-signed local server)
+                    if (!isPermissivePanel(request.url.host)) throw e
                     trustAllPlaybackHttpClient.newCall(request).execute()
                 }
             }

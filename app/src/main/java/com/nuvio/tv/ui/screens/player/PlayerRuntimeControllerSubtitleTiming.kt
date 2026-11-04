@@ -38,8 +38,11 @@ internal val subtitleHttpClient: OkHttpClient by lazy {
         .build()
 }
 
+// Unvalidated TLS for subtitle text only: executeSubtitleRequest strips every credential header before
+// using it, so (unlike the stream client, which is limited to IPTV panel hosts) any host is accepted here.
 internal val subtitleUnvalidatedTlsHttpClient: OkHttpClient by lazy {
     PlayerPlaybackNetworking.trustAllPlaybackHttpClient.newBuilder()
+        .hostnameVerifier { _, _ -> true }
         .subtitleDownloadDefaults()
         .build()
 }
