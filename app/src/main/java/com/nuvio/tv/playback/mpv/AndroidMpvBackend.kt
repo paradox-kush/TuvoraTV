@@ -379,7 +379,16 @@ internal class AndroidMpvBackend(
             val command = mutableListOf("sub-add", registration.uri, "select")
             registration.label?.let(command::add)
             if (registration.label != null) registration.language?.let(command::add)
-            core.command(*command.toTypedArray())
+            // B200: http-header-fields is ONE global mpv option sent on every HTTP request; clear the
+            // stream's Cookie/Authorization/tokens for this synchronous sub-add so the add-on subtitle
+            // host never sees them, then restore (reconnects and seeks still need them).
+            val streamHeaders = plan.preInitOptions[HTTP_HEADER_FIELDS_OPTION].orEmpty()
+            core.setString(HTTP_HEADER_FIELDS_OPTION, "")
+            try {
+                core.command(*command.toTypedArray())
+            } finally {
+                core.setString(HTTP_HEADER_FIELDS_OPTION, streamHeaders)
+            }
             manualSubtitleSelection = true
         }.fold(
             onSuccess = { PlaybackResult.Success(Unit) },
@@ -854,6 +863,7 @@ internal class AndroidMpvBackend(
          * caller receives a typed failure instead of hanging the release barrier.
          */
         const val NATIVE_CALL_ABANDON_TIMEOUT_MS = 4_000L
+        const val HTTP_HEADER_FIELDS_OPTION = "http-header-fields"
         const val MPV_EVENT_SHUTDOWN = 1
         const val MPV_EVENT_START_FILE = 6
         const val MPV_EVENT_END_FILE = 7

@@ -44,4 +44,17 @@ internal object SubtitleCredentialScope {
         val hop = hopUrl.toHttpUrlOrNull() ?: return true
         return !hop.host.equals(origin.host, ignoreCase = true)
     }
+
+    /**
+     * Headers an libmpv/ffmpeg subtitle fetch (`sub-add`) may carry. mpv's `http-header-fields` is ONE
+     * global option applied to every HTTP request the core makes, so unless it is swapped around the
+     * `sub-add` the stream's Cookie / Authorization / custom token rides to the subtitle host (B200).
+     * Fail closed: stream headers are NEVER included — not even for a same-host subtitle, because
+     * ffmpeg re-sends custom headers on a redirect and cannot scope them per hop. Only the subtitle's
+     * own headers (which target its own host) are returned, minus hop-by-hop ones and blank entries.
+     */
+    fun mpvSubtitleRequestHeaders(subtitleHeaders: Map<String, String>?): Map<String, String> =
+        subtitleHeaders.orEmpty().filter { (key, value) ->
+            key.isNotBlank() && value.isNotBlank() && key.trim().lowercase() !in NON_FORWARDABLE
+        }
 }
