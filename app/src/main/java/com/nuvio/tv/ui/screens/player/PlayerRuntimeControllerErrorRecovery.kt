@@ -147,13 +147,21 @@ internal fun isAudioTrackFailure(errorCode: Int, combinedMessage: String): Boole
 }
 
 internal fun httpStatusExplanation(context: android.content.Context, code: Int): String {
-    return when (code) {
-        401, 410 -> context.getString(com.nuvio.tv.R.string.player_error_stream_expired)
-        404 -> context.getString(com.nuvio.tv.R.string.player_error_stream_removed)
-        429 -> context.getString(com.nuvio.tv.R.string.player_error_stream_rate_limited)
-        in 500..599 -> context.getString(com.nuvio.tv.R.string.player_error_stream_unavailable)
-        in 400..499 -> context.getString(com.nuvio.tv.R.string.player_error_stream_blocked)
-        else -> ""
+    // Fork (B4): a provider firewall (HTTP 456) gets its own actionable hint (set a playlist UA).
+    return when (StreamHttpStatusPolicy.hint(code)) {
+        StreamHttpStatusHint.PROVIDER_FIREWALL ->
+            context.getString(com.nuvio.tv.R.string.player_error_stream_provider_firewall)
+        StreamHttpStatusHint.EXPIRED -> context.getString(com.nuvio.tv.R.string.player_error_stream_expired)
+        StreamHttpStatusHint.REMOVED -> context.getString(com.nuvio.tv.R.string.player_error_stream_removed)
+        StreamHttpStatusHint.RATE_LIMITED -> context.getString(com.nuvio.tv.R.string.player_error_stream_rate_limited)
+        StreamHttpStatusHint.UNAVAILABLE -> context.getString(com.nuvio.tv.R.string.player_error_stream_unavailable)
+        StreamHttpStatusHint.BLOCKED -> context.getString(com.nuvio.tv.R.string.player_error_stream_blocked)
+        // Upstream's ranges for every other code.
+        StreamHttpStatusHint.NONE -> when (code) {
+            in 500..599 -> context.getString(com.nuvio.tv.R.string.player_error_stream_unavailable)
+            in 400..499 -> context.getString(com.nuvio.tv.R.string.player_error_stream_blocked)
+            else -> ""
+        }
     }
 }
 
@@ -167,8 +175,6 @@ internal fun PlaybackException.findInvalidResponseCodeException(): HttpDataSourc
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)
-// TODO(vod-converge B4): map HTTP 456 / provider-WAF statuses to the fork's hint text
-//  (StreamHttpStatusPolicy, legacy-vod-player) inside httpStatusExplanation below.
 internal fun PlaybackException.toDisplayMessage(context: android.content.Context): String {
     val responseException = findInvalidResponseCodeException()
     if (responseException != null) {
