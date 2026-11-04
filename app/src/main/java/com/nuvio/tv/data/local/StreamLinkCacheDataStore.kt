@@ -28,7 +28,10 @@ data class CachedStreamLink(
     val deviceSourceKind: String? = null,
     val deviceSourceId: String? = null,
     val audioDelayMs: Int? = null,
-    val audioDelayLanguage: String? = null
+    val audioDelayLanguage: String? = null,
+    val addonName: String? = null,
+    val addonLogo: String? = null,
+    val streamDescription: String? = null
 ) {
     // Legacy entries have no provenance: discover again once instead of bypassing a device choice.
     val availableOnDevice: Boolean get() = when (val kind = deviceSourceKind) {
@@ -67,7 +70,10 @@ class StreamLinkCacheDataStore @Inject constructor(
         deviceSourceKind: String? = null,
         deviceSourceId: String? = null,
         audioDelayMs: Int? = null,
-        audioDelayLanguage: String? = null
+        audioDelayLanguage: String? = null,
+        addonName: String? = null,
+        addonLogo: String? = null,
+        streamDescription: String? = null
     ) {
         val payload = JSONObject().apply {
             put("url", url)
@@ -87,6 +93,9 @@ class StreamLinkCacheDataStore @Inject constructor(
             year?.let { put("year", it) }
             audioDelayMs?.let { put("audioDelayMs", it) }
             audioDelayLanguage?.let { put("audioDelayLanguage", it) }
+            addonName?.let { put("addonName", it) }
+            addonLogo?.let { put("addonLogo", it) }
+            streamDescription?.let { put("streamDescription", it) }
         }.toString()
 
         store().edit { prefs ->
@@ -110,53 +119,7 @@ class StreamLinkCacheDataStore @Inject constructor(
         val key = cachePrefKey(contentKey)
         val raw = store().data.first()[key] ?: return null
 
-        val parsed = runCatching {
-            val json = JSONObject(raw)
-            val cachedAtMs = json.optLong("cachedAtMs", 0L)
-            val age = System.currentTimeMillis() - cachedAtMs
-            if (cachedAtMs <= 0L || age > maxAgeMs) return@runCatching null
-
-            val headersJson = json.optJSONObject("headers")
-            val headers = buildMap {
-                headersJson?.keys()?.forEach { headerKey ->
-                    put(headerKey, headersJson.optString(headerKey, ""))
-                }
-            }.filterValues { it.isNotEmpty() }
-
-            val url = json.optString("url", "")
-            val streamName = json.optString("streamName", "")
-            val infoHash = json.optString("infoHash", "").ifBlank { null }
-            // Accept entry if it has either a real URL (HTTP stream) or an
-            // infoHash (torrent stream — URL is re-resolved on each playback).
-            if (streamName.isBlank() || (url.isBlank() && infoHash == null)) return@runCatching null
-
-            val sourcesJson = json.optJSONArray("sources")
-            val sources = sourcesJson?.let { arr ->
-                (0 until arr.length()).mapNotNull { i ->
-                    arr.optString(i).takeIf { it.isNotEmpty() }
-                }
-            }?.takeIf { it.isNotEmpty() }
-
-            CachedStreamLink(
-                url = url,
-                streamName = streamName,
-                headers = headers,
-                cachedAtMs = cachedAtMs,
-                filename = json.optString("filename", "").ifBlank { null },
-                videoHash = json.optString("videoHash", "").ifBlank { null },
-                videoSize = json.optLong("videoSize", -1L).takeIf { it >= 0L },
-                infoHash = infoHash,
-                fileIdx = if (json.has("fileIdx")) json.optInt("fileIdx", -1).takeIf { it >= 0 } else null,
-                sources = sources,
-                bingeGroup = json.optString("bingeGroup", "").ifBlank { null },
-                contentLanguage = json.optString("contentLanguage", "").ifBlank { null },
-                year = json.optString("year", "").ifBlank { null },
-                deviceSourceKind = json.optString("deviceSourceKind", "").ifBlank { null },
-                deviceSourceId = json.optString("deviceSourceId", "").ifBlank { null },
-                audioDelayMs = if (json.has("audioDelayMs")) json.optInt("audioDelayMs") else null,
-                audioDelayLanguage = json.optString("audioDelayLanguage", "").ifBlank { null }
-            )
-        }.getOrNull()
+        val parsed = decodeCachedStreamLink(raw, maxAgeMs, System.currentTimeMillis())
 
         if (parsed == null) {
             store().edit { mutablePrefs ->
@@ -174,3 +137,58 @@ class StreamLinkCacheDataStore @Inject constructor(
         return stringPreferencesKey("stream_link_$digest")
     }
 }
+
+/**
+ * Decodes a persisted link. Entries written by older builds lack the newer optional fields; every
+ * field reads with a default, so they decode as before. Null means expired or unusable.
+ */
+internal fun decodeCachedStreamLink(raw: String, maxAgeMs: Long, nowMs: Long): CachedStreamLink? = runCatching {
+        val json = JSONObject(raw)
+        val cachedAtMs = json.optLong("cachedAtMs", 0L)
+        val age = nowMs - cachedAtMs
+        if (cachedAtMs <= 0L || age > maxAgeMs) return@runCatching null
+
+        val headersJson = json.optJSONObject("headers")
+        val headers = buildMap {
+            headersJson?.keys()?.forEach { headerKey ->
+                put(headerKey, headersJson.optString(headerKey, ""))
+            }
+        }.filterValues { it.isNotEmpty() }
+
+        val url = json.optString("url", "")
+        val streamName = json.optString("streamName", "")
+        val infoHash = json.optString("infoHash", "").ifBlank { null }
+        // Accept entry if it has either a real URL (HTTP stream) or an
+        // infoHash (torrent stream — URL is re-resolved on each playback).
+        if (streamName.isBlank() || (url.isBlank() && infoHash == null)) return@runCatching null
+
+        val sourcesJson = json.optJSONArray("sources")
+        val sources = sourcesJson?.let { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                arr.optString(i).takeIf { it.isNotEmpty() }
+            }
+        }?.takeIf { it.isNotEmpty() }
+
+        CachedStreamLink(
+            url = url,
+            streamName = streamName,
+            headers = headers,
+            cachedAtMs = cachedAtMs,
+            filename = json.optString("filename", "").ifBlank { null },
+            videoHash = json.optString("videoHash", "").ifBlank { null },
+            videoSize = json.optLong("videoSize", -1L).takeIf { it >= 0L },
+            infoHash = infoHash,
+            fileIdx = if (json.has("fileIdx")) json.optInt("fileIdx", -1).takeIf { it >= 0 } else null,
+            sources = sources,
+            bingeGroup = json.optString("bingeGroup", "").ifBlank { null },
+            contentLanguage = json.optString("contentLanguage", "").ifBlank { null },
+            year = json.optString("year", "").ifBlank { null },
+            deviceSourceKind = json.optString("deviceSourceKind", "").ifBlank { null },
+            deviceSourceId = json.optString("deviceSourceId", "").ifBlank { null },
+            audioDelayMs = if (json.has("audioDelayMs")) json.optInt("audioDelayMs") else null,
+            audioDelayLanguage = json.optString("audioDelayLanguage", "").ifBlank { null },
+            addonName = json.optString("addonName", "").ifBlank { null },
+            addonLogo = json.optString("addonLogo", "").ifBlank { null },
+            streamDescription = json.optString("streamDescription", "").ifBlank { null }
+        )
+}.getOrNull()

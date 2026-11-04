@@ -266,11 +266,11 @@ class StreamScreenViewModel @Inject constructor(
                         }
                         val updatedAllStreams = updatedAddonStreams.flatMap { it.streams }
                         val currentFilter = state.selectedAddonFilter
-                        val filteredStreams = if (currentFilter == null) {
+                        val filteredStreams = groupStreamsByProvider(if (currentFilter == null) {
                             updatedAllStreams
                         } else {
                             updatedAllStreams.filter { it.addonName == currentFilter }
-                        }
+                        })
                         state.copy(
                             addonStreams = updatedAddonStreams,
                             allStreams = updatedAllStreams,
@@ -523,7 +523,10 @@ class StreamScreenViewModel @Inject constructor(
                                 sources = cached.sources,
                                 contentLanguage = cached.contentLanguage ?: contentLanguage,
                                 audioDelayMs = cached.audioDelayMs,
-                                audioDelayLanguage = cached.audioDelayLanguage
+                                audioDelayLanguage = cached.audioDelayLanguage,
+                                addonName = cached.addonName,
+                                addonLogo = cached.addonLogo,
+                                streamDescription = cached.streamDescription
                             ),
                             showDirectAutoPlayOverlay = showOverlay || it.showDirectAutoPlayOverlay,
                             isDirectAutoPlayFlow = showOverlay || it.isDirectAutoPlayFlow
@@ -616,21 +619,25 @@ class StreamScreenViewModel @Inject constructor(
                     } else null
                     // Try binge group + filename first
                     val bingeAndFilename = if (nextFilename != null) {
-                        allStreams.firstOrNull { stream ->
-                            !stream.isExternal() &&
-                                stream.behaviorHints?.bingeGroup == persistedBingeGroup &&
-                                com.nuvio.tv.core.player.FilenameEpisodeMatcher.matches(
-                                    stream.behaviorHints?.filename, nextFilename
-                                )
-                        }
+                        StreamAutoPlaySelector.selectEarlyBingeGroupMatch(
+                            allStreams.filter { stream ->
+                                !stream.isExternal() &&
+                                    com.nuvio.tv.core.player.FilenameEpisodeMatcher.matches(
+                                        stream.behaviorHints?.filename, nextFilename
+                                    )
+                            },
+                            persistedBingeGroup
+                        )
                     } else null
                     // Try binge group + infoHash when filename match failed or was unavailable
                     val bingeAndInfoHash = if (bingeAndFilename == null && persistedInfoHash != null) {
-                        allStreams.firstOrNull { stream ->
-                            !stream.isExternal() &&
-                                stream.behaviorHints?.bingeGroup == persistedBingeGroup &&
-                                stream.infoHash?.equals(persistedInfoHash, ignoreCase = true) == true
-                        }
+                        StreamAutoPlaySelector.selectEarlyBingeGroupMatch(
+                            allStreams.filter { stream ->
+                                !stream.isExternal() &&
+                                    stream.infoHash?.equals(persistedInfoHash, ignoreCase = true) == true
+                            },
+                            persistedBingeGroup
+                        )
                     } else null
                     // Fall back to binge group alone
                     bingeAndFilename ?: bingeAndInfoHash ?: StreamAutoPlaySelector.selectAutoPlayStream(
@@ -674,11 +681,11 @@ class StreamScreenViewModel @Inject constructor(
                 }
 
                 val currentFilter = _uiState.value.selectedAddonFilter
-                val filteredStreams = if (currentFilter == null) {
+                val filteredStreams = groupStreamsByProvider(if (currentFilter == null) {
                     allStreams
                 } else {
                     allStreams.filter { it.addonName == currentFilter }
-                }
+                })
 
                 publishSourceState {
                     it.copy(
@@ -754,7 +761,9 @@ class StreamScreenViewModel @Inject constructor(
                     return
                 }
                 debridPreparationLaunched = true
-                newScope.launch {
+                // Off the main thread: each prepared link rewrites the whole stream list,
+                // and the badge job can make that update retry many times.
+                newScope.launch(kotlinx.coroutines.Dispatchers.Default) {
                     directDebridStreamPreparer.prepare(
                         streams = _uiState.value.allStreams,
                         season = season,
@@ -775,11 +784,11 @@ class StreamScreenViewModel @Inject constructor(
                                     addonStreams.streams
                                 }
                                 val currentFilter = state.selectedAddonFilter
-                                val filteredStreams = if (currentFilter == null) {
+                                val filteredStreams = groupStreamsByProvider(if (currentFilter == null) {
                                     updatedAllStreams
                                 } else {
                                     updatedAllStreams.filter { it.addonName == currentFilter }
-                                }
+                                })
                                 state.copy(
                                     addonStreams = updatedGroups,
                                     allStreams = updatedAllStreams,
@@ -797,7 +806,8 @@ class StreamScreenViewModel @Inject constructor(
                     videoId = videoId,
                     season = season,
                     episode = episode,
-                    forceRefresh = forceRefresh
+                    forceRefresh = forceRefresh,
+                    priorityBingeGroup = persistedBingeGroup
                 ).collect { result ->
                     when (result) {
                         is NetworkResult.Success -> {
@@ -1275,11 +1285,11 @@ class StreamScreenViewModel @Inject constructor(
             if (state.selectedAddonFilter == addonName) {
                 state
             } else {
-                val filteredStreams = if (addonName == null) {
+                val filteredStreams = groupStreamsByProvider(if (addonName == null) {
                     state.allStreams
                 } else {
                     state.allStreams.filter { it.addonName == addonName }
-                }
+                })
                 state.copy(
                     selectedAddonFilter = addonName,
                     filteredStreams = filteredStreams
@@ -1364,11 +1374,16 @@ class StreamScreenViewModel @Inject constructor(
                             filename = resolved.filename,
                             videoHash = resolved.videoHash,
                             videoSize = resolved.videoSize,
+                            infoHash = resolved.infoHash,
+                            fileIdx = resolved.fileIdx,
                             bingeGroup = resolved.bingeGroup,
                             contentLanguage = contentLanguage,
                             year = year,
                             deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
-                            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef)
+                            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef),
+                            addonName = resolved.addonName,
+                            addonLogo = resolved.addonLogo,
+                            streamDescription = resolved.streamDescription
                         )
                     }
                 }
@@ -1454,6 +1469,10 @@ class StreamScreenViewModel @Inject constructor(
 
     fun onPlaybackErrorShown() {
         updateUiStateIfChanged { it.copy(playbackErrorMessage = null) }
+    }
+
+    fun rememberPlayedPlugin(bingeGroup: String?) {
+        pluginManager.recordPluginProviderPlay(bingeGroup)
     }
 
     fun onInternalPlayerLaunching() {
@@ -1600,13 +1619,18 @@ class StreamScreenViewModel @Inject constructor(
                     filename = playbackInfo.filename,
                     videoHash = playbackInfo.videoHash,
                     videoSize = playbackInfo.videoSize,
+                    infoHash = playbackInfo.infoHash,
+                    fileIdx = playbackInfo.fileIdx,
                     bingeGroup = playbackInfo.bingeGroup,
                     contentLanguage = contentLanguage,
                     year = year,
                     deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
                     deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef),
                     audioDelayMs = playbackInfo.audioDelayMs,
-                    audioDelayLanguage = playbackInfo.audioDelayLanguage
+                    audioDelayLanguage = playbackInfo.audioDelayLanguage,
+                    addonName = playbackInfo.addonName,
+                    addonLogo = playbackInfo.addonLogo,
+                    streamDescription = playbackInfo.streamDescription
                 )
             }
         }
@@ -1896,6 +1920,7 @@ class StreamScreenViewModel @Inject constructor(
                 ownsTorrentStream = isTorrentStreamStarted,
                 context = context
             )
+            if (launched) rememberPlayedPlugin(playbackInfo.bingeGroup)
         } finally {
             if (!launched) abortExternalHandoff()
         }

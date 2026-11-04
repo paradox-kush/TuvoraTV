@@ -152,6 +152,20 @@ private fun PlayerRuntimeController.disposeExoPlayerBeforeRebuild() {
     playbackSpeedAwareAudioSink = null
 }
 
+/**
+ * Starts the current stream again, as a retry or a rebuild of the same playback, in the engine it
+ * plays in: an engine chosen in the player, by hand or by a startup failover, holds until the
+ * stream changes. Without it, the restart would fall back to the settings' engine.
+ */
+internal fun PlayerRuntimeController.reinitializeCurrentStream(startPaused: Boolean = false) {
+    initializePlayer(
+        url = currentStreamUrl,
+        headers = currentHeaders,
+        overrideInternalPlayerEngine = runtimeInternalPlayerEngineOverride,
+        startPaused = startPaused
+    )
+}
+
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun PlayerRuntimeController.initializePlayer(
     url: String,
@@ -861,6 +875,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             } else {
                 playerSettings.decoderPriority
             }
+            nightModeAudioProcessor.setMode(playerSettings.nightMode)
 
             // ── Renderers Factory (Combining Libass offsets + Audio Gain + Video Fallback) ──
             val renderersFactory = SubtitleOffsetRenderersFactory(
@@ -883,9 +898,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                     if (pv != null) pv.videoBoundsFraction(videoAspectRatio) else null
                 },
                 gainAudioProcessor = gainAudioProcessor,
+                nightModeAudioProcessor = nightModeAudioProcessor,
                 downmixEnabled = playerSettings.downmixEnabled,
                 audioOutputChannels = playerSettings.audioOutputChannels,
                 downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
+                downmixLfeLevel = playerSettings.downmixLfeLevel.level,
                 forceOpticalPassthrough = isForcePassthroughActive,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
                 initialForcePcm = hasTriedAudioPcmFallback,
@@ -897,6 +914,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         downmixEnabled = playerSettings.downmixEnabled,
                         audioOutputChannels = playerSettings.audioOutputChannels,
                         downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
+                        lfeMixLevel = playerSettings.downmixLfeLevel.level,
                         forceOpticalPassthrough = isForcePassthroughActive
                     )
                     applyCenterMixLevel(_uiState.value.centerMixLevelDb)
@@ -2168,9 +2186,11 @@ private class SubtitleOffsetRenderersFactory(
     private val boxPaddingCharsProvider: () -> Int,
     private val videoBoundsFractionProvider: () -> RectF?,
     private val gainAudioProcessor: GainAudioProcessor,
+    private val nightModeAudioProcessor: NightModeAudioProcessor,
     private val downmixEnabled: Boolean,
     private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     private val downmixNormalizationEnabled: Boolean,
+    private val downmixLfeLevel: Float,
     private val forceOpticalPassthrough: Boolean,
     private val playbackSpeedProvider: () -> Float,
     private val initialForcePcm: Boolean = false,
@@ -2232,7 +2252,7 @@ private class SubtitleOffsetRenderersFactory(
         val builder = DefaultAudioSink.Builder(context)
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            .setAudioProcessors(arrayOf(gainAudioProcessor))
+            .setAudioProcessors(arrayOf(gainAudioProcessor, nightModeAudioProcessor))
         if (forceOpticalPassthrough) {
             builder.setAudioCapabilities(buildStableAudioCapabilities(context, true))
         }
@@ -2315,6 +2335,7 @@ private class SubtitleOffsetRenderersFactory(
                 downmixEnabled = downmixEnabled,
                 audioOutputChannels = audioOutputChannels,
                 downmixNormalizationEnabled = downmixNormalizationEnabled,
+                lfeMixLevel = downmixLfeLevel,
                 forceOpticalPassthrough = forceOpticalPassthrough
             )
         }
@@ -2325,6 +2346,7 @@ private fun FfmpegAudioRenderer.applyDownmixSettings(
     downmixEnabled: Boolean,
     audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     downmixNormalizationEnabled: Boolean,
+    lfeMixLevel: Float,
     forceOpticalPassthrough: Boolean
 ) {
     setForceOpticalPassthrough(forceOpticalPassthrough)
@@ -2334,9 +2356,11 @@ private fun FfmpegAudioRenderer.applyDownmixSettings(
             audioOutputChannels.channelCount
         )
         setDownmixNormalizationEnabled(downmixNormalizationEnabled)
+        setLfeMixLevel(lfeMixLevel)
     } else {
         setAudioOutputChannels(null, 0)
         setDownmixNormalizationEnabled(false)
+        setLfeMixLevel(0f)
     }
 }
 

@@ -47,7 +47,19 @@ internal suspend fun PlayerRuntimeController.fetchAddonSubtitlesNow(
     _uiState.update { it.copy(installedSubtitleAddonOrder = installedAddonOrder) }
 
     // Compute hash lazily for providers that support OpenSubtitles-style matching.
-    if (currentVideoHash == null && currentStreamUrl.isNotBlank()) {
+    // Never for provider-scoped (IPTV / single-use) streams: the two range reads would spend the
+    // link or a connection slot (SubtitleHashProbePolicy).
+    val mayProbeForHash = com.nuvio.tv.core.player.SubtitleHashProbePolicy.mayProbe(
+        url = currentStreamUrl,
+        contentId = contentId,
+        videoId = currentVideoId,
+        isLiveContent = isLiveContent(),
+        isPanelHost = { host ->
+            com.nuvio.tv.core.contracts.PlaybackTrustHosts.isPanelHost(host) ||
+                com.nuvio.tv.core.contracts.PlaybackTrustHosts.isMediaServerHost(host)
+        }
+    )
+    if (currentVideoHash == null && mayProbeForHash) {
         val result = OpenSubtitlesHasher.compute(currentStreamUrl, currentHeaders)
         if (result != null) {
             currentVideoHash = result.hash
@@ -75,7 +87,10 @@ internal suspend fun PlayerRuntimeController.fetchAddonSubtitlesNow(
                         sources = currentTorrentSources,
                         bingeGroup = currentStreamBingeGroup,
                         contentLanguage = contentLanguage,
-                        year = year
+                        year = year,
+                        addonName = currentAddonName,
+                        addonLogo = currentAddonLogo,
+                        streamDescription = currentStreamDescription
                     )
                 } else if (currentStreamUrl.isNotBlank() && !isServerStream) {
                     streamLinkCacheDataStore.save(
@@ -86,9 +101,14 @@ internal suspend fun PlayerRuntimeController.fetchAddonSubtitlesNow(
                         filename = currentFilename,
                         videoHash = currentVideoHash,
                         videoSize = currentVideoSize,
+                        infoHash = state.currentStreamInfoHash,
+                        fileIdx = state.currentStreamFileIdx,
                         bingeGroup = currentStreamBingeGroup,
                         contentLanguage = contentLanguage,
-                        year = year
+                        year = year,
+                        addonName = currentAddonName,
+                        addonLogo = currentAddonLogo,
+                        streamDescription = currentStreamDescription
                     )
                 }
             }
@@ -322,6 +342,9 @@ internal fun PlayerRuntimeController.observeSubtitleSettings() {
             }
             if (resolvedCenterMixLevelDb != currentState.centerMixLevelDb) {
                 applyCenterMixLevel(resolvedCenterMixLevelDb)
+            }
+            if (settings.nightMode != currentState.nightMode) {
+                applyNightMode(settings.nightMode)
             }
 
             if (settings.rememberAudioDelayPerDevice && !wasRememberingAudioDelayPerDevice) {
@@ -890,8 +913,8 @@ internal fun PlayerRuntimeController.scheduleDeferredPlayerReinitialize(
     scope.launch {
         yield()
         runCatching {
-            releasePlayer()
-            initializePlayer(currentStreamUrl, currentHeaders)
+            releasePlayer(flushPlaybackState = true, keepTorrentStream = true)
+            reinitializeCurrentStream()
         }.onFailure { e ->
             _uiState.update {
                 it.copy(

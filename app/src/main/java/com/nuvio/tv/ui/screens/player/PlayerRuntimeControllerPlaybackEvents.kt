@@ -16,6 +16,8 @@ import com.nuvio.tv.core.tracking.TrackingScrobbleAction
 import com.nuvio.tv.core.tracking.TrackingScrobbleEvent
 import com.nuvio.tv.core.tracking.buildTrackingMediaReference
 import com.nuvio.tv.core.tracking.scrobbleDiagnosticIdentity
+import com.nuvio.tv.data.local.InternalPlayerEngine
+import com.nuvio.tv.data.local.NightMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
 import com.nuvio.tv.data.mediaserver.ServerItemRef
 import com.nuvio.tv.data.repository.PlaybackIssueErrorInput
@@ -245,6 +247,20 @@ internal fun PlayerRuntimeController.applyAudioAmplification(db: Int) {
     }
 }
 
+internal fun PlayerRuntimeController.applyNightMode(mode: NightMode) {
+    _uiState.update { it.copy(nightMode = mode) }
+    if (isUsingMpvEngine()) return
+    val wasActive = nightModeAudioProcessor.isNightModeEnabled()
+    nightModeAudioProcessor.setMode(mode)
+
+    if (wasActive != nightModeAudioProcessor.isNightModeEnabled()) {
+        playbackSpeedAwareAudioSink?.notifyAudioProcessingRequirementChanged()
+        _exoPlayer?.let { player ->
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().build()
+        }
+    }
+}
+
 internal fun PlayerRuntimeController.applyCenterMixLevel(db: Int) {
     val clampedDb = db.coerceIn(CENTER_MIX_LEVEL_MIN_DB, CENTER_MIX_LEVEL_MAX_DB)
     ffmpegAudioRenderer?.setCenterMixLevelDb(clampedDb)
@@ -269,7 +285,8 @@ internal fun PlayerRuntimeController.updateAudioControlAvailability(
     _uiState.update { state ->
         state.copy(
             isAudioAmplificationAvailable = isAudioAmplificationAvailable,
-            isCenterMixAvailable = isCenterMixAvailable
+            isCenterMixAvailable = isCenterMixAvailable,
+            isNightModeAvailable = _exoPlayer != null && !isUsingMpvEngine()
         )
     }
 }
@@ -1499,6 +1516,12 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                 )
             }
         }
+        is PlayerEvent.OnSetNightMode -> {
+            applyNightMode(event.mode)
+            scope.launch {
+                playerSettingsDataStore.setNightMode(event.mode)
+            }
+        }
         is PlayerEvent.OnSetCenterMixLevelDb -> {
             val clampedDb = event.db.coerceIn(CENTER_MIX_LEVEL_MIN_DB, CENTER_MIX_LEVEL_MAX_DB)
             applyCenterMixLevel(clampedDb)
@@ -1846,7 +1869,7 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                 )
             } else {
                 releasePlayer()
-                initializePlayer(currentStreamUrl, currentHeaders)
+                reinitializeCurrentStream()
             }
         }
         PlayerEvent.OnStartOverFromBeginning -> startOverFromBeginning()

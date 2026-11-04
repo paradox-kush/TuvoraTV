@@ -55,6 +55,10 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
                 currentHeaders = emptyMap()
                 // Use loadSavedProgress = true — the torrent engine handles seeking via
                 // HTTP Range requests, so ExoPlayer's standard resume logic works.
+                recordDistinctPluginPlay(
+                    bingeGroup = navigationArgs.bingeGroup,
+                    playbackIdentity = infoHash
+                )
                 preparePlaybackBeforeStart(
                     url = localUrl,
                     headers = emptyMap(),
@@ -82,6 +86,10 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
         url = currentStreamUrl,
         headers = currentHeaders,
         loadSavedProgress = !navigationArgs.startFromBeginning
+    )
+    recordDistinctPluginPlay(
+        bingeGroup = navigationArgs.bingeGroup,
+        playbackIdentity = navigationArgs.infoHash ?: initialStreamUrl
     )
 }
 

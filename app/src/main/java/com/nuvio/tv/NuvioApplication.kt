@@ -41,6 +41,7 @@ import com.posthog.android.PostHogAndroidConfig
 import com.posthog.PostHog
 import com.posthog.PostHogBeforeSend
 import com.posthog.logs.PostHogBeforeSendLog
+import com.nuvio.tv.ui.screens.settings.MemoryBudget
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -125,7 +126,10 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         }
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
+        // Before super.onCreate(): Hilt creates injected services there, and the budget is read once.
+        MemoryBudget.init(this)
         super.onCreate()
         com.nuvio.tv.data.mediaserver.ServerMediaRouting.router = com.nuvio.tv.data.mediaserver.ServerMediaRouter(serverTrust)
         // Unverified TLS for playback is an IPTV-panel-only fallback; a media-server host is never eligible.
@@ -266,6 +270,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         AppExitReporter.recordMemorySnapshot(this, "trim_memory", level)
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun newImageLoader(context: android.content.Context): ImageLoader {
         val imageBaseClient by lazy {
             val imageDispatcher = okhttp3.Dispatcher().apply {

@@ -20,14 +20,15 @@ interface StreamRepository {
         videoId: String,
         season: Int? = null,
         episode: Int? = null,
-        // Accepted for API parity with upstream's force-refresh call site. The fork re-fetches
-        // streams on every collect (no result cache at this layer), so it is always "fresh".
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        priorityBingeGroup: String? = null,
+        preferredPluginOnly: Boolean = false,
+        continuePluginOnly: Boolean = false
     ): Flow<NetworkResult<List<AddonStreams>>>
 
     /**
-     * Returns the streams a recent [getStreamsFromAllAddons] search already holds for this video,
-     * or null when none is cached. Never starts a search.
+     * Returns streams a recent search already holds for this video, including a plugin
+     * continuation stored under a different search mode. Never starts a search.
      */
     suspend fun getCachedStreamsFromAllAddons(
         type: String,

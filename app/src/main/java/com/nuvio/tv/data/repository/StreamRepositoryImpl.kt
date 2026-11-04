@@ -14,6 +14,8 @@ import com.nuvio.tv.core.streams.PlaybackAvailability
 import com.nuvio.tv.core.debrid.DebridStreamPresentation
 import com.nuvio.tv.core.debrid.LocalDebridAvailabilityService
 import com.nuvio.tv.core.plugin.PluginManager
+import com.nuvio.tv.domain.model.pluginBingeGroup
+import com.nuvio.tv.core.plugin.resolvePluginSeasonEpisode
 import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.mediaserver.ServerStreams
@@ -244,7 +246,10 @@ class StreamRepositoryImpl @Inject constructor(
         videoId: String,
         season: Int?,
         episode: Int?,
-        forceRefresh: Boolean
+        forceRefresh: Boolean,
+        priorityBingeGroup: String?,
+        preferredPluginOnly: Boolean,
+        continuePluginOnly: Boolean
     ): Flow<NetworkResult<List<AddonStreams>>> = flow {
         emit(NetworkResult.Loading)
         // OWN-SOURCE LANE (media server): its ids play their own deferred streams - skip addon + debrid.
@@ -267,7 +272,16 @@ class StreamRepositoryImpl @Inject constructor(
 
         val sourceConfiguration = captureSourceConfiguration()
         val isNativeServerRequest = serverStreams.isNativeRequest(videoId)
-        val requestKey = buildStreamSearchRequestKey(sourceConfiguration, type, videoId, season, episode)
+        val requestKey = buildStreamSearchRequestKey(
+            sourceConfiguration,
+            type,
+            videoId,
+            season,
+            episode,
+            preferredPluginOnly,
+            continuePluginOnly,
+            priorityBingeGroup
+        )
 
         val producer = {
             fetchStreamsFromAllSources(
@@ -278,7 +292,14 @@ class StreamRepositoryImpl @Inject constructor(
                 debridSettings = sourceConfiguration.debridSettings,
                 hasCompatiblePlugins = !isNativeServerRequest && sourceConfiguration.pluginsEnabled &&
                     sourceConfiguration.enabledScrapers.any { it.supportsType(type) },
-                serverSources = serverStreams.sources(type, videoId, season, episode, forceRefresh)
+                serverSources = if (continuePluginOnly) {
+                    emptyList()
+                } else {
+                    serverStreams.sources(type, videoId, season, episode, forceRefresh)
+                },
+                priorityBingeGroup = priorityBingeGroup,
+                preferredPluginOnly = preferredPluginOnly,
+                continuePluginOnly = continuePluginOnly
             ).withSourceQueryDeadline { NetworkResult.Error(context.getString(R.string.stream_source_query_timed_out)) }
         }
         // Own-source matching can mint single-use links and has its own refresh policy.
@@ -302,7 +323,10 @@ class StreamRepositoryImpl @Inject constructor(
         type: String,
         videoId: String,
         season: Int?,
-        episode: Int?
+        episode: Int?,
+        preferredPluginOnly: Boolean = false,
+        continuePluginOnly: Boolean = false,
+        priorityBingeGroup: String? = null
     ): StreamSearchRequestKey = StreamSearchRequestKey(
         profileId = sourceConfiguration.profileId,
         type = type.lowercase(),
@@ -320,7 +344,20 @@ class StreamRepositoryImpl @Inject constructor(
                 .toString(),
             serverRevision = serverStreams.revision,
             pendingAddonUrls = sourceConfiguration.pendingAddonUrls,
-        )
+        ),
+        searchMode = when {
+            continuePluginOnly -> "continuePluginOnly"
+            preferredPluginOnly -> "preferredPluginOnly"
+            else -> ""
+        },
+        // A full search returns every source; the priority only changes which scraper
+        // starts first. Keying on it would make the player's source list search again
+        // instead of reusing the stream screen's results.
+        priorityBingeGroup = if (continuePluginOnly || preferredPluginOnly) {
+            priorityBingeGroup?.trim().orEmpty()
+        } else {
+            ""
+        }
     )
 
     private suspend fun captureSourceConfiguration(): StreamSourceConfigurationSnapshot {
@@ -360,7 +397,10 @@ class StreamRepositoryImpl @Inject constructor(
         forceRefresh: Boolean,
         debridSettings: DebridSettings,
         hasCompatiblePlugins: Boolean,
-        serverSources: List<ServerStreamSource>
+        serverSources: List<ServerStreamSource>,
+        priorityBingeGroup: String?,
+        preferredPluginOnly: Boolean,
+        continuePluginOnly: Boolean
     ): Flow<NetworkResult<List<AddonStreams>>> = flow {
         emit(NetworkResult.Loading)
         // Media servers (upstream's native feature): a server item id plays only its own versions, so
@@ -368,10 +408,14 @@ class StreamRepositoryImpl @Inject constructor(
         val isNativeServerRequest = serverStreams.isNativeRequest(videoId)
 
         try {
-            
-            // Filter addons that support streams for this type and id
-            val streamAddons = addons.filter { addon ->
-                addon.supportsStreamResource(type, videoId)
+            // A series started from a plugin keeps the next episode on that plugin.
+            // Addon and server results are what the prefetch was selecting instead.
+            val streamAddons = if (continuePluginOnly) {
+                emptyList()
+            } else {
+                addons.filter { addon ->
+                    addon.supportsStreamResource(type, videoId)
+                }
             }
 
             // Convert IMDB ID to TMDB ID if needed for plugins
@@ -637,12 +681,20 @@ class StreamRepositoryImpl @Inject constructor(
                     launch {
                         try {
                             // Stream plugins individually
+                            val (pluginSeason, pluginEpisode) = resolvePluginSeasonEpisode(
+                                videoId = videoId,
+                                season = season,
+                                episode = episode
+                            )
                             streamLocalPlugins(
                                 pluginId = pluginRequest.id,
                                 mediaType = pluginRequest.mediaType,
                                 pluginSource = pluginRequest.source,
-                                season = season,
-                                episode = episode,
+                                season = pluginSeason,
+                                episode = pluginEpisode,
+                                priorityBingeGroup = priorityBingeGroup,
+                                preferredPluginOnly = preferredPluginOnly,
+                                continuePluginOnly = continuePluginOnly,
                                 resultChannel = resultChannel
                             ) {
                                 markNonIptvDone()
@@ -826,6 +878,9 @@ class StreamRepositoryImpl @Inject constructor(
         pluginSource: String,
         season: Int?,
         episode: Int?,
+        priorityBingeGroup: String?,
+        preferredPluginOnly: Boolean,
+        continuePluginOnly: Boolean,
         resultChannel: Channel<AddonStreams>,
         onComplete: () -> Unit
     ) {
@@ -836,8 +891,9 @@ class StreamRepositoryImpl @Inject constructor(
             return
         }
 
-        // Skip local-plugin search while paused (e.g. during an IPTV/direct play).
-        if (localPluginSearchPaused.value) {
+        // Skip local-plugin search while paused (e.g. during an IPTV/direct play). The next-episode
+        // scraper of a plugin-started series keeps running while playback pauses ordinary searches.
+        if (localPluginSearchPaused.value && !continuePluginOnly) {
             Log.d(TAG, "Local plugin search paused — skipping $pluginSource: $pluginId")
             onComplete()
             return
@@ -858,7 +914,9 @@ class StreamRepositoryImpl @Inject constructor(
                 tmdbId = pluginId,
                 mediaType = mediaType,
                 season = season,
-                episode = episode
+                episode = episode,
+                priorityBingeGroup = priorityBingeGroup,
+                preferredPluginOnly = preferredPluginOnly
             ).collect { (scraper, results) ->
                 if (results.isNotEmpty()) {
                     val addonName = scraper.pluginAddonName(groupByRepository, repositoriesById)
@@ -908,18 +966,14 @@ class StreamRepositoryImpl @Inject constructor(
             pluginSourceName = scraper.name,
             addonLogo = null,
             description = buildDescription(this),
-            behaviorHints = if (headers != null || audioDelayMs != null || audioDelayLanguage != null) {
-                StreamBehaviorHints(
-                    notWebReady = null,
-                    bingeGroup = null,
-                    countryWhitelist = null,
-                    proxyHeaders = headers?.let { ProxyHeaders(request = it, response = null) },
-                    audioDelayMs = audioDelayMs,
-                    audioDelayLanguage = audioDelayLanguage
-                )
-            } else {
-                null
-            },
+            behaviorHints = StreamBehaviorHints(
+                notWebReady = null,
+                bingeGroup = pluginBingeGroup(scraperId = scraper.id, url = url, name = name, title = title, language = language, quality = quality),
+                countryWhitelist = null,
+                proxyHeaders = headers?.let { ProxyHeaders(request = it, response = null) },
+                audioDelayMs = audioDelayMs,
+                audioDelayLanguage = audioDelayLanguage
+            ),
             infoHash = infoHash,
             fileIdx = null,
             ytId = null,

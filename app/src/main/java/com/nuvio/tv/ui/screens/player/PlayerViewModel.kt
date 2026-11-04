@@ -154,6 +154,9 @@ class PlayerViewModel @Inject constructor(
     val partyMedia: com.nuvio.tv.core.party.PartyMedia
         get() = controller.currentPartyMedia()
 
+    /** Filename of the stream now playing; the sources panel marks the current stream by it. */
+    fun playerStreamFilename(): String? = controller.currentFilename
+
     fun startParty() = controller.startParty()
 
     fun catchUpParty() = controller.catchUpParty()

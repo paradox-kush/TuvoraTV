@@ -517,7 +517,7 @@ fun MetaDetailsScreen(
         } else if (uiState.isTrailerPlaying) {
             restorePlayFocusAfterTrailerBackToken += 1
             isTrailerPaused = false
-            viewModel.onEvent(MetaDetailsEvent.OnTrailerEnded)
+            viewModel.onEvent(MetaDetailsEvent.OnTrailerBackPress)
         } else {
             onBackPress()
         }
@@ -3396,7 +3396,11 @@ private fun BackdropLayer(
     val isBackgroundTrailerVisible = isBackgroundTrailerPlaying && !isBackgroundTrailerPaused
     // Keep the backdrop until the trailer has a frame to show; the request alone can be many
     // seconds ahead of it while the stream is fetched and buffered.
-    var isTrailerRendered by remember(isTrailerPlaying, isBackgroundTrailerPlaying) { mutableStateOf(false) }
+    // Keyed on "any trailer playing" rather than the individual modes: switching between the
+    // background and full-screen trailer keeps the same player running, so no new first frame
+    // arrives and resetting here would leave the gradient and backdrop stuck on screen.
+    val isAnyTrailerPlaying = isTrailerPlaying || isBackgroundTrailerPlaying
+    var isTrailerRendered by remember(isAnyTrailerPlaying, trailerUrl) { mutableStateOf(false) }
     val backdropAlphaState = animateFloatAsState(
         targetValue = when {
             isTrailerPlaying && isTrailerRendered -> 0f
@@ -3407,14 +3411,15 @@ private fun BackdropLayer(
         animationSpec = tween(durationMillis = if (isScrolledPastHero) 300 else 800),
         label = "backdropFade"
     )
-    val backgroundTrailerAlphaState = animateFloatAsState(
+    val trailerAlphaState = animateFloatAsState(
         targetValue = when {
+            isTrailerPlaying -> 1f
             !isBackgroundTrailerVisible -> 0f
             isScrolledPastHero -> 0.15f
             else -> 1f
         },
         animationSpec = tween(durationMillis = if (isScrolledPastHero) 300 else 800),
-        label = "backgroundTrailerFade"
+        label = "trailerFade"
     )
     val gradientAlphaState = animateFloatAsState(
         targetValue = if ((isTrailerPlaying && isTrailerRendered) || isScrolledPastHero) 0f else 1f,
@@ -3460,7 +3465,7 @@ private fun BackdropLayer(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    alpha = if (isBackgroundTrailerPlaying) backgroundTrailerAlphaState.value else 1f
+                    alpha = if (isAnyTrailerPlaying) trailerAlphaState.value else 1f
                 }
         )
         Box(
@@ -3505,11 +3510,12 @@ private fun PeopleSectionTabs(
         fun androidx.compose.foundation.layout.RowScope.renderTabs(items: List<PeopleTabItem>) {
             items.forEachIndexed { index, item ->
                 if (index > 0) {
-                    Text(
-                        text = "|",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = NuvioTheme.colors.TextPrimary.copy(alpha = 0.45f),
-                        modifier = Modifier.padding(horizontal = 10.dp)
+                    Spacer(
+                        modifier = Modifier
+                            .padding(horizontal = 10.dp)
+                            .width(1.dp)
+                            .height(16.dp)
+                            .background(NuvioTheme.colors.TextPrimary.copy(alpha = 0.45f))
                     )
                 }
 

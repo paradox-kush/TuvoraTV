@@ -4,6 +4,7 @@ import com.nuvio.tv.R
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.data.local.AutoSkipSegmentType
 import com.nuvio.tv.data.repository.SkipInterval
+import com.nuvio.tv.data.repository.segmentCategory
 import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.Stream
@@ -420,7 +421,20 @@ internal fun PlayerRuntimeController.updateActiveSkipInterval(positionMs: Long) 
             skipInterval(active)
         }
     } else if (currentActive != null) {
-        _uiState.update { it.copy(activeSkipInterval = null, skipIntervalDismissed = false) }
+        // When the same segment category exists just ahead (within 2s), swap to keep the button
+        // visible through the brief gap when a more precise interval replaces an API one with a
+        // slightly later start time (upstream sync 14).
+        val positionSec = positionMs / 1000.0
+        val replacement = skipIntervals.firstOrNull {
+            segmentCategory(it.type) == segmentCategory(currentActive.type) &&
+                positionSec < it.startTime &&
+                it.startTime - positionSec <= 2.0
+        }
+        if (replacement != null) {
+            _uiState.update { it.copy(activeSkipInterval = replacement) }
+        } else {
+            _uiState.update { it.copy(activeSkipInterval = null, skipIntervalDismissed = false) }
+        }
     }
 }
 

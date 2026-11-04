@@ -276,7 +276,7 @@ private fun PlayerRuntimeController.attemptMpvVodAutoRetry(detailedError: String
         if (savedPosition > 0L) {
             _uiState.update { it.copy(pendingSeekPosition = savedPosition) }
         }
-        initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
+        reinitializeCurrentStream(startPaused = paused)
     }
     return true
 }

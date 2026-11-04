@@ -63,7 +63,7 @@ internal fun PlayerRuntimeController.attemptStartupRecovery(
         delay(RETRY_DELAY_MS)
 
         releasePlayer(flushPlaybackState = false)
-        initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
+        reinitializeCurrentStream(startPaused = paused)
     }
     return true
 }
@@ -336,7 +336,7 @@ internal fun PlayerRuntimeController.attemptAutoRetry(
                 if (savedPosition > 0L) {
                     _uiState.update { it.copy(pendingSeekPosition = savedPosition) }
                 }
-                initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
+                reinitializeCurrentStream(startPaused = paused)
             }
         } else {
             // Full teardown — clears any corrupt decoder/internal state.
@@ -344,7 +344,7 @@ internal fun PlayerRuntimeController.attemptAutoRetry(
             if (savedPosition > 0L) {
                 _uiState.update { it.copy(pendingSeekPosition = savedPosition) }
             }
-            initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
+            reinitializeCurrentStream(startPaused = paused)
         }
     }
     return true
@@ -507,7 +507,7 @@ private fun PlayerRuntimeController.rebuildWithForcedPcmAudio(reason: String): B
         if (savedPosition > 0L) {
             _uiState.update { it.copy(pendingSeekPosition = savedPosition) }
         }
-        initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
+        reinitializeCurrentStream(startPaused = paused)
     }
 
     return true
@@ -556,7 +556,7 @@ internal fun PlayerRuntimeController.tryDv7HevcFallback(
         if (savedPosition > 0L) {
             _uiState.update { it.copy(pendingSeekPosition = savedPosition) }
         }
-        initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
+        reinitializeCurrentStream(startPaused = paused)
     }
     return true
 }

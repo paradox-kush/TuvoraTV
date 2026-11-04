@@ -9,7 +9,12 @@ internal fun PlayerRuntimeController.releasePlayer() {
     releasePlayer(flushPlaybackState = true)
 }
 
-internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) {
+// A rebuild on the same stream passes keepTorrentStream: currentStreamUrl is then the torrent
+// engine's local url, which stops serving once the torrent stream is stopped.
+internal fun PlayerRuntimeController.releasePlayer(
+    flushPlaybackState: Boolean,
+    keepTorrentStream: Boolean = false
+) {
     logScrobbleDiagnostic("release_player", "flushPlaybackState=$flushPlaybackState")
     isReleasingPlayer = true
     _uiState.update { it.copy(liveRetryStatus = null) }
@@ -18,7 +23,7 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
     Breadcrumbs.playbackStopped()
     com.nuvio.tv.core.recommendations.TvRecommendationManager.isPlaybackActive.value = false
     if (flushPlaybackState) {
-        stopTorrentStream()
+        if (!keepTorrentStream) stopTorrentStream()
         flushPlaybackSnapshotForSwitchOrExit()
     }
 
