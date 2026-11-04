@@ -3,6 +3,7 @@ package com.nuvio.tv.updater
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.data.remote.api.GitHubReleaseApi
 import com.nuvio.tv.updater.model.AppUpdate
+import com.nuvio.tv.updater.model.AppUpdateAsset
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,12 +39,13 @@ class UpdateRepository @Inject constructor(
             val releaseWithAsset = ReleaseSelector
                 .eligibleReleases(releases, channel)
                 .firstNotNullOfOrNull { release ->
-                    AbiSelector.chooseBestApkAsset(release.assets)?.let { asset ->
-                        release to asset
+                    AbiSelector.rankApkAssets(release.assets).takeIf { it.isNotEmpty() }?.let { ranked ->
+                        release to ranked
                     }
                 }
                 ?: throw NoEligibleUpdateException(channel)
-            val (dto, asset) = releaseWithAsset
+            val (dto, rankedAssets) = releaseWithAsset
+            val asset = rankedAssets.first()
 
             val tag = dto.tagName?.takeIf { it.isNotBlank() }
                 ?: dto.name?.takeIf { it.isNotBlank() }
@@ -56,7 +58,10 @@ class UpdateRepository @Inject constructor(
                 releaseUrl = dto.htmlUrl,
                 assetName = asset.name,
                 assetUrl = asset.browserDownloadUrl,
-                assetSizeBytes = asset.size
+                assetSizeBytes = asset.size,
+                fallbackAssets = rankedAssets.drop(1).map {
+                    AppUpdateAsset(name = it.name, url = it.browserDownloadUrl, sizeBytes = it.size)
+                }
             )
         }
     }
