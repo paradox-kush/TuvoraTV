@@ -256,8 +256,6 @@ internal fun PlayerRuntimeController.filterToVisibleAddonSubtitles(
     }.map { PlayerSubtitleUtils.normalizeLanguageCode(it) }
         .distinct()
 
-    // TODO(vod-converge C9): forced-subs-only when the audio has no language tag (ForcedSubtitlePolicy,
-    //  legacy-vod-player; 1b7031403); check the no-audio-match branch below returns all subtitles.
     if (preferredTargets.isEmpty()) {
         return if (
             style.useForcedSubtitles &&

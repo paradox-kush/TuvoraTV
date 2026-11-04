@@ -1713,16 +1713,21 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
     }
     val selectedAudioTrack = selectedAudioTrackForSubtitleMatching(state)
     val useForcedSubtitles = state.subtitleStyle.useForcedSubtitles
-    val forcedTarget = when {
-        !useForcedSubtitles -> null
-        primaryTarget != null && selectedAudioTrack != null && audioMatchesSubtitleTargetForForced(selectedAudioTrack, primaryTarget) ->
-            primaryTarget
-        primaryTarget == null &&
-            selectedAudioTrack != null &&
-            selectedAudioMatchesResolvedPreferredAudio(selectedAudioTrack) ->
-            selectedAudioLanguageTarget(selectedAudioTrack)
-        else -> null
-    }
+    // Fork (C9): an untagged audio track is unknown, not foreign: forced-only still holds
+    // (ForcedSubtitlePolicy; upstream fell back to full subtitles).
+    val forcedDecision = ForcedSubtitlePolicy.evaluate(
+        ForcedSubtitlePolicy.Input(
+            useForcedSubtitles = useForcedSubtitles,
+            hasSelectedAudioTrack = selectedAudioTrack != null,
+            primaryTarget = primaryTarget,
+            resolvedAudioLanguage = selectedAudioTrack?.let(::selectedAudioLanguageTarget),
+            audioMatchesPrimaryTarget = selectedAudioTrack != null && primaryTarget != null &&
+                audioMatchesSubtitleTargetForForced(selectedAudioTrack, primaryTarget),
+            audioMatchesResolvedPreferredAudio = selectedAudioTrack != null &&
+                selectedAudioMatchesResolvedPreferredAudio(selectedAudioTrack),
+        )
+    )
+    val forcedTarget = (forcedDecision as? ForcedSubtitlePolicy.Decision.ForcedOnly)?.target
     val forcedOnly = forcedTarget != null
     val targets = when {
         forcedTarget != null -> listOf(forcedTarget)
@@ -1735,7 +1740,7 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
             "internalCount=${state.subtitleTracks.size}, selectedInternal=${state.selectedSubtitleTrackIndex}, " +
             "addonCount=${state.addonSubtitles.size}, selectedAddon=${state.selectedAddonSubtitle?.lang}"
     )
-    if (useForcedSubtitles && selectedAudioTrack == null) {
+    if (forcedDecision is ForcedSubtitlePolicy.Decision.Defer) {
         Log.d(PlayerRuntimeController.TAG, "AUTO_SUB defer: selected audio track unknown")
         return
     }
