@@ -394,7 +394,8 @@ private fun PreviewPane(ui: SetupCodeUiState, vm: IptvSetupCodeViewModel) {
             Text(stringResource(R.string.iptv_setup_addons, preview.addons.joinToString(", ")), fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary)
         }
         ui.message?.let { Text(setupMessageText(it), fontSize = 18.sp, color = NuvioTheme.colors.Error) }
-        if (ui.profiles.size > 1) {
+        // Signed out there is no account to pick a profile for: the playlists go to this device (active profile).
+        if (ui.signedIn && ui.profiles.size > 1) {
             Text(stringResource(R.string.iptv_setup_add_to_profile).uppercase(), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp, color = NuvioTheme.colors.TextSecondary)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ui.profiles.forEach { p ->
@@ -429,9 +430,13 @@ private fun PreviewPane(ui: SetupCodeUiState, vm: IptvSetupCodeViewModel) {
         ) {
             Text(
                 if (adding) stringResource(R.string.iptv_setup_adding)
+                else if (!ui.signedIn) stringResource(R.string.iptv_setup_add_to_device)
                 else stringResource(R.string.iptv_setup_add_to, chosen?.name.orEmpty()),
                 fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
             )
+        }
+        if (!ui.signedIn) {
+            Text(stringResource(R.string.iptv_setup_sign_in_later), fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary)
         }
         if (!adding) {
             Button(

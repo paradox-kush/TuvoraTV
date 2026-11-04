@@ -32,7 +32,12 @@ class ProviderSetupRepository @Inject constructor(
     private val syncService: XtreamAccountSyncService,
     private val holder: SetupCodeHolder,
     private val backends: SyncBackendSupabaseProvider,
+    private val claims: DeviceClaimStore,
+    private val localPlaylists: DeviceSetupPlaylists,
 ) {
+    /** The token of a device redeem whose answer never arrived, reused on retry (the server answers `already_redeemed`). */
+    private var inFlightDevice: Pair<String, String>? = null
+
     /** True for a real (non-anonymous) account. TV's `FullAccount` is exactly that. */
     val isSignedIn: Boolean get() = authManager.authState.value is AuthState.FullAccount
 
@@ -47,12 +52,11 @@ class ProviderSetupRepository @Inject constructor(
             is SetupCode.Normalized.Invalid -> return SetupCodeOutcome.forProblem(n.problem).also { capturePreview(it) }
             is SetupCode.Normalized.Valid -> n.value
         }
-        if (!isSignedIn) {
-            holder.set(code)
-            return SetupCodeOutcome.NeedsSignIn.also { capturePreview(it) }
-        }
+        // B205: the preview is public. A signed-out viewer previews like anyone; the code is held in memory so a
+        // sign-in right after still finds it.
+        if (!isSignedIn) holder.set(code)
         // The access token goes only to the hosted backend's own web host (security L4).
-        val token = if (ProviderSetupConfig.sendsToken(backends.selectedBackend.id == SYNC_BACKEND_HOSTED_ID, ProviderSetupConfig.BASE_URL, BuildConfig.IS_DEBUG_BUILD)) {
+        val token = if (isSignedIn && ProviderSetupConfig.sendsToken(backends.selectedBackend.id == SYNC_BACKEND_HOSTED_ID, ProviderSetupConfig.BASE_URL, BuildConfig.IS_DEBUG_BUILD)) {
             runCatching { authManager.currentAccessToken() }.getOrNull()
         } else null
         return api.preview(code, token).also { capturePreview(it) }
@@ -65,6 +69,8 @@ class ProviderSetupRepository @Inject constructor(
      */
     suspend fun redeem(typed: String, profileIndex: Int): RedeemFlowResult {
         val code = SetupCode.parse(typed) ?: return RedeemFlowResult.Failed(SetupCodeOutcome.Problem(SetupCode.Problem.WRONG_LENGTH))
+        // Not a real account (signed out, or still loading): spend the code to this device, claim it on sign-in.
+        if (!isSignedIn) return redeemToDevice(code)
         return when (val r = api.redeem(code, profileIndex, RedeemAddonsPolicy.skipAddons(AppFeaturePolicy.addonsEnabled))) {
             is RedeemOutcome.Failed -> {
                 captureRedeem(0, 0, r.outcome)
@@ -83,6 +89,41 @@ class ProviderSetupRepository @Inject constructor(
                 val infos = if (inActive) refresher.infosNow(profileIndex) else emptyMap()
                 val key = r.result.playlistKeys.firstOrNull()
                 RedeemFlowResult.Added(infos[key]?.providerName, key, inActive, r.result)
+            }
+        }
+    }
+
+    /**
+     * B205: device redeem -> save the pending claim FIRST (it is the only handle on the spent code) -> add the
+     * playlists to the local store. The claim token is secure-random; a network failure keeps it for the retry.
+     */
+    private suspend fun redeemToDevice(code: String): RedeemFlowResult {
+        val token = inFlightDevice?.takeIf { it.first == code }?.second
+            ?: DeviceClaimToken.newToken().also { inFlightDevice = code to it }
+        return when (val r = api.deviceRedeem(code, DeviceClaimToken.hash(token))) {
+            is DeviceRedeemOutcome.Failed -> {
+                if (r.outcome != SetupCodeOutcome.Network) inFlightDevice = null
+                captureRedeem(0, 0, r.outcome)
+                RedeemFlowResult.Failed(r.outcome)
+            }
+            is DeviceRedeemOutcome.Done -> {
+                inFlightDevice = null
+                holder.clear()
+                val added = r.redeem.playlists.filter { it.isAdded }
+                claims.save(DeviceClaim(token, r.redeem.provider, System.currentTimeMillis(), added))
+                runCatching { localPlaylists.addMissing(added) }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                val result = RedeemResult(
+                    status = r.redeem.status, profileIndex = profileManager.activeProfileId.value,
+                    added = added.size, updated = 0, unchanged = 0,
+                    playlistKeys = added.map { it.playlistKey },
+                    playlistNames = added.mapNotNull { it.name },
+                    skippedReasons = r.redeem.playlists.filterNot { it.isAdded }.map { it.reason ?: "missing_login" },
+                )
+                val kind = RedeemResultPolicy.classify(result)
+                captureRedeem(result.added, 0, null)
+                if (kind != RedeemResultPolicy.Kind.ADDED) return RedeemFlowResult.NothingAdded(kind)
+                RedeemFlowResult.Added(r.redeem.provider, result.playlistKeys.firstOrNull(), true, result)
             }
         }
     }

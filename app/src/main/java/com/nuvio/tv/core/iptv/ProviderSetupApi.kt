@@ -14,7 +14,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -38,6 +40,10 @@ interface ProviderSetupApi {
     suspend fun preview(code: String, accessToken: String?): SetupCodeOutcome
     /** [skipAddons]: store flavours must not install the package's add-ons (see [RedeemAddonsPolicy]). */
     suspend fun redeem(code: String, profileIndex: Int, skipAddons: Boolean = false): RedeemOutcome
+    /** B205: spends [code] to THIS DEVICE with no account. [claimHash] is the SHA-256 hex of the client's claim token. */
+    suspend fun deviceRedeem(code: String, claimHash: String): DeviceRedeemOutcome
+    /** B205: `claim_device_setup` as the signed-in user. */
+    suspend fun claimDeviceSetup(token: String, profileIndex: Int, skipAddons: Boolean): ClaimOutcome
     suspend fun managedPlaylists(profileId: Int): Result<List<ManagedPlaylistInfo>>
     suspend fun detach(profileId: Int, playlistKey: String): Result<Boolean>
 }
@@ -103,6 +109,58 @@ object SetupResponses {
         if (e is IOException) return SetupCodeOutcome.Network
         if (e is io.github.jan.supabase.exceptions.RestException) return rpcFailure(e.statusCode, e.message)
         return SetupCodeOutcome.Network
+    }
+
+    /** The device redeem route's answer is a few dozen playlists at most; anything over this is not it. */
+    const val MAX_DEVICE_REDEEM_BYTES = 1024L * 1024
+
+    private val deviceJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+
+    /** `POST /api/s/redeem`: 200 -> playlists; errors share the preview route's mapping, 424/5xx are retryable. */
+    fun parseDeviceRedeem(status: Int, body: String?, retryAfterHeader: String? = null): DeviceRedeemOutcome {
+        val root = runCatching { body?.let { json.parseToJsonElement(it) } }.getOrNull()
+        if (status in 200..299) {
+            val o = root as? JsonObject ?: return DeviceRedeemOutcome.Failed(SetupCodeOutcome.Unusable)
+            val list = o["playlists"] as? JsonArray ?: return DeviceRedeemOutcome.Failed(SetupCodeOutcome.Unusable)
+            val playlists = list.mapNotNull { el ->
+                runCatching { deviceJson.decodeFromJsonElement(DevicePlaylist.serializer(), el) }.getOrNull()
+                    ?.takeIf { it.playlistKey.isNotBlank() }
+            }
+            fun str(k: String) = (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            return DeviceRedeemOutcome.Done(
+                DeviceRedeem(
+                    status = str("status") ?: "redeemed",
+                    provider = str("provider")?.let { ProviderText.clean(it) }?.takeIf { it.isNotEmpty() },
+                    skippedAddons = (o["skipped_addons"] as? JsonPrimitive)?.content == "true",
+                    playlists = playlists,
+                )
+            )
+        }
+        val code = ((root as? JsonObject)?.get("code") as? JsonPrimitive)?.takeIf { it.isString }?.content
+        val retry = retryAfterHeader?.trim()?.toIntOrNull()?.takeIf { it >= 0 }
+        if (status != 429 && (status == 424 || status in 500..599)) return DeviceRedeemOutcome.Failed(SetupCodeOutcome.Network)
+        return DeviceRedeemOutcome.Failed(SetupCodeOutcome.forPreviewHttp(status, code, retry))
+    }
+
+    /** `claim_device_setup`'s returned body. */
+    fun parseClaim(body: JsonElement?): ClaimOutcome {
+        val o = body as? JsonObject ?: return ClaimOutcome.Failed(ClaimError.UNKNOWN)
+        if ((o["ok"] as? JsonPrimitive)?.content == "true") return ClaimOutcome.Claimed
+        return ClaimOutcome.Failed(ClaimError.fromCode((o["error"] as? JsonPrimitive)?.takeIf { it.isString }?.content))
+    }
+
+    /** A failed claim RPC: the raised code is the whole first line; anything else (5xx, a refused session) is retryable. */
+    fun claimFailure(status: Int?, message: String?): ClaimOutcome {
+        val first = message.orEmpty().trim().lineSequence().firstOrNull().orEmpty().trim().lowercase()
+        val error = ClaimError.fromCode(first)
+        if (error != ClaimError.UNKNOWN) return ClaimOutcome.Failed(error)
+        return ClaimOutcome.Failed(ClaimError.NETWORK)
+    }
+
+    fun claimThrowable(e: Throwable): ClaimOutcome = when {
+        e is IOException -> ClaimOutcome.Failed(ClaimError.NETWORK)
+        e is io.github.jan.supabase.exceptions.RestException -> claimFailure(e.statusCode, e.message)
+        else -> ClaimOutcome.Failed(ClaimError.NETWORK)
     }
 
     fun parseRedeem(body: JsonElement?): RedeemOutcome {
@@ -190,6 +248,45 @@ class SupabaseProviderSetupApi @Inject constructor(
         }
     }
 
+    override suspend fun deviceRedeem(code: String, claimHash: String): DeviceRedeemOutcome = withContext(Dispatchers.IO) {
+        try {
+            val payload = buildJsonObject { put("code", code); put("claim_hash", claimHash) }.toString()
+            // No Authorization header: the route is public by design (and a signed-out device has no token).
+            val request = Request.Builder().url(ProviderSetupConfig.deviceRedeemUrl())
+                .post(payload.toRequestBody("application/json".toMediaType())).build()
+            previewClient.newCall(request).execute().use { response ->
+                val text = SetupResponses.readCapped(response.body?.source(), SetupResponses.MAX_DEVICE_REDEEM_BYTES)
+                if (text == null && response.code in 200..299) DeviceRedeemOutcome.Failed(SetupCodeOutcome.Unusable)
+                else SetupResponses.parseDeviceRedeem(response.code, text, response.header("Retry-After"))
+            }
+        } catch (e: IOException) {
+            // A transport failure may have reached the server: the caller retries with the SAME token.
+            DeviceRedeemOutcome.Failed(SetupCodeOutcome.Network)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "device redeem failed: ${e.javaClass.simpleName}")
+            DeviceRedeemOutcome.Failed(SetupResponses.forThrowable(e))
+        }
+    }
+
+    override suspend fun claimDeviceSetup(token: String, profileIndex: Int, skipAddons: Boolean): ClaimOutcome = withContext(Dispatchers.IO) {
+        try {
+            val params = buildJsonObject {
+                put("p_claim_token", token)
+                put("p_profile_index", profileIndex)
+                put("p_skip_addons", skipAddons)
+            }
+            val body: JsonElement = postgrest.rpc("claim_device_setup", params).decodeAs<JsonElement>()
+            SetupResponses.parseClaim(body)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "claim failed: ${e.javaClass.simpleName}")
+            SetupResponses.claimThrowable(e)
+        }
+    }
+
     override suspend fun managedPlaylists(profileId: Int): Result<List<ManagedPlaylistInfo>> = withContext(Dispatchers.IO) {
         runCatching {
             val body: JsonElement = postgrest.rpc("get_managed_playlists", buildJsonObject { put("p_profile_id", profileId) })
@@ -236,6 +333,10 @@ object ProviderSetupConfig {
     /** The access token goes only to the hosted backend's own web (https; plain http only in a debug build). */
     fun sendsToken(backendIsHosted: Boolean, baseUrl: String, isDebug: Boolean): Boolean =
         backendIsHosted && (baseUrl.startsWith("https://") || (isDebug && baseUrl.startsWith("http://")))
+
+    fun deviceRedeemUrl(base: String = BASE_URL) = base.trimEnd('/').toHttpUrl().newBuilder()
+        .addPathSegments("api/s/redeem")
+        .build()
 
     fun previewUrl(code: String, base: String = BASE_URL) = base.trimEnd('/').toHttpUrl().newBuilder()
         .addPathSegments("api/s/preview")

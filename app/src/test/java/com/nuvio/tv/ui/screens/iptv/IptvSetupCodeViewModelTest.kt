@@ -19,6 +19,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -180,5 +181,25 @@ class IptvSetupCodeViewModelTest {
         vm.confirmAdd(); runCurrent()
         assertEquals(SetupPhase.NEEDS_SIGN_IN, vm.ui.value.phase)
         assertEquals("ABCDEFGHJKMN", vm.ui.value.typed)
+    }
+
+    @Test
+    fun `signed out Continue reaches the preview and Add completes without an account`() = runTest(main.dispatcher) {
+        // Signed out (auth stays SignedOut): the repository previews publicly and redeems to the device.
+        coEvery { repo.preview("ABCDEFGHJKMN") } returns SetupCodeOutcome.Ready(preview)
+        coEvery { repo.redeem("ABCDEFGHJKMN", 1) } returns
+            RedeemFlowResult.Added("Acme TV", "k1", true, com.nuvio.tv.core.iptv.RedeemResult("redeemed", 1, 1, 0, 0, listOf("k1"), listOf("Live")))
+        val vm = vm()
+        runCurrent()
+        vm.typeCode(); vm.continueTapped(); runCurrent()
+        assertEquals(SetupPhase.PREVIEW, vm.ui.value.phase)
+        assertFalse(vm.ui.value.signedIn)
+
+        val finished = mutableListOf<SetupCodeEvent>()
+        val job = this.launch(main.dispatcher) { vm.events.collect { finished += it } }
+        vm.confirmAdd(); runCurrent()
+        assertEquals(listOf<SetupCodeEvent>(SetupCodeEvent.Finished), finished)
+        assertEquals("", vm.ui.value.typed)
+        job.cancel()
     }
 }

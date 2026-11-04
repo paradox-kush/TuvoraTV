@@ -83,6 +83,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var serverTrust: com.nuvio.tv.data.mediaserver.ServerTrust
     @Inject lateinit var serverRepository: com.nuvio.tv.data.mediaserver.ServerRepository
     @Inject lateinit var xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore
+    @Inject lateinit var deviceClaimCoordinator: com.nuvio.tv.core.iptv.DeviceClaimCoordinator
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -135,6 +136,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 ) == host
             }
         }
+        // B205: a setup code redeemed with no account is claimed when a real account signs in (and at app start).
+        deviceClaimCoordinator.start(analyticsConsentScope)
         analyticsConsentScope.launch {
             xtreamAccountStore.accounts.collect { com.nuvio.tv.core.iptv.IptvPanelHosts.setAccounts(it) }
         }

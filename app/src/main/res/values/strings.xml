@@ -3708,6 +3708,8 @@
     <string name="iptv_setup_addons">Also adds %1$s</string>
     <string name="iptv_setup_add_to_profile">Add to profile</string>
     <string name="iptv_setup_add_to">Add to %1$s</string>
+    <string name="iptv_setup_add_to_device">Add to this device</string>
+    <string name="iptv_setup_sign_in_later">Sign in any time to keep these in your Tuvora account.</string>
     <string name="iptv_setup_adding">Adding\u2026</string>
     <string name="iptv_setup_back">Use a different code</string>
     <string name="iptv_setup_added_other_profile">%1$s was added to profile %2$s. Switch to that profile to see it.</string>
