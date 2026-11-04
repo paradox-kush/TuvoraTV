@@ -802,10 +802,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
         mpv.setOptionString("input-default-bindings", "yes")
-        // TODO(vod-converge C10): tier the demuxer cache on low-RAM boxes (DeviceClass.isLowRam;
-        //  a241c6d8e, 454497716). Fixed 64 MB + 64 MB back is heavy on 1-2 GB TVs.
-        mpv.setOptionString("demuxer-max-bytes", "${64 * 1024 * 1024}")
-        mpv.setOptionString("demuxer-max-back-bytes", "${64 * 1024 * 1024}")
+        // Fork (C10): demuxer cache tiered by device RAM (a241c6d8e). The flat 64+64 MiB was the
+        // largest native cache, granted on the smallest boxes: low-RAM TVs get 48+16, others 64+32.
+        val demuxerBytes = mpvDemuxerBudget(lowRam = com.nuvio.tv.core.util.DeviceClass.isLowRam(context))
+        mpv.setOptionString("demuxer-max-bytes", "${demuxerBytes.maxBytes}")
+        mpv.setOptionString("demuxer-max-back-bytes", "${demuxerBytes.maxBackBytes}")
         mpv.setOptionString("keep-open", "yes")
         mpv.setOptionString("softvol", "yes")
         mpv.setOptionString("volume-max", MPV_MAX_VOLUME_PERCENT.toInt().toString())
@@ -989,3 +990,15 @@ internal fun isMpvPositionFromMediaRequest(
     if (currentPath.isNullOrEmpty()) return false
     return currentPath == requestedUrl || currentPath != pathAtRequest
 }
+
+/**
+ * Fork (C10): libmpv demuxer cache by device RAM, the same numbers as the player memory budget
+ * (core.memory.demuxerBytesFor; MpvDemuxerBytesTest keeps them equal; the firewall keeps core.memory
+ * out of this upstream file).
+ */
+internal fun mpvDemuxerBudget(lowRam: Boolean): com.nuvio.tv.core.contracts.DemuxerBudgetBytes =
+    if (lowRam) {
+        com.nuvio.tv.core.contracts.DemuxerBudgetBytes(maxBytes = 48L * 1024 * 1024, maxBackBytes = 16L * 1024 * 1024)
+    } else {
+        com.nuvio.tv.core.contracts.DemuxerBudgetBytes(maxBytes = 64L * 1024 * 1024, maxBackBytes = 32L * 1024 * 1024)
+    }
