@@ -137,10 +137,9 @@ internal fun PlayerRuntimeController.applyAudioDelay(delayMs: Int) {
 }
 
 /** Pushes the current total delay to the UI state and the active engine. */
-// TODO(vod-converge C5): clamp the ExoPlayer audio delay (AudioDelayRangePolicy, legacy-vod-player) so a
-//  large stream/manual value cannot hang "Starting stream..." (2094c13d1).
 internal fun PlayerRuntimeController.applyEffectiveAudioDelay() {
-    val totalMs = audioDelayParts.totalMs
+    // Fork (C5): ExoPlayer must buffer |delay| ahead, so a large value would never start; clamp per engine.
+    val totalMs = AudioDelayRangePolicy.effectiveDelayMs(audioDelayParts.totalMs, usingMpv = isUsingMpvEngine())
     audioDelayUs.set(totalMs.toLong() * 1000L)
     _exoPlayer?.getAssHandlerCompat()?.let { it.audioDelayUs = totalMs.toLong() * 1000L }
     _uiState.update { it.copy(audioDelayMs = totalMs) }
@@ -910,8 +909,6 @@ internal fun PlayerRuntimeController.currentWatchProgress(
     lastWatched = lastWatched
 )
 
-// TODO(vod-converge C6): guard against a stale save after completion overwriting a completed episode
-//  (CompletedEpisodeSavePolicy, legacy-vod-player; 0251ec634).
 internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, duration: Long, syncRemote: Boolean = true) {
     if (contentType.equals("cloud", ignoreCase = true)) {
         saveCloudLibraryProgress(position, duration, completed = false)

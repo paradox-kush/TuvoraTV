@@ -231,8 +231,6 @@ internal fun PlayerRuntimeController.initializePlayer(
             if (rememberAudioDelayPerDeviceEnabled) {
                 applyStoredAudioDelayForCurrentRouteIfEnabled()
             }
-            // Re-apply on every (re)initialization without dropping the user's tweak on the current stream.
-            applyEffectiveAudioDelay()
             cachedDecoderPriority = playerSettings.decoderPriority
             val preferredAudioLanguages = resolvePreferredAudioLanguages(
                 preferredAudioLanguage = playerSettings.preferredAudioLanguage,
@@ -255,6 +253,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                 resolvedAutoPlayerEngine = null
             }
             currentInternalPlayerEngine = effectiveInternalPlayerEngine
+            // Re-apply on every (re)initialization without dropping the user's tweak on the current stream.
+            // After the engine is resolved: the applied range depends on it (AudioDelayRangePolicy, C5).
+            applyEffectiveAudioDelay()
             playbackAnalyticsDiagnostics.setTraceContext(
                 host = url.safeHost(),
                 engine = effectiveInternalPlayerEngine.name
