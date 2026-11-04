@@ -378,6 +378,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                                 (pos > 0L || (playingNow && !cacheBuffering && playerDuration > 0L))
                             if (firstFrameReady) {
                                 hasRenderedFirstFrame = true
+                                reportCatchUpFirstFrame()
                                 resetMpvStartupWatchdog()
                                 scheduleMpvStableProgressReset()
                                 val clickToFirstFrameMs = launchStartedAtElapsedMs
@@ -1427,9 +1428,9 @@ fun PlayerRuntimeController.onEvent(
             pendingPreviewSeekPosition = null
             val current = currentPlaybackPositionMs() ?: 0L
             val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
-            val requested = (current + event.deltaMs)
+            val requested = catchUpSeekTargetMs((current + event.deltaMs)
                 .coerceAtLeast(0L)
-                .coerceAtMost(maxDuration)
+                .coerceAtMost(maxDuration))
             val target = if (isPartyControlLocked) ownSeekTarget(requested) ?: return else requested
             val seekParameters = if (event.deltaMs < 0L) {
                 SeekParameters.PREVIOUS_SYNC
@@ -1450,9 +1451,9 @@ fun PlayerRuntimeController.onEvent(
             if (_playbackTimeline.value.isLive) return
             val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
             val basePosition = pendingPreviewSeekPosition ?: currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L
-            val target = (basePosition + event.deltaMs)
+            val target = catchUpSeekTargetMs((basePosition + event.deltaMs)
                 .coerceAtLeast(0L)
-                .coerceAtMost(maxDuration)
+                .coerceAtMost(maxDuration))
             pendingPreviewSeekPosition = target
             updatePlaybackTimeline(currentPosition = target)
             if (_uiState.value.showControls) {
@@ -1463,7 +1464,7 @@ fun PlayerRuntimeController.onEvent(
         }
         PlayerEvent.OnCommitPreviewSeek -> {
             if (_playbackTimeline.value.isLive) return
-            val requested = pendingPreviewSeekPosition
+            val requested = pendingPreviewSeekPosition?.let(::catchUpSeekTargetMs)
             if (requested != null) {
                 val target = if (isPartyControlLocked) ownSeekTarget(requested) else requested
                 if (target == null) {
@@ -1486,7 +1487,8 @@ fun PlayerRuntimeController.onEvent(
         is PlayerEvent.OnSeekTo -> {
             if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
-            val target = if (isPartyControlLocked) ownSeekTarget(event.position) ?: return else event.position
+            val requestedPosition = catchUpSeekTargetMs(event.position)
+            val target = if (isPartyControlLocked) ownSeekTarget(requestedPosition) ?: return else requestedPosition
             seekPlaybackTo(target, SeekParameters.CLOSEST_SYNC)
             updatePlaybackTimeline(currentPosition = target)
             scheduleProgressSyncAfterSeek()

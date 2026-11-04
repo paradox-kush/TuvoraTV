@@ -38,7 +38,14 @@ internal data class PlayerNavigationArgs(
     val launchStartedAtMs: Long?,
     val profileId: Int?,
     val audioDelayMs: Int? = null,
-    val audioDelayLanguage: String? = null
+    val audioDelayLanguage: String? = null,
+    /**
+     * Fork: IPTV catch-up replay (route arg `isCatchUp`, see Screen.Player). The replay id keeps the
+     * channel's `:live:` segment; this flag and the programme bounds drive [CatchUpReplayAdapter].
+     */
+    val isCatchUp: Boolean = false,
+    val catchUpStartMs: Long? = null,
+    val catchUpEndMs: Long? = null
 ) {
     val torrentTrackers: List<String>
         get() {
@@ -100,7 +107,10 @@ internal data class PlayerNavigationArgs(
                 launchStartedAtMs = savedStateHandle.get<String>("launchStartedAtMs")?.toLongOrNull(),
                 profileId = savedStateHandle.get<String>("profileId")?.toIntOrNull(),
                 audioDelayMs = savedStateHandle.get<String>("audioDelayMs")?.toIntOrNull(),
-                audioDelayLanguage = decodedOrNull("audioDelayLanguage")
+                audioDelayLanguage = decodedOrNull("audioDelayLanguage"),
+                isCatchUp = savedStateHandle.get<String>("isCatchUp")?.toBooleanStrictOrNull() == true,
+                catchUpStartMs = savedStateHandle.get<String>("catchUpStartMs")?.toLongOrNull(),
+                catchUpEndMs = savedStateHandle.get<String>("catchUpEndMs")?.toLongOrNull()
             )
         }
     }

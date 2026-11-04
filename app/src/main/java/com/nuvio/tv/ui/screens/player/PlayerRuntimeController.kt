@@ -109,7 +109,9 @@ class PlayerRuntimeController(
     internal val party: com.nuvio.tv.core.party.PartyRepository,
     internal val profileId: Int,
     savedStateHandle: SavedStateHandle,
-    internal val scope: CoroutineScope
+    internal val scope: CoroutineScope,
+    /** Fork: the catch-up URL-dialect walk (core.contracts port; null = no IPTV catch-up wiring). */
+    internal val catchUpPort: com.nuvio.tv.core.contracts.CatchUpPlaybackPort? = null
 ) {
 
     /** Resolved once so every `context.getString(...)` here follows the app language. */
@@ -177,6 +179,12 @@ class PlayerRuntimeController(
     )
 
     internal val navigationArgs = PlayerNavigationArgs.from(savedStateHandle)
+    /** Fork: catch-up replay decisions (seek clamp, dialect walk first, report the proven shape). */
+    internal val catchUpReplay = CatchUpReplayAdapter(
+        isCatchUp = navigationArgs.isCatchUp,
+        programmeStartMs = navigationArgs.catchUpStartMs,
+        programmeEndMs = navigationArgs.catchUpEndMs,
+    )
     internal val initialStreamUrl: String = navigationArgs.streamUrl
     internal val title: String = navigationArgs.title
     internal val streamName: String? = navigationArgs.streamName

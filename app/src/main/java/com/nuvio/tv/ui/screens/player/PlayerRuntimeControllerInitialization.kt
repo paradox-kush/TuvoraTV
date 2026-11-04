@@ -1305,6 +1305,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                             val firstFrameAlreadyRendered = hasRenderedFirstFrame
                             if (readyTransition.nextState.hasRenderedFirstFrame && isTunneledPlayback) {
                                 hasRenderedFirstFrame = true
+                                reportCatchUpFirstFrame()
                             }
                             when (val action = readyTransition.action) {
                                 is PlayerStartupPlaybackPolicy.ReadyAction.TunneledFirstReady -> {
@@ -1459,6 +1460,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     override fun onRenderedFirstFrame() {
                         val isFirstFrame = !hasRenderedFirstFrame  // capture BEFORE flipping
                         hasRenderedFirstFrame = true
+                        reportCatchUpFirstFrame()
                         mediaSourceFactory.unlockStartupPrefetch()
                         if (isFirstFrame && _uiState.value.postPlayDismissedForCurrentEpisode) {
                             _uiState.update { it.copy(postPlayDismissedForCurrentEpisode = false) }
@@ -1495,6 +1497,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                         cancelFirstFrameWatchdog()
                         val detailedError = error.toDisplayMessage(context)
                         cancelStableProgressReset()
+
+                        // Fork: a catch-up replay that has not played yet tries the next URL shape
+                        // before any recovery rung below spends the connection on the wrong one.
+                        if (advanceCatchUpDialect(error.errorCode)) return
 
                         // TODO(vod-converge B1): IPTV expired-link refresh goes HERE, before every other
                         //  rung: on 401/403/410 for an IPTV id, re-mint once via

@@ -102,6 +102,8 @@ class PlayerViewModel @Inject constructor(
     private val serverStreams: com.nuvio.tv.data.mediaserver.ServerStreams,
     partyRepository: com.nuvio.tv.core.party.PartyRepository,
     profileManager: com.nuvio.tv.core.profile.ProfileManager,
+    /** Fork: IPTV catch-up replay ports (Hilt-bound in LivePlaybackModule). */
+    livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -153,7 +155,8 @@ class PlayerViewModel @Inject constructor(
         profileId = savedStateHandle.get<String>("profileId")?.toIntOrNull()
             ?: profileManager.activeProfileId.value,
         savedStateHandle = savedStateHandle,
-        scope = viewModelScope
+        scope = viewModelScope,
+        catchUpPort = livePlayback.catchUp
     )
 
     init {
