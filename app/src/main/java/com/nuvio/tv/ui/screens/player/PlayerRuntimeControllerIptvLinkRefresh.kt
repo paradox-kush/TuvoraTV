@@ -198,6 +198,17 @@ internal fun PlayerRuntimeController.onMpvPlaybackEnded(event: com.nuvio.tv.play
         // In background the live demux is stopped deliberately; resume reloads the stream and a
         // genuinely dead link will re-error in the foreground where we can recover visibly.
         if (isInBackground) return@launch
+        // Field logs must tell "provider closed the stream" (EOF) from "open failed" (ERROR) even in
+        // release builds. Class only: a reason code, never a URL, host or provider message.
+        val endClass = LiveStreamEndPolicy.describeEnd(
+            reason = event.reason,
+            rendered = hasRenderedFirstFrame,
+            reconnectInFlight = liveRecoveryInFlight,
+            attempts = liveRecoveryAttempts,
+            fileError = event.fileError,
+        )
+        Log.w(PlayerRuntimeController.TAG, "MPV_END_FILE: $endClass")
+        playbackAnalyticsDiagnostics.recordRawEventLine("MPV_END_FILE: $endClass")
         // A live end before anything rendered is a startup failure, not a freeze: it falls through
         // to the error path below rather than the indefinitely-retrying live ladder.
         when (

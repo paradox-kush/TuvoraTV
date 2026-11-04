@@ -66,4 +66,25 @@ internal object LiveStreamEndPolicy {
         isFreezeOpen -> Bookkeeping.KEEP_INCIDENT
         else -> Bookkeeping.ARM_WATCHER
     }
+
+    /**
+     * One log line for an mpv END_FILE: the typed reason plus the ladder context, with the free-text
+     * error reduced to a short token of letters, digits, spaces and `_-` (mpv's own generic error
+     * names like "loading failed"). Anything else — a URL, a host, a provider message — becomes
+     * `redacted`, so the line is safe to keep in release logs and telemetry.
+     */
+    fun describeEnd(
+        reason: MpvEndFileReason,
+        rendered: Boolean,
+        reconnectInFlight: Boolean,
+        attempts: Int,
+        fileError: String?,
+    ): String {
+        val err = fileError?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            if (it.length <= 40 && it.all { c -> c.isLetterOrDigit() || c == ' ' || c == '_' || c == '-' }) it
+            else "redacted"
+        }
+        return "reason=${reason.name.lowercase()} rendered=$rendered reconnect=$reconnectInFlight " +
+            "attempts=$attempts err=${err ?: "none"}"
+    }
 }

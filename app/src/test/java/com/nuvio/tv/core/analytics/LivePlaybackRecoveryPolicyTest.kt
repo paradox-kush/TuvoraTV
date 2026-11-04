@@ -155,4 +155,62 @@ class LivePlaybackRecoveryPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `indefinite ladder gives up after attempts that never rendered a frame`() {
+        // 2026-11-04 Onn: the provider closed the stream, five reconnects each ended in ~1s, and
+        // the screen sat black with no message. A channel that will not come back is a Failed
+        // outcome with Retry, not an endless (or silent) ladder.
+        assertEquals(
+            Decision.GiveUp,
+            LivePlaybackRecoveryPolicy.evaluate(
+                Input(
+                    attempts = 5,
+                    sinceLastAttemptMs = 60_000L,
+                    retryIndefinitely = true,
+                    attemptsWithoutPlayback = LivePlaybackRecoveryPolicy.MAX_ATTEMPTS_WITHOUT_PLAYBACK,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `indefinite ladder keeps trying while attempts still render frames in between`() {
+        // A flaky channel that plays between drops has used many attempts overall but none in a
+        // row without playback: it must never be given up on.
+        assertEquals(
+            Decision.Reconnect,
+            LivePlaybackRecoveryPolicy.evaluate(
+                Input(
+                    attempts = 12,
+                    sinceLastAttemptMs = 60_000L,
+                    retryIndefinitely = true,
+                    attemptsWithoutPlayback = LivePlaybackRecoveryPolicy.MAX_ATTEMPTS_WITHOUT_PLAYBACK - 1,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `give up wins over the backoff wait`() {
+        assertEquals(
+            Decision.GiveUp,
+            LivePlaybackRecoveryPolicy.evaluate(
+                Input(
+                    attempts = 5,
+                    sinceLastAttemptMs = 0L,
+                    retryIndefinitely = true,
+                    attemptsWithoutPlayback = LivePlaybackRecoveryPolicy.MAX_ATTEMPTS_WITHOUT_PLAYBACK,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `delay before the next attempt follows the backoff table and caps`() {
+        assertEquals(0L, LivePlaybackRecoveryPolicy.backoffMs(0))
+        assertEquals(2_000L, LivePlaybackRecoveryPolicy.backoffMs(1))
+        assertEquals(20_000L, LivePlaybackRecoveryPolicy.backoffMs(4))
+        assertEquals(20_000L, LivePlaybackRecoveryPolicy.backoffMs(40))
+    }
 }

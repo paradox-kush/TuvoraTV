@@ -129,4 +129,26 @@ class LiveStreamEndPolicyTest {
             LiveStreamEndPolicy.bookkeepingOnLiveEnd(hasRenderedFirstFrame = true, isFreezeOpen = true),
         )
     }
+
+    @Test
+    fun `end log carries the reason class and never a url or host`() {
+        val line = LiveStreamEndPolicy.describeEnd(
+            reason = MpvEndFileReason.EOF,
+            rendered = false,
+            reconnectInFlight = true,
+            attempts = 3,
+            fileError = "http://provider.example:8080/live/u/p/1.ts failed",
+        )
+        assertEquals("reason=eof rendered=false reconnect=true attempts=3 err=redacted", line)
+    }
+
+    @Test
+    fun `end log keeps mpv generic error names`() {
+        val line = LiveStreamEndPolicy.describeEnd(MpvEndFileReason.ERROR, true, false, 0, "loading failed")
+        assertEquals("reason=error rendered=true reconnect=false attempts=0 err=loading failed", line)
+        assertEquals(
+            "reason=eof rendered=true reconnect=false attempts=0 err=none",
+            LiveStreamEndPolicy.describeEnd(MpvEndFileReason.EOF, true, false, 0, null),
+        )
+    }
 }

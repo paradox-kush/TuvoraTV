@@ -342,6 +342,10 @@ class PlayerRuntimeController(
     /** True from firing a reconnect until the rebuilt player renders. Suppresses the teardown flush. */
     @Volatile internal var liveRecoveryInFlight: Boolean = false
     internal var liveRecoveryGaveUp: Boolean = false
+    /** Reconnects since a frame last rendered; feeds the policy's "never comes back" cap. */
+    internal var liveAttemptsWithoutPlayback: Int = 0
+    /** Re-asks the ladder when a failed reconnect leaves no further player event to do it. */
+    internal var liveReconnectRecheckJob: kotlinx.coroutines.Job? = null
     /** Last sampled mpv VO/AImageReader failure count; detects presentation wedges decode fps misses. */
     internal var lastMpvPresentationFaultCount: Long = 0L
 

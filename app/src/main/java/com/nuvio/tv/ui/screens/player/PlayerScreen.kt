@@ -980,7 +980,12 @@ fun PlayerScreen(
                         else PlayerEvent.OnReportPlaybackIssue
                     )
                 },
-                onBack = exitPlayerFromError
+                onBack = exitPlayerFromError,
+                // A live channel that would not come back gets a Retry (focused first on the D-pad);
+                // other errors keep their existing Report / Go back pair.
+                onRetry = if (uiState.liveFreezeGaveUp) {
+                    { viewModel.onEvent(PlayerEvent.OnRetry) }
+                } else null,
             )
         }
 
@@ -3040,14 +3045,16 @@ private fun ErrorOverlay(
     reportError: String?,
     onReport: () -> Unit,
     onBack: () -> Unit,
+    onRetry: (() -> Unit)? = null,
     isFreezeReport: Boolean = false,
     freezeReported: Boolean = false,
 ) {
     val exitFocusRequester = remember { FocusRequester() }
     val reportFocusRequester = remember { FocusRequester() }
+    val retryFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        exitFocusRequester.requestFocus()
+        if (onRetry != null) retryFocusRequester.requestFocus() else exitFocusRequester.requestFocus()
     }
 
     Box(
@@ -3104,6 +3111,16 @@ private fun ErrorOverlay(
             Row(
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
             ) {
+                if (onRetry != null) {
+                    DialogButton(
+                        text = stringResource(R.string.action_retry),
+                        onClick = onRetry,
+                        isPrimary = true,
+                        modifier = Modifier
+                            .focusRequester(retryFocusRequester)
+                            .focusProperties { right = if (showReportAction) reportFocusRequester else exitFocusRequester },
+                    )
+                }
                 if (isFreezeReport) {
                     // Freeze-specific report: lightweight PostHog signal (live_freeze_user_report),
                     // shown even when generic issue reporting is off. Label flips to a thanks once sent.
@@ -3117,7 +3134,10 @@ private fun ErrorOverlay(
                         enabled = !freezeReported,
                         modifier = Modifier
                             .focusRequester(reportFocusRequester)
-                            .focusProperties { right = exitFocusRequester }
+                            .focusProperties {
+                                right = exitFocusRequester
+                                if (onRetry != null) left = retryFocusRequester
+                            }
                     )
                 } else if (showReportAction) {
                     DialogButton(
@@ -3138,12 +3158,14 @@ private fun ErrorOverlay(
                 DialogButton(
                     text = stringResource(R.string.player_go_back),
                     onClick = onBack,
-                    isPrimary = true,
+                    isPrimary = onRetry == null,
                     modifier = Modifier
                         .focusRequester(exitFocusRequester)
                         .then(
                             if (showReportAction) {
                                 Modifier.focusProperties { left = reportFocusRequester }
+                            } else if (onRetry != null) {
+                                Modifier.focusProperties { left = retryFocusRequester }
                             } else {
                                 Modifier
                             }
