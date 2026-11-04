@@ -12,6 +12,7 @@ import com.nuvio.tv.data.local.StreamAutoPlayMode
 import com.nuvio.tv.data.local.StreamAutoPlaySource
 import com.nuvio.tv.data.local.toTrackPreference
 import com.nuvio.tv.domain.model.AddonStreams
+import com.nuvio.tv.core.streams.DeferredStreamPolicy
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.scraperIdFromPluginBingeGroup
 import com.nuvio.tv.domain.model.StreamDebridCacheState
@@ -878,20 +879,66 @@ private fun PlayerRuntimeController.openExternalStreamInBrowser(
     return true
 }
 
+/**
+ * A matched source can be LISTED with a deferred (not yet minted) play url - a Stalker edition. Every
+ * pick site mints first, for the chosen edition only ([DeferredStreamPolicy]); this is the in-player one
+ * (source switch + episode switch, which next-episode auto-play also goes through). Returns true when
+ * [stream] was deferred and the mint has started: [onMinted] re-enters the switch with the real url. A
+ * failed mint reports "invalid url" in the panel's error line and leaves the playing source alone; the
+ * engine never sees the placeholder, and nothing probes it (a minted link may be single-use).
+ */
+private fun PlayerRuntimeController.mintDeferredStreamThen(
+    stream: Stream,
+    fromEpisodePanel: Boolean,
+    onMinted: (Stream) -> Unit,
+): Boolean {
+    if (!streamRepository.isDeferredIptvUrl(stream.url)) return false
+    debridResolveJob?.cancel()
+    _uiState.update {
+        if (fromEpisodePanel) {
+            it.copy(isLoadingEpisodeStreams = true, episodeStreamsError = null)
+        } else {
+            it.copy(isLoadingSourceStreams = true, sourceStreamsError = null)
+        }
+    }
+    debridResolveJob = scope.launch {
+        val outcome = DeferredStreamPolicy.resolve(
+            stream = stream,
+            isDeferred = streamRepository::isDeferredIptvUrl,
+            mint = { url -> streamRepository.mintDeferredIptvUrl(url) },
+        )
+        debridResolveJob = null
+        if (outcome is DeferredStreamPolicy.Outcome.Minted) {
+            onMinted(outcome.stream)
+        } else {
+            val message = context.getString(com.nuvio.tv.R.string.player_stream_error_invalid_url)
+            _uiState.update {
+                if (fromEpisodePanel) {
+                    it.copy(isLoadingEpisodeStreams = false, episodeStreamsError = message)
+                } else {
+                    it.copy(isLoadingSourceStreams = false, sourceStreamsError = message)
+                }
+            }
+        }
+    }
+    return true
+}
+
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun PlayerRuntimeController.switchToSourceStream(
     stream: Stream
 ) {
-    // TODO(vod-converge B2): IMPORTANT, open seam. A matched Stalker source in the in-player sources
-    //  panel carries a `stalker-deferred:` placeholder URL; until B2 lands it reaches the engine as is
-    //  and fails to play. Mint it first (streamRepository.isDeferredIptvUrl / mintDeferredIptvUrl via
-    //  core/streams/DeferredStreamPolicy), and never probe it.
     // TODO(vod-converge C7): keep the pre-first-frame resume position across this swap (B59).
     sourceStreamsScope?.cancel()
     sourceStreamsScope = null
     sourceStreamsJob = null
     streamRepository.setLocalPluginSearchPaused(true)
     if (openExternalStreamInBrowser(stream = stream, fromEpisodePanel = false)) {
+        return
+    }
+
+    // A matched Stalker source is listed without a play link: mint it for the picked edition first.
+    if (mintDeferredStreamThen(stream, fromEpisodePanel = false) { minted -> switchToSourceStream(minted) }) {
         return
     }
 
@@ -1545,9 +1592,15 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     forcedTargetVideo: Video? = null,
     isAutoPlay: Boolean = false
 ) {
-    // TODO(vod-converge B2): IMPORTANT, open seam. Episode-panel and auto-play episode streams can be
-    //  `stalker-deferred:` placeholders; mint before the engine sees them (see switchToSourceStream).
     if (openExternalStreamInBrowser(stream = stream, fromEpisodePanel = true)) {
+        return
+    }
+
+    // Episode-panel, auto-play and next-episode streams can be deferred Stalker editions too.
+    if (mintDeferredStreamThen(stream, fromEpisodePanel = true) { minted ->
+            switchToEpisodeStream(minted, forcedTargetVideo, isAutoPlay)
+        }
+    ) {
         return
     }
 
@@ -1993,7 +2046,6 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
     val nextVideo = nextEpisodeVideo ?: return
     val type = contentType ?: return
     nextEpisodePreloadTriggered = false
-    // TODO(vod-converge B2): the next-episode stream may be `stalker-deferred:`; mint before playing.
     // TODO(vod-converge C8): wait for the matching addon before auto-picking (e30fdd2bb), and open the
     //  picker at once when no search can pick (UX25, 82aed7911).
 
