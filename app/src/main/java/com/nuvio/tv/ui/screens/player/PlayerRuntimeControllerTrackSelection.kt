@@ -466,12 +466,13 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(subtitle: Subtitle) {
                 val file = java.io.File(cacheDir, "mpv_${subtitle.id.hashCode()}.$ext")
                 file.writeText(sanitized, Charsets.UTF_8)
                 file.absolutePath
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                // TODO(vod-converge C2): PRIVACY, open seam (B200). This falls back to `sub-add <remote url>`
-                //  while mpv's global http-header-fields still hold the STREAM's headers, so they reach the
-                //  subtitle host. Fail instead, or clear http-header-fields around this one sub-add.
-                Log.w(PlayerRuntimeController.TAG, "Failed to cache normalized subtitle for MPV, falling back to URL", e)
-                subtitle.url
+                // No `sub-add <remote url>` fallback: mpv would send the STREAM's global
+                // http-header-fields to the subtitle host (B200). Fail like the ExoPlayer sidecar path.
+                Log.w(PlayerRuntimeController.TAG, "Failed to cache addon subtitle for MPV: ${e.message}")
+                return@launch
             }
 
             val added = mpvView?.addAndSelectExternalSubtitle(

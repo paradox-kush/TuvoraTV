@@ -581,6 +581,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     ): Boolean {
         if (!initialized) return false
         if (url.isBlank()) return false
+        if (!MpvExternalSubtitlePolicy.isAllowedSubAddSource(url)) {
+            Log.w(TAG, "Refusing remote sub-add: it would carry the stream's http-header-fields (B200)")
+            return false
+        }
         return runCatching {
             // "cached" avoids duplicate re-loads for the same external subtitle.
             val safeTitle = title?.takeIf { it.isNotBlank() }
