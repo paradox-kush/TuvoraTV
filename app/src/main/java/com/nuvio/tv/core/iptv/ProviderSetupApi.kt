@@ -131,7 +131,8 @@ object SetupResponses {
                 DeviceRedeem(
                     status = str("status") ?: "redeemed",
                     provider = str("provider")?.let { ProviderText.clean(it) }?.takeIf { it.isNotEmpty() },
-                    skippedAddons = (o["skipped_addons"] as? JsonPrimitive)?.content == "true",
+                    skippedAddons = (o["skipped_addons"] as? JsonPrimitive)?.content
+                        ?.let { it == "true" || (it.toIntOrNull() ?: 0) > 0 } == true,
                     playlists = playlists,
                 )
             )

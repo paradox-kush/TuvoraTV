@@ -158,8 +158,8 @@ class DeviceClaimStore internal constructor(private val prefs: SharedPreferences
 
     /** Replaces a claim with the same token. */
     @Synchronized
-    fun save(claim: DeviceClaim) {
-        write(all().filterNot { it.token == claim.token } + claim)
+    fun save(claim: DeviceClaim): Boolean {
+        return write(all().filterNot { it.token == claim.token } + claim)
     }
 
     @Synchronized
@@ -167,8 +167,8 @@ class DeviceClaimStore internal constructor(private val prefs: SharedPreferences
         write(all().filterNot { it.token == token })
     }
 
-    private fun write(list: List<DeviceClaim>) {
-        prefs.edit().putString(KEY, json.encodeToString(serializer, list)).commit()
+    private fun write(list: List<DeviceClaim>): Boolean {
+        return prefs.edit().putString(KEY, json.encodeToString(serializer, list)).commit()
     }
 
     companion object {

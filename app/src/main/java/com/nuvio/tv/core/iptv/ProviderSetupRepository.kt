@@ -107,10 +107,15 @@ class ProviderSetupRepository @Inject constructor(
                 RedeemFlowResult.Failed(r.outcome)
             }
             is DeviceRedeemOutcome.Done -> {
+                val added = r.redeem.playlists.filter { it.isAdded }
+                // A failed write would leave a spent code with no claim. Keep the token and report a
+                // retryable failure: the same token gets `already_redeemed` and the same playlists.
+                if (!claims.save(DeviceClaim(token, r.redeem.provider, System.currentTimeMillis(), added))) {
+                    captureRedeem(0, 0, SetupCodeOutcome.Network)
+                    return RedeemFlowResult.Failed(SetupCodeOutcome.Network)
+                }
                 inFlightDevice = null
                 holder.clear()
-                val added = r.redeem.playlists.filter { it.isAdded }
-                claims.save(DeviceClaim(token, r.redeem.provider, System.currentTimeMillis(), added))
                 runCatching { localPlaylists.addMissing(added) }
                     .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
                 val result = RedeemResult(

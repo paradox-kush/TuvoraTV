@@ -20,6 +20,14 @@ class SetupDeviceResponsesTest {
     """.trimIndent()
 
     @Test
+    fun `skipped_addons arrives as a count and counts as skipped when above zero`() {
+        val two = SetupResponses.parseDeviceRedeem(200, okBody.replace("\"skipped_addons\":false", "\"skipped_addons\":2")) as DeviceRedeemOutcome.Done
+        assertTrue("a count of 2 means add-ons were skipped", two.redeem.skippedAddons)
+        val zero = SetupResponses.parseDeviceRedeem(200, okBody.replace("\"skipped_addons\":false", "\"skipped_addons\":0")) as DeviceRedeemOutcome.Done
+        assertTrue("a count of 0 means none were skipped", !zero.redeem.skippedAddons)
+    }
+
+    @Test
     fun `a 200 device redeem carries every playlist field`() {
         val r = SetupResponses.parseDeviceRedeem(200, okBody) as DeviceRedeemOutcome.Done
         assertEquals("redeemed", r.redeem.status)

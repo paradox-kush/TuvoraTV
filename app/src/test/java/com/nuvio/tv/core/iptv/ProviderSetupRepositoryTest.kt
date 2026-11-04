@@ -28,7 +28,7 @@ class ProviderSetupRepositoryTest {
         every { currentAccessToken() } returns "tok"
     }
     private val profiles = mockk<ProfileManager> { every { activeProfileId } returns MutableStateFlow(1) }
-    private val claims = mockk<DeviceClaimStore>(relaxed = true)
+    private val claims = mockk<DeviceClaimStore>(relaxed = true) { every { save(any()) } returns true }
     private val local = mockk<DeviceSetupPlaylists>(relaxed = true)
 
     private fun repo(hosted: Boolean = true): ProviderSetupRepository {
@@ -84,6 +84,20 @@ class ProviderSetupRepositoryTest {
         assertEquals(true, Regex("^[0-9a-f]{64}$").matches(hash.captured))
         coVerify(exactly = 0) { api.redeem(any(), any(), any()) }
         coVerify(exactly = 0) { sync.pullAndApply() }
+    }
+
+    @Test
+    fun `a failed claim write is a retryable failure that keeps the token and adds nothing`() = runTest {
+        val hashes = mutableListOf<String>()
+        coEvery { api.deviceRedeem(any(), capture(hashes)) } returns deviceDone()
+        every { claims.save(any()) } returns false
+        val repo = signedOutRepo()
+        val first = repo.redeem("ABCDEFGHJKMN", 1)
+        assertEquals(RedeemFlowResult.Failed(SetupCodeOutcome.Network), first)
+        coVerify(exactly = 0) { local.addMissing(any()) }
+        every { claims.save(any()) } returns true
+        repo.redeem("ABCDEFGHJKMN", 1)
+        assertEquals("the retry reuses the same claim token", hashes[0], hashes[1])
     }
 
     @Test
