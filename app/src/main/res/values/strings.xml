@@ -3452,6 +3452,7 @@
     <string name="about_discord_qr_instruction">Scan with your phone to join the Tuvora Discord</string>
     <string name="advanced_rec_events">Improve recommendations</string>
     <string name="advanced_rec_events_subtitle">Share which titles you\'re shown and what you watch, so Tuvora can suggest better things. Never sold or shared with anyone.</string>
+    <string name="player_live_reconnect_failed">The channel stopped streaming and wouldn\'t reconnect after several tries. Your provider may have closed the connection or hit its connection limit. Try again in a moment.</string>
     <string name="player_live_freeze_gave_up">This channel keeps freezing and couldn\'t be recovered. Try again, or report it so we can fix it.</string>
     <string name="player_report_frozen">Report frozen</string>
     <string name="player_report_frozen_thanks">Thanks — freeze reported.</string>

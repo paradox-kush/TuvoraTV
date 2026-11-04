@@ -17,6 +17,16 @@ internal object LivePlaybackRecoveryPolicy {
     const val MAX_ATTEMPTS = 5
 
     /**
+     * Even the indefinitely-retrying live lane stops after this many reconnects IN A ROW that never
+     * rendered a frame. The attempt count alone cannot tell "flaky but playing" (must never give
+     * up) from "the provider closes every stream within a second" (will never come back): the
+     * caller counts attempts since the last real playback and passes it as
+     * [Input.attemptsWithoutPlayback]. Giving up ends in a visible Failed state with Retry;
+     * only the viewer (or a fresh tune) starts a new ladder.
+     */
+    const val MAX_ATTEMPTS_WITHOUT_PLAYBACK = 5
+
+    /**
      * How many attempts try the cheap video-only reset before escalating to a full re-resolve.
      *
      * Only [LivePlaybackFreezePolicy.Kind.VIDEO_STALLED] uses these: audio is still arriving, so
@@ -46,6 +56,8 @@ internal object LivePlaybackRecoveryPolicy {
         val videoResetAttempts: Int = VIDEO_RESET_ATTEMPTS,
         /** Live linear TV has no legitimate EOF; keep reconnecting at the capped cadence. */
         val retryIndefinitely: Boolean = false,
+        /** Reconnects since a frame last rendered; see [MAX_ATTEMPTS_WITHOUT_PLAYBACK]. */
+        val attemptsWithoutPlayback: Int = 0,
     )
 
     sealed class Decision {
@@ -66,9 +78,15 @@ internal object LivePlaybackRecoveryPolicy {
         data object GiveUp : Decision()
     }
 
+    /** Delay before attempt N (0-based), capped at the last step. Lets callers schedule the next try. */
+    fun backoffMs(attempts: Int): Long = BACKOFF_MS.getOrElse(attempts.coerceAtLeast(0)) { BACKOFF_MS.last() }
+
     fun evaluate(input: Input): Decision {
         if (!input.retryIndefinitely && input.attempts >= input.maxAttempts) return Decision.GiveUp
-        val backoffMs = BACKOFF_MS.getOrElse(input.attempts) { BACKOFF_MS.last() }
+        if (input.retryIndefinitely && input.attemptsWithoutPlayback >= MAX_ATTEMPTS_WITHOUT_PLAYBACK) {
+            return Decision.GiveUp
+        }
+        val backoffMs = backoffMs(input.attempts)
         if (input.sinceLastAttemptMs < backoffMs) return Decision.Wait
         // A dead pipe (ENDED / STALLED) can only be fixed upstream, so it goes straight to a
         // re-resolve. A live picture with live audio is the opposite case — see VIDEO_RESET_ATTEMPTS.

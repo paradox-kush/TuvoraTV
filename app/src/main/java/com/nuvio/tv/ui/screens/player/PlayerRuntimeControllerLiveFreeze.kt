@@ -10,7 +10,9 @@ import com.nuvio.tv.core.analytics.LivePlaybackFreezeReporter
 import com.nuvio.tv.core.analytics.LivePlaybackRecoveryPolicy
 import com.nuvio.tv.core.analytics.LiveRecoveryCoordinator
 import com.nuvio.tv.data.local.PlayerSettings
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 /**
  * Keeps live channels playing, and reports the ones that could not be saved.
@@ -29,6 +31,10 @@ internal fun PlayerRuntimeController.armLiveFreezeReporter() {
     // The rebuilt player has rendered, so the reconnect is done; whether it actually fixed
     // anything is decided by the next few samples, not by getting this far.
     liveRecoveryInFlight = false
+    // A rendered frame is real playback: the "never comes back" streak and any pending re-check end.
+    liveAttemptsWithoutPlayback = 0
+    liveReconnectRecheckJob?.cancel()
+    liveReconnectRecheckJob = null
     lastMpvPresentationFaultCount = mpvView?.presentationFaultCountNow() ?: 0L
     // First frame from a rebuilt live player proves the retry succeeded.
     if (_uiState.value.liveRetryStatus != null) {
@@ -230,7 +236,10 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
     if (liveRecoveryInFlight) {
         // The flag clears when the rebuilt player renders. If it never does, the ladder would
         // wedge here forever, so give the rebuild a bounded window and then move on.
-        if (sinceLastAttemptMs < LIVE_RECOVERY_RENDER_TIMEOUT_MS) return
+        if (sinceLastAttemptMs < LIVE_RECOVERY_RENDER_TIMEOUT_MS) {
+            scheduleLiveReconnectRecheck(kind, LIVE_RECOVERY_RENDER_TIMEOUT_MS - sinceLastAttemptMs)
+            return
+        }
         liveRecoveryInFlight = false
     }
 
@@ -255,10 +264,21 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
                     0
                 },
                 retryIndefinitely = true,
+                attemptsWithoutPlayback = liveAttemptsWithoutPlayback,
             )
         )
     ) {
-        LivePlaybackRecoveryPolicy.Decision.Wait -> Unit
+        // Backoff has not elapsed. A rebuilt player that ended without rendering emits no further
+        // event and (not armed/rendered) no freeze sample, so without a timer this was the silent
+        // dead end: the ladder only ever ran when something poked it.
+        LivePlaybackRecoveryPolicy.Decision.Wait -> {
+            if (!hasRenderedFirstFrame) {
+                scheduleLiveReconnectRecheck(
+                    kind,
+                    (LivePlaybackRecoveryPolicy.backoffMs(liveRecoveryAttempts) - sinceLastAttemptMs).coerceAtLeast(250L),
+                )
+            }
+        }
 
         // Audio is still arriving, so the link works and the fault is downstream of it.
         // `video-reload` reinitialises the video track off the demuxer that is already
@@ -292,6 +312,8 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
                 switchEngineForPersistentLiveFreeze()
                 return
             }
+            liveReconnectRecheckJob?.cancel()
+            liveReconnectRecheckJob = null
             if (!liveRecoveryGaveUp) {
                 liveRecoveryGaveUp = true
                 // Auto-report the terminal freeze (gave_up=true) so the fleet sees it without the
@@ -314,8 +336,11 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
 
         LivePlaybackRecoveryPolicy.Decision.Reconnect -> {
             liveRecoveryAttempts += 1
+            liveAttemptsWithoutPlayback += 1
             lastLiveRecoveryAtMs = nowMs
             livePlaybackFreezeReporter.onRecoveryAttempt(nowMs)
+            // If the rebuilt player neither renders nor reports an end, still look again.
+            scheduleLiveReconnectRecheck(kind, LIVE_RECOVERY_RENDER_TIMEOUT_MS + 500L)
             _uiState.update {
                 it.copy(
                     liveRetryStatus = "Live stream interrupted. Reconnecting (attempt $liveRecoveryAttempts)…",
@@ -339,12 +364,32 @@ private fun PlayerRuntimeController.maybeReconnectLiveStream(kind: LivePlaybackF
 }
 
 /**
+ * Re-runs the ladder after [delayMs] while the channel still has not rendered. Single job: a newer
+ * schedule replaces the older one, so it can never stack. Cancelled by a rendered frame, a give-up,
+ * a channel change or teardown ([stopLiveFreezeReporter]).
+ */
+private fun PlayerRuntimeController.scheduleLiveReconnectRecheck(
+    kind: LivePlaybackFreezePolicy.Kind,
+    delayMs: Long,
+) {
+    liveReconnectRecheckJob?.cancel()
+    liveReconnectRecheckJob = scope.launch {
+        delay(delayMs.coerceAtLeast(250L))
+        if (!isLiveFeed() || isInBackground || isReleasingPlayer || hasRenderedFirstFrame) return@launch
+        maybeReconnectLiveStream(kind)
+    }
+}
+
+/**
  * Flushes an unresolved freeze. Reaching here while frozen is exactly the reported workaround —
  * the viewer changed channel or backed out because the picture never came back.
  */
 internal fun PlayerRuntimeController.stopLiveFreezeReporter() {
     // A reconnect releases the player on purpose; the freeze is still open and unresolved.
     if (liveRecoveryInFlight) return
+    liveReconnectRecheckJob?.cancel()
+    liveReconnectRecheckJob = null
+    liveAttemptsWithoutPlayback = 0
     val position = currentLivePositionMs()
     livePlaybackFreezeReporter.onLivePlaybackStopped(
         nowMs = System.currentTimeMillis(),
@@ -369,11 +414,18 @@ internal fun PlayerRuntimeController.stopLiveFreezeReporter() {
 private fun PlayerRuntimeController.surfaceLiveFreezeGaveUp() {
     _uiState.update {
         it.copy(
-            error = context.getString(R.string.player_live_freeze_gave_up),
+            error = context.getString(
+                if (liveAttemptsWithoutPlayback >= LivePlaybackRecoveryPolicy.MAX_ATTEMPTS_WITHOUT_PLAYBACK) {
+                    R.string.player_live_reconnect_failed
+                } else {
+                    R.string.player_live_freeze_gave_up
+                }
+            ),
             liveFreezeGaveUp = true,
             showLoadingOverlay = false,
             isBuffering = false,
             showPauseOverlay = false,
+            liveRetryStatus = null,
         )
     }
 }
