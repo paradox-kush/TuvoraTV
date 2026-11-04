@@ -321,6 +321,8 @@ class PlayerRuntimeController(
     internal var iptvLinkRefreshInFlight: Boolean = false
     /** Fork (C7, B59): the resume target of the current request; survives a swap before the first frame. */
     internal var requestedStartPositionMs: Long = 0L
+    /** Fork (C1): the latest libmpv tick sample, read off Main by the progress loop. */
+    internal var lastMpvTickSample: MpvTickSample = MpvTickSample()
     internal var currentSeason: Int? = initialSeason
     internal var currentEpisode: Int? = initialEpisode
     internal var currentEpisodeTitle: String? = initialEpisodeTitle

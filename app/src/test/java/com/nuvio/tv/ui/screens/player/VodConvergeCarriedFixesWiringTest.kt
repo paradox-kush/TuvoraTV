@@ -78,6 +78,24 @@ class VodConvergeCarriedFixesWiringTest {
         assertTrue("createMediaSource must resolve the playback DNS", create.contains("playbackDnsProvider"))
     }
 
+    @Test
+    fun `C1 the progress loop, track snapshot and startup watchdog read libmpv off Main`() {
+        val loop = functionBody(source("PlayerRuntimeControllerPlaybackEvents.kt"), "fun PlayerRuntimeController.startProgressUpdates(")
+        val mpvBranch = loop.substringBefore("_exoPlayer?.let")
+        assertTrue("the mpv tick must sample through MpvReads", mpvBranch.contains("MpvReads.read"))
+        for (read in listOf(
+            "view.currentPositionMs()", "view.durationMs()", "view.isPlayingNow()", "view.currentSubtitleText()",
+            "view.isPausedForCacheNow()", "view.isCoreIdleNow()", "view.isPositionFromRequestedMedia()",
+            "view.isEofReached()", "view.isLiveStreamNow()", "view.demuxerCacheDurationSec()",
+        )) {
+            assertTrue("$read must not run on the loop's Main context", !mpvBranch.substringAfter("MpvReads.read").contains(read))
+        }
+        val tracks = functionBody(source("PlayerRuntimeControllerMpv.kt"), "fun PlayerRuntimeController.updateMpvAvailableTracks(")
+        assertTrue("the track snapshot must be read through MpvReads", tracks.contains("MpvReads.read { view.readTrackSnapshot() }"))
+        val watchdog = functionBody(source("PlayerRuntimeControllerMpvEvents.kt"), "fun PlayerRuntimeController.maybeRunMpvStartupWatchdog(")
+        assertTrue("the watchdog must use the tick sample, not read libmpv itself", !watchdog.contains("view.mpv.") && !watchdog.contains("view.demuxerCacheDurationSec()"))
+    }
+
     private fun functionBody(text: String, signature: String): String {
         val start = text.indexOf(signature)
         assertTrue("missing $signature", start >= 0)

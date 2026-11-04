@@ -22,7 +22,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : BaseMPVView(context, attrs) {
 
+    @Volatile
     private var initialized = false
+
+    /** Held by off-Main reads ([readTickSample], [readTrackSnapshot]) and by [releasePlayer]'s destroy. */
+    private val coreLock = Any()
     private var hasQueuedInitialMedia = false
     private var lastMediaRequestKey: String? = null
     private var pendingInitialMediaUrl: String? = null
@@ -630,7 +634,31 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
      * can carry close to a hundred tracks, a dozen properties each), or for a few ticks while an
      * audio track still lacks its channel count.
      */
-    fun readTrackSnapshot(): MpvTrackSnapshot {
+    /** One locked read of everything the progress tick needs; safe off Main (see [MpvReads]). */
+    internal fun readTickSample(): MpvTickSample = synchronized(coreLock) {
+        if (!initialized) return@synchronized MpvTickSample()
+        runCatching {
+            MpvTickSample(
+                positionMs = currentPositionMs(),
+                durationMs = durationMs(),
+                playing = isPlayingNow(),
+                subtitleText = currentSubtitleText(),
+                pausedForCache = isPausedForCacheNow(),
+                coreIdle = isCoreIdleNow(),
+                idleActive = mpv.getPropertyBoolean("idle-active") == true,
+                fromRequestedMedia = isPositionFromRequestedMedia(),
+                eofReached = isEofReached(),
+                liveStream = isLiveStreamNow(),
+                demuxerCacheSec = demuxerCacheDurationSec(),
+                videoTrackSelected = hasVideoTrackSelectedNow(),
+                isHdrVideo = readVideoIsHdr(),
+            )
+        }.getOrElse { MpvTickSample() }
+    }
+
+    fun readTrackSnapshot(): MpvTrackSnapshot = synchronized(coreLock) { readTrackSnapshotLocked() }
+
+    private fun readTrackSnapshotLocked(): MpvTrackSnapshot {
         if (!initialized) return MpvTrackSnapshot(emptyList(), emptyList())
         val trackCount = runCatching { mpv.getPropertyInt("track-list/count") ?: 0 }
             .getOrDefault(0)
@@ -734,9 +762,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     fun releasePlayer() {
         if (!initialized) return
         removeCallbacks(aspectReapplyRunnable)
-        runCatching { destroy() }
-            .onFailure { Log.w(TAG, "Failed to destroy libmpv view cleanly: ${LogRedaction.text(it.message)}") }
-        initialized = false
+        synchronized(coreLock) {
+            runCatching { destroy() }
+                .onFailure { Log.w(TAG, "Failed to destroy libmpv view cleanly: ${LogRedaction.text(it.message)}") }
+            initialized = false
+        }
         hasQueuedInitialMedia = false
         lastMediaRequestKey = null
         pendingInitialMediaUrl = null

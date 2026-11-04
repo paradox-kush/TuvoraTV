@@ -352,29 +352,32 @@ internal fun shouldTreatAsNaturalPlaybackCompletion(
 /** Streams shorter than ~2:01 are treated as error/placeholder clips, not real episodes. */
 internal fun isShortPlaceholderDuration(duration: Long): Boolean = duration in 1..120_999L
 
-// TODO(vod-converge C1): ANR rule. This loop makes ~8 synchronous libmpv property reads per tick on
-//  `scope` (viewModelScope = Main). Run the mpv reads on one Dispatchers.IO.limitedParallelism(1)
-//  context and post the results to Main.
 internal fun PlayerRuntimeController.startProgressUpdates() {
     progressJob?.cancel()
     progressJob = scope.launch {
         while (isActive) {
             if (isUsingMpvEngine()) {
-                val view = mpvView
-                if (view != null) {
-                    val pos = view.currentPositionMs().coerceAtLeast(0L)
-                    val playerDuration = view.durationMs().coerceAtLeast(0L)
+                val sampledView = mpvView
+                // Fork (C1, ANR rule): libmpv is read off Main on the serial mpv lane; this tick
+                // then works from the sample. A view swapped or released meanwhile skips the tick.
+                val sample = sampledView?.let { v -> MpvReads.read { v.readTickSample() } }
+                val view = sampledView?.takeIf { it === mpvView && isUsingMpvEngine() }
+                if (view != null && sample != null) {
+                    lastMpvTickSample = sample
+                    val pos = sample.positionMs.coerceAtLeast(0L)
+                    val playerDuration = sample.durationMs.coerceAtLeast(0L)
                     applyPendingMpvSeekIfNeeded(
                         view = view,
                         currentPositionMs = pos,
-                        durationMs = playerDuration
+                        durationMs = playerDuration,
+                        videoTrackSelected = sample.videoTrackSelected
                     )
-                    val playingNow = view.isPlayingNow()
-                    subtitleCueTracker.updateText(view.currentSubtitleText())
-                    val cacheBuffering = view.isPausedForCacheNow() || view.isCoreIdleNow()
+                    val playingNow = sample.playing
+                    subtitleCueTracker.updateText(sample.subtitleText)
+                    val cacheBuffering = sample.pausedForCache || sample.coreIdle
                     var firstFrameReady = hasRenderedFirstFrame
                         if (!firstFrameReady) {
-                            firstFrameReady = view.isPositionFromRequestedMedia() &&
+                            firstFrameReady = sample.fromRequestedMedia &&
                                 (pos > 0L || (playingNow && !cacheBuffering && playerDuration > 0L))
                             if (firstFrameReady) {
                                 hasRenderedFirstFrame = true
@@ -398,7 +401,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                                 }
                             }
                         }
-                    maybeRunMpvStartupWatchdog(view)
+                    maybeRunMpvStartupWatchdog(view, sample)
                     if (playerDuration > lastKnownDuration) {
                         lastKnownDuration = playerDuration
                     }
@@ -408,14 +411,14 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         previous = mpvDurationGrowth,
                         mediaKey = currentStreamUrl,
                         durationMs = playerDuration,
-                        fromRequestedMedia = view.isPositionFromRequestedMedia()
+                        fromRequestedMedia = sample.fromRequestedMedia
                     )
                     publishPlaybackTimeline(
                         currentPosition = displayPosition,
                         duration = playerDuration,
-                        bufferedPosition = (pos + (view.demuxerCacheDurationSec() * 1000.0).toLong())
+                        bufferedPosition = (pos + (sample.demuxerCacheSec * 1000.0).toLong())
                             .coerceAtLeast(displayPosition),
-                        playerReportsLive = view.isLiveStreamNow() || mpvDurationGrowth.grew,
+                        playerReportsLive = sample.liveStream || mpvDurationGrowth.grew,
                         isPlaying = playingForWatchClock
                     )
                     // Prefer the largest known duration; MPV can report a shorter one transiently.
@@ -424,10 +427,10 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     val effectiveDuration = maxOf(playerDuration, lastKnownDuration)
                     val nearEnd = endDetectionArmed && playerDuration > 0L &&
                         pos >= (effectiveDuration - PlayerNextEpisodeRules.NEAR_END_MS)
-                    val eofNow = view.isEofReached()
+                    val eofNow = sample.eofReached
                     if (!eofNow) mpvEofSeenClear = true
                     val mpvEofReached = mpvEofSeenClear && eofNow
-                    val naturalEnded = !view.isLiveStreamNow() && (nearEnd || mpvEofReached) && shouldTreatAsNaturalPlaybackCompletion(
+                    val naturalEnded = !sample.liveStream && (nearEnd || mpvEofReached) && shouldTreatAsNaturalPlaybackCompletion(
                         hasRenderedFirstFrame = firstFrameReady,
                         hasFatalError = !_uiState.value.error.isNullOrBlank(),
                         durationMs = effectiveDuration
@@ -447,7 +450,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     // libmpv has no Media3 listener callbacks. Keep Android's active media
                     // session in sync with the state sampled by this existing progress tick.
                     refreshMpvMediaSession()
-                    updateMpvTracksOnTick()
+                    updateMpvTracksOnTick(sample.isHdrVideo)
                     recomputeChapterSkipIntervalsIfNeeded()
                     updateActiveSkipInterval(pos)
                     if (!_playbackTimeline.value.isLive) {

@@ -330,7 +330,7 @@ private fun PlayerRuntimeController.attemptMpvAutoRetry(
     return true
 }
 
-internal fun PlayerRuntimeController.maybeRunMpvStartupWatchdog(view: NuvioMpvSurfaceView) {
+internal fun PlayerRuntimeController.maybeRunMpvStartupWatchdog(view: NuvioMpvSurfaceView, sample: MpvTickSample) {
     if (hasRenderedFirstFrame) return
 
     val enabled = _uiState.value.error == null &&
@@ -344,10 +344,10 @@ internal fun PlayerRuntimeController.maybeRunMpvStartupWatchdog(view: NuvioMpvSu
     var idleActive = false
     var cacheProgressing = false
     if (enabled && !waitingForSurface) {
-        // TODO(vod-converge C1): synchronous libmpv read from the watchdog tick (Main); move off Main.
-        idleActive = runCatching { view.mpv.getPropertyBoolean("idle-active") }.getOrNull() == true
+        // Fork (C1): both values come from the tick's off-Main sample.
+        idleActive = sample.idleActive
         if (!idleActive) {
-            val cacheSec = runCatching { view.demuxerCacheDurationSec() }.getOrDefault(0.0)
+            val cacheSec = sample.demuxerCacheSec
             cacheProgressing = MpvStartupWatchdogPolicy.cacheIsProgressing(mpvLastDemuxerCacheSec, cacheSec)
             if (cacheSec > mpvLastDemuxerCacheSec) {
                 mpvLastDemuxerCacheSec = cacheSec

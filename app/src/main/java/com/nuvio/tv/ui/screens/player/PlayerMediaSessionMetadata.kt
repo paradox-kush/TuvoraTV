@@ -157,10 +157,11 @@ internal fun PlayerRuntimeController.refreshMpvMediaSession() {
 }
 
 private fun PlayerRuntimeController.mpvMediaSessionSnapshot(): MpvMediaSessionSnapshot {
-    val view = mpvView
-    val positionMs = view?.currentPositionMs()?.coerceAtLeast(0L) ?: 0L
-    val durationMs = view?.durationMs()?.coerceAtLeast(0L) ?: 0L
-    val bufferedPositionMs = positionMs + ((view?.demuxerCacheDurationSec() ?: 0.0) * 1_000.0).toLong()
+    // Fork (C1): the progress tick's off-Main sample, never a libmpv read on Main.
+    val sample = lastMpvTickSample.takeIf { mpvView != null } ?: MpvTickSample()
+    val positionMs = sample.positionMs.coerceAtLeast(0L)
+    val durationMs = sample.durationMs.coerceAtLeast(0L)
+    val bufferedPositionMs = positionMs + (sample.demuxerCacheSec * 1_000.0).toLong()
     val metadata = buildMediaSessionMetadata()
     // Match ExoPlayer's default ID without publishing potentially sensitive stream URLs.
     val mediaId = currentFilename?.takeIf { it.isNotBlank() } ?: MediaItem.DEFAULT_MEDIA_ID
@@ -173,11 +174,11 @@ private fun PlayerRuntimeController.mpvMediaSessionSnapshot(): MpvMediaSessionSn
         durationMs = durationMs,
         positionMs = positionMs,
         bufferedPositionMs = bufferedPositionMs,
-        isPlaying = view?.isPlayingNow() == true,
+        isPlaying = mpvView != null && _uiState.value.isPlaying,
         isBuffering = _uiState.value.isBuffering,
         isEnded = _uiState.value.playbackEnded,
         // External seek controls must also respect the app's live-content policy.
-        isSeekable = !_playbackTimeline.value.isLive && view?.isLiveStreamNow() != true,
+        isSeekable = !_playbackTimeline.value.isLive && !sample.liveStream,
         speed = _uiState.value.playbackSpeed,
     )
 }

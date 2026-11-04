@@ -330,8 +330,8 @@ internal fun PlayerRuntimeController.markMpvTracksStale() {
  * some of them wait on things that are not track-list changes, such as the first frame or
  * add-on subtitles arriving one add-on at a time.
  */
-internal fun PlayerRuntimeController.updateMpvTracksOnTick() {
-    updateMpvHdrVideoState()
+internal fun PlayerRuntimeController.updateMpvTracksOnTick(isHdrVideo: Boolean?) {
+    updateMpvHdrVideoState(isHdrVideo)
     if (mpvTrackRefreshGate.isStale) {
         updateMpvAvailableTracks()
         return
@@ -348,9 +348,9 @@ internal fun PlayerRuntimeController.updateMpvTracksOnTick() {
 }
 
 /** mpv only reports the video transfer once it has decoded video params, so this is re-read each tick. */
-private fun PlayerRuntimeController.updateMpvHdrVideoState() {
+private fun PlayerRuntimeController.updateMpvHdrVideoState(sampledIsHdrVideo: Boolean?) {
     if (!isUsingMpvEngine()) return
-    val isHdrVideo = mpvView?.readVideoIsHdr() ?: return
+    val isHdrVideo = sampledIsHdrVideo ?: return
     if (_uiState.value.isHdrVideo != isHdrVideo) {
         _uiState.update { it.copy(isHdrVideo = isHdrVideo) }
     }
@@ -372,8 +372,8 @@ internal fun PlayerRuntimeController.updateMpvAvailableTracks() {
     mpvTrackRefreshInProgress = true
     mpvTrackRefreshJob = scope.launch {
         try {
-            // TODO(vod-converge C1): readTrackSnapshot is many synchronous libmpv reads; move off Main.
-            val snapshot = view.readTrackSnapshot()
+            // Fork (C1): many libmpv reads; off Main on the serial mpv lane.
+            val snapshot = MpvReads.read { view.readTrackSnapshot() }
             if (!isUsingMpvEngine() || mpvView !== view || currentStreamUrl != streamUrlAtRefresh) return@launch
             applyMpvTrackSnapshot(snapshot)
             refreshMpvChapters(view)
@@ -513,11 +513,12 @@ private fun PlayerRuntimeController.performPendingMpvHardRestartIfNeeded(view: N
 internal fun PlayerRuntimeController.applyPendingMpvSeekIfNeeded(
     view: NuvioMpvSurfaceView,
     currentPositionMs: Long = view.currentPositionMs().coerceAtLeast(0L),
-    durationMs: Long = view.durationMs().coerceAtLeast(0L)
+    durationMs: Long = view.durationMs().coerceAtLeast(0L),
+    videoTrackSelected: Boolean? = null
 ) {
     if (!isUsingMpvEngine()) return
     if (delayMpvResumeSeekUntilVideoTrack) {
-        if (!view.hasVideoTrackSelectedNow()) return
+        if (!(videoTrackSelected ?: view.hasVideoTrackSelectedNow())) return
         delayMpvResumeSeekUntilVideoTrack = false
     }
 
