@@ -1267,6 +1267,76 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    // 2026-11-04 Onn 4K (TV 1.16.4): the provider closed a live stream after 3 minutes and every
+    // reconnect's mpv ended again within ~1s with an EOF and no frame. The screen ended black and
+    // idle with no message. Whatever the profile, the session must end in FAILED (error + Retry),
+    // stop opening the provider, and stay there.
+    private suspend fun TestScope.eofStormEnds(profile: SessionProfile) {
+        val engine = FakeEngine { start, input, events ->
+            if (start > 1) events.emit(PlaybackEvent.PlaybackEnded(input.generation, PlaybackEndReason.EOF))
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, profile))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        advanceUntilIdle()
+        advanceTimeBy(10 * 60_000L)
+        advanceUntilIdle()
+
+        val state = session.snapshot.value
+        assertEquals(state.toString(), PlaybackState.FAILED, state.state)
+        assertEquals(FailureCode.LIVE_RECONNECT_EXHAUSTED, state.failure?.code)
+        val startsAtFailure = engine.startCalls
+        advanceTimeBy(10 * 60_000L)
+        advanceUntilIdle()
+        assertEquals("a Failed live session must not keep opening the provider", startsAtFailure, engine.startCalls)
+        close(session)
+    }
+
+    @Test
+    fun `fullscreen eof storm ends in failed and stays quiet`() = runTest { eofStormEnds(SessionProfile.FULLSCREEN) }
+
+    @Test
+    fun `guide preview eof storm ends in failed and stays quiet`() = runTest { eofStormEnds(SessionProfile.GUIDE) }
+
+    // The same Onn log: ~40 s after the ladder gave up the viewer pressed Retry; the provider still
+    // closed every stream at once. Retry must end in FAILED again (error + Retry stay reachable),
+    // never in a state with no attempts running and no error.
+    @Test
+    fun `retry after exhausted live reconnect ends in failed again`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            if (start > 1) events.emit(PlaybackEvent.PlaybackEnded(input.generation, PlaybackEndReason.EOF))
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        advanceUntilIdle()
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+
+        advanceTimeBy(40_000L)
+        session.dispatch(PlaybackCommand.Retry)
+        advanceUntilIdle()
+        advanceTimeBy(5 * 60_000L)
+        advanceUntilIdle()
+
+        val state = session.snapshot.value
+        assertEquals(state.toString(), PlaybackState.FAILED, state.state)
+        assertTrue(state.failure != null)
+        val starts = engine.startCalls
+        advanceTimeBy(5 * 60_000L)
+        advanceUntilIdle()
+        assertEquals("no further provider opens once Failed", starts, engine.startCalls)
+        close(session)
+    }
+
     @Test
     fun `live recovery joins default position while VOD restores its checkpoint`() = runTest {
         suspend fun TestScope.recoveredStart(request: PlaybackRequest): PlaybackEngineStart {
