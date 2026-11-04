@@ -5,11 +5,12 @@
 
 package com.nuvio.tv.ui.screens.player
 
-import com.nuvio.tv.ui.components.player.DialogButton
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+
+import android.view.KeyEvent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -50,6 +51,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,16 +68,21 @@ import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.Video
 import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.components.FocusScrollingText
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.SourceChipStatus
+import com.nuvio.tv.ui.screens.detail.EpisodeOptionsOverlay
+import com.nuvio.tv.ui.screens.detail.adjacentEpisode
 import com.nuvio.tv.ui.screens.detail.formatReleaseDate
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Visibility
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.request.transformations
 import androidx.compose.ui.platform.LocalContext
+import com.nuvio.tv.ui.util.contentTextDirection
 import com.nuvio.tv.ui.util.localizeEpisodeTitle
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.rememberCoroutineScope
@@ -95,9 +102,9 @@ internal fun EpisodesSidePanel(
     onBackToEpisodes: () -> Unit,
     onReloadEpisodeStreams: () -> Unit,
     onSeasonSelected: (Int) -> Unit,
-    onRangeSelected: (String) -> Unit,
     onAddonFilterSelected: (String?) -> Unit,
     onEpisodeSelected: (Video) -> Unit,
+    onEpisodeManualPlay: (Video) -> Unit,
     onStreamSelected: (Stream) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -155,8 +162,8 @@ internal fun EpisodesSidePanel(
                         uiState = uiState,
                         episodesFocusRequester = episodesFocusRequester,
                         onSeasonSelected = onSeasonSelected,
-                        onRangeSelected = onRangeSelected,
-                        onEpisodeSelected = onEpisodeSelected
+                        onEpisodeSelected = onEpisodeSelected,
+                        onEpisodeManualPlay = onEpisodeManualPlay
                     )
                 }
             }
@@ -218,6 +225,28 @@ private fun EpisodeStreamsView(
         streamFocusRequesters.getOrPut(key) { FocusRequester() }
     }
     var firstCardHasFocus by remember(firstStreamKey) { mutableStateOf(false) }
+
+    var focusedStreamKey by remember { mutableStateOf<String?>(null) }
+    var backButtonHasFocus by remember { mutableStateOf(false) }
+    var chipsHasFocus by remember { mutableStateOf(false) }
+
+    LaunchedEffect(streamKeys, focusedStreamKey, userMovedFromFirstResult) {
+        if (!userMovedFromFirstResult) return@LaunchedEffect
+        val key = focusedStreamKey ?: return@LaunchedEffect
+        val newIndex = streamKeys.indexOf(key)
+        if (newIndex < 0) return@LaunchedEffect
+        val firstVisible = streamListState.firstVisibleItemIndex
+        val lastVisible = streamListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstVisible
+        if (newIndex < firstVisible || newIndex > lastVisible) {
+            streamListState.scrollToItem(newIndex)
+        }
+        if (backButtonHasFocus || chipsHasFocus) return@LaunchedEffect
+        val requester = streamFocusRequesters[key]
+        if (requester != null) {
+            withFrameNanos { }
+            runCatching { requester.requestFocus() }
+        }
+    }
 
     LaunchedEffect(uiState.isLoadingEpisodeStreams, firstStreamKey, userMovedFromFirstResult, firstResultFocusAssigned) {
         if (!uiState.isLoadingEpisodeStreams && firstStreamKey != null &&
@@ -296,8 +325,9 @@ private fun EpisodeStreamsView(
             isPrimary = false,
             modifier = Modifier
                 .focusRequester(backButtonFocusRequester)
+                .onFocusChanged { backButtonHasFocus = it.isFocused }
                 .onKeyEvent { event ->
-                    if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN &&
+                    if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN &&
                         event.key == androidx.compose.ui.input.key.Key.DirectionDown
                     ) {
                         val activeIdx = if (uiState.episodeSelectedAddonFilter == null) 1
@@ -334,26 +364,28 @@ private fun EpisodeStreamsView(
         enter = fadeIn(animationSpec = tween(200)),
         exit = fadeOut(animationSpec = tween(120))
     ) {
-        AddonFilterChips(
-            addons = uiState.episodeAvailableAddons,
-            sourceChips = uiState.episodeSourceChips,
-            selectedAddon = uiState.episodeSelectedAddonFilter,
-            isStillFetching = uiState.isLoadingEpisodeStreams ||
-                uiState.episodeSourceChips.any { it.status == SourceChipStatus.LOADING },
-            onRefresh = {
-                userMovedFromFirstResult = false
-                firstResultFocusAssigned = false
-                onReload()
-            },
-            onAddonSelected = { onAddonFilterSelected(it) },
-            externalFocusRequesters = chipFocusRequesters,
-            externalOrderedNames = orderedAddonNames,
-            chipListState = chipListState,
-            onUpKey = {
-                try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
-            },
-            debugTag = "EpisodeSidePanel"
-        )
+        Box(modifier = Modifier.onFocusChanged { chipsHasFocus = it.hasFocus }) {
+            AddonFilterChips(
+                addons = uiState.episodeAvailableAddons,
+                sourceChips = uiState.episodeSourceChips,
+                selectedAddon = uiState.episodeSelectedAddonFilter,
+                isStillFetching = uiState.isLoadingEpisodeStreams ||
+                    uiState.episodeSourceChips.any { it.status == SourceChipStatus.LOADING },
+                onRefresh = {
+                    userMovedFromFirstResult = false
+                    firstResultFocusAssigned = false
+                    onReload()
+                },
+                onAddonSelected = { onAddonFilterSelected(it) },
+                externalFocusRequesters = chipFocusRequesters,
+                externalOrderedNames = orderedAddonNames,
+                chipListState = chipListState,
+                onUpKey = {
+                    try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                },
+                debugTag = "EpisodeSidePanel"
+            )
+        }
     }
 
     Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
@@ -398,7 +430,7 @@ private fun EpisodeStreamsView(
                     .fillMaxHeight()
                     .onFocusChanged { listHasFocus = it.hasFocus }
                     .onKeyEvent { event ->
-                        if (event.nativeKeyEvent.action != android.view.KeyEvent.ACTION_DOWN) return@onKeyEvent false
+                        if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
 
                         if (event.nativeKeyEvent.repeatCount > 0) {
                             val now = android.os.SystemClock.uptimeMillis()
@@ -459,6 +491,9 @@ private fun EpisodeStreamsView(
                         badgePlacement = uiState.streamBadgePlacement,
                         onClick = { onStreamSelected(stream) },
                         onFocusChanged = { focused ->
+                            if (focused) {
+                                focusedStreamKey = streamKeys[index]
+                            }
                             if (index == 0) {
                                 firstCardHasFocus = focused
                             }
@@ -480,12 +515,20 @@ private fun EpisodesListView(
     uiState: PlayerUiState,
     episodesFocusRequester: FocusRequester,
     onSeasonSelected: (Int) -> Unit,
-    onRangeSelected: (String) -> Unit,
-    onEpisodeSelected: (Video) -> Unit
+    onEpisodeSelected: (Video) -> Unit,
+    onEpisodeManualPlay: (Video) -> Unit
 ) {
     val seasonTabFocusRequester = remember { FocusRequester() }
-    val rangeChipsFocusRequester = remember { FocusRequester() }
     val episodesListState = rememberLazyListState()
+    var seasonTabsFocused by remember { mutableStateOf(false) }
+    var detailsEpisode by remember { mutableStateOf<Video?>(null) }
+    val isEpisodeWatched: (Video) -> Boolean = { episode ->
+        val episodeKey = episode.season?.let { s -> episode.episode?.let { e -> s to e } }
+        episodeKey != null && (
+            uiState.episodeWatchProgressMap[episodeKey]?.isCompleted() == true ||
+                uiState.watchedEpisodeKeys.contains(episodeKey)
+            )
+    }
     val lastOpenedEpisodeIndex = remember(
         uiState.episodes,
         uiState.episodeStreamsForVideoId
@@ -510,6 +553,8 @@ private fun EpisodesListView(
         }
         runCatching {
             episodesListState.scrollToItem(targetIndex)
+            // Focusing a tab loads its season and re-runs this effect, so pulling focus down here would drag the user off the tab row while browsing.
+            if (seasonTabsFocused) return@runCatching
             delay(32)
             episodesFocusRequester.requestFocus()
         }
@@ -544,30 +589,24 @@ private fun EpisodesListView(
         }
 
         else -> {
+            val sortedSeasons = remember(uiState.episodesAvailableSeasons) {
+                val regular = uiState.episodesAvailableSeasons.filter { it > 0 }.sorted()
+                val specials = uiState.episodesAvailableSeasons.filter { it == 0 }
+                regular + specials
+            }
+
             Column(modifier = Modifier.fillMaxHeight()) {
-                if (uiState.episodesAvailableSeasons.isNotEmpty()) {
-                    EpisodesSeasonTabs(
-                        seasons = uiState.episodesAvailableSeasons,
-                        selectedSeason = uiState.episodesSelectedSeason,
-                        selectedTabFocusRequester = seasonTabFocusRequester,
-                        onSeasonSelected = onSeasonSelected
-                    )
+                if (sortedSeasons.isNotEmpty()) {
+                    // hasFocus covers the whole row, so this stays true while moving between tabs and clears only once focus leaves for the list.
+                    Box(modifier = Modifier.onFocusChanged { seasonTabsFocused = it.hasFocus }) {
+                        EpisodesSeasonTabs(
+                            seasons = sortedSeasons,
+                            selectedSeason = uiState.episodesSelectedSeason,
+                            selectedTabFocusRequester = seasonTabFocusRequester,
+                            onSeasonSelected = onSeasonSelected
+                        )
+                    }
 
-                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
-                }
-
-                if (uiState.episodeRanges.isNotEmpty()) {
-                    EpisodeRangeChips(
-                        ranges = uiState.episodeRanges,
-                        selectedRange = uiState.selectedEpisodeRange,
-                        onRangeSelected = onRangeSelected,
-                        selectedChipFocusRequester = rangeChipsFocusRequester,
-                        upFocusRequester = if (uiState.episodesAvailableSeasons.isNotEmpty()) {
-                            seasonTabFocusRequester
-                        } else {
-                            null
-                        },
-                    )
                     Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
                 }
 
@@ -577,15 +616,7 @@ private fun EpisodesListView(
                     contentPadding = PaddingValues(top = NuvioTheme.spacing.xs),
                     modifier = Modifier
                         .fillMaxHeight()
-                        // Up must land on the range chips when they exist, or they become a
-                        // one-way door: reachable coming down, never coming back up.
-                        .focusProperties {
-                            up = if (uiState.episodeRanges.isNotEmpty()) {
-                                rangeChipsFocusRequester
-                            } else {
-                                seasonTabFocusRequester
-                            }
-                        }
+                        .focusProperties { up = seasonTabFocusRequester }
                 ) {
                     itemsIndexed(uiState.episodes) { index, episode ->
                         val isCurrent = episode.season == uiState.currentSeason &&
@@ -595,88 +626,62 @@ private fun EpisodesListView(
                             currentEpisodeIndex >= 0 -> isCurrent
                             else -> index == 0
                         }
-                        val episodeKey = episode.season?.let { s ->
-                            episode.episode?.let { e -> s to e }
-                        }
-                        val isWatched = episodeKey != null && (
-                            uiState.episodeWatchProgressMap[episodeKey]?.isCompleted() == true ||
-                            uiState.watchedEpisodeKeys.contains(episodeKey)
-                        )
                         EpisodeItem(
                             episode = episode,
                             isCurrent = isCurrent,
-                            isWatched = isWatched,
+                            isWatched = isEpisodeWatched(episode),
                             blurUnwatched = uiState.blurUnwatchedEpisodes,
                             focusRequester = episodesFocusRequester,
                             requestInitialFocus = requestInitialFocus,
-                            onClick = { onEpisodeSelected(episode) }
+                            availableSeasons = sortedSeasons,
+                            currentSeason = uiState.episodesSelectedSeason,
+                            onSeasonNavigate = onSeasonSelected,
+                            onPreviousFromFirstSeason = {
+                                runCatching { seasonTabFocusRequester.requestFocus() }.isSuccess
+                            },
+                            onClick = { onEpisodeSelected(episode) },
+                            onLongClick = { detailsEpisode = episode }
                         )
                     }
                 }
             }
         }
     }
-}
 
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun EpisodeRangeChips(
-    ranges: List<com.nuvio.tv.ui.util.EpisodeBucket>,
-    selectedRange: String?,
-    onRangeSelected: (String) -> Unit,
-    selectedChipFocusRequester: FocusRequester? = null,
-    upFocusRequester: FocusRequester? = null
-) {
-    LazyRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .focusRestorer(),
-        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
-        contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xs, vertical = NuvioTheme.spacing.xs)
-    ) {
-        items(ranges, key = { it.label }) { range ->
-            val isSelected = range.label == selectedRange
-            var isFocused by remember { mutableStateOf(false) }
-
-            Card(
-                onClick = { onRangeSelected(range.label) },
-                modifier = Modifier
-                    .onFocusChanged { isFocused = it.isFocused }
-                    .then(
-                        if (isSelected && selectedChipFocusRequester != null) {
-                            Modifier.focusRequester(selectedChipFocusRequester)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .focusProperties { upFocusRequester?.let { up = it } },
-                shape = CardDefaults.shape(shape = RoundedCornerShape(NuvioTheme.spacing.xl)),
-                colors = CardDefaults.colors(
-                    containerColor = if (isSelected) NuvioTheme.colors.SurfaceVariant else NuvioTheme.colors.BackgroundCard,
-                    focusedContainerColor = NuvioTheme.colors.Secondary
-                ),
-                border = CardDefaults.border(
-                    focusedBorder = Border(
-                        border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
-                        shape = RoundedCornerShape(NuvioTheme.spacing.xl)
-                    )
-                ),
-                scale = CardDefaults.scale(focusedScale = 1.0f)
-            ) {
-                Text(
-                    text = range.label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = when {
-                        isFocused -> NuvioTheme.colors.OnSecondary
-                        isSelected -> NuvioTheme.colors.TextPrimary
-                        else -> NuvioTheme.extendedColors.textSecondary
-                    },
-                    modifier = Modifier.padding(vertical = NuvioTheme.spacing.sm, horizontal = NuvioTheme.spacing.lg)
-                )
-            }
-        }
+    detailsEpisode?.let { episode ->
+        EpisodeOptionsOverlay(
+            episode = episode,
+            isWatched = isEpisodeWatched(episode),
+            blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
+            style = uiState.episodeOptionsOverlayStyle,
+            isPending = false,
+            showWatchedActions = false,
+            isCurrentlyPlaying = episode.season == uiState.currentSeason &&
+                episode.episode == uiState.currentEpisode,
+            showPlayManually = episode.season != uiState.currentSeason ||
+                episode.episode != uiState.currentEpisode,
+            onDismiss = { detailsEpisode = null },
+            onNavigateEpisode = { step ->
+                adjacentEpisode(uiState.episodes, episode, step)?.let { detailsEpisode = it }
+            },
+            onPlay = {
+                detailsEpisode = null
+                onEpisodeSelected(episode)
+            },
+            onPlayManually = {
+                detailsEpisode = null
+                onEpisodeManualPlay(episode)
+            },
+            onToggleWatched = {}
+        )
     }
 }
+
+// The panel clips descriptions to two lines, so it starts revealing the rest a little sooner than the default.
+private const val EpisodeDescriptionScrollDelayMillis = 5000L
+
+// Matches the debounce the details screen uses for the same focus-driven season switch.
+private const val SeasonFocusSelectDelayMillis = 150L
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -686,32 +691,57 @@ private fun EpisodesSeasonTabs(
     selectedTabFocusRequester: FocusRequester,
     onSeasonSelected: (Int) -> Unit
 ) {
-    val sortedSeasons = remember(seasons) {
-        val regular = seasons.filter { it > 0 }.sorted()
-        val specials = seasons.filter { it == 0 }
-        regular + specials
+    val seasonTabsListState = rememberLazyListState()
+    // Falls back to the first tab for an unknown season, so the focus requester always has a tab to attach to.
+    val focusEntryIndex = remember(seasons, selectedSeason) {
+        seasons.indexOf(selectedSeason).coerceAtLeast(0)
+    }
+
+    LaunchedEffect(selectedSeason, seasons) {
+        val targetIndex = seasons.indexOf(selectedSeason)
+        if (seasonTabsListState.layoutInfo.visibleItemsInfo.any { it.index == targetIndex }) return@LaunchedEffect
+        if (targetIndex >= 0) {
+            runCatching { seasonTabsListState.animateScrollToItem(targetIndex) }
+        }
+    }
+
+    // Debounced so holding the D-pad across the row does not load every season it passes through.
+    var pendingSeason by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(pendingSeason) {
+        val target = pendingSeason ?: return@LaunchedEffect
+        delay(SeasonFocusSelectDelayMillis)
+        onSeasonSelected(target)
+        pendingSeason = null
     }
 
     LazyRow(
+        state = seasonTabsListState,
         modifier = Modifier
             .fillMaxWidth()
-            .focusRestorer(),
+            .focusRestorer(selectedTabFocusRequester),
         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
         contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xs, vertical = NuvioTheme.spacing.xs)
     ) {
-        items(sortedSeasons, key = { it }) { season ->
+        itemsIndexed(seasons, key = { _, season -> season }) { index, season ->
             val isSelected = selectedSeason == season
             var isFocused by remember { mutableStateOf(false) }
 
             Card(
                 onClick = { onSeasonSelected(season) },
                 modifier = Modifier
-                    .then(if (isSelected) Modifier.focusRequester(selectedTabFocusRequester) else Modifier)
+                    .then(if (index == focusEntryIndex) Modifier.focusRequester(selectedTabFocusRequester) else Modifier)
                     .semantics {
                         role = Role.Tab
                         this.selected = isSelected
                     }
-                    .onFocusChanged { isFocused = it.isFocused },
+                    .onFocusChanged {
+                        isFocused = it.isFocused
+                        if (it.isFocused && season != selectedSeason) pendingSeason = season
+                    }
+                    .semantics {
+                        role = Role.Tab
+                        this.selected = isSelected
+                    },
                 shape = CardDefaults.shape(shape = RoundedCornerShape(NuvioTheme.spacing.xl)),
                 colors = CardDefaults.colors(
                     containerColor = if (isSelected) NuvioPrimitives.neutral100 else NuvioTheme.colors.BackgroundCard,
@@ -723,7 +753,7 @@ private fun EpisodesSeasonTabs(
                         shape = RoundedCornerShape(NuvioTheme.spacing.xl)
                     ),
                     focusedBorder = Border(
-                        border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                        border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                         shape = RoundedCornerShape(NuvioTheme.spacing.xl)
                     )
                 ),
@@ -752,9 +782,16 @@ private fun EpisodeItem(
     blurUnwatched: Boolean = false,
     focusRequester: FocusRequester,
     requestInitialFocus: Boolean,
-    onClick: () -> Unit
+    availableSeasons: List<Int> = emptyList(),
+    currentSeason: Int? = null,
+    onSeasonNavigate: (Int) -> Unit = {},
+    onPreviousFromFirstSeason: () -> Boolean = { false },
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val shouldBlur = blurUnwatched && !isWatched
+    var isFocused by remember { mutableStateOf(false) }
+    val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val context = LocalContext.current
     val episodeTitle = episode.title.localizeEpisodeTitle(context).ifBlank { context.getString(R.string.episodes_episode) }
     val formattedDate = remember(episode.released) {
@@ -772,16 +809,58 @@ private fun EpisodeItem(
 
     Card(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (requestInitialFocus) Modifier.focusRequester(focusRequester) else Modifier),
+            .then(if (requestInitialFocus) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { isFocused = it.isFocused }
+            .onPreviewKeyEvent { keyEvent ->
+                if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                    // In RTL, DPAD_LEFT visually moves toward later items and
+                    // DPAD_RIGHT toward earlier items (mirrors the season tabs row).
+                    val isPreviousKey = if (isRtl) {
+                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                    } else {
+                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                    }
+                    val isNextKey = if (isRtl) {
+                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                    } else {
+                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                    }
+
+                    if (isPreviousKey) {
+                        // Navigate to previous season
+                        if (currentSeason != null && availableSeasons.isNotEmpty()) {
+                            val currentIndex = availableSeasons.indexOf(currentSeason)
+                            if (currentIndex > 0) {
+                                val previousSeason = availableSeasons[currentIndex - 1]
+                                onSeasonNavigate(previousSeason)
+                                return@onPreviewKeyEvent true
+                            }
+                            if (onPreviousFromFirstSeason()) return@onPreviewKeyEvent true
+                        }
+                    } else if (isNextKey) {
+                        // Navigate to next season
+                        if (currentSeason != null && availableSeasons.isNotEmpty()) {
+                            val currentIndex = availableSeasons.indexOf(currentSeason)
+                            if (currentIndex < availableSeasons.size - 1) {
+                                val nextSeason = availableSeasons[currentIndex + 1]
+                                onSeasonNavigate(nextSeason)
+                                return@onPreviewKeyEvent true
+                            }
+                        }
+                    }
+                }
+                false
+            },
         colors = CardDefaults.colors(
             containerColor = NuvioTheme.colors.BackgroundCard,
             focusedContainerColor = NuvioTheme.colors.FocusBackground
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = RoundedCornerShape(NuvioTheme.radii.xl)
             )
         ),
@@ -842,13 +921,30 @@ private fun EpisodeItem(
                             .padding(6.dp)
                             .size(22.dp)
                             .clip(RoundedCornerShape(11.dp))
-                            .background(NuvioTheme.colors.Primary),
+                            .background(Color.Black.copy(alpha = 0.7f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Visibility,
+                            contentDescription = stringResource(R.string.cd_current),
+                            tint = NuvioTheme.colors.Primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                } else if (isWatched) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(Color.Black.copy(alpha = 0.7f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Check,
-                            contentDescription = stringResource(R.string.cd_current),
-                            tint = Color.White,
+                            contentDescription = null,
+                            tint = NuvioTheme.colors.Primary,
                             modifier = Modifier.size(14.dp)
                         )
                     }
@@ -877,12 +973,15 @@ private fun EpisodeItem(
                 }
 
                 episode.overview?.takeIf { it.isNotBlank() }?.let {
-                    Text(
+                    FocusScrollingText(
                         text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = NuvioTheme.extendedColors.textSecondary,
+                        focused = isFocused,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            textDirection = it.contentTextDirection()
+                        ),
                         maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        color = NuvioTheme.extendedColors.textSecondary,
+                        startDelayMillis = EpisodeDescriptionScrollDelayMillis
                     )
                 }
             }

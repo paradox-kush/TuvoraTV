@@ -1,25 +1,23 @@
 package com.nuvio.tv.ui.screens.player
 
-import com.nuvio.tv.core.picture.AspectMode
-import com.nuvio.tv.core.picture.VideoZoom
-import com.nuvio.tv.core.picture.VideoZoomAxis
-import com.nuvio.tv.core.picture.PlayerPreferencePolicy
 import androidx.media3.common.C
 import androidx.media3.common.TrackGroup
 import androidx.media3.ui.AspectRatioFrameLayout
+import com.nuvio.tv.core.streams.CompiledStreamBadgeFilter
 import com.nuvio.tv.core.streams.StreamBadgePlacement
 import com.nuvio.tv.data.local.FrameRateMatchingMode
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.LibassRenderType
+import com.nuvio.tv.data.local.LibassRenderMode
 import com.nuvio.tv.data.local.NightMode
 import com.nuvio.tv.data.local.StreamAutoPlayMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
 import com.nuvio.tv.data.repository.SkipInterval
+import com.nuvio.tv.domain.model.EpisodeOptionsOverlayStyle
 import com.nuvio.tv.domain.model.MetaCastMember
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.Subtitle
 import com.nuvio.tv.domain.model.Video
-import com.nuvio.tv.ui.util.EpisodeBucket
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.components.SourceChipItem
 
@@ -72,16 +70,6 @@ data class PlayerUiState(
     val contentName: String? = null, // Series/show name (for series content)
     val releaseYear: String? = null, // Release year for movies
     val contentType: String? = null,
-    /**
-     * This playback is a catch-up recording rather than a live feed. Mirrored out of
-     * [com.nuvio.tv.ui.screens.player.PlayerRuntimeController] because PlayerScreen's key handling
-     * reads uiState, not the controller — see [CatchUpPlaybackPolicy] for what it gates and why it
-     * is a flag beside the content type instead of a content type of its own.
-     */
-    val isCatchUpPlayback: Boolean = false,
-    /** The replayed programme's bounds, for the clamped seek ceiling. Null unless catch-up. */
-    val catchUpProgrammeStartMs: Long? = null,
-    val catchUpProgrammeEndMs: Long? = null,
     val currentStreamName: String? = null, // Name of the current stream source
     val currentStreamUrl: String? = null,
     val currentStreamInfoHash: String? = null, // InfoHash of the currently playing stream (for debrid matching)
@@ -104,14 +92,11 @@ data class PlayerUiState(
     val loadingProgress: Float? = null,
     val loadingIssueReportVisible: Boolean = false,
     val loadingIssueElapsedMs: Long = 0L,
-    // Set when a resume has shown no frame for ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS: the
-    // position it is trying to reach; the loading screen offers "Start from beginning".
-    val startOverOfferPositionMs: Long? = null,
-    // "You watched further on your server": the position another app left there, offered over the picture
-    // for a few seconds (a media server's resume position - owner decisions 2026-10-06). Null = no offer.
-    val serverResumeOfferMs: Long? = null,
     val pauseOverlayEnabled: Boolean = true,
     val osdClockEnabled: Boolean = true,
+    val transparentLetterbox: Boolean = false,
+    val playerStatsHudEnabled: Boolean = false,
+    val playerStatsHudButtonAvailable: Boolean = false,
     val showPauseOverlay: Boolean = false,
     val audioTracks: List<TrackInfo> = emptyList(),
     val serverAudioTracks: List<TrackInfo> = emptyList(),
@@ -120,6 +105,9 @@ data class PlayerUiState(
     val subtitleTracks: List<TrackInfo> = emptyList(),
     val selectedAudioTrackIndex: Int = -1,
     val selectedSubtitleTrackIndex: Int = -1,
+    /** The file's chapters, sorted; empty when it has fewer than two. */
+    val chapters: List<PlayerChapter> = emptyList(),
+    val showChaptersPanel: Boolean = false,
     val audioDelayMs: Int = 0,
     val audioAmplificationDb: Int = 0,
     val isAudioAmplificationAvailable: Boolean = false,
@@ -144,6 +132,8 @@ data class PlayerUiState(
     val showMoreDialog: Boolean = false,
     // Subtitle style settings
     val subtitleStyle: SubtitleStyleSettings = SubtitleStyleSettings(),
+    // Current video is HDR10/HDR10+/HLG/Dolby Vision; selects the HDR subtitle style when enabled
+    val isHdrVideo: Boolean = false,
     // Addon subtitles
     val addonSubtitles: List<Subtitle> = emptyList(),
     val isLoadingAddonSubtitles: Boolean = false,
@@ -158,15 +148,12 @@ data class PlayerUiState(
     val episodesAvailableSeasons: List<Int> = emptyList(),
     val episodesSelectedSeason: Int? = null,
     val episodes: List<Video> = emptyList(),
-    /** Every episode of the selected season, before range slicing. Empty ranges = no slicing. */
-    val episodesForSeasonAll: List<Video> = emptyList(),
-    val episodeRanges: List<EpisodeBucket> = emptyList(),
-    val selectedEpisodeRange: String? = null,
     val currentSeason: Int? = null,
     val currentEpisode: Int? = null,
     val currentVideoId: String? = null,
     val currentEpisodeTitle: String? = null,
     val blurUnwatchedEpisodes: Boolean = false,
+    val episodeOptionsOverlayStyle: EpisodeOptionsOverlayStyle = EpisodeOptionsOverlayStyle.BLUR,
     val episodeWatchProgressMap: Map<Pair<Int, Int>, WatchProgress> = emptyMap(),
     val watchedEpisodeKeys: Set<Pair<Int, Int>> = emptySet(),
     val showEpisodeStreams: Boolean = false,
@@ -181,11 +168,11 @@ data class PlayerUiState(
     val episodeStreamsSeason: Int? = null,
     val episodeStreamsEpisode: Int? = null,
     val episodeStreamsTitle: String? = null,
-    // Stream sources side panel (for switching streams during playback)
-    val showSourcesPanel: Boolean = false,
     val showPartyPanel: Boolean = false,
     val partyBehind: Boolean = false,
     val partyBehindMs: Long? = null,
+    // Stream sources side panel (for switching streams during playback)
+    val showSourcesPanel: Boolean = false,
     val isLoadingSourceStreams: Boolean = false,
     val sourceStreamsError: String? = null,
     val sourceAllStreams: List<Stream> = emptyList(),
@@ -196,15 +183,9 @@ data class PlayerUiState(
     val showFileSizeBadges: Boolean = true,
     val showAddonLogo: Boolean = true,
     val streamBadgePlacement: StreamBadgePlacement = StreamBadgePlacement.BOTTOM,
+    val playerBadgeFilters: List<CompiledStreamBadgeFilter> = emptyList(),
     val error: String? = null,
-    /** A terminal live freeze surfaced this error — the recovery ladder exhausted every rung and any
-     *  engine escape. Shows the Report Frozen action on the error overlay even when generic playback
-     *  issue reporting is off, and routes that report to freeze-specific telemetry. */
-    val liveFreezeGaveUp: Boolean = false,
-    /** Non-terminal bottom notice while a linear live feed is reconnecting after EOF/freeze. */
-    val liveRetryStatus: String? = null,
-    /** The viewer tapped Report Frozen on the terminal-freeze overlay; flips the button to a thanks. */
-    val freezeReported: Boolean = false,
+    val showSwitchToMpvErrorAction: Boolean = false,
     val playbackIssueReportStatus: PlaybackIssueReportStatus = PlaybackIssueReportStatus.Idle,
     val playbackIssueReportId: String? = null,
     val playbackIssueReportError: String? = null,
@@ -215,9 +196,11 @@ data class PlayerUiState(
     val parentalGuideHasShown: Boolean = false,
     // Skip intro
     val activeSkipInterval: SkipInterval? = null,
+    val activeSkipTargetsPostCredits: Boolean = false,
     val skipIntervalDismissed: Boolean = false,
     // Next episode card
     val nextEpisode: NextEpisodeInfo? = null,
+    val isNextEpisodeMetadataResolved: Boolean = false,
     val postPlayMode: PostPlayMode? = null,
     val postPlayDismissedForCurrentEpisode: Boolean = false,
     val streamAutoPlayMode: StreamAutoPlayMode = StreamAutoPlayMode.MANUAL,
@@ -237,14 +220,12 @@ data class PlayerUiState(
     val frameRateMatchingMode: FrameRateMatchingMode = FrameRateMatchingMode.OFF,
     val useLibass: Boolean = false,
     val libassRenderType: LibassRenderType = LibassRenderType.OVERLAY_OPEN_GL,
+    val libassRenderMode: LibassRenderMode = LibassRenderMode.DEFAULT,
     val displayModeInfo: DisplayModeInfo? = null,
     val showDisplayModeInfo: Boolean = false,
     // Aspect ratio / resize mode
     val resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
     val aspectMode: AspectMode = AspectMode.ORIGINAL,
-    /** F36 manual zoom on top of [aspectMode] (PlayerPreferencePolicy); per series when remembering. */
-    val videoZoom: VideoZoom = VideoZoom.IDENTITY,
-    val showVideoZoomPanel: Boolean = false,
     val tunneledSurfaceFill: Boolean = false,
     val tunnelingEnabled: Boolean = false,
     val showAspectRatioIndicator: Boolean = false,
@@ -266,14 +247,40 @@ data class PlayerUiState(
     val torrentBufferingProgress: Float = 0f,
     // When true, suppress all torrent stats text (buffer, seeds, peers, speed)
     // from loading overlay, rebuffering indicator, and corner overlay.
-    val hideTorrentStats: Boolean = true
+    val hideTorrentStats: Boolean = true,
+    val isLive: Boolean = false
+) {
+    /** Subtitle style to render with, after applying the HDR override for the current video. */
+    val effectiveSubtitleStyle: SubtitleStyleSettings
+        get() = subtitleStyle.forVideo(isHdrVideo)
+
+    /** In-player style edits to the text color go to the HDR override while this is true. */
+    val isEditingHdrSubtitleStyle: Boolean
+        get() = isHdrVideo && subtitleStyle.hdrStyleEnabled
+
+    val editableSubtitleStyle: SubtitleStyleSettings
+        get() = subtitleStyle.editableForVideo(isHdrVideo)
+
+    /** Brightness factor for the player controls and menus drawn over the video (1 = undimmed). */
+    val playerControlsBrightness: Float
+        get() = subtitleStyle.playerControlsBrightness(isHdrVideo)
+}
+
+internal fun PlayerUiState.clearFrameRateDetection(): PlayerUiState = copy(
+    detectedFrameRateRaw = 0f,
+    detectedFrameRate = 0f,
+    detectedFrameRateSource = null
 )
 
 data class PlaybackTimelineState(
     val currentPosition: Long = 0L,
     val duration: Long = 0L,
     /** Position (ms) up to which the player has buffered ahead of the playhead. */
-    val bufferedPosition: Long = 0L
+    val bufferedPosition: Long = 0L,
+    /** True for live windows (Live TV / live HLS), not VOD HLS. */
+    val isLive: Boolean = false,
+    /** Wall-clock time spent playing the current live stream. */
+    val watchedDurationMs: Long = 0L
 )
 
 data class TrackInfo(
@@ -297,6 +304,7 @@ data class NextEpisodeInfo(
     val overview: String?,
     val released: String?,
     val hasAired: Boolean,
+    val available: Boolean? = null,
     val unairedMessage: String?,
     val isOtherType: Boolean = false
 )
@@ -315,6 +323,10 @@ sealed class PlayerEvent {
     data class OnPreviewSeekBy(val deltaMs: Long) : PlayerEvent()
     data object OnCommitPreviewSeek : PlayerEvent()
     data class OnSeekTo(val position: Long) : PlayerEvent()
+    data class OnSkipChapter(val forward: Boolean) : PlayerEvent()
+    data object OnShowChaptersPanel : PlayerEvent()
+    data object OnDismissChaptersPanel : PlayerEvent()
+    data class OnSelectChapter(val index: Int) : PlayerEvent()
     data class OnSelectAudioTrack(val index: Int) : PlayerEvent()
     data class OnSetAudioDelayMs(val delayMs: Int) : PlayerEvent()
     data class OnSetAudioAmplificationDb(val db: Int) : PlayerEvent()
@@ -338,6 +350,7 @@ sealed class PlayerEvent {
     data object OnShowSubtitleDelayOverlay : PlayerEvent()
     data object OnHideSubtitleDelayOverlay : PlayerEvent()
     data class OnAdjustSubtitleDelay(val deltaMs: Int, val showOverlay: Boolean = true) : PlayerEvent()
+    data class OnResetSubtitleDelay(val showOverlay: Boolean = true) : PlayerEvent()
     data object OnShowSpeedDialog : PlayerEvent()
     data object OnShowMoreDialog : PlayerEvent()
     data object OnDismissMoreDialog : PlayerEvent()
@@ -345,8 +358,7 @@ sealed class PlayerEvent {
     data object OnDismissEpisodesPanel : PlayerEvent()
     data object OnBackFromEpisodeStreams : PlayerEvent()
     data class OnEpisodeSeasonSelected(val season: Int) : PlayerEvent()
-    data class OnEpisodeRangeSelected(val label: String) : PlayerEvent()
-    data class OnEpisodeSelected(val video: Video) : PlayerEvent()
+    data class OnEpisodeSelected(val video: Video, val manualSelection: Boolean = false) : PlayerEvent()
     data object OnReloadEpisodeStreams : PlayerEvent()
     data class OnEpisodeAddonFilterSelected(val addonName: String?) : PlayerEvent()
     data class OnEpisodeStreamSelected(val stream: Stream) : PlayerEvent()
@@ -360,10 +372,6 @@ sealed class PlayerEvent {
     data object OnDismissTransientOverlay : PlayerEvent()
     data object OnRetry : PlayerEvent()
     data object OnReportPlaybackIssue : PlayerEvent()
-    data object OnStartOverFromBeginning : PlayerEvent()
-    data object OnApplyServerResume : PlayerEvent()
-    data object OnDismissServerResume : PlayerEvent()
-    data object OnReportFrozen : PlayerEvent()
     data object OnParentalGuideHide : PlayerEvent()
     data class OnShowDisplayModeInfo(val info: DisplayModeInfo) : PlayerEvent()
     data object OnHideDisplayModeInfo : PlayerEvent()
@@ -377,21 +385,19 @@ sealed class PlayerEvent {
 
     // Subtitle style events (for in-player style tab)
     data class OnSetSubtitleSize(val size: Int) : PlayerEvent()
+    data class OnSetSubtitleHdrBrightness(val brightness: Int) : PlayerEvent()
     data class OnSetSubtitleTextColor(val color: Int) : PlayerEvent()
     data class OnSetSubtitleBold(val bold: Boolean) : PlayerEvent()
     data class OnSetSubtitleOutlineEnabled(val enabled: Boolean) : PlayerEvent()
     data class OnSetSubtitleOutlineColor(val color: Int) : PlayerEvent()
     data class OnSetSubtitleVerticalOffset(val offset: Int) : PlayerEvent()
     data object OnResetSubtitleDefaults : PlayerEvent()
-    data class OnSetSubtitleSideMargin(val percent: Int) : PlayerEvent()
-    data object OnShowVideoZoomPanel : PlayerEvent()
-    data object OnDismissVideoZoomPanel : PlayerEvent()
-    data class OnAdjustVideoZoom(val axis: VideoZoomAxis, val steps: Int) : PlayerEvent()
-    data object OnResetVideoZoom : PlayerEvent()
     data object OnToggleAspectRatio : PlayerEvent()
     data object OnSwitchInternalPlayerEngine : PlayerEvent()
+    data object OnSwitchToMpvPlayer : PlayerEvent()
     data object OnShowStreamInfo : PlayerEvent()
     data object OnDismissStreamInfo : PlayerEvent()
+    data object OnTogglePlayerStatsHud : PlayerEvent()
     data object OnToggleTorrentStats : PlayerEvent()
 }
 
@@ -429,6 +435,7 @@ data class StreamInfoData(
     val videoHeight: Int? = null,
     val videoFrameRate: Float? = null,
     val videoBitrate: Int? = null,
+    val fileBitrate: Int? = null,
     // Audio
     val audioCodec: String? = null,
     val audioChannels: String? = null,

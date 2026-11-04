@@ -53,6 +53,7 @@ import com.nuvio.tv.domain.repository.StreamRepository
 import com.nuvio.tv.domain.repository.WatchProgressRepository
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
+import com.nuvio.tv.ui.screens.player.StreamSidecarSubtitles
 import com.nuvio.tv.ui.util.localizedGenreLabel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -1363,6 +1364,7 @@ class StreamScreenViewModel @Inject constructor(
                     filename = result.filename ?: basePlaybackInfo.filename,
                     videoSize = result.videoSize ?: basePlaybackInfo.videoSize
                 )
+                StreamSidecarSubtitles.set(result.url, stream.subtitles)
                 // Save resolved URL to cache for reuse last link
                 if (!result.url.isNullOrBlank() && !skipLinkCache && stream.serverTarget == null && stream.deviceSourceKind != "iptv") {
                     pendingCacheSaveJob = viewModelScope.launch {
@@ -1423,8 +1425,8 @@ class StreamScreenViewModel @Inject constructor(
             }
             return null
         }
-        // Fork-pinned player has no sidecar-subtitle API: the server's external subtitles ride on the stream itself.
-        return getStreamForPlayback(stream.copy(subtitles = session.subtitles + stream.subtitles)).copy(
+        StreamSidecarSubtitles.set(session.url, session.subtitles + stream.subtitles)
+        return getStreamForPlayback(stream).copy(
             url = session.url,
             headers = session.headers.takeIf { it.isNotEmpty() },
             isServerStream = true
@@ -1607,6 +1609,7 @@ class StreamScreenViewModel @Inject constructor(
             audioDelayMs = stream.behaviorHints?.audioDelayMs,
             audioDelayLanguage = stream.behaviorHints?.audioDelayLanguage
         )
+        StreamSidecarSubtitles.set(playbackUrlFor(playbackInfo), stream.subtitles)
 
         val url = playbackInfo.url
         if (saveLastLink && !url.isNullOrBlank() && !playbackInfo.isExternal && !skipLinkCache && stream.serverTarget == null && stream.deviceSourceKind != "iptv") {
@@ -2174,3 +2177,7 @@ private fun formatSpeed(context: android.content.Context, bytesPerSec: Long): St
 
 private fun formatMB(context: android.content.Context, bytes: Long): String =
     context.getString(R.string.unit_size_mb, String.format("%.1f", bytes / 1_048_576.0))
+
+private fun playbackUrlFor(playbackInfo: StreamPlaybackInfo): String? =
+    playbackInfo.url?.takeIf { it.isNotBlank() }
+        ?: if (playbackInfo.isTorrent) playbackInfo.infoHash?.let { "torrent://$it" } else null

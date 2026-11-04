@@ -196,8 +196,16 @@ internal fun PlaybackUpNextSection(
         onToggle = { onUpdate { setStreamAutoPlayNextEpisodeEnabled(!settings.streamAutoPlayNextEpisodeEnabled) } }
     )
 
-    // Fork: the next-episode fallback toggle is not offered — the pinned fork player has no
-    // fallback path behind it (upstream player feature not ported).
+    if (settings.streamAutoPlayNextEpisodeEnabled && settings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL) {
+        SettingsToggleRow(
+            title = stringResource(R.string.autoplay_next_episode_fallback),
+            subtitle = stringResource(R.string.autoplay_next_episode_fallback_sub),
+            checked = settings.streamAutoPlayNextEpisodeFallbackEnabled,
+            onToggle = {
+                onUpdate { setStreamAutoPlayNextEpisodeFallbackEnabled(!settings.streamAutoPlayNextEpisodeFallbackEnabled) }
+            }
+        )
+    }
 
     SettingsActionRow(
         title = stringResource(R.string.autoplay_threshold_mode),
@@ -271,6 +279,26 @@ internal fun PlaybackUpNextSection(
             subtitle = stringResource(R.string.autoplay_reuse_binge_group_sub),
             checked = settings.streamAutoPlayReuseBingeGroup,
             onToggle = { onUpdate { setStreamAutoPlayReuseBingeGroup(!settings.streamAutoPlayReuseBingeGroup) } }
+        )
+    }
+
+    SettingsToggleRow(
+        title = stringResource(R.string.autoplay_post_play_recommendations),
+        subtitle = stringResource(R.string.autoplay_post_play_recommendations_sub),
+        checked = settings.postPlayRecommendationsEnabled,
+        onToggle = { onUpdate { setPostPlayRecommendationsEnabled(!settings.postPlayRecommendationsEnabled) } }
+    )
+
+    if (settings.postPlayRecommendationsEnabled) {
+        SliderSettingsItem(
+            title = stringResource(R.string.autoplay_post_play_movie_threshold),
+            subtitle = stringResource(R.string.autoplay_post_play_movie_threshold_sub),
+            value = settings.postPlayMovieThresholdPercent,
+            valueText = "${settings.postPlayMovieThresholdPercent}%",
+            minValue = PlayerSettings.MIN_POST_PLAY_MOVIE_THRESHOLD_PERCENT,
+            maxValue = PlayerSettings.MAX_POST_PLAY_MOVIE_THRESHOLD_PERCENT,
+            step = 1,
+            onValueChange = { percent -> onUpdate { setPostPlayMovieThresholdPercent(percent) } }
         )
     }
     // Fork: post-play recommendations are not offered — the fork player has no post-play

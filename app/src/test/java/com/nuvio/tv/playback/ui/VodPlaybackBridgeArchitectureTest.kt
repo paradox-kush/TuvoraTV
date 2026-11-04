@@ -48,8 +48,12 @@ class VodPlaybackBridgeArchitectureTest {
         )
 
         assertFalse(metadata.contains("player.setMediaItem("))
-        assertFalse(metadata.contains("MediaItem.Builder()"))
-        assertTrue(metadata.contains("player.replaceMediaItem("))
+        // Upstream's player (converged 2026-11-04) builds a MediaItem only for the libmpv
+        // MediaSession snapshot, which is never handed to ExoPlayer; the Exo path still only
+        // replaces the real current item.
+        val exoPath = metadata.substringBefore("private fun PlayerRuntimeController.mpvMediaSessionSnapshot")
+        assertFalse(exoPath.contains("MediaItem.Builder()"))
+        assertTrue(exoPath.contains("player.replaceMediaItem("))
     }
 
     private fun source(relative: String): String {

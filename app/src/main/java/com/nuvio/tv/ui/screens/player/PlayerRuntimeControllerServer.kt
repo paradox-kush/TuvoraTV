@@ -132,6 +132,7 @@ internal fun PlayerRuntimeController.selectServerAudio(index: Int) {
 internal fun PlayerRuntimeController.selectServerSubtitle(index: Int) {
     if (_uiState.value.serverSubtitleTracks.any { it.isSelected && it.index == index }) return
     disableSubtitles()
+    isUserExplicitSubtitleSelection = true
     persistedTrackPreference = persistedTrackPreference?.copy(subtitle = null)
     pendingRestoredAddonSubtitle = null
     restartServerStream(R.string.servers_subtitle_switch_failed) { url -> serverPlayback.switchSubtitle(url, index) }
@@ -176,6 +177,7 @@ private fun PlayerRuntimeController.restartServerSession(session: ServerPlayback
         responseHeaders = emptyMap()
     )
     currentStreamResponseHeaders = emptyMap()
+    streamSubtitles = session.subtitles
     _uiState.update { it.copy(currentStreamUrl = session.url) }
     scheduleDeferredPlayerReinitialize(fromPositionMs = positionMs)
 }
@@ -203,30 +205,3 @@ private fun PlayerRuntimeController.applyPreferredServerAudio(tracks: List<Track
 }
 
 private const val SERVER_RESUME_TIMEOUT_MS = 2_000L
-
-/**
- * mpv/ffmpeg cannot take a certificate pin, and verification is never switched off for it. For a pinned
- * self-signed media-server host the engine is handed a per-session loopback relay URL instead; any other URL
- * (CA-signed servers, IPTV, add-ons) is returned unchanged. The relay carries the session headers itself, so
- * the token never reaches mpv's command line. Throws a user-facing message when the relay cannot start (the
- * caller's failure path then fails over to ExoPlayer or shows it).
- */
-internal fun PlayerRuntimeController.mpvTargetFor(url: String, headers: Map<String, String>): Pair<String, Map<String, String>> {
-    closeServerRelay()
-    val router = com.nuvio.tv.data.mediaserver.ServerMediaRouting.router ?: return url to headers
-    if (!router.needsRelay(url)) return url to headers
-    val client = router.pinnedClient(url, PlayerPlaybackNetworking.strictPlaybackHttpClient)
-    val relay = try {
-        if (client == null) null
-        else com.nuvio.tv.data.mediaserver.ServerLoopbackRelay.open(url, headers, client)
-    } catch (error: Exception) {
-        null
-    } ?: throw IllegalStateException(context.getString(R.string.servers_mpv_unsupported))
-    serverRelay = relay
-    return relay.url to emptyMap()
-}
-
-internal fun PlayerRuntimeController.closeServerRelay() {
-    serverRelay?.close()
-    serverRelay = null
-}

@@ -1,10 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
-import com.nuvio.tv.core.picture.PlayerPreferencePolicy
-import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.os.SystemClock
 import android.util.Log
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -15,16 +12,25 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
     headers: Map<String, String>,
     loadSavedProgress: Boolean
 ) {
+    val playbackRequest = PlayerMediaSourceFactory.normalizePlaybackRequest(url, headers)
+    val playbackUrl = playbackRequest.url
+    val playbackHeaders = playbackRequest.headers
+    if (playbackUrl != currentStreamUrl || playbackHeaders != currentHeaders) {
+        currentStreamUrl = playbackUrl
+        currentHeaders = playbackHeaders
+        _uiState.update { it.copy(currentStreamUrl = playbackUrl) }
+    }
+
     logSwitchTrace(
         stage = "prepare-playback-before-start",
-        message = "urlHash=${url.hashCode().toUInt().toString(16)} loadSavedProgress=$loadSavedProgress " +
+        message = "urlHash=${playbackUrl.hashCode().toUInt().toString(16)} loadSavedProgress=$loadSavedProgress " +
             "clearPendingSwitchPref=true"
     )
     val clickElapsedMs = launchStartedAtElapsedMs
         ?.let { (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L) }
         ?: -1L
     queuePlaybackRawEventLine(
-        "PREPARE_PLAYBACK: clickElapsedMs=$clickElapsedMs host=${url.safeScrobbleHost()} " +
+        "PREPARE_PLAYBACK: clickElapsedMs=$clickElapsedMs host=${playbackUrl.safeScrobbleHost()} " +
             "loadSavedProgress=$loadSavedProgress currentSeason=${currentSeason ?: -1} " +
             "currentEpisode=${currentEpisode ?: -1} streamName=${_uiState.value.currentStreamName ?: "n/a"}"
     )
@@ -43,15 +49,9 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
             message = context.getString(com.nuvio.tv.R.string.player_loading_preparing)
         )
         refreshScrobbleItem()
-        rememberPlayerPreferences = playerSettingsDataStore.playerSettings.first().rememberPlayerPreferences
-        restoreSeriesPicture()
         if (persistedTrackPreference == null) {
             contentId?.let { id ->
-                // F37: per-series track memory only while "Remember my player preferences" is on.
-                val loaded = PlayerPreferencePolicy.seriesMemory(
-                    rememberPlayerPreferences,
-                    trackPreferenceDataStore.load(id)?.toTrackPreference(),
-                )
+                val loaded = trackPreferenceDataStore.load(id)?.toTrackPreference()
                 logSwitchTrace(
                     stage = "track-pref-load",
                     message = "contentId=$id loadedAudio=${loaded?.audio?.language}/${loaded?.audio?.name} " +
@@ -59,8 +59,8 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
                 )
                 Log.d(
                     PlayerRuntimeController.TAG,
-                    LogRedaction.text("TRACK_PREF load: contentId=$id S${currentSeason}E${currentEpisode} " +
-                        "result=${if (loaded == null) "null (no saved preference)" else "audio=${loaded.audio?.language}/${loaded.audio?.name} subtitle=${loaded.subtitle?.javaClass?.simpleName}"}")
+                    "TRACK_PREF load: contentId=$id S${currentSeason}E${currentEpisode} " +
+                        "result=${if (loaded == null) "null (no saved preference)" else "audio=${loaded.audio?.language}/${loaded.audio?.name} subtitle=${loaded.subtitle?.javaClass?.simpleName}"}"
                 )
                 persistedTrackPreference = loaded
             } ?: Log.d(PlayerRuntimeController.TAG, "TRACK_PREF load: skipped (contentId is null)")
@@ -75,7 +75,7 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
                     _uiState.update { it.copy(subtitleDelayMs = savedDelayMs) }
                     Log.d(
                         PlayerRuntimeController.TAG,
-                        LogRedaction.text("TRACK_PREF load: restored subtitleDelayMs=$savedDelayMs for videoId=$vid")
+                        "TRACK_PREF load: restored subtitleDelayMs=$savedDelayMs for videoId=$vid"
                     )
                 }
             }
@@ -93,6 +93,11 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
                     "subtitle=${persistedTrackPreference?.subtitle?.javaClass?.simpleName ?: "none"}"
             )
         }
+        contentId?.takeIf { it.isNotBlank() }?.let { id ->
+            trackPreferenceDataStore.loadPlaybackSpeed(id)?.let { speed ->
+                _uiState.update { it.copy(playbackSpeed = speed) }
+            }
+        }
         // Load saved watch progress BEFORE player init.
         // This eliminates the race condition where ExoPlayer's STATE_READY
         // callback fired before the DB read completed, causing the resume
@@ -100,7 +105,6 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
         // or hang in buffering after a late seek.
         val partyPositionMs = partyResumePositionMs()
         if (partyPositionMs != null) {
-            // Joining a watch party: start where the room is, not at our own saved progress.
             pendingResumeProgress = null
             _uiState.update { it.copy(pendingSeekPosition = partyPositionMs) }
         } else if (loadSavedProgress) {
@@ -114,7 +118,7 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
             phase = "initializing_player",
             message = context.getString(com.nuvio.tv.R.string.player_loading_building)
         )
-        initializePlayer(url, headers)
+        initializePlayer(playbackUrl, playbackHeaders)
     }
 }
 

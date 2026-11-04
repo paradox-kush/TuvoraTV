@@ -1,6 +1,5 @@
 package com.nuvio.tv.ui.screens.player
 
-import android.content.Context
 import android.media.MediaCodecList
 import android.os.Build
 import androidx.media3.common.Format
@@ -34,8 +33,9 @@ internal fun <T> hardwareFirstVideoDecoders(
     return if (hardware.any(supportsFormat)) hardware else decoders
 }
 
+// Fork media3 1.11: isFormatSupported takes a Context.
 internal fun hardwareFirstVideoDecoders(
-    context: Context,
+    context: android.content.Context,
     format: Format,
     decoders: List<MediaCodecInfo>,
 ): List<MediaCodecInfo> =
@@ -45,7 +45,7 @@ internal fun hardwareFirstVideoDecoders(
 
 /** The platform video renderer with [hardwareFirstVideoDecoders] applied to its decoder list. */
 internal class HardwareFirstVideoRenderer(
-    private val rendererContext: Context,
+    private val rendererContext: android.content.Context,
     builder: MediaCodecVideoRenderer.Builder,
 ) : MediaCodecVideoRenderer(builder) {
     override fun getDecoderInfos(
@@ -53,11 +53,7 @@ internal class HardwareFirstVideoRenderer(
         format: Format,
         requiresSecureDecoder: Boolean,
     ): List<MediaCodecInfo> =
-        hardwareFirstVideoDecoders(
-            rendererContext,
-            format,
-            super.getDecoderInfos(mediaCodecSelector, format, requiresSecureDecoder),
-        )
+        hardwareFirstVideoDecoders(rendererContext, format, super.getDecoderInfos(mediaCodecSelector, format, requiresSecureDecoder))
 }
 
 internal fun isSoftwareDecoder(info: MediaCodecInfo): Boolean =

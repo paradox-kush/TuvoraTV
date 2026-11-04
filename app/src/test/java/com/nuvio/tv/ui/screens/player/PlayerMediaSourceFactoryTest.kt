@@ -1,13 +1,44 @@
 package com.nuvio.tv.ui.screens.player
 
+import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Base64
 
 class PlayerMediaSourceFactoryTest {
+
+    @Test
+    fun `media segment 404 with an alternative prefers another HLS track`() {
+        assertTrue(
+            shouldPreferAlternativeHlsTrack(
+                responseCode = 404,
+                dataType = C.DATA_TYPE_MEDIA,
+                alternativeTrackAvailable = true
+            )
+        )
+    }
+
+    @Test
+    fun `manifest errors and missing alternatives do not trigger rendition fallback`() {
+        assertFalse(
+            shouldPreferAlternativeHlsTrack(
+                responseCode = 404,
+                dataType = C.DATA_TYPE_MANIFEST,
+                alternativeTrackAvailable = true
+            )
+        )
+        assertFalse(
+            shouldPreferAlternativeHlsTrack(
+                responseCode = 404,
+                dataType = C.DATA_TYPE_MEDIA,
+                alternativeTrackAvailable = false
+            )
+        )
+    }
 
     @Test
     fun `inferMimeType prefers response content type for manifest urls without extension`() {
@@ -116,83 +147,56 @@ class PlayerMediaSourceFactoryTest {
         }
     }
 
-    // --- Learned container types (panels that 302 a `.ts` live URL to an HLS playlist) ----------
-
     @Test
-    fun `learned container type is remembered per host and extension`() {
-        val url = "https://panel.example.com/live/user/pass/1300597937.ts"
-        assertNull(IptvContainerMimeMemory.learnedContainerMimeType(url))
-
-        IptvContainerMimeMemory.rememberContainerMimeType(url, MimeTypes.APPLICATION_M3U8)
-
-        // Every other channel on the same panel is the point — one failure teaches the provider,
-        // not the channel.
-        assertEquals(
-            MimeTypes.APPLICATION_M3U8,
-            IptvContainerMimeMemory.learnedContainerMimeType(
-                "https://panel.example.com/live/user/pass/999.ts"
-            )
+    fun `normalizePlaybackRequest converts URL userinfo to authorization header`() {
+        val userInfo = "test-user:test-pass"
+        val request = PlayerMediaSourceFactory.normalizePlaybackRequest(
+            url = "https://" + userInfo + "@webdav.example.org/movies/title.mkv?download=1",
+            headers = mapOf("Range" to "bytes=0-1")
         )
+
+        assertEquals("https://webdav.example.org/movies/title.mkv?download=1", request.url)
+        assertEquals(userInfo.basicAuthHeader(), request.headers["Authorization"])
+        assertFalse(request.headers.containsKey("Range"))
     }
 
     @Test
-    fun `learned live container does not leak into VOD on the same host`() {
-        IptvContainerMimeMemory.rememberContainerMimeType(
-            "https://vodpanel.example.com/live/user/pass/1.ts",
-            MimeTypes.APPLICATION_M3U8
+    fun `normalizePlaybackRequest strips URL userinfo without replacing explicit authorization`() {
+        val explicitAuth = "explicit:value".basicAuthHeader()
+        val request = PlayerMediaSourceFactory.normalizePlaybackRequest(
+            url = "https://" + "test-user:test-pass" + "@webdav.example.org/movies/title.mkv",
+            headers = mapOf("Authorization" to explicitAuth)
         )
 
-        // Same panel, real progressive mp4 — must not inherit what `.ts` learned.
-        assertNull(
-            IptvContainerMimeMemory.learnedContainerMimeType(
-                "https://vodpanel.example.com/movie/user/pass/55.mp4"
-            )
-        )
+        assertEquals("https://webdav.example.org/movies/title.mkv", request.url)
+        assertEquals(explicitAuth, request.headers["Authorization"])
     }
 
     @Test
-    fun `learned container type is not shared across hosts`() {
-        IptvContainerMimeMemory.rememberContainerMimeType(
-            "https://one.example.com/live/user/pass/1.ts",
-            MimeTypes.APPLICATION_M3U8
+    fun `normalizePlaybackRequest preserves encoded path query and fragment when stripping userinfo`() {
+        val userInfo = "user:p@ss"
+        val request = PlayerMediaSourceFactory.normalizePlaybackRequest(
+            url = "https://" + userInfo.replace("@", "%40") + "@webdav.example.org/files/Show%2FSeason%201/Episode%2001.mkv?name=a%2Fb#frag%2Fment",
+            headers = emptyMap()
         )
 
-        assertNull(
-            IptvContainerMimeMemory.learnedContainerMimeType(
-                "https://two.example.com/live/user/pass/1.ts"
-            )
+        assertEquals(
+            "https://webdav.example.org/files/Show%2FSeason%201/Episode%2001.mkv?name=a%2Fb#frag%2Fment",
+            request.url
         )
+        assertEquals(userInfo.basicAuthHeader(), request.headers["Authorization"])
     }
 
     @Test
-    fun `extensionless stalker links share one bucket per host despite rotating tokens`() {
-        // create_link hands back a different token every play, so the host is the only stable part.
-        IptvContainerMimeMemory.rememberContainerMimeType(
-            "http://portal.example.com/ch/12345_?token=aaaa",
-            MimeTypes.APPLICATION_M3U8
+    fun `normalizePlaybackRequest strips userinfo containing a literal at sign`() {
+        val userInfo = "user:p@ss"
+        val request = PlayerMediaSourceFactory.normalizePlaybackRequest(
+            url = "https://" + userInfo + "@webdav.example.org/files/title.mkv",
+            headers = emptyMap()
         )
 
-        assertEquals(
-            MimeTypes.APPLICATION_M3U8,
-            IptvContainerMimeMemory.learnedContainerMimeType(
-                "http://portal.example.com/ch/98765_?token=bbbb"
-            )
-        )
-    }
-
-    @Test
-    fun `learned container key ignores query and credentials and is case insensitive on host`() {
-        assertEquals(
-            "panel.example.com|ts",
-            IptvContainerMimeMemory.learnedContainerKey(
-                "https://Panel.Example.COM/live/u/p/7.ts?token=abc#frag"
-            )
-        )
-        assertEquals(
-            "panel.example.com|",
-            IptvContainerMimeMemory.learnedContainerKey("https://panel.example.com/ch/7_")
-        )
-        assertNull(IptvContainerMimeMemory.learnedContainerKey("not a url"))
+        assertEquals("https://webdav.example.org/files/title.mkv", request.url)
+        assertEquals(userInfo.basicAuthHeader(), request.headers["Authorization"])
     }
 
     @Test
@@ -209,4 +213,7 @@ class PlayerMediaSourceFactoryTest {
         assertFalse(PlayerMediaSourceFactory.isLoopbackUrl("http://192.168.1.100:8091/stream?link=123"))
         assertFalse(PlayerMediaSourceFactory.isLoopbackUrl(""))
     }
+
+    private fun String.basicAuthHeader(): String =
+        "Basic " + Base64.getEncoder().encodeToString(toByteArray(Charsets.UTF_8))
 }

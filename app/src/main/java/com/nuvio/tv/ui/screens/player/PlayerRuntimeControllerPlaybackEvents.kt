@@ -1,8 +1,5 @@
 package com.nuvio.tv.ui.screens.player
 
-import com.nuvio.tv.core.picture.nextAspectMode
-import com.nuvio.tv.core.picture.aspectModeLabel
-import com.nuvio.tv.ui.components.player.PlayerControlsTiming
 import android.net.Uri
 import android.util.Log
 import androidx.media3.common.Player
@@ -25,7 +22,7 @@ import com.nuvio.tv.data.repository.PlaybackIssuePlaybackSettingsInput
 import com.nuvio.tv.data.repository.PlaybackIssueReportInput
 import com.nuvio.tv.data.repository.SkipInterval
 import com.nuvio.tv.domain.model.WatchProgress
-import com.nuvio.tv.core.player.persistProgressOrContinue
+import java.io.IOException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -43,6 +40,7 @@ internal const val AUDIO_DELAY_HOLD_FAST_STEP_MS = 100
 internal const val AUDIO_DELAY_HOLD_THRESHOLD_MS = 1000L
 internal const val AUDIO_DELAY_HOLD_FAST_THRESHOLD_MS = 2000L
 internal const val AUDIO_DELAY_HOLD_REPEAT_INTERVAL_MS = 100L
+internal const val WATCH_PROGRESS_SAVE_INTERVAL_MS = 90_000L
 
 /**
  * Audio delay split into its sources, so the stream hint and the user's tweak on that stream
@@ -133,20 +131,18 @@ internal object StreamDelayScope {
 
 /** Audio panel change: [delayMs] is the new total delay shown to the user. */
 internal fun PlayerRuntimeController.applyAudioDelay(delayMs: Int) {
-    // Engine-aware: a large delay on ExoPlayer can never be buffered and hangs playback
-    // (AudioDelayRangePolicy). The capped value is what the user's pick means on this engine.
-    audioDelayParts = audioDelayParts.withManualTotal(
-        AudioDelayRangePolicy.effectiveDelayMs(delayMs, usingMpv = isUsingMpvEngine())
-    )
+    audioDelayParts = audioDelayParts.withManualTotal(delayMs)
     applyEffectiveAudioDelay()
     audioDelayParts.persistableDeviceMs?.let { persistAudioDelayForCurrentRoute(it) }
 }
 
 /** Pushes the current total delay to the UI state and the active engine. */
+// TODO(vod-converge C5): clamp the ExoPlayer audio delay (AudioDelayRangePolicy, legacy-vod-player) so a
+//  large stream/manual value cannot hang "Starting stream..." (2094c13d1).
 internal fun PlayerRuntimeController.applyEffectiveAudioDelay() {
-    // A stored per-device value or stream hint is only capped for this session; the saved value is left alone for libmpv.
-    val totalMs = AudioDelayRangePolicy.effectiveDelayMs(audioDelayParts.totalMs, usingMpv = isUsingMpvEngine())
+    val totalMs = audioDelayParts.totalMs
     audioDelayUs.set(totalMs.toLong() * 1000L)
+    _exoPlayer?.getAssHandlerCompat()?.let { it.audioDelayUs = totalMs.toLong() * 1000L }
     _uiState.update { it.copy(audioDelayMs = totalMs) }
     if (isUsingMpvEngine()) {
         mpvView?.setAudioDelayMs(totalMs)
@@ -193,6 +189,10 @@ internal fun PlayerRuntimeController.applyStreamSubtitleOffset() {
     )
     val offsetUs = if (applies) audioDelayParts.streamSourceOffsetMs.toLong() * 1000L else 0L
     if (streamSubtitleDelayUs.getAndSet(offsetUs) == offsetUs) return
+    // Update libass with combined user delay + stream offset.
+    _exoPlayer?.getAssHandlerCompat()?.let {
+        it.subtitleDelayUs = subtitleDelayUs.get() + offsetUs
+    }
     if (isUsingMpvEngine()) {
         mpvView?.setSubtitleDelayMs(mpvSubtitleDelayMs(state.subtitleDelayMs))
     }
@@ -207,15 +207,21 @@ internal fun PlayerRuntimeController.skipActiveInterval(): Boolean {
 }
 
 internal fun PlayerRuntimeController.skipInterval(interval: SkipInterval): Boolean {
+    if (interval.type == "post-credits") return false
     val duration = currentPlaybackDurationMs().takeIf { it > 0 } ?: Long.MAX_VALUE
-    val seekMs = if (interval.endTime == Double.MAX_VALUE) {
+    val postCredits = interval.followingPostCreditsScene(skipIntervals, currentPlaybackDurationMs())
+    val targetTime = postCredits?.startTime ?: interval.endTime
+    val seekMs = if (targetTime == Double.MAX_VALUE) {
         duration
     } else {
-        (interval.endTime * 1000).toLong()
+        (targetTime * 1000).toLong()
     }
+    val seekParameters = if (postCredits != null || interval.type == "movie-credits") {
+        SeekParameters.EXACT
+    } else SeekParameters.NEXT_SYNC
     val requested = seekMs.coerceAtMost(duration)
     val target = if (isPartyControlLocked) ownSeekTarget(requested) ?: return false else requested
-    seekPlaybackTo(target, SeekParameters.NEXT_SYNC)
+    seekPlaybackTo(target, seekParameters)
     scheduleProgressSyncAfterSeek()
     publishPartyPlayback(positionMs = target)
     _uiState.update { it.copy(activeSkipInterval = null, skipIntervalDismissed = true) }
@@ -303,11 +309,10 @@ internal fun PlayerRuntimeController.resetPostPlayStateAfterPlaybackEnded() {
     // If auto-play is enabled and the user dismissed the card earlier,
     // still auto-play the next episode when playback ends naturally.
     val state = _uiState.value
-    if (state.postPlayDismissedForCurrentEpisode &&
-        streamAutoPlayNextEpisodeEnabledSetting &&
+    val autoPlayEligible = streamAutoPlayNextEpisodeEnabledSetting &&
         state.nextEpisode?.hasAired == true &&
         nextEpisodeVideo != null
-    ) {
+    if (autoPlayEligible && (state.postPlayDismissedForCurrentEpisode || state.postPlayMode == null)) {
         playNextEpisode()
         return
     }
@@ -336,10 +341,8 @@ internal fun shouldResetPostPlayStateAfterPlaybackEnded(
 internal fun shouldTreatAsNaturalPlaybackCompletion(
     hasRenderedFirstFrame: Boolean,
     hasFatalError: Boolean,
-    durationMs: Long,
-    isLiveFeed: Boolean = false,
+    durationMs: Long
 ): Boolean {
-    if (isLiveFeed) return false
     if (hasFatalError) return false
     if (!hasRenderedFirstFrame) return false
     if (isShortPlaceholderDuration(durationMs)) return false
@@ -349,6 +352,9 @@ internal fun shouldTreatAsNaturalPlaybackCompletion(
 /** Streams shorter than ~2:01 are treated as error/placeholder clips, not real episodes. */
 internal fun isShortPlaceholderDuration(duration: Long): Boolean = duration in 1..120_999L
 
+// TODO(vod-converge C1): ANR rule. This loop makes ~8 synchronous libmpv property reads per tick on
+//  `scope` (viewModelScope = Main). Run the mpv reads on one Dispatchers.IO.limitedParallelism(1)
+//  context and post the results to Main.
 internal fun PlayerRuntimeController.startProgressUpdates() {
     progressJob?.cancel()
     progressJob = scope.launch {
@@ -364,12 +370,16 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         durationMs = playerDuration
                     )
                     val playingNow = view.isPlayingNow()
+                    subtitleCueTracker.updateText(view.currentSubtitleText())
                     val cacheBuffering = view.isPausedForCacheNow() || view.isCoreIdleNow()
                     var firstFrameReady = hasRenderedFirstFrame
                         if (!firstFrameReady) {
-                            firstFrameReady = pos > 0L || (playingNow && !cacheBuffering && playerDuration > 0L)
+                            firstFrameReady = view.isPositionFromRequestedMedia() &&
+                                (pos > 0L || (playingNow && !cacheBuffering && playerDuration > 0L))
                             if (firstFrameReady) {
                                 hasRenderedFirstFrame = true
+                                resetMpvStartupWatchdog()
+                                scheduleMpvStableProgressReset()
                                 val clickToFirstFrameMs = launchStartedAtElapsedMs
                                     ?.let { (android.os.SystemClock.elapsedRealtime() - it).coerceAtLeast(0L) }
                                     ?: -1L
@@ -385,42 +395,43 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                                 if (_uiState.value.postPlayDismissedForCurrentEpisode) {
                                     _uiState.update { it.copy(postPlayDismissedForCurrentEpisode = false) }
                                 }
-                                recordPlaybackStartBreadcrumb()
-                                armLiveFreezeReporter()
                             }
                         }
+                    maybeRunMpvStartupWatchdog(view)
                     if (playerDuration > lastKnownDuration) {
                         lastKnownDuration = playerDuration
                     }
-                    mpvDurationGrowth = MpvLiveDurationPolicy.nextDurationGrowth(
+                    val displayPosition = pendingPreviewSeekPosition ?: pos
+                    val playingForWatchClock = playingNow && !cacheBuffering
+                    mpvDurationGrowth = LivePlaybackUiPolicy.nextDurationGrowth(
                         previous = mpvDurationGrowth,
                         mediaKey = currentStreamUrl,
                         durationMs = playerDuration,
-                        fromRequestedMedia = firstFrameReady
+                        fromRequestedMedia = view.isPositionFromRequestedMedia()
                     )
-                    // mpv exposes no buffered-ahead equivalent, so position doubles as both:
-                    // the freeze signal here is the playhead standing still.
-                    sampleLiveFreeze(positionMs = pos, bufferedPositionMs = pos)
-                    val displayPosition = pendingPreviewSeekPosition ?: pos
-                    updatePlaybackTimeline(
+                    publishPlaybackTimeline(
                         currentPosition = displayPosition,
-                        duration = playerDuration
+                        duration = playerDuration,
+                        bufferedPosition = (pos + (view.demuxerCacheDurationSec() * 1000.0).toLong())
+                            .coerceAtLeast(displayPosition),
+                        playerReportsLive = view.isLiveStreamNow() || mpvDurationGrowth.grew,
+                        isPlaying = playingForWatchClock
                     )
-                    val reachedEnd = MpvVodRecoveryPolicy.isAtEnd(
-                        positionMs = pos,
-                        durationMs = playerDuration,
-                        eofReached = view.isEofReachedNow() && !isLiveFeed()
-                    )
-                    val naturalEnded = reachedEnd && shouldTreatAsNaturalPlaybackCompletion(
+                    // Prefer the largest known duration; MPV can report a shorter one transiently.
+                    // The playerDuration check stays: lastKnownDuration can still hold the previous
+                    // stream's value until it resets.
+                    val effectiveDuration = maxOf(playerDuration, lastKnownDuration)
+                    val nearEnd = endDetectionArmed && playerDuration > 0L &&
+                        pos >= (effectiveDuration - PlayerNextEpisodeRules.NEAR_END_MS)
+                    val eofNow = view.isEofReached()
+                    if (!eofNow) mpvEofSeenClear = true
+                    val mpvEofReached = mpvEofSeenClear && eofNow
+                    val naturalEnded = !view.isLiveStreamNow() && (nearEnd || mpvEofReached) && shouldTreatAsNaturalPlaybackCompletion(
                         hasRenderedFirstFrame = firstFrameReady,
                         hasFatalError = !_uiState.value.error.isNullOrBlank(),
-                        durationMs = playerDuration,
-                        isLiveFeed = isLiveFeed(),
+                        durationMs = effectiveDuration
                     )
                     val wasEnded = _uiState.value.playbackEnded
-                    if (MpvVodRecoveryPolicy.shouldResetRetries(errorRetryCount, playingNow && firstFrameReady, pos, mpvVodRetryResumeMs)) {
-                        resetErrorRetryState()
-                    }
                     _uiState.update { state ->
                         state.copy(
                             isPlaying = playingNow,
@@ -432,12 +443,18 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                             playbackEnded = naturalEnded
                         )
                     }
-                    updateMpvAvailableTracks()
+                    // libmpv has no Media3 listener callbacks. Keep Android's active media
+                    // session in sync with the state sampled by this existing progress tick.
+                    refreshMpvMediaSession()
+                    updateMpvTracksOnTick()
+                    recomputeChapterSkipIntervalsIfNeeded()
                     updateActiveSkipInterval(pos)
-                    evaluatePostPlayOverlayVisibility(
-                        positionMs = pos,
-                        durationMs = playerDuration
-                    )
+                    if (!_playbackTimeline.value.isLive) {
+                        evaluatePostPlayOverlayVisibility(
+                            positionMs = pos,
+                            durationMs = playerDuration
+                        )
+                    }
                     if (naturalEnded && !wasEnded) {
                         // Short placeholders never set naturalEnded, so they cannot mark
                         // watched or auto-advance (see #2819).
@@ -456,20 +473,18 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     lastKnownDuration = playerDuration
                 }
                 val displayPosition = pendingPreviewSeekPosition ?: pos
-                updatePlaybackTimeline(
+                publishPlaybackTimeline(
                     currentPosition = displayPosition,
                     duration = playerDuration.coerceAtLeast(0L),
-                    bufferedPosition = player.bufferedPosition.coerceAtLeast(displayPosition)
+                    bufferedPosition = player.bufferedPosition.coerceAtLeast(displayPosition),
+                    playerReportsLive = player.isCurrentMediaItemLive,
+                    isPlaying = player.isPlaying
                 )
                 playbackAnalyticsDiagnostics.recordProgressSnapshot(
                     player = player,
                     hasRenderedFirstFrame = hasRenderedFirstFrame,
                     rebufferCount = rebufferCount,
                     rebufferTotalMs = rebufferTotalMs
-                )
-                sampleLiveFreeze(
-                    positionMs = pos,
-                    bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
                 )
                 // Update torrent rebuffer progress from ExoPlayer's buffer state
                 if (isTorrentStream && _uiState.value.isBuffering && hasRenderedFirstFrame) {
@@ -501,11 +516,14 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         )
                     }
                 }
+                recomputeChapterSkipIntervalsIfNeeded()
                 updateActiveSkipInterval(pos)
-                evaluatePostPlayOverlayVisibility(
-                    positionMs = pos,
-                    durationMs = playerDuration.coerceAtLeast(0L)
-                )
+                if (!_playbackTimeline.value.isLive) {
+                    evaluatePostPlayOverlayVisibility(
+                        positionMs = pos,
+                        durationMs = playerDuration.coerceAtLeast(0L)
+                    )
+                }
 
                 if (player.isPlaying) {
                     val now = System.currentTimeMillis()
@@ -519,16 +537,11 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         Log.d(PlayerRuntimeController.TAG, "BUFFER: ahead=${bufAhead}s, loading=$loading, heap=$usedMb/${maxMb}MB, pos=${pos / 1000}s")
                         
                         if (NuvioExoPlayerPerformanceHelper.shouldLogMemoryFootprint()) {
-                            val defaultAllocator = _loadControlAllocator
+                            val defaultAllocator = _loadControl?.ownAllocator as? androidx.media3.exoplayer.upstream.DefaultAllocator
                             val totalFootprintBytes = defaultAllocator?.let { allocator ->
-                                try {
-                                    val method = allocator.javaClass.getMethod("getMemoryFootprint")
-                                    method.invoke(allocator) as? Int ?: 0
-                                } catch (e: Exception) {
-                                    0
-                                }
-                            } ?: 0
-                            val totalActiveBytes = defaultAllocator?.totalBytesAllocated ?: 0
+                                runCatching { allocator.memoryFootprint.toLong() }.getOrDefault(0L)
+                            } ?: 0L
+                            val totalActiveBytes = defaultAllocator?.totalBytesAllocated?.toLong() ?: 0L
                             val footprintMb = totalFootprintBytes / (1024 * 1024)
                             val activeMb = totalActiveBytes / (1024 * 1024)
                             Log.d("ExoMemory", "Off-heap OS ahead: $footprintMb MB, active: $activeMb MB")
@@ -551,7 +564,7 @@ internal fun PlayerRuntimeController.startWatchProgressSaving() {
     watchProgressSaveJob?.cancel()
     watchProgressSaveJob = scope.launch {
         while (isActive) {
-            delay(10000)
+            delay(WATCH_PROGRESS_SAVE_INTERVAL_MS)
             saveWatchProgressIfNeeded()
         }
     }
@@ -702,7 +715,7 @@ private fun PlayerRuntimeController.buildPlaybackIssuePlaybackSettingsInput(): P
         useLibass = settings.useLibass,
         activePlayerUsesLibass = requestedUseLibassByUser && !isUsingMpvEngine(),
         libassRenderType = settings.libassRenderType.name,
-        addonSubtitleStartupMode = settings.addonSubtitleStartupMode.name,
+        addonSubtitleStartupMode = "SIDECAR",
         externalPlayerForwardSubtitles = settings.externalPlayerForwardSubtitles,
         subtitleOrganizationMode = settings.subtitleOrganizationMode.name,
         loadingOverlayEnabled = settings.loadingOverlayEnabled,
@@ -736,7 +749,7 @@ private fun PlayerRuntimeController.buildPlaybackIssuePlaybackSettingsInput(): P
         useParallelConnections = settings.useParallelConnections,
         parallelConnectionCount = settings.parallelConnectionCount,
         parallelChunkSizeKb = settings.parallelChunkSizeKb,
-        enableHttp2 = settings.enableHttp2,
+        enableHttp2 = false,
         nuvioPerformanceModeEnabled = settings.nuvioPerformanceModeEnabled,
         streamAutoPlayMode = settings.streamAutoPlayMode.name,
         streamAutoPlaySource = settings.streamAutoPlaySource.name,
@@ -778,8 +791,8 @@ private fun String.reportSafeHost(): String {
 internal fun PlayerRuntimeController.saveWatchProgressIfNeeded() {
     if (!hasRenderedFirstFrame) return
     // A live stream's position is no point to come back to: resuming there seeks past what the
-    // stream holds and nothing plays (upstream b4e47d6d6).
-    if (mpvDurationGrowth.isLiveFor(currentStreamUrl)) return
+    // stream holds and nothing plays
+    if (_playbackTimeline.value.isLive) return
     val currentPosition = currentPlaybackPositionMs() ?: return
     val duration = getEffectiveDuration(currentPosition)
     // Don't save progress for very short streams (< 2:01) — these are
@@ -795,7 +808,7 @@ internal fun PlayerRuntimeController.saveWatchProgressIfNeeded() {
 
 internal fun PlayerRuntimeController.saveWatchProgress() {
     if (!hasRenderedFirstFrame) return
-    if (mpvDurationGrowth.isLiveFor(currentStreamUrl)) return
+    if (_playbackTimeline.value.isLive) return
     val currentPosition = currentPlaybackPositionMs() ?: return
     val duration = getEffectiveDuration(currentPosition)
     if (isShortPlaceholderDuration(duration)) return
@@ -829,19 +842,13 @@ private fun PlayerRuntimeController.isShortPlaceholderStream(): Boolean {
  * watched or trigger auto-play next.
  */
 internal fun PlayerRuntimeController.handleNaturalPlaybackEnded() {
-    if (isLiveFeed()) {
-        _uiState.update { it.copy(playbackEnded = false) }
-        onLiveStreamEnded("ended")
-        return
-    }
     val position = currentPlaybackPositionMs() ?: 0L
     val duration = getEffectiveDuration(position)
     val hasFatalError = !_uiState.value.error.isNullOrBlank()
     if (!shouldTreatAsNaturalPlaybackCompletion(
             hasRenderedFirstFrame = hasRenderedFirstFrame,
             hasFatalError = hasFatalError,
-            durationMs = duration,
-            isLiveFeed = isLiveFeed(),
+            durationMs = duration
         )
     ) {
         Log.i(
@@ -856,9 +863,12 @@ internal fun PlayerRuntimeController.handleNaturalPlaybackEnded() {
         return
     }
 
-    reportSessionStop()
     emitCompletionScrobbleStop(progressPercent = 99.5f)
-    saveWatchProgress()
+    if (contentType.equals("cloud", ignoreCase = true)) {
+        saveCloudLibraryProgress(position, duration, completed = true)
+    } else {
+        saveWatchProgress()
+    }
     resetPostPlayStateAfterPlaybackEnded()
 }
 
@@ -896,7 +906,13 @@ internal fun PlayerRuntimeController.currentWatchProgress(
     lastWatched = lastWatched
 )
 
+// TODO(vod-converge C6): guard against a stale save after completion overwriting a completed episode
+//  (CompletedEpisodeSavePolicy, legacy-vod-player; 0251ec634).
 internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, duration: Long, syncRemote: Boolean = true) {
+    if (contentType.equals("cloud", ignoreCase = true)) {
+        saveCloudLibraryProgress(position, duration, completed = false)
+        return
+    }
     val parentContentId = contentId?.takeIf { it.isNotEmpty() } ?: return
     val parentContentType = contentType?.takeIf { it.isNotEmpty() } ?: return
 
@@ -904,53 +920,62 @@ internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, d
 
     val fallbackPercent = if (duration <= 0L) 5f else null
 
-    val progress = WatchProgress(
-        contentId = parentContentId,
-        contentType = parentContentType,
-        name = contentName ?: title,
-        poster = poster,
-        backdrop = backdrop,
-        logo = logo,
-        videoId = currentVideoId ?: parentContentId,
-        season = currentSeason,
-        episode = currentEpisode,
-        episodeTitle = currentEpisodeTitle,
-        position = position,
-        duration = duration,
-        lastWatched = System.currentTimeMillis(),
-        progressPercent = fallbackPercent
-    )
+    val progress = currentWatchProgress(parentContentId, parentContentType, position, duration, System.currentTimeMillis())
+        .copy(progressPercent = fallbackPercent)
 
     scope.launch(kotlinx.coroutines.NonCancellable) {
-        persistProgressOrContinue({ error ->
-            Log.w(PlayerRuntimeController.TAG, "Watch progress could not be saved", error)
-        }) {
+        try {
             val effectiveContentId = watchProgressRepository.normalizeParentContentId(
                 parentContentId = progress.contentId,
-                videoId = progress.videoId
+                videoId = progress.videoId,
+                profileId = profileId
             )
             val normalizedProgress = progress.copy(contentId = effectiveContentId)
-            when (
-                CompletedEpisodeSavePolicy.decide(
-                    isCompleted = normalizedProgress.isCompleted(),
-                    alreadyMarkedCompleted = hasMarkedCurrentEpisodeCompleted,
-                )
-            ) {
-                ProgressSaveAction.MARK_COMPLETED -> {
+            if (normalizedProgress.isCompleted()) {
+                if (!hasMarkedCurrentEpisodeCompleted) {
                     hasMarkedCurrentEpisodeCompleted = true
                     watchProgressRepository.markAsCompleted(
                         normalizedProgress,
+                        profileId = profileId,
                         broadcastTrackingHistory = false
                     )
                 }
-                ProgressSaveAction.SAVE_PROGRESS ->
-                    watchProgressRepository.saveProgress(normalizedProgress, syncRemote = syncRemote)
-                // Already completed this session: a later save (often stale, e.g. duration=0 -> 5%)
-                // must not overwrite the completed entry or push low progress to remote.
-                ProgressSaveAction.SKIP -> Unit
+                runCatching { tvRecommendationManager.onProgressRemoved(normalizedProgress.contentId) }
+            } else if (!hasMarkedCurrentEpisodeCompleted) {
+                // Only save in-progress when the episode has not already been
+                // marked as completed during this playback session.  After
+                // natural playback completion the player can report stale
+                // position/duration values (e.g. duration=0 → fallbackPercent=5)
+                // which would overwrite the completed entry in the mutation
+                // store and push an incorrect low-progress value to remote.
+                watchProgressRepository.saveProgress(
+                    normalizedProgress,
+                    profileId = profileId,
+                    syncRemote = syncRemote
+                )
+                runCatching { tvRecommendationManager.updateSingleWatchNextProgram(normalizedProgress) }
             }
+        } catch (error: IOException) {
+            Log.w(PlayerRuntimeController.TAG, "Watch progress could not be saved", error)
         }
     }
+}
+
+private fun PlayerRuntimeController.saveCloudLibraryProgress(
+    position: Long,
+    duration: Long,
+    completed: Boolean
+) {
+    if (!completed && position < 1_000L) return
+    val playbackContext = cloudPlaybackContext ?: return
+    val file = playbackContext.fileForVideoId(currentVideoId) ?: return
+    cloudPlaybackProgressStore.save(
+        item = playbackContext.item,
+        file = file,
+        positionMs = position,
+        durationMs = duration,
+        completed = completed
+    )
 }
 
 internal fun PlayerRuntimeController.currentPlaybackProgressPercent(): Float {
@@ -993,9 +1018,6 @@ internal fun PlayerRuntimeController.buildScrobbleItem(): TrackingMediaReference
 }
 
 internal fun PlayerRuntimeController.emitScrobbleStart() {
-    // A source that owns this item (a media server) is told first: its items have no scrobble identity, so the
-    // pipeline below bails out for them (see ExcludedSourceTrackingTest).
-    reportSessionStart()
     logScrobbleDiagnostic("start_evaluated")
     if (isShortPlaceholderStream()) {
         logScrobbleDiagnostic("start_skipped", "reason=short_placeholder")
@@ -1087,7 +1109,6 @@ internal fun PlayerRuntimeController.emitScrobbleStop(progressPercent: Float? = 
 }
 
 internal fun PlayerRuntimeController.emitScrobblePause(progressPercent: Float? = null) {
-    reportSessionProgress(paused = true)
     logScrobbleDiagnostic("pause_evaluated", "providedProgress=${progressPercent ?: "none"}")
     if (isShortPlaceholderStream()) {
         logScrobbleDiagnostic("pause_skipped", "reason=short_placeholder")
@@ -1169,7 +1190,6 @@ internal fun PlayerRuntimeController.emitSeekScrobbleRestart(progressPercent: Fl
 
 internal fun PlayerRuntimeController.flushPlaybackSnapshotForSwitchOrExit() {
     logScrobbleDiagnostic("flush_switch_or_exit")
-    reportSessionStop()
     emitStopScrobbleForCurrentProgress()
     saveWatchProgress()
 }
@@ -1201,14 +1221,14 @@ internal fun PlayerRuntimeController.scheduleProgressSyncAfterSeek() {
 fun PlayerRuntimeController.scheduleHideControls() {
     hideControlsJob?.cancel()
     hideControlsJob = scope.launch {
-        delay(PlayerControlsTiming.AUTO_HIDE_MS)
+        delay(3000)
         if (_uiState.value.isPlaying && !_uiState.value.showAudioOverlay &&
             !_uiState.value.showSubtitleOverlay && !_uiState.value.showSubtitleStylePanel &&
             !_uiState.value.showSpeedDialog && !_uiState.value.showMoreDialog &&
-            !_uiState.value.showVideoZoomPanel &&
             !_uiState.value.showSubtitleDelayOverlay &&
             !_uiState.value.showSubtitleTimingDialog &&
             !_uiState.value.showEpisodesPanel && !_uiState.value.showSourcesPanel &&
+            !_uiState.value.showChaptersPanel &&
             !_uiState.value.showPartyPanel &&
             !_uiState.value.showStreamInfoOverlay) {
             _uiState.update { it.copy(showControls = false) }
@@ -1243,15 +1263,26 @@ internal fun PlayerRuntimeController.adjustSubtitleDelay(deltaMs: Int) {
 }
 
 internal fun PlayerRuntimeController.adjustSubtitleDelay(deltaMs: Int, showOverlay: Boolean) {
-    val currentState = _uiState.value
-    val currentDelayMs = currentState.subtitleDelayMs
-    val newDelayMs = (currentDelayMs + deltaMs).coerceIn(
+    setSubtitleDelayMs(targetMs = _uiState.value.subtitleDelayMs + deltaMs, showOverlay = showOverlay)
+}
+
+internal fun PlayerRuntimeController.resetSubtitleDelay(showOverlay: Boolean = true) {
+    setSubtitleDelayMs(targetMs = 0, showOverlay = showOverlay)
+}
+
+internal fun PlayerRuntimeController.setSubtitleDelayMs(targetMs: Int, showOverlay: Boolean = true) {
+    val newDelayMs = targetMs.coerceIn(
         minimumValue = SUBTITLE_DELAY_MIN_MS,
         maximumValue = SUBTITLE_DELAY_MAX_MS
     )
+    val currentState = _uiState.value
     val keepInlineInSubtitleOverlay = showOverlay && currentState.showSubtitleOverlay
 
     subtitleDelayUs.set(newDelayMs.toLong() * 1000L)
+    // Propagate to libass so overlay and video effect paths also shift.
+    _exoPlayer?.getAssHandlerCompat()?.let {
+        it.subtitleDelayUs = newDelayMs.toLong() * 1000L + streamSubtitleDelayUs.get()
+    }
     if (isUsingMpvEngine()) {
         mpvView?.setSubtitleDelayMs(mpvSubtitleDelayMs(newDelayMs))
     }
@@ -1268,8 +1299,7 @@ internal fun PlayerRuntimeController.adjustSubtitleDelay(deltaMs: Int, showOverl
         _uiState.update {
             it.copy(
                 subtitleDelayMs = newDelayMs,
-                showSubtitleDelayOverlay = false,
-                showControls = true
+                showSubtitleDelayOverlay = false
             )
         }
     }
@@ -1308,9 +1338,8 @@ internal fun PlayerRuntimeController.schedulePauseOverlay() {
         val s = _uiState.value
         val anyPanelOpen = s.showSubtitleOverlay || s.showSubtitleStylePanel ||
             s.showSpeedDialog || s.showMoreDialog || s.showEpisodesPanel ||
-            s.showSourcesPanel || s.showAudioOverlay || s.showStreamInfoOverlay ||
-            s.showSubtitleTimingDialog || s.showSubtitleDelayOverlay || s.showVideoZoomPanel ||
-            s.showPartyPanel
+            s.showSourcesPanel || s.showChaptersPanel || s.showAudioOverlay || s.showStreamInfoOverlay ||
+            s.showSubtitleTimingDialog || s.showSubtitleDelayOverlay || s.showPartyPanel
         if (!s.isPlaying && s.pauseOverlayEnabled && s.error == null && !anyPanelOpen) {
             _uiState.update { it.copy(showPauseOverlay = true, showControls = false) }
         }
@@ -1337,8 +1366,11 @@ fun PlayerRuntimeController.hideControls() {
     _uiState.update { it.copy(showControls = false, showSeekOverlay = false, showMoreDialog = false) }
 }
 
-fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
-    if (event != PlayerEvent.OnParentalGuideHide) {
+fun PlayerRuntimeController.onEvent(
+    event: PlayerEvent,
+    showPlaybackControls: Boolean = true,
+) {
+    if (showPlaybackControls && event != PlayerEvent.OnParentalGuideHide) {
         onUserInteraction()
     }
     when (event) {
@@ -1370,37 +1402,31 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                 _exoPlayer?.let { player ->
                     if (player.isPlaying) {
                         userPausedManually = true
-                        pauseStartTimeMs = System.currentTimeMillis()
                         player.pause()
                         schedulePauseOverlay()
                     } else {
                         userPausedManually = false
                         cancelPauseOverlay()
-                        val pausedDuration = System.currentTimeMillis() - pauseStartTimeMs
-                        if (pauseStartTimeMs > 0L && pausedDuration > PlayerRuntimeController.LONG_PAUSE_THRESHOLD_MS) {
-                            val pos = player.currentPosition
-                            player.seekTo((pos - 1000L).coerceAtLeast(0L))
-                        }
-                        pauseStartTimeMs = 0L
                         player.play()
                     }
                     publishPartyPlayback(paused = !player.playWhenReady)
                 }
             }
-            showControlsTemporarily()
+            if (showPlaybackControls) showControlsTemporarily()
         }
         PlayerEvent.OnSeekForward -> {
+            if (_playbackTimeline.value.isLive) return
             onEvent(PlayerEvent.OnSeekBy(deltaMs = PlayerScrubRates.STEP_SHORT_MS))
         }
         PlayerEvent.OnSeekBackward -> {
+            if (_playbackTimeline.value.isLive) return
             onEvent(PlayerEvent.OnSeekBy(deltaMs = -PlayerScrubRates.STEP_SHORT_MS))
         }
         is PlayerEvent.OnSeekBy -> {
+            if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
             val current = currentPlaybackPositionMs() ?: 0L
-            val maxDuration = catchUpSeekCeilingMs()
-                ?: currentPlaybackDurationMs().takeIf { it >= 0 }
-                ?: Long.MAX_VALUE
+            val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
             val requested = (current + event.deltaMs)
                 .coerceAtLeast(0L)
                 .coerceAtMost(maxDuration)
@@ -1421,9 +1447,8 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             }
         }
         is PlayerEvent.OnPreviewSeekBy -> {
-            val maxDuration = catchUpSeekCeilingMs()
-                ?: currentPlaybackDurationMs().takeIf { it >= 0 }
-                ?: Long.MAX_VALUE
+            if (_playbackTimeline.value.isLive) return
+            val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
             val basePosition = pendingPreviewSeekPosition ?: currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L
             val target = (basePosition + event.deltaMs)
                 .coerceAtLeast(0L)
@@ -1437,9 +1462,8 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             }
         }
         PlayerEvent.OnCommitPreviewSeek -> {
-            // Clamped again on commit: the pending position can have been set before the guard
-            // moved (the live edge advances while the viewer holds the button down).
-            val requested = pendingPreviewSeekPosition?.let { clampCatchUpSeekMs(it) }
+            if (_playbackTimeline.value.isLive) return
+            val requested = pendingPreviewSeekPosition
             if (requested != null) {
                 val target = if (isPartyControlLocked) ownSeekTarget(requested) else requested
                 if (target == null) {
@@ -1460,18 +1484,38 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             }
         }
         is PlayerEvent.OnSeekTo -> {
+            if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
-            val requested = clampCatchUpSeekMs(event.position)
-            val position = if (isPartyControlLocked) ownSeekTarget(requested) ?: return else requested
-            seekPlaybackTo(position, SeekParameters.CLOSEST_SYNC)
-            updatePlaybackTimeline(currentPosition = position)
+            val target = if (isPartyControlLocked) ownSeekTarget(event.position) ?: return else event.position
+            seekPlaybackTo(target, SeekParameters.CLOSEST_SYNC)
+            updatePlaybackTimeline(currentPosition = target)
             scheduleProgressSyncAfterSeek()
-            publishPartyPlayback(positionMs = position)
-            if (_uiState.value.showControls) {
-                showControlsTemporarily()
-            } else {
-                showSeekOverlayTemporarily()
+            publishPartyPlayback(positionMs = target)
+            if (showPlaybackControls) {
+                if (_uiState.value.showControls) {
+                    showControlsTemporarily()
+                } else {
+                    showSeekOverlayTemporarily()
+                }
             }
+        }
+        is PlayerEvent.OnSkipChapter -> {
+            val chapters = _uiState.value.chapters
+            if (chapters.isEmpty() || _playbackTimeline.value.isLive) return
+            val position = pendingPreviewSeekPosition ?: currentPlaybackPositionMs() ?: return
+            val target = if (event.forward) {
+                PlayerChapters.nextStartMs(chapters, position)
+            } else {
+                PlayerChapters.previousStartMs(chapters, position)
+            } ?: return
+            seekToChapter(target)
+        }
+        PlayerEvent.OnShowChaptersPanel -> showChaptersPanel()
+        PlayerEvent.OnDismissChaptersPanel -> dismissChaptersPanel()
+        is PlayerEvent.OnSelectChapter -> {
+            val chapter = _uiState.value.chapters.getOrNull(event.index) ?: return
+            _uiState.update { it.copy(showChaptersPanel = false) }
+            seekToChapter(chapter.startMs)
         }
         is PlayerEvent.OnSelectAudioTrack -> {
             logSwitchTrace(
@@ -1541,6 +1585,7 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             pendingAddonSubtitleTrackId = null
             pendingAudioSelectionAfterSubtitleRefresh = null
             resetSubtitleAutoSyncState()
+            cancelAutomaticSubtitleSync() // AutoSync hook
             if (_uiState.value.serverSubtitleTracks.isNotEmpty()) {
                 selectServerSubtitle(event.index)
             } else {
@@ -1568,6 +1613,7 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             pendingAddonSubtitleTrackId = null
             pendingAudioSelectionAfterSubtitleRefresh = null
             resetSubtitleAutoSyncState()
+            cancelAutomaticSubtitleSync() // AutoSync hook
             rememberSubtitleDisabled()
             disableSubtitles()
             if (hasBurnedInServerSubtitle) clearServerSubtitle()
@@ -1592,6 +1638,7 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             rememberAddonSubtitleSelection(event.subtitle)
             selectAddonSubtitle(event.subtitle)
             if (hasBurnedInServerSubtitle) clearServerSubtitle()
+            runSelectedAutomaticSubtitleSync(event.subtitle) // AutoSync hook
             _uiState.update {
                 it.copy(
                     showSubtitleOverlay = true,
@@ -1622,6 +1669,9 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                     showSubtitleTimingDialog = false,
                     showSubtitleDelayOverlay = false
                 )
+            }
+            contentId?.takeIf { it.isNotBlank() }?.let { id ->
+                scope.launch { trackPreferenceDataStore.savePlaybackSpeed(id, event.speed) }
             }
             publishPartyPlayback(rate = event.speed)
         }
@@ -1710,6 +1760,9 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         is PlayerEvent.OnAdjustSubtitleDelay -> {
             adjustSubtitleDelay(event.deltaMs, event.showOverlay)
         }
+        is PlayerEvent.OnResetSubtitleDelay -> {
+            resetSubtitleDelay(event.showOverlay)
+        }
         PlayerEvent.OnShowSpeedDialog -> {
             val state = _uiState.value
             if (state.tunnelingEnabled) {
@@ -1774,11 +1827,12 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         is PlayerEvent.OnEpisodeSeasonSelected -> {
             selectEpisodesSeason(event.season)
         }
-        is PlayerEvent.OnEpisodeRangeSelected -> {
-            selectEpisodesRange(event.label)
-        }
         is PlayerEvent.OnEpisodeSelected -> {
-            loadStreamsForEpisode(event.video)
+            loadStreamsForEpisode(
+                video = event.video,
+                forceRefresh = false,
+                manualSelection = event.manualSelection
+            )
         }
         PlayerEvent.OnReloadEpisodeStreams -> {
             reloadEpisodeStreams()
@@ -1826,6 +1880,8 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         }
         PlayerEvent.OnRetry -> {
             hasRenderedFirstFrame = false
+            endDetectionArmed = false
+            mpvEofSeenClear = false
             hasRetriedCurrentStreamAfter416 = false
             playbackIssueReportRequestVersion.incrementAndGet()
             resetErrorRetryState()
@@ -1835,8 +1891,6 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             _uiState.update { state ->
                 state.copy(
                     error = null,
-                    liveFreezeGaveUp = false,
-                    freezeReported = false,
                     playbackIssueReportStatus = PlaybackIssueReportStatus.Idle,
                     playbackIssueReportId = null,
                     playbackIssueReportError = null,
@@ -1872,18 +1926,8 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                 reinitializeCurrentStream()
             }
         }
-        PlayerEvent.OnStartOverFromBeginning -> startOverFromBeginning()
-        PlayerEvent.OnApplyServerResume -> applyServerResumeOffer()
-        PlayerEvent.OnDismissServerResume -> dismissServerResumeOffer()
         PlayerEvent.OnReportPlaybackIssue -> {
             submitPlaybackIssueReport()
-        }
-        PlayerEvent.OnReportFrozen -> {
-            // Lightweight, freeze-specific PostHog signal carrying user intent (stronger than the
-            // automatic gave_up event). PostHog attaches $device_model/$device_manufacturer, so the
-            // fleet can rank reported freezes by device without us sending it.
-            livePlaybackFreezeReporter.onUserReportFrozen(System.currentTimeMillis())
-            _uiState.update { it.copy(freezeReported = true) }
         }
         PlayerEvent.OnParentalGuideHide -> {
             _uiState.update { it.copy(showParentalGuide = false) }
@@ -1929,8 +1973,18 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         is PlayerEvent.OnSetSubtitleSize -> {
             scope.launch { playerSettingsDataStore.setSubtitleSize(event.size) }
         }
+        is PlayerEvent.OnSetSubtitleHdrBrightness -> {
+            scope.launch { playerSettingsDataStore.setSubtitleHdrBrightness(event.brightness) }
+        }
         is PlayerEvent.OnSetSubtitleTextColor -> {
-            scope.launch { playerSettingsDataStore.setSubtitleTextColor(event.color) }
+            val editingHdr = _uiState.value.isEditingHdrSubtitleStyle
+            scope.launch {
+                if (editingHdr) {
+                    playerSettingsDataStore.setSubtitleHdrTextColor(event.color)
+                } else {
+                    playerSettingsDataStore.setSubtitleTextColor(event.color)
+                }
+            }
         }
         is PlayerEvent.OnSetSubtitleBold -> {
             scope.launch { playerSettingsDataStore.setSubtitleBold(event.bold) }
@@ -1944,19 +1998,17 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         is PlayerEvent.OnSetSubtitleVerticalOffset -> {
             scope.launch { playerSettingsDataStore.setSubtitleVerticalOffset(event.offset) }
         }
-        is PlayerEvent.OnSetSubtitleSideMargin -> {
-            scope.launch { playerSettingsDataStore.setSubtitleSideMarginPercent(event.percent) }
-        }
-        PlayerEvent.OnShowVideoZoomPanel,
-        PlayerEvent.OnDismissVideoZoomPanel,
-        is PlayerEvent.OnAdjustVideoZoom,
-        PlayerEvent.OnResetVideoZoom -> handleVideoZoomEvent(event)
         PlayerEvent.OnResetSubtitleDefaults -> {
+            val editingHdr = _uiState.value.isEditingHdrSubtitleStyle
             scope.launch {
                 val defaults = SubtitleStyleSettings()
-                playerSettingsDataStore.setSubtitleSideMarginPercent(defaults.sideMarginPercent)
                 playerSettingsDataStore.setSubtitleSize(defaults.size)
-                playerSettingsDataStore.setSubtitleTextColor(defaults.textColor)
+                if (editingHdr) {
+                    playerSettingsDataStore.setSubtitleHdrTextColor(defaults.hdrTextColor)
+                    playerSettingsDataStore.setSubtitleHdrBrightness(defaults.hdrBrightness)
+                } else {
+                    playerSettingsDataStore.setSubtitleTextColor(defaults.textColor)
+                }
                 playerSettingsDataStore.setSubtitleBold(defaults.bold)
                 playerSettingsDataStore.setSubtitleOutlineEnabled(defaults.outlineEnabled)
                 playerSettingsDataStore.setSubtitleOutlineColor(defaults.outlineColor)
@@ -2011,8 +2063,6 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                 Log.d(PlayerRuntimeController.TAG, "Persisting aspect mode: $newMode")
                 deviceLocalPlayerPreferences.setAspectMode(newMode)
             }
-            // F37: also the series' own aspect (global last-used above stays the fallback).
-            persistSeriesPicture()
             hideAspectRatioIndicatorJob?.cancel()
             hideAspectRatioIndicatorJob = scope.launch {
                 delay(1500)
@@ -2026,6 +2076,13 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             )
             switchInternalPlayerEngineManually()
         }
+        PlayerEvent.OnSwitchToMpvPlayer -> {
+            logSwitchTrace(
+                stage = "event-switch-to-mpv",
+                message = "requestedByUser=true"
+            )
+            switchToInternalPlayerEngine(InternalPlayerEngine.MVP_PLAYER, reason = "user-error-dialog-switch-to-mpv")
+        }
         PlayerEvent.OnShowStreamInfo -> {
             val info = buildStreamInfoData()
             _uiState.update {
@@ -2038,6 +2095,15 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
         }
         PlayerEvent.OnDismissStreamInfo -> {
             _uiState.update { it.copy(showStreamInfoOverlay = false) }
+        }
+        PlayerEvent.OnTogglePlayerStatsHud -> {
+            val currentState = _uiState.value
+            if (currentState.playerStatsHudButtonAvailable) {
+                val newActive = !currentState.playerStatsHudEnabled
+                scope.launch {
+                    deviceLocalPlayerPreferences.setPlayerStatsHudActive(newActive)
+                }
+            }
         }
     }
 }
@@ -2057,27 +2123,12 @@ internal fun PlayerRuntimeController.buildStreamInfoData(): StreamInfoData {
                 .firstOrNull { it.id == activeVideoFormat?.id || (it.bitrate > 0 && it.bitrate == activeVideoFormat?.bitrate) }
         }
 
-    // Under mpv there is no ExoPlayer Format to read, so go to the property shadow. Read it
-    // here rather than trusting the cached currentVideo* fields: mpv's bitrate is a rolling
-    // estimate that moves constantly on live, and the track refresh that caches it is
-    // event-driven, not periodic.
-    val mpvVideo = if (isUsingMpvEngine()) mpvView?.readVideoSnapshot() else null
-
-    val videoWidth = matchedFormat?.width?.takeIf { it > 0 }
-        ?: activeVideoFormat?.width?.takeIf { it > 0 }
-        ?: mpvVideo?.width
-        ?: currentVideoWidth
-    val videoHeight = matchedFormat?.height?.takeIf { it > 0 }
-        ?: activeVideoFormat?.height?.takeIf { it > 0 }
-        ?: mpvVideo?.height
-        ?: currentVideoHeight
-    val videoBitrate = activeVideoFormat?.bitrate?.takeIf { it > 0 }
-        ?: mpvVideo?.bitrate
-        ?: currentVideoBitrate
+    val videoWidth = matchedFormat?.width?.takeIf { it > 0 } ?: activeVideoFormat?.width?.takeIf { it > 0 } ?: currentVideoWidth
+    val videoHeight = matchedFormat?.height?.takeIf { it > 0 } ?: activeVideoFormat?.height?.takeIf { it > 0 } ?: currentVideoHeight
+    val videoBitrate = activeVideoFormat?.bitrate?.takeIf { it > 0 } ?: currentVideoBitrate
     val videoCodec = activeVideoFormat?.let { format ->
-        CustomDefaultTrackNameProvider.formatNameFromMime(format.sampleMimeType)
-            ?: CustomDefaultTrackNameProvider.formatNameFromMime(format.codecs)
-    } ?: MpvCodecNames.display(mpvVideo?.codec) ?: currentVideoCodec
+        CustomDefaultTrackNameProvider.resolveCodecName(format.sampleMimeType, format.codecs)
+    } ?: currentVideoCodec
 
     return StreamInfoData(
         addonName = currentAddonName,
@@ -2089,12 +2140,12 @@ internal fun PlayerRuntimeController.buildStreamInfoData(): StreamInfoData {
         videoCodec = videoCodec,
         videoWidth = videoWidth,
         videoHeight = videoHeight,
-        // detectedFrameRate is the auto-frame-rate machinery's value and stays 0 when AFR is
-        // off or its probe was skipped; the mpv demuxer's fps then covers live.
-        videoFrameRate = state.detectedFrameRate.takeIf { it > 0f }
-            ?: mpvVideo?.frameRate
-            ?: currentVideoFrameRate,
+        videoFrameRate = state.detectedFrameRate.takeIf { it > 0f },
         videoBitrate = videoBitrate,
+        fileBitrate = PlayerBitrateEstimator.fileBitrateBps(
+            currentVideoSize,
+            playbackTimeline.value.duration
+        ),
         audioCodec = selectedAudio?.codec,
         audioChannels = selectedAudio?.channelCount?.let {
             CustomDefaultTrackNameProvider.getChannelLayoutName(it)

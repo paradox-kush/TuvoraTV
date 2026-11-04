@@ -526,7 +526,7 @@ composeCompiler {
 val approvedMedia3Version = libs.versions.media3.get()
 
 // The six forked modules are local AARs. Every remaining stock Media3 module must resolve to the
-// same approved version; ass-media 0.4.0 otherwise introduces media3-effect 1.8.0 at runtime.
+// same approved version (media3-effect is otherwise pinned at 1.8.0 by older libass builds).
 configurations.configureEach {
     exclude(group = "androidx.media3", module = "media3-exoplayer")
     exclude(group = "androidx.media3", module = "media3-common")
@@ -757,9 +757,10 @@ dependencies {
         implementation(files("libs/lib-decoder-ffmpeg-release.aar"))
     }
 
-    // libass-android for ASS/SSA subtitle support (from Maven Central)
-    implementation("io.github.peerless2012:ass-media:0.4.0")
-    // ass-media declares media3-effect 1.8.0; keep it converged with the 1.11.0 fork/runtime.
+    // libass - atlas-based subtitle rendering for upstream's VOD player (from NuvioMedia/nuvio-libass;
+    // replaced io.github.peerless2012:ass-media, which only the retired fork VOD player used).
+    implementation(files("libs/nuvio-libass-release.aar"))
+    // libass's video-effect render mode needs media3-effect; keep it converged with the 1.11.0 fork/runtime.
     implementation("androidx.media3:media3-effect:$approvedMedia3Version")
     // Local nextlib-mediainfo fork (static FFmpeg; no libav*.so in final AAR)
     implementation(files("libs/nextlib-mediainfo-local.aar"))
