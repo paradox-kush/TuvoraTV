@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.util.Log
 import androidx.media3.exoplayer.SeekParameters
 import com.nuvio.tv.data.local.InternalPlayerEngine
@@ -184,7 +186,7 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
         scheduleHideControls()
         emitScrobbleStart()
     }.onFailure { error ->
-        Log.e(PlayerRuntimeController.TAG, "libmpv initialize failed: ${error.message}", error)
+        Log.e(PlayerRuntimeController.TAG, "libmpv initialize failed: ${LogRedaction.text(error.message)}", error)
         val technical = error.message?.trim()?.takeIf { it.isNotEmpty() }
         val explanation = context.getString(com.nuvio.tv.R.string.player_error_mpv_playback_failed)
         val detailedError = if (technical == null || technical.equals(explanation, ignoreCase = true)) {
@@ -379,7 +381,7 @@ internal fun PlayerRuntimeController.updateMpvAvailableTracks() {
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
-            Log.w(PlayerRuntimeController.TAG, "Failed to refresh MPV track snapshot: ${error.message}")
+            Log.w(PlayerRuntimeController.TAG, "Failed to refresh MPV track snapshot: ${LogRedaction.text(error.message)}")
         } finally {
             mpvTrackRefreshInProgress = false
         }
@@ -503,7 +505,7 @@ private fun PlayerRuntimeController.performPendingMpvHardRestartIfNeeded(view: N
         Log.d(PlayerRuntimeController.TAG, "Applying MPV hard restart for startup engine failover")
         view.releasePlayer()
     }.onFailure {
-        Log.w(PlayerRuntimeController.TAG, "MPV hard restart release failed: ${it.message}")
+        Log.w(PlayerRuntimeController.TAG, "MPV hard restart release failed: ${LogRedaction.text(it.message)}")
     }
     return true
 }

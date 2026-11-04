@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.app.Activity
 import android.os.SystemClock
 import android.util.Log
@@ -53,7 +55,7 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
                     filename = navigationArgs.filename,
                     trackers = navigationArgs.torrentTrackers
                 )
-                Log.d("PlayerStartup", "Torrent stream ready: $localUrl")
+                Log.d("PlayerStartup", "Torrent stream ready: ${LogRedaction.url(localUrl)}")
                 currentStreamUrl = localUrl
                 currentHeaders = emptyMap()
                 recordDistinctPluginPlay(

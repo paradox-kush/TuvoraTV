@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.RectF
@@ -111,7 +113,7 @@ private suspend fun PlayerRuntimeController.resolveCurrentStreamMimeType(
     currentStreamMimeType?.let { resolvedMimeType ->
         Log.d(
             PlayerRuntimeController.TAG,
-            "Resolved stream mimeType=$resolvedMimeType for url=$url"
+            "Resolved stream mimeType=$resolvedMimeType for url=${LogRedaction.url(url)}"
         )
         return
     }
@@ -123,7 +125,7 @@ private suspend fun PlayerRuntimeController.resolveCurrentStreamMimeType(
     )
     Log.d(
         PlayerRuntimeController.TAG,
-        "Resolved stream mimeType=${currentStreamMimeType ?: "unknown"} for url=$url"
+        "Resolved stream mimeType=${currentStreamMimeType ?: "unknown"} for url=${LogRedaction.url(url)}"
     )
 }
 

@@ -2,6 +2,8 @@
 
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -184,7 +186,7 @@ internal fun PlayerRuntimeController.startSidecarAddonSubtitle(
             if (!isCurrent()) return@launch
             Log.w(
                 PlayerRuntimeController.TAG,
-                "Sidecar subtitle failed id=${subtitle.id}: ${e.message} " +
+                "Sidecar subtitle failed id=${subtitle.id}: ${LogRedaction.text(e.message)} " +
                     "(buffer preserved; no media reload)"
             )
             activeSidecarSubtitleKey = null
@@ -370,7 +372,7 @@ private fun parseSidecarTimedCuesWithMime(rawText: String, mimeType: String): Li
     } catch (e: Exception) {
         Log.d(
             PlayerRuntimeController.TAG,
-            "Sidecar Media3 parse failed mime=$mimeType: ${e.message}"
+            "Sidecar Media3 parse failed mime=$mimeType: ${LogRedaction.text(e.message)}"
         )
         emptyList()
     }

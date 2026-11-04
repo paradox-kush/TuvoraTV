@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.media.MediaCodec
 import android.media.MediaCodecList
 import android.os.Build
@@ -136,7 +138,7 @@ object DolbyVisionCodecFallback {
             codec.release()
             true
         }.getOrElse { e ->
-            Log.w(TAG, "Codec probe failed for $componentName: ${e.message}")
+            Log.w(TAG, "Codec probe failed for $componentName: ${LogRedaction.text(e.message)}")
             false
         }
     }

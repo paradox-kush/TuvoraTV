@@ -121,8 +121,8 @@ class PlayerRuntimeController(
 
     companion object {
         private val CONVERTIBLE_DV_PROFILES = setOf("5", "7")
-        // TODO(vod-converge C4): PRIVACY (B116). Wrap URL- or id-bearing log lines in this player with
-        //  core.diagnostics.LogRedaction (IPTV URLs and content ids embed the account username).
+        // Log lines in this player route URLs, ids and exception messages through
+        // core.diagnostics.LogRedaction (B116); PlayerLogRedactionGuardTest enforces it.
         internal const val TAG = "PlayerViewModel"
         internal const val SWITCH_TRACE_TAG = "SwitchTrace"
         internal const val SWITCH_TRACE_ENABLED = false

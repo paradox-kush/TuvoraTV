@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.util.Log
 import com.nuvio.tv.R
 import com.nuvio.tv.core.torrent.TorrentState
@@ -64,7 +66,7 @@ internal fun PlayerRuntimeController.observeTorrentState() {
                 is TorrentState.Connecting -> onTorrentConnecting(torrentState)
                 is TorrentState.Streaming -> onTorrentStreaming(torrentState)
                 is TorrentState.Error -> {
-                    Log.e(TAG, "Torrent error: ${torrentState.message}")
+                    Log.e(TAG, "Torrent error: ${LogRedaction.text(torrentState.message)}")
                     _uiState.update {
                         it.copy(
                             error = context.getString(R.string.player_error_torrent, torrentState.message),

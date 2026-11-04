@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -471,7 +473,7 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(subtitle: Subtitle) {
             } catch (e: Exception) {
                 // No `sub-add <remote url>` fallback: mpv would send the STREAM's global
                 // http-header-fields to the subtitle host (B200). Fail like the ExoPlayer sidecar path.
-                Log.w(PlayerRuntimeController.TAG, "Failed to cache addon subtitle for MPV: ${e.message}")
+                Log.w(PlayerRuntimeController.TAG, "Failed to cache addon subtitle for MPV: ${LogRedaction.text(e.message)}")
                 return@launch
             }
 
@@ -514,7 +516,7 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(subtitle: Subtitle) {
             PlayerRuntimeController.TAG,
             "Selecting ADDON subtitle addon=${subtitle.addonName} lang=${subtitle.lang} normalizedLang=$normalizedLang " +
                 "id=${subtitle.id} inferredMime=$inferredMime " +
-                "url=${subtitle.url}"
+                "url=${LogRedaction.url(subtitle.url)}"
         )
 
         // Prefer sidecar hot-attach so progressive/VOD buffer is not wiped (fast-startup path)
