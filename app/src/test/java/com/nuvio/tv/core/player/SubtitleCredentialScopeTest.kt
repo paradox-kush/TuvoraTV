@@ -110,4 +110,18 @@ class SubtitleCredentialScopeTest {
             SubtitleCredentialScope.redirectLeavesOriginHost(origin, "not a url")
         )
     }
+
+    @Test
+    fun mpvSubAddNeverCarriesStreamCredentials() {
+        val out = SubtitleCredentialScope.mpvSubtitleRequestHeaders(null)
+        assertEquals("no subtitle headers -> nothing, so the stream cookie is cleared for sub-add", emptyMap<String,String>(), out)
+    }
+
+    @Test
+    fun mpvSubAddKeepsOnlySubtitleOwnForwardableHeaders() {
+        val out = SubtitleCredentialScope.mpvSubtitleRequestHeaders(
+            mapOf("X-Sub-Key" to "k", "Range" to "bytes=0-", "Host" to "evil", " " to "x", "Blank" to " "),
+        )
+        assertEquals("own header kept; hop-by-hop and blank entries dropped", mapOf("X-Sub-Key" to "k"), out)
+    }
 }

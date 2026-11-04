@@ -376,6 +376,31 @@ class AndroidMpvBackendTest {
     }
 
     @Test
+    fun `sub-add runs with the stream headers cleared and restores them after (B200)`() = runTest {
+        val core = FakeCore()
+        val id = ExternalSubtitleId("subtitle-1")
+        val registration = ExternalSubtitleRegistration(
+            uri = "https://subtitle.example/a.srt", mimeType = "application/x-subrip", language = "en", label = "English",
+        )
+        val streamHeaders = "Cookie: sid=secret,Authorization: Bearer t"
+        val backend = backend(
+            core,
+            ExternalSubtitleResolver { registration.takeIf { _ -> true } },
+            testPlan().copy(preInitOptions = testPlan().preInitOptions + ("http-header-fields" to streamHeaders)),
+        )
+        assertSuccess(backend.attachSurface(FakeLease()))
+        assertSuccess(backend.start())
+        core.callOrder.clear()
+
+        assertSuccess(backend.attachExternalSubtitle(id))
+
+        assertEquals(
+            listOf("set:http-header-fields=", "cmd:sub-add", "set:http-header-fields=$streamHeaders"),
+            core.callOrder.filter { it.startsWith("cmd:sub-add") || it.startsWith("set:http-header-fields") },
+        )
+    }
+
+    @Test
     fun `audio presentation and video codec properties publish factual events`() = runTest {
         val core = FakeCore()
         val backend = backend(core)
@@ -466,6 +491,7 @@ class AndroidMpvBackendTest {
     private fun TestScope.backend(
         core: FakeCore,
         externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
+        plan: MpvAdapterPlan = testPlan(),
     ): AndroidMpvBackend {
         val files = File(System.getProperty("java.io.tmpdir"), "mpv-backend-${System.nanoTime()}").apply { mkdirs() }
         File(files, "cacert.pem").writeText("test-ca")
@@ -478,7 +504,7 @@ class AndroidMpvBackendTest {
         }
         return AndroidMpvBackend(
             context,
-            testPlan(),
+            plan,
             StandardTestDispatcher(testScheduler),
             core,
             externalSubtitleResolver,

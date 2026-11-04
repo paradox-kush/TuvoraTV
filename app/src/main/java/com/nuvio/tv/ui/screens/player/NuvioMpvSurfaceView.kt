@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
 import com.nuvio.tv.core.picture.AspectMode
+import com.nuvio.tv.core.player.SubtitleCredentialScope
 import com.nuvio.tv.core.picture.aspectModeNeedsVideoAspect
 import com.nuvio.tv.core.picture.readViewAspectRatio
 import com.nuvio.tv.core.picture.resolveAspectScale
@@ -713,15 +714,19 @@ ctl {
         ctl {
             runCatching {
                 // "cached" avoids duplicate re-loads for the same external subtitle.
+                // B200: mpv's http-header-fields is global; keep the stream's Cookie/tokens off the
+                // subtitle host for the duration of this (synchronous) sub-add.
                 val safeTitle = title?.takeIf { it.isNotBlank() }
                 val safeLanguage = language?.takeIf { it.isNotBlank() }
-                when {
-                    safeTitle != null && safeLanguage != null ->
-                        mpv.command("sub-add", url, "cached", safeTitle, safeLanguage)
-                    safeTitle != null ->
-                        mpv.command("sub-add", url, "cached", safeTitle)
-                    else ->
-                        mpv.command("sub-add", url, "cached")
+                withSubtitleHeaderScope {
+                    when {
+                        safeTitle != null && safeLanguage != null ->
+                            mpv.command("sub-add", url, "cached", safeTitle, safeLanguage)
+                        safeTitle != null ->
+                            mpv.command("sub-add", url, "cached", safeTitle)
+                        else ->
+                            mpv.command("sub-add", url, "cached")
+                    }
                 }
                 mpv.setPropertyBoolean("sub-visibility", true)
             }.onFailure {
@@ -1065,9 +1070,39 @@ ctl {
         }
     }
 
+    /** The `http-header-fields` value last handed to mpv (written on the ctl thread only). */
+    private var appliedHeaderFields: String = ""
+
+    /**
+     * Runs a `sub-add` with the stream's request headers swapped out (B200). mpv applies
+     * `http-header-fields` to every HTTP request, so an add-on subtitle host would otherwise receive
+     * the stream's Cookie / Authorization / token. sub-add opens the file synchronously, so the stream
+     * headers are restored right after (reconnects and later seeks still need them). ctl thread only.
+     */
+    private fun withSubtitleHeaderScope(
+        subtitleHeaders: Map<String, String>? = null,
+        block: () -> Unit,
+    ) {
+        val scoped = serializeHeaderFields(SubtitleCredentialScope.mpvSubtitleRequestHeaders(subtitleHeaders))
+        val restore = appliedHeaderFields
+        mpv.setPropertyString("http-header-fields", scoped)
+        try {
+            block()
+        } finally {
+            mpv.setPropertyString("http-header-fields", restore)
+        }
+    }
+
+    private fun serializeHeaderFields(headers: Map<String, String>): String = headers.entries
+        .filter { it.key.isNotBlank() && it.value.isNotBlank() }
+        .sortedWith(compareBy({ it.key.lowercase(Locale.ROOT) }, { it.value }))
+        .joinToString(separator = ",") { (key, value) ->
+            "$key: $value".replace("\\", "\\\\").replace(",", "\\,")
+        }
+
     private fun applyHeaders(headers: Map<String, String>) {
         if (headers.isEmpty()) {
-            ctl { mpv.setPropertyString("http-header-fields", "") }
+            ctl { appliedHeaderFields = ""; mpv.setPropertyString("http-header-fields", "") }
             return
         }
         val raw = headers.entries
@@ -1079,7 +1114,7 @@ ctl {
                     .replace(",", "\\,")
                 escapedHeader
             }
-        ctl { mpv.setPropertyString("http-header-fields", raw) }
+        ctl { appliedHeaderFields = raw; mpv.setPropertyString("http-header-fields", raw) }
     }
 
     private fun buildMediaRequestKey(url: String, headers: Map<String, String>): String {
