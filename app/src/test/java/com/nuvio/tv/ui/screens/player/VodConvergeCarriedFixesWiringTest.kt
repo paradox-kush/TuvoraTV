@@ -30,6 +30,42 @@ class VodConvergeCarriedFixesWiringTest {
         }
     }
 
+    @Test
+    fun `B1 an expired IPTV link is re-minted before any of upstream's ExoPlayer recovery rungs`() {
+        val init = source("PlayerRuntimeControllerInitialization.kt")
+        val onError = init.substringAfter("override fun onPlayerError(error: PlaybackException)", "")
+        assertTrue("onPlayerError must exist", onError.isNotEmpty())
+        val refreshAt = onError.indexOf("attemptIptvLinkRefresh(")
+        assertTrue("onPlayerError must try the IPTV link re-mint", refreshAt >= 0)
+        for (rung in listOf(
+            "isVc1PlaybackFailure(",
+            "isRetryablePlaybackError(error)",
+            "handleParsingErrorFallback(",
+            "attemptStartupRecovery(",
+            "maybeAutoSwitchInternalPlayerOnStartupError(",
+        )) {
+            val rungAt = onError.indexOf(rung)
+            if (rungAt >= 0) assertTrue("the re-mint must run before $rung", refreshAt < rungAt)
+        }
+    }
+
+    @Test
+    fun `B1 an expired IPTV link is re-minted before libmpv's failover and auto-retry`() {
+        val events = source("PlayerRuntimeControllerMpvEvents.kt")
+        val body = functionBody(events, "fun PlayerRuntimeController.handleMpvPlaybackError(")
+        val refreshAt = body.indexOf("attemptIptvLinkRefresh(")
+        assertTrue("handleMpvPlaybackError must try the IPTV link re-mint", refreshAt >= 0)
+        assertTrue("before engine failover", refreshAt < body.indexOf("maybeAutoSwitchInternalPlayerOnStartupError("))
+        assertTrue("before the auto-retry", refreshAt < body.indexOf("attemptMpvAutoRetry("))
+    }
+
+    @Test
+    fun `C7 the re-mint swap reopens at the requested resume position before the first frame`() {
+        val refresh = source("PlayerRuntimeControllerIptvLinkRefresh.kt")
+        assertTrue(refresh.contains("PlaybackStartPositionPolicy.targetAfterSourceSwap("))
+        assertTrue(refresh.contains("requestedStartMs = requestedStartPositionMs"))
+    }
+
     private fun functionBody(text: String, signature: String): String {
         val start = text.indexOf(signature)
         assertTrue("missing $signature", start >= 0)

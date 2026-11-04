@@ -1502,13 +1502,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                         // before any recovery rung below spends the connection on the wrong one.
                         if (advanceCatchUpDialect(error.errorCode)) return
 
-                        // TODO(vod-converge B1): IPTV expired-link refresh goes HERE, before every other
-                        //  rung: on 401/403/410 for an IPTV id, re-mint once via
-                        //  streamRepository.refreshIptvStreamUrl (single-use Stalker/Xtream links), then
-                        //  fall through. Must run before the parsing/audio fallbacks below, which would
-                        //  otherwise replay the dead single-use URL. Fork version: legacy-vod-player/
-                        //  main/.../PlayerRuntimeControllerIptvLinkRefresh.kt.
-                        // TODO(vod-converge C7): carry the resume position across that re-mint swap (B59).
+                        // Fork (B1): an expired single-use IPTV link is re-minted once, before any
+                        // rung below could replay it.
+                        if (attemptIptvLinkRefresh(error.findInvalidResponseCodeException()?.responseCode, detailedError)) return
+
                         if (Vc1VideoFormatHeuristics.isVc1PlaybackFailure(
                                 error = error,
                                 currentVideoTrackIsLikelyVc1 = currentVideoTrackIsLikelyVc1,

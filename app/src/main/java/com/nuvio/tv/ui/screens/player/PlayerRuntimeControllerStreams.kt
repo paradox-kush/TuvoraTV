@@ -654,6 +654,7 @@ private fun PlayerRuntimeController.applySelectedStreamState(
         "$hash:$fileIdx"
     }
     parsingErrorProbeAttempted = false
+    hasAttemptedIptvLinkRefresh = false
     applyStreamMetadata(stream)
 }
 
@@ -928,7 +929,6 @@ private fun PlayerRuntimeController.mintDeferredStreamThen(
 internal fun PlayerRuntimeController.switchToSourceStream(
     stream: Stream
 ) {
-    // TODO(vod-converge C7): keep the pre-first-frame resume position across this swap (B59).
     sourceStreamsScope?.cancel()
     sourceStreamsScope = null
     sourceStreamsJob = null

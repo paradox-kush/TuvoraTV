@@ -525,6 +525,7 @@ internal fun PlayerRuntimeController.loadSavedProgressFor(season: Int?, episode:
 
     scope.launch {
         pendingResumeProgress = null
+        requestedStartPositionMs = 0L
         val local = if (isCloudLibraryPlayback) {
             loadCloudLibraryResumeProgress()
         } else if (season != null && episode != null) {
@@ -543,6 +544,7 @@ internal fun PlayerRuntimeController.loadSavedProgressFor(season: Int?, episode:
 
             if (saved.isInProgress()) {
                 pendingResumeProgress = saved
+                requestedStartPositionMs = saved.position
                 if (isUsingMpvEngine()) {
                     _uiState.update { it.copy(pendingSeekPosition = null) }
                     mpvView?.let { view ->
@@ -575,6 +577,7 @@ internal suspend fun PlayerRuntimeController.loadSavedProgressSuspend(season: In
     if (!isCloudLibraryPlayback && progressContentId == null) return
 
     pendingResumeProgress = null
+    requestedStartPositionMs = 0L
     val local = if (isCloudLibraryPlayback) {
         loadCloudLibraryResumeProgress()
     } else if (season != null && episode != null) {
@@ -592,6 +595,7 @@ internal suspend fun PlayerRuntimeController.loadSavedProgressSuspend(season: In
     progress?.let { saved ->
         if (saved.isInProgress()) {
             pendingResumeProgress = saved
+            requestedStartPositionMs = saved.position
             Log.d(
                 PlayerRuntimeController.TAG,
                 "loadSavedProgressSuspend: set pendingResumeProgress " +

@@ -111,7 +111,9 @@ class PlayerRuntimeController(
     savedStateHandle: SavedStateHandle,
     internal val scope: CoroutineScope,
     /** Fork: the catch-up URL-dialect walk (core.contracts port; null = no IPTV catch-up wiring). */
-    internal val catchUpPort: com.nuvio.tv.core.contracts.CatchUpPlaybackPort? = null
+    internal val catchUpPort: com.nuvio.tv.core.contracts.CatchUpPlaybackPort? = null,
+    /** Fork: recognises IPTV ids for the expired-link re-mint (B1); null = no IPTV wiring. */
+    internal val iptvClassifier: com.nuvio.tv.core.contracts.IptvContentClassifier? = null
 ) {
 
     /** Resolved once so every `context.getString(...)` here follows the app language. */
@@ -309,6 +311,11 @@ class PlayerRuntimeController(
     }
 
     internal var currentVideoId: String? = videoId
+    /** Fork (B1): the one-shot IPTV link re-mint for the current stream, and whether one is running. */
+    internal var hasAttemptedIptvLinkRefresh: Boolean = false
+    internal var iptvLinkRefreshInFlight: Boolean = false
+    /** Fork (C7, B59): the resume target of the current request; survives a swap before the first frame. */
+    internal var requestedStartPositionMs: Long = 0L
     internal var currentSeason: Int? = initialSeason
     internal var currentEpisode: Int? = initialEpisode
     internal var currentEpisodeTitle: String? = initialEpisodeTitle

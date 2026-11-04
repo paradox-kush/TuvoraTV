@@ -198,11 +198,13 @@ internal fun PlayerRuntimeController.handleMpvPlaybackError(
 ) {
     if (!isUsingMpvEngine()) return
     if (isReleasingPlayer) return
-    // TODO(vod-converge B1): libmpv lane of the IPTV expired-link re-mint (same policy as the
-    //  ExoPlayer onPlayerError seam in PlayerRuntimeControllerInitialization).
     if (startupEngineFailoverTriggered) return
     if (mpvErrorRecoveryArmed) return
     if (_uiState.value.error != null) return
+    // Fork (B1): an expired single-use IPTV link is re-minted once, before failover or auto-retry.
+    mpvHttpStatusCodeFromLog()?.let { code ->
+        if (attemptIptvLinkRefresh(code, "HTTP $code" + httpStatusExplanation(context, code))) return
+    }
     if (!mpvErrorHandlingInProgress.compareAndSet(false, true)) return
     mpvErrorRecoveryArmed = true
     mpvStableProgressResetJob?.cancel()

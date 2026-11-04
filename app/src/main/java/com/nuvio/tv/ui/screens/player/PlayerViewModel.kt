@@ -156,7 +156,8 @@ class PlayerViewModel @Inject constructor(
             ?: profileManager.activeProfileId.value,
         savedStateHandle = savedStateHandle,
         scope = viewModelScope,
-        catchUpPort = livePlayback.catchUp
+        catchUpPort = livePlayback.catchUp,
+        iptvClassifier = livePlayback.classifier
     )
 
     init {
