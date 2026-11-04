@@ -66,6 +66,18 @@ class VodConvergeCarriedFixesWiringTest {
         assertTrue(refresh.contains("requestedStartMs = requestedStartPositionMs"))
     }
 
+    @Test
+    fun `B5 IPTV VOD media sources use the playlist's own DNS`() {
+        val controller = source("PlayerRuntimeController.kt")
+        assertTrue(
+            "the controller must hand the media source factory the playlist DNS (PlaybackDnsPort.dnsForVideoId)",
+            controller.contains("playbackDnsProvider") && controller.contains("dnsForVideoId(")
+        )
+        val factory = source("PlayerMediaSourceFactory.kt")
+        val create = functionBody(factory, "fun createMediaSource(")
+        assertTrue("createMediaSource must resolve the playback DNS", create.contains("playbackDnsProvider"))
+    }
+
     private fun functionBody(text: String, signature: String): String {
         val start = text.indexOf(signature)
         assertTrue("missing $signature", start >= 0)

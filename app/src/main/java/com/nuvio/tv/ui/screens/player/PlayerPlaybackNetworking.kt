@@ -106,13 +106,17 @@ internal object PlayerPlaybackNetworking {
             .build()
     }
 
-    // TODO(vod-converge B5): optional per-playlist `dns` (DoH / IPv4FirstDns) for IPTV VOD on DoH
-    //  playlists (core.contracts.PlaybackDnsPort.dnsForVideoId).
+    /**
+     * [dns]: the IPTV playlist's own resolver (DNS-over-HTTPS) for its VOD; null keeps the default
+     * IPv4-first system DNS.
+     */
     fun createHttpClient(
         defaultHeaders: Map<String, String> = emptyMap(),
-        useLongReadTimeout: Boolean = false
+        useLongReadTimeout: Boolean = false,
+        dns: okhttp3.Dns? = null
     ): OkHttpClient {
         val builder = playbackHttpClient.newBuilder()
+        if (dns != null) builder.dns(dns)
         if (useLongReadTimeout) {
             builder.readTimeout(LOOPBACK_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         }
@@ -137,7 +141,8 @@ internal object PlayerPlaybackNetworking {
     @UnstableApi
     fun createHttpDataSourceFactory(
         defaultHeaders: Map<String, String> = emptyMap(),
-        useLongReadTimeout: Boolean = false
+        useLongReadTimeout: Boolean = false,
+        dns: okhttp3.Dns? = null
     ): DataSource.Factory {
         val requestHeaders = defaultHeaders.mapNotNull { (rawKey, rawValue) ->
             val key = rawKey.trim()
@@ -148,7 +153,7 @@ internal object PlayerPlaybackNetworking {
                 key to value
             }
         }.toMap()
-        val client = createHttpClient(requestHeaders, useLongReadTimeout)
+        val client = createHttpClient(requestHeaders, useLongReadTimeout, dns)
         val httpFactory = OkHttpDataSource.Factory(client).apply {
             setDefaultRequestProperties(requestHeaders)
             if (requestHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {
@@ -161,9 +166,10 @@ internal object PlayerPlaybackNetworking {
     @UnstableApi
     fun createDataSourceFactory(
         context: android.content.Context,
-        defaultHeaders: Map<String, String> = emptyMap()
+        defaultHeaders: Map<String, String> = emptyMap(),
+        dns: okhttp3.Dns? = null
     ): DataSource.Factory {
-        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders))
+        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns = dns))
     }
 
     fun openConnection(

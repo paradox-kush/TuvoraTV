@@ -113,7 +113,9 @@ class PlayerRuntimeController(
     /** Fork: the catch-up URL-dialect walk (core.contracts port; null = no IPTV catch-up wiring). */
     internal val catchUpPort: com.nuvio.tv.core.contracts.CatchUpPlaybackPort? = null,
     /** Fork: recognises IPTV ids for the expired-link re-mint (B1); null = no IPTV wiring. */
-    internal val iptvClassifier: com.nuvio.tv.core.contracts.IptvContentClassifier? = null
+    internal val iptvClassifier: com.nuvio.tv.core.contracts.IptvContentClassifier? = null,
+    /** Fork: per-playlist DNS (DoH) for IPTV VOD (B5); null = system DNS. */
+    internal val playbackDns: com.nuvio.tv.core.contracts.PlaybackDnsPort? = null
 ) {
 
     /** Resolved once so every `context.getString(...)` here follows the app language. */
@@ -208,6 +210,9 @@ class PlayerRuntimeController(
     internal val cloudSessionToken: String? = navigationArgs.cloudSessionToken
     internal val mediaSourceFactory = PlayerMediaSourceFactory(context.applicationContext).apply {
         onStreamRedirected = { requestedUrl, resolvedUrl -> handleStreamRedirect(requestedUrl, resolvedUrl) }
+        playbackDnsProvider = {
+            playbackDns?.let { port -> port.dnsForVideoId(currentVideoId) ?: port.dnsForVideoId(contentId) }
+        }
     }
 
     // The file rate is the only one every container reports, so the playhead is placed in the

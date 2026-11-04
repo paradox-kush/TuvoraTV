@@ -111,6 +111,8 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         parallelStartupPrefetchUnlocked.set(true)
     }
 
+    /** Fork (B5): the current IPTV playlist's own DNS (DoH), or null for system DNS. */
+    var playbackDnsProvider: () -> okhttp3.Dns? = { null }
     var useParallelConnections: Boolean = PlayerSettings.DEFAULT_USE_PARALLEL_CONNECTIONS
     var parallelConnectionCount: Int = PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
     var parallelChunkSizeKb: Int = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_KB
@@ -175,6 +177,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         cacheKey: String? = null
     ): MediaSource {
         val sanitizedHeaders = sanitizeHeaders(headers)
+        val playbackDns = playbackDnsProvider()
         val resolvedMimeType = mimeTypeOverride ?: inferMimeType(
             url = url,
             filename = filename,
@@ -188,10 +191,11 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 PlayerPlaybackNetworking.createHttpDataSourceFactory(
                     sanitizedHeaders,
                     useLongReadTimeout = isLoopbackUrl(url),
+                    dns = playbackDns,
                 ),
             )
         } else {
-            PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders)
+            PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders, playbackDns)
         }
 
         val mediaItemBuilder = MediaItem.Builder().setUri(url)
@@ -224,7 +228,8 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         parallelStartupPrefetchUnlocked.set(!useChunkSessionSource)
         val networkProgressiveFactory: DataSource.Factory = if (useChunkSessionSource) {
             val sessionConnections = parallelConnectionCount
-            val okHttpFactory = OkHttpDataSource.Factory(playbackHttpClient).apply {
+            val chunkClient = playbackDns?.let { playbackHttpClient.newBuilder().dns(it).build() } ?: playbackHttpClient
+            val okHttpFactory = OkHttpDataSource.Factory(chunkClient).apply {
                 setDefaultRequestProperties(sanitizedHeaders)
                 if (sanitizedHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {
                     setUserAgent(DEFAULT_USER_AGENT)
