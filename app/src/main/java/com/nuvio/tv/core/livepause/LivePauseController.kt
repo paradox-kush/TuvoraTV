@@ -66,6 +66,8 @@ class LivePauseController(
     private var pauseWall = 0L
     private var catchUpBaseWall: Long? = null
     private var disposed = false
+    /** A capture failure that arrived after its first piece but before the Prepared result was handled. */
+    private var captureFailure: LivePauseFailure? = null
 
     init {
         scope.launch {
@@ -206,6 +208,7 @@ class LivePauseController(
         val gen = ++generation
         val readyForThis = CompletableDeferred<String>()
         ready = readyForThis
+        captureFailure = null
         val created = captureFactory.create(
             LiveCaptureSpec(
                 instanceId = instanceId,
@@ -241,6 +244,9 @@ class LivePauseController(
                 val pending = ready
                 if (state.value is LivePauseState.Preparing && pending != null && !pending.isCompleted) {
                     pending.completeExceptionally(CaptureFailure(event.reason))
+                } else if (state.value is LivePauseState.Preparing) {
+                    // Ready already went out: remember it, onPrepared must not shift onto a dead capture.
+                    captureFailure = event.reason
                 } else if (state.value is LivePauseState.Shifted) {
                     fail(event.reason)
                 }
@@ -252,7 +258,10 @@ class LivePauseController(
         if (command.generation != generation || state.value !is LivePauseState.Preparing) return
         when (val outcome = command.outcome) {
             is LoadOutcome.Loaded -> {
-                if (engine.playLocalBuffer(outcome.value)) {
+                val late = captureFailure
+                if (late != null) {
+                    fail(late)
+                } else if (engine.playLocalBuffer(outcome.value)) {
                     enterShifted(paused = true)
                 } else {
                     fail(LivePauseFailure.UNSUPPORTED_STREAM)
@@ -461,6 +470,7 @@ class LivePauseController(
         eventsJob = null
         prepareJob = null
         ready = null
+        captureFailure = null
         capture?.dispose()
         capture = null
         generation++
