@@ -145,8 +145,12 @@ class HlsLiveSegmentTracker {
         return Parsed.Ok(segments, target, initUri, ended)
     }
 
-    /** A segment's identity for restart detection: its URI without the (often rotating) query token. */
-    private fun stable(uri: String): String = uri.substringBefore('?').substringBefore('#')
+    /**
+     * A segment's identity for restart detection: its file name, without the directories and query a
+     * re-minted link rotates (Stalker/Xtream put a token in either). The identity is the media sequence
+     * plus that name; a provider that restarts its numbering also changes the files.
+     */
+    private fun stable(uri: String): String = uri.substringBefore('?').substringBefore('#').substringAfterLast('/')
 
     private companion object {
         const val NONE = Long.MIN_VALUE
