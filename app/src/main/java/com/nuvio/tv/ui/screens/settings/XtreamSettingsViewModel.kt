@@ -1065,7 +1065,11 @@ class XtreamSettingsViewModel @Inject constructor(
      * asked for expiry/connections even when the playlist is turned off on this device. Never called by the
      * list rows ([ensureAccountStatus]); one request per open, no timer.
      */
+    private var inspectionJob: kotlinx.coroutines.Job? = null
+
     fun inspectAccountStatus(account: XtreamAccount) {
+        // A newer plan (the playlist was turned on/off) supersedes any inspection still in flight.
+        inspectionJob?.cancel()
         if (account.isM3UBacked()) return
         when (com.nuvio.tv.core.iptv.DetailsInspectionPolicy.plan(account.sourceType, account.availableOnDevice)) {
             // Turned on here: the list row already asked (and caches); nothing extra.
@@ -1080,7 +1084,7 @@ class XtreamSettingsViewModel @Inject constructor(
             }
             com.nuvio.tv.core.iptv.DetailsInspectionPolicy.Plan.INSPECT -> _uiState.update { it.copy(inspectionSkipped = it.inspectionSkipped - account.id) }
         }
-        viewModelScope.launch {
+        inspectionJob = viewModelScope.launch {
             com.nuvio.tv.core.sources.DeviceSources.inspecting { clientFactory.clientFor(account).accountInfo(account) }
                 .onSuccess { info ->
                     _uiState.update { it.copy(accountInfo = it.accountInfo + (account.id to info), accountInfoFailed = it.accountInfoFailed - account.id) }

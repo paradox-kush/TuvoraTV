@@ -306,7 +306,7 @@ class DeviceSourceEngineTest {
     @Test fun refusalIsATypedCancellationCarryingKindAndModeOnly() = runTest {
         val refusals = mutableListOf<Pair<String, String>>()
         val device = DeviceSourceEngine(Memory("broken"), { _, _ -> error("offline") }, { "id" }, { "s" }, { 1_000L }, "tv",
-            onRefused = { kind, mode -> refusals += kind to mode })
+            onRefused = { kind, mode, _ -> refusals += kind to mode })
         val failure = refusalOf(device, source.sourceRef)
         assertNotNull("typed refusal", failure)
         assertEquals("kind", "iptv", failure!!.kind)
@@ -385,7 +385,7 @@ class DeviceSourceEngineTest {
         val settlesLater = kotlinx.coroutines.flow.MutableStateFlow<com.nuvio.tv.domain.model.AuthState>(com.nuvio.tv.domain.model.AuthState.Loading)
         val second = async { awaitAuthSettled(settlesLater) }
         testScheduler.advanceTimeBy(3_000)
-        settlesLater.value = com.nuvio.tv.domain.model.AuthState.Unauthenticated
+        settlesLater.value = com.nuvio.tv.domain.model.AuthState.SignedOut
         runCurrent()
         assertTrue("proceeds as soon as sign-in settles", second.await())
     }

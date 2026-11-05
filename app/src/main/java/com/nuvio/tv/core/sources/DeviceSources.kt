@@ -84,12 +84,12 @@ class DeviceSources @Inject constructor(
             }
         }
         /** Debug level: guards sit on hot paths (every addon request), so a refusal must not flood the log. */
-        internal fun logRefusal(kind: String, mode: String) { android.util.Log.d("DeviceSources", "source refused on this device: kind=$kind mode=$mode") }
+        internal fun logRefusal(kind: String, mode: String, scope: RefusalScope) { android.util.Log.d("DeviceSources", "source refused on this device: kind=$kind mode=$mode scope=$scope") }
         private fun refuse(kind: String, ref: String?): Nothing {
             val owner = instance
             val mode = owner?.engine()?.state?.value?.mode ?: "unknown"
             val scope = if (owner == null || ref == null) RefusalScope.DEVICE else owner.engine().refusalScope(owner.profile(), kind, ref)
-            logRefusal(kind, mode)
+            logRefusal(kind, mode, scope)
             throw SourceDisabledOnDeviceException(kind, mode, scope)
         }
         private suspend fun currentAccess() = currentCoroutineContext()[DeviceSourceAccessElement]?.access ?: DeviceSourceAccess.DISCOVERY
