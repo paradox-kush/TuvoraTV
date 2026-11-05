@@ -258,6 +258,7 @@ internal fun RowScope.GuideProgrammeCells(
                             trailingEdgeFocus.takeIf { p.startMs == lastActionableStart },
                         ),
                         onFocused = { focusedStart = p.startMs; onProgrammeFocused(p) },
+                        identity = p.startMs,
                     )
                     cursor = end
                 }
@@ -301,10 +302,17 @@ private fun RowScope.GuideCell(
     focusable: Boolean = false,
     focusRequesters: List<FocusRequester> = emptyList(),
     onFocused: () -> Unit = {},
+    /** The programme this cell shows (its start); the node outlives a change of programme. */
+    identity: Long = 0L,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val latestOnClick by rememberUpdatedState(onClick)
     val latestOnFocused by rememberUpdatedState(onFocused)
+    // Cells are matched by position, so when the row's programmes change (the stored window landing
+    // an earlier cell, the minute roll) the focused node stays focused but shows another programme.
+    // Re-announce it, or the row's edge test compares against the programme it WAS (LEFT then walked
+    // off the grid instead of paging back in time).
+    LaunchedEffect(identity) { if (isFocused) latestOnFocused() }
     val replayable = GuideCellIntent.showsReplayBadge(action)
     Box(
         modifier = Modifier
