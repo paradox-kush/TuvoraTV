@@ -1363,6 +1363,13 @@ private fun MetaDetailsContent(
     onNavigateToDetail: (itemId: String, itemType: String, addonBaseUrl: String?) -> Unit = { _, _, _ -> },
     onPosterLongPress: (MetaPreview) -> Unit = {}
 ) {
+    // Calendar reminder bell (series and films). The key is null for titles the Calendar cannot follow.
+    val calendarBellViewModel: com.nuvio.tv.ui.screens.calendar.CalendarBellViewModel = hiltViewModel()
+    val calendarBells by calendarBellViewModel.bells.collectAsStateWithLifecycle()
+    val calendarBellKey = remember(meta.apiType, meta.id, meta.imdbId) {
+        com.nuvio.tv.core.calendar.calendarBellKey(meta.apiType, meta.id, meta.imdbId)
+    }
+    val calendarBellOn = calendarBellKey?.let { com.nuvio.tv.core.calendar.calendarBellOn(calendarBells, it) }
     val playbackAvailability = LocalPlaybackAvailability.current
     val canLoadMoreComments = commentsCurrentPage in 1 until commentsPageCount
     val selectedCommentIndex = remember(comments, selectedComment?.id) {
@@ -2587,6 +2594,10 @@ private fun MetaDetailsContent(
                         isMovieWatched = isMovieWatched,
                         isMovieWatchedPending = isMovieWatchedPending,
                         onToggleMovieWatched = onToggleMovieWatched,
+                        calendarBellOn = calendarBellOn,
+                        onToggleCalendarBell = {
+                            calendarBellKey?.let { key -> calendarBellViewModel.setBell(key, calendarBellOn != true) }
+                        },
                         mdbListRatings = visibleMdbListRatings,
                         mdbListRatingOrder = mdbListRatingOrder,
                         hideMetaInfoImdb = !showStandardOverallRatings,
