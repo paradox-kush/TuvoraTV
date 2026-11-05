@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
 import android.util.Log
+import androidx.media3.common.PlaybackException
 import com.nuvio.tv.R
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -29,6 +30,60 @@ internal fun PlayerRuntimeController.catchUpPlayerPositionMs(barMs: Long): Long 
 /** First rendered frame: remember the working URL shape for this account (once per replay). */
 internal fun PlayerRuntimeController.reportCatchUpFirstFrame() {
     if (catchUpReplay.onFirstFrame()) catchUpPort?.onPlayed(contentId)
+    catchUpStartupJob?.cancel()
+    catchUpStartupJob = null
+}
+
+/**
+ * Arms the first-frame deadline of the link now loading (every (re)initialisation calls this; the
+ * budget clock and the timeout count live on [catchUpReplay], so neither a new URL nor an engine
+ * failover restarts them). A link that never produces a frame in time is a transport failure: the
+ * ladder moves to the next candidate, and when it is exhausted the player ends in a terminal error
+ * with Retry — never "Starting stream…" for as long as the provider keeps the socket open.
+ */
+internal fun PlayerRuntimeController.armCatchUpStartupDeadline() {
+    catchUpStartupJob?.cancel()
+    catchUpStartupJob = null
+    val deadlineMs = catchUpReplay.startupDeadlineMs(System.currentTimeMillis()) ?: return
+    catchUpStartupJob = scope.launch {
+        kotlinx.coroutines.delay(deadlineMs)
+        if (hasRenderedFirstFrame) return@launch
+        onCatchUpStartupDeadline()
+    }
+}
+
+private fun PlayerRuntimeController.onCatchUpStartupDeadline() {
+    val decision = catchUpReplay.onStartupTimeout(System.currentTimeMillis())
+    Log.w(PlayerRuntimeController.TAG, "CATCHUP_STARTUP_TIMEOUT: no frame from the replay link in time (decision=$decision)")
+    if (decision == CatchUpStartupPolicy.Decision.ADVANCE) {
+        val next = catchUpPort?.onFailed(contentId, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
+        if (next != null) {
+            currentStreamUrl = next.url
+            _uiState.update { it.copy(currentStreamUrl = next.url) }
+            scheduleDeferredPlayerReinitialize(fromPositionMs = 0L, clearResumeProgress = true)
+            return
+        }
+    }
+    // Ladder exhausted (or the total budget is spent): stop the player and say so.
+    cancelFirstFrameWatchdog()
+    cancelStallWatchdog()
+    errorRetryJob?.cancel()
+    errorRetryJob = null
+    releasePlayer(flushPlaybackState = false)
+    _uiState.update {
+        it.copy(
+            error = context.getString(R.string.player_error_catchup_no_answer),
+            showRetryErrorAction = true,
+            showSwitchToMpvErrorAction = false,
+            isPlaying = false,
+            showControls = false,
+            isBuffering = false,
+            showLoadingOverlay = false,
+            showPauseOverlay = false,
+            loadingIssueReportVisible = false,
+            loadingIssueElapsedMs = 0L,
+        )
+    }
 }
 
 /**

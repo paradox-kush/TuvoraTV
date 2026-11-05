@@ -1431,6 +1431,8 @@ fun PlayerScreen(
                 showSwitchToMpvAction = uiState.showSwitchToMpvErrorAction &&
                     uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER,
                 onSwitchToMpv = { viewModel.onEvent(PlayerEvent.OnSwitchToMpvPlayer) },
+                showRetryAction = uiState.showRetryErrorAction,
+                onRetry = { viewModel.onEvent(PlayerEvent.OnRetry) },
                 showReportAction = uiState.playbackIssueReportsEnabled,
                 reportStatus = uiState.playbackIssueReportStatus,
                 reportId = uiState.playbackIssueReportId,
@@ -4065,6 +4067,8 @@ private fun ErrorOverlay(
     message: String,
     showSwitchToMpvAction: Boolean = false,
     onSwitchToMpv: (() -> Unit)? = null,
+    showRetryAction: Boolean = false,
+    onRetry: (() -> Unit)? = null,
     showReportAction: Boolean,
     reportStatus: PlaybackIssueReportStatus,
     reportId: String?,
@@ -4075,7 +4079,9 @@ private fun ErrorOverlay(
     val exitFocusRequester = remember { FocusRequester() }
     val reportFocusRequester = remember { FocusRequester() }
     val mpvFocusRequester = remember { FocusRequester() }
-    val onSwitchMpvAction = onSwitchToMpv.takeIf { showSwitchToMpvAction }
+    // Fork: a catch-up replay that never started offers Retry in the slot the mpv switch uses (the two never coexist).
+    val onRetryAction = onRetry.takeIf { showRetryAction }
+    val onSwitchMpvAction = onRetryAction ?: onSwitchToMpv.takeIf { showSwitchToMpvAction }
     val targetFocusRequester = if (onSwitchMpvAction != null) mpvFocusRequester else exitFocusRequester
 
     var targetButtonPlaced by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
@@ -4162,7 +4168,7 @@ private fun ErrorOverlay(
             ) {
                 if (onSwitchMpvAction != null) {
                     PlayerOverlayButton(
-                        text = stringResource(R.string.player_switch_to_mpv),
+                        text = stringResource(if (onRetryAction != null) R.string.action_retry else R.string.player_switch_to_mpv),
                         onClick = onSwitchMpvAction,
                         primary = true,
                         modifier = Modifier

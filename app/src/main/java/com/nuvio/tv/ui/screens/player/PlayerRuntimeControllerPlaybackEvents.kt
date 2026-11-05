@@ -1884,6 +1884,7 @@ fun PlayerRuntimeController.onEvent(
             scheduleHideControls()
         }
         PlayerEvent.OnRetry -> {
+            catchUpReplay.resetStartupBudget()
             hasRenderedFirstFrame = false
             endDetectionArmed = false
             mpvEofSeenClear = false
@@ -1896,6 +1897,7 @@ fun PlayerRuntimeController.onEvent(
             _uiState.update { state ->
                 state.copy(
                     error = null,
+                    showRetryErrorAction = false,
                     playbackIssueReportStatus = PlaybackIssueReportStatus.Idle,
                     playbackIssueReportId = null,
                     playbackIssueReportError = null,

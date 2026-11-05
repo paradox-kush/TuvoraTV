@@ -2949,6 +2949,7 @@
     <string name="player_error_stream_rate_limited">\n\nToo many requests to the stream source. Wait a moment and try again.</string>
     <string name="player_error_stream_unavailable">\n\nThe stream server is currently unavailable. Try a different source.</string>
     <string name="player_error_source_invalid_content">Source error: The stream source returned invalid or unplayable content. The link may have expired or the server returned an error page instead of video.\n\nTry a different source. [%1$s]</string>
+    <string name="player_error_catchup_no_answer">The provider did not start this recording in time. Press Retry to try again, or go back and pick another programme.</string>
     <string name="player_error_decoder">Decoder error</string>
     <string name="player_error_unsupported_format">This stream uses a format your device may not support. Try a different source. [%1$s]</string>
     <string name="player_error_initialize_failed">Failed to initialize player</string>
@@ -3595,6 +3596,7 @@
     <string name="iptv_guide_move_down">Move down</string>
     <string name="iptv_guide_remove_favorite">Remove from Favorites</string>
     <string name="iptv_guide_hide_channel">Hide channel</string>
+    <string name="iptv_guide_start_over">Start over</string>
     <string name="iptv_backup_servers_title">Backup servers</string>
     <string name="iptv_backup_servers_helper">Used automatically if the main server doesn\'t respond.</string>
     <string name="iptv_backup_server_row">Backup server %1$d</string>

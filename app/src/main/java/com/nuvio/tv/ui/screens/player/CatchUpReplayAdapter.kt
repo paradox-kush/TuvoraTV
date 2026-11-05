@@ -180,6 +180,33 @@ internal class CatchUpReplayAdapter(
     fun routeError(): ErrorRoute =
         if (isCatchUp && !leftCatchUp && !played) ErrorRoute.DIALECT_WALK_FIRST else ErrorRoute.PLAYER_RECOVERY
 
+    private var startupBeganMs = Long.MIN_VALUE
+    private var startupTimeouts = 0
+
+    /**
+     * Called each time a link starts loading. How long to wait for its first frame, or null when no
+     * deadline applies (not a replay, or it already played). The clock starts at the FIRST call and is
+     * not restarted by later links, engine failovers or recovery rungs — the total stays bounded.
+     */
+    fun startupDeadlineMs(nowMs: Long): Long? {
+        if (!isCatchUp || played || leftCatchUp) return null
+        if (startupBeganMs == Long.MIN_VALUE) startupBeganMs = nowMs
+        return CatchUpStartupPolicy.deadlineMs(nowMs - startupBeganMs)
+    }
+
+    /** A link's deadline passed with no frame: advance the ladder, or give up (the count lives here, not on the URL). */
+    fun onStartupTimeout(nowMs: Long): CatchUpStartupPolicy.Decision {
+        startupTimeouts++
+        val began = if (startupBeganMs == Long.MIN_VALUE) nowMs else startupBeganMs
+        return CatchUpStartupPolicy.onTimeout(startupTimeouts, nowMs - began)
+    }
+
+    /** The viewer pressed Retry: a fresh budget for a fresh attempt. */
+    fun resetStartupBudget() {
+        startupBeganMs = Long.MIN_VALUE
+        startupTimeouts = 0
+    }
+
     /** True exactly once per replay, on its first rendered frame: report the proven shape then. */
     fun onFirstFrame(): Boolean {
         if (!isCatchUp || played) return false

@@ -121,6 +121,10 @@ class CatchUpPlaybackCoordinatorM3uTest {
         )!!
         assertEquals("never past aired", end, airing.windowEndMs)
         assertTrue("start-over", airing.isStartOver)
+        assertTrue(
+            "the Start over link is built from the programme's START (shift: utc=<start seconds>): ${airing.url}",
+            airing.url.contains("utc=${start / 1000}"),
+        )
     }
 
     @Test
@@ -136,6 +140,42 @@ class CatchUpPlaybackCoordinatorM3uTest {
         assertTrue("alternatives exist: $urls", urls.size > 1)
         assertEquals("no duplicates", urls.size, urls.toSet().size)
         assertTrue("the TS fallback of an HLS-style link or php form is on the ladder", urls.any { it.contains("timeshift.php") })
+    }
+
+    /**
+     * The player reports a replay link that never answered (CatchUpStartupPolicy) as this code. The
+     * ladder must treat it as transport-shaped — advance on both the M3U and the Xtream walk — and
+     * still end with null so the player can stop on a terminal error instead of waiting forever.
+     */
+    @Test
+    fun `a startup timeout advances the M3U ladder and ends with null`() = runTest {
+        val c = coordinator()
+        val first = c.beginM3u()!!
+        val urls = mutableListOf(first.url)
+        var next = c.onFailed(first.contentId, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
+        while (next != null) {
+            urls += next.url
+            next = c.onFailed(next.contentId, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
+        }
+        assertTrue("moved on at least once: $urls", urls.size > 1)
+        assertNull("exhausted ladder is terminal", c.sessionFor(first.contentId))
+    }
+
+    @Test
+    fun `a startup timeout advances the Xtream walk and ends with null`() = runTest {
+        val c = coordinator()
+        val first = c.begin(
+            account = xtream(), channelContentId = "xtream:acc:live:7", channelName = "BBC", streamId = 7,
+            programme = programme, nowMs = now,
+        )!!
+        val urls = mutableListOf(first.url)
+        var next = c.onFailed(first.contentId, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
+        while (next != null) {
+            urls += next.url
+            next = c.onFailed(next.contentId, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
+        }
+        assertTrue("moved on at least once: $urls", urls.size > 1)
+        assertNull("exhausted walk is terminal", c.sessionFor(first.contentId))
     }
 
     @Test
