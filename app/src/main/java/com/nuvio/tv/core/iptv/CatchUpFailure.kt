@@ -32,7 +32,7 @@ object CatchUpFailure {
     }
 
     /** The Stalker `create_link` answers worth naming to the viewer. */
-    enum class StalkerLinkError { NONE, SESSION_LIMIT, LINK_FAULT }
+    enum class StalkerLinkError { NONE, SESSION_LIMIT, LINK_FAULT, NOTHING_TO_PLAY }
 
     /**
      * Reads a raw Stalker response for the two documented failure shapes.
@@ -50,9 +50,11 @@ object CatchUpFailure {
         if (raw.isNullOrBlank()) return StalkerLinkError.NONE
         if (ERROR_LIMIT.containsMatchIn(raw)) return StalkerLinkError.SESSION_LIMIT
         if (LINK_FAULT.containsMatchIn(raw)) return StalkerLinkError.LINK_FAULT
+        if (NOTHING_TO_PLAY.containsMatchIn(raw)) return StalkerLinkError.NOTHING_TO_PLAY
         return StalkerLinkError.NONE
     }
 
     private val ERROR_LIMIT = Regex("""["']?error["']?\s*:\s*["']limit["']""", RegexOption.IGNORE_CASE)
+    private val NOTHING_TO_PLAY = Regex("""["']?error["']?\s*:\s*["']nothing_to_play["']""", RegexOption.IGNORE_CASE)
     private val LINK_FAULT = Regex("""["']?(cmd|error)["']?\s*:\s*["']link_fault["']""", RegexOption.IGNORE_CASE)
 }
