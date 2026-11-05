@@ -101,10 +101,14 @@ object CatchUpPlaybackPolicy {
     /** Bar position -> player position. */
     fun playerPositionMs(barMs: Long, bar: ReplayBar): Long = bar.originMs + barMs.coerceAtLeast(0L)
 
-    /** The bar's length; an unknown duration (<= 0) stays unknown so the bar still falls back to NO_SCRUB. */
+    /**
+     * The bar's TOTAL: always the programme's length, so a replay of a programme still airing reads
+     * "0:20 / 30:00" rather than a total that grows with what has aired (seeks stay capped at
+     * [ReplayBar.lengthMs]; the buffered range reflects what is served). An unknown player duration
+     * (<= 0) stays unknown so the bar still falls back to NO_SCRUB.
+     */
     fun barDurationMs(playerDurationMs: Long, bar: ReplayBar): Long =
-        if (playerDurationMs <= 0L) playerDurationMs
-        else minOf(bar.lengthMs, (playerDurationMs - bar.originMs).coerceAtLeast(0L))
+        if (playerDurationMs <= 0L) playerDurationMs else bar.programmeLengthMs
 
     /** A player-space seek target clamped to the bar. */
     fun clampPlayerSeekMs(playerMs: Long, bar: ReplayBar): Long =

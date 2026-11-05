@@ -150,12 +150,31 @@ class CatchUpReplayBarTest {
     }
 
     @Test
-    fun `a programme still airing stops the bar short of live but Ends at uses the programme`() {
+    fun `a programme still airing keeps the programme length as the total while seeks stop short of live`() {
         val start = now - 30 * minute
         val end = now + 30 * minute
-        val r = m3u(start = start, end = end, window = now - 30_000L).barReading(10 * minute, 30 * minute, 10 * minute, now)
-        assertEquals(30 * minute - CatchUpPlaybackPolicy.LIVE_EDGE_GUARD_MS, r.durationMs)
+        val a = m3u(start = start, end = end, window = now - 30_000L)
+        val r = a.barReading(10 * minute, 30 * minute, 10 * minute, now)
+        assertEquals("total is the programme, not what has aired", hour, r.durationMs)
         assertEquals(hour, r.programmeLengthMs)
+        assertEquals(
+            "seeks still stop the guard short of live",
+            30 * minute - CatchUpPlaybackPolicy.LIVE_EDGE_GUARD_MS,
+            a.seekTargetMs(hour, now) - 0L,
+        )
+    }
+
+    @Test
+    fun `the total does not grow while the player duration grows`() {
+        // 02:30-03:00 programme, now 02:35, Start over: the player has served 5 min, then 6 min.
+        val start = now - 5 * minute
+        val a = m3u(start = start, end = start + 30 * minute, window = now + 3 * hour)
+        val first = a.barReading(20_000L, 44_000L, 44_000L, now)
+        val later = a.barReading(65_000L, 90_000L, 90_000L, now + minute)
+        assertEquals("total is the programme length", 30 * minute, first.durationMs)
+        assertEquals("and stays it a minute later", 30 * minute, later.durationMs)
+        assertEquals("Ends at counts the programme", 30 * minute, later.programmeLengthMs)
+        assertEquals("buffer reflects what is served", 44_000L, first.bufferedMs)
     }
 
     @Test
