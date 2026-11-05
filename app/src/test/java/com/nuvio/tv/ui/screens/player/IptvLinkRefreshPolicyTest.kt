@@ -16,7 +16,8 @@ class IptvLinkRefreshPolicyTest {
         isCatchUp: Boolean = false,
         addonName: String? = null,
         attempted: Boolean = false,
-    ) = IptvLinkRefreshPolicy.lane(status, iptvId, isLiveId, isCatchUp, addonName, attempted)
+        playedSinceRefreshMs: Long = 0L,
+    ) = IptvLinkRefreshPolicy.lane(status, iptvId, isLiveId, isCatchUp, addonName, attempted, playedSinceRefreshMs)
 
     @Test
     fun anIptvVodIdWithATokenStatusIsReMintedById() {
@@ -43,5 +44,20 @@ class IptvLinkRefreshPolicyTest {
         assertNull("one shot only", lane(attempted = true))
         assertNull("catch-up has its own walk", lane(isCatchUp = true))
         assertNull("live left this player", lane(isLiveId = true))
+    }
+
+    @Test
+    fun aRefreshedLinkThatPlayedAMinuteEarnsAnotherShot() {
+        // Short-TTL Stalker links expire again later in a long movie (Onn device pass 2026-11-04:
+        // the second expiry in one session showed "Playback Error … link has expired").
+        assertEquals(
+            "the refreshed link played 60 s: a later expiry re-mints again",
+            IptvLinkRefreshPolicy.Lane.IptvId("xtream:acc:vod:42"),
+            lane(attempted = true, playedSinceRefreshMs = 60_000L)
+        )
+        assertNull(
+            "the refreshed link died within a minute: stop, no mint loop",
+            lane(attempted = true, playedSinceRefreshMs = 59_999L)
+        )
     }
 }

@@ -27,6 +27,7 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(httpStatus: Int?, de
         isCatchUp = navigationArgs.isCatchUp,
         addonName = currentAddonName,
         alreadyAttempted = hasAttemptedIptvLinkRefresh,
+        playedSinceRefreshMs = (currentPlaybackPositionMs() ?: 0L) - iptvLinkRefreshResumedAtMs,
     ) ?: return false
 
     val isEpisode = contentType in listOf("series", "tv") && currentSeason != null && currentEpisode != null
@@ -79,6 +80,7 @@ internal fun PlayerRuntimeController.attemptIptvLinkRefresh(httpStatus: Int?, de
                 return@launch
             }
             releasePlayer(flushPlaybackState = false)
+            iptvLinkRefreshResumedAtMs = savedPosition
             currentStreamUrl = fresh
             _uiState.update {
                 it.copy(currentStreamUrl = fresh, pendingSeekPosition = savedPosition.takeIf { pos -> pos > 0L })

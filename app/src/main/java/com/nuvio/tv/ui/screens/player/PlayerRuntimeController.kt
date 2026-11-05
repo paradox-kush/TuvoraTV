@@ -319,6 +319,8 @@ class PlayerRuntimeController(
     /** Fork (B1): the one-shot IPTV link re-mint for the current stream, and whether one is running. */
     internal var hasAttemptedIptvLinkRefresh: Boolean = false
     internal var iptvLinkRefreshInFlight: Boolean = false
+    /** Content position the last IPTV link refresh resumed at; [IptvLinkRefreshPolicy] re-arms after a minute past it. */
+    internal var iptvLinkRefreshResumedAtMs: Long = 0L
     /** Fork (C7, B59): the resume target of the current request; survives a swap before the first frame. */
     internal var requestedStartPositionMs: Long = 0L
     /** Fork (C1): the latest libmpv tick sample, read off Main by the progress loop. */
