@@ -179,6 +179,8 @@ class XtreamHubViewModel @Inject constructor(
      * least-recently-loaded category drops and re-fetches if scrolled back to — a cheap
      * category call. (research/iptv-catalog-loading.md)
      */
+    /** Raw provider rows each loaded category's windows have covered — the paging offset (see [RawWindow]). */
+    private val rawOffsets = mutableMapOf<String, Int>()
     private val itemsCache = object : LinkedHashMap<String, List<XtreamHubItem>>(32, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<XtreamHubItem>>): Boolean =
             size > MAX_LOADED_CATEGORIES
@@ -326,6 +328,7 @@ class XtreamHubViewModel @Inject constructor(
         inFlightCategories.removeAll { it.startsWith("$accountId|") }
         categoriesCache.keys.removeAll { it.startsWith("$accountId|") }
         itemsCache.keys.removeAll { it.startsWith("$accountId|") }
+        rawOffsets.keys.removeAll { it.startsWith("$accountId|") }
         if (_uiState.value.selectedAccountId == accountId) {
             _uiState.update { it.copy(catalogueGeneration = it.catalogueGeneration + 1L, itemsByCategory = emptyMap(), rowLoads = emptyMap(), hasMoreByCategory = emptyMap()) }
             loadCategories()
@@ -353,6 +356,7 @@ class XtreamHubViewModel @Inject constructor(
             inFlightCategories.removeAll { it.startsWith("${acc.id}|") }
             categoriesCache.keys.removeAll { it.startsWith("${acc.id}|") }
             itemsCache.keys.removeAll { it.startsWith("${acc.id}|") }
+            rawOffsets.keys.removeAll { it.startsWith("${acc.id}|") }
             cacheCheckedAt[acc.id] = System.currentTimeMillis()
         }
         // A file playlist synced from another device has no local copy (file contents don't
@@ -435,9 +439,11 @@ class XtreamHubViewModel @Inject constructor(
             }
             // A slow answer for a section the viewer already left must not paint over the new one.
             if (catalogEpoch(acc.id) != epoch || !isCurrent(acc.id, section)) return@launch
+            var seriesAbsent = false
             if (section == XtreamSection.SERIES && acc.sourceType == XtreamAccount.SOURCE_STALKER) {
                 // UX147: the series probe has settled; a portal with positive "no series" evidence loses the tab.
                 val absent = clientFactory.stalker().seriesAbsent(acc)
+                seriesAbsent = absent
                 _uiState.update { it.copy(seriesUnavailableIds = if (absent) it.seriesUnavailableIds + acc.id else it.seriesUnavailableIds - acc.id) }
             }
             val cats = outcome.valueOrNull()
@@ -456,7 +462,8 @@ class XtreamHubViewModel @Inject constructor(
             val failure = IptvLoadFailurePolicy.classify(
                 (outcome as? LoadOutcome.Failed)?.error,
                 if (failedHost != null) IptvPanelGuard.panelOriginUrlOf(acc, failedHost) else IptvPanelGuard.panelOriginUrlOf(acc),
-                forSeriesSection = section == XtreamSection.SERIES,
+                // "No series" only when the whole probe agreed (a failed follow-up vod probe is a plain failure).
+                forSeriesSection = section == XtreamSection.SERIES && seriesAbsent,
             )
             val text = when (failure.kind) {
                 IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER ->
@@ -558,22 +565,20 @@ class XtreamHubViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val existing = itemsCache[key].orEmpty()
-                val offset = existing.size
+                // Page on the RAW row count: rows hidden from the shown list (divider rows) still occupy
+                // provider offsets, so the shown count would drift below it and re-read the same rows.
+                val start = PagedState(existing, true, rawOffsets[key] ?: existing.size)
                 // Bounded like the row's first window; a stalled page just ends paging for now.
-                val (more, hasMore) = BoundedLoad.run(LoadSurface.HUB_ROW) {
-                    fetchWindow(acc, section, categoryId, offset)
-                }.valueOrNull() ?: return@launch
-                // Dedup + no-progress guard. The row triggers loadMore as focus nears its end, so a
-                // window that returns rows ALREADY loaded (a stale index, or a tied ORDER BY
-                // overlapping its pages) would append dupes, grow the row, re-trigger, and spin
-                // forever — the "category rotating on a loop" bug. Only NEW ids extend the row, and
-                // a window that adds nothing new ends paging.
+                // Dedup + no-progress guard live in advancePaged (the "category rotating on a loop" bug): only NEW
+                // ids extend the row, a window of only hidden rows keeps going, and a source that consumes nothing stops.
+                val next = advancePaged(start, id = { it.cardId }) { raw ->
+                    BoundedLoad.run(LoadSurface.HUB_ROW) { fetchWindow(acc, section, categoryId, raw) }.valueOrNull()
+                }
                 if (catalogEpoch(acc.id) != epoch) return@launch
-                val seen = existing.mapTo(HashSet(existing.size)) { it.cardId }
-                val fresh = more.filter { it.cardId !in seen }
-                val merged = existing + fresh
+                val merged = next.items
                 itemsCache[key] = merged
-                val stillMore = hasMore && fresh.isNotEmpty()
+                rawOffsets[key] = next.rawOffset
+                val stillMore = next.hasMore
                 if (_uiState.value.selectedAccountId == acc.id && _uiState.value.section == section) {
                     _uiState.update {
                         it.copy(
@@ -601,7 +606,7 @@ class XtreamHubViewModel @Inject constructor(
         categoryId: String,
         offset: Int,
         prefetch: Boolean = false,
-    ): Pair<List<XtreamHubItem>, Boolean> {
+    ): RawWindow<XtreamHubItem> {
         if (acc.isXtream() && matchIndex.builtAt(acc.id, section.matchKind) != null) {
             val client = clientFactory.clientFor(acc) as com.nuvio.tv.core.iptv.XtreamClient
             val rows = matchIndex.itemsFor(acc.id, section.matchKind, categoryId, offset, PAGE_SIZE + 1)
@@ -655,7 +660,7 @@ class XtreamHubViewModel @Inject constructor(
                     }
                 }
             }
-            return items to (rows.size > PAGE_SIZE)
+            return RawWindow(items, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size)
         }
         if (acc.sourceType == XtreamAccount.SOURCE_STALKER && section == XtreamSection.LIVE) {
             val rows = clientFactory.stalker().liveChannelsPage(acc, categoryId, offset, PAGE_SIZE + 1)
@@ -671,7 +676,7 @@ class XtreamHubViewModel @Inject constructor(
                 )
                 XtreamHubItem(id, ch.name, ch.logo, isLive = true, contentId = id, streamUrl = ch.streamUrl)
             }
-            return items to (rows.size > PAGE_SIZE)
+            return RawWindow(items, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size)
         }
         if (acc.isM3UBacked()) {
             return when (section) {
@@ -687,7 +692,7 @@ class XtreamHubViewModel @Inject constructor(
                             )
                         )
                         XtreamHubItem(id, r.name, r.logo, isLive = true, contentId = id, streamUrl = r.url)
-                    } to (rows.size > PAGE_SIZE)
+                    }.let { RawWindow(it, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size) }
                 }
                 XtreamSection.MOVIES -> contentDb.pageVod(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
                     val page = rows.take(PAGE_SIZE)
@@ -700,7 +705,7 @@ class XtreamHubViewModel @Inject constructor(
                             )
                         )
                         XtreamHubItem(id, r.name, r.logo, isLive = false, contentId = id, streamUrl = null)
-                    } to (rows.size > PAGE_SIZE)
+                    }.let { RawWindow(it, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size) }
                 }
                 XtreamSection.SERIES -> contentDb.pageSeries(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
                     val page = rows.take(PAGE_SIZE)
@@ -714,14 +719,14 @@ class XtreamHubViewModel @Inject constructor(
                             )
                         )
                         XtreamHubItem(id, r.name, r.logo, isLive = false, contentId = id, streamUrl = null, detailType = "series")
-                    } to (rows.size > PAGE_SIZE)
+                    }.let { RawWindow(it, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size) }
                 }
             }
         }
         // Fallbacks (Xtream before its index exists; Stalker VOD/series): the old full fetch,
         // once — bounded to one window for Xtream, see fetchCategoryItemsLegacy.
-        if (offset > 0) return emptyList<XtreamHubItem>() to false
-        return fetchCategoryItemsLegacy(acc, section, categoryId) to false
+        if (offset > 0) return RawWindow(emptyList(), false, 0)
+        return fetchCategoryItemsLegacy(acc, section, categoryId).let { RawWindow(it, false, it.size) }
     }
 
     /**
@@ -777,7 +782,7 @@ class XtreamHubViewModel @Inject constructor(
         }
         val outcome = BoundedLoad.run(
             surface = LoadSurface.HUB_ROW,
-            isEmpty = { it.first.isEmpty() },
+            isEmpty = { it.items.isEmpty() },
             report = mapOf("source_type" to acc.sourceType, "section" to section.name.lowercase()),
         ) { fetchWindow(acc, section, categoryId, offset = 0, prefetch = prefetch) }
         if (catalogEpoch(acc.id) != epoch) return
@@ -789,8 +794,10 @@ class XtreamHubViewModel @Inject constructor(
             }
             return
         }
-        val (items, hasMore) = window
+        val items = window.items
+        val hasMore = window.hasMore
         itemsCache[key] = items
+        rawOffsets[key] = window.consumed
         // Publish only while this account/section is still on screen: a prefetch that lands after
         // a switch would otherwise inject its items under a category id the new section may reuse.
         // Nothing is lost — the cache above serves them the moment the user comes back.

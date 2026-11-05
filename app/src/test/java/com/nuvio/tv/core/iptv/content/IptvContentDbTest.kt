@@ -399,10 +399,10 @@ class IptvContentDbTest {
         assertEquals(true, db.channelsFor(other, null).single().useLoadBalancing)
     }
 
-    // --- B179: divider rows never become channels, on either write path -------------------------
+    // --- B179: divider rows are STORED (saved ids resolve), but the stored count is what the lists show ---------
 
     private val b179Lineup = listOf(
-        ContentChannel(1, "BG: ################ Bulgaria Channels ################", null, null, "bg", "http://h/1.ts"),
+        ContentChannel(1, "BG: ################ Bulgaria Channels", null, null, "bg", "http://h/1.ts"),
         ContentChannel(2, "BG: Bnt 2", null, null, "bg", "http://h/2.ts"),
         ContentChannel(3, "*** UK ***", null, null, "bg", "http://h/3.ts"),
         ContentChannel(4, "#0 Sport", null, null, "bg", "http://h/4.ts"),
@@ -410,17 +410,20 @@ class IptvContentDbTest {
     )
 
     @Test
-    fun `B179 M3U ingest drops separator rows and keeps real channels`() = runTest {
+    fun `B179 M3U ingest stores every row and counts only what is shown`() = runTest {
         val id = "m3u:http://b179/ingest"
         db.ingest(id) { w -> b179Lineup.forEach { w.addChannel(it) } }
-        assertEquals(listOf(2, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
-        assertEquals(listOf(2, 4, 5), db.pageChannels(id, null, 0, 50).map { it.sid }.sorted())
+        assertEquals("nothing deleted", listOf(1, 2, 3, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
+        assertEquals("paged reads are raw too (the hub filters per window)", 5, db.pageChannels(id, null, 0, 50).size)
+        assertNotNull("a saved id still resolves", db.channelRow(id, 1))
+        assertEquals("two dividers are not counted", 3, db.liveCount(id))
     }
 
     @Test
-    fun `B179 Stalker lineup replace drops separator rows`() = runTest {
+    fun `B179 Stalker lineup replace stores every row and counts only what is shown`() = runTest {
         val id = "m3u:http://b179/lineup"
         db.replaceLiveLineup(id, b179Lineup, categories = listOf("bg" to "Bulgaria"))
-        assertEquals(listOf(2, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
+        assertEquals("nothing deleted", listOf(1, 2, 3, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
+        assertEquals(3, db.liveCount(id))
     }
 }

@@ -32,6 +32,8 @@ class StalkerSeriesAbsentTest {
     private lateinit var server: MockWebServer
     @Volatile private var seriesReply = """{"js":null}"""
     @Volatile private var vodCategories = """{"js":[{"id":"*","title":"All"}]}"""
+    @Volatile private var profile = """{"js":{"id":"1","status":0}}"""
+    @Volatile private var modules = """{"js":{}}"""
 
     @Before
     fun setUp() {
@@ -51,7 +53,8 @@ class StalkerSeriesAbsentTest {
                 val action = request.url.queryParameter("action")
                 val body = when {
                     action == "handshake" -> """{"js":{"token":"T"}}"""
-                    action == "get_profile" -> """{"js":{"id":"1","status":0}}"""
+                    action == "get_profile" -> profile
+                    action == "get_modules" -> modules
                     type == "series" && action == "get_categories" -> seriesReply
                     type == "vod" && action == "get_categories" -> vodCategories
                     else -> """{"js":[]}"""
@@ -111,6 +114,40 @@ class StalkerSeriesAbsentTest {
         val c = client()
         c.seriesCategories(acc)
         assertFalse("empty alone is not positive evidence", c.seriesAbsent(acc))
+    }
+
+    // A module-gated portal (auth_access=false) is asked for get_modules during the session bootstrap; its
+    // answer is the capability signal, so these run the payload THROUGH the session.
+    private val moduleGated = """{"js":{"id":"1","status":0,"auth_access":false}}"""
+
+    @Test
+    fun `get_modules reporting series disabled plus an empty answer hides the tab`() = runBlocking {
+        profile = moduleGated
+        modules = """{"js":{"all_modules":["tv","vod","series"],"disabled_modules":["series"]}}"""
+        seriesReply = """{"js":[]}"""
+        val c = client()
+        c.seriesCategories(acc)
+        assertTrue("module off + empty + no series vod = positive evidence", c.seriesAbsent(acc))
+    }
+
+    @Test
+    fun `get_modules listing series as available keeps the tab even when the list is empty`() = runBlocking {
+        profile = moduleGated
+        modules = """{"js":{"all_modules":["tv","vod","series"],"disabled_modules":[]}}"""
+        seriesReply = """{"js":[]}"""
+        val c = client()
+        c.seriesCategories(acc)
+        assertFalse(c.seriesAbsent(acc))
+    }
+
+    @Test
+    fun `a get_modules payload we do not recognise is unknown and keeps the tab`() = runBlocking {
+        profile = moduleGated
+        modules = """{"js":"nope"}"""
+        seriesReply = """{"js":[]}"""
+        val c = client()
+        c.seriesCategories(acc)
+        assertFalse(c.seriesAbsent(acc))
     }
 
     @Test
