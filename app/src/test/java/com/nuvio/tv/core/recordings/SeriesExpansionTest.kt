@@ -2,7 +2,7 @@ package com.nuvio.tv.core.recordings
 
 import com.nuvio.tv.core.recordings.api.CaptureMode
 import com.nuvio.tv.core.recordings.api.RecordingStatus
-import com.nuvio.tv.core.recordings.internal.ListingInfo
+import com.nuvio.tv.core.recordings.api.ListingInfo
 import com.nuvio.tv.core.recordings.internal.SeriesExpansion
 import org.junit.Test
 import org.junit.Assert.assertEquals

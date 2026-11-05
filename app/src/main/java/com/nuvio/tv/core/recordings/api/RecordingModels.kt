@@ -27,6 +27,9 @@ enum class LowSpacePolicy { STOP, DELETE_OLDEST }
 @Serializable
 enum class RecordingProblem {
     NO_SPACE, NO_CATCH_UP, PROVIDER_REFUSED, NETWORK, STALLED, MISSED, CANCELLED_BY_USER, UNSUPPORTED_FORMAT, UNKNOWN,
+
+    /** A live capture was due but this build cannot record live yet (wave 4, pending the live-pause branch). */
+    LIVE_CAPTURE_PENDING,
 }
 
 /** What a platform can do: iPhone (false, true), Android (true, true), Desktop (true, true), Apple TV (false, false). */
@@ -125,4 +128,6 @@ data class Recording(
     val problem: RecordingProblem? = null,
     val fileName: String,
     val seriesRuleId: String? = null,
+    /** The schedule that produced a FAILED or CANCELLED row, kept so Retry can run it again. Null otherwise. */
+    val retrySource: RecordingSchedule? = null,
 )
