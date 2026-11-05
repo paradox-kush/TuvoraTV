@@ -626,6 +626,13 @@ private class AndroidMedia3Backend(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW && isLocalBuffer()) {
+                // The buffer trimmed past the viewer's position: carry on from the window start (Media3
+                // live docs: seekTo(0) is the window start; recover with prepare()), never fail the session.
+                player.seekTo(0)
+                player.prepare()
+                return
+            }
             reportState()
             if (!terminalSuppressed) {
                 _events.tryEmit(Media3BackendEvent.Failed(Media3FailureMapper.map(error)))
@@ -748,7 +755,9 @@ private class AndroidMedia3Backend(
             frozenForTransition = false
             pendingRestoration = restorationCheckpoint
             player.setMediaItem(mediaItem)
-            if (startPositionMs > 0) player.seekTo(startPositionMs)
+            // A local live-pause buffer starts at the WINDOW start (seekTo(0)), not the live edge a live
+            // playlist would default to; any other source keeps its restored position.
+            if (startPositionMs > 0 || isLocalBuffer()) player.seekTo(startPositionMs)
             player.playbackParameters = PlaybackParameters(playbackRate)
             player.prepare()
             player.playWhenReady = !paused
@@ -1000,6 +1009,9 @@ private class AndroidMedia3Backend(
         }
     }
 
+    /** The live-pause buffer: a `file://` playlist the app itself wrote. */
+    private fun isLocalBuffer(): Boolean = mediaItem.localConfiguration?.uri?.scheme == "file"
+
     private fun publishTimelineFacts() {
         if (released) return
         // Local debug measurements only: no media identity, endpoint, or analytics upload.
@@ -1210,6 +1222,14 @@ internal fun applyMedia3RuntimeTrackPlan(
 private fun mediaItemFor(plan: Media3AdapterPlan): MediaItem = MediaItem.Builder()
     .setUri(plan.request.url)
     .apply { plan.request.mimeType?.let(::setMimeType) }
+    .apply {
+        // The local live-pause buffer plays at 1x from wherever the viewer is: no catch-up-to-live speedup.
+        if (plan.request.url.startsWith("file:")) {
+            setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder().setMinPlaybackSpeed(1f).setMaxPlaybackSpeed(1f).build(),
+            )
+        }
+    }
     .apply {
         plan.request.drm?.let { drm ->
             setDrmConfiguration(

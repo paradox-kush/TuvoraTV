@@ -109,6 +109,34 @@ internal class CleanLivePlaybackHost private constructor(
         controller.tune(request, profile, startPositionMs)
     }
 
+    /**
+     * Live pause / rewind: plays the local buffer (a `file://` HLS playlist the app wrote) as a
+     * seekable, finite-looking source on this same host, so the surface, MediaSession and release
+     * barrier stay the host's. Never a provider selection.
+     */
+    suspend fun tuneLocalBuffer(playlistUri: String, metadata: CleanMediaSessionMetadata): Long =
+        acceptCommand(metadata) {
+            require(playlistUri.startsWith("file:")) { "Local buffer must be a file URI" }
+            controller.tune(
+                PlaybackRequest(url = playlistUri, contentType = ContentType.VOD),
+                SessionProfile.FULLSCREEN,
+                0L,
+            )
+        }
+
+    /** Provider archive at the pause instant, through the same deferred-provider path a catch-up uses. */
+    suspend fun tuneCatchUp(
+        selection: ProviderPlaybackSelection,
+        profile: SessionProfile,
+        metadata: CleanMediaSessionMetadata,
+    ): Long = acceptCommand(metadata) {
+        require(selection.contentType == ContentType.CATCH_UP) { "Catch-up host command needs a catch-up selection" }
+        controller.tune(selection, profile)
+    }
+
+    suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) =
+        withActiveHost { controller.setLiveCacheBudget(maxBytes, maxBackBytes, cacheSecs) }
+
     suspend fun pause() = withActiveHost(controller::pause)
     suspend fun resume() = withActiveHost(controller::resume)
     suspend fun retry() {

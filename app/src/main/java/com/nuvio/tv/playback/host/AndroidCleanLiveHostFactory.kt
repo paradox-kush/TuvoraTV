@@ -44,6 +44,16 @@ internal interface CleanLiveHost {
     suspend fun resume()
     suspend fun retry()
 
+    // Live pause / rewind. Defaults keep every other implementer (guide host, test fakes) unaffected.
+    suspend fun seekTo(positionMs: Long) {}
+    suspend fun tuneLocalBuffer(playlistUri: String, metadata: CleanMediaSessionMetadata): Long = 0L
+    suspend fun tuneCatchUp(
+        selection: ProviderPlaybackSelection,
+        profile: SessionProfile,
+        metadata: CleanMediaSessionMetadata,
+    ): Long = 0L
+    suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) {}
+
     /** F28: live track choices, the same session commands VOD uses. */
     suspend fun selectAudioTrack(trackId: PlaybackTrackId)
     suspend fun selectSubtitleTrack(trackId: PlaybackTrackId)
@@ -132,6 +142,16 @@ private class AndroidCleanLiveHost(
     override suspend fun pause() = host.pause()
     override suspend fun resume() = host.resume()
     override suspend fun retry() = host.retry()
+    override suspend fun seekTo(positionMs: Long) = host.seekTo(positionMs)
+    override suspend fun tuneLocalBuffer(playlistUri: String, metadata: CleanMediaSessionMetadata): Long =
+        host.tuneLocalBuffer(playlistUri, metadata)
+    override suspend fun tuneCatchUp(
+        selection: ProviderPlaybackSelection,
+        profile: SessionProfile,
+        metadata: CleanMediaSessionMetadata,
+    ): Long = host.tuneCatchUp(selection, profile, metadata)
+    override suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) =
+        host.setLiveCacheBudget(maxBytes, maxBackBytes, cacheSecs)
     override suspend fun selectAudioTrack(trackId: PlaybackTrackId) = host.selectAudioTrack(trackId)
     override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) = host.selectSubtitleTrack(trackId)
     override suspend fun disableSubtitles() = host.disableSubtitles()
