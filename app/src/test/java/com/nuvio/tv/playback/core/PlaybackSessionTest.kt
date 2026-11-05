@@ -2321,6 +2321,44 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    @Test
+    fun `B178 a request resolution that never returns ends in failed with a timeout`() = runTest {
+        val resolver = PlaybackRequestResolver { awaitCancellation() }
+        val session = session(
+            engine = FakeEngine(),
+            requestResolver = resolver,
+            policy = PlaybackPolicy(),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        runCurrent()
+        assertEquals(PlaybackState.RESOLVING, session.snapshot.value.state)
+
+        advanceTimeBy(PlaybackStageDeadlinePolicy.RESOLVING_MS - 1)
+        runCurrent()
+        assertEquals("still inside the deadline", PlaybackState.RESOLVING, session.snapshot.value.state)
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.NETWORK_TIMEOUT, session.snapshot.value.failure?.code)
+        assertEquals(FailurePhase.REQUEST_RESOLUTION, session.snapshot.value.failure?.phase)
+        close(session)
+    }
+
+    @Test
+    fun `B178 a healthy resolution does not trip the stage deadline`() = runTest {
+        val session = session(engine = FakeEngine(), policy = PlaybackPolicy())
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        runCurrent()
+        assertTrue(session.snapshot.value.state != PlaybackState.FAILED)
+        advanceTimeBy(PlaybackStageDeadlinePolicy.RESOLVING_MS + 1)
+        runCurrent()
+        assertTrue(session.snapshot.value.failure?.phase != FailurePhase.REQUEST_RESOLUTION)
+        close(session)
+    }
+
     private fun TestScope.session(
         engine: FakeEngine,
         otherEngine: FakeEngine? = null,

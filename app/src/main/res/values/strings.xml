@@ -2952,6 +2952,8 @@
     <string name="player_error_decoder">Decoder error</string>
     <string name="player_error_unsupported_format">This stream uses a format your device may not support. Try a different source. [%1$s]</string>
     <string name="player_error_initialize_failed">Failed to initialize player</string>
+    <string name="player_error_offline">No internet connection. Check your network; playback will retry when it is back, or press Retry.</string>
+    <string name="player_error_start_timeout">This stream didn\'t start in time. It may be slow, or its video output failed to start. Retry, or pick another source.</string>
     <string name="player_error_mpv_surface_failed">Failed to initialize libmpv surface</string>
     <string name="player_error_mpv_playback_failed">Failed to initialize libmpv playback</string>
     <string name="player_error_torrent">Torrent error: %1$s</string>

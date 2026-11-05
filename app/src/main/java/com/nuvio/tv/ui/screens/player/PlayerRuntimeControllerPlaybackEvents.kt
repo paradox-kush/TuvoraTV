@@ -1881,6 +1881,7 @@ fun PlayerRuntimeController.onEvent(
             scheduleHideControls()
         }
         PlayerEvent.OnRetry -> {
+            restartLoadDeadline()
             hasRenderedFirstFrame = false
             endDetectionArmed = false
             mpvEofSeenClear = false
@@ -1893,6 +1894,7 @@ fun PlayerRuntimeController.onEvent(
             _uiState.update { state ->
                 state.copy(
                     error = null,
+                    showRetryErrorAction = false,
                     playbackIssueReportStatus = PlaybackIssueReportStatus.Idle,
                     playbackIssueReportId = null,
                     playbackIssueReportError = null,
@@ -2072,6 +2074,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         PlayerEvent.OnSwitchInternalPlayerEngine -> {
+            restartLoadDeadline()
             logSwitchTrace(
                 stage = "event-switch-engine",
                 message = "requestedByUser=true"
@@ -2079,6 +2082,7 @@ fun PlayerRuntimeController.onEvent(
             switchInternalPlayerEngineManually()
         }
         PlayerEvent.OnSwitchToMpvPlayer -> {
+            restartLoadDeadline()
             logSwitchTrace(
                 stage = "event-switch-to-mpv",
                 message = "requestedByUser=true"

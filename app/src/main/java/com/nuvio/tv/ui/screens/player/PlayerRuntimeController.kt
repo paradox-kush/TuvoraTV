@@ -486,6 +486,10 @@ class PlayerRuntimeController(
     internal var debridResolveJob: Job? = null
     internal var stillWatchingPromptJob: Job? = null
     internal var startupLoadingReportJob: Job? = null
+    // B214/B217: screen-level backstop so a VOD start always ends (PlayerLoadDeadlinePolicy).
+    internal var loadDeadlineAnchorMs: Long = 0L
+    internal var loadDeadlineJob: Job? = null
+    internal var loadDeadlineFailedOffline: Boolean = false
     internal var sourceStreamsJob: Job? = null
     internal var sourceBadgeJob: Job? = null
     internal var sourceFilterFullList: List<com.nuvio.tv.domain.model.Stream> = emptyList()
@@ -859,6 +863,7 @@ class PlayerRuntimeController(
         stopTorrentStream()
         torrentService.shutdown()
         startupLoadingReportJob?.cancel()
+        loadDeadlineJob?.cancel()
         vodTelemetryJob?.cancel()
         mediaSourceFactory.shutdown()
         sourceChipErrorDismissJob?.cancel()
