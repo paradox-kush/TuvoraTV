@@ -11,6 +11,7 @@ import com.nuvio.tv.core.contracts.CatchUpProgramme
 import com.nuvio.tv.core.contracts.CatchUpRestart
 import com.nuvio.tv.core.contracts.CatchUpReopen
 import com.nuvio.tv.core.iptv.stalker.StalkerReplayOutcome
+import com.nuvio.tv.core.iptv.stalker.runCatchingCancellable
 import com.nuvio.tv.core.iptv.CatchUpNextProgramme
 import com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator
 import com.nuvio.tv.core.iptv.epg.XmltvClient
@@ -67,7 +68,7 @@ class IptvLivePlayback @Inject constructor(
             // An Xtream channel's past lives in its own per-channel history table (the guide's
             // "sid:" key); an M3U channel's, like an Xtream channel without one, in the XMLTV lane.
             val history = if (ctx.request != null) {
-                runCatching { contentDb.epgWindow(ctx.account.id, "sid:${ctx.streamId}", from, to) }.getOrDefault(emptyList())
+                runCatchingCancellable { contentDb.epgWindow(ctx.account.id, "sid:${ctx.streamId}", from, to) }.getOrDefault(emptyList())
             } else emptyList()
             val stored = history.ifEmpty { xmltv.storedWindow(ctx.account, ctx.streamId, from, to) }
             val rows = stored.map { CatchUpNextProgramme.Row(it.title, it.startMs, it.endMs) }

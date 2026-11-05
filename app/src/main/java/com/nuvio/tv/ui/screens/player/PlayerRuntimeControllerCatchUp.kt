@@ -27,6 +27,27 @@ internal fun PlayerRuntimeController.catchUpBarPositionMs(playerMs: Long): Long 
 internal fun PlayerRuntimeController.catchUpPlayerPositionMs(barMs: Long): Long =
     catchUpReplay.playerPositionMs(barMs, System.currentTimeMillis())
 
+/** True for a replay whose link is spent by playing it (a Stalker archive); decided by the port. */
+internal fun PlayerRuntimeController.isSingleUseCatchUp(): Boolean =
+    SingleUseReplayPolicy.endMessage(catchUpReplay.isCatchUp, catchUpPort?.singleUseFailure(contentId, false)) != null
+
+/** Ties the replay's state in the port to this player, once: it is dropped when the player is. */
+private fun PlayerRuntimeController.holdCatchUpSession() {
+    if (catchUpHeld) return
+    val port = catchUpPort ?: return
+    catchUpHeld = true
+    catchUpEffects.adopt(port.hold(contentId))
+}
+
+/**
+ * A single-use replay's mint (credentials + programme id, which Retry needs) is held from the moment the
+ * player starts, not from the first playhead tick: leaving during the load must not strand it in the
+ * coordinator until newer replays evict it.
+ */
+internal fun PlayerRuntimeController.holdSingleUseCatchUpAtStart() {
+    if (SingleUseReplayPolicy.holdAtStart(isSingleUseCatchUp(), catchUpHeld)) holdCatchUpSession()
+}
+
 /** First rendered frame: remember the working URL shape for this account (once per replay). */
 internal fun PlayerRuntimeController.reportCatchUpFirstFrame() {
     if (catchUpReplay.onFirstFrame()) catchUpPort?.onPlayed(contentId)
@@ -101,8 +122,9 @@ private fun PlayerRuntimeController.endCatchUpWithError(message: String) {
  * and Retry mints a fresh link ([retrySingleUseCatchUp]). True when it was one and has been ended.
  */
 internal fun PlayerRuntimeController.failSingleUseCatchUp(startupHang: Boolean): Boolean {
-    if (!catchUpReplay.isCatchUp) return false
-    val message = catchUpPort?.singleUseFailure(contentId, startupHang) ?: return false
+    val message = SingleUseReplayPolicy.endMessage(
+        catchUpReplay.isCatchUp, catchUpPort?.singleUseFailure(contentId, startupHang),
+    ) ?: return false
     Log.w(PlayerRuntimeController.TAG, "CATCHUP_SINGLE_USE: link failed (startupHang=$startupHang); ending with Retry, no re-open")
     endCatchUpWithError(message)
     return true
@@ -113,9 +135,8 @@ internal fun PlayerRuntimeController.failSingleUseCatchUp(startupHang: Boolean):
  * False when this is not such a replay (the caller's ordinary retry runs).
  */
 internal fun PlayerRuntimeController.retrySingleUseCatchUp(): Boolean {
-    if (!catchUpReplay.isCatchUp) return false
     val port = catchUpPort ?: return false
-    if (port.singleUseFailure(contentId, false) == null) return false
+    if (!isSingleUseCatchUp()) return false
     catchUpReplay.onRelinked()
     hasRenderedFirstFrame = false
     resetErrorRetryState()
@@ -130,15 +151,17 @@ internal fun PlayerRuntimeController.retrySingleUseCatchUp(): Boolean {
     }
     errorRetryJob?.cancel()
     errorRetryJob = scope.launch {
-        when (val reopened = port.reopen(contentId)) {
-            is com.nuvio.tv.core.contracts.CatchUpReopen.Link -> {
-                currentStreamUrl = reopened.url
-                _uiState.update { it.copy(currentStreamUrl = reopened.url) }
+        when (val step = SingleUseReplayPolicy.retryStep(
+            reopened = port.reopen(contentId),
+            noAnswer = context.getString(R.string.player_error_catchup_no_answer),
+        )) {
+            is SingleUseReplayPolicy.RetryStep.Open -> {
+                currentStreamUrl = step.url
+                _uiState.update { it.copy(currentStreamUrl = step.url) }
                 releasePlayer()
                 reinitializeCurrentStream()
             }
-            is com.nuvio.tv.core.contracts.CatchUpReopen.Refused -> endCatchUpWithError(reopened.message)
-            null -> endCatchUpWithError(context.getString(R.string.player_error_catchup_no_answer))
+            is SingleUseReplayPolicy.RetryStep.End -> endCatchUpWithError(step.message)
         }
     }
     return true
@@ -153,8 +176,12 @@ internal fun PlayerRuntimeController.retrySingleUseCatchUp(): Boolean {
  * CatchUpFailure to classify, so a replay on libmpv falls through to upstream's mpv error path.
  */
 internal fun PlayerRuntimeController.advanceCatchUpDialect(errorCode: Int): Boolean {
-    if (failSingleUseCatchUp(startupHang = false)) return true
-    if (catchUpReplay.routeError() != CatchUpReplayAdapter.ErrorRoute.DIALECT_WALK_FIRST) return false
+    when (SingleUseReplayPolicy.routeError(isSingleUseCatchUp(), catchUpReplay.routeError())) {
+        SingleUseReplayPolicy.ErrorRoute.END_WITH_RETRY ->
+            if (failSingleUseCatchUp(startupHang = false)) return true
+        SingleUseReplayPolicy.ErrorRoute.DIALECT_WALK -> Unit
+        SingleUseReplayPolicy.ErrorRoute.PLAYER_RECOVERY -> return false
+    }
     val next = catchUpPort?.onFailed(contentId, errorCode) ?: return false
     Log.i(PlayerRuntimeController.TAG, "CATCHUP_DIALECT_WALK: attempt failed (code=$errorCode); trying the next URL shape")
     // Same headers, new URL: a plain re-initialise, not a source switch, so nothing is persisted as a
@@ -181,16 +208,20 @@ internal fun PlayerRuntimeController.followCatchUpPlayhead(positionMs: Long) {
         continuation?.let {
             catchUpReplay.enableContinuation(it.programme.startMs, it.windowEndMs, it.programme.endMs)
         }
-        // The continuation state (and a single-use replay's mint, which Retry needs) lives exactly as long as this player.
-        if (continuation != null || port.singleUseFailure(contentId, false) != null) {
-            catchUpEffects.adopt(port.hold(contentId))
-        }
+        // The continuation state lives exactly as long as this player (a single-use replay's mint was held at start).
+        if (continuation != null) holdCatchUpSession()
     }
     val nowMs = System.currentTimeMillis()
     if (!catchUpReplay.needsLookup(positionMs, nowMs) || catchUpLookupJob?.isActive == true) return
     val playhead = catchUpReplay.playheadMs(positionMs)
     catchUpLookupJob = scope.launch {
-        val next = runCatching { port.programmeAt(contentId, playhead) }.getOrNull()
+        val next = try {
+            port.programmeAt(contentId, playhead)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c // the player left: do not carry on to act on a dead session
+        } catch (_: Throwable) {
+            null
+        }
         val now = System.currentTimeMillis()
         val pos = currentPlaybackPositionMs() ?: positionMs
         when (val action = catchUpReplay.onPlayhead(pos, now, next)) {

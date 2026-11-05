@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import com.nuvio.tv.core.iptv.stalker.runCatchingCancellable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.iptv.BoundedLoad
@@ -1434,16 +1435,16 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val published = LinkedHashMap<Int, List<XtreamProgram>>()
         for (channel in channels) {
             if (channel.streamId <= 0 || channel.streamId in published) continue
-            val table = runCatching {
+            val table = runCatchingCancellable {
                 contentDb.epgWindow(acc.id, epgChannelKey(channel.streamId), fromMs, toMs)
             }.getOrDefault(emptyList())
-            val store = if (table.isNotEmpty()) emptyList() else runCatching {
+            val store = if (table.isNotEmpty()) emptyList() else runCatchingCancellable {
                 // B10/F14: the user's pick, else the ingest's match (provider id, then cleaned name).
                 xmltv.storedWindow(acc, channel.streamId, fromMs, toMs)
             }.getOrDefault(emptyList()).ifEmpty {
                 // A Stalker portal's own bulk guide (keyed by its channel id) is the only place its
                 // programme ids live - and what a replay of an aired programme is addressed by.
-                if (acc.sourceType != XtreamAccount.SOURCE_STALKER) emptyList() else runCatching {
+                if (acc.sourceType != XtreamAccount.SOURCE_STALKER) emptyList() else runCatchingCancellable {
                     contentDb.epgWindow(acc.id, channel.streamId.toString(), fromMs, toMs)
                 }.getOrDefault(emptyList())
             }
@@ -1530,10 +1531,15 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * finished replay take the same path — the difference is only whether the programme's end is
      * still in the future, which the player uses for its clamped seek ceiling.
      */
+    private var replayOpenJob: kotlinx.coroutines.Job? = null
+
     fun startReplay(channel: GuideChannel, programme: XtreamProgram) {
         val acc = account ?: return
+        // A second press while the first is still opening is the same press (a Stalker open mints a
+        // single-use link, and a second launch would navigate twice).
+        if (replayOpenJob?.isActive == true) return
         // Suspends only for the panel's clock pair (B117), memoized per session — usually free.
-        viewModelScope.launch { startReplayFor(acc, channel, programme) }
+        replayOpenJob = viewModelScope.launch { startReplayFor(acc, channel, programme) }
     }
 
     private suspend fun startReplayFor(acc: XtreamAccount, channel: GuideChannel, programme: XtreamProgram) {
