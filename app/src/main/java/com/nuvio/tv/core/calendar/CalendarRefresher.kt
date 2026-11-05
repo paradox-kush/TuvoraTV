@@ -304,7 +304,11 @@ class CalendarRefresher internal constructor(
                     dataMutex.withLock {
                         val carried = attempted.get() == 0 && calendarCarriesFailure(lastRun, data.titles)
                         val result = CalendarRunResult(clock.millis(), attempted.get(), succeeded.get(), carried)
-                        if (owner == current) lastRun = result
+                        if (owner == current) {
+                            lastRun = result
+                            // Kept with the snapshot so the failure still shows after a restart.
+                            data = data.copy(lastRun = result)
+                        }
                         if (result.failed) Log.w(TAG, "run failed: ${result.attempted} fetches, none answered, carried=$carried")
                     }
                 }
@@ -347,7 +351,7 @@ class CalendarRefresher internal constructor(
             data = storage.load(profileId)
             owner = wanted
             watched = null
-            lastRun = null
+            lastRun = data.lastRun
             publishLocked(refreshing = false, remaining = 0)
         }
         wanted
