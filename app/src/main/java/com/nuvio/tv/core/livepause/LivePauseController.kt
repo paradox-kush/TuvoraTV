@@ -69,9 +69,16 @@ class LivePauseController(
 
     init {
         scope.launch {
-            for (command in commands) {
-                if (disposed) break
-                handle(command)
+            try {
+                for (command in commands) {
+                    if (disposed) break
+                    handle(command)
+                }
+            } finally {
+                // Cancelled mid-command (the player was released while the actor was inside an engine call)
+                // or finished: Dispose may never have been handled, but the buffer must not outlive us.
+                // Non-suspending: the capture hands the file deletion to its own cleanup scope.
+                disposeCapture()
             }
         }
     }
