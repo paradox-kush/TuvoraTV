@@ -998,6 +998,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
         GuideEpgPrefetchPolicy.onChannelsLoaded(channels.size).forEach { index ->
             channels.getOrNull(index)?.let { ensureEpg(it.streamId) }
         }
+        // The same goes for the stored window: an M3U playlist's cells either side of now/next live
+        // only on disk, and the UI's focus event for row one is the no-op described above, so without
+        // this the first paint stays at now + next until the viewer moves. Disk only; no request.
+        if (readsStoredWindow(_uiState.value.windowStartMs)) publishVisibleWindows()
     }
 
     /** One quiet retry for flaky IPTV panels; second failure bubbles up as null. */
