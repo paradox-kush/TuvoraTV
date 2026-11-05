@@ -195,6 +195,11 @@ internal fun PlayerRuntimeController.initializePlayer(
             }
             resetLoadingOverlayForNewStream()
             armCatchUpStartupDeadline()
+            // Decided once: a single-use replay link (Stalker archive) is spent by the first request, so
+            // nothing below may open it before the player does (AFR preflight, DoVi probe, parallel Range,
+            // the VOD cache), and the viewer's leaving must let its mint go.
+            val singleUseLink = isSingleUseCatchUp()
+            holdSingleUseCatchUpAtStart()
             if (startPaused) {
                 userPausedManually = true
                 shouldEnforceAutoplayOnFirstReady = false
@@ -294,6 +299,11 @@ internal fun PlayerRuntimeController.initializePlayer(
             )
 
             val afrJob = async {
+                if (!SingleUseReplayPolicy.allowsOpeningProbes(singleUseLink)) {
+                    Log.i(PlayerRuntimeController.TAG, "AFR preflight skipped: single-use replay link")
+                    _uiState.update { it.clearFrameRateDetection().copy(afrProbeRunning = false) }
+                    return@async
+                }
                 runAfrPreflightIfEnabled(
                     url = url,
                     headers = headers,
@@ -392,7 +402,8 @@ internal fun PlayerRuntimeController.initializePlayer(
             }
 
             // DV7 to DV8.1 libdovi probe — only runs when the effective mode requests it.
-            val dv7ToDv81SettingActive = effectiveDv7Mode == Dv7HandlingMode.DV81_LIBDOVI
+            val dv7ToDv81SettingActive = effectiveDv7Mode == Dv7HandlingMode.DV81_LIBDOVI &&
+                SingleUseReplayPolicy.allowsOpeningProbes(singleUseLink)
             val dv7ToDv81Probe = if (dv7ToDv81SettingActive) {
                 DoviBridge.probeRealtimeConversionSupport(url)
             } else {
@@ -512,7 +523,10 @@ internal fun PlayerRuntimeController.initializePlayer(
             )
             val isHlsStream = isHls || resolvedStreamMime == MimeTypes.APPLICATION_M3U8
             val isDashStream = resolvedStreamMime == MimeTypes.APPLICATION_MPD
-            val parallelActive = playerSettings.parallelNetworkEnabled && playerSettings.useParallelConnections
+            val parallelActive = SingleUseReplayPolicy.allowsParallelRange(
+                requested = playerSettings.parallelNetworkEnabled && playerSettings.useParallelConnections,
+                singleUse = singleUseLink,
+            )
             val useChunkSessionSource = parallelActive && !isHlsStream && !isDashStream
 
             val parallelOverheadMb = if (useChunkSessionSource) {
@@ -608,14 +622,16 @@ internal fun PlayerRuntimeController.initializePlayer(
             // first frame, since the stream content is not known here.
             mediaSourceFactory.bufferEngineEnabled = playerSettings.bufferEngineEnabled
             mediaSourceFactory.bufferBudgetManaged = playerSettings.bufferBudgetManaged
-            mediaSourceFactory.vodCacheEnabled = playerSettings.vodCacheEnabled
+            mediaSourceFactory.vodCacheEnabled =
+                SingleUseReplayPolicy.allowsVodCache(playerSettings.vodCacheEnabled, singleUseLink)
             mediaSourceFactory.vodCacheSizeMode = playerSettings.vodCacheSizeMode
             mediaSourceFactory.vodCacheSizeMb = playerSettings.vodCacheSizeMb
             mediaSourceFactory.nativeEngineEnabled = playerSettings.nuvioPerformanceModeEnabled
 
             mediaSourceFactory.nuvioPerformanceModeEnabled = playerSettings.nuvioPerformanceModeEnabled
             if (playerSettings.parallelNetworkEnabled && !isTorrentStream) {
-                mediaSourceFactory.useParallelConnections = playerSettings.useParallelConnections
+                mediaSourceFactory.useParallelConnections =
+                    SingleUseReplayPolicy.allowsParallelRange(playerSettings.useParallelConnections, singleUseLink)
                 mediaSourceFactory.parallelConnectionCount = playerSettings.parallelConnectionCount
                 mediaSourceFactory.parallelChunkSizeKb = playerSettings.parallelChunkSizeKb
             } else {
@@ -1139,7 +1155,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     audioDelayUsProvider = audioDelayUs::get,
                     mediaMetadata = buildMediaSessionMetadata(),
                     cacheKey = currentStreamCacheKey,
-                    singleUseLink = navigationArgs.isCatchUp && catchUpPort?.singleUseFailure(contentId, false) != null,
+                    singleUseLink = singleUseLink,
                 )
 
                 if (initialResumePosition > 0L) {
@@ -1553,7 +1569,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 retryCurrentStreamWithDv7Mode1Fallback(currentPosition)
                                 return
                             }
-                            if (isExperimentalDv7ToDv81ActiveForCurrentPlayback && !hasAttemptedDv7ToDv81ForCurrentPlayback) {
+                            if (isExperimentalDv7ToDv81ActiveForCurrentPlayback && !hasAttemptedDv7ToDv81ForCurrentPlayback && !isSingleUseCatchUp()) {
                                 hasAttemptedDv7ToDv81ForCurrentPlayback = true
                                 val probe = DoviBridge.probeRealtimeConversionSupport(currentStreamUrl)
                                 dv7ToDv81LastProbeReasonForCurrentPlayback = probe.reason
