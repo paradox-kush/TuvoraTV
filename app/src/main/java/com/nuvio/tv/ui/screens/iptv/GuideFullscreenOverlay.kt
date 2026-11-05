@@ -149,7 +149,7 @@ internal fun BoxScope.GuideFullscreenOverlay(
 }
 
 @Composable
-private fun GuideFullscreenOverlayContent(
+private fun BoxScope.GuideFullscreenOverlayContent(
     controls: FullscreenControlsState,
     viewModel: XtreamLiveGuideViewModel,
     playbackViewModel: CleanLiveGuidePlaybackViewModel,
