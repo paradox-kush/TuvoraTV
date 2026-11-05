@@ -780,8 +780,9 @@ fun LiveGuide(
             if (playbackUi?.spinnerVisible == true) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
-            if (fullscreen && controls.visible) {
+            run {
                 GuideFullscreenOverlay(
+                    fullscreen = fullscreen,
                     controls = controls,
                     viewModel = viewModel,
                     playbackViewModel = playbackViewModel,

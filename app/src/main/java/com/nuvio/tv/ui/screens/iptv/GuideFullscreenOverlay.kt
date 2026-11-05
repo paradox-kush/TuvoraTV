@@ -118,9 +118,38 @@ internal fun GuideFullscreenControlsEffects(
     }
 }
 
-/** The fullscreen live controls, drawn only while visible. Collects the guide state itself. */
+/**
+ * The fullscreen live controls. The `fullscreen && controls.visible` gate is read HERE, in this
+ * composable's own scope, so the first zap press (which flips `visible`) recomposes this function and
+ * not the guide screen that hosts it. Collects the guide state itself.
+ */
 @Composable
 internal fun BoxScope.GuideFullscreenOverlay(
+    fullscreen: Boolean,
+    controls: FullscreenControlsState,
+    viewModel: XtreamLiveGuideViewModel,
+    playbackViewModel: CleanLiveGuidePlaybackViewModel,
+    playbackState: CleanLiveGuidePlaybackState,
+    playingContentId: String?,
+    nowMs: Long,
+    favoriteIds: Set<String>,
+    livePicture: com.nuvio.tv.core.picture.PictureChoice,
+    primaryFocus: FocusRequester,
+    onTogglePause: () -> Unit,
+    onHide: () -> Unit,
+    onOpenPanel: (LivePanel) -> Unit,
+    onAspectLabel: (String) -> Unit,
+    onOpenChannelList: () -> Unit,
+) {
+    if (!fullscreen || !controls.visible) return
+    GuideFullscreenOverlayContent(
+        controls, viewModel, playbackViewModel, playbackState, playingContentId, nowMs, favoriteIds,
+        livePicture, primaryFocus, onTogglePause, onHide, onOpenPanel, onAspectLabel, onOpenChannelList,
+    )
+}
+
+@Composable
+private fun GuideFullscreenOverlayContent(
     controls: FullscreenControlsState,
     viewModel: XtreamLiveGuideViewModel,
     playbackViewModel: CleanLiveGuidePlaybackViewModel,

@@ -7,6 +7,7 @@ import org.junit.Test
 
 class CleanLiveGuideCutoverArchitectureTest {
     private val screen = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/XtreamLiveGuideScreen.kt")
+    private val overlay = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/GuideFullscreenOverlay.kt")
     private val catalog = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/XtreamLiveGuideViewModel.kt")
     // Ordering checks read the catalog with whitespace removed, so a reformat (a one-line
     // `_uiState.update { it.copy(...) }` split across lines by #36) cannot hide a real reorder.
@@ -27,6 +28,15 @@ class CleanLiveGuideCutoverArchitectureTest {
         assertTrue(screen.contains("playbackViewModel.requestPromote()"))
         assertTrue(screen.contains("playbackViewModel.requestCollapse()"))
         assertTrue(screen.contains("playbackViewModel.detachGuide()"))
+    }
+
+    @Test
+    fun `fullscreen overlay state is read by the overlay scope and never by the guide body`() {
+        listOf("controls.visible", "controls.tick", "controls.moreOpen").forEach { read ->
+            // Writes and event-time reads are fine; a composition read is an `if (... read)` gate or a `= read` argument.
+            assertFalse("Guide body gates composition on $read", screen.contains("if (fullscreen && $read)"))
+        }
+        assertTrue(overlay.contains("if (!fullscreen || !controls.visible) return"))
     }
 
     @Test
@@ -54,6 +64,7 @@ class CleanLiveGuideCutoverArchitectureTest {
             "prepared.url",
         ).forEach { forbidden ->
             assertFalse("Guide screen regained legacy playback symbol: $forbidden", screen.contains(forbidden))
+            assertFalse("Guide overlay regained legacy playback symbol: $forbidden", overlay.contains(forbidden))
         }
     }
 
