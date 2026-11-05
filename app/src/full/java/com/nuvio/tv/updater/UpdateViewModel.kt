@@ -155,7 +155,7 @@ class UpdateViewModel @Inject constructor(
                                 if (error is NoEligibleUpdateException) {
                                     noUpdateFeedback(channel)
                                 } else {
-                                    error.message ?: context.getString(R.string.update_error_check_failed)
+                                    checkFailureMessage(error)
                                 }
                             } else {
                                 null
@@ -164,6 +164,16 @@ class UpdateViewModel @Inject constructor(
                     }
                 }
         }
+    }
+
+    /** B175: say what GitHub said (a limit and when it lifts), not a bare status code. */
+    private fun checkFailureMessage(error: Throwable): String = when (error) {
+        is UpdateRateLimitedException -> context.getString(
+            R.string.update_error_rate_limited,
+            UpdaterHttpErrorPolicy.minutesUntil(error.resetAtEpochSeconds, System.currentTimeMillis() / 1000L),
+        )
+        is UpdateForbiddenException -> context.getString(R.string.update_error_forbidden)
+        else -> error.message ?: context.getString(R.string.update_error_check_failed)
     }
 
     private fun noUpdateFeedback(channel: UpdateChannel): String =
