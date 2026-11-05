@@ -3672,6 +3672,7 @@
     <string name="iptv_card_rematch">Re-match catalog</string>
     <string name="iptv_card_rematch_sub">Re-check missing titles</string>
     <string name="iptv_card_rematch_started">Re-check started</string>
+    <string name="catchup_recording_ended">This replay has ended</string>
     <string name="iptv_card_catchup">Catch-up &amp; guide</string>
     <string name="iptv_card_catchup_sub">Replay and guide timing</string>
     <string name="iptv_card_guide">Guide &amp; channel names</string>

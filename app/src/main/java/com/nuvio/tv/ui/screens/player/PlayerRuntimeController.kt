@@ -189,6 +189,9 @@ class PlayerRuntimeController(
         programmeStartMs = navigationArgs.catchUpStartMs,
         programmeEndMs = navigationArgs.catchUpEndMs,
     )
+    /** Fork: the continuation port was asked once whether this replay follows its playhead. */
+    internal var catchUpContinuationChecked = false
+    internal var catchUpLookupJob: kotlinx.coroutines.Job? = null
     internal val initialStreamUrl: String = navigationArgs.streamUrl
     internal val title: String = navigationArgs.title
     internal val streamName: String? = navigationArgs.streamName

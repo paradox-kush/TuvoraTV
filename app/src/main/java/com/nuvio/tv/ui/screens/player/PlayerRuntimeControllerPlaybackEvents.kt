@@ -420,6 +420,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         playerReportsLive = sample.liveStream || mpvDurationGrowth.grew,
                         isPlaying = playingForWatchClock
                     )
+                    followCatchUpPlayhead(pos)
                     // Prefer the largest known duration; MPV can report a shorter one transiently.
                     // The playerDuration check stays: lastKnownDuration can still hold the previous
                     // stream's value until it resets.
@@ -483,6 +484,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     playerReportsLive = player.isCurrentMediaItemLive,
                     isPlaying = player.isPlaying
                 )
+                followCatchUpPlayhead(pos)
                 playbackAnalyticsDiagnostics.recordProgressSnapshot(
                     player = player,
                     hasRenderedFirstFrame = hasRenderedFirstFrame,
