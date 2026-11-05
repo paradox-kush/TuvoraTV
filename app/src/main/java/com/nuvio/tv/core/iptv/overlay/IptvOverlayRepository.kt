@@ -103,6 +103,10 @@ class IptvOverlayRepository @Inject constructor(
     suspend fun epgOverrideGuideIds(playlistId: String): Set<String> =
         kotlinx.coroutines.withContext(Dispatchers.IO) { runCatching { db.epgOverrideGuideIds(playlistId) }.getOrDefault(emptySet()) }
 
+    /** Every profile's picks for a playlist as (entity id, guide channel id) - the ingest sizes their history. */
+    suspend fun epgOverrideEntries(playlistId: String): List<Pair<String, String>> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) { runCatching { db.epgOverrideEntries(playlistId) }.getOrDefault(emptyList()) }
+
     /** Pick ([guideId] non-null) or clear the guide channel for one channel; synced like hide/pin. */
     fun setEpgOverride(entityId: String, playlistId: String, guideId: String?, guideName: String?) {
         val p = profile()

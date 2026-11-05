@@ -343,13 +343,19 @@ class XmltvClient @Inject constructor(
             val nowMs = System.currentTimeMillis()
             // M3U catch-up: a guide id matched to a channel that replays N days keeps N days of history.
             val backByGuide: Map<String, Long> = if (acc.isXtream()) emptyMap() else {
-                val days = db.liveCatchUpDays(acc.id)
-                if (days.isEmpty()) emptyMap() else HashMap<String, Long>().also { out ->
-                    result.assignments.forEach { a ->
-                        val d = days[a.streamId] ?: return@forEach
-                        out.merge(a.guideId, XmltvIngestWindow.backMsForCatchUpDays(d), ::maxOf)
-                    }
+                // A channel the user gave a guide channel by hand is not among the matcher's
+                // assignments; without it the pick fell back to the 6 h default.
+                val entityToSid = lineup.associate {
+                    com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(acc.id, it.name, it.epgId) to it.streamId
                 }
+                val manual = overlay?.epgOverrideEntries(acc.id).orEmpty().mapNotNull { (entity, gid) ->
+                    entityToSid[entity]?.let { sid -> sid to normalizeChannelId(gid) }
+                }
+                XmltvIngestWindow.backMsByGuide(
+                    assigned = result.assignments.map { it.streamId to it.guideId },
+                    manual = manual,
+                    catchUpDaysBySid = db.liveCatchUpDays(acc.id),
+                )
             }
             file.bufferedReader().use { reader ->
                 val parser = android.util.Xml.newPullParser().apply {

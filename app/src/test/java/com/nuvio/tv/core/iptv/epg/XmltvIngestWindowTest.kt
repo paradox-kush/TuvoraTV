@@ -89,4 +89,42 @@ class XmltvIngestWindowTest {
         assertEquals("no archive keeps the default", XmltvIngestWindow.BACK_MS, XmltvIngestWindow.backMsForCatchUpDays(0))
         assertEquals("a short archive never goes below the default", XmltvIngestWindow.BACK_MS, XmltvIngestWindow.backMsForCatchUpDays(-1))
     }
+
+    // A guide channel the user picked by hand is not in the matcher's assignments. It used to fall
+    // through to the 6 h default, so a hand-picked catch-up channel had nothing older to replay.
+    @Test
+    fun `a hand-picked guide channel keeps the archive depth of the channel it was picked for`() {
+        val back = XmltvIngestWindow.backMsByGuide(
+            assigned = emptyList(),
+            manual = listOf(7 to "bbc1.uk"),
+            catchUpDaysBySid = mapOf(7 to 3),
+        )
+        assertEquals("the pick gets the 3-day archive, not the 6 h default",
+            XmltvIngestWindow.backMsForCatchUpDays(3), back["bbc1.uk"])
+    }
+
+    @Test
+    fun `a pick for a channel without catch-up keeps the default`() {
+        val back = XmltvIngestWindow.backMsByGuide(
+            assigned = emptyList(), manual = listOf(7 to "bbc1.uk"), catchUpDaysBySid = mapOf(9 to 3),
+        )
+        assertEquals("no archive on channel 7, so nothing widened", null, back["bbc1.uk"])
+    }
+
+    @Test
+    fun `a guide id shared by a matched and a picked channel keeps the longer archive`() {
+        val back = XmltvIngestWindow.backMsByGuide(
+            assigned = listOf(1 to "itv.uk"), manual = listOf(2 to "itv.uk"),
+            catchUpDaysBySid = mapOf(1 to 2, 2 to 5),
+        )
+        assertEquals("longest depth wins", XmltvIngestWindow.backMsForCatchUpDays(5), back["itv.uk"])
+    }
+
+    @Test
+    fun `matched channels still get their depth`() {
+        val back = XmltvIngestWindow.backMsByGuide(
+            assigned = listOf(1 to "itv.uk"), manual = emptyList(), catchUpDaysBySid = mapOf(1 to 2),
+        )
+        assertEquals(XmltvIngestWindow.backMsForCatchUpDays(2), back["itv.uk"])
+    }
 }
