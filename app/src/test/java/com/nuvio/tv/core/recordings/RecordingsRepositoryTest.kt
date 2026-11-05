@@ -55,9 +55,10 @@ private class FakeFiles : RecordingFiles {
     val aside = ArrayList<Pair<String, String>>()
     val sizes = HashMap<String, Long>()
     val deleted = ArrayList<String>()
+    val writes = ArrayList<String>()
     var free = 100L * 1024 * 1024 * 1024
     override suspend fun read(name: String) = texts[name]
-    override suspend fun write(name: String, text: String) { texts[name] = text }
+    override suspend fun write(name: String, text: String) { writes += name; texts[name] = text }
     override suspend fun keepAside(name: String) { texts.remove(name)?.let { aside += name to it } }
     override fun pathFor(fileName: String) = "/rec/$fileName"
     override fun freeBytes() = free
@@ -85,7 +86,8 @@ private class Rig(
     val saver = FakeSaver()
     val clock = TestTimeSource()
     var low = policy
-    val repo = RecordingsRepository(files, alarms, saver, capabilities, lowSpacePolicy = { low }, timeSource = clock)
+    var wall = NOW
+    val repo = RecordingsRepository(files, alarms, saver, capabilities, lowSpacePolicy = { low }, timeSource = clock, clock = { wall })
 }
 
 /** A catch-up programme that ended 1 h ago: its save fire time (end + 5 min + 10 min) is past. */
@@ -154,10 +156,12 @@ class RecordingsRepositoryTest {
         assertTrue(rig.repo.state.value.schedules.isEmpty())
     }
 
+    private fun v1(text: String) = text.replace("\"schemaVersion\":2", "\"schemaVersion\":1")
+
     @Test
-    fun `restart with a RUNNING ledger entry recovers it and retries later`() = runTest {
+    fun `a v1 state with the old ledger file is migrated once and recovers its RUNNING claim`() = runTest {
         val files = FakeFiles()
-        files.texts["recordings.json"] = stateText(dueCatchUp())
+        files.texts["recordings.json"] = v1(stateText(dueCatchUp()))
         val ledger = FireLedgerState(listOf(FireEntry("s1", FireState.RUNNING, "s1#1", 5L)), nextSeq = 2)
         files.texts["recordings-ledger.json"] = kotlinx.serialization.json.Json.encodeToString(FireLedgerState.serializer(), ledger)
         val rig = Rig(files = files)
@@ -167,6 +171,88 @@ class RecordingsRepositoryTest {
         assertEquals(NOW + RecordingSchedulePolicy.RETRY_MS, s.nextTryMs)
         assertEquals(s.nextTryMs, rig.alarms.armed["s1"])
         assertTrue("recovery re-arms, it does not start a save", rig.saver.calls.isEmpty())
+        val doc = RecordingsCodec.decode(files.texts["recordings.json"])!!
+        assertEquals("rewritten as v2", 2, doc.schemaVersion)
+        assertEquals("the ledger now lives in the document", FireState.FAILED, doc.ledgerState.entries.single().state)
+        assertNull("the old ledger file is gone after the one-time migration", files.texts["recordings-ledger.json"])
+        assertEquals("recordings-ledger.json", files.aside.single().first)
+    }
+
+    @Test
+    fun `a fire commits the ledger and the state in ONE write so a crash cannot split them`() = runTest {
+        val rig = Rig()
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        assertEquals(FireResult.Saved, rig.repo.fire("s1", NOW))
+        assertTrue(rig.files.writes.isNotEmpty())
+        assertTrue("no second file: ${rig.files.writes.toSet()}", rig.files.writes.all { it == "recordings.json" })
+        assertNull(rig.files.texts["recordings-ledger.json"])
+        val doc = RecordingsCodec.decode(rig.files.texts["recordings.json"])!!
+        assertEquals(FireState.DONE, doc.ledgerState.entries.single { it.scheduleId == "s1" }.state)
+        assertEquals(RecordingStatus.DONE, doc.recordingValues.single().status)
+    }
+
+    @Test
+    fun `a RECORDING row whose ledger entry says DONE is finished from the file on load`() = runTest {
+        val files = FakeFiles()
+        val row = recording("rec:s1", status = RecordingStatus.RECORDING, size = 0).copy(scheduleId = "s1", fileName = "Show.ts")
+        val doc = RecordingsDocument(
+            schedules = listOf(StoredRow.of(dueCatchUp())), recordings = listOf(StoredRow.of(row)),
+        ).withLedger(FireLedgerState(listOf(FireEntry("s1", FireState.DONE, "s1#1", 1L)), 2))
+        files.texts["recordings.json"] = RecordingsCodec.encode(doc)
+        files.sizes["/rec/Show.ts"] = 777L
+        val rig = Rig(files = files)
+        rig.repo.start(NOW)
+        val rec = rig.repo.state.value.recordings.single()
+        assertEquals(RecordingStatus.DONE, rec.status)
+        assertEquals(777L, rec.sizeBytes)
+        assertTrue("a finished capture has no schedule to re-arm", rig.repo.state.value.schedules.isEmpty())
+        assertNull("and is never re-armed", rig.alarms.armed["s1"])
+    }
+
+    @Test
+    fun `a RECORDING row whose ledger entry is not RUNNING is retried not left recording forever`() = runTest {
+        val files = FakeFiles()
+        val row = recording("rec:s1", status = RecordingStatus.RECORDING, size = 0).copy(scheduleId = "s1", fileName = "Show.ts")
+        files.texts["recordings.json"] = RecordingsCodec.encode(
+            RecordingsDocument(schedules = listOf(StoredRow.of(dueCatchUp())), recordings = listOf(StoredRow.of(row))),
+        )
+        val rig = Rig(files = files)
+        rig.repo.start(NOW)
+        assertTrue(rig.repo.state.value.recordings.none { it.status == RecordingStatus.RECORDING })
+        val s = rig.repo.state.value.schedules.single()
+        assertEquals(1, s.attempts)
+        assertEquals(NOW + RecordingSchedulePolicy.RETRY_MS, rig.alarms.armed["s1"])
+    }
+
+    @Test
+    fun `delete after a cold start recovers lost runs with the real clock not zero`() = runTest {
+        val files = FakeFiles()
+        files.texts["recordings.json"] = v1(RecordingsCodec.encode(
+            RecordingsDocument(schedules = listOf(StoredRow.of(dueCatchUp())), recordings = listOf(StoredRow.of(recording("old")))),
+        ))
+        files.texts["recordings-ledger.json"] = kotlinx.serialization.json.Json.encodeToString(
+            FireLedgerState.serializer(), FireLedgerState(listOf(FireEntry("s1", FireState.RUNNING, "s1#1", 5L)), 2),
+        )
+        val rig = Rig(files = files)
+        rig.wall = NOW + 3 * HOUR
+        rig.repo.deleteRecording("old")
+        assertEquals(NOW + 3 * HOUR + RecordingSchedulePolicy.RETRY_MS, rig.repo.state.value.schedules.single().nextTryMs)
+    }
+
+    @Test
+    fun `cancel after a cold start stamps endedAtMs from the real clock`() = runTest {
+        val files = FakeFiles()
+        val exhausted = dueCatchUp().copy(attempts = RecordingSchedulePolicy.MAX_ATTEMPTS - 1)
+        val row = recording("rec:s1", status = RecordingStatus.RECORDING, size = 0).copy(scheduleId = "s1", fileName = "Show.ts")
+        files.texts["recordings.json"] = RecordingsCodec.encode(
+            RecordingsDocument(schedules = listOf(StoredRow.of(exhausted)), recordings = listOf(StoredRow.of(row)))
+                .withLedger(FireLedgerState(listOf(FireEntry("s1", FireState.RUNNING, "s1#1", 5L)), 2)),
+        )
+        val rig = Rig(files = files)
+        rig.wall = NOW + 3 * HOUR
+        rig.repo.cancel("s1")
+        val rec = rig.repo.state.value.recordings.single()
+        assertEquals("not 0 (1970)", NOW + 3 * HOUR, rec.endedAtMs)
     }
 
     @Test
@@ -320,7 +406,7 @@ class RecordingsRepositoryTest {
     }
 
     @Test
-    fun `cancelling the caller during a save rethrows and records CANCELLED_BY_USER`() = runTest {
+    fun `system teardown during a save rethrows and is retryable not a user cancel`() = runTest {
         val rig = Rig()
         rig.files.texts["recordings.json"] = stateText(dueCatchUp())
         val started = CompletableDeferred<Unit>()
@@ -332,13 +418,30 @@ class RecordingsRepositoryTest {
         started.await()
         job.cancelAndJoin()
         assertTrue("cancellation must propagate", thrown is CancellationException)
+        assertTrue("the user did not cancel", rig.repo.state.value.recordings.none { it.status == RecordingStatus.CANCELLED })
+        val s = rig.repo.state.value.schedules.single()
+        assertEquals("the interrupted run used an attempt", 1, s.attempts)
+        assertEquals("retry is armed", NOW + RecordingSchedulePolicy.RETRY_MS, rig.alarms.armed["s1"])
+        val doc = RecordingsCodec.decode(rig.files.texts["recordings.json"])!!
+        assertEquals(RecordingProblem.STALLED, doc.ledgerState.entries.single().problem)
+        assertEquals("the claim was released", FireState.FAILED, doc.ledgerState.entries.single().state)
+    }
+
+    @Test
+    fun `a user cancel of the running capture records CANCELLED_BY_USER and the claim is released`() = runTest {
+        val rig = Rig()
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        val started = CompletableDeferred<Unit>()
+        rig.saver.next = { _, _ -> started.complete(Unit); CompletableDeferred<Unit>().await(); SaveOutcome.Done(1) }
+        val result = async { rig.repo.fire("s1", NOW) }
+        started.await()
+        rig.repo.cancel("s1")
+        assertEquals(FireResult.Cancelled, result.await())
         val rec = rig.repo.state.value.recordings.single()
-        assertEquals(RecordingStatus.CANCELLED, rec.status)
         assertEquals(RecordingProblem.CANCELLED_BY_USER, rec.problem)
-        assertTrue(rig.repo.state.value.schedules.isEmpty())
-        // the claim was released: the ledger file says FAILED, not RUNNING
-        assertTrue(rig.files.texts["recordings-ledger.json"]!!.contains("CANCELLED_BY_USER"))
-        assertTrue(!rig.files.texts["recordings-ledger.json"]!!.contains("RUNNING"))
+        assertEquals(NOW, rec.endedAtMs)
+        val doc = RecordingsCodec.decode(rig.files.texts["recordings.json"])!!
+        assertEquals(RecordingProblem.CANCELLED_BY_USER, doc.ledgerState.entries.single().problem)
     }
 
     @Test

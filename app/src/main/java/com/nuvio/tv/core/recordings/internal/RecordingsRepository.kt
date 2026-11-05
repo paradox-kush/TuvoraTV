@@ -22,6 +22,7 @@ import com.nuvio.tv.core.recordings.api.SaveOutcome
 import com.nuvio.tv.core.recordings.api.SaveRequest
 import com.nuvio.tv.core.recordings.api.ScheduleResult
 import com.nuvio.tv.core.recordings.api.SeriesRule
+import io.ktor.util.date.GMTDate
 import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
@@ -31,7 +32,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,7 +49,8 @@ import kotlinx.serialization.json.Json
  *
  * Durations use the monotonic [timeSource], never the wall clock (a timezone or NTP jump must not
  * change how long a save "took"). Cancellation is never swallowed: a cancelled caller sees it
- * rethrown after the claim is released as FAILED(CANCELLED_BY_USER).
+ * rethrown after the claim is released as FAILED(STALLED) (system teardown, retryable); only the
+ * explicit [cancel] records CANCELLED_BY_USER.
  *
  * LIVE capture is wave 4. TODO(live capture pending live-pause branch): a due LIVE schedule becomes a
  * FAILED row with [RecordingProblem.LIVE_CAPTURE_PENDING] until that lands.
@@ -62,6 +64,8 @@ class RecordingsRepository(
     private val preMs: Long = RecordingSchedulePolicy.DEFAULT_PRE_MS,
     private val postMs: Long = RecordingSchedulePolicy.DEFAULT_POST_MS,
     private val timeSource: TimeSource = TimeSource.Monotonic,
+    /** Wall clock for paths that have no caller-supplied time (cancel, delete after a cold start). */
+    private val clock: () -> Long = { GMTDate().timestamp },
 ) : RecordingsPort {
 
     private val mutex = Mutex()
@@ -107,7 +111,10 @@ class RecordingsRepository(
             files.keepAside(STATE_FILE)
             RecordingsDocument()
         }
-        ledger = RecordingFireLedger(readLedger())
+        // v1 kept the ledger in a second file: fold it in once, then retire the file (below, after the
+        // v2 document is on disk, so a crash in between leaves the old file to be read again).
+        val migrating = doc.loadedVersion < 2
+        ledger = RecordingFireLedger(if (migrating) readLegacyLedger() else doc.ledgerState)
         loaded = true
         // A RUNNING claim now belongs to a process that is gone.
         for (id in ledger.recoverAfterRestart()) {
@@ -121,11 +128,38 @@ class RecordingsRepository(
                 edit(recordings = { list -> list.map { if (it.id == row.id) it.copy(status = RecordingStatus.FAILED, problem = RecordingProblem.STALLED) else it } })
             }
         }
-        persistLedger()
-        persistState()
+        reconcileRecordingRowsLocked(nowMs)
+        if (persistState() && migrating) files.keepAside(LEDGER_FILE)
     }
 
-    private suspend fun readLedger(): FireLedgerState {
+    /**
+     * A row still RECORDING after the RUNNING claims were recovered has a ledger entry that is not
+     * RUNNING, so nothing is writing to it. DONE in the ledger means the save finished: finish the row
+     * from the file. Anything else is a lost run: the retry policy decides, or the row is failed.
+     */
+    private suspend fun reconcileRecordingRowsLocked(nowMs: Long) {
+        for (row in doc.recordingValues.filter { it.status == RecordingStatus.RECORDING }) {
+            val sid = row.scheduleId
+            val schedule = sid?.let { id -> doc.scheduleValues.firstOrNull { it.id == id } }
+            val target = files.pathFor(row.fileName)
+            if (sid != null && ledger.stateOf(sid) == FireState.DONE && files.sizeOf(target) > 0L) {
+                edit(
+                    schedules = { list -> list.filterNot { it.id == sid } },
+                    recordings = { list ->
+                        list.map { if (it.id == row.id) it.copy(status = RecordingStatus.DONE, endedAtMs = row.endedAtMs ?: nowMs, sizeBytes = files.sizeOf(target), problem = null, retrySource = null) else it }
+                    },
+                )
+                alarms.disarm(sid)
+            } else if (schedule != null) {
+                val partial = files.sizeOf(partPath(target))
+                afterFailureLocked(schedule, RecordingProblem.STALLED, offline = false, nowMs = nowMs, written = partial, rangeSupported = true)
+            } else {
+                edit(recordings = { list -> list.map { if (it.id == row.id) it.copy(status = RecordingStatus.FAILED, problem = RecordingProblem.STALLED, endedAtMs = row.endedAtMs ?: nowMs) else it } })
+            }
+        }
+    }
+
+    private suspend fun readLegacyLedger(): FireLedgerState {
         val text = files.read(LEDGER_FILE) ?: return FireLedgerState()
         return try {
             ledgerJson.decodeFromString(FireLedgerState.serializer(), text)
@@ -137,25 +171,20 @@ class RecordingsRepository(
         }
     }
 
-    private suspend fun persistState() {
-        try {
+    /** One atomic write: the ledger rides in the same document, so the two can never disagree on disk. */
+    private suspend fun persistState(): Boolean {
+        doc = doc.withLedger(ledger.snapshot())
+        return try {
             files.write(STATE_FILE, RecordingsCodec.encode(doc))
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "could not write recordings state", e)
+            false
         }
     }
 
-    private suspend fun persistLedger() {
-        try {
-            files.write(LEDGER_FILE, ledgerJson.encodeToString(FireLedgerState.serializer(), ledger.snapshot()))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "could not write fire ledger", e)
-        }
-    }
 
     private fun publish() {
         _state.value = RecordingsState(
@@ -180,7 +209,6 @@ class RecordingsRepository(
     }
 
     private suspend fun commit() {
-        persistLedger()
         persistState()
         publish()
     }
@@ -277,7 +305,7 @@ class RecordingsRepository(
     override suspend fun cancel(scheduleId: String) {
         val job = mutex.withLock {
             running[scheduleId]?.let { return@withLock it }
-            if (!loaded) loadLocked(0)
+            if (!loaded) loadLocked(clock())
             alarms.disarm(scheduleId)
             if (doc.scheduleValues.any { it.id == scheduleId }) {
                 edit(schedules = { list -> list.filterNot { it.id == scheduleId } })
@@ -293,7 +321,7 @@ class RecordingsRepository(
     override suspend fun deleteRecording(id: String) {
         val job = mutex.withLock { running[id.removePrefix("rec:")] }
         job?.cancel(CancellationException("cancelled by user"))
-        locked(0) {
+        locked(clock()) {
             val row = doc.recordingValues.firstOrNull { it.id == id } ?: return@locked
             deleteFilesOf(row)
             removeRecordingRow(id)
@@ -459,10 +487,24 @@ class RecordingsRepository(
         val outcome: SaveOutcome = try {
             withContext(run.cancelJob) { saver.save(run.request, progress) }
         } catch (e: CancellationException) {
-            withContext(NonCancellable) { mutex.withLock { finishCancelled(run) } }
-            // If the caller itself was cancelled this rethrows; if only our own job was (cancel()), we report it.
-            currentCoroutineContext().ensureActive()
-            return FireResult.Cancelled
+            if (currentCoroutineContext().isActive) {
+                // Only our own job was cancelled: that is the user's cancel().
+                withContext(NonCancellable) { mutex.withLock { finishCancelled(run) } }
+                return FireResult.Cancelled
+            }
+            // The caller was cancelled by the system (service destroyed, process scope torn down), not by
+            // the user: release the claim as STALLED so the retry policy re-arms it. Then rethrow.
+            withContext(NonCancellable) {
+                mutex.withLock {
+                    running.remove(run.schedule.id)
+                    val partial = files.sizeOf(partPath(run.targetPath))
+                    afterFailureLocked(
+                        run.schedule, RecordingProblem.STALLED, offline = false,
+                        nowMs = nowMs + mark.elapsedNow().inWholeMilliseconds, written = partial, rangeSupported = true, token = run.token,
+                    )
+                }
+            }
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "save threw", e)
             SaveOutcome.Failed(RecordingProblem.UNKNOWN, offline = false, writtenBytes = 0, rangeSupported = false)
@@ -513,6 +555,7 @@ class RecordingsRepository(
         val s = run.schedule
         running.remove(s.id)
         ledger.release(run.token, FireOutcome.FAILED, RecordingProblem.CANCELLED_BY_USER)
+        val endedAt = clock()
         files.delete(partPath(run.targetPath))
         alarms.disarm(s.id)
         edit(
@@ -520,7 +563,7 @@ class RecordingsRepository(
             recordings = { list ->
                 list.map {
                     if (it.id == run.recordingId) it.copy(
-                        status = RecordingStatus.CANCELLED, problem = RecordingProblem.CANCELLED_BY_USER, retrySource = s,
+                        status = RecordingStatus.CANCELLED, problem = RecordingProblem.CANCELLED_BY_USER, retrySource = s, endedAtMs = endedAt,
                     ) else it
                 }
             },
@@ -599,6 +642,7 @@ class RecordingsRepository(
     private companion object {
         const val TAG = "Recordings"
         const val STATE_FILE = "recordings.json"
+        /** v1 only: read once to migrate into the document, then retired. */
         const val LEDGER_FILE = "recordings-ledger.json"
         const val OVERDUE_REARM_DELAY_MS = 5_000L
         const val PROGRESS_STEP_BYTES = 256L * 1024

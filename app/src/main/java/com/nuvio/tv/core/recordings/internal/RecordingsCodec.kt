@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -38,7 +39,20 @@ data class RecordingsDocument(
     val series: List<StoredRow<SeriesRule>> = emptyList(),
     val recordings: List<StoredRow<Recording>> = emptyList(),
     val extra: JsonObject = JsonObject(emptyMap()),
+    /** The fire ledger, folded into this document (v2) so state and ledger always commit together. */
+    val ledger: List<StoredRow<FireEntry>> = emptyList(),
+    val ledgerNextSeq: Long = 1,
+    /** Keys of the `ledger` object this version does not know. */
+    val ledgerExtra: JsonObject = JsonObject(emptyMap()),
+    /** The schemaVersion the file said (missing = 1); [schemaVersion] is what gets written back. */
+    val loadedVersion: Int = RecordingsCodec.SCHEMA_VERSION,
 ) {
+    val ledgerState: FireLedgerState get() = FireLedgerState(ledger.mapNotNull { it.value }, ledgerNextSeq)
+
+    /** This document with the ledger replaced by [state]; unknown fields of surviving entries ride along. */
+    fun withLedger(state: FireLedgerState): RecordingsDocument =
+        copy(ledger = ledger.reconcile(state.entries) { it.scheduleId }, ledgerNextSeq = state.nextSeq)
+
     val scheduleValues: List<RecordingSchedule> get() = schedules.mapNotNull { it.value }
     val seriesValues: List<SeriesRule> get() = series.mapNotNull { it.value }
     val recordingValues: List<Recording> get() = recordings.mapNotNull { it.value }
@@ -62,13 +76,16 @@ fun <T> List<StoredRow<T>>.reconcile(updated: List<T>, idOf: (T) -> String): Lis
  * and a row that cannot be decoded is re-emitted verbatim. The platform writer does tmp-file+rename.
  */
 object RecordingsCodec {
-    const val SCHEMA_VERSION = 1
+    /** 2 folds the fire ledger into the document; 1 kept it in a second file. */
+    const val SCHEMA_VERSION = 2
 
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
         classDiscriminator = "kind"
     }
+
+    private val LEDGER_KNOWN = setOf("nextSeq", "entries")
 
     /** Nested model objects whose unknown fields are kept; maps (headers) are replaced whole. */
     private val mergeKeys = setOf("channel", "catchUp")
@@ -85,13 +102,18 @@ object RecordingsCodec {
             null
         } ?: return null
         val version = (root["schemaVersion"] as? JsonPrimitive)?.intOrNull ?: 0
-        val known = setOf("schemaVersion", "schedules", "series", "recordings")
+        val known = setOf("schemaVersion", "schedules", "series", "recordings", "ledger")
+        val ledgerObj = root["ledger"] as? JsonObject
         return RecordingsDocument(
             schemaVersion = version.coerceAtLeast(SCHEMA_VERSION),
             schedules = rows(root["schedules"], RecordingSchedule.serializer()),
             series = rows(root["series"], SeriesRule.serializer()),
             recordings = rows(root["recordings"], Recording.serializer()),
             extra = JsonObject(root.filterKeys { it !in known }),
+            ledger = rows(ledgerObj?.get("entries"), FireEntry.serializer()),
+            ledgerNextSeq = (ledgerObj?.get("nextSeq") as? JsonPrimitive)?.longOrNull ?: 1L,
+            ledgerExtra = JsonObject(ledgerObj?.filterKeys { it !in LEDGER_KNOWN } ?: emptyMap()),
+            loadedVersion = version.coerceAtLeast(1),
         )
     }
 
@@ -101,6 +123,10 @@ object RecordingsCodec {
         out["schedules"] = JsonArray(doc.schedules.map { row(it, RecordingSchedule.serializer()) })
         out["series"] = JsonArray(doc.series.map { row(it, SeriesRule.serializer()) })
         out["recordings"] = JsonArray(doc.recordings.map { row(it, Recording.serializer()) })
+        val ledger = LinkedHashMap<String, JsonElement>(doc.ledgerExtra)
+        ledger["nextSeq"] = JsonPrimitive(doc.ledgerNextSeq)
+        ledger["entries"] = JsonArray(doc.ledger.map { row(it, FireEntry.serializer()) })
+        out["ledger"] = JsonObject(ledger)
         return json.encodeToString(JsonObject.serializer(), JsonObject(out))
     }
 

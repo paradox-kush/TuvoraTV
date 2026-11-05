@@ -4,6 +4,11 @@ import com.nuvio.tv.core.recordings.api.CaptureMode
 import com.nuvio.tv.core.recordings.api.RecordingCatchUp
 import com.nuvio.tv.core.recordings.api.RecordingProblem
 import com.nuvio.tv.core.recordings.api.RecordingStatus
+import com.nuvio.tv.core.recordings.internal.FireEntry
+import com.nuvio.tv.core.recordings.internal.FireLedgerState
+import com.nuvio.tv.core.recordings.internal.FireOutcome
+import com.nuvio.tv.core.recordings.internal.FireState
+import com.nuvio.tv.core.recordings.internal.RecordingFireLedger
 import com.nuvio.tv.core.recordings.internal.RecordingsCodec
 import com.nuvio.tv.core.recordings.internal.RecordingsDocument
 import com.nuvio.tv.core.recordings.internal.StoredRow
@@ -16,6 +21,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -41,13 +47,13 @@ class RecordingsCodecTest {
         assertEquals("schedules", doc.scheduleValues, back.scheduleValues)
         assertEquals("series", doc.seriesValues, back.seriesValues)
         assertEquals("recordings", doc.recordingValues, back.recordingValues)
-        assertEquals("version", 1, back.schemaVersion)
+        assertEquals("version", 2, back.schemaVersion)
     }
 
     @Test
     fun `the encoded document names its schemaVersion and the three lists`() {
         val obj = parse(RecordingsCodec.encode(fullDoc()))
-        assertEquals(1, obj.getValue("schemaVersion").jsonPrimitive.int)
+        assertEquals(2, obj.getValue("schemaVersion").jsonPrimitive.int)
         assertEquals(2, obj.getValue("schedules").jsonArray.size)
         assertEquals(1, obj.getValue("series").jsonArray.size)
         assertEquals(1, obj.getValue("recordings").jsonArray.size)
@@ -113,22 +119,46 @@ class RecordingsCodecTest {
 
     @Test
     fun `a higher schemaVersion is read and kept and no row is dropped`() {
-        val v2 = parse(RecordingsCodec.encode(fullDoc())).let { JsonObject(it + ("schemaVersion" to JsonPrimitive(2))) }.toString()
-        val doc = assertNotNull(RecordingsCodec.decode(v2))
-        assertEquals(2, doc.schemaVersion)
+        val v3 = parse(RecordingsCodec.encode(fullDoc())).let { JsonObject(it + ("schemaVersion" to JsonPrimitive(3))) }.toString()
+        val doc = assertNotNull(RecordingsCodec.decode(v3))
+        assertEquals(3, doc.schemaVersion)
         assertEquals(2, doc.schedules.size)
         assertEquals(1, doc.recordings.size)
         val out = parse(RecordingsCodec.encode(doc))
-        assertEquals("an older writer must not downgrade the file", 2, out.getValue("schemaVersion").jsonPrimitive.int)
+        assertEquals("an older writer must not downgrade the file", 3, out.getValue("schemaVersion").jsonPrimitive.int)
         assertEquals(2, out.getValue("schedules").jsonArray.size)
     }
 
     @Test
-    fun `a missing schemaVersion is legacy and is read as 1`() {
+    fun `a missing schemaVersion is legacy 1 and is written back as the current version`() {
         val doc = assertNotNull(RecordingsCodec.decode("""{"schedules":[],"series":[],"recordings":[]}"""))
-        assertEquals(1, doc.schemaVersion)
-        assertEquals(1, parse(RecordingsCodec.encode(doc)).getValue("schemaVersion").jsonPrimitive.int)
+        assertEquals("what the file said", 1, doc.loadedVersion)
+        assertEquals(2, parse(RecordingsCodec.encode(doc)).getValue("schemaVersion").jsonPrimitive.int)
     }
+
+    @Test
+    fun `the fire ledger lives inside the document and round trips`() {
+        val entry = FireEntry("s1", FireState.RUNNING, "s1#4", 7L)
+        val doc = fullDoc().withLedger(FireLedgerState(listOf(entry), nextSeq = 5))
+        val back = assertNotNull(RecordingsCodec.decode(RecordingsCodec.encode(doc)))
+        assertEquals(FireLedgerState(listOf(entry), 5), back.ledgerState)
+    }
+
+    @Test
+    fun `unknown ledger fields survive a rewrite`() {
+        val text = """{"schemaVersion":2,"schedules":[],"series":[],"recordings":[],
+            "ledger":{"nextSeq":3,"futureLedgerKey":{"a":1},
+              "entries":[{"scheduleId":"s1","state":"RUNNING","token":"s1#2","claimedAtElapsedMs":9,"futureEntryField":"keep"}]}}"""
+        val doc = assertNotNull(RecordingsCodec.decode(text))
+        val rewritten = doc.withLedger(RecordingFireLedger(doc.ledgerState).also { it.release("s1#2", FireOutcome.DONE) }.snapshot())
+        val ledger = parse(RecordingsCodec.encode(rewritten)).getValue("ledger").jsonObject
+        assertEquals("ledger-level field", 1, ledger.getValue("futureLedgerKey").jsonObject.getValue("a").jsonPrimitive.int)
+        val entry = ledger.getValue("entries").jsonArray[0].jsonObject
+        assertEquals("entry-level field", "keep", entry.getValue("futureEntryField").jsonPrimitive.content)
+        assertEquals("and the update still lands", "DONE", entry.getValue("state").jsonPrimitive.content)
+        assertEquals(3L, ledger.getValue("nextSeq").jsonPrimitive.long)
+    }
+
 
     @Test
     fun `a row that does not decode is kept verbatim`() {
