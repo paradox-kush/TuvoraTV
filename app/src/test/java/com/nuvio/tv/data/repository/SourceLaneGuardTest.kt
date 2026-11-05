@@ -115,13 +115,11 @@ class SourceLaneGuardTest {
                 finally { server.finish() }
             }
             val plugin = lane()
-            launch { // plugin lane: completion callback AND catch AND finally all report; slowest, still sends
-                try {
-                    SourceLaneGuard.bounded<Unit>(deadlineMs = null) {
-                        try { throw CancellationException("plugin side") } finally { plugin.finish() }
-                    }
-                } catch (e: Exception) { if (e is CancellationException) throw e; failures += e; plugin.finish() }
-                finally { plugin.finish() }
+            launch { // the production plugin-lane runner: failure reported once, completion once
+                runPluginLane("fallback", { failures += IllegalStateException(it) }, { plugin.finish() }) {
+                    throw CancellationException("plugin side")
+                }
+                plugin.finish() // the outer path also reports done
             }
             val slow = lane()
             launch { // a healthy, slower lane: its result must not hit a channel closed early by double counting
@@ -131,8 +129,44 @@ class SourceLaneGuardTest {
             }
         }
         assertEquals(3, failures.size)
+        assertTrue(failures.any { it.message == "plugin side" })
         assertEquals(total, done.get())
         assertEquals("late", channel.tryReceive().getOrNull())
         assertTrue(channel.trySend("x").isFailure) // closed once, after all lanes
+    }
+
+    @Test
+    fun aPluginSideFailureIsReportedOnceAndACompleteLaneIsCountedOnce() = runTest {
+        val details = mutableListOf<String>()
+        var completed = 0
+        runPluginLane("fallback", { details += it }, { completed++ }) { throw java.io.IOException("scraper blew up") }
+        assertEquals(listOf("scraper blew up"), details)
+        assertEquals(1, completed)
+        details.clear(); completed = 0
+        runPluginLane("fallback", { details += it }, { completed++ }) { throw IllegalStateException() }
+        assertEquals(listOf("fallback"), details)
+    }
+
+    @Test
+    fun aPluginLaneThatReturnsNoResultsIsNotAFailure() = runTest {
+        val details = mutableListOf<String>()
+        var completed = 0
+        runPluginLane("fallback", { details += it }, { completed++ }) { /* every scraper answered empty */ }
+        assertTrue(details.isEmpty())
+        assertEquals(1, completed)
+    }
+
+    @Test
+    fun theCallersCancellationLeavesAPluginLaneWithoutAFailureRecord() = runTest {
+        val details = mutableListOf<String>()
+        var completed = 0
+        val job = launch {
+            runPluginLane("fallback", { details += it }, { completed++ }) { delay(10_000) }
+        }
+        runCurrent()
+        job.cancel()
+        job.join()
+        assertTrue(details.isEmpty())
+        assertEquals(1, completed)
     }
 }

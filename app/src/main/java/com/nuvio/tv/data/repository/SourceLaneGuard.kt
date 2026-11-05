@@ -60,3 +60,26 @@ class OnceLane(private val onFinish: () -> Unit) {
         if (done.compareAndSet(false, true)) onFinish()
     }
 }
+
+/**
+ * The local-plugin lane's ending rules, shared by production and its test: a plugin-side failure
+ * (including a foreign CancellationException) is reported once through [onFailure]; a lane that simply
+ * returns no results reports nothing; only the caller's own cancellation propagates. [onComplete] runs
+ * exactly when the lane ends, whichever way.
+ */
+suspend fun runPluginLane(
+    fallbackDetail: String,
+    onFailure: (String) -> Unit,
+    onComplete: () -> Unit,
+    body: suspend () -> Unit
+) {
+    try {
+        body()
+    } catch (e: Exception) {
+        // Only the caller leaving propagates; a plugin-side cancellation is a failure of this lane.
+        if (e is CancellationException) currentCoroutineContext().ensureActive()
+        onFailure(e.message ?: fallbackDetail)
+    } finally {
+        onComplete()
+    }
+}
