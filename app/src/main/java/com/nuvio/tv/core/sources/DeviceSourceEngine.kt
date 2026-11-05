@@ -5,6 +5,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -13,6 +15,30 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
+
+/**
+ * The device-source guard refused a request: the source is turned off on this device, or the device's
+ * choices are not known yet. A [CancellationException] so every existing "the work was cancelled" path
+ * keeps its meaning, but a type of its own so callers can tell it from a real cancellation and from a
+ * network failure (B224: it used to read as "Couldn't reach the server"). Carries only the source [kind]
+ * and the engine [mode] - never a host, id or URL.
+ */
+class SourceDisabledOnDeviceException(val kind: String, val mode: String) :
+    CancellationException("Source disabled on this device")
+
+/**
+ * Why a request reaches a source. [DISCOVERY] (the default) is playback and catalog use: it needs the
+ * device's explicit permission. [VERIFY] is the add/edit form's live check of a playlist the user is typing in
+ * and [INSPECT] is a read-only account lookup the user opened (expiry, connections). Neither can ENABLE
+ * anything - they only decide whether one request may be made - and VERIFY still refuses a source this
+ * device knows to be off.
+ */
+enum class DeviceSourceAccess { DISCOVERY, VERIFY, INSPECT }
+
+/** Carries the [DeviceSourceAccess] of the current request through the call stack. */
+class DeviceSourceAccessElement(val access: DeviceSourceAccess) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<DeviceSourceAccessElement>
+}
 
 interface DevicePreferenceStorage {
     fun read(): String?
@@ -68,11 +94,15 @@ class DeviceSourceEngine(
     private val automaticSetupName: String? = null,
     // No longer changes the outcome (every device sets itself up); kept so callers and old tests compile.
     @Suppress("unused") private val existingInstallation: Boolean = false,
+    // One line per refusal (source kind + engine mode; no host). Injected so the engine stays pure.
+    private val onRefused: (kind: String, mode: String) -> Unit = { _, _ -> },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
     private val network = Mutex()
+    private fun readDisk() = runCatching { store.read()?.let { json.decodeFromString<DevicePreferenceDisk>(it) } ?: DevicePreferenceDisk() }
     private val loaded = runCatching { store.read()?.let { json.decodeFromString<DevicePreferenceDisk>(it) } ?: DevicePreferenceDisk() }
+    private var storageReadable = loaded.isSuccess
     private val restored = loaded.getOrDefault(DevicePreferenceDisk())
     private val mutable = MutableStateFlow(DeviceSourceView(restored, mode = when {
         loaded.isFailure -> "storage_error"
@@ -126,6 +156,23 @@ class DeviceSourceEngine(
             .map { it.copy(accountEnabled = true, storageProfile = profile) }
     }
 
+    /** Whether a request of [access] may reach this source now. Pure: it never changes a choice. */
+    fun permits(access: DeviceSourceAccess, profile: Int, kind: String, ref: String): Boolean = when (access) {
+        DeviceSourceAccess.DISCOVERY -> allows(profile, kind, ref)
+        DeviceSourceAccess.INSPECT -> true
+        // An unsaved playlist has no device choice, and a not-ready engine cannot say; only a source this
+        // device positively knows to be off is refused.
+        DeviceSourceAccess.VERIFY -> state.value.mode == "unavailable" ||
+            knownSources(profile).filter { it.kind == kind && it.sourceRef == ref }.all { it.accountEnabled && choice(profile, it.sourceId) }
+    }
+
+    /** Throws the typed refusal (and reports it once). */
+    fun refuse(kind: String): Nothing {
+        val mode = state.value.mode
+        onRefused(kind, mode)
+        throw SourceDisabledOnDeviceException(kind, mode)
+    }
+
     fun allows(profile: Int, kind: String, ref: String): Boolean {
         val view = state.value
         if (view.mode == "unavailable") return true // Old/self-hosted backend: existing behavior, no false controls.
@@ -135,15 +182,19 @@ class DeviceSourceEngine(
     }
 
     /** Cancel discovery for a disabled source, including requests already in flight. */
-    suspend fun <T> guarded(profile: Int, kind: String, ref: String, block: suspend () -> T): T = kotlinx.coroutines.coroutineScope {
-        if (!allows(profile,kind,ref)) throw CancellationException("Source disabled on this device")
+    suspend fun <T> guarded(
+        profile: Int, kind: String, ref: String,
+        access: DeviceSourceAccess = DeviceSourceAccess.DISCOVERY, block: suspend () -> T,
+    ): T = kotlinx.coroutines.coroutineScope {
+        if (!permits(access,profile,kind,ref)) refuse(kind)
+        if (access == DeviceSourceAccess.INSPECT) return@coroutineScope block()
         val task = async { block() }
         val watcher = launch {
             state.collect {
-                if (!allows(profile,kind,ref)) task.cancel(CancellationException("Source disabled on this device"))
+                if (!permits(access,profile,kind,ref)) task.cancel(SourceDisabledOnDeviceException(kind, state.value.mode))
             }
         }
-        try { task.await().also { if (!allows(profile,kind,ref)) throw CancellationException("Source disabled on this device") } }
+        try { task.await().also { if (!permits(access,profile,kind,ref)) refuse(kind) } }
         finally { watcher.cancel() }
     }
 
@@ -225,7 +276,23 @@ class DeviceSourceEngine(
         refresh(profile)
     }
 
+    /**
+     * A storage read that failed at start-up (keychain not yet readable before first unlock, a transient
+     * I/O error) is retried on the next refresh instead of sticking until relaunch (B224).
+     */
+    private fun rereadStorageIfFailed() = synchronized(lock) {
+        if (mutable.value.mode != "storage_error") return@synchronized
+        val disk = readDisk().getOrNull() ?: return@synchronized
+        storageReadable = true
+        update(mutable.value.copy(disk = disk, message = null, mode = when {
+            localOnly -> "local"
+            disk.binding != null && disk.cursor != null -> "ready"
+            else -> "loading"
+        }))
+    }
+
     suspend fun refresh(profile: Int, refreshSources: Boolean = true, forceDelta: Boolean = true) = network.withLock {
+        rereadStorageIfFailed()
         if (localOnly) return@withLock
         val disk = state.value.disk
         if (!refreshSources && !forceDelta && !DevicePreferenceRefreshPolicy.hasLocalWork(
@@ -249,7 +316,7 @@ class DeviceSourceEngine(
                 // A device with no setup of its own uses the account's sources without asking (owner
                 // decision 2026-11-02), even when other devices saved setups: restoring one stays
                 // available under "Sources on this device". Never guess by device name.
-                if (b == null && loaded.isSuccess && !automaticSetupName.isNullOrBlank()) {
+                if (b == null && storageReadable && !automaticSetupName.isNullOrBlank()) {
                     val automatic = SavedDeviceBinding(uuid(), automaticSetupName.trim(), credential(), registration = "create")
                     commit { it.copy(binding = automatic) } // Persist identity before the network for safe retries.
                     b = registerBinding(automatic)

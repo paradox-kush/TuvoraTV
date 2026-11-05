@@ -389,7 +389,7 @@ class XtreamSettingsViewModel @Inject constructor(
         if (panel != null) {
             viewModelScope.launch {
                 _uiState.update { it.copy(isValidating = true, error = null) }
-                val verified = client.verify(panel).isSuccess
+                val verified = com.nuvio.tv.core.sources.DeviceSources.verifying { client.verify(panel) }.isSuccess
                 _uiState.update { it.copy(isValidating = false) }
                 if (verified) {
                     if (persistOrError { store.upsert(accountToStore(panel)) }) {
@@ -517,7 +517,7 @@ class XtreamSettingsViewModel @Inject constructor(
         }
         viewModelScope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
-            val result = client.verify(account)
+            val result = com.nuvio.tv.core.sources.DeviceSources.verifying { client.verify(account) }
             _uiState.update { it.copy(isValidating = false) }
             result.onSuccess {
                 if (persistOrError { store.upsert(accountToStore(account)) }) {
@@ -599,7 +599,7 @@ class XtreamSettingsViewModel @Inject constructor(
             // Options-only edit (name/EPG/DNS/refresh) — nothing about how we reach the provider
             // changed, so it is not checked at all. See sameConnectionAs.
             val result =
-                if (!PlaylistEditVerifyPolicy.needsVerify(old, account)) Result.success(Unit) else client.verify(account)
+                if (!PlaylistEditVerifyPolicy.needsVerify(old, account)) Result.success(Unit) else com.nuvio.tv.core.sources.DeviceSources.verifying { client.verify(account) }
             _uiState.update { it.copy(isValidating = false) }
             // B60 decision (2026-09-27): a failed check saves anyway and shows the reason on the row —
             // the edit that fails a check is usually a provider moving domains, the one users must keep.
@@ -1037,9 +1037,32 @@ class XtreamSettingsViewModel @Inject constructor(
                         _uiState.update { it.copy(accountStatus = it.accountStatus + (account.id to full)) }
                     }
                 }
-                .onFailure {
+                .onFailure { e ->
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     _uiState.update { st -> st.copy(accountInfoFailed = st.accountInfoFailed + account.id) }
                     if (counts.isEmpty()) statusRequests.remove(account.id)   // silent; retry later
+                }
+        }
+    }
+
+    /**
+     * The playlist DETAILS page's one read-only lookup (B171): the user opened this playlist, so its panel is
+     * asked for expiry/connections even when the playlist is turned off on this device. Never called by the
+     * list rows ([ensureAccountStatus]); one request per open, no timer.
+     */
+    fun inspectAccountStatus(account: XtreamAccount) {
+        if (account.isM3UBacked()) return
+        viewModelScope.launch {
+            com.nuvio.tv.core.sources.DeviceSources.inspecting { clientFactory.clientFor(account).accountInfo(account) }
+                .onSuccess { info ->
+                    _uiState.update { it.copy(accountInfo = it.accountInfo + (account.id to info), accountInfoFailed = it.accountInfoFailed - account.id) }
+                    info.toStatusLine()?.let { line ->
+                        _uiState.update { st -> st.copy(accountStatus = st.accountStatus + (account.id to ((st.catalogCounts[account.id]?.let { "$it · " }.orEmpty()) + line))) }
+                    }
+                }
+                .onFailure { e ->
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    _uiState.update { st -> st.copy(accountInfoFailed = st.accountInfoFailed + account.id) }
                 }
         }
     }
