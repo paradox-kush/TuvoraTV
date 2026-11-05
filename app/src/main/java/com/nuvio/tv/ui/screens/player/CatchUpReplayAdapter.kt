@@ -144,12 +144,38 @@ internal class CatchUpReplayAdapter(
      */
     fun seekTargetMs(targetMs: Long, nowMs: Long): Long {
         if (!isCatchUp || leftCatchUp) return targetMs
-        val c = continuation
-        // A continuing replay may reach anywhere in the window it asked for, not just the first show.
-        val start = c?.sessionStartMs ?: programmeStartMs ?: return targetMs
-        val end = c?.windowEndMs ?: programmeEndMs ?: return targetMs
+        // A continuing replay is clamped to the programme being watched (the bar's span), not the
+        // whole window it asked for; skipping on re-bases when the playhead moves to the next show.
+        replayBar(nowMs)?.let { return CatchUpPlaybackPolicy.clampPlayerSeekMs(targetMs, it) }
+        val start = programmeStartMs ?: return targetMs
+        val end = programmeEndMs ?: return targetMs
         return CatchUpPlaybackPolicy.clampSeekMs(targetMs, start, end, nowMs)
     }
+
+    /** The programme-spanning bar of a continuing replay; null for any other playback (no re-basing). */
+    private fun replayBar(nowMs: Long): CatchUpPlaybackPolicy.ReplayBar? {
+        val c = continuation ?: return null
+        if (!isCatchUp || leftCatchUp) return null
+        return CatchUpPlaybackPolicy.replayBar(c.sessionStartMs, c.windowEndMs, c.playing.startMs, c.playing.endMs, nowMs)
+    }
+
+    /** What the seek bar shows for a player reading; [playerDurationMs] unknown (<= 0) stays unknown. */
+    data class BarReading(val positionMs: Long, val durationMs: Long, val bufferedMs: Long, val programmeLengthMs: Long?)
+
+    fun barReading(playerPositionMs: Long, playerDurationMs: Long, playerBufferedMs: Long, nowMs: Long): BarReading {
+        val bar = replayBar(nowMs)
+            ?: return BarReading(playerPositionMs, playerDurationMs, playerBufferedMs, null)
+        return BarReading(
+            positionMs = CatchUpPlaybackPolicy.barPositionMs(playerPositionMs, bar),
+            durationMs = CatchUpPlaybackPolicy.barDurationMs(playerDurationMs, bar),
+            bufferedMs = CatchUpPlaybackPolicy.barPositionMs(playerBufferedMs, bar),
+            programmeLengthMs = bar.programmeLengthMs,
+        )
+    }
+
+    /** A position on the bar -> the player's own; unchanged when there is no re-based bar. */
+    fun playerPositionMs(barPositionMs: Long, nowMs: Long): Long =
+        replayBar(nowMs)?.let { CatchUpPlaybackPolicy.playerPositionMs(barPositionMs, it) } ?: barPositionMs
 
     fun routeError(): ErrorRoute =
         if (isCatchUp && !leftCatchUp && !played) ErrorRoute.DIALECT_WALK_FIRST else ErrorRoute.PLAYER_RECOVERY

@@ -62,4 +62,51 @@ object CatchUpPlaybackPolicy {
 
     fun clampSeekMs(targetMs: Long, programmeStartMs: Long, programmeEndMs: Long, nowMs: Long): Long =
         targetMs.coerceIn(0L, maxSeekMs(programmeStartMs, programmeEndMs, nowMs))
+
+    /**
+     * The seek bar of a replay that asked for a continuation window: it spans the programme being
+     * watched, not the whole window. Positions are the player's own, which count from the start of
+     * the window ([streamStartMs], wall clock).
+     *
+     * @property originMs where the programme starts in the player's timeline (bar position 0)
+     * @property lengthMs how far the bar reaches: the programme, stopping [LIVE_EDGE_GUARD_MS] short of live while it airs
+     * @property programmeLengthMs the programme's own length, for the "Ends at" label (not guarded)
+     */
+    data class ReplayBar(val originMs: Long, val lengthMs: Long, val programmeLengthMs: Long)
+
+    /**
+     * [programmeEndMs] at or before the window start (a stale programme after a restart) falls back
+     * to [windowEndMs]: the bar then spans the rest of the window rather than collapsing to nothing.
+     */
+    fun replayBar(
+        streamStartMs: Long,
+        windowEndMs: Long,
+        programmeStartMs: Long,
+        programmeEndMs: Long,
+        nowMs: Long,
+    ): ReplayBar {
+        val origin = (programmeStartMs - streamStartMs).coerceAtLeast(0L)
+        val start = streamStartMs + origin
+        val end = if (programmeEndMs > start) programmeEndMs else windowEndMs
+        return ReplayBar(
+            originMs = origin,
+            lengthMs = maxSeekMs(start, end, nowMs),
+            programmeLengthMs = (end - start).coerceAtLeast(0L),
+        )
+    }
+
+    /** Player position -> bar position. */
+    fun barPositionMs(playerMs: Long, bar: ReplayBar): Long = (playerMs - bar.originMs).coerceIn(0L, bar.lengthMs)
+
+    /** Bar position -> player position. */
+    fun playerPositionMs(barMs: Long, bar: ReplayBar): Long = bar.originMs + barMs.coerceAtLeast(0L)
+
+    /** The bar's length; an unknown duration (<= 0) stays unknown so the bar still falls back to NO_SCRUB. */
+    fun barDurationMs(playerDurationMs: Long, bar: ReplayBar): Long =
+        if (playerDurationMs <= 0L) playerDurationMs
+        else minOf(bar.lengthMs, (playerDurationMs - bar.originMs).coerceAtLeast(0L))
+
+    /** A player-space seek target clamped to the bar. */
+    fun clampPlayerSeekMs(playerMs: Long, bar: ReplayBar): Long =
+        playerMs.coerceIn(bar.originMs, bar.originMs + bar.lengthMs)
 }

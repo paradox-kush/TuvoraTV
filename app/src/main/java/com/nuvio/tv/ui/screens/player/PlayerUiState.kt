@@ -280,7 +280,9 @@ data class PlaybackTimelineState(
     /** True for live windows (Live TV / live HLS), not VOD HLS. */
     val isLive: Boolean = false,
     /** Wall-clock time spent playing the current live stream. */
-    val watchedDurationMs: Long = 0L
+    val watchedDurationMs: Long = 0L,
+    /** A re-based catch-up bar: the programme's own length, which "Ends at" counts down. Null elsewhere. */
+    val programmeLengthMs: Long? = null
 )
 
 data class TrackInfo(

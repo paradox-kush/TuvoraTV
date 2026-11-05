@@ -404,6 +404,8 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     if (playerDuration > lastKnownDuration) {
                         lastKnownDuration = playerDuration
                     }
+                    // Before the timeline is published, so a re-based bar never shows one stale frame.
+                    followCatchUpPlayhead(pos)
                     val displayPosition = pendingPreviewSeekPosition ?: pos
                     val playingForWatchClock = playingNow && !cacheBuffering
                     mpvDurationGrowth = LivePlaybackUiPolicy.nextDurationGrowth(
@@ -420,7 +422,6 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         playerReportsLive = sample.liveStream || mpvDurationGrowth.grew,
                         isPlaying = playingForWatchClock
                     )
-                    followCatchUpPlayhead(pos)
                     // Prefer the largest known duration; MPV can report a shorter one transiently.
                     // The playerDuration check stays: lastKnownDuration can still hold the previous
                     // stream's value until it resets.
@@ -476,6 +477,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                 if (playerDuration > lastKnownDuration) {
                     lastKnownDuration = playerDuration
                 }
+                followCatchUpPlayhead(pos)
                 val displayPosition = pendingPreviewSeekPosition ?: pos
                 publishPlaybackTimeline(
                     currentPosition = displayPosition,
@@ -484,7 +486,6 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     playerReportsLive = player.isCurrentMediaItemLive,
                     isPlaying = player.isPlaying
                 )
-                followCatchUpPlayhead(pos)
                 playbackAnalyticsDiagnostics.recordProgressSnapshot(
                     player = player,
                     hasRenderedFirstFrame = hasRenderedFirstFrame,
@@ -1440,7 +1441,7 @@ fun PlayerRuntimeController.onEvent(
                 SeekParameters.NEXT_SYNC
             }
             seekPlaybackTo(target, seekParameters)
-            updatePlaybackTimeline(currentPosition = target)
+            updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(target))
             scheduleProgressSyncAfterSeek()
             publishPartyPlayback(positionMs = target)
             if (_uiState.value.showControls) {
@@ -1457,7 +1458,7 @@ fun PlayerRuntimeController.onEvent(
                 .coerceAtLeast(0L)
                 .coerceAtMost(maxDuration))
             pendingPreviewSeekPosition = target
-            updatePlaybackTimeline(currentPosition = target)
+            updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(target))
             if (_uiState.value.showControls) {
                 showControlsTemporarily()
             } else {
@@ -1471,11 +1472,11 @@ fun PlayerRuntimeController.onEvent(
                 val target = if (isPartyControlLocked) ownSeekTarget(requested) else requested
                 if (target == null) {
                     pendingPreviewSeekPosition = null
-                    updatePlaybackTimeline(currentPosition = currentPlaybackPositionMs() ?: 0L)
+                    updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(currentPlaybackPositionMs() ?: 0L))
                     return
                 }
                 seekPlaybackTo(target, SeekParameters.CLOSEST_SYNC)
-                updatePlaybackTimeline(currentPosition = target)
+                updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(target))
                 pendingPreviewSeekPosition = null
                 scheduleProgressSyncAfterSeek()
                 publishPartyPlayback(positionMs = target)
@@ -1489,10 +1490,10 @@ fun PlayerRuntimeController.onEvent(
         is PlayerEvent.OnSeekTo -> {
             if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
-            val requestedPosition = catchUpSeekTargetMs(event.position)
+            val requestedPosition = catchUpSeekTargetMs(catchUpPlayerPositionMs(event.position))
             val target = if (isPartyControlLocked) ownSeekTarget(requestedPosition) ?: return else requestedPosition
             seekPlaybackTo(target, SeekParameters.CLOSEST_SYNC)
-            updatePlaybackTimeline(currentPosition = target)
+            updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(target))
             scheduleProgressSyncAfterSeek()
             publishPartyPlayback(positionMs = target)
             if (showPlaybackControls) {

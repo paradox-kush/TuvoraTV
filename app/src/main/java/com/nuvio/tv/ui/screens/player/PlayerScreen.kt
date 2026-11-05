@@ -3628,7 +3628,8 @@ private fun PlayerClockOverlay(
     currentPosition: Long,
     duration: Long,
     playbackSpeed: Float,
-    isLive: Boolean = false
+    isLive: Boolean = false,
+    programmeLengthMs: Long? = null
 ) {
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     val context = LocalContext.current
@@ -3644,7 +3645,8 @@ private fun PlayerClockOverlay(
     }
 
     val effectiveSpeed = playbackSpeed.takeIf { it > 0f } ?: 1f
-    val remainingMediaMs = (duration - currentPosition).coerceAtLeast(0L)
+    // A re-based catch-up bar ends where the programme does, even when its seekable end stops short of live.
+    val remainingMediaMs = ((programmeLengthMs ?: duration) - currentPosition).coerceAtLeast(0L)
     val remainingMs = kotlin.math.ceil(remainingMediaMs.toDouble() / effectiveSpeed.toDouble()).toLong()
     val endTimeText = if (duration > 0L) {
         timeFormatter.format(Date(nowMs + remainingMs))
@@ -3683,7 +3685,8 @@ private fun PlayerClockOverlayHost(viewModel: PlayerViewModel, playbackSpeed: Fl
         currentPosition = playbackTimeline.currentPosition,
         duration = playbackTimeline.duration,
         playbackSpeed = playbackSpeed,
-        isLive = playbackTimeline.isLive
+        isLive = playbackTimeline.isLive,
+        programmeLengthMs = playbackTimeline.programmeLengthMs
     )
 }
 

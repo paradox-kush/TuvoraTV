@@ -383,7 +383,8 @@ class PlayerRuntimeController(
         duration: Long = _playbackTimeline.value.duration,
         bufferedPosition: Long = _playbackTimeline.value.bufferedPosition,
         isLive: Boolean = _playbackTimeline.value.isLive,
-        watchedDurationMs: Long = _playbackTimeline.value.watchedDurationMs
+        watchedDurationMs: Long = _playbackTimeline.value.watchedDurationMs,
+        programmeLengthMs: Long? = _playbackTimeline.value.programmeLengthMs
     ) {
         if (_uiState.value.isLive != isLive) {
             _uiState.update { it.copy(isLive = isLive) }
@@ -394,7 +395,8 @@ class PlayerRuntimeController(
                 duration = duration.coerceAtLeast(0L),
                 bufferedPosition = bufferedPosition.coerceAtLeast(0L),
                 isLive = isLive,
-                watchedDurationMs = watchedDurationMs.coerceAtLeast(0L)
+                watchedDurationMs = watchedDurationMs.coerceAtLeast(0L),
+                programmeLengthMs = programmeLengthMs
             )
         }
     }
@@ -420,12 +422,15 @@ class PlayerRuntimeController(
             isPlaying = isPlaying,
             nowElapsedMs = android.os.SystemClock.elapsedRealtime()
         )
+        // A continuing catch-up replay shows the programme being watched, not the window it asked for.
+        val bar = catchUpReplay.barReading(currentPosition, duration, bufferedPosition, System.currentTimeMillis())
         updatePlaybackTimeline(
-            currentPosition = currentPosition,
-            duration = duration,
-            bufferedPosition = bufferedPosition,
+            currentPosition = bar.positionMs,
+            duration = bar.durationMs,
+            bufferedPosition = bar.bufferedMs,
             isLive = isLive,
-            watchedDurationMs = watched
+            watchedDurationMs = watched,
+            programmeLengthMs = bar.programmeLengthMs
         )
     }
 

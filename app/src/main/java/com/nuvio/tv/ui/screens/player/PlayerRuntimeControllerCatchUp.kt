@@ -18,6 +18,14 @@ import kotlinx.coroutines.launch
 internal fun PlayerRuntimeController.catchUpSeekTargetMs(targetMs: Long): Long =
     catchUpReplay.seekTargetMs(targetMs, System.currentTimeMillis())
 
+/** A player position as the seek bar shows it (re-based onto the programme for a continuing replay). */
+internal fun PlayerRuntimeController.catchUpBarPositionMs(playerMs: Long): Long =
+    catchUpReplay.barReading(playerMs, 0L, 0L, System.currentTimeMillis()).positionMs
+
+/** A seek-bar position as the player counts it. */
+internal fun PlayerRuntimeController.catchUpPlayerPositionMs(barMs: Long): Long =
+    catchUpReplay.playerPositionMs(barMs, System.currentTimeMillis())
+
 /** First rendered frame: remember the working URL shape for this account (once per replay). */
 internal fun PlayerRuntimeController.reportCatchUpFirstFrame() {
     if (catchUpReplay.onFirstFrame()) catchUpPort?.onPlayed(contentId)

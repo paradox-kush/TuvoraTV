@@ -84,10 +84,20 @@ class CatchUpContinuationAdapterTest {
     }
 
     @Test
-    fun `seeks may reach into the continuation window not just the first programme`() {
+    fun `seeks stay inside the programme being watched not the whole window`() {
         val a = adapter()
-        assertEquals(2 * hour, a.seekTargetMs(2 * hour, now))
-        assertEquals("past the window stops at it", 3 * hour, a.seekTargetMs(5 * hour, now))
+        assertEquals("inside the programme is untouched", 40 * minute, a.seekTargetMs(40 * minute, now))
+        assertEquals("past the programme stops at its end", hour, a.seekTargetMs(2 * hour, now))
+        assertEquals("past the window too", hour, a.seekTargetMs(5 * hour, now))
+    }
+
+    @Test
+    fun `after moving to the next show seeks clamp to that show`() {
+        val a = adapter()
+        a.onPlayhead(61 * minute, now, next = b)
+        assertEquals("back before B stops at B's start", hour, a.seekTargetMs(10 * minute, now))
+        assertEquals("forward past B stops at B's end", 2 * hour, a.seekTargetMs(2 * hour + 30 * minute, now))
+        assertEquals(90 * minute, a.seekTargetMs(90 * minute, now))
     }
 
     @Test
@@ -95,5 +105,99 @@ class CatchUpContinuationAdapterTest {
         val plain = CatchUpReplayAdapter(isCatchUp = true, programmeStartMs = aStart, programmeEndMs = aEnd)
         assertFalse(plain.needsLookup(2 * hour, now))
         assertEquals(ContinuationAction.None, plain.onPlayhead(2 * hour, now, next = null))
+    }
+}
+
+/** The seek bar of a continuing replay spans the programme, re-based as the playhead moves on. */
+class CatchUpReplayBarTest {
+
+    private val minute = 60_000L
+    private val hour = 60 * minute
+    private val now = 1_710_000_000_000L
+    private val aStart = now - 6 * hour
+    private val aEnd = aStart + 30 * minute
+    private val b = CatchUpProgramme("BBC · B", aEnd, aEnd + hour)
+
+    private fun m3u(start: Long = aStart, end: Long = aEnd, window: Long = start + 3 * hour) =
+        CatchUpReplayAdapter(isCatchUp = true, programmeStartMs = start, programmeEndMs = end).also {
+            it.enableContinuation(sessionStartMs = start, windowEndMs = window, playingEndMs = end)
+        }
+
+    @Test
+    fun `a 30 minute programme in a 3 hour window shows a 30 minute bar`() {
+        val r = m3u().barReading(22_000L, 3 * hour, 5 * minute, now)
+        assertEquals("position", 22_000L, r.positionMs)
+        assertEquals("the bar is the programme, not the window", 30 * minute, r.durationMs)
+        assertEquals("buffered", 5 * minute, r.bufferedMs)
+        assertEquals("Ends at counts the programme", 30 * minute, r.programmeLengthMs)
+    }
+
+    @Test
+    fun `the bar re-bases when the playhead moves to the next programme`() {
+        val a = m3u()
+        a.onPlayhead(31 * minute, now, next = b)
+        val r = a.barReading(45 * minute, 3 * hour, 50 * minute, now)
+        assertEquals("origin is B's start", 15 * minute, r.positionMs)
+        assertEquals("length is B's", hour, r.durationMs)
+        assertEquals(hour, r.programmeLengthMs)
+        assertEquals("bar position maps back to the player", 45 * minute, a.playerPositionMs(15 * minute, now))
+    }
+
+    @Test
+    fun `position never leaves the bar even before the next show is looked up`() {
+        val r = m3u().barReading(33 * minute, 3 * hour, 33 * minute, now)
+        assertEquals(30 * minute, r.positionMs)
+    }
+
+    @Test
+    fun `a programme still airing stops the bar short of live but Ends at uses the programme`() {
+        val start = now - 30 * minute
+        val end = now + 30 * minute
+        val r = m3u(start = start, end = end, window = now - 30_000L).barReading(10 * minute, 30 * minute, 10 * minute, now)
+        assertEquals(30 * minute - CatchUpPlaybackPolicy.LIVE_EDGE_GUARD_MS, r.durationMs)
+        assertEquals(hour, r.programmeLengthMs)
+    }
+
+    @Test
+    fun `an unknown duration stays unknown so the bar does not pretend to scrub`() {
+        assertEquals(0L, m3u().barReading(0L, 0L, 0L, now).durationMs)
+    }
+
+    @Test
+    fun `a restarted window re-bases to the programme at its start`() {
+        val a = m3u()
+        a.onPlayhead(31 * minute, now, next = b)
+        // The window ran out mid-B; the new one opens 40 min into B.
+        a.restarted(sessionStartMs = b.startMs + 40 * minute, windowEndMs = b.startMs + 3 * hour)
+        val r = a.barReading(5 * minute, 3 * hour, 5 * minute, now)
+        assertEquals("bar starts where the new window does", 5 * minute, r.positionMs)
+        assertEquals("and runs to B's end", 20 * minute, r.durationMs)
+    }
+
+    @Test
+    fun `Xtream and plain replays behave exactly as before`() {
+        val plain = CatchUpReplayAdapter(isCatchUp = true, programmeStartMs = aStart, programmeEndMs = aEnd)
+        val r = plain.barReading(12 * minute, 30 * minute, 20 * minute, now)
+        assertEquals(12 * minute, r.positionMs)
+        assertEquals(30 * minute, r.durationMs)
+        assertEquals(20 * minute, r.bufferedMs)
+        assertEquals("no programme override: Ends at keeps using the duration", null, r.programmeLengthMs)
+        assertEquals("positions pass through", 7 * minute, plain.playerPositionMs(7 * minute, now))
+        assertEquals("seek clamp is the programme's", 30 * minute, plain.seekTargetMs(2 * hour, now))
+        val vod = CatchUpReplayAdapter(isCatchUp = false, programmeStartMs = null, programmeEndMs = null)
+        assertEquals(40 * minute, vod.barReading(40 * minute, hour, hour, now).positionMs)
+    }
+
+    @Test
+    fun `the pure bar arithmetic round-trips`() {
+        val bar = CatchUpPlaybackPolicy.replayBar(
+            streamStartMs = 0L, windowEndMs = 3 * hour, programmeStartMs = hour, programmeEndMs = 2 * hour, nowMs = now,
+        )
+        assertEquals(hour, bar.originMs)
+        assertEquals(hour, bar.lengthMs)
+        assertEquals(15 * minute, CatchUpPlaybackPolicy.barPositionMs(75 * minute, bar))
+        assertEquals(75 * minute, CatchUpPlaybackPolicy.playerPositionMs(15 * minute, bar))
+        assertEquals(hour, CatchUpPlaybackPolicy.clampPlayerSeekMs(0L, bar))
+        assertEquals(2 * hour, CatchUpPlaybackPolicy.clampPlayerSeekMs(5 * hour, bar))
     }
 }
