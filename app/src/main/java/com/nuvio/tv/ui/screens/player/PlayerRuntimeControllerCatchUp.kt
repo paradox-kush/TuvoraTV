@@ -57,6 +57,8 @@ internal fun PlayerRuntimeController.followCatchUpPlayhead(positionMs: Long) {
         catchUpContinuationChecked = true
         port.continuation(contentId)?.let {
             catchUpReplay.enableContinuation(it.programme.startMs, it.windowEndMs, it.programme.endMs)
+            // The continuation state lives exactly as long as this player.
+            catchUpEffects.adopt(port.hold(contentId))
         }
     }
     val nowMs = System.currentTimeMillis()

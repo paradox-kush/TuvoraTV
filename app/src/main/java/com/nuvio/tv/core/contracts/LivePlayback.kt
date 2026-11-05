@@ -56,6 +56,12 @@ interface CatchUpPlaybackPort {
     /** A new replay window starting at [atMs] for a replay whose window ran out; null when none can be built. */
     fun restartAt(contentId: String?, atMs: Long): CatchUpRestart? = null
 
+    /**
+     * Ties this replay's continuation state to the caller: dispose the handle when the player goes away
+     * and the state is dropped with it (the port keeps a small bounded table only as a backstop).
+     */
+    fun hold(contentId: String?): com.nuvio.tv.core.lifecycle.Disposable = com.nuvio.tv.core.lifecycle.Disposable { }
+
     /** The channel's live URL, to rejoin live when the replay reaches the live edge. */
     fun liveUrl(contentId: String?): String? = null
 }

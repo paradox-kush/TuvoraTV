@@ -191,6 +191,7 @@ class PlayerRuntimeController(
     )
     /** Fork: the continuation port was asked once whether this replay follows its playhead. */
     internal var catchUpContinuationChecked = false
+    internal val catchUpEffects = com.nuvio.tv.core.lifecycle.EffectScope { Log.w(TAG, "catch-up teardown failed", it) }
     internal var catchUpLookupJob: kotlinx.coroutines.Job? = null
     internal val initialStreamUrl: String = navigationArgs.streamUrl
     internal val title: String = navigationArgs.title
@@ -856,6 +857,7 @@ class PlayerRuntimeController(
     }
 
     fun onCleared() {
+        catchUpEffects.dispose()
         playerSession.close()
         stopServerPlayback()
         releasePlayer()

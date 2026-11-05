@@ -69,6 +69,8 @@ class IptvLivePlayback @Inject constructor(
             catchUpCoordinator.restartM3u(contentId, atMs, System.currentTimeMillis())
                 ?.let { CatchUpRestart(it.url, it.startMs, it.windowEndMs) }
 
+        override fun hold(contentId: String?) = catchUpCoordinator.hold(contentId)
+
         override fun liveUrl(contentId: String?): String? = catchUpCoordinator.m3uContextFor(contentId)?.liveUrl
     }
 
