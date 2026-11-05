@@ -29,6 +29,49 @@ class GuideM3uCatchUpTest {
         assertEquals(ProgrammeAction.REPLAY, guideActionFor(finished(), channel(true), now, catchUpSupported = true))
     }
 
+    private fun airing() = XtreamProgram("Live show", "", now - 20 * 60_000L, now + 40 * 60_000L, nowPlaying = true)
+
+    @Test
+    fun `the airing programme of an M3U catch-up channel offers Start over and opens the sheet`() {
+        val action = guideActionFor(airing(), channel(true), now, catchUpSupported = true)
+        assertEquals("airing + catch-up channel", ProgrammeAction.START_OVER, action)
+        assertEquals("OK opens the Start over / Watch live sheet", GuideCellIntent.Intent.OPEN_SHEET, GuideCellIntent.forAction(action))
+    }
+
+    @Test
+    fun `the airing programme of a channel without catch-up just plays live`() {
+        val action = guideActionFor(airing(), channel(false), now, catchUpSupported = true)
+        assertEquals(ProgrammeAction.PLAY_LIVE, action)
+        assertEquals(GuideCellIntent.Intent.PLAY_LIVE, GuideCellIntent.forAction(action))
+    }
+
+    @Test
+    fun `a past programme on a channel without catch-up explains itself instead of doing nothing`() {
+        val action = guideActionFor(finished(), channel(false), now, catchUpSupported = true)
+        assertEquals(ProgrammeAction.NONE, action)
+        assertTrue(GuideCellIntent.explainsNoRecording(action, finished(), now))
+        // The future, a degenerate row, and a replayable programme say nothing.
+        val future = XtreamProgram("Later", "", now + hour, now + 2 * hour, nowPlaying = false)
+        assertFalse("future", GuideCellIntent.explainsNoRecording(ProgrammeAction.NONE, future, now))
+        val degenerate = XtreamProgram("Bad", "", 0L, 0L, nowPlaying = false)
+        assertFalse("degenerate row", GuideCellIntent.explainsNoRecording(ProgrammeAction.NONE, degenerate, now))
+        assertFalse("replayable", GuideCellIntent.explainsNoRecording(ProgrammeAction.REPLAY, finished(), now))
+    }
+
+    @Test
+    fun `the channel menu offers Start over for the airing programme of an M3U catch-up channel only`() {
+        val rows = listOf(finished(), airing())
+        fun candidate(ch: GuideChannel) =
+            GuideCellIntent.startOverCandidate(rows, now) { guideActionFor(it, ch, now, catchUpSupported = true) }
+        assertEquals("catch-up channel", airing(), candidate(channel(true)))
+        assertEquals("no catch-up", null, candidate(channel(false)))
+        assertEquals(
+            "nothing airing",
+            null,
+            GuideCellIntent.startOverCandidate(listOf(finished()), now) { guideActionFor(it, channel(true), now, true) },
+        )
+    }
+
     @Test
     fun `a channel without catch-up attributes offers no replay`() {
         assertEquals(ProgrammeAction.NONE, guideActionFor(finished(), channel(false), now, catchUpSupported = true))

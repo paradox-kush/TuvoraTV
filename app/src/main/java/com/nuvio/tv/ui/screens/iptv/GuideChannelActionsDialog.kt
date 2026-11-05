@@ -29,6 +29,8 @@ internal fun GuideChannelActionsDialog(
     favorite: Boolean,
     actions: List<GuideChannelMenuPolicy.Action>,
     onFavorite: () -> Unit,
+    /** Non-null when the channel keeps an archive and a programme is airing: replay it from its start. */
+    onStartOver: (() -> Unit)? = null,
     onAction: (GuideChannelMenuPolicy.Action) -> Unit,
     onGuideSize: () -> Unit,
     onDismiss: () -> Unit,
@@ -38,6 +40,9 @@ internal fun GuideChannelActionsDialog(
     NuvioDialog(onDismiss = onDismiss, title = channelName, width = 420.dp, scrollable = true) {
         Button(onClick = onFavorite, modifier = Modifier.fillMaxWidth().focusRequester(first)) {
             Text(stringResource(if (favorite) R.string.iptv_guide_remove_favorite else R.string.iptv_guide_add_favorite))
+        }
+        onStartOver?.let {
+            Button(onClick = it, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.iptv_guide_start_over)) }
         }
         actions.filter { it != GuideChannelMenuPolicy.Action.REMOVE_FAVORITE }.forEach { action ->
             Button(onClick = { onAction(action) }, modifier = Modifier.fillMaxWidth()) {

@@ -1571,6 +1571,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
     }
 
+    /** OK on an aired programme the channel kept no recording of: say so instead of doing nothing. */
+    fun explainNoRecording(programme: XtreamProgram) {
+        _uiState.update { it.copy(actionError = GuideReplayMessages.noRecording(programme.title)) }
+    }
+
     /** The screen navigated; drop the one-shot so a recomposition cannot launch it twice. */
     fun consumeReplayLaunch() {
         if (_uiState.value.replayLaunch != null) _uiState.update { it.copy(replayLaunch = null) }
