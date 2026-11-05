@@ -536,6 +536,7 @@ fun LiveGuide(
                     .width(categoryColWidth)
                     .fillMaxHeight()
                     .focusRequester(categoryListFocus)
+                    .guideKeyRepeatGate()
                     .focusRestorer(),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
             ) {
@@ -649,6 +650,7 @@ fun LiveGuide(
                             // Focus arriving anywhere in the guide means the viewer has committed
                             // to this category — give the grid the width.
                             .onFocusChanged { if (it.hasFocus) inCategory = true }
+                            .guideKeyRepeatGate()
                             .focusRestorer(firstChannelFocus),
                         contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxl)
                     ) {

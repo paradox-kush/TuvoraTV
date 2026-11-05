@@ -25,6 +25,7 @@ class UpdatePreferences @Inject constructor(
 
     private val ignoredTagKey = stringPreferencesKey("ignored_release_tag")
     private val lastCheckAtKey = longPreferencesKey("last_check_at_ms")
+    private val rateLimitedUntilKey = longPreferencesKey("rate_limited_until_epoch_s")
     private val updateBannerEnabledKey = booleanPreferencesKey("update_banner_enabled")
     private val updateChannelKey = stringPreferencesKey("update_channel")
     private val autoInstallEnabledKey = booleanPreferencesKey("auto_install_enabled")
@@ -39,6 +40,11 @@ class UpdatePreferences @Inject constructor(
 
     val lastCheckAtMs: Flow<Long> = dataStore.data.map { prefs ->
         prefs[lastCheckAtKey] ?: 0L
+    }
+
+    /** B175: epoch seconds before which GitHub told us not to ask again (null = not limited). */
+    val rateLimitedUntilEpochSeconds: Flow<Long?> = dataStore.data.map { prefs ->
+        prefs[rateLimitedUntilKey]
     }
 
     val updateBannerEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
@@ -90,6 +96,12 @@ class UpdatePreferences @Inject constructor(
     suspend fun setLastCheckAtMs(value: Long) {
         dataStore.edit { prefs ->
             prefs[lastCheckAtKey] = value
+        }
+    }
+
+    suspend fun setRateLimitedUntilEpochSeconds(value: Long?) {
+        dataStore.edit { prefs ->
+            if (value == null) prefs.remove(rateLimitedUntilKey) else prefs[rateLimitedUntilKey] = value
         }
     }
 

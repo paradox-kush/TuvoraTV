@@ -97,6 +97,8 @@ data class PlaylistDetailsState(
     val rematchStarted: Boolean,
     /** The panel was asked for the account info and did not answer. */
     val expiryCheckFailed: Boolean = false,
+    /** A portal playlist turned off on this device: the account was not asked ("turn it on to check"). */
+    val inspectionSkipped: Boolean = false,
     val nowEpochSec: Long,
     /** UX179: the "Refresh now" card's status; filled by the page itself, so callers leave the default. */
     val refresh: ManualRefreshUiState = ManualRefreshUiState(),
@@ -243,7 +245,7 @@ private fun FactsPane(state: PlaylistDetailsState, facts: ManagedDetailsModel.Fa
             }
         }
         Spacer(Modifier.height(6.dp))
-        ExpiryBlock(facts.expiry)
+        ExpiryBlock(facts.expiry, state.inspectionSkipped)
         facts.connections?.let { c ->
             Text(
                 text = if (c.active != null) stringResource(R.string.iptv_details_connections, c.active, c.max)
@@ -271,7 +273,7 @@ private fun FactsPane(state: PlaylistDetailsState, facts: ManagedDetailsModel.Fa
 }
 
 @Composable
-private fun ExpiryBlock(expiry: Expiry) {
+private fun ExpiryBlock(expiry: Expiry, inspectionSkipped: Boolean = false) {
     when (expiry) {
         is Expiry.Days -> {
             Text(
@@ -311,7 +313,10 @@ private fun ExpiryBlock(expiry: Expiry) {
             stringResource(R.string.iptv_details_expiry_check_failed),
             fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary,
         )
-        Expiry.Unknown -> Unit // not asked yet: say nothing rather than "not reported"
+        Expiry.Unknown -> if (inspectionSkipped) Text(
+            stringResource(R.string.iptv_details_turn_on_to_check),
+            fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary,
+        ) // else not asked yet: say nothing rather than "not reported"
         Expiry.NotReported -> Text(
             stringResource(R.string.iptv_details_expiry_unknown),
             fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary,

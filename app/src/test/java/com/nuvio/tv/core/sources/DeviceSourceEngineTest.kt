@@ -297,4 +297,75 @@ class DeviceSourceEngineTest {
         assertFalse(device.allowsAddonRequest(1,"https://addon.example/stream/movie/id.json?token=B"))
         assertTrue(device.allowsAddonRequest(1,path.sourceRef + "/catalog/movie/top.json"))
     }
+
+    // --- B224 / B171: typed refusal, verify + inspect access, storage re-read ---------------------------
+
+    private suspend fun refusalOf(device: DeviceSourceEngine, ref: String, access: DeviceSourceAccess = DeviceSourceAccess.DISCOVERY): SourceDisabledOnDeviceException? =
+        try { device.guarded(1, "iptv", ref, access) { "ran" }; null } catch (e: SourceDisabledOnDeviceException) { e }
+
+    @Test fun refusalIsATypedCancellationCarryingKindAndModeOnly() = runTest {
+        val refusals = mutableListOf<Pair<String, String>>()
+        val device = DeviceSourceEngine(Memory("broken"), { _, _ -> error("offline") }, { "id" }, { "s" }, { 1_000L }, "tv",
+            onRefused = { kind, mode -> refusals += kind to mode })
+        val failure = refusalOf(device, source.sourceRef)
+        assertNotNull("typed refusal", failure)
+        assertTrue("existing cancellation semantics hold", failure is CancellationException)
+        assertEquals("kind", "iptv", failure!!.kind)
+        assertEquals("mode", "storage_error", failure.mode)
+        assertEquals("exactly one line per refusal, no host or id", listOf("iptv" to "storage_error"), refusals)
+    }
+
+    @Test fun addTimeVerifyRunsForAnUnsavedPlaylistWhileTheEngineIsNotReady() = runTest {
+        for (memory in listOf(Memory("broken"), Memory())) { // storage_error, and loading (no binding yet)
+            val device = engine(memory)
+            assertFalse(device.state.value.ready)
+            assertNotNull("discovery stays closed", refusalOf(device, "brand-new-playlist"))
+            assertNull("verify may run", refusalOf(device, "brand-new-playlist", DeviceSourceAccess.VERIFY))
+            assertFalse("verifying never makes the source usable", device.allows(1, "iptv", "brand-new-playlist"))
+        }
+    }
+
+    @Test fun verifyStillRefusesASourceThisDeviceKnowsToBeOff() = runTest {
+        val device = engine(cached(listOf(DevicePreferenceValue(1, source.sourceId, false, 1))))
+        assertNotNull(refusalOf(device, source.sourceRef, DeviceSourceAccess.VERIFY))
+    }
+
+    @Test fun inspectionReadsADisabledSourceButDiscoveryStaysClosedAndNothingChanges() = runTest {
+        val device = engine(cached(listOf(DevicePreferenceValue(1, source.sourceId, false, 1))))
+        val before = device.state.value
+        assertNull("inspection runs", refusalOf(device, source.sourceRef, DeviceSourceAccess.INSPECT))
+        assertNotNull("discovery still refused", refusalOf(device, source.sourceRef))
+        assertFalse(device.allows(1, "iptv", source.sourceRef))
+        assertFalse(device.choice(1, source.sourceId))
+        assertEquals("inspection cannot enable or alter anything", before.disk, device.state.value.disk)
+        assertEquals(before.availabilityEpoch, device.state.value.availabilityEpoch)
+    }
+
+    @Test fun storageThatFailedAtStartupIsReadAgainOnRefreshInsteadOfStayingBrokenUntilRelaunch() = runTest {
+        val memory = Memory("broken")
+        val device = engine(memory)
+        assertEquals("storage_error", device.state.value.mode)
+        device.refresh(1, false, false)
+        assertEquals("still unreadable: stays closed", "storage_error", device.state.value.mode)
+        assertFalse(device.allows(1, "iptv", source.sourceRef))
+        memory.value = cached().value // the keystore became readable
+        device.refresh(1, false, false)
+        assertEquals("ready", device.state.value.mode)
+        assertNull(device.state.value.message)
+        assertTrue(device.allows(1, "iptv", source.sourceRef))
+    }
+
+    @Test fun inspectingAndVerifyingScopesCarryTheirAccessKind() = runTest {
+        assertNull(kotlin.coroutines.coroutineContext[DeviceSourceAccessElement])
+        assertEquals(DeviceSourceAccess.INSPECT, DeviceSources.inspecting { kotlin.coroutines.coroutineContext[DeviceSourceAccessElement]?.access })
+        assertEquals(DeviceSourceAccess.VERIFY, DeviceSources.verifying { kotlin.coroutines.coroutineContext[DeviceSourceAccessElement]?.access })
+    }
+
+    @Test fun refusalNamesWhoTurnedTheSourceOff() = runTest {
+        val accountOff = source.copy(accountEnabled = false)
+        val memory = Memory(json.encodeToString(DevicePreferenceDisk(binding = SavedDeviceBinding("setup", "Phone", "secret"), cursor = 0, sources = mapOf(1 to listOf(accountOff)))))
+        assertEquals(RefusalScope.ACCOUNT, refusalOf(engine(memory), source.sourceRef, DeviceSourceAccess.VERIFY)!!.scope)
+        val here = engine(cached(listOf(DevicePreferenceValue(1, source.sourceId, false, 1))))
+        assertEquals(RefusalScope.DEVICE, refusalOf(here, source.sourceRef, DeviceSourceAccess.VERIFY)!!.scope)
+    }
 }
