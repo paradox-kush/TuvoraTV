@@ -352,7 +352,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** See [GuideWindowRows.readsStoredWindowOnFocus]; an M3U playlist's history is its stored XMLTV. */
     private fun readsStoredWindow(windowStartMs: Long): Boolean = GuideWindowRows.readsStoredWindowOnFocus(
         atLiveEdge = GuideTimeTravel.isAtLiveEdge(windowStartMs, System.currentTimeMillis()),
-        historyFromStore = account?.isM3uPlaylist() == true,
+        historyFromStore = GuideWindowRows.historyFromStore(
+            isM3u = account?.isM3uPlaylist() == true,
+            isStalker = account?.sourceType == XtreamAccount.SOURCE_STALKER,
+        ),
     )
 
     /** Live channel ids currently in the platform Library (drives the ★ + add/remove). */
@@ -1263,6 +1266,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 // past lives only there) and takes just the fresh now/next — B11.
                 _uiState.update {
                     it.copy(epg = it.epg + (streamId to GuideWindowRows.mergeNowNext(it.epg[streamId], now, next, programs)))
+                }
+                // A Stalker portal's now/next is answered FROM its bulk guide, so the stored window is on
+                // disk exactly now: a window read made before the first ingest landed found nothing, and
+                // nothing else republishes it at the live edge (the aired cells stayed blank).
+                if (acc.sourceType == XtreamAccount.SOURCE_STALKER) {
+                    _uiState.value.channels.firstOrNull { c -> c.streamId == streamId }?.let { publishWindows(listOf(it)) }
                 }
             }
         }

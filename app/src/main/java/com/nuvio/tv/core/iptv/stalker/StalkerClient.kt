@@ -190,6 +190,7 @@ class StalkerClient @Inject constructor(
                 epgChannelId = r.tvgId,
                 categoryId = r.categoryId,
                 hasArchive = r.hasArchive,
+                catchUpDays = r.archiveDays,
                 streamUrl = ""   // create_link resolves the real single-use URL at play time
             )
         }
@@ -206,6 +207,7 @@ class StalkerClient @Inject constructor(
                 epgChannelId = r.tvgId,
                 categoryId = r.categoryId,
                 hasArchive = r.hasArchive,
+                catchUpDays = r.archiveDays,
                 streamUrl = ""   // create_link resolves the real single-use URL at play time
             )
         }
@@ -259,6 +261,7 @@ class StalkerClient @Inject constructor(
                     url = "",
                     cmd = item.str("cmd"),
                     hasArchive = (item.int("tv_archive") ?: 0) > 0,
+                    archiveDays = StalkerArchiveDepth.days(item.int("tv_archive"), item.int("tv_archive_duration")),
                     // Stored as plain booleans (false = flag absent OR panel said false — the
                     // column cannot tell them apart), so reads treat only TRUE as evidence.
                     useHttpTmpLink = item.flag("use_http_tmp_link") ?: false,
@@ -282,6 +285,7 @@ class StalkerClient @Inject constructor(
         epgChannelId = item.str("xmltv_id")?.takeIf { it.isNotBlank() },
         categoryId = item.str("tv_genre_id") ?: item.str("genre_id"),
         hasArchive = (item.int("tv_archive") ?: 0) > 0,
+        catchUpDays = StalkerArchiveDepth.days(item.int("tv_archive"), item.int("tv_archive_duration")),
         // Placeholder: create_link resolves the real single-use URL at play time.
         streamUrl = ""
     )

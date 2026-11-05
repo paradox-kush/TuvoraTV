@@ -15,7 +15,9 @@ import javax.inject.Singleton
  *  [useHttpTmpLink]/[useLoadBalancing] mirror the Xtream panel's per-channel flags (stream
  *  resolution consumes them — this store only persists and returns them). [catchUp] is the M3U
  *  playlist's per-channel catch-up (null = none; Xtream/Stalker use [hasArchive] alone). */
-data class ContentChannel(val sid: Int, val name: String, val logo: String?, val tvgId: String?, val categoryId: String?, val url: String, val cmd: String? = null, val hasArchive: Boolean = false, val useHttpTmpLink: Boolean = false, val useLoadBalancing: Boolean = false, val catchUp: M3uCatchUpInfo? = null)
+data class ContentChannel(val sid: Int, val name: String, val logo: String?, val tvgId: String?, val categoryId: String?, val url: String, val cmd: String? = null, val hasArchive: Boolean = false, val useHttpTmpLink: Boolean = false, val useLoadBalancing: Boolean = false, val catchUp: M3uCatchUpInfo? = null,
+    /** A Stalker portal's archive depth in days (0 = not stated); stored in `catchup_days` with no catch-up type. */
+    val archiveDays: Int = 0)
 data class ContentVod(val sid: Int, val name: String, val logo: String?, val categoryId: String?, val url: String, val ext: String?, val cmd: String? = null)
 /** A series HEADER (grouped M3U episodes). [sid] is a synthetic id derived from the series name. */
 data class ContentSeries(val sid: Int, val name: String, val logo: String?, val categoryId: String?)
@@ -310,7 +312,7 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
                     bindNullable(s, 9, r.cmd); s.bindLong(10, if (r.hasArchive) 1L else 0L)
                     s.bindLong(11, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(12, if (r.useLoadBalancing) 1L else 0L)
                     s.bindLong(13, channelOrd[i])
-                    bindCatchUp(s, 14, r.catchUp)
+                    bindCatchUp(s, 14, r.catchUp, r.archiveDays)
                     s.executeInsert()
                 }
                 s.close()
@@ -713,7 +715,7 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
                 s.bindString(5, r.name); bindNullable(s, 6, r.logo); bindNullable(s, 7, r.tvgId); s.bindString(8, r.url)
                 bindNullable(s, 9, r.cmd); s.bindLong(10, if (r.hasArchive) 1L else 0L)
                 s.bindLong(11, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(12, if (r.useLoadBalancing) 1L else 0L)
-                bindCatchUp(s, 13, r.catchUp)
+                bindCatchUp(s, 13, r.catchUp, r.archiveDays)
                 s.executeInsert()
             }
             s.close()
@@ -1223,6 +1225,7 @@ private fun channelOf(c: android.database.Cursor) = ContentChannel(
     c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5),
     c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0,
     catchUp = storedCatchUp(c.getStringOrNull(10), c.getStringOrNull(11), if (c.isNull(12)) 0 else c.getInt(12)),
+    archiveDays = if (c.isNull(10) && !c.isNull(12)) c.getInt(12).coerceAtLeast(0) else 0,
 )
 
 /** A stored triple back to its settings; an unknown type (a future dialect) or a missing one reads as none. */
@@ -1231,9 +1234,10 @@ internal fun storedCatchUp(type: String?, source: String?, days: Int): M3uCatchU
     return M3uCatchUpInfo(t, source, days.coerceAtLeast(1))
 }
 
-private fun bindCatchUp(stmt: android.database.sqlite.SQLiteStatement, index: Int, info: M3uCatchUpInfo?) {
+private fun bindCatchUp(stmt: android.database.sqlite.SQLiteStatement, index: Int, info: M3uCatchUpInfo?, archiveDays: Int = 0) {
     if (info == null) {
-        stmt.bindNull(index); stmt.bindNull(index + 1); stmt.bindNull(index + 2)
+        stmt.bindNull(index); stmt.bindNull(index + 1)
+        if (archiveDays > 0) stmt.bindLong(index + 2, archiveDays.toLong()) else stmt.bindNull(index + 2)
     } else {
         stmt.bindString(index, info.type.name)
         info.source?.let { stmt.bindString(index + 1, it) } ?: stmt.bindNull(index + 1)
