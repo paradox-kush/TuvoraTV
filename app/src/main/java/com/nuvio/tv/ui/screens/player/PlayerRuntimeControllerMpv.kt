@@ -234,6 +234,7 @@ internal fun PlayerRuntimeController.pauseForLifecycle() {
     releaseMediaSession()
 
     // Mark as user-paused so autoplay logic doesn't resume playback.
+    if (!userPausedManually) userPauseSetByLifecycle = true
     userPausedManually = true
     shouldEnforceAutoplayOnFirstReady = false
     logScrobbleDiagnostic("lifecycle_pause", "userPaused=$userPausedManually")
