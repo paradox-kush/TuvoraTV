@@ -264,7 +264,9 @@ data class XtreamChannel(
     val hasArchive: Boolean,
     /** Days of catch-up available; 0 = the panel did not say (see [XtreamCatchUp.isWithinWindow]). */
     val catchUpDays: Int = 0,
-    val streamUrl: String
+    val streamUrl: String,
+    /** An M3U playlist's own catch-up settings for this channel (null on Xtream/Stalker, or no catch-up). */
+    val m3uCatchUp: M3uCatchUpInfo? = null,
 )
 
 data class XtreamMovie(
@@ -496,6 +498,9 @@ class XtreamClient @Inject constructor(
                 catchUpDays = (dto.tvArchiveDuration ?: 0).coerceAtLeast(0),
                 streamUrl = streamUrl(a, "live", id, "ts")
             )
+        }.let { rows ->
+            // B179: provider divider rows ("BG: #### Bulgaria Channels") are not streams.
+            ChannelSeparatorPolicy.withoutSeparators(rows, { it.name }, { it.epgChannelId }, { it.hasArchive })
         } }
     }
 

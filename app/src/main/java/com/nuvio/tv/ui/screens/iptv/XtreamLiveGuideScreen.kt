@@ -732,7 +732,11 @@ fun LiveGuide(
                                         GuideCellIntent.Intent.REPLAY -> viewModel.startReplay(ch, programme)
                                         GuideCellIntent.Intent.OPEN_SHEET -> sheetProgramme = programme
                                         GuideCellIntent.Intent.PLAY_LIVE -> selectChannel(ch.contentId)
-                                        GuideCellIntent.Intent.NONE -> Unit
+                                        GuideCellIntent.Intent.NONE ->
+                                            if (GuideCellIntent.explainsNoRecording(
+                                                    guideActionFor(programme, ch, nowMs, uiState.catchUpSupported), programme, nowMs,
+                                                )
+                                            ) viewModel.explainNoRecording(programme)
                                     }
                                 },
                                 leadingEdgeFocus = leadingCellFocus,
@@ -910,8 +914,15 @@ fun LiveGuide(
             else pendingRestoreEntityId = aimedChannel()?.entityId
         }
         channelMenuAsk?.let { (channel, actions) ->
+            // Start over is reachable from the channel row too, not only from the timeline cell.
+            val startOver = GuideCellIntent.startOverCandidate(
+                uiState.epg[channel.streamId]?.programmes.orEmpty(), nowMs,
+            ) { guideActionFor(it, channel, nowMs, uiState.catchUpSupported) }
             GuideChannelActionsDialog(
                 channelName = channel.name,
+                onStartOver = startOver?.let { programme ->
+                    { returnFromMenu(); viewModel.startReplay(channel, programme) }
+                },
                 favorite = channel.contentId in favoriteIds,
                 actions = actions,
                 onFavorite = { returnFromMenu(); viewModel.toggleFavorite(channel) },

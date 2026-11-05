@@ -341,13 +341,23 @@ class XmltvClient @Inject constructor(
             val keep = result.assignments.mapTo(HashSet()) { it.guideId }
             guide.forEach { g -> normalizeChannelId(g.id).let { if (it in picked) keep.add(it) } }
             val nowMs = System.currentTimeMillis()
+            // M3U catch-up: a guide id matched to a channel that replays N days keeps N days of history.
+            val backByGuide: Map<String, Long> = if (acc.isXtream()) emptyMap() else {
+                val days = db.liveCatchUpDays(acc.id)
+                if (days.isEmpty()) emptyMap() else HashMap<String, Long>().also { out ->
+                    result.assignments.forEach { a ->
+                        val d = days[a.streamId] ?: return@forEach
+                        out.merge(a.guideId, XmltvIngestWindow.backMsForCatchUpDays(d), ::maxOf)
+                    }
+                }
+            }
             file.bufferedReader().use { reader ->
                 val parser = android.util.Xml.newPullParser().apply {
                     setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
                     setInput(reader)
                 }
                 XmltvParser.parseGuide(parser, onChannel = { _, _ -> }, onChannelsDone = { keep }, onProgramme = { p ->
-                    if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs)) {
+                    if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs, backByGuide[normalizeChannelId(p.channelId)] ?: XmltvIngestWindow.BACK_MS)) {
                         emit(p.copy(channelId = EpgSourcePlan.storedKey(index, p.channelId)))
                     }
                 })

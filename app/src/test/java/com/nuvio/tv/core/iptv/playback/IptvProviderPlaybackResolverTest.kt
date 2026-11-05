@@ -1,6 +1,8 @@
 package com.nuvio.tv.core.iptv.playback
 
 import com.nuvio.tv.core.iptv.CatchUpDialectWalk
+import com.nuvio.tv.core.iptv.M3uCatchUpInfo
+import com.nuvio.tv.core.iptv.M3uCatchUpType
 import com.nuvio.tv.core.iptv.PanelClockSource
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
@@ -267,6 +269,42 @@ class IptvProviderPlaybackResolverTest {
         assertTrue(unsupported is PlaybackResult.Failure)
     }
 
+    @Test
+    fun `M3U catch-up is built from the channel's own settings and walks on a transport failure`() = runTest {
+        val m3u = account(id = "url:https://playlist.invalid/list", sourceType = XtreamAccount.SOURCE_URL)
+        val channel = M3uChannelCatchUp(
+            "http://panel.invalid/live/user/pass/7.ts",
+            M3uCatchUpInfo(M3uCatchUpType.XTREAM, null, 3),
+        )
+        val resolver = resolver(m3u, m3uChannel = channel) { _, _, _, _ -> error("catch-up must not use live resolver") }
+        // 2026-10-03 19:00-20:00 UTC, long past: the window extends, the link names its start minute.
+        val window = ProviderCatchUpWindow(1_791_054_000_000L, 1_791_057_600_000L)
+        val selection = selection(m3u, ProviderSourceType.M3U, ContentType.CATCH_UP, streamId = 7, window = window)
+
+        val first = resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success()
+        assertTrue("timeshift link at the programme start: ${first.request.url}", first.request.url.contains("/timeshift/user/pass/") && first.request.url.contains("2026-10-03:19-00"))
+
+        val second = resolver.resolve(
+            selection,
+            ProviderResolutionContext(
+                trigger = ProviderResolutionTrigger.RECOVERY,
+                previousFailure = feedback(ProviderDialectAdvanceEligibility.TRANSPORT_OR_DEMUX_FAILURE),
+            ),
+        ).success()
+        assertNotEquals("a transport failure moves to another candidate", first.request.url, second.request.url)
+    }
+
+    @Test
+    fun `M3U catch-up for a channel without catch-up settings is unavailable`() = runTest {
+        val m3u = account(id = "url:https://playlist.invalid/list", sourceType = XtreamAccount.SOURCE_URL)
+        val window = ProviderCatchUpWindow(1_791_054_000_000L, 1_791_057_600_000L)
+        val result = resolver(m3u, m3uChannel = null) { _, _, _, _ -> error("unused") }.resolve(
+            selection(m3u, ProviderSourceType.M3U, ContentType.CATCH_UP, streamId = 7, window = window),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        )
+        assertTrue(result is PlaybackResult.Failure)
+    }
+
     /** B117: the clean pipeline mints the replay too, so it must ask for the panel-local start. */
     @Test
     fun `catch-up start is panel-local when the panel clock is measured`() = runTest {
@@ -345,12 +383,14 @@ class IptvProviderPlaybackResolverTest {
     private fun resolver(
         account: XtreamAccount,
         panelOffsetMs: Long? = null,
+        m3uChannel: M3uChannelCatchUp? = null,
         link: suspend (XtreamAccount, String, Int, Boolean) -> ProviderLinkResult,
     ) = IptvProviderPlaybackResolver(
         accounts = ProviderAccountLookup { id -> account.takeIf { it.id == id } },
         links = ProviderLinkSource(link),
         winnerMemory = Memory(),
         panelClock = PanelClockSource { panelOffsetMs },
+        m3uChannels = ProviderM3uCatchUpLookup { _, _ -> m3uChannel },
     )
 
     private fun selection(

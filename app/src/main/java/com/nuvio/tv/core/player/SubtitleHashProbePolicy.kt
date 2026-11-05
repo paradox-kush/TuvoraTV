@@ -12,6 +12,10 @@ import java.net.URI
  * Local torrent streams are served from loopback and are fine to read.
  */
 object SubtitleHashProbePolicy {
+    /** Live channels and catch-up replays (which navigate as `live`) are never range-probed. */
+    fun isLivePlayback(contentType: String?, isCatchUp: Boolean): Boolean =
+        isCatchUp || contentType.equals("live", ignoreCase = true)
+
     fun mayProbe(
         url: String?,
         contentId: String?,

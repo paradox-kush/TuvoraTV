@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.iptv.content
 
+import com.nuvio.tv.core.iptv.M3uCatchUpInfo
+import com.nuvio.tv.core.iptv.M3uCatchUpType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -167,5 +169,107 @@ class M3UParserTest {
         val fromPlain = parseAll(SAMPLE.reader().buffered())
         assertEquals(fromPlain.map { it.name to it.kind }, fromGzip.map { it.name to it.kind })
         assertEquals(3, fromGzip.size)
+    }
+}
+
+/** Catch-up attributes per entry and as `#EXTM3U` header defaults (adapted from homelessbrian/NuvioPlusIPTV, GPL-3.0). */
+class M3UParserCatchUpTest {
+
+    private fun parse(body: String): List<M3UEntry> =
+        buildList { M3UParser.parseStream(body.reader().buffered()) { add(it) } }
+
+    private fun entry(attrs: String) = M3UParser.parseExtInf("#EXTINF:-1 $attrs,Ch", "http://h/live/u/p/1.ts")!!
+
+    @Test
+    fun `no catch-up attributes means no catch-up`() {
+        assertNull(entry("""tvg-id="a"""").catchUp)
+    }
+
+    @Test
+    fun `catchup type source and days are read`() {
+        val c = entry("""catchup="append" catchup-source="?utc={utc}" catchup-days="5"""").catchUp
+        assertEquals(M3uCatchUpInfo(M3uCatchUpType.APPEND, "?utc={utc}", 5), c)
+    }
+
+    @Test
+    fun `catchup-type is accepted when catchup is absent and catchup wins when both`() {
+        assertEquals(M3uCatchUpType.SHIFT, entry("""catchup-type="shift"""").catchUp?.type)
+        assertEquals(M3uCatchUpType.APPEND, entry("""catchup="append" catchup-type="shift"""").catchUp?.type)
+    }
+
+    @Test
+    fun `type defaults to default and days to one`() {
+        assertEquals(
+            M3uCatchUpInfo(M3uCatchUpType.DEFAULT, "http://a/{utc}", 1),
+            entry("""catchup-source="http://a/{utc}"""").catchUp,
+        )
+        assertEquals(M3uCatchUpInfo(M3uCatchUpType.SHIFT, null, 1), entry("""catchup="shift"""").catchUp)
+    }
+
+    @Test
+    fun `days alone enables default catch-up and tvg-rec and timeshift are aliases`() {
+        assertEquals(M3uCatchUpInfo(M3uCatchUpType.DEFAULT, null, 3), entry("""catchup-days="3"""").catchUp)
+        assertEquals(3, entry("""tvg-rec="3"""").catchUp?.days)
+        assertEquals(4, entry("""timeshift="4"""").catchUp?.days)
+        assertNull("zero days and no type", entry("""catchup-days="0"""").catchUp)
+    }
+
+    @Test
+    fun `header attributes are the default for entries that set none`() {
+        val e = parse(
+            """
+            #EXTM3U catchup="append" catchup-source="?utc={utc}" catchup-days="7"
+            #EXTINF:-1 tvg-id="a",A
+            http://h/a.ts
+            """.trimIndent(),
+        ).single()
+        assertEquals(M3uCatchUpInfo(M3uCatchUpType.APPEND, "?utc={utc}", 7), e.catchUp)
+    }
+
+    @Test
+    fun `per-entry attributes override the header per key`() {
+        val es = parse(
+            """
+            #EXTM3U catchup="append" catchup-source="?utc={utc}" catchup-days="7"
+            #EXTINF:-1 catchup="shift" catchup-days="2",A
+            http://h/a.ts
+            #EXTINF:-1 tvg-id="b",B
+            http://h/b.ts
+            """.trimIndent(),
+        )
+        assertEquals(M3uCatchUpInfo(M3uCatchUpType.SHIFT, "?utc={utc}", 2), es[0].catchUp)
+        assertEquals(M3uCatchUpInfo(M3uCatchUpType.APPEND, "?utc={utc}", 7), es[1].catchUp)
+    }
+
+    @Test
+    fun `playlist without a header default leaves plain entries without catch-up`() {
+        assertNull(parse("#EXTM3U\n#EXTINF:-1 tvg-id=\"x\",X\nhttp://h/x.ts").single().catchUp)
+    }
+
+    @Test
+    fun `header defaults and entry attrs reach live entries only`() {
+        val es = parse(
+            """
+            #EXTM3U catchup="append" catchup-source="?utc={utc}" catchup-days="7"
+            #EXTINF:-1 tvg-id="l",Live
+            http://h/live/u/p/1.ts
+            #EXTINF:-1 catchup-days="3",Movie
+            http://h/movie/u/p/2.mp4
+            #EXTINF:-1,Ep
+            http://h/series/u/p/3.mkv
+            """.trimIndent(),
+        )
+        assertEquals(M3UKind.LIVE, es[0].kind)
+        assertEquals(M3uCatchUpType.APPEND, es[0].catchUp?.type)
+        assertNull("vod", es[1].catchUp)
+        assertNull("series", es[2].catchUp)
+    }
+
+    @Test
+    fun `attribute keys are case insensitive`() {
+        assertEquals(7, entry("""Catchup-Days="7"""").catchUp?.days)
+        assertEquals(M3uCatchUpType.SHIFT, entry("""CATCHUP="shift"""").catchUp?.type)
+        val e = parse("#EXTM3U Catchup=\"shift\" CATCHUP-DAYS=\"2\"\n#EXTINF:-1,A\nhttp://h/a.ts").single()
+        assertEquals(M3uCatchUpInfo(M3uCatchUpType.SHIFT, null, 2), e.catchUp)
     }
 }

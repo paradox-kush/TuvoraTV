@@ -186,7 +186,7 @@ data class PlayerUiState(
     val playerBadgeFilters: List<CompiledStreamBadgeFilter> = emptyList(),
     val error: String? = null,
     val showSwitchToMpvErrorAction: Boolean = false,
-    /** Failed-start error (B214/B217): the error dialog offers Retry. */
+    /** Failed-start error (B214/B217) and a catch-up replay that never started: the error dialog offers Retry. */
     val showRetryErrorAction: Boolean = false,
     val playbackIssueReportStatus: PlaybackIssueReportStatus = PlaybackIssueReportStatus.Idle,
     val playbackIssueReportId: String? = null,
@@ -282,7 +282,9 @@ data class PlaybackTimelineState(
     /** True for live windows (Live TV / live HLS), not VOD HLS. */
     val isLive: Boolean = false,
     /** Wall-clock time spent playing the current live stream. */
-    val watchedDurationMs: Long = 0L
+    val watchedDurationMs: Long = 0L,
+    /** A re-based catch-up bar: the programme's own length, which "Ends at" counts down. Null elsewhere. */
+    val programmeLengthMs: Long? = null
 )
 
 data class TrackInfo(

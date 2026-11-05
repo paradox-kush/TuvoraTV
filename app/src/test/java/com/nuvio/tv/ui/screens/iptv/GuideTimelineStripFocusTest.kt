@@ -250,4 +250,49 @@ class GuideTimelineStripFocusTest {
         rule.onRoot().performKeyInput { pressKey(Key.Back) }
         rule.runOnIdle { assertEquals("one BACK, one exit", 1, exits) }
     }
+
+    /**
+     * Field (M3U catch-up, Android TV emulator): with the cursor on the row's first cell, the stored
+     * XMLTV window landed an EARLIER cell under it. The focused node kept its place and now showed
+     * the earlier programme, but the edge test still compared against the programme it was focused
+     * on when it took focus - so LEFT read as "not at the edge", walked, and left the grid instead
+     * of paging back in time.
+     */
+    @Test
+    fun `LEFT on the first cell still pages back after an earlier cell lands under the cursor`() {
+        val windowStart = GuideTimeTravel.liveWindowStartMs(now)
+        val half = GuideTimeTravel.SLOT_MS
+        val b = XtreamProgram("B", "", windowStart + half, windowStart + 2 * half, nowPlaying = false)
+        val c = XtreamProgram("C", "", windowStart + 2 * half, windowStart + 3 * half, nowPlaying = false)
+        val a = XtreamProgram("A", "", windowStart, windowStart + half, nowPlaying = false)
+        val leading = FocusRequester()
+        val travels = mutableListOf<Int>()
+        var programmes by mutableStateOf(listOf(b, c))
+        rule.setContent {
+            NuvioTheme {
+                Row(Modifier.width(900.dp).height(44.dp).focusable()) {
+                    GuideProgrammeCells(
+                        programmes = programmes,
+                        channel = channel,
+                        windowStartMs = windowStart,
+                        nowMs = now,
+                        catchUpSupported = true,
+                        interactive = true,
+                        onProgrammeClick = {},
+                        onTravel = { travels += it; true },
+                        leadingEdgeFocus = leading,
+                        trailingEdgeFocus = FocusRequester(),
+                        stripFocus = FocusRequester(),
+                    )
+                }
+            }
+        }
+        rule.runOnIdle { assertTrue(leading.requestFocusOrFalse()) }
+        rule.runOnIdle { programmes = listOf(a, b, c) }
+        rule.waitForIdle()
+        rule.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+        rule.runOnIdle {
+            assertEquals("one page back", listOf(-GuideTimeTravel.EDGE_TRAVEL_SLOTS), travels)
+        }
+    }
 }

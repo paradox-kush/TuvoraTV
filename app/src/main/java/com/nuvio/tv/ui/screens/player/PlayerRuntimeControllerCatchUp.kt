@@ -1,7 +1,10 @@
 package com.nuvio.tv.ui.screens.player
 
 import android.util.Log
+import androidx.media3.common.PlaybackException
+import com.nuvio.tv.R
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 /**
  * Fork-only: the catch-up replay adapter's calls on upstream's player (audit §7a option i). The
@@ -16,9 +19,71 @@ import kotlinx.coroutines.flow.update
 internal fun PlayerRuntimeController.catchUpSeekTargetMs(targetMs: Long): Long =
     catchUpReplay.seekTargetMs(targetMs, System.currentTimeMillis())
 
+/** A player position as the seek bar shows it (re-based onto the programme for a continuing replay). */
+internal fun PlayerRuntimeController.catchUpBarPositionMs(playerMs: Long): Long =
+    catchUpReplay.barReading(playerMs, 0L, 0L, System.currentTimeMillis()).positionMs
+
+/** A seek-bar position as the player counts it. */
+internal fun PlayerRuntimeController.catchUpPlayerPositionMs(barMs: Long): Long =
+    catchUpReplay.playerPositionMs(barMs, System.currentTimeMillis())
+
 /** First rendered frame: remember the working URL shape for this account (once per replay). */
 internal fun PlayerRuntimeController.reportCatchUpFirstFrame() {
     if (catchUpReplay.onFirstFrame()) catchUpPort?.onPlayed(contentId)
+    catchUpStartupJob?.cancel()
+    catchUpStartupJob = null
+}
+
+/**
+ * Arms the first-frame deadline of the link now loading (every (re)initialisation calls this; the
+ * budget clock and the timeout count live on [catchUpReplay], so neither a new URL nor an engine
+ * failover restarts them). A link that never produces a frame in time is a transport failure: the
+ * ladder moves to the next candidate, and when it is exhausted the player ends in a terminal error
+ * with Retry — never "Starting stream…" for as long as the provider keeps the socket open.
+ */
+internal fun PlayerRuntimeController.armCatchUpStartupDeadline() {
+    catchUpStartupJob?.cancel()
+    catchUpStartupJob = null
+    val deadlineMs = catchUpReplay.startupDeadlineMs(System.currentTimeMillis()) ?: return
+    catchUpStartupJob = scope.launch {
+        kotlinx.coroutines.delay(deadlineMs)
+        if (hasRenderedFirstFrame) return@launch
+        onCatchUpStartupDeadline()
+    }
+}
+
+private fun PlayerRuntimeController.onCatchUpStartupDeadline() {
+    val decision = catchUpReplay.onStartupTimeout(System.currentTimeMillis())
+    Log.w(PlayerRuntimeController.TAG, "CATCHUP_STARTUP_TIMEOUT: no frame from the replay link in time (decision=$decision)")
+    if (decision == CatchUpStartupPolicy.Decision.ADVANCE) {
+        val next = catchUpPort?.onFailed(contentId, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
+        if (next != null) {
+            currentStreamUrl = next.url
+            _uiState.update { it.copy(currentStreamUrl = next.url) }
+            scheduleDeferredPlayerReinitialize(fromPositionMs = 0L, clearResumeProgress = true)
+            return
+        }
+    }
+    // Ladder exhausted (or the total budget is spent): stop the player and say so.
+    cancelFirstFrameWatchdog()
+    cancelStallWatchdog()
+    errorRetryJob?.cancel()
+    errorRetryJob = null
+    releasePlayer(flushPlaybackState = false)
+    _uiState.update {
+        it.copy(
+            error = context.getString(R.string.player_error_catchup_no_answer),
+            showRetryErrorAction = true,
+            showSwitchToMpvErrorAction = false,
+            isPlaying = false,
+            showControls = false,
+            isBuffering = false,
+            showLoadingOverlay = false,
+            showPauseOverlay = false,
+            loadingIssueReportVisible = false,
+            loadingIssueElapsedMs = 0L,
+        )
+    }
 }
 
 /**
@@ -39,4 +104,71 @@ internal fun PlayerRuntimeController.advanceCatchUpDialect(errorCode: Int): Bool
     _uiState.update { it.copy(currentStreamUrl = next.url) }
     scheduleDeferredPlayerReinitialize(fromPositionMs = 0L, clearResumeProgress = true)
     return true
+}
+
+/**
+ * Called from the progress loop on every tick. Follows the playhead of a replay that asked for a
+ * continuation window (M3U): retitles as it crosses into the next show, asks for a new window when
+ * this one runs out mid-show, rejoins live at the live edge, and says so when there is nothing left.
+ * Every decision is [CatchUpReplayAdapter]'s (and [com.nuvio.tv.core.contracts.CatchUpContinuationPolicy]'s);
+ * this only acts on it. A plain replay (or VOD) costs one boolean check per tick.
+ */
+internal fun PlayerRuntimeController.followCatchUpPlayhead(positionMs: Long) {
+    if (!catchUpReplay.isCatchUp) return
+    val port = catchUpPort ?: return
+    if (!catchUpContinuationChecked) {
+        catchUpContinuationChecked = true
+        port.continuation(contentId)?.let {
+            catchUpReplay.enableContinuation(it.programme.startMs, it.windowEndMs, it.programme.endMs)
+            // The continuation state lives exactly as long as this player.
+            catchUpEffects.adopt(port.hold(contentId))
+        }
+    }
+    val nowMs = System.currentTimeMillis()
+    if (!catchUpReplay.needsLookup(positionMs, nowMs) || catchUpLookupJob?.isActive == true) return
+    val playhead = catchUpReplay.playheadMs(positionMs)
+    catchUpLookupJob = scope.launch {
+        val next = runCatching { port.programmeAt(contentId, playhead) }.getOrNull()
+        val now = System.currentTimeMillis()
+        val pos = currentPlaybackPositionMs() ?: positionMs
+        when (val action = catchUpReplay.onPlayhead(pos, now, next)) {
+            CatchUpReplayAdapter.ContinuationAction.None -> Unit
+            is CatchUpReplayAdapter.ContinuationAction.MoveTo ->
+                _uiState.update { it.copy(title = action.programme.title) }
+            is CatchUpReplayAdapter.ContinuationAction.Restart -> {
+                val restart = port.restartAt(contentId, action.atMs)
+                if (restart == null) {
+                    showCatchUpEnded()
+                } else {
+                    Log.i(PlayerRuntimeController.TAG, "CATCHUP_CONTINUE: window ran out; opening a new one")
+                    catchUpReplay.restarted(restart.startMs, restart.windowEndMs)
+                    retuneCatchUp(restart.url)
+                }
+            }
+            CatchUpReplayAdapter.ContinuationAction.GoLive -> {
+                val live = port.liveUrl(contentId)
+                if (live == null) {
+                    showCatchUpEnded()
+                } else {
+                    Log.i(PlayerRuntimeController.TAG, "CATCHUP_CONTINUE: reached the live edge; rejoining live")
+                    // Back to the channel's name: the programme the title carried is over.
+                    _uiState.update { it.copy(title = it.title.substringBefore(" · ")) }
+                    retuneCatchUp(live)
+                }
+            }
+            CatchUpReplayAdapter.ContinuationAction.Ended -> showCatchUpEnded()
+        }
+    }
+}
+
+/** Same headers, new URL, from the start of it: a plain re-initialise, nothing persisted as a source. */
+private fun PlayerRuntimeController.retuneCatchUp(url: String) {
+    currentStreamUrl = url
+    _uiState.update { it.copy(currentStreamUrl = url) }
+    scheduleDeferredPlayerReinitialize(fromPositionMs = 0L, clearResumeProgress = true)
+}
+
+/** The window ran out with nothing left to replay: stop waiting and say so. */
+private fun PlayerRuntimeController.showCatchUpEnded() {
+    _uiState.update { it.copy(error = context.getString(R.string.catchup_recording_ended)) }
 }

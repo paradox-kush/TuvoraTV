@@ -81,4 +81,21 @@ class GuideWindowRowsTest {
         assertTrue("two pages back is stale", !GuideWindowRows.readCovers(from, to, start - 2 * GuideTimeTravel.WINDOW_MS))
         assertTrue("two pages forward is stale", !GuideWindowRows.readCovers(from, to, start + 2 * GuideTimeTravel.WINDOW_MS))
     }
+
+    @Test
+    fun `an M3U playlist fills the live window from its stored guide, not just now and next`() {
+        // The live window is 2 h; the store rung's first paint carries only now/next, so without a disk
+        // read the cells before and after them stay empty (M3U never had the Xtream per-channel fetch
+        // whose tail republished the window).
+        assertTrue(
+            "live edge, store-fed rows must still read their window",
+            GuideWindowRows.readsStoredWindowOnFocus(atLiveEdge = true, historyFromStore = true),
+        )
+        assertTrue(GuideWindowRows.readsStoredWindowOnFocus(atLiveEdge = false, historyFromStore = true))
+        assertTrue(GuideWindowRows.readsStoredWindowOnFocus(atLiveEdge = false, historyFromStore = false))
+        assertTrue(
+            "an Xtream live window keeps its now/next first paint",
+            !GuideWindowRows.readsStoredWindowOnFocus(atLiveEdge = true, historyFromStore = false),
+        )
+    }
 }

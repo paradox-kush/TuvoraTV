@@ -194,6 +194,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 )
             }
             resetLoadingOverlayForNewStream()
+            armCatchUpStartupDeadline()
             if (startPaused) {
                 // A background rebuild (releaseForBackground) pauses on the lifecycle's behalf, not the viewer's.
                 if (isInBackground) userPauseSetByLifecycle = true
