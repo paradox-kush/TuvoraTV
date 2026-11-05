@@ -630,6 +630,39 @@ class CleanLiveGuidePlaybackViewModelTest {
         assertEquals(CleanLiveGuidePlaybackState.Released, fixture.viewModel.state.value)
     }
 
+    @Test
+    fun `live pause control is per channel and Pause Play and Live go through it`() = runTest {
+        val controls = mutableListOf<RecordingPauseControl>()
+        val fixture = fixture(
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                RecordingPauseControl(request.selection).also { controls += it }
+            },
+        )
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+
+        assertEquals("one control for the first channel", 1, controls.size)
+        assertSame("built for the channel on screen", fixture.initial.selection, controls[0].selection)
+        fixture.viewModel.requestPause()
+        fixture.viewModel.requestResume()
+        advanceUntilIdle()
+        assertEquals("pause and play reach the control", listOf("pause", "play"), controls[0].calls)
+        assertEquals("the host is not paused behind the control's back", listOf("create", "tune"), fixture.operations)
+
+        fixture.viewModel.requestTune(fixture.next.contentId)
+        advanceUntilIdle()
+        assertEquals("a new channel gets a new control", 2, controls.size)
+        assertEquals("the old control heard the channel change", listOf("pause", "play", "channelChanged", "dispose"), controls[0].calls)
+        assertSame("the new one is for the new channel", fixture.next.selection, controls[1].selection)
+
+        controls[1].state.value = com.nuvio.tv.core.contracts.LivePauseView(phase = com.nuvio.tv.core.contracts.LivePausePhase.SHIFTED)
+        fixture.viewModel.requestCollapse()
+        advanceUntilIdle()
+        assertEquals("collapsing a shifted player returns the preview to live", true, "goLive" in controls[1].calls)
+
+        fixture.viewModel.releaseBeforeExit()
+        assertEquals("release disposes the control", true, "dispose" in controls[1].calls)
+    }
+
     private fun fixture(
         profileSource: () -> Int = { 1 },
         relative: (suspend (LiveRelativeRequest, Int) -> LiveRelativeResult)? = null,
@@ -641,6 +674,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         ownerDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
         extraTargets: List<LiveChannelTarget> = emptyList(),
         picturePort: com.nuvio.tv.core.picture.LivePicturePort = com.nuvio.tv.core.picture.LivePicturePort.Unremembered,
+        livePauseFactory: com.nuvio.tv.core.contracts.LivePauseControlFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { null },
     ): Fixture {
         val context = RuntimeEnvironment.getApplication() as Context
         val operations = mutableListOf<String>()
@@ -681,6 +715,7 @@ class CleanLiveGuidePlaybackViewModelTest {
             ownerDispatcher = ownerDispatcher,
             releaseRetryWait = releaseWait,
             picturePort = picturePort,
+            livePauseFactory = livePauseFactory,
         )
         return Fixture(
             viewModel = viewModel,
@@ -716,6 +751,22 @@ class CleanLiveGuidePlaybackViewModelTest {
         val lifecycle: Lifecycle,
         val owner: FrameLayout,
     )
+
+    private class RecordingPauseControl(
+        val selection: com.nuvio.tv.playback.core.ProviderPlaybackSelection,
+    ) : com.nuvio.tv.core.contracts.LivePauseControl {
+        val calls = mutableListOf<String>()
+        val state = kotlinx.coroutines.flow.MutableStateFlow(com.nuvio.tv.core.contracts.LivePauseView.OFF)
+        override val view: kotlinx.coroutines.flow.StateFlow<com.nuvio.tv.core.contracts.LivePauseView> get() = state
+        override fun onPause() { calls += "pause" }
+        override fun onPlay() { calls += "play" }
+        override fun seekInWindow(positionMs: Long) { calls += "seek" }
+        override fun goLive() { calls += "goLive" }
+        override fun retry() { calls += "retry" }
+        override fun onChannelChanged() { calls += "channelChanged" }
+        override fun onLiveStarted() {}
+        override fun dispose() { calls += "dispose" }
+    }
 
     private class FakeFactory(
         private val operations: MutableList<String>,

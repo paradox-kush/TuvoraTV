@@ -143,6 +143,22 @@ internal object LiveControlsPolicy {
         LivePausePhase.FAILED -> Status.PAUSED
     }
 
+    /** Only a shifted stream has a saved window to scrub (Preparing has none yet, Failed lost it). */
+    fun isScrubbable(phase: LivePausePhase): Boolean = phase == LivePausePhase.SHIFTED
+
+    /** While the saved part is in play its own state is the truth; the session may be stopped under it. */
+    fun effectivePaused(phase: LivePausePhase, controlPaused: Boolean, hostPaused: Boolean): Boolean =
+        if (phase != LivePausePhase.OFF) controlPaused else hostPaused
+
+    enum class ChipLabel { BEHIND, GO_LIVE }
+
+    /** The chip names the offset ("-00:00 Live") from the moment a shift begins; Failed offers the way back. */
+    fun chipLabel(phase: LivePausePhase): ChipLabel? = when (phase) {
+        LivePausePhase.OFF -> null
+        LivePausePhase.PREPARING, LivePausePhase.SHIFTED -> ChipLabel.BEHIND
+        LivePausePhase.FAILED -> ChipLabel.GO_LIVE
+    }
+
     enum class ScrubDirection { BACK, FORWARD }
 
     /** 10 s a press; a held key speeds up (30 s, then 60 s). */

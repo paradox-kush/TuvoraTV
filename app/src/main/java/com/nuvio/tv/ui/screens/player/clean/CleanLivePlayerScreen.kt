@@ -120,8 +120,9 @@ internal fun CleanLivePlayerScreen(
     val primaryFocus = remember { FocusRequester() }
     val pauseOn = livePause.phase != LivePausePhase.OFF
     // While the saved part is in play, its own state is the truth (the session may be stopped under it).
-    val paused = if (pauseOn) livePause.paused else !uiState.playWhenReady
+    val paused = LiveControlsPolicy.effectivePaused(livePause.phase, livePause.paused, hostPaused = !uiState.playWhenReady)
     val pauseFailed = livePause.phase == LivePausePhase.FAILED
+    val scrubbable = LiveControlsPolicy.isScrubbable(livePause.phase)
     // Any error keeps the controls up; Retry itself is offered only where retrying can help.
     val failed = chrome.messageIsError || pauseFailed
     val nowMs by produceState(System.currentTimeMillis()) {
@@ -147,7 +148,8 @@ internal fun CleanLivePlayerScreen(
     }
     // Shown: focus the first control. Hidden: the buttons leave composition, so focus returns to
     // the root, where the next key still reaches the policy.
-    LaunchedEffect(controlsVisible, failed) {
+    // The scrub bar is the default focus while shifted, so focus moves when it appears or goes.
+    LaunchedEffect(controlsVisible, failed, scrubbable) {
         runCatching { if (controlsVisible) primaryFocus.requestFocus() else rootFocus.requestFocus() }
     }
 
@@ -180,7 +182,7 @@ internal fun CleanLivePlayerScreen(
                     panelOpen = panel != null,
                     isRepeat = event.nativeKeyEvent.repeatCount > 0,
                     zapReveal = zapReveal,
-                    scrubbable = livePause.phase == LivePausePhase.SHIFTED,
+                    scrubbable = scrubbable,
                 )
                 when (action) {
                     LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
@@ -289,7 +291,7 @@ internal fun CleanLivePlayerScreen(
                     onToggleMore = { moreOpen = !moreOpen; revealTick++ },
                     onKeepAlive = { revealTick++ },
                     onHide = { hideControls() },
-                    onSeekWindow = onSeekInWindow.takeIf { livePause.phase == LivePausePhase.SHIFTED },
+                    onSeekWindow = onSeekInWindow.takeIf { scrubbable },
                     onGoLive = onGoLive.takeIf { pauseOn },
                 ),
                 pause = livePause,

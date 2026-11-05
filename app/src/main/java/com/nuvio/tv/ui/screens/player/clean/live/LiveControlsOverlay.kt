@@ -145,7 +145,7 @@ internal fun BoxScope.LiveControlsOverlay(
     pause: LivePauseView = LivePauseView.OFF,
 ) {
     // Time-shifted: the scrub bar takes the default focus (as the VOD timeline does), the buttons follow.
-    val scrubbing = pause.phase == LivePausePhase.SHIFTED && actions.onSeekWindow != null
+    val scrubbing = LiveControlsPolicy.isScrubbable(pause.phase) && actions.onSeekWindow != null
     val playPainter = rememberRawSvgPainter(R.raw.ic_player_play)
     val pausePainter = rememberRawSvgPainter(R.raw.ic_player_pause)
     val subtitlePainter = rememberRawSvgPainter(R.raw.ic_player_subtitles)
@@ -256,7 +256,7 @@ internal fun BoxScope.LiveControlsOverlay(
                     if (pause.phase != LivePausePhase.OFF) {
                         actions.onGoLive?.let { goLive ->
                             LiveChip(
-                                label = if (pause.phase == LivePausePhase.SHIFTED) {
+                                label = if (LiveControlsPolicy.chipLabel(pause.phase) == LiveControlsPolicy.ChipLabel.BEHIND) {
                                     stringResource(R.string.live_pause_chip_behind, LiveControlsPolicy.behindLabel(pause.behindLiveMs))
                                 } else {
                                     stringResource(R.string.live_pause_chip_go_live)

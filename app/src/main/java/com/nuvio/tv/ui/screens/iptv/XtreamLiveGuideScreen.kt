@@ -16,6 +16,8 @@ import com.nuvio.tv.playback.ui.LivePlaybackUiErrorCode
 import com.nuvio.tv.playback.core.PlaybackTrackCatalog
 import com.nuvio.tv.playback.ui.LivePlaybackUiStatusCode
 import com.nuvio.tv.ui.components.player.PlayerControlsTiming
+import com.nuvio.tv.core.contracts.LivePausePhase
+import com.nuvio.tv.ui.screens.player.clean.livePauseProblemRes
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsOverlay
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
@@ -306,6 +308,11 @@ fun LiveGuide(
     val playbackState by playbackViewModel.state.collectAsStateWithLifecycle()
     val readyPlayback = playbackState as? CleanLiveGuidePlaybackState.Ready
     val playbackUi = readyPlayback?.presentation
+    // Live pause / rewind: while the saved part is in play its own state is the truth.
+    val livePause by playbackViewModel.livePause.collectAsStateWithLifecycle()
+    val pauseFailed = livePause.phase == LivePausePhase.FAILED
+    val scrubbable = LiveControlsPolicy.isScrubbable(livePause.phase)
+    val effectivePaused = LiveControlsPolicy.effectivePaused(livePause.phase, livePause.paused, hostPaused = playbackUi?.isPaused == true)
     com.nuvio.tv.ui.screens.ambient.AmbientPlaybackEffect(
         active = fullscreen || playbackUi?.playWhenReady == true
     )
@@ -408,12 +415,12 @@ fun LiveGuide(
     var zapReveal by remember { mutableStateOf(false) }
     fun showControls() { controlsVisible = true; controlsTick++ }
     fun togglePause() {
-        if (playbackUi?.isPaused == true) playbackViewModel.requestResume()
+        if (effectivePaused) playbackViewModel.requestResume()
         else playbackViewModel.requestPause()
         showControls()
     }
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
-    val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected
+    val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected || pauseFailed
     val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null
     // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up.
     val liveTuning = playbackUi?.spinnerVisible == true ||
@@ -434,14 +441,15 @@ fun LiveGuide(
         }
     }
     // F28: one auto-hide delay shared with VOD; never while paused, on an error, or with a panel open.
-    LaunchedEffect(fullscreen, controlsTick, playbackUi?.isPaused, liveFailed, livePanelOpen, liveTuning) {
-        if (fullscreen && LiveControlsPolicy.mayAutoHide(controlsVisible, playbackUi?.isPaused == true, liveFailed, livePanelOpen, tuning = liveTuning)) {
+    LaunchedEffect(fullscreen, controlsTick, effectivePaused, liveFailed, livePanelOpen, liveTuning) {
+        if (fullscreen && LiveControlsPolicy.mayAutoHide(controlsVisible, effectivePaused, liveFailed, livePanelOpen, tuning = liveTuning)) {
             delay(PlayerControlsTiming.AUTO_HIDE_MS)
             hideControls()
         }
     }
     // Shown controls take the D-pad, starting on Retry (when offered) or play/pause.
-    LaunchedEffect(fullscreen, controlsVisible, livePanelOpen) {
+    // The scrub bar is the default focus while shifted, so focus moves when it appears or goes.
+    LaunchedEffect(fullscreen, controlsVisible, livePanelOpen, scrubbable) {
         if (fullscreen && controlsVisible && !livePanelOpen) controlsPrimaryFocus.requestFocusOrFalse()
     }
     LaunchedEffect(fullscreen) { if (!fullscreen) { controlsVisible = false; zapReveal = false; moreOpen = false; livePanel = null } }
@@ -467,18 +475,18 @@ fun LiveGuide(
                 if (!fullscreen) return@onPreviewKeyEvent false
                 // F28: the remote map lives in LiveControlsPolicy (shared with the clean live player).
                 // An open panel (the channel list, a picker, a hide notice's Undo) keeps its own keys.
-                when (
-                    LiveControlsPolicy.keyAction(
+                val action = LiveControlsPolicy.keyAction(
                         key = event.key,
                         isKeyDown = event.type == KeyEventType.KeyDown,
                         controlsVisible = controlsVisible,
-                        paused = playbackUi?.isPaused == true,
+                        paused = effectivePaused,
                         panelOpen = livePanelOpen,
                         isRepeat = event.nativeKeyEvent.repeatCount > 0,
                         hasLineup = true,
                         zapReveal = zapReveal,
+                        scrubbable = scrubbable,
                     )
-                ) {
+                when (action) {
                     LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
                     // The buttons own the D-pad while shown; each press keeps them up.
                     LiveControlsPolicy.KeyAction.PASS_AND_KEEP_ALIVE -> {
@@ -515,9 +523,22 @@ fun LiveGuide(
                         if (!controlsVisible) showControls() else controlsTick++
                         zapReveal = true
                     }
-                    // Live pause / rewind is not offered on the guide's player yet (scrubbable is never set here).
+                    // Time-shifted with the controls hidden: LEFT / RIGHT scrub inside the saved window.
                     LiveControlsPolicy.KeyAction.SCRUB_BACK,
-                    LiveControlsPolicy.KeyAction.SCRUB_FORWARD -> showControls()
+                    LiveControlsPolicy.KeyAction.SCRUB_FORWARD -> {
+                        val direction = if (action == LiveControlsPolicy.KeyAction.SCRUB_BACK) {
+                            LiveControlsPolicy.ScrubDirection.BACK
+                        } else {
+                            LiveControlsPolicy.ScrubDirection.FORWARD
+                        }
+                        playbackViewModel.requestSeekInLivePause(
+                            LiveControlsPolicy.scrubTarget(
+                                livePause.positionMs, livePause.windowStartMs, livePause.windowEndMs, direction,
+                                LiveControlsPolicy.scrubStepMs(event.nativeKeyEvent.repeatCount),
+                            ),
+                        )
+                        showControls(); zapReveal = false
+                    }
                 }
                 true
             }
@@ -799,7 +820,7 @@ fun LiveGuide(
                 val status = playbackUi?.bottomStatusCode
                 val tuningNow = liveTuning
                 val currentButtons = LiveControlsPolicy.buttons(
-                    failed = liveChrome?.retryEnabled == true,
+                    failed = liveChrome?.retryEnabled == true || pauseFailed,
                     subtitleTracks = catalog?.subtitles?.size ?: 0,
                     audioTracks = catalog?.audio?.size ?: 0,
                     hasLineup = true,
@@ -816,18 +837,23 @@ fun LiveGuide(
                         nowStartMs = overlayEpg?.now?.startMs,
                         nowEndMs = overlayEpg?.now?.endMs,
                         nextLine = overlayEpg?.next?.let { stringResource(R.string.iptv_guide_next_programme, timeRange(it), it.title) },
-                        status = LiveControlsPolicy.status(
-                            tuning = tuningNow,
-                            reconnecting = status == LivePlaybackUiStatusCode.RECONNECTING ||
-                                status == LivePlaybackUiStatusCode.RECOVERING,
-                            paused = playbackUi?.isPaused == true,
-                            failed = errorText != null,
+                        status = LiveControlsPolicy.withLivePause(
+                            base = LiveControlsPolicy.status(
+                                tuning = tuningNow,
+                                reconnecting = status == LivePlaybackUiStatusCode.RECONNECTING ||
+                                    status == LivePlaybackUiStatusCode.RECOVERING,
+                                paused = effectivePaused,
+                                failed = errorText != null,
+                            ),
+                            phase = livePause.phase,
+                            paused = effectivePaused,
                         ),
-                        errorText = errorText,
+                        errorText = errorText.takeIf { livePause.phase == LivePausePhase.OFF },
+                        pauseErrorText = livePause.problem?.let { stringResource(livePauseProblemRes(it)) },
                     ),
                     nowMs = nowMs,
                     buttons = LiveControlsPolicy.holdWhileTuning(settledButtons, currentButtons, tuningNow),
-                    paused = playbackUi?.isPaused == true,
+                    paused = effectivePaused,
                     favourite = overlayChannel?.contentId?.let { it in favoriteIds } == true,
                     moreOpen = moreOpen,
                     primaryFocus = controlsPrimaryFocus,
@@ -862,7 +888,11 @@ fun LiveGuide(
                         onToggleMore = { moreOpen = !moreOpen; controlsTick++ },
                         onKeepAlive = { controlsTick++ },
                         onHide = { hideControls() },
+                        onSeekWindow = { playbackViewModel.requestSeekInLivePause(it) }.takeIf { scrubbable },
+                        onGoLive = { playbackViewModel.requestGoLive(); controlsTick++ }
+                            .takeIf { livePause.phase != LivePausePhase.OFF },
                     ),
+                    pause = livePause,
                 )
             }
             when (livePanel.takeIf { fullscreen }) {
