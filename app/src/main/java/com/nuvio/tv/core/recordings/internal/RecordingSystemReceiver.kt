@@ -4,7 +4,10 @@ import android.app.AlarmManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.nuvio.tv.core.recordings.api.RecordingsAccess
+import com.nuvio.tv.core.recordings.api.RecordingsPort
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,16 +25,23 @@ class RecordingSystemReceiver : BroadcastReceiver() {
         if (intent?.action !in HANDLED) return
         val port = RecordingsAccess.current() ?: return
         val pending = goAsync()
-        scope.launch {
-            try {
-                port.rearmAll(System.currentTimeMillis())
-            } finally {
-                pending.finish()
-            }
-        }
+        scope.launch { rearmAndFinish(port, System.currentTimeMillis()) { pending.finish() } }
     }
 
     companion object {
+        /** Re-arms, never lets an I/O failure escape the (unsupervised-by-the-OS) scope, and always releases the broadcast. */
+        internal suspend fun rearmAndFinish(port: RecordingsPort, nowMs: Long, finish: () -> Unit) {
+            try {
+                port.rearmAll(nowMs)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("Recordings", "re-arming alarms failed", e)
+            } finally {
+                finish()
+            }
+        }
+
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
         val HANDLED = setOf(

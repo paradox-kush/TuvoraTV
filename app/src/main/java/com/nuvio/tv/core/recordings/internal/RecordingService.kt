@@ -30,10 +30,12 @@ class RecordingService : Service() {
     // Touched on the main thread only (onStartCommand and completion posts).
     private val active = HashMap<String, Job>()
     private var notifier: Job? = null
+    private var lastStartId = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         val id = intent?.getStringExtra(AndroidRecordingAlarms.EXTRA_SCHEDULE_ID)?.takeIf { it.isNotBlank() }
         val port = RecordingsAccess.current()
         if (id == null || port == null) {
@@ -43,7 +45,11 @@ class RecordingService : Service() {
             return START_NOT_STICKY
         }
         if (intent.action == ACTION_CANCEL) {
-            scope.launch { port.cancel(id) }
+            scope.launch {
+                port.cancel(id)
+                // A stale Cancel (nothing running) must not leave a started service behind.
+                android.os.Handler(mainLooper).post { if (active.isEmpty()) finish() }
+            }
             return START_NOT_STICKY
         }
         if (!promote(RecordingNotifications.ongoing(this, "Recording", "Starting…", null, id))) {
@@ -107,11 +113,13 @@ class RecordingService : Service() {
     private fun finish() {
         notifier?.cancel()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // The latest start id: a newer start that arrived meanwhile keeps the service alive.
+        stopSelf(lastStartId)
     }
 
     override fun onDestroy() {
-        // Anything still running is cancelled; the repository records each as CANCELLED_BY_USER.
+        // Anything still running is cancelled by the system, not the user: the repository records each
+        // as STALLED and re-arms it (only an explicit cancel() is CANCELLED_BY_USER).
         scope.cancel()
         super.onDestroy()
     }
