@@ -2,6 +2,7 @@ package com.nuvio.tv.core.livepause
 
 import com.nuvio.tv.core.contracts.LivePauseEngineFacts
 import com.nuvio.tv.playback.core.ApplicationDnsKey
+import com.nuvio.tv.playback.core.PlaybackNetworkRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 
@@ -14,6 +15,10 @@ data class LiveLink(
     val headers: Map<String, String>,
     /** The playlist's pinned DNS, when it has one (the same selector the player's request carries). */
     val dnsKey: ApplicationDnsKey? = null,
+    /** The resolver's network policy (proxy, timeouts), so the capture reaches the provider as the player does. */
+    val network: PlaybackNetworkRequest = PlaybackNetworkRequest(),
+    /** False when the resolver rejects redirects (RedirectPolicy.REJECT). */
+    val followRedirects: Boolean = true,
 )
 
 /** Mints a link through the app's live-resolve path. Null = the provider refused. */

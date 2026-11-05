@@ -13,6 +13,7 @@ import com.nuvio.tv.core.iptv.playback.ProviderLinkReusePolicy
 import com.nuvio.tv.playback.core.DEFAULT_STREAM_USER_AGENT
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.ProviderPlaybackResolver
+import com.nuvio.tv.playback.core.RedirectPolicy
 import com.nuvio.tv.playback.core.ProviderPlaybackResolverFactory
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.ProviderResolutionContext
@@ -97,7 +98,13 @@ internal class LivePauseControlFactoryImpl @Inject constructor(
                 val req = resolved.value.request
                 val headers = req.assembledHttpHeaders()
                 headers.putReplacingCaseInsensitive("User-Agent", req.userAgent ?: DEFAULT_STREAM_USER_AGENT)
-                LiveLink(req.url, headers, req.applicationDnsKey)
+                LiveLink(
+                    url = req.url,
+                    headers = headers,
+                    dnsKey = req.applicationDnsKey,
+                    network = req.network,
+                    followRedirects = req.redirectPolicy == RedirectPolicy.FOLLOW,
+                )
             }
             is PlaybackResult.Failure -> null
         }
