@@ -23,3 +23,23 @@ internal object Media3BehindWindowPolicy {
             Action.REPORT
         }
 }
+
+/**
+ * The backend's per-player state around [Media3BehindWindowPolicy]: counts recoveries since the buffer
+ * last played, so the wiring (count on recover, reset on READY) is testable without a Media3 player.
+ */
+internal class Media3BehindWindowTracker {
+    private var recoveries = 0
+
+    /** A player error arrived; the returned action is final and the recovery is counted. */
+    fun onError(errorCode: Int, isLocalBuffer: Boolean): Media3BehindWindowPolicy.Action {
+        val action = Media3BehindWindowPolicy.decide(errorCode, isLocalBuffer, recoveries)
+        if (action == Media3BehindWindowPolicy.Action.SEEK_TO_WINDOW_START) recoveries++
+        return action
+    }
+
+    /** The player reached READY: it played, so earlier recoveries no longer count against it. */
+    fun onReady() {
+        recoveries = 0
+    }
+}

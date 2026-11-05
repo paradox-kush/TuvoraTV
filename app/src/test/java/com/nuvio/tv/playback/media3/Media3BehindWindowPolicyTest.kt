@@ -33,4 +33,20 @@ class Media3BehindWindowPolicyTest {
     fun `other errors on the local buffer are reported`() {
         assertEquals("io", Action.REPORT, Media3BehindWindowPolicy.decide(PlaybackException.ERROR_CODE_IO_UNSPECIFIED, isLocalBuffer = true, recoveriesWithoutProgress = 0))
     }
+
+    @Test
+    fun `the tracker counts recoveries and a READY resets the count`() {
+        val tracker = Media3BehindWindowTracker()
+        repeat(3) { assertEquals("recovery ${it + 1}", Action.SEEK_TO_WINDOW_START, tracker.onError(behind, true)) }
+        assertEquals("4th without playing", Action.REPORT, tracker.onError(behind, true))
+        tracker.onReady()
+        assertEquals("after READY the budget is back", Action.SEEK_TO_WINDOW_START, tracker.onError(behind, true))
+    }
+
+    @Test
+    fun `reported errors do not consume the recovery budget`() {
+        val tracker = Media3BehindWindowTracker()
+        repeat(5) { assertEquals(Action.REPORT, tracker.onError(behind, false)) }
+        assertEquals("live-source errors did not count", Action.SEEK_TO_WINDOW_START, tracker.onError(behind, true))
+    }
 }

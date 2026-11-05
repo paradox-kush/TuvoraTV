@@ -566,7 +566,7 @@ private class AndroidMedia3Backend(
     private val firstVideoReported = AtomicBoolean(false)
     private var terminalSuppressed = false
     // Behind-window recoveries on the local buffer since it last played (Media3BehindWindowPolicy).
-    private var behindWindowRecoveries = 0
+    private val behindWindow = Media3BehindWindowTracker()
     private var released = false
     private var playerReleased = false
     private val factScope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -587,7 +587,7 @@ private class AndroidMedia3Backend(
             when (playbackState) {
                 Player.STATE_BUFFERING -> _events.tryEmit(Media3BackendEvent.BufferingStarted)
                 Player.STATE_READY -> {
-                    behindWindowRecoveries = 0
+                    behindWindow.onReady()
                     _events.tryEmit(Media3BackendEvent.BufferingEnded)
                 }
             }
@@ -631,13 +631,12 @@ private class AndroidMedia3Backend(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            if (Media3BehindWindowPolicy.decide(error.errorCode, isLocalBuffer(), behindWindowRecoveries) ==
+            if (behindWindow.onError(error.errorCode, isLocalBuffer()) ==
                 Media3BehindWindowPolicy.Action.SEEK_TO_WINDOW_START
             ) {
                 // The buffer trimmed past the viewer's position: carry on from the window start (Media3
                 // live docs: seekTo(0) is the window start; recover with prepare()), never fail the session
                 // (a failure on the live session would silently reconnect to live).
-                behindWindowRecoveries++
                 player.seekTo(0)
                 player.prepare()
                 return
