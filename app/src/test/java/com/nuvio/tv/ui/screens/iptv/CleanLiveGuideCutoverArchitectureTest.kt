@@ -32,11 +32,32 @@ class CleanLiveGuideCutoverArchitectureTest {
 
     @Test
     fun `fullscreen overlay state is read by the overlay scope and never by the guide body`() {
-        listOf("controls.visible", "controls.tick", "controls.moreOpen").forEach { read ->
-            // Writes and event-time reads are fine; a composition read is an `if (... read)` gate or a `= read` argument.
-            assertFalse("Guide body gates composition on $read", screen.contains("if (fullscreen && $read)"))
+        // Event-time reads are fine: they sit inside the BACK handler, the root key handler and the
+        // overlay's channel-list lambda. Any other `controls.<state>` in the screen file is a
+        // composition-time read that restarts the whole hidden guide on every zap press.
+        fun span(start: String, end: String): IntRange {
+            val a = screen.indexOf(start)
+            assertTrue("anchor missing: $start", a >= 0)
+            val b = screen.indexOf(end, startIndex = a + start.length)
+            assertTrue("anchor end missing: $end", b > a)
+            return a..b
+        }
+        val eventScopes = listOf(
+            span("BackHandler(enabled = fullscreen) {", "\n    }\n"),
+            span(".onPreviewKeyEvent { event ->", "                true\n            }"),
+            span("onOpenChannelList = {", "},\n"),
+        )
+        val reads = Regex("""controls\.(visible|tick|moreOpen|zapReveal)\b""").findAll(screen).toList()
+        assertTrue("expected the event-handler reads to be found", reads.isNotEmpty())
+        reads.forEach { m ->
+            assertTrue(
+                "Guide body reads `${m.value}` in composition (offset ${m.range.first}); move it into " +
+                    "GuideFullscreenOverlay / GuideFullscreenControlsEffects or an event handler",
+                eventScopes.any { m.range.first in it },
+            )
         }
         assertTrue(overlay.contains("if (!fullscreen || !controls.visible) return"))
+        assertTrue(screen.contains("GuideFullscreenOverlay(\n                    fullscreen = fullscreen,"))
     }
 
     @Test

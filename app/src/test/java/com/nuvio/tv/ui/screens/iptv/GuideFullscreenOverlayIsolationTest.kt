@@ -46,7 +46,10 @@ class GuideFullscreenOverlayIsolationTest {
         SideEffect { bodyPasses.incrementAndGet() }
         // Stands in for the guide rows: reads body state only.
         Box { Row(body.channels.size) }
-        Box { Overlay(flow, controls) }
+        Box {
+            // The real gate: visibility is read in its scope, never in the body's.
+            FullscreenOverlayGate(fullscreen = true, controls = controls) { Overlay(flow, controls) }
+        }
     }
 
     @Composable
@@ -56,7 +59,6 @@ class GuideFullscreenOverlayIsolationTest {
     private fun Overlay(flow: MutableStateFlow<LiveGuideUiState>, controls: FullscreenControlsState) {
         val ui by flow.collectAsStateWithLifecycle()
         @Suppress("UNUSED_VARIABLE") val aimed = ui.focusedChannelId
-        @Suppress("UNUSED_VARIABLE") val tick = controls.tick
         SideEffect { overlayPasses.incrementAndGet() }
     }
 
@@ -70,6 +72,7 @@ class GuideFullscreenOverlayIsolationTest {
         val rows0 = rowPasses.get()
         val overlay0 = overlayPasses.get()
 
+        assertEquals("overlay hidden until the first press", 0, overlayPasses.get())
         repeat(3) { n ->
             flow.value = flow.value.copy(focusedChannelId = "c${n + 1}")
             controls.show(); controls.zapReveal = true
