@@ -192,7 +192,7 @@ class IptvIngressSelectionFactoryTest {
     }
 
     @Test
-    fun `unknown sources and non-Xtream catch-up are rejected`() = runTest {
+    fun `unknown sources and stalker catch-up are rejected`() = runTest {
         val unknown = account("unknown", sourceType = "future-source")
         assertRejected(
             factory(listOf(unknown)).create(
@@ -201,11 +201,11 @@ class IptvIngressSelectionFactoryTest {
             IptvIngressSelectionFailure.SOURCE_UNSUPPORTED,
         )
 
-        val m3u = account("m3u", sourceType = XtreamAccount.SOURCE_URL)
+        val stalker = account("stalker", sourceType = XtreamAccount.SOURCE_STALKER)
         assertRejected(
-            factory(listOf(m3u)).create(
+            factory(listOf(stalker)).create(
                 IptvIngressSelectionInput(
-                    XtreamItemRegistry.liveId(m3u.id, 1),
+                    XtreamItemRegistry.liveId(stalker.id, 1),
                     ContentType.CATCH_UP,
                     60_000,
                     120_000,
@@ -213,6 +213,15 @@ class IptvIngressSelectionFactoryTest {
             ),
             IptvIngressSelectionFailure.CATCH_UP_SOURCE_UNSUPPORTED,
         )
+    }
+
+    @Test
+    fun `M3U catch-up is selectable`() = runTest {
+        val m3u = account("m3u", sourceType = XtreamAccount.SOURCE_URL)
+        val result = factory(listOf(m3u)).create(
+            IptvIngressSelectionInput(XtreamItemRegistry.liveId(m3u.id, 1), ContentType.CATCH_UP, 60_000, 120_000),
+        )
+        assertTrue("M3U replay is selected: $result", result is IptvIngressSelectionResult.Selected)
     }
 
     @Test

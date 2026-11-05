@@ -59,6 +59,16 @@ internal fun interface ProviderLinkSource {
     ): ProviderLinkResult
 }
 
+/** An M3U channel's live URL and its catch-up settings, as the clean resolver needs them to build a replay. */
+internal class M3uChannelCatchUp(val liveUrl: String, val info: com.nuvio.tv.core.iptv.M3uCatchUpInfo) {
+    override fun toString(): String = "M3uChannelCatchUp(type=${info.type}, days=${info.days})"
+}
+
+/** Looks an M3U channel up by its stream id; null when it is gone or has no catch-up. */
+internal fun interface ProviderM3uCatchUpLookup {
+    suspend fun find(account: XtreamAccount, streamId: Int): M3uChannelCatchUp?
+}
+
 internal sealed interface ProviderLinkResult {
     class Resolved(val url: String) : ProviderLinkResult {
         override fun toString(): String = "ProviderLinkResult.Resolved(hasUrl=true)"
@@ -77,6 +87,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
     private val winnerMemory: CatchUpDialectWalk.WinnerMemory,
     private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
     private val panelClock: com.nuvio.tv.core.iptv.PanelClockSource = com.nuvio.tv.core.iptv.PanelClockSource.NONE,
+    private val m3uChannels: ProviderM3uCatchUpLookup = ProviderM3uCatchUpLookup { _, _ -> null },
 ) : ProviderPlaybackResolverFactory {
 
     @Inject
@@ -86,6 +97,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
         winnerStore: CatchUpWinnerStore,
         serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover,
         panelClock: com.nuvio.tv.core.iptv.PanelClockSource,
+        contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
     ) : this(
         accountLookups = ProviderAccountLookupFactory { profileId ->
             val persistedProfileId = profileId.value.toIntOrNull()?.takeIf { it > 0 }
@@ -110,6 +122,11 @@ class IptvProviderPlaybackResolverFactory internal constructor(
         winnerMemory = winnerStore,
         activeServer = serverFailover::activeAccount,
         panelClock = panelClock,
+        m3uChannels = ProviderM3uCatchUpLookup { account, streamId ->
+            contentDb.channelRow(account.id, streamId)?.let { row ->
+                row.catchUp?.let { M3uChannelCatchUp(row.url, it) }
+            }
+        },
     )
 
     override fun create(profileId: PlaybackProfileId): ProviderPlaybackResolver =
@@ -119,6 +136,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
             winnerMemory = winnerMemory,
             activeServer = activeServer,
             panelClock = panelClock,
+            m3uChannels = m3uChannels,
         )
 }
 
@@ -136,12 +154,14 @@ class IptvProviderPlaybackResolver internal constructor(
     /** Step 0.3: the playlist on its ACTIVE server — catch-up replays from there, never failing over. */
     private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
     private val panelClock: com.nuvio.tv.core.iptv.PanelClockSource = com.nuvio.tv.core.iptv.PanelClockSource.NONE,
+    private val m3uChannels: ProviderM3uCatchUpLookup = ProviderM3uCatchUpLookup { _, _ -> null },
 ) : ProviderPlaybackResolver {
 
     private val mapper = PlaybackRequestMapper()
     private val catchUpWalk = CatchUpDialectWalk(winnerMemory)
     private val resolutionMutex = Mutex()
     private val activeCatchUpByAccount = mutableMapOf<String, ActiveCatchUp>()
+    private val activeM3uCatchUpByAccount = mutableMapOf<String, ActiveM3uCatchUp>()
 
     override suspend fun resolve(
         selection: ProviderPlaybackSelection,
@@ -210,6 +230,9 @@ class IptvProviderPlaybackResolver internal constructor(
         streamId: Int,
         context: ProviderResolutionContext,
     ): PlaybackResult<ResolvedPlaybackRequest> {
+        if (selection.sourceType == ProviderSourceType.M3U && account.isM3UBacked()) {
+            return resolveM3uCatchUp(account, selection, streamId, context)
+        }
         if (selection.sourceType != ProviderSourceType.XTREAM || account.sourceType != XtreamAccount.SOURCE_XTREAM) {
             return unavailable(deterministic = true)
         }
@@ -255,6 +278,53 @@ class IptvProviderPlaybackResolver internal constructor(
                 unavailable(deterministic = false)
             }
         }
+    }
+
+    /**
+     * M3U replay: the playlist's own style builds the link ([com.nuvio.tv.core.iptv.M3uCatchUp]); a
+     * transport-shaped failure moves to the next candidate, anything else keeps the link it has. There
+     * is no panel to ask, so the playlist's correction minutes are the whole clock offset.
+     */
+    private suspend fun resolveM3uCatchUp(
+        account: XtreamAccount,
+        selection: ProviderPlaybackSelection,
+        streamId: Int,
+        context: ProviderResolutionContext,
+    ): PlaybackResult<ResolvedPlaybackRequest> {
+        val window = selection.catchUpWindow ?: return unavailable(deterministic = true)
+        val key = CatchUpSelectionKey(selection)
+        val previous = activeM3uCatchUpByAccount[account.id]?.takeIf { it.key == key }
+        if (
+            context.previousFailure?.dialectAdvanceEligibility ==
+            ProviderDialectAdvanceEligibility.TRANSPORT_OR_DEMUX_FAILURE
+        ) {
+            if (previous == null) return unavailable(deterministic = false)
+            if (previous.index + 1 >= previous.urls.size) {
+                activeM3uCatchUpByAccount.remove(account.id)
+                return unavailable(deterministic = false)
+            }
+            previous.index++
+            return mapped(account, selection, previous.urls[previous.index], dialect = null)
+        }
+        if (previous != null) return mapped(account, selection, previous.urls[previous.index], dialect = null)
+
+        val channel = m3uChannels.find(account, streamId) ?: return unavailable(deterministic = true)
+        val nowMs = System.currentTimeMillis()
+        val windowEnd = com.nuvio.tv.core.iptv.CatchUpContinuationPolicy.replayWindowEndMs(
+            com.nuvio.tv.core.iptv.CatchUpContinuationPolicy.Programme(window.startEpochMs, window.endEpochMs), nowMs,
+        )
+        val offsetMs = account.catchUpOffsetMs ?: 0L
+        val primary = com.nuvio.tv.core.iptv.M3uCatchUp.build(
+            channel.info, channel.liveUrl, window.startEpochMs, windowEnd, nowMs, offsetMs,
+        ) ?: return unavailable(deterministic = true)
+        val urls = listOf(primary) + com.nuvio.tv.core.iptv.M3uCatchUp.alternatives(
+            url = primary,
+            offsetMs = offsetMs,
+            showMinutes = (window.endEpochMs - window.startEpochMs) / 60_000L,
+            airedMinutes = if (window.endEpochMs > nowMs) (nowMs - window.startEpochMs) / 60_000L else null,
+        )
+        activeM3uCatchUpByAccount[account.id] = ActiveM3uCatchUp(key, urls)
+        return mapped(account, selection, primary, dialect = null)
     }
 
     private fun mapped(
@@ -434,6 +504,8 @@ class IptvProviderPlaybackResolver internal constructor(
         }
         override fun toString(): String = "CatchUpSelectionKey([REDACTED])"
     }
+
+    private class ActiveM3uCatchUp(val key: CatchUpSelectionKey, val urls: List<String>, var index: Int = 0)
 
     private data class ActiveCatchUp(
         val key: CatchUpSelectionKey,
