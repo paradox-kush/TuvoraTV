@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,8 +75,11 @@ internal class AndroidRecordingSaver(
     }
 
     private suspend fun attempt(url: String, req: SaveRequest, part: File, progress: (Long) -> Unit): Attempt {
-        var offset = if (req.resumeFromBytes > 0) part.length() else 0L
-        if (offset == 0L && part.exists()) part.delete()
+        // Resume only a partial that is known to come from THIS link; anything else would splice
+        // bytes of a different file (another candidate, a re-minted link) into this one.
+        val meta = ResumeMeta.read(part)
+        var offset = if (req.resumeFromBytes > 0 && meta?.url == url) part.length() else 0L
+        if (offset == 0L) { part.delete(); ResumeMeta.delete(part) }
         var restartedOnce = false
         while (true) {
             currentCoroutineContext().ensureActive()
@@ -85,7 +89,10 @@ internal class AndroidRecordingSaver(
                         if (!k.equals("Range", true) && !k.equals("If-Range", true) && !k.equals("Accept-Encoding", true)) header(k, v)
                     }
                     header("Accept-Encoding", "identity")
-                    if (offset > 0L) header("Range", "bytes=$offset-")
+                    if (offset > 0L) {
+                        header("Range", "bytes=$offset-")
+                        meta?.validator?.let { header("If-Range", it) }
+                    }
                 }.build()
             } catch (e: IllegalArgumentException) {
                 // A link OkHttp cannot parse is a link the provider can't serve.
@@ -95,10 +102,12 @@ internal class AndroidRecordingSaver(
             val stall = RecordingStallPolicy(0)
             val clock = TimeSource.Monotonic.markNow()
             var stalledByWatchdog = false
-            val job = currentCoroutineContext()[kotlinx.coroutines.Job]
-            val handle = job?.invokeOnCompletion { if (it != null) call.cancel() }
             try {
                 return coroutineScope {
+                    // A blocking read ignores coroutine cancellation, so a sibling that waits for it
+                    // closes the connection from another thread (invokeOnCompletion would only run
+                    // after the blocked read had already returned).
+                    val canceller = launch { try { awaitCancellation() } finally { call.cancel() } }
                     val watchdog = launch {
                         while (true) {
                             delay(WATCHDOG_TICK_MS)
@@ -110,8 +119,13 @@ internal class AndroidRecordingSaver(
                         val response = call.execute()
                         response.use { resp ->
                             if (resp.code == 416 && offset > 0L && !restartedOnce) {
-                                part.delete(); offset = 0L; restartedOnce = true
+                                part.delete(); ResumeMeta.delete(part); offset = 0L; restartedOnce = true
                                 return@coroutineScope null // go round again from zero
+                            }
+                            if (resp.code == 206 && offset > 0L && resp.header("Content-Range")?.let(::startOfRange) != offset) {
+                                // Bytes that do not start where our partial ends: never append them.
+                                part.delete(); ResumeMeta.delete(part); offset = 0L
+                                return@coroutineScope null
                             }
                             if (!resp.isSuccessful) {
                                 val kind = RecordingSaveClassifier.forHttp(resp.code, isOnline())
@@ -124,6 +138,7 @@ internal class AndroidRecordingSaver(
                                 SaveOutcome.Failed(RecordingProblem.PROVIDER_REFUSED, false, part.length(), rangeSupported),
                             )
                             val expected = body.contentLength().takeIf { it >= 0 }?.let { if (resumed) offset + it else it }
+                            if (!resumed) ResumeMeta.write(part, url, resp.header("ETag"), resp.header("Last-Modified"))
                             var written = if (resumed) offset else 0L
                             var sinceCheck = 0L
                             progress(written)
@@ -156,11 +171,12 @@ internal class AndroidRecordingSaver(
                                     val kind = RecordingSaveClassifier.forIo(null, stalled = true, online = isOnline())
                                     Attempt.Failure(SaveOutcome.Failed(kind.problem, kind.offline, written, rangeSupported))
                                 }
-                                else -> Attempt.Finished
+                                else -> { ResumeMeta.delete(part); Attempt.Finished }
                             }
                         }
                     } finally {
                         watchdog.cancel()
+                        canceller.cancel()
                     }
                 } ?: continue
             } catch (e: CancellationException) {
@@ -170,8 +186,6 @@ internal class AndroidRecordingSaver(
                 currentCoroutineContext().ensureActive()
                 val kind = RecordingSaveClassifier.forIo(e, stalledByWatchdog, isOnline())
                 return Attempt.Failure(SaveOutcome.Failed(kind.problem, kind.offline, part.length(), offset > 0L || part.length() > 0))
-            } finally {
-                handle?.dispose()
             }
         }
     }
@@ -182,5 +196,28 @@ internal class AndroidRecordingSaver(
     private companion object {
         const val WATCHDOG_TICK_MS = 5_000L
         const val SPACE_CHECK_BYTES = 16L * 1024 * 1024
+    }
+}
+
+internal data class ResumeMeta(val url: String, val etag: String?, val lastModified: String?) {
+    val validator: String? get() = etag?.takeIf { !it.startsWith("W/") } ?: lastModified
+
+    companion object {
+        private fun file(part: File) = File(part.path + ".meta")
+
+        fun write(part: File, url: String, etag: String?, lastModified: String?) {
+            val text = listOf(url, etag.orEmpty(), lastModified.orEmpty()).joinToString("\n")
+            val tmp = File(part.path + ".meta.tmp")
+            tmp.writeText(text)
+            if (!tmp.renameTo(file(part))) { file(part).writeText(text); tmp.delete() }
+        }
+
+        fun read(part: File): ResumeMeta? {
+            val lines = try { file(part).takeIf { it.isFile }?.readText()?.split("\n") } catch (e: IOException) { null } ?: return null
+            val url = lines.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return null
+            return ResumeMeta(url, lines.getOrNull(1)?.takeIf { it.isNotBlank() }, lines.getOrNull(2)?.takeIf { it.isNotBlank() })
+        }
+
+        fun delete(part: File) { file(part).delete() }
     }
 }

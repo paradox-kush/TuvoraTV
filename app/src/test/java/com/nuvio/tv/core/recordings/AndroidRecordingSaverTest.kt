@@ -4,6 +4,7 @@ import com.nuvio.tv.core.recordings.api.RecordingProblem
 import com.nuvio.tv.core.recordings.api.SaveOutcome
 import com.nuvio.tv.core.recordings.api.SaveRequest
 import com.nuvio.tv.core.recordings.internal.AndroidRecordingSaver
+import com.nuvio.tv.core.recordings.internal.ResumeMeta
 import java.io.File
 import java.nio.file.Files
 import org.junit.After
@@ -11,7 +12,12 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -42,6 +48,13 @@ class AndroidRecordingSaverTest {
             targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = 0, spaceCheck = check,
         )
 
+    /** A `.part` left by an earlier try of [path]: its bytes plus the sidecar naming the link and validators it came from. */
+    private fun partial(text: String, path: String, etag: String? = null, lastModified: String? = null) {
+        val part = File(dir, "show.ts.part")
+        part.writeText(text)
+        ResumeMeta.write(part, server.url(path).toString(), etag, lastModified)
+    }
+
     private fun saver() = AndroidRecordingSaver(isOnline = { online }, baseClient = OkHttpClient())
     private fun body(s: String) = MockResponse().setResponseCode(200).setBody(s)
 
@@ -63,17 +76,19 @@ class AndroidRecordingSaverTest {
 
     @Test
     fun `a partial file resumes with a range request when the server answers 206`() = runBlocking {
-        File(dir, "show.ts.part").writeText("01234")
+        partial("01234", "/a.ts", etag = "\"v1\"")
         server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 5-9/10").setBody("56789"))
         val got = saver().save(req("/a.ts", resume = 5)) { }
         assertEquals(SaveOutcome.Done(10), got)
-        assertEquals("bytes=5-", server.takeRequest().getHeader("Range"))
+        val sent = server.takeRequest()
+        assertEquals("bytes=5-", sent.getHeader("Range"))
+        assertEquals("the resume is conditional on the same bytes", "\"v1\"", sent.getHeader("If-Range"))
         assertEquals("0123456789", File(dir, "show.ts").readText())
     }
 
     @Test
     fun `a server that ignores the range restarts from zero`() = runBlocking {
-        File(dir, "show.ts.part").writeText("01234")
+        partial("01234", "/a.ts", etag = "\"v1\"")
         server.enqueue(body("0123456789"))
         val got = saver().save(req("/a.ts", resume = 5)) { }
         assertEquals(SaveOutcome.Done(10), got)
@@ -82,7 +97,7 @@ class AndroidRecordingSaverTest {
 
     @Test
     fun `a 416 on resume throws the partial away and starts again`() = runBlocking {
-        File(dir, "show.ts.part").writeText("0123456789ABC")
+        partial("0123456789ABC", "/a.ts", etag = "\"v1\"")
         server.enqueue(MockResponse().setResponseCode(416))
         server.enqueue(body("0123456789"))
         assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 13)) { })
@@ -134,5 +149,69 @@ class AndroidRecordingSaverTest {
         val got = saver().save(req("/a.ts", check = { asked++; RecordingProblem.NO_SPACE })) { } as SaveOutcome.Failed
         assertEquals(RecordingProblem.NO_SPACE, got.problem)
         assertEquals(1, asked)
+    }
+
+    @Test
+    fun `cancelling aborts a read stalled on a body that never finishes`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setHeader("Content-Length", "100000")
+                .setBody(Buffer().write(ByteArray(100_000))).throttleBody(1, 1, TimeUnit.HOURS),
+        )
+        val job = async(Dispatchers.Default) { saver().save(req("/a.ts")) { } }
+        delay(700)
+        val t0 = System.nanoTime()
+        withTimeout(3_000) { job.cancel(); job.join() }
+        val tookMs = (System.nanoTime() - t0) / 1_000_000
+        assertTrue("cancel must interrupt the blocked read, took $tookMs ms", tookMs < 1_000)
+    }
+
+    @Test
+    fun `a partial from a different link is not resumed`() = runBlocking {
+        partial("01234", "/other.ts", etag = "\"v1\"")
+        server.enqueue(body("0123456789"))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 5)) { })
+        val sent = server.takeRequest()
+        assertEquals("never ask for a range of bytes that came from another URL", null, sent.getHeader("Range"))
+        assertEquals("0123456789", File(dir, "show.ts").readText())
+    }
+
+    @Test
+    fun `a partial with no recorded source is not resumed`() = runBlocking {
+        File(dir, "show.ts.part").writeText("01234")
+        server.enqueue(body("0123456789"))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 5)) { })
+        assertEquals(null, server.takeRequest().getHeader("Range"))
+    }
+
+    @Test
+    fun `a 206 whose Content-Range starts elsewhere is never appended and restarts from zero`() = runBlocking {
+        partial("01234", "/a.ts", etag = "\"v1\"")
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 3-9/10").setBody("3456789"))
+        server.enqueue(body("0123456789"))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 5)) { })
+        assertEquals("0123456789", File(dir, "show.ts").readText())
+        server.takeRequest()
+        assertEquals("the second request starts from zero", null, server.takeRequest().getHeader("Range"))
+    }
+
+    @Test
+    fun `a 200 to a conditional range replaces the partial because the file changed`() = runBlocking {
+        partial("OLDOL", "/a.ts", etag = "\"v1\"")
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("ETag", "\"v2\"").setBody("0123456789"))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 5)) { })
+        assertEquals("0123456789", File(dir, "show.ts").readText())
+    }
+
+    @Test
+    fun `an interrupted save records its link and validators so the next try can resume`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setHeader("Content-Length", "10").setHeader("ETag", "\"v9\"")
+                .setBody("0123456789").setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY),
+        )
+        val first = saver().save(req("/a.ts")) { } as SaveOutcome.Failed
+        assertTrue("a partial was kept", first.writtenBytes in 1..9)
+        val meta = ResumeMeta.read(File(dir, "show.ts.part"))
+        assertEquals(server.url("/a.ts").toString(), meta?.url)
+        assertEquals("\"v9\"", meta?.etag)
     }
 }
