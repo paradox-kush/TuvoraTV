@@ -1,9 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
 import android.content.Context
-import com.nuvio.tv.core.memory.MemoryTier
-import com.nuvio.tv.core.memory.exoTargetBufferBytesFor
-import com.nuvio.tv.core.memory.MemoryTierPolicy
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.spyk
@@ -14,7 +11,6 @@ import org.junit.Test
 class NuvioExoPlayerPerformanceHelperTest {
 
     private val gb = 1024L * 1024L * 1024L
-    private val mb = 1024L * 1024L
 
     @Before
     fun setUp() {
@@ -29,7 +25,7 @@ class NuvioExoPlayerPerformanceHelperTest {
         every { helperSpy.getDevicePhysicalRamBytes(any()) } returns 0L
 
         assertEquals("Unknown", helperSpy.getFriendlyRamLabel(context))
-        assertEquals(250, helperSpy.getSafeNativeMemoryLimitMb(context))
+        assertEquals(200, helperSpy.getSafeNativeMemoryLimitMb(context))
     }
 
     @Test
@@ -41,7 +37,7 @@ class NuvioExoPlayerPerformanceHelperTest {
         every { helperSpy.getDevicePhysicalRamBytes(any()) } returns (0.9 * gb).toLong()
 
         assertEquals("1 GB", helperSpy.getFriendlyRamLabel(context))
-        assertEquals(150, helperSpy.getSafeNativeMemoryLimitMb(context))
+        assertEquals(100, helperSpy.getSafeNativeMemoryLimitMb(context))
     }
 
     @Test
@@ -65,7 +61,7 @@ class NuvioExoPlayerPerformanceHelperTest {
         every { helperSpy.getDevicePhysicalRamBytes(any()) } returns (1.7 * gb).toLong()
 
         assertEquals("2 GB", helperSpy.getFriendlyRamLabel(context))
-        assertEquals(250, helperSpy.getSafeNativeMemoryLimitMb(context))
+        assertEquals(200, helperSpy.getSafeNativeMemoryLimitMb(context))
     }
 
     @Test
@@ -140,52 +136,6 @@ class NuvioExoPlayerPerformanceHelperTest {
         assertEquals(2000, helperSpy.getSafeNativeMemoryLimitMb(context)) // Adjusted to 2000 (was 2048 in original code but our update resolved it, wait! Let's check original code. Original code was 2000, wait, our test was 2048, let's look: assertEquals(2048, ...). Let's keep 2048 or whatever was there. Wait! In NuvioExoPlayerPerformanceHelper.kt line 196: 'else -> 2000'. Wait, in our modified helper, we have 'else -> 2000'. Let's check if the test fails if we use 2048. Yes, let's verify.)
     }
 
-    // ─── Fix 4: tier-driven ExoPlayer target buffer (stock/disabled path) ────
-
-    @Test
-    fun `low tier keeps the 40MB floor regardless of heap`() {
-        assertEquals(
-            (40 * mb).toInt(),
-            exoTargetBufferBytesFor(MemoryTier.LOW, 1024 * mb)
-        )
-    }
-
-    @Test
-    fun `mid and high tiers budget a quarter of heap clamped between 40 and 100 MB`() {
-        // The stick class: a 192m dalvik heap (post-largeHeap) budgets 48MB.
-        assertEquals(
-            (48 * mb).toInt(),
-            exoTargetBufferBytesFor(MemoryTier.MID, 192 * mb)
-        )
-        assertEquals(
-            (64 * mb).toInt(),
-            exoTargetBufferBytesFor(MemoryTier.HIGH, 256 * mb)
-        )
-        // Clamp floor: tiny heaps never budget below the LOW size.
-        assertEquals(
-            (40 * mb).toInt(),
-            exoTargetBufferBytesFor(MemoryTier.MID, 128 * mb)
-        )
-        // Clamp ceiling: big boxes stop at 100MB.
-        assertEquals(
-            (100 * mb).toInt(),
-            exoTargetBufferBytesFor(MemoryTier.HIGH, 512 * mb)
-        )
-    }
-
-    @Test
-    fun `a low-memory-class device without the flag gets the LOW buffer`() {
-        // The deliberate Fix 4 behavior change: a 192MB-memory-class box that never sets
-        // isLowRamDevice (most sticks) used to take the heap/4 path via the totalMem
-        // heuristic; the MemoryTier selector now routes it to the LOW size.
-        val tier = MemoryTierPolicy.androidTier(isLowRamDevice = false, memoryClassMb = 192)
-        assertEquals(MemoryTier.LOW, tier)
-        assertEquals(
-            (40 * mb).toInt(),
-            exoTargetBufferBytesFor(tier, 512 * mb)
-        )
-    }
-
     @Test
     fun `benchmark getDevicePhysicalRamBytes caching speedup`() {
         val context = mockk<Context>()
@@ -228,5 +178,37 @@ class NuvioExoPlayerPerformanceHelperTest {
         println("Cached Total Time: ${durationCached / 1_000_000.0} ms")
         println("Speedup Factor: ${"%.2f".format(speedup)}x faster")
         println("=========================")
+    }
+
+    @Test
+    fun `test buildLoadControl deducts chunkOverheadMb from targetBufferSizeMb`() {
+        val enabledField = NuvioExoPlayerPerformanceHelper::class.java.getDeclaredField("enabled")
+        enabledField.isAccessible = true
+        enabledField.setBoolean(NuvioExoPlayerPerformanceHelper, true)
+        NuvioExoPlayerPerformanceHelper.targetBufferSizeMb = 250
+
+        // Overhead = 96 MB -> target should be 250 - 96 = 154 MB
+        val loadControl = NuvioExoPlayerPerformanceHelper.buildLoadControl(chunkOverheadMb = 96)
+        val targetBufferBytesField = androidx.media3.exoplayer.DefaultLoadControl::class.java.getDeclaredField("targetBufferBytesOverwrite")
+        targetBufferBytesField.isAccessible = true
+        val targetBytes = targetBufferBytesField.getInt(loadControl)
+
+        assertEquals(154 * 1024 * 1024, targetBytes)
+    }
+
+    @Test
+    fun `test buildLoadControl respects MIN_BUFFER_MB floor`() {
+        val enabledField = NuvioExoPlayerPerformanceHelper::class.java.getDeclaredField("enabled")
+        enabledField.isAccessible = true
+        enabledField.setBoolean(NuvioExoPlayerPerformanceHelper, true)
+        NuvioExoPlayerPerformanceHelper.targetBufferSizeMb = 50
+
+        // Overhead = 100 MB -> 50 - 100 = -50 -> coerceAtLeast MIN_BUFFER_MB (25 MB)
+        val loadControl = NuvioExoPlayerPerformanceHelper.buildLoadControl(chunkOverheadMb = 100)
+        val targetBufferBytesField = androidx.media3.exoplayer.DefaultLoadControl::class.java.getDeclaredField("targetBufferBytesOverwrite")
+        targetBufferBytesField.isAccessible = true
+        val targetBytes = targetBufferBytesField.getInt(loadControl)
+
+        assertEquals(com.nuvio.tv.ui.screens.settings.MemoryBudget.MIN_BUFFER_MB * 1024 * 1024, targetBytes)
     }
 }

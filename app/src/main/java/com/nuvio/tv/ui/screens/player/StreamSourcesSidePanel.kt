@@ -5,7 +5,6 @@
 
 package com.nuvio.tv.ui.screens.player
 
-import com.nuvio.tv.ui.components.player.DialogButton
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -59,6 +58,8 @@ import com.nuvio.tv.ui.components.SourceChipStatus
 import com.nuvio.tv.ui.theme.NuvioTheme
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
+import com.nuvio.tv.ui.util.localizeEpisodeTitle
+import androidx.compose.ui.platform.LocalContext
 
 @Composable
 internal fun StreamSourcesSidePanel(
@@ -69,6 +70,7 @@ internal fun StreamSourcesSidePanel(
     onReload: () -> Unit,
     onAddonFilterSelected: (String?) -> Unit,
     onStreamSelected: (Stream) -> Unit,
+    onExpandStreams: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
@@ -253,6 +255,7 @@ internal fun StreamSourcesSidePanel(
                     isPrimary = false,
                     modifier = Modifier
                         .focusRequester(closeButtonFocusRequester)
+                        .onFocusChanged { closeButtonHasFocus = it.isFocused }
                         .onKeyEvent { event ->
                             if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN &&
                                 event.key == Key.DirectionDown
@@ -269,6 +272,7 @@ internal fun StreamSourcesSidePanel(
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
 
             // Current content info
+            val context = LocalContext.current
             val seasonEpisodeCode = if (uiState.currentSeason != null && uiState.currentEpisode != null) {
                 stringResource(
                     R.string.season_episode_format,
@@ -278,17 +282,16 @@ internal fun StreamSourcesSidePanel(
             } else {
                 null
             }
+            val localizedEpisodeTitle = uiState.currentEpisodeTitle
+                ?.takeIf { it.isNotBlank() }
+                ?.localizeEpisodeTitle(context)
+            val contentInfoText = when {
+                seasonEpisodeCode != null && localizedEpisodeTitle != null -> "$seasonEpisodeCode • $localizedEpisodeTitle"
+                seasonEpisodeCode != null -> seasonEpisodeCode
+                else -> uiState.title
+            }
             Text(
-                text = buildString {
-                    if (seasonEpisodeCode != null) {
-                        append(seasonEpisodeCode)
-                        if (!uiState.currentEpisodeTitle.isNullOrBlank()) {
-                            append(" • ${uiState.currentEpisodeTitle}")
-                        }
-                    } else {
-                        append(uiState.title)
-                    }
-                },
+                text = contentInfoText,
                 style = MaterialTheme.typography.bodyLarge,
                 color = NuvioTheme.extendedColors.textSecondary,
                 maxLines = 1,
@@ -377,6 +380,17 @@ internal fun StreamSourcesSidePanel(
 
                     val lastKeyRepeatDispatchRef = remember { java.util.concurrent.atomic.AtomicLong(0L) }
 
+                    val lastVisibleIndex = remember(streamListState) {
+                        androidx.compose.runtime.derivedStateOf {
+                            streamListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                        }
+                    }
+                    LaunchedEffect(lastVisibleIndex.value, uiState.sourceFilteredStreams.size) {
+                        if (lastVisibleIndex.value >= uiState.sourceFilteredStreams.size - 20) {
+                            onExpandStreams()
+                        }
+                    }
+
                     LazyColumn(
                         state = streamListState,
                         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
@@ -463,6 +477,9 @@ internal fun StreamSourcesSidePanel(
                                 badgePlacement = uiState.streamBadgePlacement,
                                 onClick = { onStreamSelected(stream) },
                                 onFocusChanged = { focused ->
+                                    if (focused) {
+                                        focusedStreamKey = streamKeys[index]
+                                    }
                                     if (index == 0) {
                                         firstCardHasFocus = focused
                                     }

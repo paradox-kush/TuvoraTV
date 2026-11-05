@@ -44,6 +44,7 @@ import com.nuvio.tv.ui.screens.addon.CatalogOrderScreen
 import com.nuvio.tv.ui.screens.library.LibraryScreen
 import com.nuvio.tv.ui.screens.player.PlayerExitReason
 import com.nuvio.tv.ui.screens.player.PlayerScreen
+import com.nuvio.tv.ui.screens.player.PostPlayRecommendation
 import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerRoute
 import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerViewModel
 import com.nuvio.tv.ui.screens.player.playerBackOpensCurrentEpisodeStreams
@@ -1012,6 +1013,31 @@ private fun PlaybackNavHost(
                 return returnedToStream
             }
 
+            fun navigateFromPostPlay(
+                recommendation: PostPlayRecommendation,
+                playOnLoad: Boolean,
+                manualSelection: Boolean = false
+            ) {
+                val returnToHomeOnBack = backStackEntry.arguments
+                    ?.getString("returnToHomeOnBack")
+                    ?.toBooleanStrictOrNull() == true
+                val playbackRootRoute = postPlayRecommendationPopUpRoute(
+                    navController.previousBackStackEntry?.destination?.route
+                )
+                navController.navigate(
+                    Screen.Detail.createRoute(
+                        itemId = recommendation.id,
+                        itemType = recommendation.contentType,
+                        addonBaseUrl = recommendation.sourceAddonBaseUrl,
+                        returnToHomeOnBack = returnToHomeOnBack,
+                        heroBackdropUrl = recommendation.backdrop,
+                        playOnLoad = playOnLoad,
+                        manualSelection = manualSelection
+                    )
+                ) {
+                    popUpTo(playbackRootRoute) { inclusive = true }
+                }
+            }
 
             PlayerScreen(
                 onBackPress = onBack@{ currentVideoId, currentSeason, currentEpisode, autoPlayEnabled, playbackCompleted ->
@@ -1115,6 +1141,19 @@ private fun PlaybackNavHost(
                     }
                 },
                 onOpenPartyMedia = ::openPartyMedia,
+                onPlayRecommendation = { recommendation, manualSelection ->
+                    navigateFromPostPlay(
+                        recommendation = recommendation,
+                        playOnLoad = true,
+                        manualSelection = manualSelection
+                    )
+                },
+                onOpenRecommendationDetails = { recommendation ->
+                    navigateFromPostPlay(
+                        recommendation = recommendation,
+                        playOnLoad = false
+                    )
+                },
                 onPlaybackEnded = onEnded@{ nextVideoId, nextSeason, nextEpisode, exitReason ->
                     if (returnToLiveGuideOrPop()) return@onEnded
                     val args = backStackEntry.arguments

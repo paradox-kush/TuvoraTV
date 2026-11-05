@@ -32,23 +32,20 @@ internal data class PlayerNavigationArgs(
     val fileIdx: Int?,
     val sourcesJson: String?,
     val contentLanguage: String?,
+    val cloudSessionToken: String?,
     val rememberedAudioLanguage: String?,
     val rememberedAudioName: String?,
     val launchStartedAtMs: Long?,
-    /**
-     * This playback is a catch-up recording, not a live feed.
-     *
-     * Carried BESIDE [contentType] rather than as a new type: the replay id keeps the channel's
-     * `:live:` segment, so `isLiveContentId()` still answers true and every live code path keeps
-     * working — this flag turns off only the three behaviours a recording must not have (channel
-     * zapping, live-edge resume after backgrounding, and the freeze watchdog).
-     */
-    val isCatchUp: Boolean,
-    /** The replayed programme's bounds, for the seek ceiling. Null unless [isCatchUp]. */
-    val catchUpStartMs: Long?,
-    val catchUpEndMs: Long?,
+    val profileId: Int?,
     val audioDelayMs: Int? = null,
-    val audioDelayLanguage: String? = null
+    val audioDelayLanguage: String? = null,
+    /**
+     * Fork: IPTV catch-up replay (route arg `isCatchUp`, see Screen.Player). The replay id keeps the
+     * channel's `:live:` segment; this flag and the programme bounds drive [CatchUpReplayAdapter].
+     */
+    val isCatchUp: Boolean = false,
+    val catchUpStartMs: Long? = null,
+    val catchUpEndMs: Long? = null
 ) {
     val torrentTrackers: List<String>
         get() {
@@ -92,7 +89,7 @@ internal data class PlayerNavigationArgs(
                 initialSeason = savedStateHandle.get<String>("season")?.toIntOrNull(),
                 initialEpisode = savedStateHandle.get<String>("episode")?.toIntOrNull(),
                 initialEpisodeTitle = decodedOrNull("episodeTitle"),
-                bingeGroup = decodedOrNull("bingeGroup"),
+                bingeGroup = savedStateHandle.get<String>("bingeGroup")?.takeIf { it.isNotEmpty() },
                 filename = decodedOrNull("filename"),
                 videoHash = savedStateHandle.get<String>("videoHash")?.takeIf { it.isNotEmpty() },
                 videoSize = savedStateHandle.get<String>("videoSize")?.toLongOrNull(),
@@ -104,14 +101,16 @@ internal data class PlayerNavigationArgs(
                 fileIdx = savedStateHandle.get<String>("fileIdx")?.toIntOrNull(),
                 sourcesJson = decodedOrNull("sources"),
                 contentLanguage = decodedOrNull("contentLanguage"),
+                cloudSessionToken = decodedOrNull("cloudSessionToken"),
                 rememberedAudioLanguage = decodedOrNull("rememberedAudioLanguage"),
                 rememberedAudioName = decodedOrNull("rememberedAudioName"),
                 launchStartedAtMs = savedStateHandle.get<String>("launchStartedAtMs")?.toLongOrNull(),
+                profileId = savedStateHandle.get<String>("profileId")?.toIntOrNull(),
+                audioDelayMs = savedStateHandle.get<String>("audioDelayMs")?.toIntOrNull(),
+                audioDelayLanguage = decodedOrNull("audioDelayLanguage"),
                 isCatchUp = savedStateHandle.get<String>("isCatchUp")?.toBooleanStrictOrNull() == true,
                 catchUpStartMs = savedStateHandle.get<String>("catchUpStartMs")?.toLongOrNull(),
-                catchUpEndMs = savedStateHandle.get<String>("catchUpEndMs")?.toLongOrNull(),
-                audioDelayMs = savedStateHandle.get<String>("audioDelayMs")?.toIntOrNull(),
-                audioDelayLanguage = decodedOrNull("audioDelayLanguage")
+                catchUpEndMs = savedStateHandle.get<String>("catchUpEndMs")?.toLongOrNull()
             )
         }
     }

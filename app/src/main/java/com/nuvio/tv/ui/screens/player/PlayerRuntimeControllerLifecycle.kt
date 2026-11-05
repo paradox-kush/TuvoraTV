@@ -2,7 +2,6 @@ package com.nuvio.tv.ui.screens.player
 
 import android.content.Intent
 import android.media.audiofx.AudioEffect
-import com.nuvio.tv.core.analytics.Breadcrumbs
 import kotlinx.coroutines.flow.update
 
 internal fun PlayerRuntimeController.releasePlayer() {
@@ -16,11 +15,39 @@ internal fun PlayerRuntimeController.releasePlayer(
     keepTorrentStream: Boolean = false
 ) {
     logScrobbleDiagnostic("release_player", "flushPlaybackState=$flushPlaybackState")
+
+    // Preserve current subtitle selection across any rebuild. When the user explicitly
+    // selected a track, persistedTrackPreference was nulled and the choice lives only
+    // in the UI state. Capture it so applyPersistedTrackPreference restores it.
+    if (persistedTrackPreference == null) {
+        val currentSubIdx = _uiState.value.selectedSubtitleTrackIndex
+        val currentAddon = _uiState.value.selectedAddonSubtitle
+        val currentTracks = _uiState.value.subtitleTracks
+        val currentSubTrack = currentTracks.getOrNull(currentSubIdx)
+        if (currentSubTrack != null) {
+            persistedTrackPreference = PlayerRuntimeController.TrackPreference(
+                subtitle = PlayerRuntimeController.RememberedSubtitleSelection.Internal(
+                    track = PlayerRuntimeController.RememberedTrackSelection(
+                        language = currentSubTrack.language,
+                        name = currentSubTrack.name,
+                        indexHint = currentSubIdx,
+                        isForcedHint = currentSubTrack.isForced
+                    )
+                )
+            )
+        } else if (currentAddon != null) {
+            persistedTrackPreference = PlayerRuntimeController.TrackPreference(
+                subtitle = PlayerRuntimeController.RememberedSubtitleSelection.Addon(
+                    id = currentAddon.id,
+                    url = currentAddon.url,
+                    language = currentAddon.lang,
+                    addonName = currentAddon.addonName
+                )
+            )
+        }
+    }
+
     isReleasingPlayer = true
-    _uiState.update { it.copy(liveRetryStatus = null) }
-    // Before the player is torn down: a freeze still open here is one the viewer had to escape.
-    stopLiveFreezeReporter()
-    Breadcrumbs.playbackStopped()
     com.nuvio.tv.core.recommendations.TvRecommendationManager.isPlaybackActive.value = false
     if (flushPlaybackState) {
         if (!keepTorrentStream) stopTorrentStream()
@@ -29,13 +56,10 @@ internal fun PlayerRuntimeController.releasePlayer(
 
     notifyAudioSessionUpdate(false)
     unregisterAudioDelayRouteCallback()
+    audioRouteChangeJob?.cancel()
+    audioRouteChangeJob = null
 
-    try {
-        currentMediaSession?.release()
-        currentMediaSession = null
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
+    releaseMediaSession()
     progressJob?.cancel()
     mpvTrackRefreshJob?.cancel()
     mpvTrackRefreshJob = null
@@ -43,13 +67,18 @@ internal fun PlayerRuntimeController.releasePlayer(
     hideControlsJob?.cancel()
     watchProgressSaveJob?.cancel()
     seekProgressSyncJob?.cancel()
+    seekSourceLogJob?.cancel()
+    seekSourceLogJob = null
     frameRateProbeJob?.cancel()
+    cancelAfrPreflight()
     hideStreamSourceIndicatorJob?.cancel()
     hideStreamSourceIndicatorJob = null
     _uiState.update { it.copy(showStreamSourceIndicator = false) }
     hidePlayerEngineSwitchInfoJob?.cancel()
     hideSubtitleDelayOverlayJob?.cancel()
     subtitleAutoSyncLoadJob?.cancel()
+    cancelAutomaticSubtitleSync() // AutoSync hook
+    stopSidecarAddonSubtitle(clearView = true)
     subtitleTimingRefreshJob?.cancel()
     subtitleTimingRefreshJob = null
     playbackPreparationJob?.cancel()
@@ -57,6 +86,7 @@ internal fun PlayerRuntimeController.releasePlayer(
     traktMappingJob?.cancel()
     traktMappingJob = null
     delayMpvResumeSeekUntilVideoTrack = false
+    mpvMediaLoadPrepared = false
     nextEpisodeAutoPlayJob?.cancel()
     nextEpisodeAutoPlayJob = null
     cancelNextEpisodePreload()
@@ -68,6 +98,8 @@ internal fun PlayerRuntimeController.releasePlayer(
     errorRetryJob = null
     stableProgressResetJob?.cancel()
     stableProgressResetJob = null
+    mpvStableProgressResetJob?.cancel()
+    mpvStableProgressResetJob = null
     releaseMpvPlayer()
     _exoPlayer?.let { player ->
         runCatching { player.playWhenReady = false }
@@ -75,9 +107,14 @@ internal fun PlayerRuntimeController.releasePlayer(
         runCatching { player.stop() }
         runCatching { player.clearMediaItems() }
         runCatching { player.clearVideoSurface() }
+        runCatching { player.releaseAssHandlerCompat() }
         runCatching { player.release() }
     }
     _exoPlayer = null
+    activeAssVideoEffect = null
+    _loadControl = null
+    currentBitrateAwareLoadControl = null
+    currentParallelChunkOverheadMb = 0
     ffmpegAudioRenderer = null
     updateAudioControlAvailability()
     playbackSpeedAwareAudioSink = null

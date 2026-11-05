@@ -12,13 +12,12 @@ import androidx.media3.exoplayer.RenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ExtractorsFactory
-import androidx.media3.extractor.mkv.MatroskaExtractor
+import androidx.media3.extractor.mkv.MatroskaExtractor as StockMatroskaExtractor
 import androidx.media3.extractor.text.SubtitleParser
 import com.nuvio.tv.core.player.dvmkv.MatroskaExtractor as DvMatroskaExtractor
-import io.github.peerless2012.ass.media.AssHandler
-import io.github.peerless2012.ass.media.kt.withAssSupport
-import io.github.peerless2012.ass.media.parser.AssSubtitleParserFactory
-import io.github.peerless2012.ass.media.type.AssRenderType
+import com.nuvio.tv.libass.media.AssHandler
+import com.nuvio.tv.libass.media.parser.AssSubtitleParserFactory
+import com.nuvio.tv.libass.media.render.AssRenderersFactory
 import java.util.Collections
 import java.util.WeakHashMap
 
@@ -27,22 +26,12 @@ private val assHandlersByPlayer = Collections.synchronizedMap(WeakHashMap<ExoPla
 @OptIn(UnstableApi::class)
 internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     context: Context,
-    renderType: AssRenderType = AssRenderType.CUES,
     playerMediaSourceFactory: PlayerMediaSourceFactory? = null,
     dataSourceFactory: DataSource.Factory = PlayerPlaybackNetworking.createDataSourceFactory(context),
-    extractorsFactory: ExtractorsFactory = DefaultExtractorsFactory()
-        // IPTV live MPEG-TS streams often lack AUDs / IDR keyframes -> ExoPlayer buffers forever.
-        // These flags let it detect frame boundaries itself and accept non-IDR keyframes.
-        // SINGLE_PMT + ignore-splice match StreamVault/TiviMate for direct live .ts (Phase 0).
-        .setTsExtractorMode(androidx.media3.extractor.ts.TsExtractor.MODE_SINGLE_PMT)
-        .setTsExtractorFlags(
-            androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
-                androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
-                androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
-        ),
+    extractorsFactory: ExtractorsFactory = DefaultExtractorsFactory(),
     renderersFactory: RenderersFactory = DefaultRenderersFactory(context)
 ): ExoPlayer {
-    val assHandler = AssHandler(renderType)
+    val assHandler = AssHandler()
     val assSubtitleParserFactory = CompatAssSubtitleParserFactory(assHandler)
     val assExtractorsFactory = extractorsFactory.withAssMkvSupportCompat(
         subtitleParserFactory = assSubtitleParserFactory,
@@ -59,9 +48,12 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     )
     mediaSourceFactory.setSubtitleParserFactory(assSubtitleParserFactory)
 
+    // Wrap the renderers factory with AssRenderersFactory to add a
+    // NoSampleRenderer-based position fallback for tunneled playback.
+    val assRenderersFactory = AssRenderersFactory(assHandler, renderersFactory)
     val player = this
         .setMediaSourceFactory(mediaSourceFactory)
-        .setRenderersFactory(renderersFactory.withAssSupport(assHandler))
+        .setRenderersFactory(assRenderersFactory)
         .build()
 
     assHandlersByPlayer[player] = assHandler
@@ -70,6 +62,16 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
 }
 
 internal fun ExoPlayer.getAssHandlerCompat(): AssHandler? = assHandlersByPlayer[this]
+
+/**
+ * Releases the AssHandler associated with this player and removes it from the map.
+ * Must be called when the player is being disposed to free native libass resources
+ * (renderer, tracks, embedded MKV fonts).
+ */
+internal fun ExoPlayer.releaseAssHandlerCompat() {
+    val handler = assHandlersByPlayer.remove(this)
+    handler?.release()
+}
 
 @OptIn(UnstableApi::class)
 private class CompatAssSubtitleParserFactory(
@@ -110,21 +112,26 @@ private fun ExtractorsFactory.withAssMkvSupportCompat(
     return ExtractorsFactory {
         val extractors = delegate.createExtractors()
         extractors.forEachIndexed { index, extractor ->
-            // Media3 wraps extractors (e.g. subtitle transcoding), so match on the underlying
-            // implementation or the swap below silently never happens (upstream 84ec910db).
             val underlying = extractor.getUnderlyingImplementation()
             // Stock MatroskaExtractor: replace with ASS-aware variant for libass support.
-            if (underlying is MatroskaExtractor) {
-                extractors[index] = NuvioAssMatroskaExtractor(subtitleParserFactory, assHandler)
+            // Only the innermost extractor is replaced, so wrappers such as AutoSync's
+            // embedded subtitle observer keep seeing the stream.
+            if (underlying is StockMatroskaExtractor) {
+                extractors[index] = extractor.replaceInnermostExtractor(
+                    NuvioAssMatroskaExtractor(subtitleParserFactory, assHandler)
+                )
             }
             // The DV7 factory swaps in a vendored DvMatroskaExtractor for DV conversion.
-            // AssMatroskaExtractor extends stock MatroskaExtractor and cannot handle DV7
-            // BlockAdditional RPU, but it IS required for libass ASS/SSA rendering.
-            // Replace DvMatroskaExtractor with AssMatroskaExtractor so that libass works.
-            // For actual DV content, maybeAdjustLibassPipelineForTracks will detect the DV
-            // video track and rebuild the player without libass, restoring DvMatroskaExtractor.
+            // Preserve its Dolby Vision transformer while enabling libass and zlib subtitle
+            // decompression from the same vendored Matroska extractor base class.
             if (underlying is DvMatroskaExtractor) {
-                extractors[index] = NuvioAssMatroskaExtractor(subtitleParserFactory, assHandler)
+                extractors[index] = extractor.replaceInnermostExtractor(
+                    NuvioAssMatroskaExtractor(
+                        subtitleParserFactory = subtitleParserFactory,
+                        assHandler = assHandler,
+                        dolbyVisionSampleTransformer = underlying.dolbyVisionSampleTransformer
+                    )
+                )
             }
         }
         extractors

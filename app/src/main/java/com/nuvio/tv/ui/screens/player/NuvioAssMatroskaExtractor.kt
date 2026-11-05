@@ -11,10 +11,11 @@ import androidx.media3.extractor.ExtractorInput
 import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.mkv.EbmlProcessor
-import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.text.SubtitleParser
-import io.github.peerless2012.ass.media.AssHandler
-import io.github.peerless2012.ass.media.type.AssRenderType
+import com.nuvio.tv.core.player.SubtitleCharsetDetector
+import com.nuvio.tv.core.player.dvmkv.MatroskaExtractor
+import com.nuvio.tv.core.player.dvmkv.MatroskaExtractor.DolbyVisionSampleTransformer
+import com.nuvio.tv.libass.media.AssHandler
 import java.io.ByteArrayOutputStream
 import java.util.regex.Pattern
 import java.util.zip.DataFormatException
@@ -24,8 +25,13 @@ import java.util.zip.Inflater
 internal class NuvioAssMatroskaExtractor(
     subtitleParserFactory: SubtitleParser.Factory,
     private val assHandler: AssHandler,
-    flags: Int = 0
-) : MatroskaExtractor(subtitleParserFactory, flags) {
+    flags: Int = 0,
+    dolbyVisionSampleTransformer: DolbyVisionSampleTransformer? = null
+) : MatroskaExtractor(
+    subtitleParserFactory,
+    flags,
+    dolbyVisionSampleTransformer
+) {
 
     private var currentAttachmentName: String? = null
     private var currentAttachmentMime: String? = null
@@ -77,14 +83,14 @@ internal class NuvioAssMatroskaExtractor(
     }
 
     private fun onEbmlStart(contentPosition: Long, contentSize: Long) {
-        if (assHandler.renderType != AssRenderType.CUES) {
-            val currentExtractor = extractorOutput.get(this) as ExtractorOutput
-            if (currentExtractor !is NuvioAssSubtitleExtractorOutput) {
-                extractorOutput.set(
-                    this,
-                    NuvioAssSubtitleExtractorOutput(currentExtractor, assHandler, this)
-                )
-            }
+        // Always wrap the extractor output for overlay rendering (the new libass
+        // module always uses the SurfaceView overlay pipeline).
+        val currentExtractor = extractorOutput.get(this) as ExtractorOutput
+        if (currentExtractor !is NuvioAssSubtitleExtractorOutput) {
+            extractorOutput.set(
+                this,
+                NuvioAssSubtitleExtractorOutput(currentExtractor, assHandler, this)
+            )
         }
         super.startMasterElement(ID_EBML, contentPosition, contentSize)
     }
@@ -238,12 +244,13 @@ private class NuvioAssTrackOutput(
 
     private fun ByteArray.dialoguePayload(offset: Int, limit: Int): ByteArray {
         if (offset >= limit) return EMPTY_BYTE_ARRAY
-        if (looksLikeZlib(offset, limit)) {
-            val inflated = maybeInflate(offset, size - offset)
-            if (inflated != null) return inflated
+        val raw = if (looksLikeZlib(offset, limit)) {
+            maybeInflate(offset, size - offset) ?: copyOfRange(offset, limit.coerceIn(offset, size))
+        } else {
+            val boundedLimit = limit.coerceIn(offset, size)
+            copyOfRange(offset, boundedLimit)
         }
-        val boundedLimit = limit.coerceIn(offset, size)
-        return copyOfRange(offset, boundedLimit)
+        return SubtitleCharsetDetector.normalizeToUtf8(raw)
     }
 
     private fun ByteArray.looksLikeZlib(offset: Int, limit: Int): Boolean {

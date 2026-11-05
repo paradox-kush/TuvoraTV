@@ -5,19 +5,20 @@
 
 package com.nuvio.tv.ui.screens.player
 
-import com.nuvio.tv.core.picture.AspectMode
-import com.nuvio.tv.core.picture.aspectModeAppliedToExoSurface
-import com.nuvio.tv.core.picture.VideoZoom
-import com.nuvio.tv.core.picture.SubtitleSideMargin
-import com.nuvio.tv.ui.components.player.VideoZoomDialog
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.layout.boundsInWindow
+import android.graphics.RectF
+import com.nuvio.tv.ui.screens.detail.formatPlaybackTime
 import com.nuvio.tv.ui.theme.NuvioMotion
+import kotlinx.coroutines.delay
 
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.theme.accentBrush
 
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
-import androidx.annotation.RawRes
+import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
@@ -31,8 +32,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -44,6 +48,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,6 +57,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Toc
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -67,19 +73,22 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -90,11 +99,27 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.findRootCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
+import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -117,51 +142,56 @@ import androidx.tv.material3.IconButton
 import androidx.tv.material3.IconButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import coil3.compose.rememberAsyncImagePainter
-import coil3.request.ImageRequest
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
-import com.nuvio.tv.ui.components.player.ControlButton
+import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.party.PartyAction
 import com.nuvio.tv.core.party.PartyMedia
 import com.nuvio.tv.core.party.PartyNotice
 import com.nuvio.tv.core.party.PartySync
+import com.nuvio.tv.ui.screens.party.ConfirmDialog
 import com.nuvio.tv.ui.screens.party.PartyPanel
-import com.nuvio.tv.ui.screens.party.openPartyMedia
 import com.nuvio.tv.ui.screens.party.PartyStatusPill
-import com.nuvio.tv.ui.screens.detail.formatPlaybackTime
-import androidx.compose.material.icons.rounded.Groups
-import kotlinx.coroutines.flow.collectLatest
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.progressBarRangeInfo
-import androidx.compose.ui.semantics.semantics
-import com.nuvio.tv.ui.components.player.DialogButton
-import com.nuvio.tv.ui.components.player.rememberRawSvgPainter
 import com.nuvio.tv.core.player.PlayerWindowBackdrop
 import com.nuvio.tv.ui.util.keepLtr
 import com.nuvio.tv.ui.util.localizeEpisodeTitle
 import com.nuvio.tv.data.local.InternalPlayerEngine
-import com.nuvio.tv.data.local.LibassRenderType
+import com.nuvio.tv.data.local.LibassRenderMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
 import com.nuvio.tv.data.local.StreamAutoPlayMode
+import com.nuvio.tv.domain.model.StreamBadge
 import com.nuvio.tv.domain.model.Subtitle
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.components.LoadingIndicator
 import android.text.format.DateFormat
+import com.nuvio.tv.ui.util.rememberRawSvgPainter
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.lazy.rememberLazyListState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.media3.exoplayer.ExoPlayer
-import io.github.peerless2012.ass.media.widget.AssSubtitleView
+import com.nuvio.tv.libass.media.widget.AssSubtitleSurfaceView
 import kotlin.math.abs
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.withContext
+
+private const val PLAYER_CONTROLS_FADE_DURATION_MS = 200
+
+private fun PlayerUiState.returnFocusSeasonEpisode(completed: Boolean): Pair<Int?, Int?> {
+    val next = nextEpisode?.takeIf {
+        it.hasAired && !(it.released.isNullOrBlank() && it.available == false)
+    }
+    return if (completed && next != null) {
+        next.season to next.episode
+    } else {
+        currentSeason to currentEpisode
+    }
+}
 
 internal fun playerBackTreatsSkipAsAutoPlay(
     streamAutoPlayMode: StreamAutoPlayMode,
@@ -179,9 +209,12 @@ fun PlayerScreen(
     onBackPress: (currentVideoId: String?, currentSeason: Int?, currentEpisode: Int?, autoPlayEnabled: Boolean, playbackCompleted: Boolean) -> Unit,
     onPlaybackErrorBack: () -> Unit = { onBackPress(null, null, null, false, false) },
     onPlaybackEnded: ((nextVideoId: String?, nextSeason: Int?, nextEpisode: Int?, exitReason: PlayerExitReason?) -> Unit)? = null,
+    onPlayRecommendation: (PostPlayRecommendation, manualSelection: Boolean) -> Unit = { _, _ -> },
+    onOpenRecommendationDetails: (PostPlayRecommendation) -> Unit = {},
     onOpenPartyMedia: (PartyMedia) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val playerBadges = rememberPlayerBadges(viewModel, uiState)
     val partyState by viewModel.party.state.collectAsState()
     val partyPlayback by viewModel.party.playback.collectAsState()
     val partyAvailable by viewModel.party.available.collectAsState()
@@ -191,37 +224,38 @@ fun PlayerScreen(
     LaunchedEffect(Unit) {
         viewModel.party.notices.collectLatest { next ->
             partyNotice = next
-            delay(PARTY_NOTICE_MS)
+            kotlinx.coroutines.delay(3000)
             partyNotice = null
         }
     }
-    // The panel owns the D-pad only while it is on screen. A playback error hides it, so close it
-    // for real: a hidden panel must never keep swallowing keys over the video.
-    val isPartyPanelOpen = uiState.showPartyPanel && uiState.error == null
-    LaunchedEffect(uiState.showPartyPanel, uiState.error) {
-        if (uiState.showPartyPanel && uiState.error != null) viewModel.onEvent(PlayerEvent.OnDismissPartyPanel)
-    }
+    val postPlayRecommendationState by viewModel.postPlayRecommendationUiState.collectAsState()
+    val effectiveAutoplayEnabled by viewModel.effectiveAutoplayEnabled.collectAsState(initial = false)
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
-    val activity = context as? android.app.Activity
-    // Budget boxes: skip decorative full-res bitmaps around playback (memory pressure).
-    val lowRamDevice = remember(context) { com.nuvio.tv.core.util.DeviceClass.isLowRam(context) }
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val containerFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
     val progressBarFocusRequester = remember { FocusRequester() }
     val episodesFocusRequester = remember { FocusRequester() }
+    val chaptersFocusRequester = remember { FocusRequester() }
     val streamsFocusRequester = remember { FocusRequester() }
     val sourceStreamsFocusRequester = remember { FocusRequester() }
     val skipIntroFocusRequester = remember { FocusRequester() }
     val streamInfoFocusRequester = remember { FocusRequester() }
+    val postPlayRecommendationFocusRequester = remember { FocusRequester() }
+    val postPlayRecommendationPlayerWindowFocusRequester = remember { FocusRequester() }
     var skipButtonActuallyVisible by remember { mutableStateOf(false) }
     var restoreStreamInfoFocus by remember { mutableStateOf(false) }
+    var focusPlayAfterMoreBack by remember { mutableStateOf(false) }
+    var hideControlsAfterStreamInfo by remember { mutableStateOf(false) }
     val nextEpisodeFocusRequester = remember { FocusRequester() }
-    var subtitleDelayAutoSyncFocused by remember { mutableStateOf(false) }
+    var subtitleDelayFocusTarget by remember { mutableStateOf(SubtitleDelayFocusTarget.SLIDER) }
+    val subtitleDelayResetFocusRequester = remember { FocusRequester() }
     val subtitleDelaySyncLineFocusRequester = remember { FocusRequester() }
     var subtitleTimingConsumeNextConfirmKeyUp by remember { mutableStateOf(false) }
     var reportCodeVisible by remember { mutableStateOf(false) }
     var exitDispatched by remember { mutableStateOf(false) }
+    var externalHandoffInProgress by remember { mutableStateOf(false) }
     val autoPlayEnabledForBack = playerBackTreatsSkipAsAutoPlay(
         streamAutoPlayMode = uiState.streamAutoPlayMode,
         preferBingeGroupForNextEpisode = uiState.streamAutoPlayPreferBingeGroupForNextEpisode
@@ -232,9 +266,18 @@ fun PlayerScreen(
         exitDispatched = true
         val timeline = viewModel.playbackTimeline.value
         viewModel.stopAndRelease()
-        val completed = timeline.duration > 0L &&
-            (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD
-        onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, autoPlayEnabledForBack, completed)
+        val completed = postPlayRecommendationState.isVisible || uiState.playbackEnded ||
+            (!timeline.isLive &&
+                timeline.duration > 0L &&
+                (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD)
+        val (focusSeason, focusEpisode) = uiState.returnFocusSeasonEpisode(completed)
+        onBackPress(
+            uiState.currentVideoId,
+            focusSeason,
+            focusEpisode,
+            autoPlayEnabledForBack,
+            completed
+        )
     }
     val exitPlayerFromError: () -> Unit = exitPlayerFromError@{
         if (exitDispatched) return@exitPlayerFromError
@@ -245,10 +288,17 @@ fun PlayerScreen(
     val dismissStreamInfoOverlay = {
         viewModel.onEvent(PlayerEvent.OnDismissStreamInfo)
     }
+    val returnToPlayerFromPostPlay = {
+        viewModel.returnToPlayerFromPostPlay()
+    }
 
     val currentOnPlaybackEnded by rememberUpdatedState(onPlaybackEnded)
     val currentOnBackPress by rememberUpdatedState(onBackPress)
-    val nextEpisodeForEndPrompt = uiState.nextEpisode?.takeIf { it.hasAired }
+    val currentOnPlayRecommendation by rememberUpdatedState(onPlayRecommendation)
+    val currentOnOpenRecommendationDetails by rememberUpdatedState(onOpenRecommendationDetails)
+    val nextEpisodeForEndPrompt = uiState.nextEpisode?.takeIf {
+        it.hasAired && !(it.released.isNullOrBlank() && it.available == false)
+    }
     val shouldConfirmNextEpisodeOnEnd =
         uiState.playbackEnded &&
             uiState.error == null &&
@@ -258,10 +308,11 @@ fun PlayerScreen(
             nextEpisodeForEndPrompt != null
     val returnToDetailsFromEndPrompt = {
         viewModel.stopAndRelease()
+        val (focusSeason, focusEpisode) = uiState.returnFocusSeasonEpisode(completed = true)
         currentOnBackPress(
             uiState.currentVideoId,
-            uiState.currentSeason,
-            uiState.currentEpisode,
+            focusSeason,
+            focusEpisode,
             true,
             true
         )
@@ -274,10 +325,11 @@ fun PlayerScreen(
             if (cb != null) {
                 cb(next.videoId, next.season, next.episode, null)
             } else {
+                val (focusSeason, focusEpisode) = uiState.returnFocusSeasonEpisode(completed = true)
                 currentOnBackPress(
                     uiState.currentVideoId,
-                    uiState.currentSeason,
-                    uiState.currentEpisode,
+                    focusSeason,
+                    focusEpisode,
                     false,
                     true
                 )
@@ -299,8 +351,14 @@ fun PlayerScreen(
         }
     }
 
-    val handleBackPress = {
-        if (shouldConfirmNextEpisodeOnEnd) {
+    val handleBackPress = handleBackPress@{
+        if (externalHandoffInProgress) return@handleBackPress
+        if (postPlayRecommendationState.canReturnToPlayer && !uiState.playbackEnded) {
+            returnToPlayerFromPostPlay()
+            viewModel.hideControls()
+        } else if (postPlayRecommendationState.isVisible || postPlayRecommendationState.isLoadingRecommendation) {
+            exitPlayer()
+        } else if (shouldConfirmNextEpisodeOnEnd) {
             returnToDetailsFromEndPrompt()
         } else if (uiState.error != null) {
             exitPlayerFromError()
@@ -308,9 +366,17 @@ fun PlayerScreen(
             viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay)
         } else if (uiState.showStreamInfoOverlay) {
             dismissStreamInfoOverlay()
+            if (hideControlsAfterStreamInfo) {
+                viewModel.hideControls()
+            } else if (uiState.showControls) {
+                restoreStreamInfoFocus = true
+                viewModel.onEvent(PlayerEvent.OnShowMoreDialog)
+            }
+            hideControlsAfterStreamInfo = false
         } else if (uiState.showPauseOverlay) {
             viewModel.onEvent(PlayerEvent.OnDismissPauseOverlay)
         } else if (uiState.showMoreDialog) {
+            focusPlayAfterMoreBack = true
             viewModel.onEvent(PlayerEvent.OnDismissMoreDialog)
         } else if (uiState.showSubtitleTimingDialog) {
             viewModel.onEvent(PlayerEvent.OnDismissSubtitleTimingDialog)
@@ -326,19 +392,24 @@ fun PlayerScreen(
             } else {
                 viewModel.onEvent(PlayerEvent.OnDismissSourcesPanel)
             }
+        } else if (uiState.showChaptersPanel) {
+            viewModel.onEvent(PlayerEvent.OnDismissChaptersPanel)
         } else if (uiState.showEpisodesPanel) {
             if (uiState.showEpisodeStreams) {
                 viewModel.onEvent(PlayerEvent.OnBackFromEpisodeStreams)
             } else {
                 viewModel.onEvent(PlayerEvent.OnDismissEpisodesPanel)
             }
-        } else if (uiState.postPlayMode is PostPlayMode.AutoPlay) {
+        } else if (uiState.postPlayMode is PostPlayMode.AutoPlay &&
+            postPlayRecommendationState.recommendation == null
+        ) {
             viewModel.onEvent(PlayerEvent.OnDismissNextEpisodeCard)
-            // Transfer focus to skip button if it's still visible
             if (skipButtonActuallyVisible) {
                 runCatching { skipIntroFocusRequester.requestFocus() }
+            } else {
+                runCatching { containerFocusRequester.requestFocus() }
             }
-        } else if (uiState.activeSkipInterval != null && !uiState.skipIntervalDismissed && !uiState.showControls) {
+        } else if (skipButtonActuallyVisible && !uiState.showControls) {
             viewModel.onEvent(PlayerEvent.OnDismissSkipIntro)
         } else if (uiState.postPlayMode is PostPlayMode.StillWatching) {
             viewModel.onEvent(PlayerEvent.OnDismissStillWatchingPrompt)
@@ -353,11 +424,18 @@ fun PlayerScreen(
         handleBackPress()
     }
 
-    LaunchedEffect(uiState.playbackEnded, uiState.error, uiState.pendingExitReason, shouldConfirmNextEpisodeOnEnd) {
+    LaunchedEffect(
+        uiState.playbackEnded,
+        uiState.error,
+        uiState.pendingExitReason,
+        shouldConfirmNextEpisodeOnEnd,
+        postPlayRecommendationState.blocksNaturalCompletion
+    ) {
         val explicitReason = uiState.pendingExitReason
         val shouldDispatchNatural = uiState.playbackEnded &&
             uiState.error == null &&
             uiState.postPlayMode?.blocksNaturalCompletion() != true &&
+            !postPlayRecommendationState.blocksNaturalCompletion &&
             !shouldConfirmNextEpisodeOnEnd &&
             explicitReason == null
         when {
@@ -367,10 +445,11 @@ fun PlayerScreen(
                 if (cb != null) {
                     cb(null, null, null, PlayerExitReason.StillWatchingPrompt)
                 } else {
+                    val (focusSeason, focusEpisode) = uiState.returnFocusSeasonEpisode(completed = true)
                     currentOnBackPress(
                         uiState.currentVideoId,
-                        uiState.currentSeason,
-                        uiState.currentEpisode,
+                        focusSeason,
+                        focusEpisode,
                         autoPlayEnabledForBack,
                         true
                     )
@@ -379,15 +458,18 @@ fun PlayerScreen(
             }
             shouldDispatchNatural -> {
                 viewModel.stopAndRelease()
-                val next = uiState.nextEpisode?.takeIf { it.hasAired }
+                val next = uiState.nextEpisode?.takeIf {
+                    it.hasAired && !(it.released.isNullOrBlank() && it.available == false)
+                }
                 val cb = currentOnPlaybackEnded
                 if (cb != null) {
                     cb(next?.videoId, next?.season, next?.episode, null)
                 } else {
+                    val (focusSeason, focusEpisode) = uiState.returnFocusSeasonEpisode(completed = true)
                     currentOnBackPress(
                         uiState.currentVideoId,
-                        uiState.currentSeason,
-                        uiState.currentEpisode,
+                        focusSeason,
+                        focusEpisode,
                         autoPlayEnabledForBack,
                         true
                     )
@@ -397,7 +479,7 @@ fun PlayerScreen(
     }
 
     // Handle lifecycle events
-    DisposableEffect(lifecycleOwner, activity) {
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
@@ -421,21 +503,8 @@ fun PlayerScreen(
                 }
                 Lifecycle.Event.ON_RESUME -> {
                     // Re-create the MediaSession so media controls work in foreground.
-                    // VOD stays paused (let the user press play); live channels rejoin the
-                    // live edge and resume — a paused live buffer is stale and would stall.
+                    // Don't auto-resume playback — let the user press play.
                     viewModel.resumeForLifecycle()
-                }
-                Lifecycle.Event.ON_DESTROY -> {
-                    // Root navigation may save this destination's ViewModel after destroying its
-                    // entry, so onCleared is not a reliable terminal playback boundary.
-                    if (
-                        LegacyPlayerDestinationLifecyclePolicy.shouldRelease(
-                            event = event,
-                            activityIsChangingConfigurations = activity?.isChangingConfigurations == true,
-                        )
-                    ) {
-                        viewModel.stopAndRelease()
-                    }
                 }
                 else -> {}
             }
@@ -450,14 +519,6 @@ fun PlayerScreen(
     // The Linux scheduler favors the thread under CPU pressure (background addon prefetch,
     // Trakt sync, image decode), reducing dropped frames at scene cuts and during decoder
     // spin-up. Restored on dispose so non-player screens stay at default priority.
-    // Tell app-level chrome (the update banner) to stand down while the player owns the screen:
-    // the banner is a layout sibling of the whole app, so leaving it up shrinks the video.
-    com.nuvio.tv.ui.screens.ambient.AmbientPlaybackEffect(active = true)
-    DisposableEffect(Unit) {
-        com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(true)
-        onDispose { com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(false) }
-    }
-
     DisposableEffect(Unit) {
         val tid = android.os.Process.myTid()
         val previousPriority = runCatching { android.os.Process.getThreadPriority(tid) }.getOrDefault(0)
@@ -472,6 +533,7 @@ fun PlayerScreen(
     }
 
     // Frame rate matching lifecycle.
+    val activity = LocalContext.current as? android.app.Activity
     LaunchedEffect(activity) {
         viewModel.attachHostActivity(activity)
         viewModel.startInitialPlaybackIfNeeded()
@@ -508,6 +570,7 @@ fun PlayerScreen(
         uiState.showControls,
         uiState.showEpisodesPanel,
         uiState.showSourcesPanel,
+        uiState.showChaptersPanel,
         uiState.showPartyPanel,
         uiState.showSubtitleStylePanel,
         uiState.showSubtitleDelayOverlay,
@@ -516,9 +579,12 @@ fun PlayerScreen(
         uiState.showSubtitleOverlay,
         uiState.showSpeedDialog,
         shouldConfirmNextEpisodeOnEnd,
+        postPlayRecommendationState.isVisible,
     ) {
-        if (shouldConfirmNextEpisodeOnEnd) return@LaunchedEffect
-        if (uiState.showControls && !uiState.showEpisodesPanel && !uiState.showSourcesPanel && !uiState.showPartyPanel &&
+        if (shouldConfirmNextEpisodeOnEnd || postPlayRecommendationState.isVisible) return@LaunchedEffect
+        if (uiState.error != null) return@LaunchedEffect
+        if (uiState.showPartyPanel) return@LaunchedEffect
+        if (uiState.showControls && !uiState.showEpisodesPanel && !uiState.showSourcesPanel && !uiState.showChaptersPanel &&
             !uiState.showAudioOverlay && !uiState.showSubtitleOverlay &&
             !uiState.showSubtitleStylePanel && !uiState.showSubtitleDelayOverlay &&
             !uiState.showSubtitleTimingDialog &&
@@ -548,10 +614,12 @@ fun PlayerScreen(
 
     // Initial focus on container - the LaunchedEffect above will handle focusing controls
     LaunchedEffect(Unit) {
-        containerFocusRequester.requestFocus()
+        if (uiState.error == null) {
+            containerFocusRequester.requestFocus()
+        }
     }
     LaunchedEffect(uiState.showSubtitleDelayOverlay) {
-        subtitleDelayAutoSyncFocused = false
+        subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SLIDER
     }
     LaunchedEffect(uiState.showSubtitleTimingDialog) {
         if (!uiState.showSubtitleTimingDialog) {
@@ -565,16 +633,59 @@ fun PlayerScreen(
             restoreStreamInfoFocus = false
         }
     }
+    val moreDialogOpen by rememberUpdatedState(uiState.showMoreDialog)
+    val controlsVisibleForMoreBack by rememberUpdatedState(uiState.showControls)
+    val playerHasError by rememberUpdatedState(uiState.error != null)
+    LaunchedEffect(focusPlayAfterMoreBack) {
+        if (!focusPlayAfterMoreBack) return@LaunchedEffect
+        runCatching { playPauseFocusRequester.requestFocus() }
+        delay(200)
+        if (!moreDialogOpen && controlsVisibleForMoreBack && !playerHasError) {
+            playPauseFocusRequester.requestFocusAfterFrames(frames = 0)
+        }
+        focusPlayAfterMoreBack = false
+    }
+
+    val transparentLetterbox = uiState.transparentLetterbox &&
+        uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER
+    DisposableEffect(transparentLetterbox) {
+        if (!transparentLetterbox) {
+            return@DisposableEffect onDispose {}
+        }
+        PlayerWindowBackdrop.acquireTransparent()
+        onDispose { PlayerWindowBackdrop.releaseTransparent() }
+    }
+
+    // Controls and menus drawn over HDR video get the HDR brightness when the user enables it;
+    // the video surface and its subtitles are never inside this layer.
+    val playerControlsDim = Modifier.playerControlsBrightness(uiState.playerControlsBrightness)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .then(if (transparentLetterbox) Modifier else Modifier.background(Color.Black))
             .focusRequester(containerFocusRequester)
-            .focusable()
+            .focusable(enabled = uiState.error == null)
             .onPreviewKeyEvent { keyEvent ->
-                if (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BACK ||
-                    keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE
+                // Consume the confirm KEY_UP that opened the subtitle timing dialog before
+                // the newly focused "Sync" button can treat it as a second click. Preview
+                // is required: after open, focus moves into the dialog so onKeyEvent on
+                // this container no longer receives the release.
+                if (subtitleTimingConsumeNextConfirmKeyUp &&
+                    keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP &&
+                    (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER ||
+                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
+                ) {
+                    subtitleTimingConsumeNextConfirmKeyUp = false
+                    return@onPreviewKeyEvent true
+                }
+
+                val postPlayHandlesBack = postPlayRecommendationState.isVisible ||
+                    postPlayRecommendationState.isLoadingRecommendation ||
+                    postPlayRecommendationState.isTrailerPlaying
+                if (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE ||
+                    (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BACK && !postPlayHandlesBack)
                 ) {
                     return@onPreviewKeyEvent when (keyEvent.nativeKeyEvent.action) {
                         KeyEvent.ACTION_DOWN -> true
@@ -598,7 +709,7 @@ fun PlayerScreen(
                     viewModel.onEvent(PlayerEvent.OnHideSubtitleDelayOverlay)
                 } else if (
                     !uiState.showEpisodesPanel &&
-                    !uiState.showSourcesPanel &&
+                    !uiState.showSourcesPanel && !uiState.showChaptersPanel &&
                     !uiState.showPartyPanel &&
                     !uiState.showAudioOverlay &&
                     !uiState.showSubtitleOverlay &&
@@ -611,53 +722,100 @@ fun PlayerScreen(
                 true
             }
             .onKeyEvent { keyEvent ->
-                if (subtitleTimingConsumeNextConfirmKeyUp &&
-                    keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP &&
-                    (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER)
-                ) {
-                    subtitleTimingConsumeNextConfirmKeyUp = false
-                    return@onKeyEvent true
-                }
+                // KEY_UP confirm for Sync Line is consumed in onPreviewKeyEvent so it still
+                // runs after focus moves into the timing dialog.
                 if (uiState.showSubtitleDelayOverlay) {
                     if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
-                        if (subtitleDelayAutoSyncFocused) {
-                            when (keyEvent.nativeKeyEvent.keyCode) {
-                                KeyEvent.KEYCODE_DPAD_CENTER,
-                                KeyEvent.KEYCODE_ENTER -> {
-                                    subtitleDelayAutoSyncFocused = false
-                                    subtitleTimingConsumeNextConfirmKeyUp = true
-                                    viewModel.onEvent(PlayerEvent.OnShowSubtitleTimingDialog)
-                                    return@onKeyEvent true
-                                }
-                                KeyEvent.KEYCODE_DPAD_UP -> {
-                                    subtitleDelayAutoSyncFocused = false
-                                    return@onKeyEvent true
-                                }
-                                KeyEvent.KEYCODE_DPAD_DOWN,
-                                KeyEvent.KEYCODE_DPAD_LEFT,
-                                KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                    return@onKeyEvent true
+                        when (subtitleDelayFocusTarget) {
+                            SubtitleDelayFocusTarget.SLIDER -> {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        viewModel.onEvent(PlayerEvent.OnAdjustSubtitleDelay(-SUBTITLE_DELAY_STEP_MS))
+                                        return@onKeyEvent true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        viewModel.onEvent(PlayerEvent.OnAdjustSubtitleDelay(SUBTITLE_DELAY_STEP_MS))
+                                        return@onKeyEvent true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SYNC_LINE
+                                        return@onKeyEvent true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_CENTER,
+                                    KeyEvent.KEYCODE_ENTER,
+                                    KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                    KeyEvent.KEYCODE_DPAD_UP -> {
+                                        return@onKeyEvent true
+                                    }
                                 }
                             }
-                        } else {
-                            when (keyEvent.nativeKeyEvent.keyCode) {
-                                KeyEvent.KEYCODE_DPAD_LEFT -> {
-                                    viewModel.onEvent(PlayerEvent.OnAdjustSubtitleDelay(-SUBTITLE_DELAY_STEP_MS))
-                                    return@onKeyEvent true
+                            SubtitleDelayFocusTarget.RESET -> {
+                                val towardSyncLine = if (isRtl) {
+                                    KeyEvent.KEYCODE_DPAD_LEFT
+                                } else {
+                                    KeyEvent.KEYCODE_DPAD_RIGHT
                                 }
-                                KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                    viewModel.onEvent(PlayerEvent.OnAdjustSubtitleDelay(SUBTITLE_DELAY_STEP_MS))
-                                    return@onKeyEvent true
+                                val awayFromSyncLine = if (isRtl) {
+                                    KeyEvent.KEYCODE_DPAD_RIGHT
+                                } else {
+                                    KeyEvent.KEYCODE_DPAD_LEFT
                                 }
-                                KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                    subtitleDelayAutoSyncFocused = true
-                                    return@onKeyEvent true
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    KeyEvent.KEYCODE_DPAD_CENTER,
+                                    KeyEvent.KEYCODE_ENTER,
+                                    KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                        viewModel.onEvent(PlayerEvent.OnResetSubtitleDelay())
+                                        subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SLIDER
+                                        return@onKeyEvent true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_UP -> {
+                                        subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SLIDER
+                                        return@onKeyEvent true
+                                    }
+                                    towardSyncLine -> {
+                                        subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SYNC_LINE
+                                        return@onKeyEvent true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_DOWN,
+                                    awayFromSyncLine -> {
+                                        return@onKeyEvent true
+                                    }
                                 }
-                                KeyEvent.KEYCODE_DPAD_CENTER,
-                                KeyEvent.KEYCODE_ENTER,
-                                KeyEvent.KEYCODE_DPAD_UP -> {
-                                    return@onKeyEvent true
+                            }
+                            SubtitleDelayFocusTarget.SYNC_LINE -> {
+                                val towardReset = if (isRtl) {
+                                    KeyEvent.KEYCODE_DPAD_RIGHT
+                                } else {
+                                    KeyEvent.KEYCODE_DPAD_LEFT
+                                }
+                                val awayFromReset = if (isRtl) {
+                                    KeyEvent.KEYCODE_DPAD_LEFT
+                                } else {
+                                    KeyEvent.KEYCODE_DPAD_RIGHT
+                                }
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    KeyEvent.KEYCODE_DPAD_CENTER,
+                                    KeyEvent.KEYCODE_ENTER,
+                                    KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                        subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SLIDER
+                                        // KEY_DOWN open: swallow the trailing KEY_UP so the
+                                        // dialog's Sync control does not treat it as a click.
+                                        subtitleTimingConsumeNextConfirmKeyUp = true
+                                        viewModel.onEvent(PlayerEvent.OnShowSubtitleTimingDialog)
+                                        return@onKeyEvent true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_UP -> {
+                                        subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SLIDER
+                                        return@onKeyEvent true
+                                    }
+                                    towardReset -> {
+                                        subtitleDelayFocusTarget = SubtitleDelayFocusTarget.RESET
+                                        return@onKeyEvent true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_DOWN,
+                                    awayFromReset -> {
+                                        return@onKeyEvent true
+                                    }
                                 }
                             }
                         }
@@ -675,14 +833,16 @@ fun PlayerScreen(
                 }
 
                 // When a side panel or dialog is open, let it handle all keys
-                val panelOrDialogOpen = uiState.showEpisodesPanel || uiState.showSourcesPanel ||
-                        isPartyPanelOpen ||
+                val panelOrDialogOpen = uiState.showEpisodesPanel || uiState.showSourcesPanel || uiState.showPartyPanel ||
+                        uiState.showChaptersPanel ||
                         uiState.showAudioOverlay || uiState.showSubtitleOverlay ||
                         uiState.showSubtitleStylePanel || uiState.showSpeedDialog ||
                         uiState.showSubtitleDelayOverlay || uiState.showSubtitleTimingDialog ||
                         uiState.showMoreDialog ||
                         shouldConfirmNextEpisodeOnEnd ||
-                        uiState.postPlayMode is PostPlayMode.StillWatching
+                        uiState.postPlayMode is PostPlayMode.StillWatching ||
+                        postPlayRecommendationState.isVisible ||
+                        uiState.error != null
                 if (panelOrDialogOpen) return@onKeyEvent false
 
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
@@ -709,6 +869,9 @@ fun PlayerScreen(
                                 // Resume directly from pause overlay in one click.
                                 viewModel.onEvent(PlayerEvent.OnPlayPause)
                             }
+                            KeyEvent.KEYCODE_MEDIA_PAUSE,
+                            KeyEvent.KEYCODE_MEDIA_STOP -> {
+                            }
                             else -> {
                                 viewModel.onEvent(PlayerEvent.OnDismissPauseOverlay)
                             }
@@ -718,8 +881,6 @@ fun PlayerScreen(
                     when (keyEvent.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                             if (!uiState.showControls) {
-                                // This legacy destination now serves finite/VOD playback only.
-                                // Production linear Live TV owns its remote model in the clean host.
                                 viewModel.onEvent(PlayerEvent.OnPlayPause)
                                 true
                             } else {
@@ -729,7 +890,9 @@ fun PlayerScreen(
                         }
                         KeyEvent.KEYCODE_DPAD_LEFT,
                         KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            if (!uiState.showControls) {
+                            val overlayButtonsCoexist = skipButtonActuallyVisible &&
+                                uiState.postPlayMode is PostPlayMode.AutoPlay
+                            if (!uiState.showControls && !overlayButtonsCoexist) {
                                 val isLeft =
                                     keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT
                                 val deltaMs = PlayerScrubRates.deltaMsForKeyRepeat(
@@ -740,6 +903,7 @@ fun PlayerScreen(
                                 true
                             } else {
                                 // Let focus system handle navigation when controls are visible
+                                // or both skip and next-episode buttons are on screen
                                 false
                             }
                         }
@@ -787,6 +951,29 @@ fun PlayerScreen(
                             }
                             true
                         }
+                        KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                            if (uiState.isPlaying) {
+                                viewModel.onEvent(PlayerEvent.OnPlayPause)
+                            }
+                            true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_STOP -> {
+                            viewModel.onEvent(PlayerEvent.OnPlayPause)
+                            true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_NEXT,
+                        KeyEvent.KEYCODE_CHANNEL_UP,
+                        KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+                        KeyEvent.KEYCODE_CHANNEL_DOWN -> {
+                            if (uiState.chapters.isEmpty()) {
+                                false
+                            } else {
+                                val forward = keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_MEDIA_NEXT ||
+                                    keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_CHANNEL_UP
+                                viewModel.onEvent(PlayerEvent.OnSkipChapter(forward))
+                                true
+                            }
+                        }
                         KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                             viewModel.onEvent(
                                 PlayerEvent.OnSeekBy(
@@ -809,49 +996,333 @@ fun PlayerScreen(
                             )
                             true
                         }
+                        KeyEvent.KEYCODE_INFO -> {
+                            if (uiState.showStreamInfoOverlay) {
+                                viewModel.onEvent(PlayerEvent.OnDismissStreamInfo)
+                                if (hideControlsAfterStreamInfo) {
+                                    viewModel.hideControls()
+                                } else if (uiState.showControls) {
+                                    restoreStreamInfoFocus = true
+                                    viewModel.onEvent(PlayerEvent.OnShowMoreDialog)
+                                }
+                                hideControlsAfterStreamInfo = false
+                            } else {
+                                hideControlsAfterStreamInfo = !uiState.showControls
+                                viewModel.onEvent(PlayerEvent.OnShowStreamInfo)
+                            }
+                            true
+                        }
                         else -> false
                     }
                 } else false
             }
     ) {
-        // Keep the screen awake on watch INTENT (FLAG_KEEP_SCREEN_ON), not the transient isPlaying —
-        // otherwise a stall/re-buffer drops the flag and Android TV enters Ambient Mode (the
-        // screensaver black-out). Held while playing, buffering, or paused-not: released only when the
-        // user pauses (showPauseOverlay) or playback ends. Monotonic vs the old (isPlaying||isBuffering):
-        // it can only keep the screen on MORE, never less, so it cannot introduce a new black-out.
-        val keepScreenOnIntent = uiState.isPlaying || uiState.isBuffering ||
-            (!uiState.playbackEnded && !uiState.showPauseOverlay)
-        // Video Player
-        if (uiState.internalPlayerEngine == InternalPlayerEngine.MVP_PLAYER) {
-            MpvPlayerSurface(
-                viewModel = viewModel,
-                keepScreenOn = keepScreenOnIntent,
-                aspectMode = uiState.aspectMode,
-                videoZoom = uiState.videoZoom,
-                subtitleStyle = uiState.subtitleStyle,
-                modifier = Modifier.fillMaxSize()
+        val postPlayRecommendationPlayerWidth by animateFloatAsState(
+            targetValue = if (postPlayRecommendationState.isVisible) 0.32f else 1f,
+            animationSpec = tween(durationMillis = POST_PLAY_RECOMMENDATION_TRANSITION_MS),
+            label = "postPlayRecommendationPlayerWidth"
+        )
+        val postPlayRecommendationPlayerPadding by animateDpAsState(
+            targetValue = if (postPlayRecommendationState.isVisible) NuvioTheme.spacing.xxl else 0.dp,
+            animationSpec = tween(durationMillis = POST_PLAY_RECOMMENDATION_TRANSITION_MS),
+            label = "postPlayRecommendationPlayerPadding"
+        )
+        val postPlayRecommendationPlayerCornerRadius by animateDpAsState(
+            targetValue = if (postPlayRecommendationState.isVisible) 12.dp else 0.dp,
+            animationSpec = tween(durationMillis = POST_PLAY_RECOMMENDATION_TRANSITION_MS),
+            label = "postPlayRecommendationPlayerCornerRadius"
+        )
+        val postPlayRecommendationPlayerBorderAlpha by animateFloatAsState(
+            targetValue = if (postPlayRecommendationState.isVisible) 0.2f else 0f,
+            animationSpec = tween(durationMillis = POST_PLAY_RECOMMENDATION_TRANSITION_MS),
+            label = "postPlayRecommendationPlayerBorderAlpha"
+        )
+        val playerSurfaceShape = RoundedCornerShape(postPlayRecommendationPlayerCornerRadius)
+        val playerSurfaceIsFullscreen = !postPlayRecommendationState.isVisible &&
+            postPlayRecommendationPlayerWidth >= 0.999f
+        var subtitleControlsClearancePx by remember { mutableFloatStateOf(0f) }
+        var progressBarSubtitleClearancePx by remember { mutableFloatStateOf(0f) }
+        var controlsTitleRightPx by remember { mutableFloatStateOf(0f) }
+        var subtitleTextMetrics by remember { mutableStateOf<SubtitleTextMetrics?>(null) }
+        var skipClearancePx by remember { mutableFloatStateOf(0f) }
+        var postPlayClearancePx by remember { mutableFloatStateOf(0f) }
+        var seekClearancePx by remember { mutableFloatStateOf(0f) }
+        val subtitleClearanceGapPx = with(LocalDensity.current) { SUBTITLE_CONTROLS_GAP.toPx() }
+        val postPlayOverlayMode = uiState.postPlayMode.takeIf {
+            uiState.error == null &&
+                !postPlayRecommendationState.isVisible &&
+                postPlayRecommendationState.recommendation == null &&
+                !shouldConfirmNextEpisodeOnEnd &&
+                !uiState.showLoadingOverlay &&
+                !uiState.showPauseOverlay &&
+                !uiState.showStreamInfoOverlay &&
+                !uiState.showEpisodesPanel &&
+                !uiState.showSourcesPanel && !uiState.showChaptersPanel &&
+                !uiState.showPartyPanel &&
+                !uiState.showAudioOverlay &&
+                !uiState.showSubtitleOverlay &&
+                !uiState.showSubtitleStylePanel &&
+                !uiState.showSubtitleDelayOverlay &&
+                !uiState.showSubtitleTimingDialog &&
+                !uiState.showSpeedDialog &&
+                !uiState.showMoreDialog
+        }
+        val seekOverlayVisible = uiState.showSeekOverlay && !uiState.showControls && uiState.error == null &&
+            !uiState.showLoadingOverlay && !uiState.showPauseOverlay &&
+            !uiState.showSubtitleDelayOverlay && !uiState.showSubtitleTimingDialog &&
+            !uiState.showMoreDialog &&
+            !uiState.isLive
+        val playerControlsVisible = uiState.showControls && uiState.error == null &&
+            !uiState.showLoadingOverlay && !uiState.showPauseOverlay &&
+            !uiState.showStreamInfoOverlay &&
+            !uiState.showSubtitleStylePanel &&
+            !uiState.showSubtitleDelayOverlay &&
+            !uiState.showEpisodesPanel &&
+            !uiState.showSourcesPanel && !uiState.showChaptersPanel &&
+            !uiState.showPartyPanel &&
+            !uiState.showAudioOverlay &&
+            !uiState.showSubtitleOverlay &&
+            !uiState.showSpeedDialog &&
+            !postPlayRecommendationState.isVisible &&
+            uiState.postPlayMode !is PostPlayMode.StillWatching
+        val latestPlayerControlsVisible by rememberUpdatedState(playerControlsVisible)
+        LaunchedEffect(playerControlsVisible) {
+            if (!playerControlsVisible) {
+                subtitleControlsClearancePx = 0f
+                progressBarSubtitleClearancePx = 0f
+                controlsTitleRightPx = 0f
+            }
+        }
+        val fallbackSubtitleLiftPx = with(LocalDensity.current) { SUBTITLE_CONTROLS_LIFT.toPx() }
+        val playerSurfaceModifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(end = postPlayRecommendationPlayerPadding, top = postPlayRecommendationPlayerPadding)
+            .fillMaxWidth(postPlayRecommendationPlayerWidth)
+            .aspectRatio(16f / 9f)
+            .clip(playerSurfaceShape)
+            .border(
+                BorderStroke(1.dp, Color.White.copy(alpha = postPlayRecommendationPlayerBorderAlpha)),
+                playerSurfaceShape
             )
-        } else {
-            viewModel.exoPlayer?.let { player ->
-                ExoPlayerSurface(
-                    player = player,
-                    controller = viewModel.controller,
-                    keepScreenOn = keepScreenOnIntent,
-                    aspectMode = uiState.aspectMode,
-                    videoZoom = uiState.videoZoom,
-                    tunnelingEnabled = uiState.tunnelingEnabled,
-                    tunneledSurfaceFill = uiState.tunneledSurfaceFill,
-                    useLibass = uiState.useLibass,
-                    libassRenderType = uiState.libassRenderType,
-                    subtitleStyle = uiState.subtitleStyle,
-                    modifier = Modifier.fillMaxSize()
+            .then(
+                if (transparentLetterbox && playerSurfaceIsFullscreen) Modifier
+                else Modifier.background(Color.Black)
+            )
+            .zIndex(
+                if (postPlayRecommendationState.isVisible || postPlayRecommendationPlayerWidth < 0.999f) {
+                    2.2f
+                } else {
+                    0f
+                }
+            )
+
+        if (!exitDispatched &&
+            !postPlayRecommendationState.isTrailerPlaying &&
+            (!postPlayRecommendationState.isVisible || !postPlayRecommendationState.hasAutoPlayedTrailer)
+        ) {
+            LaunchedEffect(postPlayRecommendationState.isVisible) {
+                val playerView = viewModel.controller.exoPlayerView
+                val vis = if (postPlayRecommendationState.isVisible) {
+                    android.view.View.GONE
+                } else {
+                    android.view.View.VISIBLE
+                }
+                playerView?.subtitleView?.visibility = vis
+                playerView?.setAssOverlayVisibility(vis)
+            }
+
+            Box(modifier = playerSurfaceModifier) {
+                val previewConfiguredSubtitlePosition = uiState.showSubtitleOverlay || uiState.showSubtitleStylePanel
+                val subtitleCueState by viewModel.controller.subtitleCueTracker.state.collectAsState()
+                val prescannedSubtitleTexts by viewModel.controller.subtitleCueTracker.prescannedTexts.collectAsState()
+                val subtitleWidthKey = listOf(uiState.selectedSubtitleTrackIndex, uiState.selectedAddonSubtitle, subtitleTextMetrics)
+                var widestSubtitleBlockPx by remember(subtitleWidthKey) { mutableStateOf<Float?>(null) }
+                val subtitleMeasurePaint = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG) }
+                LaunchedEffect(subtitleWidthKey, prescannedSubtitleTexts) {
+                    val metrics = subtitleTextMetrics ?: return@LaunchedEffect
+                    if (prescannedSubtitleTexts.isEmpty()) return@LaunchedEffect
+                    val widest = withContext(Dispatchers.Default) {
+                        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                        prescannedSubtitleTexts.maxOf { measureSubtitleBlockPx(paint, it, metrics) }
+                    }
+                    widestSubtitleBlockPx = maxOf(widestSubtitleBlockPx ?: 0f, widest)
+                }
+                LaunchedEffect(subtitleWidthKey, subtitleCueState) {
+                    val metrics = subtitleTextMetrics ?: return@LaunchedEffect
+                    if (!subtitleCueState.visible) return@LaunchedEffect
+                    val width = if (subtitleCueState.hasBitmap) {
+                        Float.MAX_VALUE
+                    } else {
+                        measureSubtitleBlockPx(subtitleMeasurePaint, subtitleCueState.text, metrics)
+                    }
+                    widestSubtitleBlockPx = maxOf(widestSubtitleBlockPx ?: 0f, width)
+                }
+                val subtitleTitleMarginPx = with(LocalDensity.current) { SUBTITLE_TITLE_MARGIN.toPx() }
+                val subtitleClearsControlsTitle = subtitleTextMetrics?.let {
+                    subtitleClearsTitle(widestSubtitleBlockPx, it.centerXPx, controlsTitleRightPx, subtitleTitleMarginPx)
+                } == true
+                val effectiveControlsClearancePx = effectiveSubtitleControlsClearancePx(
+                    fullClearancePx = subtitleControlsClearancePx,
+                    progressBarClearancePx = progressBarSubtitleClearancePx,
+                    clearsTitle = subtitleClearsControlsTitle
                 )
+                var heldControlsClearancePx by remember { mutableFloatStateOf(0f) }
+                val controlsClearanceMeasured = playerControlsVisible && subtitleControlsClearancePx > 0f
+                LaunchedEffect(controlsClearanceMeasured, effectiveControlsClearancePx) {
+                    heldControlsClearancePx = if (controlsClearanceMeasured) {
+                        maxOf(heldControlsClearancePx, effectiveControlsClearancePx)
+                    } else {
+                        0f
+                    }
+                }
+                val targetSubtitleLiftPx = computeSubtitleLiftPx(
+                    previewConfiguredPosition = previewConfiguredSubtitlePosition,
+                    controlsVisible = controlsClearanceMeasured,
+                    controlsClearancePx = maxOf(heldControlsClearancePx, effectiveControlsClearancePx),
+                    fallbackControlsLiftPx = fallbackSubtitleLiftPx,
+                    skipVisible = skipButtonActuallyVisible,
+                    skipClearancePx = skipClearancePx,
+                    postPlayVisible = postPlayOverlayMode != null,
+                    postPlayClearancePx = postPlayClearancePx,
+                    seekVisible = seekOverlayVisible,
+                    seekClearancePx = seekClearancePx
+                )
+                var subtitleLiftPx by remember { mutableFloatStateOf(0f) }
+                var pendingDropCueVersion by remember { mutableStateOf<Long?>(null) }
+                var subtitleDropTimedOut by remember { mutableStateOf(false) }
+                var controlsHideAnimationFinished by remember { mutableStateOf(false) }
+                LaunchedEffect(playerControlsVisible) {
+                    controlsHideAnimationFinished = false
+                    if (!playerControlsVisible) {
+                        delay(PLAYER_CONTROLS_FADE_DURATION_MS.toLong())
+                        controlsHideAnimationFinished = true
+                    }
+                }
+                val applySubtitleLiftImmediately = shouldApplySubtitleLiftImmediately(
+                    isPlaying = uiState.isPlaying,
+                    previewConfiguredPosition = previewConfiguredSubtitlePosition,
+                    controlsVisible = playerControlsVisible || !controlsHideAnimationFinished
+                )
+                LaunchedEffect(
+                    targetSubtitleLiftPx,
+                    subtitleCueState,
+                    applySubtitleLiftImmediately,
+                    subtitleDropTimedOut
+                ) {
+                    val decision = nextSubtitleLift(
+                        targetLiftPx = targetSubtitleLiftPx,
+                        appliedLiftPx = subtitleLiftPx,
+                        cueVersion = subtitleCueState.version,
+                        cueVisible = subtitleCueState.visible,
+                        applyImmediately = applySubtitleLiftImmediately,
+                        pendingDropCueVersion = pendingDropCueVersion,
+                        dropTimedOut = subtitleDropTimedOut
+                    )
+                    subtitleLiftPx = decision.appliedLiftPx
+                    pendingDropCueVersion = decision.pendingDropCueVersion
+                    if (decision.pendingDropCueVersion == null) subtitleDropTimedOut = false
+                }
+                LaunchedEffect(pendingDropCueVersion) {
+                    if (pendingDropCueVersion != null) {
+                        delay(SUBTITLE_LIFT_DROP_TIMEOUT_MS)
+                        subtitleDropTimedOut = true
+                    }
+                }
+                if (uiState.internalPlayerEngine == InternalPlayerEngine.MVP_PLAYER) {
+                    MpvPlayerSurface(
+                        viewModel = viewModel,
+                        isPlaying = uiState.isPlaying,
+                        isBuffering = uiState.isBuffering,
+                        aspectMode = uiState.aspectMode,
+                        subtitleStyle = uiState.effectiveSubtitleStyle,
+                        subtitleLiftPx = subtitleLiftPx,
+                        subtitleTrackKey = subtitleWidthKey.take(2),
+                        onSubtitleTextMetricsChanged = { subtitleTextMetrics = it },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    viewModel.exoPlayer?.let { player ->
+                        ExoPlayerSurface(
+                            player = player,
+                            controller = viewModel.controller,
+                            isPlaying = uiState.isPlaying,
+                            isBuffering = uiState.isBuffering,
+                            aspectMode = uiState.aspectMode,
+                            tunnelingEnabled = uiState.tunnelingEnabled,
+                            tunneledSurfaceFill = uiState.tunneledSurfaceFill,
+                            useLibass = uiState.useLibass,
+                            libassRenderMode = uiState.libassRenderMode,
+                            subtitleStyle = uiState.effectiveSubtitleStyle,
+                            subtitleLiftPx = subtitleLiftPx,
+                            onBindSubtitleView = viewModel::bindExoSubtitleView,
+                            onSubtitleTextMetricsChanged = { subtitleTextMetrics = it },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+
+                if (postPlayRecommendationState.canReturnToPlayer) {
+                    PostPlayRecommendationPlayerWindow(
+                        focusRequester = postPlayRecommendationPlayerWindowFocusRequester,
+                        downFocusRequester = postPlayRecommendationFocusRequester,
+                        onBack = handleBackPress,
+                        onClick = {
+                            returnToPlayerFromPostPlay()
+                            if (!uiState.showControls) {
+                                viewModel.onEvent(PlayerEvent.OnToggleControls)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
         }
 
+        if (!exitDispatched) {
+            PostPlayRecommendationOverlay(
+                state = postPlayRecommendationState,
+                currentTitle = uiState.contentName ?: uiState.title,
+                showManualPlayOption = effectiveAutoplayEnabled,
+                playFocusRequester = postPlayRecommendationFocusRequester,
+                playerWindowFocusRequester = postPlayRecommendationPlayerWindowFocusRequester,
+                onBack = handleBackPress,
+                onForceExit = { exitPlayer() },
+                onStopTrailer = viewModel::onPostPlayTrailerEnded,
+                onPlay = { recommendation ->
+                    if (!exitDispatched) {
+                        exitDispatched = true
+                        viewModel.stopAndRelease()
+                        currentOnPlayRecommendation(recommendation, false)
+                    }
+                },
+                onPlayManually = { recommendation ->
+                    if (!exitDispatched) {
+                        exitDispatched = true
+                        viewModel.stopAndRelease()
+                        currentOnPlayRecommendation(recommendation, true)
+                    }
+                },
+                onOpenDetails = { recommendation ->
+                    if (!exitDispatched) {
+                        exitDispatched = true
+                        viewModel.stopAndRelease()
+                        currentOnOpenRecommendationDetails(recommendation)
+                    }
+                },
+                onPlayTrailer = viewModel::playPostPlayTrailer,
+                onTrailerEnded = viewModel::onPostPlayTrailerEnded,
+                onPreviousRecommendation = viewModel::showPreviousPostPlayRecommendation,
+                onNextRecommendation = viewModel::showNextPostPlayRecommendation,
+                mdbListRatingOrder = postPlayRecommendationState.mdbListRatingOrder,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(1f)
+            )
+        }
+
         LoadingOverlay(
-            visible = uiState.showLoadingOverlay && uiState.error == null,
-            backdropUrl = uiState.backdrop.takeUnless { lowRamDevice },
+            visible = uiState.showLoadingOverlay && uiState.error == null && !postPlayRecommendationState.isVisible,
+            backdropUrl = uiState.backdrop,
             logoUrl = uiState.logo,
             title = uiState.title,
             message = uiState.loadingMessage.takeIf { uiState.showPlayerLoadingStatus || uiState.isTorrentStream },
@@ -861,37 +1332,11 @@ fun PlayerScreen(
                 .zIndex(2f)
         )
 
-        // "You watched further on your server" (a media server's resume position): a choice over the picture for a few seconds.
-        uiState.serverResumeOfferMs?.let { serverAt ->
-            if (!uiState.showLoadingOverlay && uiState.error == null) {
-                ServerResumeOfferAction(
-                    positionLabel = formatTime(serverAt),
-                    onJump = { viewModel.onEvent(PlayerEvent.OnApplyServerResume) },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 72.dp)
-                        .zIndex(2.4f)
-                )
-            }
-        }
-
-        val startOverAt = uiState.startOverOfferPositionMs
-        if (startOverAt != null && uiState.showLoadingOverlay && uiState.error == null) {
-            StartOverAction(
-                resumeAtLabel = formatTime(startOverAt),
-                onStartOver = { viewModel.onEvent(PlayerEvent.OnStartOverFromBeginning) },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    // Sits above the loading-issue report action when both are up.
-                    .padding(bottom = if (uiState.loadingIssueReportVisible) 200.dp else 72.dp)
-                    .zIndex(2.4f)
-            )
-        }
-
         if (uiState.playbackIssueReportsEnabled &&
             uiState.showLoadingOverlay &&
             uiState.error == null &&
-            uiState.loadingIssueReportVisible
+            uiState.loadingIssueReportVisible &&
+            !postPlayRecommendationState.isVisible
         ) {
             LoadingIssueReportAction(
                 elapsedMs = uiState.loadingIssueElapsedMs,
@@ -907,7 +1352,8 @@ fun PlayerScreen(
         }
 
         PauseOverlay(
-            visible = uiState.showPauseOverlay && uiState.error == null && !uiState.showLoadingOverlay,
+            visible = uiState.showPauseOverlay && uiState.error == null &&
+                !uiState.showLoadingOverlay && !postPlayRecommendationState.isVisible,
             onClose = { viewModel.onEvent(PlayerEvent.OnDismissPauseOverlay) },
             title = uiState.title,
             logo = uiState.logo,
@@ -917,24 +1363,43 @@ fun PlayerScreen(
             year = uiState.releaseYear,
             type = uiState.contentType,
             description = uiState.description,
-            cast = if (lowRamDevice) emptyList() else uiState.castMembers,
+            cast = uiState.castMembers,
+            showClock = !uiState.isLive,
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(2.5f)
+                .then(playerControlsDim)
         )
 
         StreamInfoOverlay(
-            visible = uiState.showStreamInfoOverlay && uiState.error == null && !uiState.showLoadingOverlay,
+            visible = uiState.showStreamInfoOverlay && uiState.error == null &&
+                !uiState.showLoadingOverlay && !postPlayRecommendationState.isVisible,
             onClose = dismissStreamInfoOverlay,
             data = uiState.streamInfoData,
+            hudEnabled = uiState.playerStatsHudEnabled,
+            hudButtonShown = uiState.playerStatsHudButtonAvailable,
+            onToggleHud = { viewModel.onEvent(PlayerEvent.OnTogglePlayerStatsHud) },
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(2.6f)
+                .then(playerControlsDim)
         )
+
+        if (uiState.playerStatsHudEnabled && uiState.playerStatsHudButtonAvailable && uiState.error == null) {
+            PlayerDebugStatsOverlay(
+                viewModel = viewModel,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = NuvioTheme.spacing.xl, top = NuvioTheme.spacing.xl)
+                    .zIndex(2.75f)
+                    .then(playerControlsDim)
+            )
+        }
 
         // Torrent stats overlay (top-right corner)
         TorrentOverlay(
-            visible = uiState.isTorrentStream && uiState.showTorrentStats && !uiState.hideTorrentStats && uiState.error == null,
+            visible = uiState.isTorrentStream && uiState.showTorrentStats &&
+                !uiState.hideTorrentStats && uiState.error == null && !postPlayRecommendationState.isVisible,
             downloadSpeed = uiState.torrentDownloadSpeed,
             uploadSpeed = uiState.torrentUploadSpeed,
             peers = uiState.torrentPeers,
@@ -944,51 +1409,34 @@ fun PlayerScreen(
                 .align(Alignment.TopEnd)
                 .padding(top = NuvioTheme.spacing.lg, end = NuvioTheme.spacing.lg)
                 .zIndex(2.7f)
+                .then(playerControlsDim)
         )
 
         // Buffering indicator — isolated in its own composable scope so that
         // isBuffering state changes only recompose this small subtree instead
         // of the entire PlayerScreen.
         PlayerBufferingIndicator(
-            isBuffering = uiState.isBuffering,
+            isBuffering = uiState.isBuffering && !postPlayRecommendationState.isVisible,
             showLoadingOverlay = uiState.showLoadingOverlay,
             isTorrentStream = uiState.isTorrentStream,
             torrentBufferingMessage = uiState.torrentBufferingMessage,
-            torrentBufferingProgress = uiState.torrentBufferingProgress
+            torrentBufferingProgress = uiState.torrentBufferingProgress,
+            modifier = playerControlsDim
         )
-
-        uiState.liveRetryStatus?.let { status ->
-            PlayerLiveRetryStatus(
-                message = status,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 46.dp)
-                    .zIndex(2.8f),
-            )
-        }
 
         // Error state
         if (uiState.error != null) {
             ErrorOverlay(
                 message = uiState.error!!,
-                showReportAction = uiState.playbackIssueReportsEnabled || uiState.liveFreezeGaveUp,
-                isFreezeReport = uiState.liveFreezeGaveUp,
-                freezeReported = uiState.freezeReported,
+                showSwitchToMpvAction = uiState.showSwitchToMpvErrorAction &&
+                    uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER,
+                onSwitchToMpv = { viewModel.onEvent(PlayerEvent.OnSwitchToMpvPlayer) },
+                showReportAction = uiState.playbackIssueReportsEnabled,
                 reportStatus = uiState.playbackIssueReportStatus,
                 reportId = uiState.playbackIssueReportId,
                 reportError = uiState.playbackIssueReportError,
-                onReport = {
-                    viewModel.onEvent(
-                        if (uiState.liveFreezeGaveUp) PlayerEvent.OnReportFrozen
-                        else PlayerEvent.OnReportPlaybackIssue
-                    )
-                },
-                onBack = exitPlayerFromError,
-                // A live channel that would not come back gets a Retry (focused first on the D-pad);
-                // other errors keep their existing Report / Go back pair.
-                onRetry = if (uiState.liveFreezeGaveUp) {
-                    { viewModel.onEvent(PlayerEvent.OnRetry) }
-                } else null,
+                onReport = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
+                onBack = exitPlayerFromError
             )
         }
 
@@ -997,7 +1445,8 @@ fun PlayerScreen(
             NextEpisodeEndPromptOverlay(
                 nextEpisode = endPromptEpisode,
                 onContinue = continueToNextEpisodeFromEndPrompt,
-                onReturnToDetails = returnToDetailsFromEndPrompt
+                onReturnToDetails = returnToDetailsFromEndPrompt,
+                modifier = playerControlsDim
             )
         }
 
@@ -1008,22 +1457,43 @@ fun PlayerScreen(
         )
 
         // Skip Intro button (bottom-left, lifted when controls are visible)
+        val skipIntroCanFocus = isSkipIntroCanFocus(
+            subtitleOverlayVisible = uiState.showSubtitleOverlay,
+        )
         SkipIntroButton(
-            interval = if (uiState.showPauseOverlay || uiState.showLoadingOverlay) null else uiState.activeSkipInterval,
+            interval = if (uiState.showPauseOverlay || uiState.showLoadingOverlay || postPlayRecommendationState.isVisible) {
+                null
+            } else {
+                uiState.activeSkipInterval
+            },
             dismissed = uiState.skipIntervalDismissed,
+            targetsPostCredits = uiState.activeSkipTargetsPostCredits,
             controlsVisible = uiState.showControls,
-            suppressFocus = uiState.postPlayMode is PostPlayMode.AutoPlay,
-            onSkip = { viewModel.onEvent(PlayerEvent.OnSkipIntro) },
+            // Autoplay next-episode card owns focus; subtitle menu must keep D-pad focus (#2874).
+            suppressFocus = (uiState.postPlayMode is PostPlayMode.AutoPlay &&
+                postPlayRecommendationState.recommendation == null) || !skipIntroCanFocus,
+            canFocus = skipIntroCanFocus,
+            onSkip = {
+                if (uiState.showControls) {
+                    runCatching { playPauseFocusRequester.requestFocus() }
+                }
+                viewModel.onEvent(PlayerEvent.OnSkipIntro)
+            },
             onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissSkipIntro) },
             onVisibilityChanged = { skipButtonActuallyVisible = it },
             onFocused = { viewModel.scheduleHideControls() },
             focusRequester = skipIntroFocusRequester,
             downFocusRequester = if (uiState.showControls) progressBarFocusRequester else null,
             upFocusRequester = if (uiState.showSubtitleDelayOverlay || uiState.showSubtitleTimingDialog) {
-                subtitleDelaySyncLineFocusRequester
+                if (subtitleDelayFocusTarget == SubtitleDelayFocusTarget.RESET) {
+                    subtitleDelayResetFocusRequester
+                } else {
+                    subtitleDelaySyncLineFocusRequester
+                }
             } else {
                 null
             },
+            rightFocusRequester = if (uiState.postPlayMode is PostPlayMode.AutoPlay) nextEpisodeFocusRequester else null,
             onHideControls = {
                 if (uiState.showControls) viewModel.hideControls()
                 else viewModel.onEvent(PlayerEvent.OnToggleControls)
@@ -1032,36 +1502,25 @@ fun PlayerScreen(
                 .align(Alignment.BottomStart)
                 .padding(start = NuvioTheme.spacing.xxl, bottom = skipButtonBottomPadding)
                 .zIndex(2.1f)
+                .then(playerControlsDim)
+                .reportSubtitleClearance(subtitleClearanceGapPx) { skipClearancePx = it }
         )
         PostPlayOverlay(
-            mode = uiState.postPlayMode.takeIf {
-                uiState.error == null &&
-                    !shouldConfirmNextEpisodeOnEnd &&
-                    !uiState.showLoadingOverlay &&
-                    !uiState.showPauseOverlay &&
-                    !uiState.showStreamInfoOverlay &&
-                    !uiState.showEpisodesPanel &&
-                    !uiState.showSourcesPanel &&
-                    !uiState.showPartyPanel &&
-                    !uiState.showAudioOverlay &&
-                    !uiState.showSubtitleOverlay &&
-                    !uiState.showSubtitleStylePanel &&
-                    !uiState.showSubtitleDelayOverlay &&
-                    !uiState.showSubtitleTimingDialog &&
-                    !uiState.showSpeedDialog &&
-                    !uiState.showMoreDialog
-            },
+            mode = postPlayOverlayMode,
             controlsVisible = uiState.showControls,
             blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
             nextEpisodeFocusRequester = nextEpisodeFocusRequester,
             progressBarFocusRequester = if (uiState.showControls) progressBarFocusRequester else null,
+            leftFocusRequester = if (skipButtonActuallyVisible) skipIntroFocusRequester else null,
             onPlayNext = { viewModel.onEvent(PlayerEvent.OnPlayNextEpisode) },
             onContinueStillWatching = { viewModel.onEvent(PlayerEvent.OnStillWatchingContinue) },
             onDismissStillWatching = { viewModel.onEvent(PlayerEvent.OnDismissStillWatchingPrompt) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 26.dp, bottom = if (uiState.showControls) 122.dp else 30.dp)
-                .zIndex(2.1f),
+                .zIndex(2.1f)
+                .then(playerControlsDim)
+                .reportSubtitleClearance(subtitleClearanceGapPx) { postPlayClearancePx = it },
         )
 
         // Parental guide overlay (shows when video first starts playing)
@@ -1071,7 +1530,9 @@ fun PlayerScreen(
             onAnimationComplete = {
                 viewModel.onEvent(PlayerEvent.OnParentalGuideHide)
             },
-            modifier = Modifier.align(Alignment.TopStart)
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .then(playerControlsDim)
         )
 
         DisplayModeOverlay(
@@ -1083,6 +1544,7 @@ fun PlayerScreen(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .zIndex(2.2f)
+                .then(playerControlsDim)
         )
 
         val showClockOverlay = uiState.showControls &&
@@ -1091,14 +1553,15 @@ fun PlayerScreen(
             !uiState.showLoadingOverlay &&
             !uiState.showPauseOverlay &&
             !uiState.showEpisodesPanel &&
-            !uiState.showSourcesPanel &&
+            !uiState.showSourcesPanel && !uiState.showChaptersPanel &&
             !uiState.showPartyPanel &&
             !uiState.showAudioOverlay &&
             !uiState.showSubtitleOverlay &&
             !uiState.showSubtitleStylePanel &&
             !uiState.showSpeedDialog &&
             !uiState.showMoreDialog &&
-            !uiState.showDisplayModeInfo
+            !uiState.showDisplayModeInfo &&
+            !postPlayRecommendationState.isVisible
 
         AnimatedVisibility(
             visible = showClockOverlay,
@@ -1108,6 +1571,7 @@ fun PlayerScreen(
                 .align(Alignment.TopEnd)
                 .padding(end = 28.dp, top = NuvioTheme.spacing.xl)
                 .zIndex(2.15f)
+                .then(playerControlsDim)
         ) {
             PlayerClockOverlayHost(
                 viewModel = viewModel,
@@ -1117,25 +1581,26 @@ fun PlayerScreen(
 
         // Controls overlay
         AnimatedVisibility(
-            visible = uiState.showControls && uiState.error == null &&
-                !uiState.showLoadingOverlay && !uiState.showPauseOverlay &&
-                !uiState.showStreamInfoOverlay &&
-                !uiState.showSubtitleStylePanel &&
-                !uiState.showSubtitleDelayOverlay &&
-                !uiState.showEpisodesPanel &&
-                !uiState.showSourcesPanel &&
-                !uiState.showPartyPanel &&
-                !uiState.showAudioOverlay &&
-                !uiState.showSubtitleOverlay &&
-                !uiState.showSpeedDialog &&
-                uiState.postPlayMode !is PostPlayMode.StillWatching,
-            enter = fadeIn(animationSpec = tween(200)),
-            exit = fadeOut(animationSpec = tween(200))
+            visible = playerControlsVisible,
+            enter = fadeIn(animationSpec = tween(PLAYER_CONTROLS_FADE_DURATION_MS)),
+            exit = fadeOut(animationSpec = tween(PLAYER_CONTROLS_FADE_DURATION_MS)),
+            modifier = playerControlsDim
         ) {
             val context = LocalContext.current
             PlayerControlsOverlay(
                 uiState = uiState,
+                playerBadges = playerBadges,
                 viewModel = viewModel,
+                subtitleReportingActive = playerControlsVisible,
+                onSubtitleClearanceChanged = {
+                    if (latestPlayerControlsVisible) subtitleControlsClearancePx = it
+                },
+                onSubtitleTitleBoundsChanged = { progressBarClearance, titleRight ->
+                    if (latestPlayerControlsVisible) {
+                        progressBarSubtitleClearancePx = progressBarClearance
+                        controlsTitleRightPx = titleRight
+                    }
+                },
                 playPauseFocusRequester = playPauseFocusRequester,
                 progressBarFocusRequester = progressBarFocusRequester,
                 streamInfoFocusRequester = streamInfoFocusRequester,
@@ -1150,6 +1615,7 @@ fun PlayerScreen(
                 onSeekForward = { viewModel.onEvent(PlayerEvent.OnSeekForward) },
                 onSeekBackward = { viewModel.onEvent(PlayerEvent.OnSeekBackward) },
                 onSeekTo = { viewModel.onEvent(PlayerEvent.OnSeekTo(it)) },
+                onShowChaptersPanel = { viewModel.onEvent(PlayerEvent.OnShowChaptersPanel) },
                 onShowEpisodesPanel = { viewModel.onEvent(PlayerEvent.OnShowEpisodesPanel) },
                 onShowSourcesPanel = { viewModel.onEvent(PlayerEvent.OnShowSourcesPanel) },
                 onShowPartyPanel = if (partyAvailable && viewModel.canUseParty) {
@@ -1165,7 +1631,6 @@ fun PlayerScreen(
                     Log.d("PlayerScreen", "onToggleAspectRatio called - dispatching event")
                     viewModel.onEvent(PlayerEvent.OnToggleAspectRatio)
                 },
-                onShowVideoZoom = { viewModel.onEvent(PlayerEvent.OnShowVideoZoomPanel) },
                 onSwitchPlayerEngine = { viewModel.onEvent(PlayerEvent.OnSwitchInternalPlayerEngine) },
                 onReportPlaybackIssue = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
                 onToggleMoreActions = {
@@ -1176,18 +1641,28 @@ fun PlayerScreen(
                     }
                 },
                 onOpenInExternalPlayer = {
-                    val url = viewModel.getCurrentStreamUrl()
-                    val title = uiState.title
-                    val headers = viewModel.getCurrentHeaders()
-                    val timeline = viewModel.playbackTimeline.value
-                    viewModel.stopAndRelease()
-                    // Launch via tracker - it handles progress saving independently
-                    viewModel.launchInExternalPlayer(context, timeline.currentPosition)
-                    // Exit PlayerScreen - tracker will save progress when external player returns
-                    val completed = timeline.duration > 0L &&
-                        (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD
-                    onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, autoPlayEnabledForBack, completed)
-                }.takeIf { ExternalPlayerAvailability.canOpen(uiState.isServerStream) },
+                    if (!externalHandoffInProgress) {
+                        externalHandoffInProgress = true
+                        val timeline = viewModel.playbackTimeline.value
+                        val completed = !timeline.isLive &&
+                            timeline.duration > 0L &&
+                            (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD
+                        viewModel.launchInExternalPlayer(context, timeline.currentPosition) { launched ->
+                            externalHandoffInProgress = false
+                            if (launched && !exitDispatched) {
+                                exitDispatched = true
+                                val (focusSeason, focusEpisode) = uiState.returnFocusSeasonEpisode(completed)
+                                currentOnBackPress(
+                                    uiState.currentVideoId,
+                                    focusSeason,
+                                    focusEpisode,
+                                    autoPlayEnabledForBack,
+                                    completed
+                                )
+                            }
+                        }
+                    }
+                }.takeUnless { uiState.isServerStream },
                 onShowStreamInfo = {
                     restoreStreamInfoFocus = true
                     viewModel.onEvent(PlayerEvent.OnShowStreamInfo)
@@ -1210,6 +1685,7 @@ fun PlayerScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 80.dp)
+                .then(playerControlsDim)
         ) {
             AspectRatioIndicator(text = uiState.aspectRatioIndicatorText)
         }
@@ -1221,6 +1697,7 @@ fun PlayerScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 128.dp)
+                .then(playerControlsDim)
         ) {
             StreamSourceIndicator(text = uiState.streamSourceIndicatorText)
         }
@@ -1251,6 +1728,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 28.dp)
+                    .then(playerControlsDim)
             )
         }
 
@@ -1261,6 +1739,7 @@ fun PlayerScreen(
             modifier = Modifier
                 .align(Alignment.Center)
                 .zIndex(2.35f)
+                .then(playerControlsDim)
         ) {
             PlayerEngineSwitchIndicator(
                 title = stringResource(R.string.player_engine_switching_title),
@@ -1277,7 +1756,7 @@ fun PlayerScreen(
                 !uiState.showPauseOverlay &&
                 !uiState.showSubtitleStylePanel &&
                 !uiState.showEpisodesPanel &&
-                !uiState.showSourcesPanel &&
+                !uiState.showSourcesPanel && !uiState.showChaptersPanel &&
                 !uiState.showPartyPanel &&
                 !uiState.showAudioOverlay &&
                 !uiState.showSubtitleOverlay &&
@@ -1289,31 +1768,72 @@ fun PlayerScreen(
                 .align(Alignment.TopCenter)
                 .padding(top = 44.dp)
                 .zIndex(2.3f)
+                .then(playerControlsDim)
         ) {
             SubtitleDelayOverlay(
                 subtitleDelayMs = uiState.subtitleDelayMs,
-                isAutoSyncButtonFocused = subtitleDelayAutoSyncFocused,
-                isSliderFocused = !subtitleDelayAutoSyncFocused,
+                isResetButtonFocused = subtitleDelayFocusTarget == SubtitleDelayFocusTarget.RESET,
+                isSyncLineButtonFocused = subtitleDelayFocusTarget == SubtitleDelayFocusTarget.SYNC_LINE,
+                isSliderFocused = subtitleDelayFocusTarget == SubtitleDelayFocusTarget.SLIDER,
+                resetFocusRequester = subtitleDelayResetFocusRequester,
                 syncLineFocusRequester = subtitleDelaySyncLineFocusRequester,
-                onSyncLineFocused = { subtitleDelayAutoSyncFocused = true },
+                onResetFocused = { subtitleDelayFocusTarget = SubtitleDelayFocusTarget.RESET },
+                onSyncLineFocused = { subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SYNC_LINE },
+                onResetDelay = {
+                    viewModel.onEvent(PlayerEvent.OnResetSubtitleDelay())
+                    subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SLIDER
+                },
                 onOpenSyncByLine = {
-                    subtitleDelayAutoSyncFocused = false
-                    subtitleTimingConsumeNextConfirmKeyUp = true
+                    subtitleDelayFocusTarget = SubtitleDelayFocusTarget.SLIDER
+                    // Card onClick already runs on confirm KEY_UP — no trailing release
+                    // to swallow. KEY_DOWN open (SYNC_LINE branch above) sets the flag.
                     viewModel.onEvent(PlayerEvent.OnShowSubtitleTimingDialog)
                 }
             )
         }
 
         AnimatedVisibility(
-            visible = uiState.showSeekOverlay && !uiState.showControls && uiState.error == null &&
-                !uiState.showLoadingOverlay && !uiState.showPauseOverlay &&
-                !uiState.showSubtitleDelayOverlay && !uiState.showSubtitleTimingDialog &&
-                !uiState.showMoreDialog,
+            visible = seekOverlayVisible,
             enter = fadeIn(animationSpec = tween(150)),
             exit = fadeOut(animationSpec = tween(150)),
-            modifier = Modifier.align(Alignment.BottomCenter)
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .reportSubtitleClearance(subtitleClearanceGapPx) { seekClearancePx = it }
+                .then(playerControlsDim)
         ) {
-            SeekOverlayHost(viewModel = viewModel)
+            SeekOverlayHost(viewModel = viewModel, chapters = uiState.chapters)
+        }
+
+        // Chapters side panel (slides in from right, over a scrim)
+        AnimatedVisibility(
+            visible = uiState.showChaptersPanel && uiState.chapters.isNotEmpty() && uiState.error == null,
+            enter = fadeIn(animationSpec = tween(120)),
+            exit = fadeOut(animationSpec = tween(120))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.45f))
+            )
+        }
+        AnimatedVisibility(
+            visible = uiState.showChaptersPanel && uiState.chapters.isNotEmpty() && uiState.error == null,
+            enter = slideInHorizontally(animationSpec = tween(220), initialOffsetX = { it }),
+            exit = slideOutHorizontally(animationSpec = tween(220), targetOffsetX = { it }),
+            modifier = playerControlsDim
+        ) {
+            val chaptersTimeline by viewModel.playbackTimeline.collectAsState()
+            Box(modifier = Modifier.fillMaxSize()) {
+                ChaptersSidePanel(
+                    chapters = uiState.chapters,
+                    positionMs = chaptersTimeline.currentPosition,
+                    durationMs = chaptersTimeline.duration,
+                    focusRequester = chaptersFocusRequester,
+                    onChapterSelected = { viewModel.onEvent(PlayerEvent.OnSelectChapter(it)) },
+                    onClose = { viewModel.onEvent(PlayerEvent.OnDismissChaptersPanel) },
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
         }
 
         // Episodes/streams side panel (slides in from right)
@@ -1340,7 +1860,8 @@ fun PlayerScreen(
             exit = slideOutHorizontally(
                 animationSpec = tween(220),
                 targetOffsetX = { it }
-            )
+            ),
+            modifier = playerControlsDim
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 EpisodesSidePanel(
@@ -1351,9 +1872,11 @@ fun PlayerScreen(
                     onBackToEpisodes = { viewModel.onEvent(PlayerEvent.OnBackFromEpisodeStreams) },
                     onReloadEpisodeStreams = { viewModel.onEvent(PlayerEvent.OnReloadEpisodeStreams) },
                     onSeasonSelected = { viewModel.onEvent(PlayerEvent.OnEpisodeSeasonSelected(it)) },
-                    onRangeSelected = { viewModel.onEvent(PlayerEvent.OnEpisodeRangeSelected(it)) },
                     onAddonFilterSelected = { viewModel.onEvent(PlayerEvent.OnEpisodeAddonFilterSelected(it)) },
                     onEpisodeSelected = { viewModel.onEvent(PlayerEvent.OnEpisodeSelected(it)) },
+                    onEpisodeManualPlay = {
+                        viewModel.onEvent(PlayerEvent.OnEpisodeSelected(it, manualSelection = true))
+                    },
                     onStreamSelected = { viewModel.onEvent(PlayerEvent.OnEpisodeStreamSelected(it)) },
                     modifier = Modifier.align(Alignment.CenterEnd)
                 )
@@ -1383,7 +1906,8 @@ fun PlayerScreen(
             exit = slideOutHorizontally(
                 animationSpec = tween(220),
                 targetOffsetX = { it }
-            )
+            ),
+            modifier = playerControlsDim
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 StreamSourcesSidePanel(
@@ -1400,14 +1924,14 @@ fun PlayerScreen(
                     onReload = { viewModel.onEvent(PlayerEvent.OnReloadSourceStreams) },
                     onAddonFilterSelected = { viewModel.onEvent(PlayerEvent.OnSourceAddonFilterSelected(it)) },
                     onStreamSelected = { viewModel.onEvent(PlayerEvent.OnSourceStreamSelected(it)) },
+                    onExpandStreams = { viewModel.controller.expandSourceFilteredStreamsIfNeeded() },
                     modifier = Modifier.align(Alignment.CenterEnd)
                 )
             }
         }
 
-        // Watch party panel scrim
         AnimatedVisibility(
-            visible = isPartyPanelOpen,
+            visible = uiState.showPartyPanel && uiState.error == null,
             enter = fadeIn(animationSpec = tween(120)),
             exit = fadeOut(animationSpec = tween(120))
         ) {
@@ -1418,9 +1942,8 @@ fun PlayerScreen(
             )
         }
 
-        // Watch party panel (slides in from right)
         AnimatedVisibility(
-            visible = isPartyPanelOpen,
+            visible = uiState.showPartyPanel && uiState.error == null,
             enter = slideInHorizontally(
                 animationSpec = tween(220),
                 initialOffsetX = { it }
@@ -1428,7 +1951,8 @@ fun PlayerScreen(
             exit = slideOutHorizontally(
                 animationSpec = tween(220),
                 targetOffsetX = { it }
-            )
+            ),
+            modifier = playerControlsDim
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 PartyPanel(
@@ -1437,16 +1961,14 @@ fun PlayerScreen(
                     playerMedia = viewModel.partyMedia,
                     isSupported = partyAvailable,
                     canStart = partyCanUse,
-                    canShareStream = viewModel.canSharePartyStream(),
+                    canShareStream = viewModel.currentPartyStream() != null,
                     onStart = { viewModel.startParty() },
                     onSwitchParty = { viewModel.switchParty() },
                     onWatchWithParty = {
                         partyState.party?.media?.let { media ->
-                            openPartyMedia(context, viewModel.party, media) { local ->
-                                viewModel.onEvent(PlayerEvent.OnDismissPartyPanel)
-                                viewModel.stopAndRelease()
-                                onOpenPartyMedia(local)
-                            }
+                            viewModel.onEvent(PlayerEvent.OnDismissPartyPanel)
+                            viewModel.stopAndRelease()
+                            onOpenPartyMedia(media)
                         }
                     },
                     onLeave = {
@@ -1466,7 +1988,6 @@ fun PlayerScreen(
                         viewModel.onEvent(PlayerEvent.OnDismissPartyPanel)
                     },
                     onClose = { viewModel.onEvent(PlayerEvent.OnDismissPartyPanel) },
-                    chatHintVisible = viewModel.party.chatHintVisible.collectAsState().value,
                     modifier = Modifier.align(Alignment.CenterEnd)
                 )
             }
@@ -1495,14 +2016,33 @@ fun PlayerScreen(
             exit = slideOutVertically(
                 animationSpec = tween(220),
                 targetOffsetY = { -it }
-            )
+            ),
+            modifier = playerControlsDim
         ) {
             Box(
                 modifier = Modifier.fillMaxSize()
             ) {
+                val isCurrentSubtitleAss = run {
+                    val addon = uiState.selectedAddonSubtitle
+                    if (addon != null) {
+                        val url = addon.url.lowercase(java.util.Locale.US)
+                        return@run url.contains(".ass") || url.contains(".ssa")
+                    }
+                    val track = uiState.subtitleTracks.getOrNull(uiState.selectedSubtitleTrackIndex)
+                    if (track != null) {
+                        val codec = track.codec?.lowercase(java.util.Locale.US).orEmpty()
+                        return@run codec.contains("ass") || codec.contains("ssa") || track.name.contains("ASS", ignoreCase = true)
+                    }
+                    false
+                }
+                val isUsingMpv = uiState.internalPlayerEngine == InternalPlayerEngine.MVP_PLAYER
+                val isAssDisabled = isCurrentSubtitleAss && (isUsingMpv || uiState.useLibass)
+
                 SubtitleStyleSidePanel(
-                    subtitleStyle = uiState.subtitleStyle,
-                    onEvent = { viewModel.onEvent(it) },
+                    subtitleStyle = uiState.editableSubtitleStyle,
+                    isEditingHdrStyle = uiState.isEditingHdrSubtitleStyle,
+                    onEvent = { if (!isAssDisabled) viewModel.onEvent(it) },
+                    isStyleDisabledByLibass = isAssDisabled,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                 )
@@ -1536,6 +2076,7 @@ fun PlayerScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(2.6f)
+                .then(playerControlsDim)
         )
 
         SubtitleSelectionOverlay(
@@ -1548,10 +2089,13 @@ fun PlayerScreen(
             },
             addonSubtitles = uiState.addonSubtitles,
             selectedAddonSubtitle = uiState.selectedAddonSubtitle,
-            subtitleStyle = uiState.subtitleStyle,
+            subtitleStyle = uiState.editableSubtitleStyle,
+            isEditingHdrStyle = uiState.isEditingHdrSubtitleStyle,
             subtitleDelayMs = uiState.subtitleDelayMs,
             installedSubtitleAddonOrder = uiState.installedSubtitleAddonOrder,
             isLoadingAddons = uiState.isLoadingAddonSubtitles,
+            useLibass = uiState.useLibass,
+            isUsingMpv = uiState.internalPlayerEngine == InternalPlayerEngine.MVP_PLAYER,
             onInternalTrackSelected = { viewModel.onEvent(PlayerEvent.OnSelectSubtitleTrack(it)) },
             onAddonSubtitleSelected = { viewModel.onEvent(PlayerEvent.OnSelectAddonSubtitle(it)) },
             onDisableSubtitles = { viewModel.onEvent(PlayerEvent.OnDisableSubtitles) },
@@ -1560,6 +2104,7 @@ fun PlayerScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(2.6f)
+                .then(playerControlsDim)
         )
 
         PlayerOverlayScaffold(
@@ -1568,7 +2113,7 @@ fun PlayerScreen(
                 !uiState.showLoadingOverlay &&
                 !uiState.showPauseOverlay &&
                 !uiState.showEpisodesPanel &&
-                !uiState.showSourcesPanel &&
+                !uiState.showSourcesPanel && !uiState.showChaptersPanel &&
                 !uiState.showPartyPanel &&
                 !uiState.showAudioOverlay &&
                 !uiState.showSubtitleOverlay &&
@@ -1579,13 +2124,15 @@ fun PlayerScreen(
             onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissSubtitleTimingDialog) },
             modifier = Modifier
                 .fillMaxSize()
-                .zIndex(2.35f),
+                .zIndex(2.35f)
+                .then(playerControlsDim),
             captureKeys = false,
             contentPadding = PaddingValues(top = 44.dp)
         ) {
             SubtitleTimingDialogHost(
                 viewModel = viewModel,
                 modifier = Modifier.align(Alignment.TopCenter),
+                subtitleDelayMs = uiState.subtitleDelayMs,
                 selectedAddonSubtitle = uiState.selectedAddonSubtitle,
                 cues = uiState.subtitleAutoSyncCues,
                 capturedVideoMs = uiState.subtitleAutoSyncCapturedVideoMs,
@@ -1599,20 +2146,12 @@ fun PlayerScreen(
             )
         }
 
-        if (uiState.showVideoZoomPanel) {
-            VideoZoomDialog(
-                zoom = uiState.videoZoom,
-                onAdjust = { axis, steps -> viewModel.onEvent(PlayerEvent.OnAdjustVideoZoom(axis, steps)) },
-                onReset = { viewModel.onEvent(PlayerEvent.OnResetVideoZoom) },
-                onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissVideoZoomPanel) }
-            )
-        }
-
         if (uiState.showSpeedDialog) {
             SpeedSelectionDialog(
                 currentSpeed = uiState.playbackSpeed,
                 onSpeedSelected = { viewModel.onEvent(PlayerEvent.OnSetPlaybackSpeed(it)) },
-                onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay) }
+                onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay) },
+                brightness = uiState.playerControlsBrightness
             )
         }
     }
@@ -1621,21 +2160,29 @@ fun PlayerScreen(
 @Composable
 private fun MpvPlayerSurface(
     viewModel: PlayerViewModel,
-    keepScreenOn: Boolean,
+    isPlaying: Boolean,
+    isBuffering: Boolean,
     aspectMode: AspectMode,
-    videoZoom: VideoZoom,
     subtitleStyle: SubtitleStyleSettings,
+    subtitleLiftPx: Float,
+    subtitleTrackKey: Any?,
+    onSubtitleTextMetricsChanged: (SubtitleTextMetrics?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val latestAspectMode by rememberUpdatedState(aspectMode)
+    val latestSubtitleStyle by rememberUpdatedState(subtitleStyle)
+    val latestMetricsCallback by rememberUpdatedState(onSubtitleTextMetricsChanged)
     val mpvView = remember(context) {
-        NuvioMpvSurfaceView(context)
+        NuvioMpvSurfaceView(context).apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
     }
 
     AndroidView(
         factory = { mpvView },
-        modifier = modifier
+        modifier = modifier.focusProperties { canFocus = false }
     )
 
     DisposableEffect(viewModel, mpvView) {
@@ -1647,7 +2194,8 @@ private fun MpvPlayerSurface(
 
     DisposableEffect(mpvView) {
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            viewModel.applyMpvAspectMode(latestAspectMode)
+            mpvView.applyAspectMode(latestAspectMode)
+            latestMetricsCallback(mpvView.subtitleTextMetrics(latestSubtitleStyle))
         }
         mpvView.addOnLayoutChangeListener(listener)
         onDispose {
@@ -1655,22 +2203,29 @@ private fun MpvPlayerSurface(
         }
     }
 
-    LaunchedEffect(mpvView, keepScreenOn) {
-        if (mpvView.keepScreenOn != keepScreenOn) {
-            mpvView.keepScreenOn = keepScreenOn
+    LaunchedEffect(mpvView, isPlaying, isBuffering) {
+        val shouldKeepScreenOn = isPlaying || isBuffering
+        if (mpvView.keepScreenOn != shouldKeepScreenOn) {
+            mpvView.keepScreenOn = shouldKeepScreenOn
         }
     }
 
     LaunchedEffect(mpvView, aspectMode) {
-        viewModel.applyMpvAspectMode(aspectMode)
+        mpvView.applyAspectMode(aspectMode)
     }
 
-    LaunchedEffect(mpvView, videoZoom) {
-        viewModel.applyMpvVideoZoom(videoZoom)
+    LaunchedEffect(mpvView, subtitleStyle, subtitleLiftPx) {
+        val height = mpvView.height
+        mpvView.subtitleLiftFraction = if (subtitleLiftPx > 0f && height > 0) {
+            (subtitleLiftPx / height).toDouble()
+        } else {
+            0.0
+        }
+        mpvView.applySubtitleStyle(subtitleStyle)
     }
 
-    LaunchedEffect(mpvView, subtitleStyle) {
-        viewModel.applyMpvSubtitleStyle(subtitleStyle)
+    LaunchedEffect(mpvView, subtitleStyle, subtitleTrackKey) {
+        latestMetricsCallback(mpvView.subtitleTextMetrics(subtitleStyle))
     }
 }
 
@@ -1678,26 +2233,34 @@ private fun MpvPlayerSurface(
 private fun ExoPlayerSurface(
     player: ExoPlayer,
     controller: PlayerRuntimeController,
-    keepScreenOn: Boolean,
+    isPlaying: Boolean,
+    isBuffering: Boolean,
     aspectMode: AspectMode,
-    videoZoom: VideoZoom,
     tunnelingEnabled: Boolean,
     tunneledSurfaceFill: Boolean,
     useLibass: Boolean,
-    libassRenderType: LibassRenderType,
+    libassRenderMode: LibassRenderMode,
     subtitleStyle: SubtitleStyleSettings,
+    subtitleLiftPx: Float,
+    onBindSubtitleView: (androidx.media3.ui.SubtitleView?) -> Unit = {},
+    onSubtitleTextMetricsChanged: (SubtitleTextMetrics?) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val latestAspectMode by rememberUpdatedState(aspectMode)
-    val latestVideoZoom by rememberUpdatedState(videoZoom)
     val latestTunnelingEnabled by rememberUpdatedState(tunnelingEnabled)
     val latestTunneledSurfaceFill by rememberUpdatedState(tunneledSurfaceFill)
+    val latestBindSubtitleView by rememberUpdatedState(onBindSubtitleView)
     val latestSubtitleStyle by rememberUpdatedState(subtitleStyle)
+    val latestSubtitleLiftPx by rememberUpdatedState(subtitleLiftPx)
+    val latestMetricsCallback by rememberUpdatedState(onSubtitleTextMetricsChanged)
     val playerView = remember(context, player) {
         PlayerView(context).apply {
             useController = false
-            this.keepScreenOn = false // qualify: the composable param `keepScreenOn` shadows the View prop
+            isFocusable = false
+            isFocusableInTouchMode = false
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            keepScreenOn = false
             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
             enableComposeSurfaceSyncWorkaroundIfAvailable()
@@ -1707,13 +2270,14 @@ private fun ExoPlayerSurface(
 
     AndroidView(
         factory = { playerView },
-        modifier = modifier,
+        modifier = modifier.focusProperties { canFocus = false },
         update = {
             it.syncLibassOverlay(
                 player = player,
                 enabled = useLibass,
-                renderType = libassRenderType
+                renderMode = libassRenderMode
             )
+            latestBindSubtitleView(it.subtitleView)
         }
     )
 
@@ -1721,7 +2285,9 @@ private fun ExoPlayerSurface(
         if (playerView.player !== player) {
             playerView.player = player
         }
+        latestBindSubtitleView(playerView.subtitleView)
         onDispose {
+            latestBindSubtitleView(null)
             if (playerView.player === player) {
                 playerView.player = null
             }
@@ -1749,8 +2315,7 @@ private fun ExoPlayerSurface(
                     playerView.syncExoSurfaceLayout(
                         tunnelingEnabled = latestTunnelingEnabled,
                         tunneledSurfaceFill = latestTunneledSurfaceFill,
-                        aspectMode = latestAspectMode,
-                        videoZoom = latestVideoZoom
+                        aspectMode = latestAspectMode
                     )
                 }
             }
@@ -1760,8 +2325,7 @@ private fun ExoPlayerSurface(
                     playerView.syncExoSurfaceLayout(
                         tunnelingEnabled = latestTunnelingEnabled,
                         tunneledSurfaceFill = latestTunneledSurfaceFill,
-                        aspectMode = latestAspectMode,
-                        videoZoom = latestVideoZoom
+                        aspectMode = latestAspectMode
                     )
                 }
             }
@@ -1770,7 +2334,7 @@ private fun ExoPlayerSurface(
                 // Re-apply subtitle style when tracks change so style is applied
                 // even when subtitles are enabled after initial player setup.
                 playerView.post {
-                    playerView.applySubtitleStyleIfNeeded(latestSubtitleStyle)
+                    playerView.applySubtitleStyleIfNeeded(latestSubtitleStyle, latestSubtitleLiftPx, force = true)
                 }
             }
         }
@@ -1779,8 +2343,7 @@ private fun ExoPlayerSurface(
             playerView.syncExoSurfaceLayout(
                 tunnelingEnabled = latestTunnelingEnabled,
                 tunneledSurfaceFill = latestTunneledSurfaceFill,
-                aspectMode = latestAspectMode,
-                videoZoom = latestVideoZoom
+                aspectMode = latestAspectMode
             )
         }
         onDispose {
@@ -1794,8 +2357,7 @@ private fun ExoPlayerSurface(
                 playerView.syncExoSurfaceLayout(
                     tunnelingEnabled = latestTunnelingEnabled,
                     tunneledSurfaceFill = latestTunneledSurfaceFill,
-                    aspectMode = latestAspectMode,
-                    videoZoom = latestVideoZoom
+                    aspectMode = latestAspectMode
                 )
             }
         }
@@ -1805,35 +2367,43 @@ private fun ExoPlayerSurface(
         }
     }
 
-    LaunchedEffect(playerView, keepScreenOn) {
-        if (playerView.keepScreenOn != keepScreenOn) {
-            playerView.keepScreenOn = keepScreenOn
+    LaunchedEffect(playerView, isPlaying, isBuffering) {
+        val shouldKeepScreenOn = isPlaying || isBuffering
+        if (playerView.keepScreenOn != shouldKeepScreenOn) {
+            playerView.keepScreenOn = shouldKeepScreenOn
         }
     }
 
-    LaunchedEffect(playerView, aspectMode, videoZoom, tunnelingEnabled, tunneledSurfaceFill) {
+    LaunchedEffect(playerView, aspectMode, tunnelingEnabled, tunneledSurfaceFill) {
         playerView.syncExoSurfaceLayout(
             tunnelingEnabled = tunnelingEnabled,
             tunneledSurfaceFill = tunneledSurfaceFill,
-            aspectMode = aspectMode,
-            videoZoom = videoZoom
+            aspectMode = aspectMode
         )
     }
 
-    LaunchedEffect(playerView, player, useLibass, libassRenderType) {
+    LaunchedEffect(playerView, player, useLibass, libassRenderMode) {
         playerView.syncLibassOverlay(
             player = player,
             enabled = useLibass,
-            renderType = libassRenderType
+            renderMode = libassRenderMode
         )
     }
 
-    LaunchedEffect(playerView, subtitleStyle) {
-        playerView.applySubtitleStyleIfNeeded(subtitleStyle)
+    DisposableEffect(playerView) {
+        val callback: (SubtitleTextMetrics?) -> Unit = { latestMetricsCallback(it) }
+        playerView.setTag(R.id.player_view_subtitle_metrics_callback_tag, callback)
+        onDispose {
+            playerView.setTag(R.id.player_view_subtitle_metrics_callback_tag, null)
+        }
+    }
+
+    LaunchedEffect(playerView, subtitleStyle, subtitleLiftPx) {
+        playerView.applySubtitleStyleIfNeeded(subtitleStyle, subtitleLiftPx)
     }
 }
 
-internal fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
+private fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
     runCatching {
         javaClass
             .getMethod("setEnableComposeSurfaceSyncWorkaround", java.lang.Boolean.TYPE)
@@ -1841,20 +2411,15 @@ internal fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
     }
 }
 
-private fun PlayerView.applyExoAspectMode(mode: AspectMode, zoom: VideoZoom) {
+private fun PlayerView.applyExoAspectMode(mode: AspectMode) {
     setTag(R.id.player_view_aspect_mode_tag, mode)
-    applyExoAspectMode(this, mode, zoom)
+    applyExoAspectMode(this, mode)
 }
 
-/**
- * Tunneled video ignores view scale, so while tunneling the surface size (FIT/FILL) is the
- * only aspect control and the view-scale aspect mode is held at ORIGINAL (upstream 9d4c5d050).
- */
 private fun PlayerView.syncExoSurfaceLayout(
     tunnelingEnabled: Boolean,
     tunneledSurfaceFill: Boolean,
-    aspectMode: AspectMode,
-    videoZoom: VideoZoom
+    aspectMode: AspectMode
 ) {
     val targetResizeMode = PlayerDisplayModeUtils.exoSurfaceResizeMode(
         tunnelingEnabled = tunnelingEnabled,
@@ -1863,15 +2428,139 @@ private fun PlayerView.syncExoSurfaceLayout(
     if (resizeMode != targetResizeMode) {
         resizeMode = targetResizeMode
     }
-    // Tunneled video ignores view scale, so manual zoom is held at identity there too.
-    applyExoAspectMode(
-        aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode),
-        if (tunnelingEnabled) VideoZoom.IDENTITY else videoZoom
+    val appliedAspectMode = aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode)
+    applyExoAspectMode(appliedAspectMode)
+    setTag(
+        R.id.player_view_libass_geometry_context_tag,
+        LibassOverlayGeometryContext(
+            requestedAspectMode = aspectMode,
+            appliedAspectMode = appliedAspectMode,
+            tunnelingEnabled = tunnelingEnabled,
+            tunneledSurfaceFill = tunneledSurfaceFill
+        )
+    )
+    syncLibassOverlayGeometry()
+    reportSubtitleTextMetrics()
+}
+
+private data class LibassOverlayGeometryContext(
+    val requestedAspectMode: AspectMode,
+    val appliedAspectMode: AspectMode,
+    val tunnelingEnabled: Boolean,
+    val tunneledSurfaceFill: Boolean
+)
+
+private const val LIBASS_OVERLAY_GEOMETRY_TAG = "LibassOverlayGeometry"
+
+private fun PlayerView.syncLibassOverlayGeometry() {
+    val overlay = findViewById<android.widget.FrameLayout>(R.id.libass_overlay_container_gl)
+    val assOverlayView = overlay?.findAssOverlayChild()
+    val contentFrame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+    val exoPlayer = player as? ExoPlayer
+    val assHandler = exoPlayer?.getAssHandlerCompat()
+    val context = getTag(R.id.player_view_libass_geometry_context_tag) as? LibassOverlayGeometryContext
+    val videoSize = exoPlayer?.videoSize
+    val overlayWidth = overlay?.width ?: 0
+    val overlayHeight = overlay?.height ?: 0
+    val videoBounds = contentFrame?.let(::transformedChildBoundsInParent)
+    val margins = videoBounds?.let { libassOverlayMargins(overlayWidth, overlayHeight, it) }
+
+    if (assOverlayView == null || assHandler == null || margins == null) {
+        logLibassOverlayGeometry(
+            "event=skip overlay=${overlayWidth}x${overlayHeight} hasOverlay=${assOverlayView != null} " +
+                "handler=${assHandler != null} videoBounds=$videoBounds"
+        )
+        return
+    }
+
+    assHandler.setMargins(margins.top, margins.bottom, margins.left, margins.right)
+    assHandler.setUseMargins(false)
+    assOverlayView.invalidateSubtitles()
+    logLibassOverlayGeometry(
+        "event=apply requested=${context?.requestedAspectMode} applied=${context?.appliedAspectMode} " +
+            "tunneling=${context?.tunnelingEnabled} tunneledFill=${context?.tunneledSurfaceFill} " +
+            "overlay=${overlayWidth}x${overlayHeight} video=${videoSize?.width}x${videoSize?.height} " +
+            "par=${videoSize?.pixelWidthHeightRatio} content=${describeRect(videoBounds)} " +
+            "margins=top:${margins.top},bottom:${margins.bottom},left:${margins.left},right:${margins.right}"
     )
 }
 
-private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSettings) {
-    if (getTag(R.id.player_view_subtitle_style_tag) == subtitleStyle) {
+private fun PlayerView.logLibassOverlayGeometry(message: String) {
+    if (!BuildConfig.IS_DEBUG_BUILD) return
+    if (getTag(R.id.player_view_libass_geometry_snapshot_tag) == message) return
+    setTag(R.id.player_view_libass_geometry_snapshot_tag, message)
+    Log.d(LIBASS_OVERLAY_GEOMETRY_TAG, message)
+}
+
+private fun describeRect(rect: RectF?): String =
+    rect?.let { "${it.left},${it.top},${it.right},${it.bottom}" } ?: "null"
+
+private data class SubtitleAppliedConfig(
+    val style: SubtitleStyleSettings,
+    val isAss: Boolean,
+    val liftPx: Float
+)
+
+private val SUBTITLE_CONTROLS_LIFT = 130.dp
+private val SUBTITLE_CONTROLS_GAP = 8.dp
+private val SUBTITLE_TITLE_MARGIN = 16.dp
+private const val EXO_SUBTITLE_BASE_SP = 24f
+private const val EXO_SUBTITLE_INNER_PADDING_RATIO = 0.125f
+
+@Composable
+private fun Modifier.reportRightEdge(key: String, rights: MutableMap<String, Float>): Modifier {
+    DisposableEffect(key, rights) {
+        onDispose { rights.remove(key) }
+    }
+    return onGloballyPositioned { rights[key] = it.boundsInWindow().right }
+}
+
+private fun Modifier.reportSubtitleClearance(gapPx: Float, onClearance: (Float) -> Unit): Modifier =
+    onGloballyPositioned { coordinates ->
+        val rootHeight = coordinates.findRootCoordinates().size.height
+        if (rootHeight > 0 && coordinates.size.height > 0) {
+            onClearance((rootHeight - coordinates.boundsInRoot().top + gapPx).coerceAtLeast(0f))
+        }
+    }
+
+private fun PlayerView.isAssOrSsaSubtitleSelected(): Boolean {
+    val currentTracks = player?.currentTracks
+    if (currentTracks != null) {
+        for (group in currentTracks.groups) {
+            if (group.type != androidx.media3.common.C.TRACK_TYPE_TEXT) continue
+            for (index in 0 until group.length) {
+                if (!group.isTrackSelected(index)) continue
+                val format = group.getTrackFormat(index)
+                if (format.sampleMimeType == androidx.media3.common.MimeTypes.TEXT_SSA) return true
+                val hasAssCodec = format.codecs
+                    ?.split(',')
+                    ?.asSequence()
+                    ?.map { it.trim().lowercase(java.util.Locale.US) }
+                    ?.any { codec ->
+                        codec == androidx.media3.common.MimeTypes.TEXT_SSA ||
+                            codec == "s_text/ass" ||
+                            codec == "s_text/ssa" ||
+                            codec.endsWith("/x-ssa")
+                    } == true
+                if (hasAssCodec) return true
+            }
+        }
+    }
+    val sidecarKey = subtitleView?.getTag(R.id.player_view_sidecar_generation_tag) as? String
+    if (sidecarKey != null && (sidecarKey.contains(".ass", ignoreCase = true) || sidecarKey.contains(".ssa", ignoreCase = true))) {
+        return true
+    }
+    return false
+}
+
+private fun PlayerView.applySubtitleStyleIfNeeded(
+    subtitleStyle: SubtitleStyleSettings,
+    liftPx: Float,
+    force: Boolean = false
+) {
+    val isAss = isAssOrSsaSubtitleSelected()
+    val config = SubtitleAppliedConfig(subtitleStyle, isAss, liftPx)
+    if (!force && getTag(R.id.player_view_subtitle_style_tag) == config) {
         return
     }
     val subView = subtitleView
@@ -1880,9 +2569,9 @@ private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSe
         // tag so that when subtitles become active the style is re-applied.
         return
     }
-    setTag(R.id.player_view_subtitle_style_tag, subtitleStyle)
+    setTag(R.id.player_view_subtitle_style_tag, config)
     subView.apply {
-        val baseFontSize = 24f
+        val baseFontSize = EXO_SUBTITLE_BASE_SP
         val scaledFontSize = baseFontSize * (subtitleStyle.size / 100f)
         setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, scaledFontSize)
         setApplyEmbeddedFontSizes(false)
@@ -1900,46 +2589,87 @@ private fun PlayerView.applySubtitleStyleIfNeeded(subtitleStyle: SubtitleStyleSe
         }
 
         setStyle(
-            // F47: the background is ONE box per cue (window colour, with inner horizontal padding
-            // from Media3 + SubtitleBoxPadding), like libmpv's background-box, not tight per-line
-            // strips. Media3 draws it with square corners (no corner-radius API).
             androidx.media3.ui.CaptionStyleCompat(
                 subtitleStyle.textColor,
-                android.graphics.Color.TRANSPARENT,
                 subtitleStyle.backgroundColor,
+                android.graphics.Color.TRANSPARENT,
                 edgeType,
                 subtitleStyle.outlineColor,
                 typeface
             )
         )
 
-        setApplyEmbeddedStyles(false)
+        setApplyEmbeddedStyles(!isAss)
 
         val bottomPaddingFraction =
             (0.06f + (subtitleStyle.verticalOffset / 250f)).coerceIn(0f, 0.4f)
-        setBottomPaddingFraction(bottomPaddingFraction)
-
-        post {
+        val applyPosition = {
             val extraPadding = (height * (subtitleStyle.verticalOffset / 400f)).toInt().coerceAtLeast(0)
-            // F47: side padding, a percent of the width on each side (SubtitleSideMargin).
-            val side = SubtitleSideMargin.paddingPx(width, subtitleStyle.sideMarginPercent)
-            setPadding(side, paddingTop, side, extraPadding)
+            setPadding(paddingLeft, paddingTop, paddingRight, extraPadding)
+            val availableHeight = height - extraPadding
+            setBottomPaddingFraction(
+                if (liftPx > 0f && availableHeight > 0) {
+                    maxOf(bottomPaddingFraction, (liftPx - extraPadding) / availableHeight).coerceIn(0f, 0.5f)
+                } else {
+                    bottomPaddingFraction
+                }
+            )
         }
+        if (height > 0) applyPosition() else post { applyPosition() }
     }
+    if (subView.width > 0) reportSubtitleTextMetrics() else post { reportSubtitleTextMetrics() }
+}
+
+private fun PlayerView.reportSubtitleTextMetrics() {
+    @Suppress("UNCHECKED_CAST")
+    val callback = getTag(R.id.player_view_subtitle_metrics_callback_tag) as? (SubtitleTextMetrics?) -> Unit ?: return
+    callback(exoSubtitleTextMetrics())
+}
+
+private fun PlayerView.exoSubtitleTextMetrics(): SubtitleTextMetrics? {
+    val applied = getTag(R.id.player_view_subtitle_style_tag) as? SubtitleAppliedConfig ?: return null
+    if (applied.isAss) return null
+    val subView = subtitleView ?: return null
+    if (subView.width <= 0) return null
+    val textSizePx = android.util.TypedValue.applyDimension(
+        android.util.TypedValue.COMPLEX_UNIT_SP,
+        EXO_SUBTITLE_BASE_SP * (applied.style.size / 100f),
+        resources.displayMetrics
+    )
+    val innerPaddingPx = textSizePx * EXO_SUBTITLE_INNER_PADDING_RATIO
+    val location = IntArray(2)
+    subView.getLocationInWindow(location)
+    return SubtitleTextMetrics(
+        textSizePx = textSizePx,
+        bold = applied.style.bold,
+        scaleX = 1f,
+        innerPaddingPx = innerPaddingPx,
+        wrapWidthPx = (subView.width - subView.paddingLeft - subView.paddingRight - innerPaddingPx * 2f).coerceAtLeast(0f),
+        centerXPx = location[0] + subView.width / 2f
+    )
+}
+
+private fun measureSubtitleBlockPx(
+    paint: android.graphics.Paint,
+    text: String,
+    metrics: SubtitleTextMetrics
+): Float {
+    paint.textSize = metrics.textSizePx
+    paint.typeface = if (metrics.bold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+    return subtitleBlockWidthPx(text, metrics) { paint.measureText(it) }
 }
 
 private fun PlayerView.syncLibassOverlay(
     player: ExoPlayer,
     enabled: Boolean,
-    renderType: LibassRenderType
+    renderMode: LibassRenderMode = LibassRenderMode.VIDEO_EFFECT
 ) {
-    val containerId = if (renderType == LibassRenderType.OVERLAY_OPEN_GL) {
-        R.id.libass_overlay_container_gl
-    } else {
-        R.id.libass_overlay_container
-    }
+    val containerId = R.id.libass_overlay_container_gl
     val overlayContainer = findViewById<android.widget.FrameLayout>(containerId) ?: return
-    val needsOverlay = enabled && renderType.usesOverlaySubtitleView()
+    // Overlay is needed when libass is enabled AND the user chose OVERLAY mode.
+    // OVERLAY mode skips setVideoEffects entirely so HDR passthrough is preserved.
+    // VIDEO_EFFECT (default) draws subtitles onto the video frame - no overlay needed.
+    val needsOverlay = enabled && renderMode == LibassRenderMode.OVERLAY
     val boundPlayer = getTag(R.id.libass_overlay_bound_player) as? ExoPlayer
     val hasOverlayChild = overlayContainer.hasAssOverlayChild()
 
@@ -1948,6 +2678,7 @@ private fun PlayerView.syncLibassOverlay(
             overlayContainer.removeAssOverlayChildren()
         }
         if (boundPlayer != null) {
+            boundPlayer.getAssHandlerCompat()?.videoFrameCallback = null
             setTag(R.id.libass_overlay_bound_player, null)
         }
         return
@@ -1959,41 +2690,73 @@ private fun PlayerView.syncLibassOverlay(
     }
 
     overlayContainer.removeAssOverlayChildren()
-    val assSubtitleView = AssSubtitleView(overlayContainer.context, assHandler)
+    // SurfaceView with atlas GL pipeline for best performance.
+    // AssPositionRenderer provides position updates when VideoFrameMetadataListener
+    // is not active (tunneled playback).
+    val surfaceView = AssSubtitleSurfaceView(overlayContainer.context, assHandler)
+    assHandler.videoFrameCallback = { presentationTimeUs, releaseTimeNs ->
+        surfaceView.requestRender(presentationTimeUs, releaseTimeNs)
+    }
     overlayContainer.addView(
-        assSubtitleView,
+        surfaceView,
         android.widget.FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.MATCH_PARENT
         )
     )
     setTag(R.id.libass_overlay_bound_player, player)
-}
-
-private fun LibassRenderType.usesOverlaySubtitleView(): Boolean {
-    return this == LibassRenderType.OVERLAY_CANVAS || this == LibassRenderType.OVERLAY_OPEN_GL
+    post { syncLibassOverlayGeometry() }
 }
 
 private fun android.widget.FrameLayout.hasAssOverlayChild(): Boolean {
     for (index in 0 until childCount) {
-        if (getChildAt(index) is AssSubtitleView) {
+        val child = getChildAt(index)
+        if (child is AssSubtitleSurfaceView) {
             return true
         }
     }
     return false
 }
 
+private fun android.widget.FrameLayout.findAssOverlayChild(): AssSubtitleSurfaceView? {
+    for (index in 0 until childCount) {
+        val child = getChildAt(index)
+        if (child is AssSubtitleSurfaceView) {
+            return child
+        }
+    }
+    return null
+}
+
 private fun android.widget.FrameLayout.removeAssOverlayChildren() {
     for (index in childCount - 1 downTo 0) {
-        if (getChildAt(index) is AssSubtitleView) {
+        val child = getChildAt(index)
+        if (child is AssSubtitleSurfaceView) {
             removeViewAt(index)
         }
+    }
+}
+
+/**
+ * Remove ASS overlay views when hiding so the libass render thread stops.
+ * [syncLibassOverlay] re-creates them on the next Compose update cycle.
+ */
+private fun PlayerView.setAssOverlayVisibility(visibility: Int) {
+    if (visibility == android.view.View.GONE) {
+        for (containerId in intArrayOf(R.id.libass_overlay_container_gl)) {
+            val container = findViewById<android.widget.FrameLayout>(containerId) ?: continue
+            container.removeAssOverlayChildren()
+        }
+        setTag(R.id.libass_overlay_bound_player, null)
+        val player = player as? ExoPlayer ?: return
+        player.getAssHandlerCompat()?.videoFrameCallback = null
     }
 }
 
 @Composable
 private fun PlayerControlsOverlay(
     uiState: PlayerUiState,
+    playerBadges: List<StreamBadge>,
     viewModel: PlayerViewModel,
     playPauseFocusRequester: FocusRequester,
     progressBarFocusRequester: FocusRequester,
@@ -2004,6 +2767,7 @@ private fun PlayerControlsOverlay(
     onSeekForward: () -> Unit,
     onSeekBackward: () -> Unit,
     onSeekTo: (Long) -> Unit,
+    onShowChaptersPanel: () -> Unit,
     onShowEpisodesPanel: () -> Unit,
     onShowSourcesPanel: () -> Unit,
     onShowPartyPanel: (() -> Unit)?,
@@ -2012,7 +2776,6 @@ private fun PlayerControlsOverlay(
     onShowSubtitleDialog: () -> Unit,
     onShowSpeedDialog: () -> Unit,
     onToggleAspectRatio: () -> Unit,
-    onShowVideoZoom: () -> Unit,
     onSwitchPlayerEngine: () -> Unit,
     onReportPlaybackIssue: () -> Unit,
     onToggleMoreActions: () -> Unit,
@@ -2022,8 +2785,26 @@ private fun PlayerControlsOverlay(
     onHideControls: () -> Unit,
     onBack: () -> Unit,
     reportCodeVisible: Boolean,
-    skipButtonVisible: Boolean = false
+    skipButtonVisible: Boolean = false,
+    subtitleReportingActive: Boolean = true,
+    onSubtitleClearanceChanged: (Float) -> Unit = {},
+    onSubtitleTitleBoundsChanged: (Float, Float) -> Unit = { _, _ -> }
 ) {
+    val density = LocalDensity.current
+    val clearanceOffsetPx = with(density) { (NuvioTheme.spacing.xl - SUBTITLE_CONTROLS_GAP).toPx() }
+    val subtitleGapPx = with(density) { SUBTITLE_CONTROLS_GAP.toPx() }
+    val latestClearanceCallback by rememberUpdatedState(onSubtitleClearanceChanged)
+    val latestTitleBoundsCallback by rememberUpdatedState(onSubtitleTitleBoundsChanged)
+    val titleRights = remember { mutableStateMapOf<String, Float>() }
+    var progressBarClearancePx by remember { mutableFloatStateOf(0f) }
+    val titleRightPx = titleRights.values.maxOrNull() ?: 0f
+    var controlsClearancePx by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(subtitleReportingActive, controlsClearancePx) {
+        if (subtitleReportingActive && controlsClearancePx > 0f) latestClearanceCallback(controlsClearancePx)
+    }
+    LaunchedEffect(subtitleReportingActive, progressBarClearancePx, titleRightPx) {
+        if (subtitleReportingActive) latestTitleBoundsCallback(progressBarClearancePx, titleRightPx)
+    }
     val customPlayPainter = rememberRawSvgPainter(R.raw.ic_player_play)
     val customPausePainter = rememberRawSvgPainter(R.raw.ic_player_pause)
     val customSubtitlePainter = rememberRawSvgPainter(R.raw.ic_player_subtitles)
@@ -2031,6 +2812,14 @@ private fun PlayerControlsOverlay(
     val customSourcePainter = rememberRawSvgPainter(R.raw.ic_player_source)
     val customAspectPainter = rememberRawSvgPainter(R.raw.ic_player_aspect_ratio)
     val customEpisodesPainter = rememberRawSvgPainter(R.raw.ic_player_episodes)
+    var showEngineSwitchConfirm by remember { mutableStateOf(false) }
+    val playbackTimeline by viewModel.playbackTimeline.collectAsState()
+    val isLivePlayback = playbackTimeline.isLive
+    val progressUpTarget = if (isLivePlayback) {
+        progressBarUpFocusRequester ?: playPauseFocusRequester
+    } else {
+        progressBarFocusRequester
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Top gradient
@@ -2069,6 +2858,13 @@ private fun PlayerControlsOverlay(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
+                .onGloballyPositioned { coordinates ->
+                    val rootHeight = coordinates.findRootCoordinates().size.height
+                    val top = coordinates.boundsInRoot().top
+                    if (rootHeight > 0) {
+                        controlsClearancePx = (rootHeight - top - clearanceOffsetPx).coerceAtLeast(0f)
+                    }
+                }
                 .padding(horizontal = NuvioTheme.spacing.xxl, vertical = NuvioTheme.spacing.xl)
         ) {
             val skipIntroVisible = uiState.activeSkipInterval != null
@@ -2087,6 +2883,7 @@ private fun PlayerControlsOverlay(
 
                     Text(
                         text = displayName,
+                        modifier = Modifier.reportRightEdge("name", titleRights),
                         style = MaterialTheme.typography.headlineMedium,
                         color = Color.White,
                         maxLines = 1,
@@ -2099,14 +2896,18 @@ private fun PlayerControlsOverlay(
                             uiState.currentSeason,
                             uiState.currentEpisode
                         )
-                        val episodeInfo = buildString {
-                            append(seasonEpisodeCode)
-                            if (!uiState.currentEpisodeTitle.isNullOrBlank()) {
-                                append(" • ${uiState.currentEpisodeTitle}")
-                            }
+                        val appContext = LocalContext.current
+                        val localizedEpisodeTitle = uiState.currentEpisodeTitle
+                            ?.takeIf { it.isNotBlank() }
+                            ?.localizeEpisodeTitle(appContext)
+                        val episodeInfo = if (localizedEpisodeTitle != null) {
+                            "$seasonEpisodeCode • $localizedEpisodeTitle"
+                        } else {
+                            seasonEpisodeCode
                         }
                         Text(
                             text = episodeInfo,
+                            modifier = Modifier.reportRightEdge("episode", titleRights),
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White.copy(alpha = 0.9f),
                             maxLines = 1,
@@ -2114,9 +2915,19 @@ private fun PlayerControlsOverlay(
                         )
                     }
 
+                    if (playerBadges.isNotEmpty()) {
+                        PlayerBadges(
+                            badges = playerBadges,
+                            modifier = Modifier
+                                .padding(vertical = NuvioTheme.spacing.xs)
+                                .reportRightEdge("badges", titleRights)
+                        )
+                    }
+
                     if (!uiState.releaseYear.isNullOrBlank()) {
                         Text(
                             text = uiState.releaseYear.orEmpty(),
+                            modifier = Modifier.reportRightEdge("year", titleRights),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.68f)
                         )
@@ -2126,19 +2937,41 @@ private fun PlayerControlsOverlay(
 
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
 
-            // Progress bar — always LTR regardless of locale
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                PlayerControlsProgressBarHost(
-                    viewModel = viewModel,
-                    focusRequester = progressBarFocusRequester,
-                    upFocusRequester = progressBarUpFocusRequester,
-                    downFocusRequester = playPauseFocusRequester,
-                    onUpKey = onHideControls,
-                    onFocused = onResetHideTimer
-                )
-            }
+            if (!isLivePlayback) {
+                // Progress bar — always LTR regardless of locale
+                DisposableEffect(Unit) {
+                    onDispose { progressBarClearancePx = 0f }
+                }
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    // Column: the host stacks the chapter title above the bar.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coordinates ->
+                                val rootHeight = coordinates.findRootCoordinates().size.height
+                                if (rootHeight > 0) {
+                                    progressBarClearancePx =
+                                        (rootHeight - coordinates.boundsInRoot().top + subtitleGapPx).coerceAtLeast(0f)
+                                }
+                            }
+                    ) {
+                        PlayerControlsProgressBarHost(
+                            viewModel = viewModel,
+                            chapters = uiState.chapters,
+                            focusRequester = progressBarFocusRequester,
+                            upFocusRequester = progressBarUpFocusRequester,
+                            downFocusRequester = playPauseFocusRequester,
+                            onUpKey = onHideControls,
+                            onFocused = onResetHideTimer,
+                            onClick = onPlayPause
+                        )
+                    }
+                }
 
-            Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+                Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+            } else {
+                Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+            }
 
             // Control buttons row — always LTR regardless of locale
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -2165,7 +2998,7 @@ private fun PlayerControlsOverlay(
                         contentDescription = if (uiState.isPlaying) stringResource(R.string.cd_pause) else stringResource(R.string.cd_play),
                         onClick = onPlayPause,
                         focusRequester = playPauseFocusRequester,
-                        upFocusRequester = progressBarFocusRequester,
+                        upFocusRequester = progressUpTarget,
                         onDownKey = onHideControls,
                         onFocused = onResetHideTimer
                     )
@@ -2175,7 +3008,7 @@ private fun PlayerControlsOverlay(
                             icon = Icons.Default.SkipNext,
                             contentDescription = stringResource(R.string.next_episode_label),
                             onClick = onPlayNextEpisode,
-                            upFocusRequester = progressBarFocusRequester,
+                            upFocusRequester = progressUpTarget,
                             onDownKey = onHideControls,
                             onFocused = onResetHideTimer
                         )
@@ -2187,7 +3020,7 @@ private fun PlayerControlsOverlay(
                             iconPainter = customSubtitlePainter,
                             contentDescription = stringResource(R.string.cd_subtitles),
                             onClick = onShowSubtitleDialog,
-                            upFocusRequester = progressBarFocusRequester,
+                            upFocusRequester = progressUpTarget,
                             onDownKey = onHideControls,
                             onFocused = onResetHideTimer
                         )
@@ -2199,7 +3032,18 @@ private fun PlayerControlsOverlay(
                             iconPainter = customAudioPainter,
                             contentDescription = stringResource(R.string.cd_audio_tracks),
                             onClick = onShowAudioDialog,
-                            upFocusRequester = progressBarFocusRequester,
+                            upFocusRequester = progressUpTarget,
+                            onDownKey = onHideControls,
+                            onFocused = onResetHideTimer
+                        )
+                    }
+
+                    if (uiState.chapters.isNotEmpty() && !isLivePlayback) {
+                        ControlButton(
+                            icon = Icons.AutoMirrored.Filled.Toc,
+                            contentDescription = stringResource(R.string.player_chapters),
+                            onClick = onShowChaptersPanel,
+                            upFocusRequester = progressUpTarget,
                             onDownKey = onHideControls,
                             onFocused = onResetHideTimer
                         )
@@ -2210,28 +3054,7 @@ private fun PlayerControlsOverlay(
                         iconPainter = customSourcePainter,
                         contentDescription = stringResource(R.string.cd_sources),
                         onClick = onShowSourcesPanel,
-                        upFocusRequester = progressBarFocusRequester,
-                        onDownKey = onHideControls,
-                        onFocused = onResetHideTimer
-                    )
-
-                    if (onShowPartyPanel != null) {
-                        ControlButton(
-                            icon = Icons.Rounded.Groups,
-                            contentDescription = stringResource(R.string.party_title),
-                            onClick = onShowPartyPanel,
-                            upFocusRequester = progressBarFocusRequester,
-                            onDownKey = onHideControls,
-                            onFocused = onResetHideTimer,
-                            contentColor = if (partyActive) NuvioTheme.colors.Secondary else Color.White
-                        )
-                    }
-
-                    ControlButton(
-                        icon = Icons.Default.SwapHoriz,
-                        contentDescription = stringResource(R.string.cd_switch_player_engine),
-                        onClick = onSwitchPlayerEngine,
-                        upFocusRequester = progressBarFocusRequester,
+                        upFocusRequester = progressUpTarget,
                         onDownKey = onHideControls,
                         onFocused = onResetHideTimer
                     )
@@ -2242,9 +3065,21 @@ private fun PlayerControlsOverlay(
                             iconPainter = customEpisodesPainter,
                             contentDescription = stringResource(R.string.cd_episodes),
                             onClick = onShowEpisodesPanel,
-                            upFocusRequester = progressBarFocusRequester,
+                            upFocusRequester = progressUpTarget,
                             onDownKey = onHideControls,
                             onFocused = onResetHideTimer
+                        )
+                    }
+
+                    if (onShowPartyPanel != null) {
+                        ControlButton(
+                            icon = Icons.Rounded.Groups,
+                            contentDescription = stringResource(R.string.party_title),
+                            onClick = onShowPartyPanel,
+                            upFocusRequester = progressUpTarget,
+                            onDownKey = onHideControls,
+                            onFocused = onResetHideTimer,
+                            contentColor = if (partyActive) NuvioTheme.colors.Secondary else Color.White
                         )
                     }
 
@@ -2269,7 +3104,7 @@ private fun PlayerControlsOverlay(
                                 onClick = {
                                     onShowSpeedDialog()
                                 },
-                                upFocusRequester = progressBarFocusRequester,
+                                upFocusRequester = progressUpTarget,
                                 onDownKey = onHideControls,
                                 onFocused = onResetHideTimer
                             )
@@ -2280,17 +3115,15 @@ private fun PlayerControlsOverlay(
                                 onClick = {
                                     onToggleAspectRatio()
                                 },
-                                upFocusRequester = progressBarFocusRequester,
+                                upFocusRequester = progressUpTarget,
                                 onDownKey = onHideControls,
                                 onFocused = onResetHideTimer
                             )
                             ControlButton(
-                                icon = Icons.Default.ZoomIn,
-                                contentDescription = stringResource(R.string.cd_manual_zoom),
-                                onClick = {
-                                    onShowVideoZoom()
-                                },
-                                upFocusRequester = progressBarFocusRequester,
+                                icon = Icons.Default.SwapHoriz,
+                                contentDescription = stringResource(R.string.cd_switch_player_engine),
+                                onClick = { showEngineSwitchConfirm = true },
+                                upFocusRequester = progressUpTarget,
                                 onDownKey = onHideControls,
                                 onFocused = onResetHideTimer
                             )
@@ -2298,10 +3131,8 @@ private fun PlayerControlsOverlay(
                                 ControlButton(
                                     icon = Icons.AutoMirrored.Filled.OpenInNew,
                                     contentDescription = stringResource(R.string.cd_open_external_player),
-                                    onClick = {
-                                        openInExternalPlayer()
-                                    },
-                                    upFocusRequester = progressBarFocusRequester,
+                                    onClick = openInExternalPlayer,
+                                    upFocusRequester = progressUpTarget,
                                     onDownKey = onHideControls,
                                     onFocused = onResetHideTimer
                                 )
@@ -2313,7 +3144,7 @@ private fun PlayerControlsOverlay(
                                     onShowStreamInfo()
                                 },
                                 focusRequester = streamInfoFocusRequester,
-                                upFocusRequester = progressBarFocusRequester,
+                                upFocusRequester = progressUpTarget,
                                 onDownKey = onHideControls,
                                 onFocused = onResetHideTimer
                             )
@@ -2324,7 +3155,7 @@ private fun PlayerControlsOverlay(
                                     onClick = onReportPlaybackIssue,
                                     enabled = uiState.playbackIssueReportStatus != PlaybackIssueReportStatus.Sending &&
                                         uiState.playbackIssueReportStatus != PlaybackIssueReportStatus.Sent,
-                                    upFocusRequester = progressBarFocusRequester,
+                                    upFocusRequester = progressUpTarget,
                                     onDownKey = onHideControls,
                                     onFocused = onResetHideTimer
                                 )
@@ -2340,7 +3171,7 @@ private fun PlayerControlsOverlay(
                         },
                         contentDescription = if (uiState.showMoreDialog) stringResource(R.string.cd_close_more_actions) else stringResource(R.string.cd_more_actions),
                         onClick = onToggleMoreActions,
-                        upFocusRequester = progressBarFocusRequester,
+                        upFocusRequester = progressUpTarget,
                         onDownKey = onHideControls,
                         onFocused = onResetHideTimer
                     )
@@ -2352,20 +3183,42 @@ private fun PlayerControlsOverlay(
             }
         }
     }
+
+    if (showEngineSwitchConfirm) {
+        val targetEngine = if (uiState.internalPlayerEngine == InternalPlayerEngine.MVP_PLAYER) {
+            R.string.playback_engine_exoplayer
+        } else {
+            R.string.playback_engine_mvplayer
+        }
+        ConfirmDialog(
+            title = stringResource(R.string.player_engine_switch_title, stringResource(targetEngine)),
+            message = stringResource(R.string.player_engine_switch_message),
+            confirmLabel = stringResource(R.string.action_switch),
+            onConfirm = {
+                showEngineSwitchConfirm = false
+                onSwitchPlayerEngine()
+            },
+            onDismiss = { showEngineSwitchConfirm = false }
+        )
+    }
 }
 
 @Composable
 private fun PlayerControlsProgressBarHost(
     viewModel: PlayerViewModel,
+    chapters: List<PlayerChapter>,
     focusRequester: FocusRequester,
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
     onUpKey: (() -> Unit)? = null,
-    onFocused: (() -> Unit)? = null
+    onFocused: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null
 ) {
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
 
+    ChapterTitle(chapters = chapters, positionMs = playbackTimeline.currentPosition)
     ProgressBar(
+        chapters = chapters,
         currentPosition = playbackTimeline.currentPosition,
         duration = playbackTimeline.duration,
         onSeekPreview = { delta ->
@@ -2379,6 +3232,7 @@ private fun PlayerControlsProgressBarHost(
         downFocusRequester = downFocusRequester,
         onUpKey = onUpKey,
         onFocused = onFocused,
+        onClick = onClick,
         bufferedPosition = playbackTimeline.bufferedPosition
     )
 }
@@ -2386,9 +3240,14 @@ private fun PlayerControlsProgressBarHost(
 @Composable
 private fun PlayerControlsTimeTextHost(viewModel: PlayerViewModel) {
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
+    val timeText = if (playbackTimeline.isLive) {
+        stringResource(R.string.player_live_watched, formatTime(playbackTimeline.watchedDurationMs))
+    } else {
+        "${formatTime(playbackTimeline.currentPosition)} / ${formatTime(playbackTimeline.duration)}"
+    }
 
     Text(
-        text = "${formatTime(playbackTimeline.currentPosition)} / ${formatTime(playbackTimeline.duration)}",
+        text = timeText,
         style = MaterialTheme.typography.bodyMedium,
         color = Color.White.copy(alpha = 0.9f)
     )
@@ -2435,6 +3294,85 @@ private fun ReportControlButton(
     }
 }
 
+@Composable
+private fun ControlButton(
+    icon: ImageVector,
+    iconPainter: Painter? = null,
+    contentDescription: String,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    enabled: Boolean = true,
+    onDownKey: (() -> Unit)? = null,
+    onFocused: (() -> Unit)? = null,
+    contentColor: Color = Color.White
+) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .size(NuvioTheme.spacing.xxxl)
+            .then(
+                if (focusRequester != null) Modifier.focusRequester(focusRequester)
+                else Modifier
+            )
+            .then(
+                if (upFocusRequester != null) {
+                    Modifier.focusProperties { up = upFocusRequester }
+                } else {
+                    Modifier
+                }
+            )
+            .onPreviewKeyEvent { keyEvent ->
+                if (
+                    upFocusRequester != null &&
+                    keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN &&
+                    keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_UP
+                ) {
+                    try {
+                        upFocusRequester.requestFocus()
+                    } catch (_: Exception) {}
+                    true
+                } else if (
+                    onDownKey != null &&
+                    keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN &&
+                    keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_DOWN
+                ) {
+                    onDownKey.invoke()
+                    true
+                } else {
+                    false
+                }
+            }
+            .onFocusChanged {
+                isFocused = it.isFocused
+                if (it.isFocused) onFocused?.invoke()
+            },
+        colors = IconButtonDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color.White,
+            contentColor = contentColor,
+            focusedContentColor = Color.Black
+        ),
+        shape = IconButtonDefaults.shape(shape = CircleShape)
+    ) {
+        if (iconPainter != null) {
+            Icon(
+                painter = iconPainter,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(NuvioTheme.spacing.xl)
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(28.dp)
+            )
+        }
+    }
+}
 
 @Composable
 private fun ProgressBar(
@@ -2447,9 +3385,13 @@ private fun ProgressBar(
     downFocusRequester: FocusRequester? = null,
     onUpKey: (() -> Unit)? = null,
     onFocused: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
     /** Position (ms) up to which content is buffered. Pass 0 to skip the overlay. */
-    bufferedPosition: Long = 0L
+    bufferedPosition: Long = 0L,
+    /** Each chapter after the first gets a mark where it starts. */
+    chapters: List<PlayerChapter> = emptyList()
 ) {
+    val accentBrush = NuvioTheme.palette.accentBrush()
     val seekBarLabel = stringResource(R.string.cd_seek_bar)
     val progress = if (duration > 0) {
         (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
@@ -2471,10 +3413,10 @@ private fun ProgressBar(
     )
     var isFocused by remember { mutableStateOf(false) }
 
-    BoxWithConstraints(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (isFocused) NuvioTheme.spacing.md else NuvioTheme.spacing.sm)
+            .height(NuvioTheme.spacing.md)
             .then(
                 if (focusRequester != null) Modifier.focusRequester(focusRequester)
                 else Modifier
@@ -2506,6 +3448,11 @@ private fun ProgressBar(
                             onSeekCommit()
                             return@onPreviewKeyEvent true
                         }
+                        KeyEvent.KEYCODE_DPAD_CENTER,
+                        KeyEvent.KEYCODE_ENTER,
+                        KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                            if (onClick != null) return@onPreviewKeyEvent true
+                        }
                     }
                     return@onPreviewKeyEvent false
                 }
@@ -2513,6 +3460,17 @@ private fun ProgressBar(
                 // testing additional key handling for DPAD_LEFT and DPAD_RIGHT to allow seek in focus (check)
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
+                        KeyEvent.KEYCODE_DPAD_CENTER,
+                        KeyEvent.KEYCODE_ENTER,
+                        KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                            if (onClick != null) {
+                                // Ignore key-repeat so holding OK doesn't toggle repeatedly.
+                                if (keyEvent.nativeKeyEvent.repeatCount == 0) onClick()
+                                true
+                            } else {
+                                false
+                            }
+                        }
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
                             if (downFocusRequester != null) {
                                 try {
@@ -2561,42 +3519,64 @@ private fun ProgressBar(
                 } else {
                     false
                 }
-            }
-            .clip(RoundedCornerShape(3.dp))
-            .background(
-                if (isFocused) Color.White.copy(alpha = 0.45f)
-                else Color.White.copy(alpha = 0.3f)
-            )
+            },
+        contentAlignment = Alignment.Center
     ) {
-        val trackWidth = maxWidth
-
-        // Buffered-ahead overlay: the theme accent, faded so it reads under the played
-        // fill and on light themes.
-        if (animatedBufferedProgress > 0f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(trackWidth * animatedBufferedProgress)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(NuvioTheme.colors.Secondary.copy(alpha = 0.35f))
-            )
-        }
-        // Played fill.
         Box(
             modifier = Modifier
-                .fillMaxHeight()
-                .width(trackWidth * animatedProgress)
+                .fillMaxWidth()
+                .height(if (isFocused) NuvioTheme.spacing.md else NuvioTheme.spacing.sm)
                 .clip(RoundedCornerShape(3.dp))
-                .background(NuvioTheme.colors.Secondary)
+                .background(
+                    if (isFocused) Color.White.copy(alpha = 0.45f)
+                    else Color.White.copy(alpha = 0.3f)
+                )
+                .playerProgressFill(
+                    progress = { animatedProgress },
+                    bufferedProgress = { animatedBufferedProgress },
+                    bufferedColor = NuvioTheme.colors.Secondary,
+                    playedBrush = accentBrush
+                )
+                // Chapter marks, drawn over the fill.
+                .drawBehind {
+                    if (chapters.isNotEmpty() && duration > 0) {
+                        val markWidth = 2.dp.toPx()
+                        chapters.forEach { chapter ->
+                            val fraction = chapter.startMs.toFloat() / duration.toFloat()
+                            if (fraction <= 0f || fraction >= 1f) return@forEach
+                            drawRect(
+                                color = Color.Black.copy(alpha = 0.6f),
+                                topLeft = Offset(size.width * fraction - markWidth / 2f, 0f),
+                                size = Size(markWidth, size.height)
+                            )
+                        }
+                    }
+                }
         )
     }
+}
+
+/** The name of the chapter at [positionMs], or "Chapter N" when the file gives it none. */
+@Composable
+private fun ChapterTitle(chapters: List<PlayerChapter>, positionMs: Long) {
+    val index = PlayerChapters.indexAt(chapters, positionMs)
+    if (index < 0) return
+    Text(
+        text = chapters[index].title ?: stringResource(R.string.player_chapter_number, index + 1),
+        style = MaterialTheme.typography.bodyMedium,
+        color = Color.White.copy(alpha = 0.9f),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(bottom = NuvioTheme.spacing.xs)
+    )
 }
 
 @Composable
 private fun SeekOverlay(
     currentPosition: Long,
     duration: Long,
-    bufferedPosition: Long = 0L
+    bufferedPosition: Long = 0L,
+    chapters: List<PlayerChapter> = emptyList()
 ) {
     Column(
         modifier = Modifier
@@ -2604,12 +3584,14 @@ private fun SeekOverlay(
             .padding(horizontal = NuvioTheme.spacing.xxl, vertical = NuvioTheme.spacing.xl)
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            ChapterTitle(chapters = chapters, positionMs = currentPosition)
             ProgressBar(
                 currentPosition = currentPosition,
                 duration = duration,
                 onSeekPreview = {},
                 onSeekCommit = {},
-                bufferedPosition = bufferedPosition
+                bufferedPosition = bufferedPosition,
+                chapters = chapters
             )
 
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
@@ -2630,13 +3612,14 @@ private fun SeekOverlay(
 }
 
 @Composable
-private fun SeekOverlayHost(viewModel: PlayerViewModel) {
+private fun SeekOverlayHost(viewModel: PlayerViewModel, chapters: List<PlayerChapter>) {
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
 
     SeekOverlay(
         currentPosition = playbackTimeline.currentPosition,
         duration = playbackTimeline.duration,
-        bufferedPosition = playbackTimeline.bufferedPosition
+        bufferedPosition = playbackTimeline.bufferedPosition,
+        chapters = chapters
     )
 }
 
@@ -2644,7 +3627,8 @@ private fun SeekOverlayHost(viewModel: PlayerViewModel) {
 private fun PlayerClockOverlay(
     currentPosition: Long,
     duration: Long,
-    playbackSpeed: Float
+    playbackSpeed: Float,
+    isLive: Boolean = false
 ) {
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     val context = LocalContext.current
@@ -2681,11 +3665,13 @@ private fun PlayerClockOverlay(
             ),
             color = Color.White.copy(alpha = 0.96f)
         )
-        Text(
-            text = stringResource(R.string.player_ends_at, endTimeText),
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.sp),
-            color = Color.White.copy(alpha = 0.78f)
-        )
+        if (!isLive) {
+            Text(
+                text = stringResource(R.string.player_ends_at, endTimeText),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.sp),
+                color = Color.White.copy(alpha = 0.78f)
+            )
+        }
     }
 }
 
@@ -2696,7 +3682,8 @@ private fun PlayerClockOverlayHost(viewModel: PlayerViewModel, playbackSpeed: Fl
     PlayerClockOverlay(
         currentPosition = playbackTimeline.currentPosition,
         duration = playbackTimeline.duration,
-        playbackSpeed = playbackSpeed
+        playbackSpeed = playbackSpeed,
+        isLive = playbackTimeline.isLive
     )
 }
 
@@ -2704,6 +3691,7 @@ private fun PlayerClockOverlayHost(viewModel: PlayerViewModel, playbackSpeed: Fl
 private fun SubtitleTimingDialogHost(
     viewModel: PlayerViewModel,
     modifier: Modifier = Modifier,
+    subtitleDelayMs: Int,
     selectedAddonSubtitle: Subtitle?,
     cues: List<SubtitleSyncCue>,
     capturedVideoMs: Long?,
@@ -2718,6 +3706,7 @@ private fun SubtitleTimingDialogHost(
     SubtitleTimingDialog(
         modifier = modifier,
         currentPositionMs = playbackTimeline.currentPosition,
+        subtitleDelayMs = subtitleDelayMs,
         selectedAddonSubtitle = selectedAddonSubtitle,
         cues = cues,
         capturedVideoMs = capturedVideoMs,
@@ -2837,13 +3826,23 @@ private fun PlayerEngineSwitchIndicator(
     }
 }
 
+private enum class SubtitleDelayFocusTarget {
+    SLIDER,
+    RESET,
+    SYNC_LINE
+}
+
 @Composable
 private fun SubtitleDelayOverlay(
     subtitleDelayMs: Int,
-    isAutoSyncButtonFocused: Boolean,
+    isResetButtonFocused: Boolean,
+    isSyncLineButtonFocused: Boolean,
     isSliderFocused: Boolean,
+    onResetDelay: () -> Unit,
     onOpenSyncByLine: () -> Unit,
+    resetFocusRequester: FocusRequester,
     syncLineFocusRequester: FocusRequester,
+    onResetFocused: () -> Unit = {},
     onSyncLineFocused: () -> Unit = {}
 ) {
     val fraction = ((subtitleDelayMs - SUBTITLE_DELAY_MIN_MS).toFloat() /
@@ -2889,7 +3888,7 @@ private fun SubtitleDelayOverlay(
                     .fillMaxWidth()
                     .height(NuvioTheme.spacing.xs)
                     .clip(RoundedCornerShape(NuvioTheme.radii.xxs))
-                    .align(Alignment.CenterStart)
+                    .align(AbsoluteAlignment.CenterLeft)
                     .background(Color.White.copy(alpha = 0.15f))
             )
 
@@ -2911,8 +3910,8 @@ private fun SubtitleDelayOverlay(
 
             Box(
                 modifier = Modifier
-                    .offset(x = thumbOffset)
-                    .align(Alignment.CenterStart)
+                    .absoluteOffset(x = thumbOffset)
+                    .align(AbsoluteAlignment.CenterLeft)
                     .width(thumbWidth)
                     .height(NuvioTheme.spacing.sm)
                     .clip(RoundedCornerShape(NuvioTheme.radii.sm))
@@ -2922,66 +3921,83 @@ private fun SubtitleDelayOverlay(
 
         Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
 
-        Card(
-            onClick = onOpenSyncByLine,
-            modifier = Modifier
-                .focusRequester(syncLineFocusRequester)
-                .onFocusChanged { focusState ->
-                    if (focusState.isFocused) {
-                        onSyncLineFocused()
-                    }
-                },
-            colors = CardDefaults.colors(
-                containerColor = if (isAutoSyncButtonFocused) {
-                    Color.White.copy(alpha = 0.22f)
-                } else {
-                    Color.White.copy(alpha = 0.11f)
-                },
-                focusedContainerColor = Color.White.copy(alpha = 0.22f)
-            ),
-            shape = CardDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = stringResource(R.string.player_sync_line),
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                color = Color.White,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
-            )
+            Card(
+                onClick = onResetDelay,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(resetFocusRequester)
+                    .onFocusChanged { focusState ->
+                        if (focusState.isFocused) {
+                            onResetFocused()
+                        }
+                    },
+                colors = CardDefaults.colors(
+                    containerColor = if (isResetButtonFocused) {
+                        Color.White.copy(alpha = 0.22f)
+                    } else {
+                        Color.White.copy(alpha = 0.11f)
+                    },
+                    focusedContainerColor = Color.White.copy(alpha = 0.22f)
+                ),
+                shape = CardDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.subtitle_delay_reset),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            Card(
+                onClick = onOpenSyncByLine,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(syncLineFocusRequester)
+                    .onFocusChanged { focusState ->
+                        if (focusState.isFocused) {
+                            onSyncLineFocused()
+                        }
+                    },
+                colors = CardDefaults.colors(
+                    containerColor = if (isSyncLineButtonFocused) {
+                        Color.White.copy(alpha = 0.22f)
+                    } else {
+                        Color.White.copy(alpha = 0.11f)
+                    },
+                    focusedContainerColor = Color.White.copy(alpha = 0.22f)
+                ),
+                shape = CardDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.player_sync_line),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
+                }
+            }
         }
-    }
-}
-
-
-@Composable
-private fun StartOverAction(
-    resumeAtLabel: String,
-    onStartOver: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(NuvioTheme.radii.lg))
-            .background(Color.Black.copy(alpha = 0.72f))
-            .padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.md),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
-    ) {
-        Text(
-            text = stringResource(R.string.player_loading_resuming_slow, resumeAtLabel),
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.86f),
-            textAlign = TextAlign.Center
-        )
-        DialogButton(
-            text = stringResource(R.string.player_start_from_beginning),
-            onClick = onStartOver,
-            isPrimary = true,
-            modifier = Modifier.focusRequester(focusRequester)
-        )
     }
 }
 
@@ -3044,32 +4060,56 @@ private fun LoadingIssueReportAction(
 @Composable
 private fun ErrorOverlay(
     message: String,
+    showSwitchToMpvAction: Boolean = false,
+    onSwitchToMpv: (() -> Unit)? = null,
     showReportAction: Boolean,
     reportStatus: PlaybackIssueReportStatus,
     reportId: String?,
     reportError: String?,
     onReport: () -> Unit,
-    onBack: () -> Unit,
-    onRetry: (() -> Unit)? = null,
-    isFreezeReport: Boolean = false,
-    freezeReported: Boolean = false,
+    onBack: () -> Unit
 ) {
     val exitFocusRequester = remember { FocusRequester() }
     val reportFocusRequester = remember { FocusRequester() }
-    val retryFocusRequester = remember { FocusRequester() }
+    val mpvFocusRequester = remember { FocusRequester() }
+    val onSwitchMpvAction = onSwitchToMpv.takeIf { showSwitchToMpvAction }
+    val targetFocusRequester = if (onSwitchMpvAction != null) mpvFocusRequester else exitFocusRequester
 
-    LaunchedEffect(Unit) {
-        if (onRetry != null) retryFocusRequester.requestFocus() else exitFocusRequester.requestFocus()
+    var targetButtonPlaced by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
+    var mpvFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
+    var reportFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
+    var exitFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
+    val hasOverlayFocus = mpvFocused || reportFocused || exitFocused
+
+    LaunchedEffect(targetButtonPlaced, onSwitchMpvAction != null) {
+        if (!targetButtonPlaced) return@LaunchedEffect
+        val focused = targetFocusRequester.requestFocusAfterFrames(frames = 0)
+        if (!focused) {
+            targetFocusRequester.requestFocusAfterFrames(frames = 2)
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.9f))
-            .zIndex(3f),
+            .zIndex(3f)
+            .onPreviewKeyEvent { event ->
+                if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                val isDirection = when (event.nativeKeyEvent.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    KeyEvent.KEYCODE_DPAD_DOWN,
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> true
+                    else -> false
+                }
+                if (!isDirection || hasOverlayFocus) return@onPreviewKeyEvent false
+                runCatching { targetFocusRequester.requestFocus() }.isSuccess
+            },
         contentAlignment = Alignment.Center
     ) {
         Column(
+            modifier = Modifier.focusGroup(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
         ) {
@@ -3097,7 +4137,7 @@ private fun ErrorOverlay(
                 PlaybackIssueReportStatus.Sent -> stringResource(R.string.player_report_issue_sent, reportId.orEmpty())
                 PlaybackIssueReportStatus.Failed -> reportError ?: stringResource(R.string.player_report_issue_failed)
             }
-            if (!isFreezeReport && showReportAction && reportMessage != null) {
+            if (showReportAction && reportMessage != null) {
                 Text(
                     text = reportMessage,
                     style = MaterialTheme.typography.bodyMedium,
@@ -3114,67 +4154,62 @@ private fun ErrorOverlay(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (onRetry != null) {
-                    DialogButton(
-                        text = stringResource(R.string.action_retry),
-                        onClick = onRetry,
-                        isPrimary = true,
+                if (onSwitchMpvAction != null) {
+                    PlayerOverlayButton(
+                        text = stringResource(R.string.player_switch_to_mpv),
+                        onClick = onSwitchMpvAction,
+                        primary = true,
                         modifier = Modifier
-                            .focusRequester(retryFocusRequester)
-                            .focusProperties { right = if (showReportAction) reportFocusRequester else exitFocusRequester },
-                    )
-                }
-                if (isFreezeReport) {
-                    // Freeze-specific report: lightweight PostHog signal (live_freeze_user_report),
-                    // shown even when generic issue reporting is off. Label flips to a thanks once sent.
-                    DialogButton(
-                        text = stringResource(
-                            if (freezeReported) R.string.player_report_frozen_thanks
-                            else R.string.player_report_frozen
-                        ),
-                        onClick = onReport,
-                        isPrimary = false,
-                        enabled = !freezeReported,
-                        modifier = Modifier
-                            .focusRequester(reportFocusRequester)
+                            .focusRequester(mpvFocusRequester)
+                            .onPlaced { targetButtonPlaced = true }
+                            .onFocusChanged { mpvFocused = it.isFocused }
                             .focusProperties {
-                                right = exitFocusRequester
-                                if (onRetry != null) left = retryFocusRequester
+                                right = if (showReportAction) reportFocusRequester else exitFocusRequester
                             }
                     )
-                } else if (showReportAction) {
-                    DialogButton(
+                }
+                if (showReportAction) {
+                    PlayerOverlayButton(
                         text = when (reportStatus) {
                             PlaybackIssueReportStatus.Sending -> stringResource(R.string.player_report_issue_sending_button)
                             PlaybackIssueReportStatus.Sent -> stringResource(R.string.player_report_issue_sent_button)
                             else -> stringResource(R.string.player_report_issue)
                         },
                         onClick = onReport,
-                        isPrimary = false,
+                        primary = false,
                         enabled = reportStatus != PlaybackIssueReportStatus.Sending &&
                             reportStatus != PlaybackIssueReportStatus.Sent,
                         modifier = Modifier
                             .focusRequester(reportFocusRequester)
-                            .focusProperties { right = exitFocusRequester }
+                            .onFocusChanged { reportFocused = it.isFocused }
+                            .focusProperties {
+                                if (onSwitchMpvAction != null) left = mpvFocusRequester
+                                right = exitFocusRequester
+                            }
                     )
                 }
-                DialogButton(
+                PlayerOverlayButton(
                     text = stringResource(R.string.player_go_back),
                     onClick = onBack,
-                    isPrimary = onRetry == null,
+                    primary = onSwitchMpvAction == null,
                     modifier = Modifier
                         .focusRequester(exitFocusRequester)
-                        .then(
-                            if (showReportAction) {
-                                Modifier.focusProperties { left = reportFocusRequester }
-                            } else if (onRetry != null) {
-                                Modifier.focusProperties { left = retryFocusRequester }
+                        .onPlaced {
+                            if (onSwitchMpvAction == null) targetButtonPlaced = true
+                        }
+                        .onFocusChanged { exitFocused = it.isFocused }
+                        .focusProperties {
+                            left = if (showReportAction) {
+                                reportFocusRequester
+                            } else if (onSwitchMpvAction != null) {
+                                mpvFocusRequester
                             } else {
-                                Modifier
+                                FocusRequester.Default
                             }
-                        )
+                        }
                 )
             }
         }
@@ -3182,10 +4217,52 @@ private fun ErrorOverlay(
 }
 
 @Composable
+internal fun PlayerOverlayButton(
+    text: String,
+    onClick: () -> Unit,
+    primary: Boolean,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val shape = RoundedCornerShape(NuvioTheme.spacing.xxl)
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        colors = ButtonDefaults.colors(
+            containerColor = if (primary) Color.White else NuvioTheme.colors.BackgroundCard,
+            focusedContainerColor = if (primary) Color.White else NuvioTheme.colors.Secondary,
+            contentColor = if (primary) Color.Black else NuvioTheme.colors.TextPrimary,
+            focusedContentColor = if (primary) Color.Black else NuvioTheme.colors.OnSecondary
+        ),
+        shape = ButtonDefaults.shape(shape = shape),
+        border = ButtonDefaults.border(
+            focusedBorder = Border(
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                shape = shape
+            )
+        ),
+        contentPadding = PaddingValues(
+            horizontal = NuvioTheme.spacing.lg,
+            vertical = 14.dp
+        ),
+        scale = ButtonDefaults.scale()
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 private fun SpeedSelectionDialog(
     currentSpeed: Float,
     onSpeedSelected: (Float) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    brightness: Float = 1f
 ) {
     val selectedIndex = remember(currentSpeed) {
         PLAYBACK_SPEEDS.indices.minByOrNull { index ->
@@ -3202,8 +4279,10 @@ private fun SpeedSelectionDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
+        // The dialog is its own window, so the player's controls dim does not reach it.
         Box(
             modifier = Modifier
+                .playerControlsBrightness(brightness)
                 .width(300.dp)
                 .clip(RoundedCornerShape(NuvioTheme.radii.xl))
                 .background(NuvioTheme.colors.BackgroundElevated)
@@ -3351,21 +4430,58 @@ private fun SpeedItem(
     }
 }
 
+@Composable
+internal fun DialogButton(
+    text: String,
+    onClick: () -> Unit,
+    isPrimary: Boolean,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        colors = ButtonDefaults.colors(
+            containerColor = if (isPrimary) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundCard,
+            contentColor = if (isPrimary) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextSecondary,
+            focusedContainerColor = if (isPrimary) NuvioTheme.colors.SecondaryVariant else NuvioTheme.colors.FocusBackground,
+            focusedContentColor = if (isPrimary) NuvioTheme.colors.OnSecondaryVariant else NuvioTheme.colors.Primary
+        ),
+        border = ButtonDefaults.border(
+            focusedBorder = Border(
+                border = if (isPrimary) {
+                    BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.SecondaryVariant)
+                } else {
+                    NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs)
+                },
+                shape = RoundedCornerShape(NuvioTheme.radii.md)
+            )
+        ),
+        shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md)),
+        scale = ButtonDefaults.scale(focusedScale = 1f)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
 
 @Composable
 private fun partyNoticeText(notice: PartyNotice): String = when (notice.action) {
     PartyAction.Paused -> stringResource(R.string.party_action_paused, notice.name)
     PartyAction.Resumed -> stringResource(R.string.party_action_resumed, notice.name)
     PartyAction.Seeked -> stringResource(R.string.party_action_seeked, notice.name, formatTime(notice.positionMs))
-    PartyAction.Speed -> stringResource(R.string.party_action_speed, notice.name, formatPartySpeed(notice.rate))
+    PartyAction.Speed -> stringResource(R.string.party_action_speed, notice.name, formatSpeedLabel(notice.rate))
 }
 
-private fun formatPartySpeed(rate: Float): String =
+private fun formatSpeedLabel(rate: Float): String =
     if (rate % 1f == 0f) "${rate.toInt()}x" else "${rate}x"
 
-private const val PARTY_NOTICE_MS = 3_000L
-
-private fun formatTime(millis: Long): String {
+internal fun formatTime(millis: Long): String {
     if (millis <= 0) return "0:00"
 
     val hours = TimeUnit.MILLISECONDS.toHours(millis)
@@ -3394,12 +4510,13 @@ private fun PlayerBufferingIndicator(
     showLoadingOverlay: Boolean,
     isTorrentStream: Boolean,
     torrentBufferingMessage: String?,
-    torrentBufferingProgress: Float
+    torrentBufferingProgress: Float,
+    modifier: Modifier = Modifier
 ) {
     if (!isBuffering || showLoadingOverlay) return
 
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         if (isTorrentStream && torrentBufferingMessage != null) {
@@ -3440,30 +4557,5 @@ private fun PlayerBufferingIndicator(
         } else {
             LoadingIndicator()
         }
-    }
-}
-
-/** Non-terminal live retry notice; controls and Back remain usable while reconnecting. */
-@Composable
-private fun PlayerLiveRetryStatus(
-    message: String,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color.Black.copy(alpha = 0.84f))
-            .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
-    ) {
-        LoadingIndicator(modifier = Modifier.size(20.dp))
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.White,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }

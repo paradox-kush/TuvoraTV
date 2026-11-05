@@ -49,4 +49,10 @@ class MpvDemuxerBytesTest {
             assertTrue("$tier total", bytes.maxBytes + bytes.maxBackBytes <= 128L * mib)
         }
     }
+
+    @Test
+    fun `the libmpv view uses the budget's numbers`() {
+        assertEquals("low RAM", demuxerBytesFor(MemoryTier.LOW), mpvDemuxerBudget(lowRam = true))
+        assertEquals("other devices", demuxerBytesFor(MemoryTier.MID), mpvDemuxerBudget(lowRam = false))
+    }
 }

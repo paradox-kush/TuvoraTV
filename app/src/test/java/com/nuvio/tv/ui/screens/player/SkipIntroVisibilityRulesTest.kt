@@ -163,6 +163,19 @@ class SkipIntroVisibilityRulesTest {
         )
     }
 
+    // ── Focus while overlays open (#2874) ─────────────────────────────────
+
+    @Test
+    fun `skip intro can accept focus when subtitle overlay is closed`() {
+        assertTrue(isSkipIntroCanFocus(subtitleOverlayVisible = false))
+    }
+
+    @Test
+    fun `skip intro cannot accept focus while subtitle selection overlay is open`() {
+        // DPAD_DOWN past the last subtitle card must not escape onto Skip Intro.
+        assertFalse(isSkipIntroCanFocus(subtitleOverlayVisible = true))
+    }
+
     // ── Auto-hide countdown ────────────────────────────────────────────────
 
     @Test

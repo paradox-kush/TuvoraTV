@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.net.Uri
 import android.util.Log
 import androidx.media3.common.C
@@ -107,7 +109,7 @@ internal class ParallelRangeDataSource(
                     cleanMethod.invoke(cleaner)
                 }
             } catch (e: Throwable) {
-                Log.w(TAG, "Failed to explicitly free direct buffer: ${e.message}")
+                Log.w(TAG, "Failed to explicitly free direct buffer: ${LogRedaction.text(e.message)}")
             }
         }
 
@@ -968,7 +970,7 @@ internal class ParallelRangeDataSource(
             )
         } catch (e: Exception) {
             try { source.close() } catch (_: Exception) {}
-            Log.w(TAG, "Continuation open failed at $position; using chunk path: ${e.message}")
+            Log.w(TAG, "Continuation open failed at $position; using chunk path: ${LogRedaction.text(e.message)}")
             return
         }
         continuationSource = source
@@ -1027,7 +1029,7 @@ internal class ParallelRangeDataSource(
                 }
             } catch (e: Exception) {
 
-                Log.w(TAG, "RS_ESCALATE failed chunk=$chunkIndex: ${e.message}")
+                Log.w(TAG, "RS_ESCALATE failed chunk=$chunkIndex: ${LogRedaction.text(e.message)}")
             } catch (e: OutOfMemoryError) {
                 drainIdleBuffers(activeSession.chunkSize)
                 Log.w(TAG, "RS_ESCALATE failed chunk=$chunkIndex: chunk buffer OOM (contained)")
@@ -1196,7 +1198,7 @@ internal class ParallelRangeDataSource(
                         } catch (_: InterruptedException) {
                         }
                     } else {
-                        Log.w(TAG, "Chunk $chunkIndex download failed (attempt 1), retrying: ${e.message}")
+                        Log.w(TAG, "Chunk $chunkIndex download failed (attempt 1), retrying: ${LogRedaction.text(e.message)}")
                     }
                 }
             }

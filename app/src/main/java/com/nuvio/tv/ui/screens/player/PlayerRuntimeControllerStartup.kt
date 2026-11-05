@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
 import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.app.Activity
 import android.os.SystemClock
 import android.util.Log
@@ -18,13 +19,13 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
 
     initialPlaybackStarted = true
 
-    // Persist binge group from navigation args so that subsequent plays
-    // (from CW, Details, or next-episode) can reuse the same source group.
     val bg = navigationArgs.bingeGroup
     val cid = contentId
-    if (cid != null) {
+    if (cid != null && bg != null) {
         scope.launch(kotlinx.coroutines.NonCancellable) {
-            bingeGroupCacheDataStore.replace(cid, bg)
+            val existingFilename = bingeGroupCacheDataStore.getFilename(cid)
+            val existingInfoHash = bingeGroupCacheDataStore.getInfoHash(cid)
+            bingeGroupCacheDataStore.replace(cid, bg, existingFilename, existingInfoHash)
         }
     }
 
@@ -38,7 +39,11 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
             "S${currentSeason ?: "-"}E${currentEpisode ?: "-"} infoHash=${infoHash != null} " +
             "startFromBeginning=${navigationArgs.startFromBeginning} streamName=${streamName ?: "n/a"}"
     )
-    Log.d("PlayerStartup", "startInitialPlayback: infoHash=$infoHash, streamUrl=${LogRedaction.url(initialStreamUrl)}")
+    Log.d(
+        "PlayerStartup",
+        "startInitialPlayback: infoHash=$infoHash host=${currentStreamUrl.safeStartupHost()} " +
+            "urlHash=${currentStreamUrl.hashCode().toUInt().toString(16)}"
+    )
     if (infoHash != null && !initialStreamUrl.startsWith("http")) {
         torrentStreamJob = scope.launch {
             try {
@@ -53,8 +58,6 @@ internal fun PlayerRuntimeController.startInitialPlaybackIfNeeded() {
                 Log.d("PlayerStartup", "Torrent stream ready: ${LogRedaction.url(localUrl)}")
                 currentStreamUrl = localUrl
                 currentHeaders = emptyMap()
-                // Use loadSavedProgress = true — the torrent engine handles seeking via
-                // HTTP Range requests, so ExoPlayer's standard resume logic works.
                 recordDistinctPluginPlay(
                     bingeGroup = navigationArgs.bingeGroup,
                     playbackIdentity = infoHash

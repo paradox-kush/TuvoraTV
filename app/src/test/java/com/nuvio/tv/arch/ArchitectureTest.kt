@@ -147,8 +147,11 @@ class ArchitectureTest {
         assertProductionFilesCollected()
         // The shell (declares the SurfaceView) + the fork-owned engine package (extracted internals:
         // property shadow, and later the ctl queue / lifecycle) are the only places libmpv is named.
+        // Upstream's VOD player (converged 2026-11-04) also names libmpv in its event relay
+        // (MpvEventRelay / MPV_EVENT_* constants); that file is its libmpv event boundary.
         fun isEnginePackage(rel: String) =
             rel == "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt" ||
+                rel == "com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerMpvEvents.kt" ||
                 rel.startsWith("com/nuvio/tv/player/mpv/") ||
                 rel.startsWith("com/nuvio/tv/playback/mpv/")
         val libmpvRef = Regex("`is`\\.xyz\\.mpv|\\bBaseMPVView\\b")
@@ -165,26 +168,26 @@ class ArchitectureTest {
     }
 
     /**
-     * Rule B — concrete-type containment. Controllers must talk to the mpv engine through the
-     * [com.nuvio.tv.ui.screens.player.MpvSurface] contract, never the concrete NuvioMpvSurfaceView.
-     * Only the shell (which declares it) and PlayerScreen (the one AndroidView construction site, which
-     * uses it purely as a View) may name it.
+     * Rule B — concrete-type containment. The VOD mpv view (NuvioMpvSurfaceView) belongs to the
+     * VOD player package. Until 2026-11-04 this rule also forced the fork's own VOD controllers through
+     * an `MpvSurface` interface; that seam (audit D4) retired with the fork VOD player, since upstream's
+     * player talks to its view directly. What still matters: nothing outside the VOD player — the
+     * clean live pipeline included — may reach for it.
      */
     @Test
-    fun `only the shell and PlayerScreen name the concrete NuvioMpvSurfaceView`() {
+    fun `only the VOD player package names the concrete NuvioMpvSurfaceView`() {
         assertProductionFilesCollected()
-        val allowed = setOf(
-            "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt",
-            "com/nuvio/tv/ui/screens/player/PlayerScreen.kt",
-        )
+        fun inVodPlayer(rel: String) =
+            rel.startsWith("com/nuvio/tv/ui/screens/player/") &&
+                !rel.startsWith("com/nuvio/tv/ui/screens/player/clean/")
         val concreteRef = Regex("\\bNuvioMpvSurfaceView\\b")
         val violations = files
-            .filter { (p, _) -> rel(p) !in allowed }
+            .filter { (p, _) -> !inVodPlayer(rel(p)) }
             .filter { (_, text) -> concreteRef.containsMatchIn(stripComments(text)) }
             .map { (p, _) -> rel(p) }
             .sorted()
         assertTrue(
-            "Talk to the mpv engine through MpvSurface, not the concrete NuvioMpvSurfaceView:\n" +
+            "Only the VOD player package may name the concrete NuvioMpvSurfaceView:\n" +
                 violations.joinToString("\n"),
             violations.isEmpty(),
         )

@@ -1,0 +1,115 @@
+package com.nuvio.tv.ui.screens.player
+
+import java.io.File
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Wiring guards for the fork fixes carried onto upstream's VOD player (2026-11-04 convergence, audit §2
+ * buckets B/C). The decisions are pure policies with their own tests; these assert upstream's controller
+ * still calls them, so the next upstream merge can't silently drop a call site.
+ */
+class VodConvergeCarriedFixesWiringTest {
+
+    @Test
+    fun `B2 in-player source and episode switches mint a stalker-deferred url before the engine sees it`() {
+        val streams = source("PlayerRuntimeControllerStreams.kt")
+        val helper = streams.substringAfter("fun PlayerRuntimeController.mintDeferredStreamThen(", "")
+        assertTrue("mintDeferredStreamThen must exist", helper.isNotEmpty())
+        assertTrue(
+            "the mint must go through DeferredStreamPolicy (never hand the placeholder on)",
+            helper.substringBefore("\n}\n").contains("DeferredStreamPolicy.resolve(")
+        )
+        for (entry in listOf("switchToSourceStream", "switchToEpisodeStream")) {
+            val body = functionBody(streams, "fun PlayerRuntimeController.$entry(")
+            val mintAt = body.indexOf("mintDeferredStreamThen(")
+            assertTrue("$entry must mint deferred IPTV urls", mintAt >= 0)
+            val engineAt = body.indexOf("applySelectedStreamState(")
+            assertTrue("$entry must hand the url to the engine via applySelectedStreamState", engineAt >= 0)
+            assertTrue("$entry must mint BEFORE the engine handoff", mintAt < engineAt)
+        }
+    }
+
+    @Test
+    fun `B1 an expired IPTV link is re-minted before any of upstream's ExoPlayer recovery rungs`() {
+        val init = source("PlayerRuntimeControllerInitialization.kt")
+        val onError = init.substringAfter("override fun onPlayerError(error: PlaybackException)", "")
+        assertTrue("onPlayerError must exist", onError.isNotEmpty())
+        val refreshAt = onError.indexOf("attemptIptvLinkRefresh(")
+        assertTrue("onPlayerError must try the IPTV link re-mint", refreshAt >= 0)
+        for (rung in listOf(
+            "isVc1PlaybackFailure(",
+            "isRetryablePlaybackError(error)",
+            "handleParsingErrorFallback(",
+            "attemptStartupRecovery(",
+            "maybeAutoSwitchInternalPlayerOnStartupError(",
+        )) {
+            val rungAt = onError.indexOf(rung)
+            if (rungAt >= 0) assertTrue("the re-mint must run before $rung", refreshAt < rungAt)
+        }
+    }
+
+    @Test
+    fun `B1 an expired IPTV link is re-minted before libmpv's failover and auto-retry`() {
+        val events = source("PlayerRuntimeControllerMpvEvents.kt")
+        val body = functionBody(events, "fun PlayerRuntimeController.handleMpvPlaybackError(")
+        val refreshAt = body.indexOf("attemptIptvLinkRefresh(")
+        assertTrue("handleMpvPlaybackError must try the IPTV link re-mint", refreshAt >= 0)
+        assertTrue("before engine failover", refreshAt < body.indexOf("maybeAutoSwitchInternalPlayerOnStartupError("))
+        assertTrue("before the auto-retry", refreshAt < body.indexOf("attemptMpvAutoRetry("))
+    }
+
+    @Test
+    fun `C7 the re-mint swap reopens at the requested resume position before the first frame`() {
+        val refresh = source("PlayerRuntimeControllerIptvLinkRefresh.kt")
+        assertTrue(refresh.contains("PlaybackStartPositionPolicy.targetAfterSourceSwap("))
+        assertTrue(refresh.contains("requestedStartMs = requestedStartPositionMs"))
+    }
+
+    @Test
+    fun `B5 IPTV VOD media sources use the playlist's own DNS`() {
+        val controller = source("PlayerRuntimeController.kt")
+        assertTrue(
+            "the controller must hand the media source factory the playlist DNS (PlaybackDnsPort.dnsForVideoId)",
+            controller.contains("playbackDnsProvider") && controller.contains("dnsForVideoId(")
+        )
+        val factory = source("PlayerMediaSourceFactory.kt")
+        val create = functionBody(factory, "fun createMediaSource(")
+        assertTrue("createMediaSource must resolve the playback DNS", create.contains("playbackDnsProvider"))
+    }
+
+    @Test
+    fun `C1 the progress loop, track snapshot and startup watchdog read libmpv off Main`() {
+        val loop = functionBody(source("PlayerRuntimeControllerPlaybackEvents.kt"), "fun PlayerRuntimeController.startProgressUpdates(")
+        val mpvBranch = loop.substringBefore("_exoPlayer?.let")
+        assertTrue("the mpv tick must sample through MpvReads", mpvBranch.contains("MpvReads.read"))
+        for (read in listOf(
+            "view.currentPositionMs()", "view.durationMs()", "view.isPlayingNow()", "view.currentSubtitleText()",
+            "view.isPausedForCacheNow()", "view.isCoreIdleNow()", "view.isPositionFromRequestedMedia()",
+            "view.isEofReached()", "view.isLiveStreamNow()", "view.demuxerCacheDurationSec()",
+        )) {
+            assertTrue("$read must not run on the loop's Main context", !mpvBranch.substringAfter("MpvReads.read").contains(read))
+        }
+        val tracks = functionBody(source("PlayerRuntimeControllerMpv.kt"), "fun PlayerRuntimeController.updateMpvAvailableTracks(")
+        assertTrue("the track snapshot must be read through MpvReads", tracks.contains("MpvReads.read { view.readTrackSnapshot() }"))
+        val watchdog = functionBody(source("PlayerRuntimeControllerMpvEvents.kt"), "fun PlayerRuntimeController.maybeRunMpvStartupWatchdog(")
+        assertTrue("the watchdog must use the tick sample, not read libmpv itself", !watchdog.contains("view.mpv.") && !watchdog.contains("view.demuxerCacheDurationSec()"))
+    }
+
+    private fun functionBody(text: String, signature: String): String {
+        val start = text.indexOf(signature)
+        assertTrue("missing $signature", start >= 0)
+        val next = Regex("""\n(internal |private )?(suspend )?fun """).find(text, start + signature.length)
+        return text.substring(start, next?.range?.first ?: text.length)
+    }
+
+    private fun source(name: String): String = File(playerDir(), name).readText()
+
+    private fun playerDir(): File {
+        val root = generateSequence(File(requireNotNull(System.getProperty("user.dir"))).canonicalFile) {
+            it.parentFile
+        }.firstOrNull { File(it, "app/src/main").isDirectory }
+            ?: error("Cannot locate NuvioTV root")
+        return File(root, "app/src/main/java/com/nuvio/tv/ui/screens/player")
+    }
+}

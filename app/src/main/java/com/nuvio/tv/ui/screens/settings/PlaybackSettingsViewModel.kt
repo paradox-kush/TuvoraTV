@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.data.local.DeviceLocalPlayerPreferences
+import com.nuvio.tv.data.local.LibassRenderScale
 import com.nuvio.tv.data.local.LibassRenderType
+import com.nuvio.tv.data.local.LibassRenderMode
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.DownmixLfeLevel
 import com.nuvio.tv.data.local.NightMode
@@ -17,7 +19,6 @@ import com.nuvio.tv.data.local.FrameRateMatchingMode
 import com.nuvio.tv.data.local.NextEpisodeThresholdMode
 import com.nuvio.tv.data.local.StreamAutoPlayMode
 import com.nuvio.tv.data.local.StreamAutoPlaySource
-import com.nuvio.tv.data.local.AddonSubtitleStartupMode
 import com.nuvio.tv.data.local.AudioOutputChannels
 import com.nuvio.tv.data.local.AutoSkipSegmentType
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
@@ -185,10 +186,6 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setRememberPlayerPreferences(enabled)
     }
 
-    suspend fun setSubtitleSideMarginPercent(percent: Int) {
-        playerSettingsDataStore.setSubtitleSideMarginPercent(percent)
-    }
-
     suspend fun setPauseOverlayEnabled(enabled: Boolean) {
         playerSettingsDataStore.setPauseOverlayEnabled(enabled)
     }
@@ -230,6 +227,10 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setMpvHardwareDecodeMode(mode)
     }
 
+    suspend fun setMpvHi10pGnextSoftwareFallbackEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setMpvHi10pGnextSoftwareFallbackEnabled(enabled)
+    }
+
 
     suspend fun setDv5ToDv81Enabled(enabled: Boolean) {
         playerSettingsDataStore.setDv5ToDv81Enabled(enabled)
@@ -257,12 +258,24 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setStripHdr10PlusSei(enabled)
     }
 
+    suspend fun setExoChaptersEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setExoChaptersEnabled(enabled)
+    }
+
     suspend fun setUseLibass(enabled: Boolean) {
         playerSettingsDataStore.setUseLibass(enabled)
     }
 
     suspend fun setLibassRenderType(renderType: LibassRenderType) {
         playerSettingsDataStore.setLibassRenderType(renderType)
+    }
+
+    suspend fun setLibassRenderScale(scale: LibassRenderScale) {
+        playerSettingsDataStore.setLibassRenderScale(scale)
+    }
+
+    suspend fun setLibassRenderMode(mode: LibassRenderMode) {
+        playerSettingsDataStore.setLibassRenderMode(mode)
     }
 
     suspend fun setSubtitlePreferredLanguage(language: String) {
@@ -279,6 +292,10 @@ class PlaybackSettingsViewModel @Inject constructor(
 
     suspend fun setSubtitleShowOnlyPreferredLanguages(enabled: Boolean) {
         playerSettingsDataStore.setSubtitleShowOnlyPreferredLanguages(enabled)
+    }
+
+    suspend fun setSubtitleStripSdh(enabled: Boolean) {
+        playerSettingsDataStore.setSubtitleStripSdh(enabled)
     }
 
     suspend fun setSubtitleSize(size: Int) {
@@ -313,12 +330,24 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setSubtitleOutlineWidth(width)
     }
 
-    suspend fun setSubtitleOrganizationMode(mode: SubtitleOrganizationMode) {
-        playerSettingsDataStore.setSubtitleOrganizationMode(mode)
+    suspend fun setSubtitleHdrStyleEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setSubtitleHdrStyleEnabled(enabled)
     }
 
-    suspend fun setAddonSubtitleStartupMode(mode: AddonSubtitleStartupMode) {
-        playerSettingsDataStore.setAddonSubtitleStartupMode(mode)
+    suspend fun setSubtitleHdrTextColor(color: Int) {
+        playerSettingsDataStore.setSubtitleHdrTextColor(color)
+    }
+
+    suspend fun setSubtitleHdrBrightness(brightness: Int) {
+        playerSettingsDataStore.setSubtitleHdrBrightness(brightness)
+    }
+
+    suspend fun setSubtitleHdrDimPlayerControls(enabled: Boolean) {
+        playerSettingsDataStore.setSubtitleHdrDimPlayerControls(enabled)
+    }
+
+    suspend fun setSubtitleOrganizationMode(mode: SubtitleOrganizationMode) {
+        playerSettingsDataStore.setSubtitleOrganizationMode(mode)
     }
 
     // Buffer settings functions
@@ -499,8 +528,20 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setStreamAutoPlayRegex(regex)
     }
 
+    suspend fun setPostPlayRecommendationsEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setPostPlayRecommendationsEnabled(enabled)
+    }
+
+    suspend fun setPostPlayMovieThresholdPercent(percent: Int) {
+        playerSettingsDataStore.setPostPlayMovieThresholdPercent(percent)
+    }
+
     suspend fun setStreamAutoPlayNextEpisodeEnabled(enabled: Boolean) {
         playerSettingsDataStore.setStreamAutoPlayNextEpisodeEnabled(enabled)
+    }
+
+    suspend fun setStreamAutoPlayNextEpisodeFallbackEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setStreamAutoPlayNextEpisodeFallbackEnabled(enabled)
     }
 
     suspend fun setStreamAutoPlayPreferBingeGroupForNextEpisode(enabled: Boolean) {

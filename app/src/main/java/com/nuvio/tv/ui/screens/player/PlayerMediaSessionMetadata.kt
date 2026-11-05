@@ -1,9 +1,13 @@
 package com.nuvio.tv.ui.screens.player
 
 import com.nuvio.tv.core.diagnostics.LogRedaction
+
 import android.net.Uri
 import android.util.Log
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaSession
 
 /**
  * Builds a [MediaMetadata] from the current playback information so that
@@ -61,7 +65,7 @@ internal fun PlayerRuntimeController.buildMediaSessionMetadata(): MediaMetadata 
  * - When TMDB enrichment updates the title / artwork
  */
 internal fun PlayerRuntimeController.updateMediaSessionMetadata() {
-    val session = currentMediaSession ?: return
+    if (currentMediaSession == null) return
     val metadata = buildMediaSessionMetadata()
     val mediaId = currentFilename?.takeIf { it.isNotBlank() }
     try {
@@ -79,18 +83,102 @@ internal fun PlayerRuntimeController.updateMediaSessionMetadata() {
                     .build()
                 player.replaceMediaItem(player.currentMediaItemIndex, updated)
             }
-            // A newly built player intentionally has no item until the playback media source is
-            // installed. Never insert a metadata-only placeholder here: doing so asks Media3's
-            // source factory to build an item without a URI and lets a presentation concern
-            // mutate playback ownership. The initial source already receives this metadata when
-            // it is created; later enrichment updates replace that real item in place above.
+            // No current MediaItem yet (e.g. player just built, source not set) means there is
+            // nothing to attach metadata to. Setting a placeholder item was tried here and can
+            // never work: a MediaItem carrying only metadata has no localConfiguration, and
+            // DefaultMediaSourceFactory.createMediaSource requires one, so setMediaItem threw
+            // every time. The metadata is applied on the next call, once the real item exists.
         }
+        mpvMediaSessionPlayer?.refresh()
         Log.d(
             PlayerRuntimeController.TAG,
-            LogRedaction.text("MediaSession metadata updated: title=${metadata.title}, " +
-                "artist=${metadata.artist}, mediaId=$mediaId, artworkUri=${metadata.artworkUri}")
+            "MediaSession metadata updated: title=${metadata.title}, " +
+                "artist=${metadata.artist}, mediaId=$mediaId, artworkUri=${LogRedaction.url(metadata.artworkUri?.toString())}"
         )
     } catch (e: Exception) {
         Log.w(PlayerRuntimeController.TAG, "Failed to update MediaSession metadata", e)
     }
+}
+
+/** Releases the current engine's session and its mpv facade, if any. */
+internal fun PlayerRuntimeController.releaseMediaSession() {
+    runCatching { currentMediaSession?.release() }
+    currentMediaSession = null
+    runCatching { mpvMediaSessionPlayer?.release() }
+    mpvMediaSessionPlayer = null
+}
+
+internal fun PlayerRuntimeController.installExoMediaSession(player: ExoPlayer) {
+    releaseMediaSession()
+    if (player.canAdvertiseSession()) {
+        currentMediaSession = MediaSession.Builder(context, SafeMediaSessionPlayer(player)).build()
+        updateMediaSessionMetadata()
+    }
+}
+
+/** Creates the foreground-only MediaSession used by Bluetooth and other Android media controls. */
+internal fun PlayerRuntimeController.installMpvMediaSession() {
+    runCatching {
+        if (!isUsingMpvEngine() || isInBackground || mpvView == null || currentStreamUrl.isBlank()) return
+        if (currentMediaSession != null && mpvMediaSessionPlayer != null) {
+            mpvMediaSessionPlayer?.refresh()
+            return
+        }
+        releaseMediaSession()
+        val sessionPlayer = MpvMediaSessionPlayer(
+            snapshotProvider = ::mpvMediaSessionSnapshot,
+            commandTarget = object : MpvMediaSessionCommandTarget {
+                override fun setPlayWhenReady(playWhenReady: Boolean) {
+                    if (!isUsingMpvEngine() || isInBackground) return
+                    if (isPlaybackCurrentlyPlaying() != playWhenReady) {
+                        // MediaSession commands should behave like ExoPlayer's session controls:
+                        // change playback without treating the button press as an in-player gesture.
+                        onEvent(PlayerEvent.OnPlayPause, showPlaybackControls = false)
+                    }
+                }
+
+                override fun seekTo(positionMs: Long) {
+                    if (!isUsingMpvEngine() || isInBackground) return
+                    onEvent(PlayerEvent.OnSeekTo(positionMs), showPlaybackControls = false)
+                }
+            }
+        )
+        mpvMediaSessionPlayer = sessionPlayer
+        currentMediaSession = MediaSession.Builder(context, sessionPlayer).build()
+        updateMediaSessionMetadata()
+    }.onFailure { error ->
+        releaseMediaSession()
+        Log.w(PlayerRuntimeController.TAG, "Failed to install MPV MediaSession", error)
+    }
+}
+
+internal fun PlayerRuntimeController.refreshMpvMediaSession() {
+    mpvMediaSessionPlayer?.refresh()
+}
+
+private fun PlayerRuntimeController.mpvMediaSessionSnapshot(): MpvMediaSessionSnapshot {
+    // Fork (C1): the progress tick's off-Main sample, never a libmpv read on Main.
+    val sample = lastMpvTickSample.takeIf { mpvView != null } ?: MpvTickSample()
+    val positionMs = sample.positionMs.coerceAtLeast(0L)
+    val durationMs = sample.durationMs.coerceAtLeast(0L)
+    val bufferedPositionMs = positionMs + (sample.demuxerCacheSec * 1_000.0).toLong()
+    val metadata = buildMediaSessionMetadata()
+    // Match ExoPlayer's default ID without publishing potentially sensitive stream URLs.
+    val mediaId = currentFilename?.takeIf { it.isNotBlank() } ?: MediaItem.DEFAULT_MEDIA_ID
+    return MpvMediaSessionSnapshot(
+        mediaId = mediaId,
+        mediaItem = MediaItem.Builder()
+            .setMediaId(mediaId)
+            .setMediaMetadata(metadata)
+            .build(),
+        durationMs = durationMs,
+        positionMs = positionMs,
+        bufferedPositionMs = bufferedPositionMs,
+        isPlaying = mpvView != null && _uiState.value.isPlaying,
+        isBuffering = _uiState.value.isBuffering,
+        isEnded = _uiState.value.playbackEnded,
+        // External seek controls must also respect the app's live-content policy.
+        isSeekable = !_playbackTimeline.value.isLive && !sample.liveStream,
+        speed = _uiState.value.playbackSpeed,
+    )
 }

@@ -79,12 +79,11 @@ internal fun PlaybackAudioSection(
     SettingsToggleRow(
         title = stringResource(R.string.audio_enable_downmix_title),
         subtitle = stringResource(R.string.audio_enable_downmix_subtitle),
-        // Fork: the pinned PlayerSettings has no effective-downmix / prefer-app-decoder gate.
-        checked = settings.downmixEnabled,
-        onToggle = { onUpdate { setDownmixEnabled(!settings.downmixEnabled) } },
-        enabled = enabled
+        checked = settings.effectiveDownmixEnabled,
+        onToggle = { onUpdate { setDownmixEnabled(!settings.effectiveDownmixEnabled) } },
+        enabled = enabled && settings.isPreferAppDecoder
     )
-    if (settings.downmixEnabled) {
+    if (settings.effectiveDownmixEnabled) {
         SettingsActionRow(
             title = stringResource(R.string.audio_number_of_channels),
             subtitle = null,
@@ -110,9 +109,9 @@ internal fun PlaybackAudioSection(
     SettingsToggleRow(
         title = stringResource(R.string.audio_tunneled),
         subtitle = stringResource(R.string.audio_tunneled_sub),
-        checked = settings.tunnelingEnabled,
-        onToggle = { onUpdate { setTunnelingEnabled(!settings.tunnelingEnabled) } },
-        enabled = enabled
+        checked = settings.effectiveTunnelingEnabled,
+        onToggle = { onUpdate { setTunnelingEnabled(!settings.effectiveTunnelingEnabled) } },
+        enabled = enabled && settings.isTunnelingCompatible
     )
     SettingsToggleRow(
         title = stringResource(R.string.audio_force_optical_passthrough),

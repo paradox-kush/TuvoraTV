@@ -131,17 +131,15 @@ class PlayerPreferencePolicyTest {
         assertEquals(96, SubtitleSideMargin.paddingPx(1920, 5))
     }
 
-    // --- F47 default look (owner-approved 2026-10-04) ---
+    // --- Default look: upstream's (owner chose it over F47 on 2026-11-04; the TV VOD player
+    // converged on upstream the same day). SubtitleStyleDefaults below now has no production caller. ---
 
     @Test
-    fun `new users get white text in a soft box with no outline and no screen margin`() {
+    fun `new users get upstream's white outlined text with no box`() {
         val style = com.nuvio.tv.data.local.SubtitleStyleSettings()
         assertEquals(android.graphics.Color.WHITE, style.textColor)
-        assertFalse(style.outlineEnabled)
-        assertEquals(SubtitleStyleDefaults.BOX_BACKGROUND, style.backgroundColor)
-        val alpha = (style.backgroundColor ushr 24) / 255f
-        assertTrue("soft translucent, not solid", alpha in 0.4f..0.75f)
-        assertEquals(0, style.sideMarginPercent)
+        assertTrue(style.outlineEnabled)
+        assertEquals(android.graphics.Color.TRANSPARENT, style.backgroundColor)
     }
 
     @Test

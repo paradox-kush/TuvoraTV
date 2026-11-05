@@ -4,15 +4,14 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import com.nuvio.tv.core.contracts.PlaybackTlsClass
+import com.nuvio.tv.core.contracts.PlaybackTrustHosts
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.core.network.PlaybackSocketFactory
-import okhttp3.Dns
 import okhttp3.OkHttpClient
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
-import com.nuvio.tv.core.contracts.PlaybackTlsClass
-import com.nuvio.tv.core.contracts.PlaybackTrustHosts
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HostnameVerifier
@@ -23,7 +22,6 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 internal object PlayerPlaybackNetworking {
-    /** The local torrent engine can block a read while it fetches pieces (upstream 76c05edd3). */
     private const val LOOPBACK_READ_TIMEOUT_SECONDS = 65L
 
     private val trustAllManager = object : X509TrustManager {
@@ -34,11 +32,13 @@ internal object PlayerPlaybackNetworking {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
-    // Trust-all certificate chains are only ever used for an IPTV panel host. The verifier runs on EVERY hop
-    // (redirects included), so a panel redirecting to a media server, an add-on or any other host is refused.
-    private val playbackHostnameVerifier = HostnameVerifier { host, _ ->
+    // Unverified TLS is only ever used for an IPTV panel host (panels commonly present self-signed or
+    // mismatched certificates). The verifier runs on EVERY hop, redirects included, so a panel redirecting
+    // to a media server, an add-on or any other host is refused.
+    private fun isPermissivePanel(host: String?): Boolean =
         PlaybackTrustHosts.classify(host) == PlaybackTlsClass.PermissivePanel
-    }
+
+    private val playbackHostnameVerifier = HostnameVerifier { host, _ -> isPermissivePanel(host) }
 
     private val sslContext: SSLContext by lazy {
         SSLContext.getInstance("TLS").apply {
@@ -47,8 +47,8 @@ internal object PlayerPlaybackNetworking {
     }
 
     /**
-     * Fallback OkHttpClient with trust-all certificate chains, for IPTV PANEL hosts only: its hostname verifier
-     * accepts a host only when [PlaybackTrustHosts] classifies it as a panel (and never a media-server host).
+     * Fallback OkHttpClient with unverified certificates, for IPTV panel hosts only
+     * ([PlaybackTrustHosts]); its hostname verifier refuses every other host.
      */
     internal val trustAllPlaybackHttpClient: OkHttpClient by lazy {
         val dispatcher = okhttp3.Dispatcher().apply {
@@ -62,6 +62,7 @@ internal object PlayerPlaybackNetworking {
             .eventListenerFactory(PlaybackConnectionEvents)
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
             .hostnameVerifier(playbackHostnameVerifier)
+            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
@@ -73,31 +74,10 @@ internal object PlayerPlaybackNetworking {
 
     /**
      * Primary OkHttpClient using standard system SSL certificates and full SNI support.
-     * Includes an automatic fallback to [trustAllPlaybackHttpClient] if an [SSLException]
-     * occurs on self-signed local media servers.
+     * Falls back to [trustAllPlaybackHttpClient] after an [SSLException] only when the host is an
+     * IPTV panel; every other host (media servers, add-ons, CDNs, unknown) keeps its SSL failure.
      */
     internal val playbackHttpClient: OkHttpClient by lazy {
-        strictPlaybackHttpClient.newBuilder()
-            .addInterceptor { chain ->
-                val request = chain.request()
-                try {
-                    chain.proceed(request)
-                } catch (e: SSLException) {
-                    // Unverified TLS is a panel-only escape hatch (IPTV panels often present self-signed certificates).
-                    // Media servers, add-ons, CDNs and unknown hosts keep the SSL failure.
-                    if (PlaybackTrustHosts.classify(request.url.host) != PlaybackTlsClass.PermissivePanel) throw e
-                    trustAllPlaybackHttpClient.newCall(request).execute()
-                }
-            }
-            .build()
-    }
-
-    /**
-     * The same client WITHOUT the trust-all fallback. A media-server host the user pinned (trust on first
-     * use) is reached through a client derived from this one, so a changed certificate is refused rather
-     * than silently accepted by the fallback.
-     */
-    internal val strictPlaybackHttpClient: OkHttpClient by lazy {
         val dispatcher = okhttp3.Dispatcher().apply {
             maxRequests = 64
             maxRequestsPerHost = 32
@@ -107,54 +87,50 @@ internal object PlayerPlaybackNetworking {
             .dns(IPv4FirstDns())
             .socketFactory(PlaybackSocketFactory)
             .eventListenerFactory(PlaybackConnectionEvents)
+            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
+            .addInterceptor { chain ->
+                val request = chain.request()
+                try {
+                    chain.proceed(request)
+                } catch (e: SSLException) {
+                    if (!isPermissivePanel(request.url.host)) throw e
+                    trustAllPlaybackHttpClient.newCall(request).execute()
+                }
+            }
             .build()
     }
 
-    /** The playback client for [url]: the pinned-certificate client for a pinned media-server host, else the normal one. */
-    internal fun clientFor(url: String?): OkHttpClient =
-        url?.let { com.nuvio.tv.data.mediaserver.ServerMediaRouting.router?.pinnedClient(it, strictPlaybackHttpClient) }
-            ?: playbackHttpClient
-
-    @OptIn(UnstableApi::class)
+    /**
+     * [dns]: the IPTV playlist's own resolver (DNS-over-HTTPS) for its VOD; null keeps the default
+     * IPv4-first system DNS.
+     */
     fun createHttpClient(
         defaultHeaders: Map<String, String> = emptyMap(),
-        dns: Dns? = null,
         useLongReadTimeout: Boolean = false,
-        url: String? = null
+        dns: okhttp3.Dns? = null
     ): OkHttpClient {
-        val builder = clientFor(url).newBuilder()
+        val builder = playbackHttpClient.newBuilder()
+        if (dns != null) builder.dns(dns)
         if (useLongReadTimeout) {
             builder.readTimeout(LOOPBACK_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         }
-        // Per-playlist DoH resolver (VOD/series). SNI/cert stay keyed on the original host, so this
-        // works for https too — only mpv's live URL-rewrite can't do https (see PlaylistLivePlayback).
-        if (dns != null) builder.dns(dns)
-        if (defaultHeaders.any { it.key.equals("Authorization", ignoreCase = true) }) {
-            // OkHttp strips the Authorization header on cross-host redirects.
-            // WebDAV servers behind reverse proxies commonly redirect to a
-            // different host/port, causing auth to be lost. A network
-            // interceptor ensures the header is always present on every
-            // outgoing request — same behavior as mpv/curl.
-            val authValue = defaultHeaders.entries
-                .first { it.key.equals("Authorization", ignoreCase = true) }
-                .value
+        val proxyHeaders = defaultHeaders.filterKeys { key ->
+            !key.equals("Range", ignoreCase = true)
+        }
+        if (proxyHeaders.isNotEmpty()) {
             builder.addNetworkInterceptor { chain ->
                 val request = chain.request()
-                if (request.header("Authorization") == null) {
-                    chain.proceed(
-                        request.newBuilder()
-                            .header("Authorization", authValue)
-                            .build()
-                    )
-                } else {
-                    chain.proceed(request)
+                val next = request.newBuilder()
+                for ((key, value) in proxyHeaders) {
+                    next.header(key, value)
                 }
+                chain.proceed(next.build())
             }
         }
         return builder
@@ -162,33 +138,38 @@ internal object PlayerPlaybackNetworking {
             .build()
     }
 
-    @OptIn(UnstableApi::class)
+    @UnstableApi
     fun createHttpDataSourceFactory(
         defaultHeaders: Map<String, String> = emptyMap(),
-        dns: Dns? = null,
         useLongReadTimeout: Boolean = false,
-        url: String? = null
+        dns: okhttp3.Dns? = null
     ): DataSource.Factory {
-        val client = createHttpClient(defaultHeaders, dns, useLongReadTimeout, url)
-        return OkHttpDataSource.Factory(client).apply {
-            setDefaultRequestProperties(defaultHeaders)
-            if (defaultHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {
+        val requestHeaders = defaultHeaders.mapNotNull { (rawKey, rawValue) ->
+            val key = rawKey.trim()
+            val value = rawValue.trim()
+            if (key.isEmpty() || value.isEmpty() || key.equals("Range", ignoreCase = true)) {
+                null
+            } else {
+                key to value
+            }
+        }.toMap()
+        val client = createHttpClient(requestHeaders, useLongReadTimeout, dns)
+        val httpFactory = OkHttpDataSource.Factory(client).apply {
+            setDefaultRequestProperties(requestHeaders)
+            if (requestHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {
                 setUserAgent(PlayerMediaSourceFactory.DEFAULT_USER_AGENT)
             }
         }
+        return LoggingDataSourceFactory(httpFactory, "HTTP")
     }
 
     @UnstableApi
     fun createDataSourceFactory(
         context: android.content.Context,
         defaultHeaders: Map<String, String> = emptyMap(),
-        dns: Dns? = null,
-        useLongReadTimeout: Boolean = false,
-        url: String? = null
+        dns: okhttp3.Dns? = null
     ): DataSource.Factory {
-        // DefaultDataSource keeps file/content/rtmp/udp/asset URIs working; only http(s) uses the
-        // OkHttp (optionally DoH-resolved) upstream.
-        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns, useLongReadTimeout, url))
+        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns = dns))
     }
 
     fun openConnection(

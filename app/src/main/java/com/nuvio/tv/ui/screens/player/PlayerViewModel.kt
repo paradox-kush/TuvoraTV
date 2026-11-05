@@ -1,7 +1,5 @@
 package com.nuvio.tv.ui.screens.player
 
-import com.nuvio.tv.core.picture.AspectMode
-import com.nuvio.tv.core.picture.VideoZoom
 import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -9,16 +7,23 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.core.debrid.DirectDebridResolver
 import com.nuvio.tv.core.debrid.DirectDebridStreamPreparer
+import com.nuvio.tv.core.cloud.CloudLibraryPlaybackSessionStore
+import com.nuvio.tv.core.cloud.CloudLibraryPlaybackProgressStore
+import com.nuvio.tv.core.cloud.CloudLibraryRepository
+import com.nuvio.tv.core.party.PartyMedia
 import com.nuvio.tv.core.plugin.PluginManager
+import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.tracking.TrackingScrobbleCoordinator
 import com.nuvio.tv.core.torrent.TorrentService
 import com.nuvio.tv.core.torrent.TorrentSettings
 import com.nuvio.tv.data.local.AudioDelayRouteDataStore
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
 import com.nuvio.tv.data.local.DeviceLocalPlayerPreferences
+import com.nuvio.tv.data.local.MDBListSettingsDataStore
 import com.nuvio.tv.data.local.StreamLinkCacheDataStore
 import com.nuvio.tv.data.local.StreamBadgeSettingsDataStore
 import com.nuvio.tv.data.repository.ParentalGuideRepository
+import com.nuvio.tv.data.repository.MDBListRepository
 import com.nuvio.tv.data.repository.SkipIntroRepository
 import com.nuvio.tv.data.repository.TraktEpisodeMappingService
 import com.nuvio.tv.domain.repository.AddonRepository
@@ -28,10 +33,19 @@ import com.nuvio.tv.domain.repository.WatchProgressRepository
 import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.core.tmdb.TmdbMetadataService
 import com.nuvio.tv.data.local.TmdbSettingsDataStore
+import com.nuvio.tv.data.local.TraktAuthDataStore
+import com.nuvio.tv.data.local.TraktSettingsDataStore
+import com.nuvio.tv.data.local.TrailerSettingsDataStore
+import com.nuvio.tv.data.local.WatchedSeriesStateHolder
+import com.nuvio.tv.data.repository.TraktRelatedService
+import com.nuvio.tv.data.trailer.TrailerService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 @HiltViewModel
@@ -55,6 +69,7 @@ class PlayerViewModel @Inject constructor(
     private val layoutPreferenceDataStore: com.nuvio.tv.data.local.LayoutPreferenceDataStore,
     private val episodeShufflePlayback: com.nuvio.tv.core.player.EpisodeShufflePlayback,
     private val watchedItemsPreferences: com.nuvio.tv.data.local.WatchedItemsPreferences,
+    private val watchedSeriesStateHolder: WatchedSeriesStateHolder,
     private val trackPreferenceDataStore: com.nuvio.tv.data.local.TrackPreferenceDataStore,
     private val audioDelayRouteDataStore: AudioDelayRouteDataStore,
     private val torrentService: TorrentService,
@@ -62,38 +77,40 @@ class PlayerViewModel @Inject constructor(
     private val tmdbService: TmdbService,
     private val tmdbMetadataService: TmdbMetadataService,
     private val tmdbSettingsDataStore: TmdbSettingsDataStore,
+    private val mdbListRepository: MDBListRepository,
+    private val mdbListSettingsDataStore: MDBListSettingsDataStore,
     private val trailerPlayerPool: com.nuvio.tv.core.player.TrailerPlayerPool,
+    private val trailerService: TrailerService,
+    private val trailerSettingsDataStore: TrailerSettingsDataStore,
+    private val traktRelatedService: TraktRelatedService,
+    private val traktAuthDataStore: TraktAuthDataStore,
+    private val traktSettingsDataStore: TraktSettingsDataStore,
+    private val simklRelatedService: com.nuvio.tv.data.simkl.SimklRelatedService,
+    private val simklAuthRepository: com.nuvio.tv.data.simkl.SimklAuthRepository,
     private val directDebridResolver: DirectDebridResolver,
     private val youTubeStreamResolver: com.nuvio.tv.core.streams.YouTubeStreamResolver,
     private val directDebridStreamPreparer: DirectDebridStreamPreparer,
+    private val cloudLibraryRepository: CloudLibraryRepository,
+    private val cloudPlaybackProgressStore: CloudLibraryPlaybackProgressStore,
+    private val cloudPlaybackSessionStore: CloudLibraryPlaybackSessionStore,
     private val streamBadgePresentation: com.nuvio.tv.core.streams.StreamBadgePresentation,
     private val playbackIssueReportRepository: com.nuvio.tv.data.repository.PlaybackIssueReportRepository,
     private val externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker,
     private val subtitleFileCache: com.nuvio.tv.core.player.SubtitleFileCache,
-    private val livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
-    private val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
-    private val playbackActivityTracker: com.nuvio.tv.core.player.PlaybackActivityTracker,
+    private val tvRecommendationManager: com.nuvio.tv.core.recommendations.TvRecommendationManager,
     private val serverPlayback: com.nuvio.tv.data.mediaserver.ServerPlayback,
     private val serverStreams: com.nuvio.tv.data.mediaserver.ServerStreams,
     partyRepository: com.nuvio.tv.core.party.PartyRepository,
-    private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
+    profileManager: com.nuvio.tv.core.profile.ProfileManager,
+    /** Fork: IPTV catch-up replay ports (Hilt-bound in LivePlaybackModule). */
+    livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
-
-    /**
-     * Profile this playback belongs to: the one that launched it (nav arg), else the active one.
-     * Watch state recorded for an external-player session is scoped to it, so a profile switch
-     * mid-playback cannot write into another profile's history.
-     */
-    private val launchProfileId: Int =
-        savedStateHandle.get<String>("profileId")?.toIntOrNull() ?: profileManager.activeProfileId.value
 
     init {
         // Release trailer player codec resources so the full-screen player can
         // claim hardware decoders without contention (prevents black screen).
         trailerPlayerPool.yield()
-        // Signal that a player is active so the IPTV refresh worker defers re-ingest while playing.
-        playbackActivityTracker.onPlayerStarted()
     }
 
     internal val controller = PlayerRuntimeController(
@@ -114,8 +131,8 @@ class PlayerViewModel @Inject constructor(
         streamBadgeSettingsDataStore = streamBadgeSettingsDataStore,
         bingeGroupCacheDataStore = bingeGroupCacheDataStore,
         layoutPreferenceDataStore = layoutPreferenceDataStore,
-        episodeShufflePlayback = episodeShufflePlayback,
         watchedItemsPreferences = watchedItemsPreferences,
+        episodeShufflePlayback = episodeShufflePlayback,
         trackPreferenceDataStore = trackPreferenceDataStore,
         audioDelayRouteDataStore = audioDelayRouteDataStore,
         torrentService = torrentService,
@@ -126,24 +143,27 @@ class PlayerViewModel @Inject constructor(
         directDebridResolver = directDebridResolver,
         youTubeStreamResolver = youTubeStreamResolver,
         directDebridStreamPreparer = directDebridStreamPreparer,
+        cloudLibraryRepository = cloudLibraryRepository,
+        cloudPlaybackProgressStore = cloudPlaybackProgressStore,
+        cloudPlaybackSessionStore = cloudPlaybackSessionStore,
         streamBadgePresentation = streamBadgePresentation,
         playbackIssueReportRepository = playbackIssueReportRepository,
-        livePlayback = livePlayback,
-        playerMemoryBudget = playerMemoryBudget,
+        tvRecommendationManager = tvRecommendationManager,
         serverPlayback = serverPlayback,
         serverStreams = serverStreams,
         party = partyRepository,
+        profileId = savedStateHandle.get<String>("profileId")?.toIntOrNull()
+            ?: profileManager.activeProfileId.value,
         savedStateHandle = savedStateHandle,
         scope = viewModelScope,
-        profileId = launchProfileId
+        catchUpPort = livePlayback.catchUp,
+        iptvClassifier = livePlayback.classifier,
+        playbackDns = livePlayback.dns
     )
 
     init {
         controller.bindParty()
     }
-
-    val uiState: StateFlow<PlayerUiState>
-        get() = controller.uiState
 
     val party: com.nuvio.tv.core.party.PartyRepository
         get() = controller.party
@@ -151,22 +171,55 @@ class PlayerViewModel @Inject constructor(
     val canUseParty: Boolean
         get() = controller.canUseParty
 
-    val partyMedia: com.nuvio.tv.core.party.PartyMedia
-        get() = controller.currentPartyMedia()
-
-    /** Filename of the stream now playing; the sources panel marks the current stream by it. */
-    fun playerStreamFilename(): String? = controller.currentFilename
+    val partyKey: String
+        get() = controller.partyKey
 
     fun startParty() = controller.startParty()
 
     fun catchUpParty() = controller.catchUpParty()
 
-    fun switchParty() = controller.switchPartyToCurrent()
+    val partyMedia: PartyMedia
+        get() = controller.currentPartyMedia()
 
-    fun canSharePartyStream(): Boolean = controller.canSharePartyStream()
+    fun switchParty() = controller.party.publishMedia(controller.currentPartyMedia(), controller.currentPlaybackPositionMs() ?: 0L)
+
+    fun currentPartyStream() = controller.currentPartyStream()
+
+    private val postPlayRecommendationController = PostPlayRecommendationController(
+        playbackController = controller,
+        playerSettingsDataStore = playerSettingsDataStore,
+        metaRepository = metaRepository,
+        tmdbService = tmdbService,
+        tmdbMetadataService = tmdbMetadataService,
+        tmdbSettingsDataStore = tmdbSettingsDataStore,
+        mdbListRepository = mdbListRepository,
+        mdbListSettingsDataStore = mdbListSettingsDataStore,
+        traktRelatedService = traktRelatedService,
+        traktAuthDataStore = traktAuthDataStore,
+        traktSettingsDataStore = traktSettingsDataStore,
+        simklRelatedService = simklRelatedService,
+        simklAuthRepository = simklAuthRepository,
+        layoutPreferenceDataStore = layoutPreferenceDataStore,
+        watchProgressRepository = watchProgressRepository,
+        watchedSeriesStateHolder = watchedSeriesStateHolder,
+        trailerService = trailerService,
+        trailerSettingsDataStore = trailerSettingsDataStore,
+        trailerPlayerPool = trailerPlayerPool,
+        scope = viewModelScope
+    )
+
+    val uiState: StateFlow<PlayerUiState>
+        get() = controller.uiState
 
     val playbackTimeline: StateFlow<PlaybackTimelineState>
         get() = controller.playbackTimeline
+
+    val postPlayRecommendationUiState: StateFlow<PostPlayRecommendationUiState>
+        get() = postPlayRecommendationController.uiState
+
+    val effectiveAutoplayEnabled = playerSettingsDataStore.playerSettings
+        .map(StreamAutoPlayPolicy::isEffectivelyEnabled)
+        .distinctUntilChanged()
 
     val exoPlayer: ExoPlayer?
         get() = controller.exoPlayer
@@ -175,8 +228,37 @@ class PlayerViewModel @Inject constructor(
 
     fun getCurrentHeaders(): Map<String, String> = controller.getCurrentHeaders()
 
+    fun getCurrentFileSizeBytes(): Long? = controller.currentVideoSize
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun getPlayerNativeMemoryBytes(): Long? {
+        val allocator = controller._loadControl?.ownAllocator as? androidx.media3.exoplayer.upstream.DefaultAllocator ?: return null
+        return allocator.totalBytesAllocated.toLong().coerceAtLeast(0L)
+    }
+
     fun stopAndRelease() {
+        postPlayRecommendationController.stop()
         controller.stopAndRelease()
+    }
+
+    fun playPostPlayTrailer() {
+        postPlayRecommendationController.playTrailer()
+    }
+
+    fun onPostPlayTrailerEnded() {
+        postPlayRecommendationController.onTrailerEnded()
+    }
+
+    fun showPreviousPostPlayRecommendation() {
+        postPlayRecommendationController.showPreviousRecommendation()
+    }
+
+    fun showNextPostPlayRecommendation() {
+        postPlayRecommendationController.showNextRecommendation()
+    }
+
+    fun returnToPlayerFromPostPlay() {
+        postPlayRecommendationController.returnToPlayer()
     }
 
     fun scheduleHideControls() {
@@ -195,26 +277,8 @@ class PlayerViewModel @Inject constructor(
         controller.attachHostActivity(activity)
     }
 
-    fun attachMpvView(view: MpvSurface?) {
+    fun attachMpvView(view: NuvioMpvSurfaceView?) {
         controller.attachMpvView(view)
-    }
-
-    /**
-     * Aspect + subtitle style are applied to the mpv surface through the controller so the Composable
-     * (PlayerScreen) never calls an engine method on the concrete view — it uses the instance only as
-     * an Android View. Keeps the MpvSurface contract the single entry point for engine calls
-     * (research/tv-player-mpv-engine-ownership.md, D3).
-     */
-    fun applyMpvAspectMode(mode: AspectMode) {
-        controller.mpvView?.applyAspectMode(mode)
-    }
-
-    fun applyMpvVideoZoom(zoom: VideoZoom) {
-        controller.mpvView?.applyVideoZoom(zoom)
-    }
-
-    fun applyMpvSubtitleStyle(style: com.nuvio.tv.data.local.SubtitleStyleSettings) {
-        controller.mpvView?.applySubtitleStyle(style)
     }
 
     fun pauseForLifecycle() {
@@ -237,15 +301,23 @@ class PlayerViewModel @Inject constructor(
         controller.onEvent(event)
     }
 
+    fun playerMediaInfo(): PlayerMediaInfo = controller.playerMediaInfo()
+
+    fun playerStreamFilename(): String? = controller.currentFilename
+
+    fun bindExoSubtitleView(subtitleView: androidx.media3.ui.SubtitleView?) {
+        controller.bindExoSubtitleView(subtitleView)
+    }
+
     fun consumePendingExitReason() {
         controller.consumePendingExitReason()
     }
 
     override fun onCleared() {
+        postPlayRecommendationController.stop()
         controller.onCleared()
         // Allow the trailer player to be re-created when returning to home screen.
         trailerPlayerPool.reclaim()
-        playbackActivityTracker.onPlayerStopped()
         super.onCleared()
     }
 
@@ -264,26 +336,45 @@ class PlayerViewModel @Inject constructor(
 
     /**
      * Launch the current stream in an external player via the centralized tracker.
-     * The tracker handles progress saving independently of PlayerScreen lifecycle.
+     *
+     * Keep the ViewModel alive until the external intent has been handed to the launcher.
+     * This lets the caller navigate away only after a successful handoff, while failures
+     * remain visible on the current player screen (#2560).
      */
-    fun launchInExternalPlayer(activityContext: Context, resumePositionMs: Long) {
+    fun launchInExternalPlayer(
+        activityContext: Context,
+        resumePositionMs: Long,
+        onResult: (Boolean) -> Unit
+    ) {
         val url = controller.getCurrentStreamUrl()
+        if (url.isBlank()) {
+            onResult(false)
+            return
+        }
+        val contentId = controller.contentId
+            ?: controller.cloudPlaybackContext?.item?.stableKey
+            ?: run {
+            onResult(false)
+            return
+        }
+        val videoId = controller.currentVideoId ?: contentId
         val metadata = com.nuvio.tv.core.player.ExternalPlaybackMetadata(
-            contentId = controller.contentId ?: return,
+            contentId = contentId,
             contentType = controller.contentType ?: "movie",
             contentName = controller.contentName ?: controller.title,
             poster = controller.poster,
             backdrop = controller.backdrop,
             logo = controller.logo,
-            videoId = controller.currentVideoId ?: controller.contentId ?: return,
+            videoId = videoId,
             season = controller.currentSeason,
             episode = controller.currentEpisode,
             episodeTitle = controller.currentEpisodeTitle,
             year = controller.year,
-            profileId = launchProfileId
+            profileId = controller.profileId
         )
-
-        // Pass already-loaded addon subtitles if forward setting is enabled
+        val headers = controller.getCurrentHeaders()
+        // Capture already-loaded addon subtitles before handing off. Preparation stays in the
+        // ViewModel scope because the player screen remains alive until the intent is sent.
         val subtitleInputs = if (controller.uiState.value.subtitleStyle.preferredLanguage.trim().lowercase() != "none") {
             val addonSubtitles = controller.uiState.value.addonSubtitles
             if (addonSubtitles.isNotEmpty()) {
@@ -297,22 +388,40 @@ class PlayerViewModel @Inject constructor(
             } else null
         } else null
 
-        // Cache subtitle files locally and launch player in background
         viewModelScope.launch {
-            val cachedSubtitles = subtitleInputs?.let { subtitleFileCache.cacheSubtitles(it) }
+            val cachedSubtitles = subtitleInputs?.let { inputs ->
+                try {
+                    withTimeoutOrNull(10_000L) {
+                        subtitleFileCache.cacheSubtitles(inputs)
+                    }
+                } catch (_: Exception) {
+                    // Subtitle forwarding is best-effort; the external launch must still proceed.
+                    null
+                }
+            }
 
-            externalPlaybackTracker.launchPlayer(
-                metadata = metadata,
-                url = url,
-                title = metadata.buildPlayerTitle(),
-                headers = controller.getCurrentHeaders(),
-                resumePositionMs = resumePositionMs,
-                subtitles = cachedSubtitles,
-                nextEpisodeSnapshot = controller.metaVideos
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { videos -> externalPlaybackTracker.resolveNextEpisodeSnapshot(metadata, videos) },
-                context = activityContext
-            )
+            // Stop the internal player only after preparation has completed and immediately
+            // before sending the external intent.
+            val nextEpisodeSnapshot = controller.metaVideos.takeIf { it.isNotEmpty() }?.let {
+                externalPlaybackTracker.resolveNextEpisodeSnapshot(metadata, it)
+            }
+            controller.stopAndRelease()
+            val launched = try {
+                externalPlaybackTracker.launchPlayer(
+                    metadata = metadata,
+                    url = url,
+                    title = metadata.buildPlayerTitle(),
+                    headers = headers,
+                    resumePositionMs = resumePositionMs,
+                    subtitles = cachedSubtitles,
+                    nextEpisodeSnapshot = nextEpisodeSnapshot,
+                    cloudSessionToken = controller.cloudSessionToken,
+                    context = activityContext
+                )
+            } catch (_: Exception) {
+                false
+            }
+            onResult(launched)
         }
     }
 }
