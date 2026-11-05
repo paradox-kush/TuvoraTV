@@ -1541,7 +1541,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 endMs = programme.endMs,
             ),
             nowMs = nowMs,
-            liveUrl = channel.streamUrl.takeIf { channel.m3uCatchUp != null },
+            // The live URL is what a continuing replay rejoins at the live edge (M3U and Xtream alike).
+            liveUrl = channel.streamUrl,
             m3uCatchUp = channel.m3uCatchUp,
         )
         val session = when (outcome) {

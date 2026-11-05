@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.iptv
 
+import com.nuvio.tv.core.contracts.CatchUpContinuationPolicy
+
 /**
  * Walks the catch-up URL dialects for one replay until one plays.
  *
@@ -160,6 +162,16 @@ class CatchUpDialectWalk(private val memory: WinnerMemory) {
         }
     }
 
+    /**
+     * Lets go of the walk [token] names, if it is still the live one. A restarted window's first link
+     * is taken and played, but the player has already reported its first frame for this replay and
+     * says nothing more - without this the walk would sit in the account's single slot for good.
+     */
+    fun abandon(token: Long) {
+        val session = sessionFor(token) ?: return
+        sessions.remove(session.request.accountId)
+    }
+
     /** A token names one attempt of the one active walk per account; anything else is dead. */
     private fun sessionFor(token: Long): Session? =
         sessions.values.firstOrNull { it.token == token }
@@ -243,6 +255,18 @@ class CatchUpDialectWalk(private val memory: WinnerMemory) {
     }
 
     companion object {
+        /**
+         * The ask for a fresh window starting at [atMs] (a continuation past the served one): the same
+         * panel, account and channel, with the window [CatchUpContinuationPolicy.replayWindowEndMs]
+         * gives for a programme starting there. The proven winner leads it through [begin].
+         */
+        fun continuationRequest(request: Request, atMs: Long, nowMs: Long): Request = request.copy(
+            startMs = atMs,
+            endMs = CatchUpContinuationPolicy.replayWindowEndMs(
+                CatchUpContinuationPolicy.Programme(atMs, atMs + 1L), nowMs,
+            ),
+        )
+
         /**
          * The allowed-formats signature a winner is proven under: normalized (trim/lowercase),
          * deduped, sorted, comma-joined — or "unknown" when the panel never said. Sorted so two

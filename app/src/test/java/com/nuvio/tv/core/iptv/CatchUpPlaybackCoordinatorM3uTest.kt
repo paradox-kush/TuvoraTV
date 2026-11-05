@@ -273,9 +273,9 @@ class CatchUpPlaybackCoordinatorM3uTest {
                         programme = programme, nowMs = now, liveUrl = "http://panel.invalid/live/user/pass/$id.ts",
                         m3uCatchUp = xtreamStyle,
                     )!!
-                    assertNotNull(c.m3uContextFor(s.contentId))
+                    assertNotNull(c.replayContextFor(s.contentId))
                     c.onFailed(s.contentId, PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS)
-                    c.restartM3u(s.contentId, start + 5 * 60_000L, now)
+                    c.restartReplay(s.contentId, start + 5 * 60_000L, now)
                     if (i % 2 == 0) c.onPlayed(s.contentId)
                     c.release(s.contentId)
                     assertNull(c.sessionFor(s.contentId))
@@ -308,9 +308,9 @@ class CatchUpPlaybackCoordinatorM3uTest {
         val c = coordinator()
         val s = c.beginM3u()!!
         val hold = c.hold(s.contentId)
-        assertNotNull("held while the player is up", c.m3uContextFor(s.contentId))
+        assertNotNull("held while the player is up", c.replayContextFor(s.contentId))
         hold.dispose()
-        assertNull("gone with the player", c.m3uContextFor(s.contentId))
+        assertNull("gone with the player", c.replayContextFor(s.contentId))
         hold.dispose() // at most once, harmlessly
     }
 }

@@ -368,7 +368,7 @@ class RadarChannelMatcher @Inject constructor(
             programmeTitle = programme?.title ?: "Replay",
             programmeStartMs = replayStart,
             programmeEndMs = replayStart + durationMin * 60_000L,
-            liveUrl = match.channel.streamUrl.takeIf { match.channel.m3uCatchUp != null },
+            liveUrl = match.channel.streamUrl.takeIf { it.isNotBlank() },
             m3uCatchUp = match.channel.m3uCatchUp,
         )
     }
