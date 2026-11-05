@@ -8,8 +8,15 @@ package com.nuvio.tv.playback.core
  * backstop; they are pure and gated by the same switch as the other watchdogs.
  */
 object PlaybackStageDeadlinePolicy {
-    const val RESOLVING_MS = 30_000L
-    const val SELECTING_GRAPH_MS = 20_000L
+    /**
+     * Longer than the 60 s per-call HTTP limit (DEFAULT_READ_TIMEOUT_MS) with margin: a slow but
+     * successful Stalker handshake + create_link must not end fatal. Only a resolution that outlives
+     * its own HTTP limits is "never returns".
+     */
+    const val RESOLVING_MS = 90_000L
+
+    /** Graph selection is quick, but a handoff re-resolves the provider link here, so it gets the resolve window. */
+    const val SELECTING_GRAPH_MS = 90_000L
     /** STARTING_PRIMARY before any engine attempt began (the engine start call itself never returned). */
     const val PRE_ENGINE_START_MS = 30_000L
 

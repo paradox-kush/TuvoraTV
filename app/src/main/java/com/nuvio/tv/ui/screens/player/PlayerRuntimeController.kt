@@ -487,7 +487,8 @@ class PlayerRuntimeController(
     internal var stillWatchingPromptJob: Job? = null
     internal var startupLoadingReportJob: Job? = null
     // B214/B217: screen-level backstop so a VOD start always ends (PlayerLoadDeadlinePolicy).
-    internal var loadDeadlineAnchorMs: Long = 0L
+    internal val loadDeadlineClock = StartDeadlineClock()
+    internal var loadDeadlineFailed: Boolean = false
     internal var loadDeadlineJob: Job? = null
     internal var loadDeadlineFailedOffline: Boolean = false
     internal var sourceStreamsJob: Job? = null

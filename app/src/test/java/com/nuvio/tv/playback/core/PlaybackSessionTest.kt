@@ -2347,16 +2347,24 @@ class PlaybackSessionTest {
     }
 
     @Test
-    fun `B178 a healthy resolution does not trip the stage deadline`() = runTest {
+    fun `B178 a healthy resolution trips no stage deadline in any stage`() = runTest {
         val session = session(engine = FakeEngine(), policy = PlaybackPolicy())
         session.dispatch(PlaybackCommand.SurfaceAvailable)
         session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
         runCurrent()
-        assertTrue(session.snapshot.value.state != PlaybackState.FAILED)
-        advanceTimeBy(PlaybackStageDeadlinePolicy.RESOLVING_MS + 1)
+        // Past the pre-engine stage window but inside the engine's own 60 s read timeout.
+        advanceTimeBy(PlaybackStageDeadlinePolicy.PRE_ENGINE_START_MS + 1)
         runCurrent()
-        assertTrue(session.snapshot.value.failure?.phase != FailurePhase.REQUEST_RESOLUTION)
+        assertTrue("not failed: ${session.snapshot.value.failure}", session.snapshot.value.state != PlaybackState.FAILED)
+        assertEquals(null, session.snapshot.value.failure)
         close(session)
+    }
+
+    @Test
+    fun `B178 stage deadlines outlast the per-call http limit`() {
+        val httpLimit = PlaybackNetworkRequest.DEFAULT_READ_TIMEOUT_MS.toLong()
+        assertTrue(PlaybackStageDeadlinePolicy.RESOLVING_MS > httpLimit)
+        assertTrue(PlaybackStageDeadlinePolicy.SELECTING_GRAPH_MS > httpLimit)
     }
 
     private fun TestScope.session(

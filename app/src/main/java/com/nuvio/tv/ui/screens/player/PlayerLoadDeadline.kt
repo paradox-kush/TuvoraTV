@@ -11,21 +11,33 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Wires [PlayerLoadDeadlinePolicy] to the player. The anchor is set by the first attempt of a
- * stream and survives auto-retries and engine failovers; it restarts only on a user action
- * (Retry, manual engine switch) so the deadline is the viewer's real wait.
+ * Wires [PlayerLoadDeadlinePolicy] to the player. Called by every new load attempt
+ * ([resetLoadingOverlayForNewStream]). The [StartDeadlineClock] counts only active time (not
+ * paused or backgrounded), is kept across auto-retries and engine failovers, and restarts on a new
+ * source identity (stream URL / video), after a failure was shown, and on a viewer restart.
  */
 internal fun PlayerRuntimeController.armLoadDeadline() {
-    if (loadDeadlineAnchorMs == 0L) loadDeadlineAnchorMs = SystemClock.elapsedRealtime()
+    val now = SystemClock.elapsedRealtime()
+    if (loadDeadlineFailed) {
+        // The shown failure was cleared by a new attempt (a source pick, Retry): a full new window.
+        loadDeadlineFailed = false
+        loadDeadlineFailedOffline = false
+        loadDeadlineClock.onAttempt(null, now, force = true)
+    } else {
+        loadDeadlineClock.onAttempt(loadDeadlineKey(), now)
+    }
     if (loadDeadlineJob?.isActive == true) return
     loadDeadlineJob = scope.launch {
         while (isActive) {
             delay(PlayerLoadDeadlinePolicy.POLL_INTERVAL_MS)
             val state = _uiState.value
-            val online = context.isNetworkOnline()
+            val tickNow = SystemClock.elapsedRealtime()
+            // A different source than the one being timed (picked after the attempt began): new window.
+            loadDeadlineClock.onAttempt(loadDeadlineKey(), tickNow)
+            val suspended = isInBackground || userPausedManually
             val action = PlayerLoadDeadlinePolicy.decide(
-                elapsedMs = SystemClock.elapsedRealtime() - loadDeadlineAnchorMs,
-                online = online,
+                elapsedMs = loadDeadlineClock.tick(tickNow, suspended),
+                online = context.isNetworkOnline(),
                 firstFrameRendered = hasRenderedFirstFrame,
                 isLive = LivePlaybackUiPolicy.isLivePlayback(
                     playerReportsLive = state.isLive,
@@ -33,7 +45,7 @@ internal fun PlayerRuntimeController.armLoadDeadline() {
                     latchedLive = livePlaybackLatched
                 ),
                 isTorrent = state.isTorrentStream,
-                suspended = isInBackground || userPausedManually,
+                suspended = suspended,
                 hasError = state.error != null,
                 failedOffline = loadDeadlineFailedOffline,
             )
@@ -43,12 +55,10 @@ internal fun PlayerRuntimeController.armLoadDeadline() {
                     failLoadDeadline(context.getString(R.string.player_error_offline), offline = true)
                 PlayerLoadDeadlinePolicy.Action.FailTimeout ->
                     failLoadDeadline(context.getString(R.string.player_error_start_timeout), offline = false)
-                PlayerLoadDeadlinePolicy.Action.RetryNetworkBack -> {
-                    onEvent(PlayerEvent.OnRetry)
-                }
+                PlayerLoadDeadlinePolicy.Action.RetryNetworkBack -> onEvent(PlayerEvent.OnRetry)
             }
             if (hasRenderedFirstFrame) {
-                loadDeadlineAnchorMs = 0L
+                loadDeadlineClock.clear()
                 break
             }
         }
@@ -56,14 +66,18 @@ internal fun PlayerRuntimeController.armLoadDeadline() {
     }
 }
 
-/** A user-driven restart: the next attempt gets a full deadline. */
+private fun PlayerRuntimeController.loadDeadlineKey(): String = "$currentStreamUrl|$currentVideoId"
+
+/** A viewer-driven restart (Retry, manual engine switch): the next attempt gets a full window. */
 internal fun PlayerRuntimeController.restartLoadDeadline() {
-    loadDeadlineAnchorMs = SystemClock.elapsedRealtime()
+    loadDeadlineClock.reset(SystemClock.elapsedRealtime())
     loadDeadlineFailedOffline = false
+    loadDeadlineFailed = false
 }
 
 private fun PlayerRuntimeController.failLoadDeadline(message: String, offline: Boolean) {
     errorRetryJob?.cancel()
+    loadDeadlineFailed = true
     loadDeadlineFailedOffline = offline
     // Stop the engine so a late success cannot play under the error dialog.
     releasePlayer(flushPlaybackState = false)

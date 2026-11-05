@@ -194,7 +194,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                 )
             }
             resetLoadingOverlayForNewStream()
-            armLoadDeadline()
             if (startPaused) {
                 userPausedManually = true
                 shouldEnforceAutoplayOnFirstReady = false
@@ -2121,6 +2120,8 @@ internal fun PlayerRuntimeController.buildStartupSubtitleConfigurations(startupS
 }
 
 internal fun PlayerRuntimeController.resetLoadingOverlayForNewStream() {
+    // Every new load attempt (first open, auto-retry, source/episode/engine switch) is covered.
+    armLoadDeadline()
     cancelFirstFrameWatchdog()
     cancelStallWatchdog()
     val preparingMessage = context.getString(R.string.player_loading_preparing)
