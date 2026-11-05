@@ -186,7 +186,7 @@ data class PlayerUiState(
     val playerBadgeFilters: List<CompiledStreamBadgeFilter> = emptyList(),
     val error: String? = null,
     val showSwitchToMpvErrorAction: Boolean = false,
-    /** Fork: a catch-up replay that never started ends here with a Retry beside Go back. */
+    /** Failed-start error (B214/B217) and a catch-up replay that never started: the error dialog offers Retry. */
     val showRetryErrorAction: Boolean = false,
     val playbackIssueReportStatus: PlaybackIssueReportStatus = PlaybackIssueReportStatus.Idle,
     val playbackIssueReportId: String? = null,
