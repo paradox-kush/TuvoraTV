@@ -19,7 +19,15 @@ internal object PlayerLoadDeadlinePolicy {
      * The clock parks only for a real background or a shown error. userPausedManually is NOT an input:
      * the lifecycle pause sets it and a resume never clears it, which disabled the deadline for good.
      */
-    fun clockSuspended(isInBackground: Boolean, hasError: Boolean): Boolean = isInBackground || hasError
+    fun clockSuspended(
+        isInBackground: Boolean,
+        hasError: Boolean,
+        viewerPaused: Boolean = false,
+    ): Boolean = isInBackground || hasError || viewerPaused
+
+    /** A pause the viewer asked for; the lifecycle pause (Home) also sets userPausedManually but is not one. */
+    fun viewerPaused(userPausedManually: Boolean, pauseSetByLifecycle: Boolean): Boolean =
+        userPausedManually && !pauseSetByLifecycle
 
     /** Audio-only streams never render a video frame; actually playing counts as started. */
     fun started(renderedFirstFrame: Boolean, enginePlaying: Boolean): Boolean = renderedFirstFrame || enginePlaying

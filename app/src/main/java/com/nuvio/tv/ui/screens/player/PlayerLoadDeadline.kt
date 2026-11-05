@@ -39,7 +39,11 @@ internal fun PlayerRuntimeController.armLoadDeadline() {
             // Only a real background parks the clock: userPausedManually is also set by the lifecycle
             // pause (and never cleared by a resume), so it must not gate the deadline. Time with an
             // error on screen is not the viewer waiting either.
-            val suspended = PlayerLoadDeadlinePolicy.clockSuspended(isInBackground, state.error != null)
+            val suspended = PlayerLoadDeadlinePolicy.clockSuspended(
+                isInBackground,
+                state.error != null,
+                PlayerLoadDeadlinePolicy.viewerPaused(userPausedManually, userPauseSetByLifecycle),
+            )
             // Audio-only streams never render a first video frame: actually playing is "started".
             val started = PlayerLoadDeadlinePolicy.started(hasRenderedFirstFrame, _exoPlayer?.isPlaying == true)
             val action = PlayerLoadDeadlinePolicy.decide(
@@ -80,6 +84,8 @@ internal fun PlayerRuntimeController.restartLoadDeadline() {
     loadDeadlineClock.reset(SystemClock.elapsedRealtime())
     loadDeadlineFailedOffline = false
     loadDeadlineFailed = false
+    // The failure's Retry affordance goes with it (an engine switch clears the error but not this flag).
+    _uiState.update { if (it.showRetryErrorAction) it.copy(showRetryErrorAction = false) else it }
 }
 
 private fun PlayerRuntimeController.failLoadDeadline(message: String, offline: Boolean) {

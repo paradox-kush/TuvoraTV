@@ -195,6 +195,8 @@ internal fun PlayerRuntimeController.initializePlayer(
             }
             resetLoadingOverlayForNewStream()
             if (startPaused) {
+                // A background rebuild (releaseForBackground) pauses on the lifecycle's behalf, not the viewer's.
+                if (isInBackground) userPauseSetByLifecycle = true
                 userPausedManually = true
                 shouldEnforceAutoplayOnFirstReady = false
             }
@@ -2136,6 +2138,7 @@ internal fun PlayerRuntimeController.resetLoadingOverlayForNewStream() {
     hasMarkedCurrentEpisodeCompleted = false
     shouldEnforceAutoplayOnFirstReady = true
     userPausedManually = false
+    userPauseSetByLifecycle = false
     timeoutRecoveryAttempts = 0
     hasRetriedCurrentStreamAfterUnexpectedNpe = false
     hasRetriedCurrentStreamAfterMediaPeriodHolderCrash = false

@@ -1384,6 +1384,7 @@ fun PlayerRuntimeController.onEvent(
                 val playing = isPlaybackCurrentlyPlaying()
                 if (playing) {
                     userPausedManually = true
+                    userPauseSetByLifecycle = false
                     setPlaybackPaused(true)
                     stopProgressUpdates()
                     stopWatchProgressSaving()
@@ -1391,6 +1392,7 @@ fun PlayerRuntimeController.onEvent(
                     schedulePauseOverlay()
                 } else {
                     userPausedManually = false
+                    userPauseSetByLifecycle = false
                     cancelPauseOverlay()
                     setPlaybackPaused(false)
                     startProgressUpdates()
@@ -1403,10 +1405,12 @@ fun PlayerRuntimeController.onEvent(
                 _exoPlayer?.let { player ->
                     if (player.isPlaying) {
                         userPausedManually = true
+                        userPauseSetByLifecycle = false
                         player.pause()
                         schedulePauseOverlay()
                     } else {
                         userPausedManually = false
+                        userPauseSetByLifecycle = false
                         cancelPauseOverlay()
                         player.play()
                     }

@@ -554,6 +554,8 @@ class PlayerRuntimeController(
     internal var nextEpisodePreloadJob: Job? = null
     internal var nextEpisodePreloadTriggered: Boolean = false
     internal var userPausedManually = false
+    /** userPausedManually was set by the lifecycle pause (Home), not by the viewer: it must not park the load deadline. */
+    internal var userPauseSetByLifecycle = false
 
     internal var isInBackground: Boolean = false
     internal var pendingBackgroundCrashRecovery: Boolean = false

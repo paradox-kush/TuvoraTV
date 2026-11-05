@@ -68,4 +68,13 @@ class PlayerLoadDeadlinePolicyTest {
         assertEquals(false, PlayerLoadDeadlinePolicy.started(renderedFirstFrame = false, enginePlaying = false))
         assertEquals(true, PlayerLoadDeadlinePolicy.started(renderedFirstFrame = true, enginePlaying = false))
     }
+
+    @Test
+    fun `a viewer pause parks the clock but the lifecycle pause does not count as one`() {
+        assertEquals(true, PlayerLoadDeadlinePolicy.viewerPaused(userPausedManually = true, pauseSetByLifecycle = false))
+        assertEquals("Home sets userPausedManually; that is not the viewer", false,
+            PlayerLoadDeadlinePolicy.viewerPaused(userPausedManually = true, pauseSetByLifecycle = true))
+        assertEquals(false, PlayerLoadDeadlinePolicy.viewerPaused(userPausedManually = false, pauseSetByLifecycle = false))
+        assertEquals(true, PlayerLoadDeadlinePolicy.clockSuspended(isInBackground = false, hasError = false, viewerPaused = true))
+    }
 }
