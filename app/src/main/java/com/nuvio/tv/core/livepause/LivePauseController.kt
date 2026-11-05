@@ -74,6 +74,8 @@ class LivePauseController(
     private var disposed = false
     /** A capture failure that arrived after its first piece but before the Prepared result was handled. */
     private var captureFailure: LivePauseFailure? = null
+    /** The last target actually sent to the engine: a held key clamped at an end must not re-seek it. */
+    private var lastSeekTarget: Long? = null
     /** Links this pause episode may still mint (capture opens, reconnects and Retry share it). */
     private var linkBudget = LiveLinkBudget()
 
@@ -344,6 +346,8 @@ class LivePauseController(
     private suspend fun seek(positionMs: Long) {
         val current = state.value as? LivePauseState.Shifted ?: return
         val target = positionMs.coerceIn(current.windowStartMs, maxOf(current.windowStartMs, current.windowEndMs))
+        if (target == lastSeekTarget && target == current.positionMs) return
+        lastSeekTarget = target
         if (mechanism == LivePauseMechanism.PROVIDER_CATCHUP) {
             val base = catchUpBaseWall
             if (base == null) {
@@ -505,6 +509,7 @@ class LivePauseController(
         tickJob = null
         sourceReleased = false
         catchUpBaseWall = null
+        lastSeekTarget = null
         mechanism = LivePauseMechanism.UNAVAILABLE
         mutableState.value = LivePauseState.Off
     }
