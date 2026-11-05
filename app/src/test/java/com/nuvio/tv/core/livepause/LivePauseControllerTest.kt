@@ -273,9 +273,12 @@ class LivePauseControllerTest {
     }
 
     @Test
-    fun `Retry after a failure goes live and starts a fresh buffer`() = runTest {
+    fun `Retry after a failure restarts only the capture and keeps the live link unspent`() = runTest {
         val f = fixture()
-        diskToShifted(f)
+        f.controller.onPause()
+        runCurrent()
+        advanceTimeBy(LivePauseController.CAPTURE_OPEN_DELAY_MS + 1)
+        runCurrent()
         f.capture.flow.emit(LiveCaptureEvent.Failed(LivePauseFailure.PROVIDER_REFUSED))
         runCurrent()
         f.controller.retry()
@@ -283,7 +286,7 @@ class LivePauseControllerTest {
 
         assertEquals("a new capture", 2, f.captures.size)
         assertTrue("the old one is gone", f.captures.first().disposed)
-        assertTrue("retuned before pausing again", f.engine.calls.indexOf("retune") >= 0)
+        assertFalse("no retune: the live source is already released and a retune would spend a link", f.engine.calls.contains("retune"))
         assertTrue(f.state is LivePauseState.Preparing)
     }
 

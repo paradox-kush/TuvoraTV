@@ -166,6 +166,9 @@ class OkHttpLiveCapture(
     private suspend fun openAndCapture() {
         // Every open mints: a single-use link is never re-opened, and the first open of one was already
         // spent by the player that just released it.
+        if (!spec.linkBudget.tryAcquire()) {
+            throw Stop(if (landed == 0) LivePauseFailure.PROVIDER_REFUSED else LivePauseFailure.STALLED)
+        }
         val link = spec.minter.mint() ?: return
         val client = clients.clientFor(link) ?: throw Stop(LivePauseFailure.PROVIDER_REFUSED)
         val call = client.newCall(requestFor(link, link.url))
@@ -392,6 +395,7 @@ class OkHttpLiveCapture(
     private fun pieceLanded(totalMs: Long, trimmedMs: Long) {
         landed++
         reconnect.onProgress()
+        spec.linkBudget.refill()
         lastProgress.set(monotonicMs())
         if (!readySent) {
             readySent = true

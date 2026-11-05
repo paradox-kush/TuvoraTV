@@ -74,6 +74,8 @@ class LivePauseController(
     private var disposed = false
     /** A capture failure that arrived after its first piece but before the Prepared result was handled. */
     private var captureFailure: LivePauseFailure? = null
+    /** Links this pause episode may still mint (capture opens, reconnects and Retry share it). */
+    private var linkBudget = LiveLinkBudget()
 
     init {
         scope.launch {
@@ -182,6 +184,7 @@ class LivePauseController(
 
     private suspend fun startPause() {
         mechanism = mechanismNow()
+        linkBudget = LiveLinkBudget()
         when (mechanism) {
             LivePauseMechanism.UNAVAILABLE -> engine.pause()
             LivePauseMechanism.PROVIDER_CATCHUP -> {
@@ -223,6 +226,7 @@ class LivePauseController(
                 keepMs = decision.keepMs,
                 bitrateBps = env.facts().bitrateBps,
                 maxCaptureBitrateBps = LivePausePolicy.maxCaptureBitrateBps(env.lowMemoryTier()),
+                linkBudget = linkBudget,
             )
         // deleteRecursively + mkdirs: disk work, so off the actor's (Main) thread. Not cancellable: a capture
         // that was created must reach `capture` so the teardown can delete it.
@@ -380,6 +384,18 @@ class LivePauseController(
 
     private suspend fun retryNow() {
         if (state.value !is LivePauseState.Failed) return
+        if (mechanism == LivePauseMechanism.DISK_BUFFER && sourceReleased) {
+            // The live source is already released: going live first would spend one single-use link on the
+            // player and then another on the new capture. Restart the capture alone, within the shared
+            // budget; once that is spent Retry just returns to live.
+            if (!linkBudget.hasRemaining()) {
+                goLive(failedFallsBackToPlay = true)
+                return
+            }
+            disposeCapture()
+            startDiskBuffer()
+            return
+        }
         goLive(failedFallsBackToPlay = true)
         pause()
     }

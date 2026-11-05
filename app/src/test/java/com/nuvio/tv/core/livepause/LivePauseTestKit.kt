@@ -46,6 +46,8 @@ internal class KitCapture(val spec: LiveCaptureSpec) : LiveCapture {
     override val events = flow
     override fun start() {
         started = true
+        // A start is a mint: it draws from the shared budget like the real capture's open does.
+        spec.linkBudget.tryAcquire()
     }
     override fun dispose() { disposed = true }
 }

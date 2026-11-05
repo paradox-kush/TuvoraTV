@@ -28,7 +28,37 @@ data class LiveCaptureSpec(
     val keepMs: Long,
     val bitrateBps: Long?,
     val maxCaptureBitrateBps: Long,
+    /** Shared with the controller: every mint (open, reconnect, Retry) draws from it. */
+    val linkBudget: LiveLinkBudget = LiveLinkBudget(),
 )
+
+/**
+ * The bounded count of links one pause episode may mint, shared by the capture (first open and reconnects)
+ * and the controller (Retry), so a single-use provider is never asked for more than [max] links without a
+ * piece landing in between. [refill] is the "progress" signal.
+ */
+class LiveLinkBudget(private val max: Int = DEFAULT_MAX) {
+    private val used = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** Takes one mint. False = the budget is spent: stop asking the provider. */
+    fun tryAcquire(): Boolean {
+        while (true) {
+            val now = used.get()
+            if (now >= max) return false
+            if (used.compareAndSet(now, now + 1)) return true
+        }
+    }
+
+    fun hasRemaining(): Boolean = used.get() < max
+
+    /** A piece landed: the count starts over. */
+    fun refill() = used.set(0)
+
+    companion object {
+        /** First open + the capture's 3 capped reconnects (LiveCaptureReconnect). */
+        const val DEFAULT_MAX = 4
+    }
+}
 
 sealed interface LiveCaptureEvent {
     /** The first playable piece is on disk; [playlistUri] is a `file://` URL of the local playlist. */
