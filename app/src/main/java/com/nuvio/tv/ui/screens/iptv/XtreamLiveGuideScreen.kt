@@ -515,6 +515,9 @@ fun LiveGuide(
                         if (!controlsVisible) showControls() else controlsTick++
                         zapReveal = true
                     }
+                    // Live pause / rewind is not offered on the guide's player yet (scrubbable is never set here).
+                    LiveControlsPolicy.KeyAction.SCRUB_BACK,
+                    LiveControlsPolicy.KeyAction.SCRUB_FORWARD -> showControls()
                 }
                 true
             }

@@ -39,6 +39,7 @@ internal fun CleanLivePlayerRoute(
 ) {
     val routeState by viewModel.routeState.collectAsStateWithLifecycle()
     val picture by viewModel.picture.collectAsStateWithLifecycle()
+    val livePause by viewModel.livePause.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context.findActivity()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -121,6 +122,9 @@ internal fun CleanLivePlayerRoute(
         onSelectSubtitle = { id -> if (!exitGate.isStarted()) scope.launch { viewModel.selectSubtitleTrack(id) } },
         picture = picture,
         onPictureChange = { update -> if (!exitGate.isStarted()) viewModel.requestPictureChange(update) },
+        livePause = livePause,
+        onSeekInWindow = { positionMs -> if (!exitGate.isStarted()) viewModel.seekInLivePause(positionMs) },
+        onGoLive = { if (!exitGate.isStarted()) viewModel.goLive() },
     )
 }
 
