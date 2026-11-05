@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.iptv
 
+import com.nuvio.tv.core.contracts.CatchUpContinuationPolicy
 import com.nuvio.tv.core.lifecycle.Disposable
 
 import javax.inject.Inject

@@ -1,7 +1,7 @@
-package com.nuvio.tv.core.iptv
+package com.nuvio.tv.core.contracts
 
-import com.nuvio.tv.core.iptv.CatchUpContinuationPolicy.Decision
-import com.nuvio.tv.core.iptv.CatchUpContinuationPolicy.Programme
+import com.nuvio.tv.core.contracts.CatchUpContinuationPolicy.Decision
+import com.nuvio.tv.core.contracts.CatchUpContinuationPolicy.Programme
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

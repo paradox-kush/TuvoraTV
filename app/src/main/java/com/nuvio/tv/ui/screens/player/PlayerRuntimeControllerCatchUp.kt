@@ -47,7 +47,7 @@ internal fun PlayerRuntimeController.advanceCatchUpDialect(errorCode: Int): Bool
  * Called from the progress loop on every tick. Follows the playhead of a replay that asked for a
  * continuation window (M3U): retitles as it crosses into the next show, asks for a new window when
  * this one runs out mid-show, rejoins live at the live edge, and says so when there is nothing left.
- * Every decision is [CatchUpReplayAdapter]'s (and [com.nuvio.tv.core.iptv.CatchUpContinuationPolicy]'s);
+ * Every decision is [CatchUpReplayAdapter]'s (and [com.nuvio.tv.core.contracts.CatchUpContinuationPolicy]'s);
  * this only acts on it. A plain replay (or VOD) costs one boolean check per tick.
  */
 internal fun PlayerRuntimeController.followCatchUpPlayhead(positionMs: Long) {

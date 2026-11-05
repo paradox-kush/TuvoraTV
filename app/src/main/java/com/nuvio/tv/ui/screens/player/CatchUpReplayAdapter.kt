@@ -1,7 +1,7 @@
 package com.nuvio.tv.ui.screens.player
 
 import com.nuvio.tv.core.contracts.CatchUpProgramme
-import com.nuvio.tv.core.iptv.CatchUpContinuationPolicy
+import com.nuvio.tv.core.contracts.CatchUpContinuationPolicy
 
 /**
  * Fork-only: what upstream's VOD player must do differently when it plays an IPTV catch-up replay

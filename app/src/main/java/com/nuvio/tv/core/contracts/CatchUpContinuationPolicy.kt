@@ -1,4 +1,4 @@
-package com.nuvio.tv.core.iptv
+package com.nuvio.tv.core.contracts
 
 /*
  * Adapted from homelessbrian/NuvioPlusIPTV (GPL-3.0), LiveTvViewModel.followCatchup().

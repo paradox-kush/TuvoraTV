@@ -310,8 +310,8 @@ class IptvProviderPlaybackResolver internal constructor(
 
         val channel = m3uChannels.find(account, streamId) ?: return unavailable(deterministic = true)
         val nowMs = System.currentTimeMillis()
-        val windowEnd = com.nuvio.tv.core.iptv.CatchUpContinuationPolicy.replayWindowEndMs(
-            com.nuvio.tv.core.iptv.CatchUpContinuationPolicy.Programme(window.startEpochMs, window.endEpochMs), nowMs,
+        val windowEnd = com.nuvio.tv.core.contracts.CatchUpContinuationPolicy.replayWindowEndMs(
+            com.nuvio.tv.core.contracts.CatchUpContinuationPolicy.Programme(window.startEpochMs, window.endEpochMs), nowMs,
         )
         val offsetMs = account.catchUpOffsetMs ?: 0L
         val primary = com.nuvio.tv.core.iptv.M3uCatchUp.build(
