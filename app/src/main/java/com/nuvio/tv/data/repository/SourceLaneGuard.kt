@@ -1,10 +1,10 @@
 package com.nuvio.tv.data.repository
 
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** A provider lane ran past [SourceLaneGuard.LANE_DEADLINE_MS] and is ended as a failure. */
 class SourceLaneTimeoutException(val deadlineMs: Long) :
@@ -29,16 +29,34 @@ class SourceLaneInterruptedException(cause: Throwable) :
 object SourceLaneGuard {
     const val LANE_DEADLINE_MS = 60_000L
 
-    suspend fun <T> bounded(deadlineMs: Long = LANE_DEADLINE_MS, block: suspend () -> T): T {
+    private class Held<T>(val value: T)
+
+    /**
+     * Runs [block] under [deadlineMs] (null: no deadline, only foreign-cancellation conversion; used
+     * for plugins, whose manager owns the per-scraper 120 s budget, staggering and queue). An inner
+     * TimeoutCancellationException is the provider's own interruption, not this deadline.
+     */
+    suspend fun <T> bounded(deadlineMs: Long? = LANE_DEADLINE_MS, block: suspend () -> T): T {
         val caller = currentCoroutineContext()
         try {
-            return withTimeout(deadlineMs) { block() }
-        } catch (error: TimeoutCancellationException) {
-            caller.ensureActive()
-            throw SourceLaneTimeoutException(deadlineMs)
+            if (deadlineMs == null) return block()
+            val held = withTimeoutOrNull(deadlineMs) { Held(block()) }
+            if (held == null) {
+                caller.ensureActive()
+                throw SourceLaneTimeoutException(deadlineMs)
+            }
+            return held.value
         } catch (error: CancellationException) {
             caller.ensureActive()
             throw SourceLaneInterruptedException(error)
         }
+    }
+}
+
+/** Runs [onFinish] at most once, however many paths (completion callback, catch, finally) report the lane done. */
+class OnceLane(private val onFinish: () -> Unit) {
+    private val done = AtomicBoolean(false)
+    fun finish() {
+        if (done.compareAndSet(false, true)) onFinish()
     }
 }
