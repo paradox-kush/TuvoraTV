@@ -102,6 +102,33 @@ class CatchUpPlaybackCoordinator @Inject constructor(
     private val m3uLadders = HashMap<String, M3uLadder>()
     private var m3uToken = 0L
 
+    /**
+     * Mints in flight, by replay. A second press (or Retry) on the same programme while its mint is
+     * still out joins it instead of minting a second single-use link.
+     */
+    private val inFlight = HashMap<String, kotlinx.coroutines.CompletableDeferred<Any?>>()
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun <T> singleFlight(key: String, ifCancelled: T, block: suspend () -> T): T {
+        val mine = kotlinx.coroutines.CompletableDeferred<Any?>()
+        val running = synchronized(lock) {
+            inFlight[key] ?: run { inFlight[key] = mine; null }
+        }
+        if (running != null) {
+            // The leader may be cancelled (its screen left); the follower then reports it as a failure
+            // rather than inheriting the cancellation, so the press is not silently lost.
+            return running.await() as T
+        }
+        try {
+            return block().also { mine.complete(it) }
+        } catch (t: Throwable) {
+            mine.complete(ifCancelled)
+            throw t
+        } finally {
+            synchronized(lock) { if (inFlight[key] === mine) inFlight.remove(key) }
+        }
+    }
+
     /** [open] calls that are still waiting; a result for any other ticket is stale and must not be published. */
     private val liveTickets = HashSet<Long>()
     private var ticketSeq = 0L
@@ -241,7 +268,9 @@ class CatchUpPlaybackCoordinator @Inject constructor(
         stalkerProgrammeId: String? = null,
     ): OpenOutcome {
         if (account.sourceType == XtreamAccount.SOURCE_STALKER) {
-            return openStalker(account, channelContentId, channelName, programme, nowMs, stalkerProgrammeId)
+            return singleFlight<OpenOutcome>("open:" + contentIdFor(channelContentId, programme.startMs), OpenOutcome.Failed(timedOut = false)) {
+                openStalker(account, channelContentId, channelName, programme, nowMs, stalkerProgrammeId)
+            }
         }
         val ticket = synchronized(lock) { (++ticketSeq).also { liveTickets.add(it) } }
         val outcome = BoundedLoad.run<Session?>(
@@ -494,7 +523,14 @@ class CatchUpPlaybackCoordinator @Inject constructor(
      * Null when [contentId] is not a held Stalker replay (not one, or the player already let go of it).
      */
     suspend fun reopenStalker(contentId: String?): Reopened? {
-        val held = contentId?.let { synchronized(lock) { stalkerReplays[it] } } ?: return null
+        if (contentId == null) return null
+        val held = synchronized(lock) { stalkerReplays[contentId] } ?: return null
+        return singleFlight<Reopened?>("reopen:$contentId", Reopened.Refused(StalkerReplayOutcome.forOpen(CatchUpFailure.StalkerLinkError.NONE))) {
+            mintAgain(contentId, held)
+        }
+    }
+
+    private suspend fun mintAgain(contentId: String, held: StalkerReplay): Reopened? {
         val outcome = BoundedLoad.run<StalkerArchiveSource.Minted>(
             surface = LoadSurface.LIVE_RESOLVE,
             report = mapOf("source_type" to held.account.sourceType, "kind" to "catchup"),

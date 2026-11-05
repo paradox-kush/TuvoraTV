@@ -4,6 +4,9 @@ import androidx.media3.common.PlaybackException
 import com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError
 import com.nuvio.tv.core.iptv.stalker.StalkerArchiveSource
 import com.nuvio.tv.core.iptv.stalker.StalkerReplayOutcome
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -147,5 +150,59 @@ class CatchUpPlaybackCoordinatorStalkerTest {
         assertTrue(c.supportsStalkerArchive(account))
         assertFalse(c.supportsStalkerArchive(account.copy(sourceType = XtreamAccount.SOURCE_XTREAM)))
         assertFalse(c.supportsStalkerArchive(account.copy(sourceType = XtreamAccount.SOURCE_URL)))
+    }
+
+    /** A portal whose mints after the first [freeMints] wait on [gate]; counts every ask. */
+    private class GatedPortal(private val freeMints: Int = 0) : StalkerArchiveSource {
+        val gate = CompletableDeferred<Unit>()
+        var asked = 0
+        override suspend fun mint(account: XtreamAccount, programmeId: String): StalkerArchiveSource.Minted {
+            val n = ++asked
+            if (n > freeMints) gate.await()
+            return StalkerArchiveSource.Minted.Link("http://store.invalid/play/$n")
+        }
+    }
+
+    @Test
+    fun `a double press mints one link, not two`() = runTest {
+        val portal = GatedPortal()
+        val c = coordinator(portal)
+
+        val first = async { c.openNews() }
+        val second = async { c.openNews() }
+        runCurrent() // not advanceUntilIdle: that would run the 20 s open deadline out in virtual time
+        portal.gate.complete(Unit)
+
+        val a = first.await() as CatchUpPlaybackCoordinator.OpenOutcome.Opened
+        val b = second.await() as CatchUpPlaybackCoordinator.OpenOutcome.Opened
+        assertEquals("one create_link for two presses", 1, portal.asked)
+        assertEquals("both presses see the same session", a.session.url, b.session.url)
+    }
+
+    @Test
+    fun `a press after the first finished mints again`() = runTest {
+        val portal = FakePortal()
+        val c = coordinator(portal)
+
+        c.openNews()
+        c.openNews()
+
+        assertEquals("the in-flight guard does not stick", 2, portal.asked.size)
+    }
+
+    @Test
+    fun `a double retry mints one fresh link`() = runTest {
+        val portal = GatedPortal(freeMints = 1)
+        val c = coordinator(portal)
+        val s = (c.openNews() as CatchUpPlaybackCoordinator.OpenOutcome.Opened).session
+
+        val r1 = async { c.reopenStalker(s.contentId) }
+        val r2 = async { c.reopenStalker(s.contentId) }
+        runCurrent() // not advanceUntilIdle: that would run the 20 s open deadline out in virtual time
+        portal.gate.complete(Unit)
+
+        assertTrue(r1.await() is CatchUpPlaybackCoordinator.Reopened.Link)
+        assertTrue(r2.await() is CatchUpPlaybackCoordinator.Reopened.Link)
+        assertEquals("one open + one re-mint for two Retry presses", 2, portal.asked)
     }
 }
