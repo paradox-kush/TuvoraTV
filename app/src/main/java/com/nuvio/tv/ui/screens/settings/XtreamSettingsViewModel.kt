@@ -79,6 +79,8 @@ data class XtreamSettingsUiState(
     val accountStatus: Map<String, String> = emptyMap(),
     /** accountIds whose panel account check failed (the details page says "Couldn't check expiry", not "not reported"). */
     val accountInfoFailed: Set<String> = emptySet(),
+    /** accountIds the details page deliberately did NOT ask (a portal playlist turned off on this device). */
+    val inspectionSkipped: Set<String> = emptySet(),
     /** accountId -> local catalog counts ("12,000 channels"), for the details page. */
     val catalogCounts: Map<String, String> = emptyMap(),
     /** accountId -> the panel's structured account info (days left, connections) for the details page. */
@@ -389,9 +391,15 @@ class XtreamSettingsViewModel @Inject constructor(
         if (panel != null) {
             viewModelScope.launch {
                 _uiState.update { it.copy(isValidating = true, error = null) }
-                val verified = com.nuvio.tv.core.sources.DeviceSources.verifying { client.verify(panel) }.isSuccess
+                val check = com.nuvio.tv.core.sources.DeviceSources.verifying { client.verify(panel) }
+                val verified = check.isSuccess
                 _uiState.update { it.copy(isValidating = false) }
-                if (verified) {
+                val refusal = check.exceptionOrNull()?.takeIf { it is com.nuvio.tv.core.sources.SourceDisabledOnDeviceException }
+                if (refusal != null) {
+                    // The device guard refused this playlist: saving the same URL as a fresh m3u: playlist (new id)
+                    // would sidestep the off switch. Show the refusal; add nothing.
+                    _uiState.update { it.copy(error = PlaylistSaveErrorPolicy.messageFor(refusal)) }
+                } else if (verified) {
                     if (persistOrError { store.upsert(accountToStore(panel)) }) {
                         resolver.warmUp(listOf(panel))
                         syncService.triggerRemoteSync()
@@ -1029,6 +1037,9 @@ class XtreamSettingsViewModel @Inject constructor(
             }
             // M3U playlists have no account endpoint at all — don't burn a doomed request per row.
             if (account.isM3UBacked()) return@launch
+            // A playlist turned off on this device is not asked by the list; the details page inspects it on open.
+            if (!account.availableOnDevice) { statusRequests.remove(account.id); return@launch }
+            try {
             clientFactory.clientFor(account).accountInfo(account)
                 .onSuccess { info ->
                     _uiState.update { it.copy(accountInfo = it.accountInfo + (account.id to info), accountInfoFailed = it.accountInfoFailed - account.id) }
@@ -1038,10 +1049,14 @@ class XtreamSettingsViewModel @Inject constructor(
                     }
                 }
                 .onFailure { e ->
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is kotlinx.coroutines.CancellationException && e !is com.nuvio.tv.core.sources.SourceDisabledOnDeviceException) throw e
                     _uiState.update { st -> st.copy(accountInfoFailed = st.accountInfoFailed + account.id) }
                     if (counts.isEmpty()) statusRequests.remove(account.id)   // silent; retry later
                 }
+            } finally {
+                // A cancelled/refused ask must not leave the row blank until the VM is recreated (re-enable heals it).
+                if (!_uiState.value.accountInfo.containsKey(account.id)) statusRequests.remove(account.id)
+            }
         }
     }
 
@@ -1052,6 +1067,19 @@ class XtreamSettingsViewModel @Inject constructor(
      */
     fun inspectAccountStatus(account: XtreamAccount) {
         if (account.isM3UBacked()) return
+        when (com.nuvio.tv.core.iptv.DetailsInspectionPolicy.plan(account.sourceType, account.availableOnDevice)) {
+            // Turned on here: the list row already asked (and caches); nothing extra.
+            com.nuvio.tv.core.iptv.DetailsInspectionPolicy.Plan.NORMAL -> {
+                _uiState.update { it.copy(inspectionSkipped = it.inspectionSkipped - account.id) }
+                return
+            }
+            // A portal's handshake can log another device out: only ask while it is turned on here.
+            com.nuvio.tv.core.iptv.DetailsInspectionPolicy.Plan.SKIP -> {
+                _uiState.update { it.copy(inspectionSkipped = it.inspectionSkipped + account.id, accountInfoFailed = it.accountInfoFailed - account.id) }
+                return
+            }
+            com.nuvio.tv.core.iptv.DetailsInspectionPolicy.Plan.INSPECT -> _uiState.update { it.copy(inspectionSkipped = it.inspectionSkipped - account.id) }
+        }
         viewModelScope.launch {
             com.nuvio.tv.core.sources.DeviceSources.inspecting { clientFactory.clientFor(account).accountInfo(account) }
                 .onSuccess { info ->
@@ -1061,7 +1089,7 @@ class XtreamSettingsViewModel @Inject constructor(
                     }
                 }
                 .onFailure { e ->
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is kotlinx.coroutines.CancellationException && e !is com.nuvio.tv.core.sources.SourceDisabledOnDeviceException) throw e
                     _uiState.update { st -> st.copy(accountInfoFailed = st.accountInfoFailed + account.id) }
                 }
         }

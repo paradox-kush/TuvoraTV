@@ -129,4 +129,11 @@ class PlaylistSaveErrorPolicyTest {
         val plain = kotlinx.coroutines.CancellationException("scope cancelled")
         assertEquals(PlaylistSaveError.UNREACHABLE, PlaylistSaveErrorPolicy.classify(plain))
     }
+
+    @Test
+    fun `an account-wide refusal says so instead of blaming this device`() {
+        val refusal = com.nuvio.tv.core.sources.SourceDisabledOnDeviceException("iptv", "ready", com.nuvio.tv.core.sources.RefusalScope.ACCOUNT)
+        assertEquals(PlaylistSaveError.SOURCE_DISABLED_FOR_ACCOUNT, PlaylistSaveErrorPolicy.classify(refusal))
+        assertFalse(msg(refusal), msg(refusal).contains("this device"))
+    }
 }

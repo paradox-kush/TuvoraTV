@@ -9,6 +9,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -82,32 +83,42 @@ class DeviceSources @Inject constructor(
                 it.sourceId == id && it.accountEnabled && engine.choice(owner.profile(),id)
             }
         }
-        /** One line per refusal: source kind and engine mode only, never a host, id or URL. */
-        internal fun logRefusal(kind: String, mode: String) { android.util.Log.i("DeviceSources", "source refused on this device: kind=$kind mode=$mode") }
-        private fun refuse(kind: String): Nothing {
-            val mode = instance?.engine()?.state?.value?.mode ?: "unknown"
+        /** Debug level: guards sit on hot paths (every addon request), so a refusal must not flood the log. */
+        internal fun logRefusal(kind: String, mode: String) { android.util.Log.d("DeviceSources", "source refused on this device: kind=$kind mode=$mode") }
+        private fun refuse(kind: String, ref: String?): Nothing {
+            val owner = instance
+            val mode = owner?.engine()?.state?.value?.mode ?: "unknown"
+            val scope = if (owner == null || ref == null) RefusalScope.DEVICE else owner.engine().refusalScope(owner.profile(), kind, ref)
             logRefusal(kind, mode)
-            throw SourceDisabledOnDeviceException(kind, mode)
+            throw SourceDisabledOnDeviceException(kind, mode, scope)
         }
         private suspend fun currentAccess() = currentCoroutineContext()[DeviceSourceAccessElement]?.access ?: DeviceSourceAccess.DISCOVERY
-        fun guard(kind: String, ref: String) { if (!allows(kind,ref)) refuse(kind) }
+        /** The wrong profile must never be read: wait (bounded) for the sign-in state, else refuse. */
+        private suspend fun authSettled(owner: DeviceSources): Boolean {
+            val flow = owner.auth.get().authState
+            return flow.value != com.nuvio.tv.domain.model.AuthState.Loading ||
+                kotlinx.coroutines.withTimeoutOrNull(5_000) { flow.first { it != com.nuvio.tv.domain.model.AuthState.Loading } } != null
+        }
+        fun guard(kind: String, ref: String) { if (!allows(kind,ref)) refuse(kind, ref) }
         /** [guard] for suspend callers: honours [verifying] / [inspecting] for the current request. */
         suspend fun checkAccess(kind: String, ref: String) {
             val owner = instance ?: return
             when (val access = currentAccess()) {
                 DeviceSourceAccess.INSPECT -> return
                 DeviceSourceAccess.DISCOVERY -> guard(kind, ref)
-                else -> if (!owner.engine().permits(access, owner.profile(), kind, ref)) refuse(kind)
+                else -> if (!authSettled(owner) || !owner.engine().permits(access, owner.profile(), kind, ref)) refuse(kind, ref)
             }
         }
         suspend fun <T> guarded(kind: String, ref: String, block: suspend () -> T): T {
             val owner = instance ?: return block()
-            return owner.engine().guarded(owner.profile(),kind,ref,currentAccess(),block)
+            val access = currentAccess()
+            if (access == DeviceSourceAccess.VERIFY && !authSettled(owner)) refuse(kind, ref)
+            return owner.engine().guarded(owner.profile(),kind,ref,access,block)
         }
         /** The add/edit form's live check of a playlist: allowed before the device has a choice for it. */
         suspend fun <T> verifying(block: suspend () -> T): T = withContext(DeviceSourceAccessElement(DeviceSourceAccess.VERIFY)) { block() }
         /** A read-only account lookup the user opened (expiry, connections): allowed for a source turned off here. */
         suspend fun <T> inspecting(block: suspend () -> T): T = withContext(DeviceSourceAccessElement(DeviceSourceAccess.INSPECT)) { block() }
-        fun guardAddon(url: String) { if (!addonAllowed(url)) refuse("addon") }
+        fun guardAddon(url: String) { if (!addonAllowed(url)) refuse("addon", null) }
     }
 }

@@ -423,7 +423,8 @@ fun XtreamSettingsContent(
                     justAddedBy = justAddedBy,
                     detachedFrom = detachedFrom?.takeIf { it.first == id }?.second,
                     rematchStarted = id in rematchStarted,
-                    expiryCheckFailed = id in uiState.accountInfoFailed,
+                    expiryCheckFailed = id in uiState.accountInfoFailed && id !in uiState.inspectionSkipped,
+                    inspectionSkipped = id in uiState.inspectionSkipped,
                     nowEpochSec = System.currentTimeMillis() / 1000,
                 ),
                 onAction = { action ->

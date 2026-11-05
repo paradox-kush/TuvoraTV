@@ -360,4 +360,12 @@ class DeviceSourceEngineTest {
         assertEquals(DeviceSourceAccess.INSPECT, DeviceSources.inspecting { kotlin.coroutines.coroutineContext[DeviceSourceAccessElement]?.access })
         assertEquals(DeviceSourceAccess.VERIFY, DeviceSources.verifying { kotlin.coroutines.coroutineContext[DeviceSourceAccessElement]?.access })
     }
+
+    @Test fun refusalNamesWhoTurnedTheSourceOff() = runTest {
+        val accountOff = source.copy(accountEnabled = false)
+        val memory = Memory(json.encodeToString(DevicePreferenceDisk(binding = SavedDeviceBinding("setup", "Phone", "secret"), cursor = 0, sources = mapOf(1 to listOf(accountOff)))))
+        assertEquals(RefusalScope.ACCOUNT, refusalOf(engine(memory), source.sourceRef, DeviceSourceAccess.VERIFY)!!.scope)
+        val here = engine(cached(listOf(DevicePreferenceValue(1, source.sourceId, false, 1))))
+        assertEquals(RefusalScope.DEVICE, refusalOf(here, source.sourceRef, DeviceSourceAccess.VERIFY)!!.scope)
+    }
 }

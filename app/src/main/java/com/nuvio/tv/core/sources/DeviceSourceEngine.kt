@@ -23,8 +23,12 @@ import kotlinx.serialization.json.*
  * network failure (B224: it used to read as "Couldn't reach the server"). Carries only the source [kind]
  * and the engine [mode] - never a host, id or URL.
  */
-class SourceDisabledOnDeviceException(val kind: String, val mode: String) :
-    CancellationException("Source disabled on this device")
+class SourceDisabledOnDeviceException(
+    val kind: String, val mode: String, val scope: RefusalScope = RefusalScope.DEVICE,
+) : CancellationException("Source disabled on this device")
+
+/** Who turned the source off: this device's own choice, or the account (the playlist is off for every device). */
+enum class RefusalScope { DEVICE, ACCOUNT }
 
 /**
  * Why a request reaches a source. [DISCOVERY] (the default) is playback and catalog use: it needs the
@@ -166,11 +170,15 @@ class DeviceSourceEngine(
             knownSources(profile).filter { it.kind == kind && it.sourceRef == ref }.all { it.accountEnabled && choice(profile, it.sourceId) }
     }
 
-    /** Throws the typed refusal (and reports it once). */
-    fun refuse(kind: String): Nothing {
+    /** Whether the account itself (not this device) has [ref] off: any matching source with accountEnabled == false. */
+    fun refusalScope(profile: Int, kind: String, ref: String): RefusalScope =
+        if (knownSources(profile).any { it.kind == kind && it.sourceRef == ref && !it.accountEnabled }) RefusalScope.ACCOUNT else RefusalScope.DEVICE
+
+    /** Throws the typed refusal (and reports it). */
+    fun refuse(kind: String, scope: RefusalScope = RefusalScope.DEVICE): Nothing {
         val mode = state.value.mode
         onRefused(kind, mode)
-        throw SourceDisabledOnDeviceException(kind, mode)
+        throw SourceDisabledOnDeviceException(kind, mode, scope)
     }
 
     fun allows(profile: Int, kind: String, ref: String): Boolean {
@@ -186,15 +194,15 @@ class DeviceSourceEngine(
         profile: Int, kind: String, ref: String,
         access: DeviceSourceAccess = DeviceSourceAccess.DISCOVERY, block: suspend () -> T,
     ): T = kotlinx.coroutines.coroutineScope {
-        if (!permits(access,profile,kind,ref)) refuse(kind)
+        if (!permits(access,profile,kind,ref)) refuse(kind, refusalScope(profile,kind,ref))
         if (access == DeviceSourceAccess.INSPECT) return@coroutineScope block()
         val task = async { block() }
         val watcher = launch {
             state.collect {
-                if (!permits(access,profile,kind,ref)) task.cancel(SourceDisabledOnDeviceException(kind, state.value.mode))
+                if (!permits(access,profile,kind,ref)) task.cancel(SourceDisabledOnDeviceException(kind, state.value.mode, refusalScope(profile,kind,ref)))
             }
         }
-        try { task.await().also { if (!permits(access,profile,kind,ref)) refuse(kind) } }
+        try { task.await().also { if (!permits(access,profile,kind,ref)) refuse(kind, refusalScope(profile,kind,ref)) } }
         finally { watcher.cancel() }
     }
 

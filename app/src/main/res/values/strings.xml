@@ -3640,6 +3640,8 @@
         <item quantity="other">%d days left</item>
     </plurals>
     <string name="iptv_details_expired">Expired</string>
+    <string name="iptv_details_turn_on_to_check">Turn this playlist on to check its account</string>
+    <string name="iptv_playlist_error_source_disabled_account">This playlist is turned off on your account — turn it on in your playlist settings, then try again</string>
     <string name="iptv_details_expiry_check_failed">Couldn\'t check expiry</string>
     <string name="iptv_details_expiry_unknown">Expiry not reported by this provider</string>
     <string name="iptv_details_never_expires">Never expires</string>
