@@ -1,7 +1,13 @@
 package com.nuvio.tv.core.iptv
 
 import androidx.media3.common.PlaybackException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
@@ -210,5 +216,60 @@ class CatchUpPlaybackCoordinatorM3uTest {
         )
         assertTrue("opened: $ok", ok is CatchUpPlaybackCoordinator.OpenOutcome.Opened)
         assertNotEquals(CatchUpPlaybackCoordinator.OpenOutcome.Unavailable, ok)
+    }
+
+    // --- shared state, stale results, ownership -------------------------------------------------
+
+    @Test
+    fun `several coroutines can open look up fail and release replays at once`() = runBlocking(Dispatchers.Default) {
+        val c = coordinator()
+        val jobs = (0 until 8).map { w ->
+            launch {
+                repeat(300) { i ->
+                    val id = w * 1000 + i + 1
+                    val s = c.begin(
+                        account = m3u(), channelContentId = "m3u:list-a:live:$id", channelName = "C$id", streamId = id,
+                        programme = programme, nowMs = now, liveUrl = "http://panel.invalid/live/user/pass/$id.ts",
+                        m3uCatchUp = xtreamStyle,
+                    )!!
+                    assertNotNull(c.m3uContextFor(s.contentId))
+                    c.onFailed(s.contentId, PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS)
+                    c.restartM3u(s.contentId, start + 5 * 60_000L, now)
+                    if (i % 2 == 0) c.onPlayed(s.contentId)
+                    c.release(s.contentId)
+                    assertNull(c.sessionFor(s.contentId))
+                }
+            }
+        }
+        jobs.forEach { it.join() }
+    }
+
+    @Test
+    fun `a begin that finishes after its open timed out publishes nothing`() = runTest {
+        val gate = CompletableDeferred<Long?>()
+        // A call that ignores cancellation, the case BoundedLoad exists for.
+        val slow = PanelClockSource { withContext(NonCancellable) { gate.await() } }
+        val c = coordinator(panelClock = slow)
+        val outcome = c.open(
+            account = xtream(), channelContentId = "xtream:acc:live:7", channelName = "BBC", streamId = 7,
+            programme = programme, nowMs = now,
+        )
+        assertEquals(CatchUpPlaybackCoordinator.OpenOutcome.Failed(timedOut = true), outcome)
+
+        gate.complete(null)
+        testScheduler.advanceUntilIdle()
+
+        assertNull("the viewer gave up on it: no session", c.sessionFor(c.contentIdFor("xtream:acc:live:7", start)))
+    }
+
+    @Test
+    fun `holding a replay's context and disposing it drops the context`() = runTest {
+        val c = coordinator()
+        val s = c.beginM3u()!!
+        val hold = c.hold(s.contentId)
+        assertNotNull("held while the player is up", c.m3uContextFor(s.contentId))
+        hold.dispose()
+        assertNull("gone with the player", c.m3uContextFor(s.contentId))
+        hold.dispose() // at most once, harmlessly
     }
 }
