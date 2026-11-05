@@ -3,6 +3,8 @@ package com.nuvio.tv.core.iptv.content
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.nuvio.tv.core.iptv.M3uCatchUpInfo
+import com.nuvio.tv.core.iptv.M3uCatchUpType
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,8 +13,9 @@ import javax.inject.Singleton
 
 /** One live/vod row as stored/queried. sid is the synthetic per-playlist stream id.
  *  [useHttpTmpLink]/[useLoadBalancing] mirror the Xtream panel's per-channel flags (stream
- *  resolution consumes them — this store only persists and returns them). */
-data class ContentChannel(val sid: Int, val name: String, val logo: String?, val tvgId: String?, val categoryId: String?, val url: String, val cmd: String? = null, val hasArchive: Boolean = false, val useHttpTmpLink: Boolean = false, val useLoadBalancing: Boolean = false)
+ *  resolution consumes them — this store only persists and returns them). [catchUp] is the M3U
+ *  playlist's per-channel catch-up (null = none; Xtream/Stalker use [hasArchive] alone). */
+data class ContentChannel(val sid: Int, val name: String, val logo: String?, val tvgId: String?, val categoryId: String?, val url: String, val cmd: String? = null, val hasArchive: Boolean = false, val useHttpTmpLink: Boolean = false, val useLoadBalancing: Boolean = false, val catchUp: M3uCatchUpInfo? = null)
 data class ContentVod(val sid: Int, val name: String, val logo: String?, val categoryId: String?, val url: String, val ext: String?, val cmd: String? = null)
 /** A series HEADER (grouped M3U episodes). [sid] is a synthetic id derived from the series name. */
 data class ContentSeries(val sid: Int, val name: String, val logo: String?, val categoryId: String?)
@@ -63,7 +66,9 @@ data class EpgCensusRow(
  * short, and the ingest_meta row written LAST so a crashed/partial ingest reads as "not built".
  */
 @Singleton
-class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
+class IptvContentDb internal constructor(context: Context, dbName: String) {
+    @Inject constructor(@ApplicationContext context: Context) : this(context, "iptv_content.db")
+
 
     // v4 (memory/catch-up pre-work, one migration): epg_programmes.has_archive, the
     // per-(playlist, channel) fetch-stamp table, and the Xtream channel flags. This helper
@@ -73,7 +78,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     // `generation` column in its primary key, so a refresh builds generation N+1 BESIDE the one
     // still being served and flips in one transaction (IngestWriter.finish). A crash before the
     // flip leaves the previous, complete catalog serving — the old clear-first ingest left it empty.
-    private val helper = object : SQLiteOpenHelper(context, "iptv_content.db", null, 5) {
+    private val helper = object : SQLiteOpenHelper(context, dbName, null, 5) {
         override fun onConfigure(db: SQLiteDatabase) {
             // WAL: browse/guide reads keep serving while a background ingest writes — the
             // default journal mode blocks every reader for the duration of each write
@@ -141,6 +146,15 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
                     found
                 }
                 if (!has) d.execSQL("ALTER TABLE $table ADD COLUMN ord INTEGER")
+            }
+            // M3U catch-up (catchup-type / catchup-source / catchup-days) per live channel. Added in
+            // place like `ord`: a version bump drops every cached catalog. NULL on older rows reads
+            // as "no M3U catch-up" until the next refresh writes it.
+            val channelColumns = d.rawQuery("PRAGMA table_info(channels)", null).use { c ->
+                buildSet { while (c.moveToNext()) add(c.getString(1)) }
+            }
+            for ((column, type) in CATCHUP_COLUMNS) {
+                if (column !in channelColumns) d.execSQL("ALTER TABLE channels ADD COLUMN $column $type")
             }
         }
     }
@@ -274,7 +288,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         // --- batched writers (each its own transaction) ---
         private fun flushChannels() {
             inTx {
-                val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing, ord) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing, ord, catchup_type, catchup_source, catchup_days) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
                 for ((i, r) in channelBatch.withIndex()) {
                     s.clearBindings()
                     s.bindString(1, playlistId); s.bindLong(2, generation); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
@@ -282,6 +296,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
                     bindNullable(s, 9, r.cmd); s.bindLong(10, if (r.hasArchive) 1L else 0L)
                     s.bindLong(11, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(12, if (r.useLoadBalancing) 1L else 0L)
                     s.bindLong(13, channelOrd[i])
+                    bindCatchUp(s, 14, r.catchUp)
                     s.executeInsert()
                 }
                 s.close()
@@ -564,11 +579,11 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     suspend fun pageChannels(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<ContentChannel> = withContext(Dispatchers.IO) {
         val (where, args) = catFilter(playlistId, categoryId)
         db.rawQuery(
-            "SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE $where ORDER BY name, sid LIMIT ? OFFSET ?",
+            "SELECT $CHANNEL_COLS FROM channels WHERE $where ORDER BY name, sid LIMIT ? OFFSET ?",
             args + arrayOf(limit.toString(), offset.toString()),
         ).use { c ->
             buildList {
-                while (c.moveToNext()) add(ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0))
+                while (c.moveToNext()) add(channelOf(c))
             }
         }
     }
@@ -598,9 +613,9 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     /** [categoryId] null = every channel in the playlist. */
     suspend fun channelsFor(playlistId: String, categoryId: String?): List<ContentChannel> = withContext(Dispatchers.IO) {
         val (where, args) = catFilter(playlistId, categoryId)
-        db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE $where ORDER BY ord, sid", args).use { c ->
+        db.rawQuery("SELECT $CHANNEL_COLS FROM channels WHERE $where ORDER BY ord, sid", args).use { c ->
             buildList {
-                while (c.moveToNext()) add(ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0))
+                while (c.moveToNext()) add(channelOf(c))
             }
         }
     }
@@ -646,8 +661,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     }
 
     suspend fun channelRow(playlistId: String, sid: Int): ContentChannel? = withContext(Dispatchers.IO) {
-        db.rawQuery("SELECT sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE playlist_id = ? AND $gen AND sid = ?", arrayOf(playlistId, playlistId, sid.toString())).use { c ->
-            if (c.moveToFirst()) ContentChannel(c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5), c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0) else null
+        db.rawQuery("SELECT $CHANNEL_COLS FROM channels WHERE playlist_id = ? AND $gen AND sid = ?", arrayOf(playlistId, playlistId, sid.toString())).use { c ->
+            if (c.moveToFirst()) channelOf(c) else null
         }
     }
 
@@ -677,13 +692,14 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             val g = activeGeneration(playlistId)
             db.delete("channels", "playlist_id = ? AND generation = ?", arrayOf(playlistId, g.toString()))
             db.delete("categories", "playlist_id = ? AND generation = ? AND type = ?", arrayOf(playlistId, g.toString(), TYPE_LIVE))
-            val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+            val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing, catchup_type, catchup_source, catchup_days) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
             for (r in channels) {
                 s.clearBindings()
                 s.bindString(1, playlistId); s.bindLong(2, g); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
                 s.bindString(5, r.name); bindNullable(s, 6, r.logo); bindNullable(s, 7, r.tvgId); s.bindString(8, r.url)
                 bindNullable(s, 9, r.cmd); s.bindLong(10, if (r.hasArchive) 1L else 0L)
                 s.bindLong(11, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(12, if (r.useLoadBalancing) 1L else 0L)
+                bindCatchUp(s, 13, r.catchUp)
                 s.executeInsert()
             }
             s.close()
@@ -943,6 +959,13 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
+    /** Stream id -> archive days for the playlist's M3U channels that carry catch-up (the guide's history depth). */
+    suspend fun liveCatchUpDays(playlistId: String): Map<Int, Int> = withContext(Dispatchers.IO) {
+        db.rawQuery("SELECT sid, catchup_days FROM channels WHERE playlist_id = ? AND $gen AND catchup_type IS NOT NULL", arrayOf(playlistId, playlistId)).use { c ->
+            buildMap { while (c.moveToNext()) put(c.getInt(0), if (c.isNull(1)) 1 else c.getInt(1).coerceAtLeast(1)) }
+        }
+    }
+
     /** Batches programme inserts during an XMLTV parse (mirrors IngestWriter's chunking). */
     inner class EpgWriter internal constructor(private val playlistId: String) {
         private val batch = ArrayList<EpgProgramme>(CHUNK)
@@ -1134,6 +1157,10 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
     companion object {
         /** Catalog tables whose rows carry their source position (`ord`, B64 follow-up). */
         private val ORDERED_TABLES = listOf("channels", "vod", "series")
+        private val CATCHUP_COLUMNS = listOf("catchup_type" to "TEXT", "catchup_source" to "TEXT", "catchup_days" to "INTEGER")
+
+        /** Column list every channel read selects (order matches [channelOf]). */
+        private const val CHANNEL_COLS = "sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing, catchup_type, catchup_source, catchup_days"
 
         const val TYPE_LIVE = "live"
         const val TYPE_VOD = "vod"
@@ -1175,3 +1202,25 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 }
 
 private fun android.database.Cursor.getStringOrNull(index: Int): String? = if (isNull(index)) null else getString(index)
+
+private fun channelOf(c: android.database.Cursor) = ContentChannel(
+    c.getInt(0), c.getString(1), c.getStringOrNull(2), c.getStringOrNull(3), c.getStringOrNull(4), c.getString(5),
+    c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0,
+    catchUp = storedCatchUp(c.getStringOrNull(10), c.getStringOrNull(11), if (c.isNull(12)) 0 else c.getInt(12)),
+)
+
+/** A stored triple back to its settings; an unknown type (a future dialect) or a missing one reads as none. */
+internal fun storedCatchUp(type: String?, source: String?, days: Int): M3uCatchUpInfo? {
+    val t = type?.let { name -> runCatching { M3uCatchUpType.valueOf(name) }.getOrNull() } ?: return null
+    return M3uCatchUpInfo(t, source, days.coerceAtLeast(1))
+}
+
+private fun bindCatchUp(stmt: android.database.sqlite.SQLiteStatement, index: Int, info: M3uCatchUpInfo?) {
+    if (info == null) {
+        stmt.bindNull(index); stmt.bindNull(index + 1); stmt.bindNull(index + 2)
+    } else {
+        stmt.bindString(index, info.type.name)
+        info.source?.let { stmt.bindString(index + 1, it) } ?: stmt.bindNull(index + 1)
+        stmt.bindLong(index + 2, info.days.toLong())
+    }
+}
