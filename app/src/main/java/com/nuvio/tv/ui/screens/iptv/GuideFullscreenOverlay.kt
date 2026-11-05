@@ -141,11 +141,27 @@ internal fun BoxScope.GuideFullscreenOverlay(
     onAspectLabel: (String) -> Unit,
     onOpenChannelList: () -> Unit,
 ) {
+    FullscreenOverlayGate(fullscreen, controls) {
+        GuideFullscreenOverlayContent(
+            controls, viewModel, playbackViewModel, playbackState, playingContentId, nowMs, favoriteIds,
+            livePicture, primaryFocus, onTogglePause, onHide, onOpenPanel, onAspectLabel, onOpenChannelList,
+        )
+    }
+}
+
+/**
+ * The only composition-time reader of [FullscreenControlsState.visible] for the overlay. Its own
+ * (non-inline) scope is what keeps a visibility flip away from the hosting guide; the isolation test
+ * drives this real gate.
+ */
+@Composable
+internal fun BoxScope.FullscreenOverlayGate(
+    fullscreen: Boolean,
+    controls: FullscreenControlsState,
+    content: @Composable BoxScope.() -> Unit,
+) {
     if (!fullscreen || !controls.visible) return
-    GuideFullscreenOverlayContent(
-        controls, viewModel, playbackViewModel, playbackState, playingContentId, nowMs, favoriteIds,
-        livePicture, primaryFocus, onTogglePause, onHide, onOpenPanel, onAspectLabel, onOpenChannelList,
-    )
+    content()
 }
 
 @Composable
