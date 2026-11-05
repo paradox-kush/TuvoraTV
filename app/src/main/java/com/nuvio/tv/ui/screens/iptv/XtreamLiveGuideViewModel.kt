@@ -1001,6 +1001,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
         GuideEpgPrefetchPolicy.onChannelsLoaded(channels.size).forEach { index ->
             channels.getOrNull(index)?.let { ensureEpg(it.streamId) }
         }
+        // And for the focused channel's catch-up history (get_simple_data_table): its focus event is
+        // the same no-op, so without this the past cells stay blank until focus moves off and back.
+        GuideHistoryPrimePolicy.primeTarget(
+            channels, _uiState.value.focusedChannelId, _uiState.value.catchUpSupported,
+        )?.let { ensureHistory(it) }
         // The same goes for the stored window: an M3U playlist's cells either side of now/next live
         // only on disk, and the UI's focus event for row one is the no-op described above, so without
         // this the first paint stays at now + next until the viewer moves. Disk only; no request.
