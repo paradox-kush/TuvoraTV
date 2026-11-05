@@ -7,6 +7,7 @@ import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.BoundedLoad
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.IptvImportProgress
+import com.nuvio.tv.core.iptv.ChannelSeparatorPolicy
 import com.nuvio.tv.core.iptv.IptvLoadFailurePolicy
 import com.nuvio.tv.core.iptv.IptvPanelGuard
 import com.nuvio.tv.core.iptv.LoadOutcome
@@ -320,6 +321,7 @@ class XtreamHubViewModel @Inject constructor(
     private fun onCatalogLanded(accountId: String) {
         if (_uiState.value.selectedAccountId == accountId) pendingHeals.addAll(_uiState.value.rowLoads.filterValues { it is LoadStatus.Failed }.keys)
         catalogEpochs[accountId] = catalogEpoch(accountId) + 1L
+        forgetSeriesVerdict(accountId)
         cacheCheckedAt[accountId] = System.currentTimeMillis()
         inFlightCategories.removeAll { it.startsWith("$accountId|") }
         categoriesCache.keys.removeAll { it.startsWith("$accountId|") }
@@ -328,6 +330,12 @@ class XtreamHubViewModel @Inject constructor(
             _uiState.update { it.copy(catalogueGeneration = it.catalogueGeneration + 1L, itemsByCategory = emptyMap(), rowLoads = emptyMap(), hasMoreByCategory = emptyMap()) }
             loadCategories()
         }
+    }
+
+    /** F9: a refreshed catalogue re-asks whether the portal has series, so a hidden Series tab can come back. */
+    private fun forgetSeriesVerdict(accountId: String) {
+        clientFactory.stalker().forgetSeriesVerdict(accountId)
+        _uiState.update { it.copy(seriesUnavailableIds = it.seriesUnavailableIds - accountId) }
     }
 
     private fun healRows() {
@@ -341,6 +349,7 @@ class XtreamHubViewModel @Inject constructor(
         val section = _uiState.value.section
         if (com.nuvio.tv.core.iptv.IptvCatalogFreshness.stale(cacheCheckedAt[acc.id], acc.autoRefreshHours, System.currentTimeMillis())) {
             catalogEpochs[acc.id] = catalogEpoch(acc.id) + 1L
+            forgetSeriesVerdict(acc.id)
             inFlightCategories.removeAll { it.startsWith("${acc.id}|") }
             categoriesCache.keys.removeAll { it.startsWith("${acc.id}|") }
             itemsCache.keys.removeAll { it.startsWith("${acc.id}|") }
@@ -447,6 +456,7 @@ class XtreamHubViewModel @Inject constructor(
             val failure = IptvLoadFailurePolicy.classify(
                 (outcome as? LoadOutcome.Failed)?.error,
                 if (failedHost != null) IptvPanelGuard.panelOriginUrlOf(acc, failedHost) else IptvPanelGuard.panelOriginUrlOf(acc),
+                forSeriesSection = section == XtreamSection.SERIES,
             )
             val text = when (failure.kind) {
                 IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER ->
@@ -595,7 +605,12 @@ class XtreamHubViewModel @Inject constructor(
         if (acc.isXtream() && matchIndex.builtAt(acc.id, section.matchKind) != null) {
             val client = clientFactory.clientFor(acc) as com.nuvio.tv.core.iptv.XtreamClient
             val rows = matchIndex.itemsFor(acc.id, section.matchKind, categoryId, offset, PAGE_SIZE + 1)
-            val page = rows.take(PAGE_SIZE)
+            // B179: hasMore is judged on the RAW window; divider rows are dropped from what is shown
+            // (the next window starts at the shown count, so a few rows overlap and merge by id).
+            val page = rows.take(PAGE_SIZE).let { raw ->
+                if (section != XtreamSection.LIVE) raw
+                else ChannelSeparatorPolicy.withoutSeparators(raw, { it.name }, { it.epgId }, { it.hasArchive })
+            }
             // Panels that ship no icons in the bulk list (or rows indexed before artwork was
             // known) get filled lazily: ask get_vod_info per null row, in list order, while the
             // user is on this window. Results land in the DB + patch in via posterUpdates.
@@ -644,7 +659,7 @@ class XtreamHubViewModel @Inject constructor(
         }
         if (acc.sourceType == XtreamAccount.SOURCE_STALKER && section == XtreamSection.LIVE) {
             val rows = clientFactory.stalker().liveChannelsPage(acc, categoryId, offset, PAGE_SIZE + 1)
-            val page = rows.take(PAGE_SIZE)
+            val page = ChannelSeparatorPolicy.withoutSeparators(rows.take(PAGE_SIZE), { it.name }, { it.epgChannelId }, { it.hasArchive })
             val items = page.map { ch ->
                 val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
                 registry.register(
@@ -661,7 +676,7 @@ class XtreamHubViewModel @Inject constructor(
         if (acc.isM3UBacked()) {
             return when (section) {
                 XtreamSection.LIVE -> contentDb.pageChannels(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
-                    val page = rows.take(PAGE_SIZE)
+                    val page = ChannelSeparatorPolicy.withoutSeparators(rows.take(PAGE_SIZE), { it.name }, { it.tvgId }, { it.hasArchive })
                     page.map { r ->
                         val id = XtreamItemRegistry.liveId(acc.id, r.sid)
                         registry.register(

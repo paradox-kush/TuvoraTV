@@ -1,84 +1,75 @@
 package com.nuvio.tv.core.iptv
 
 /**
- * B179: providers pad a lineup with dummy "header" rows — `BG: ############ Bulgaria Channels
- * ############`, `*** UK ***`, `—— SPORT ——` — that exist only to label the group above/below them.
- * They are not streams: tuning one fails ("This device cannot play this stream").
+ * B179: providers pad a lineup with dummy "header" rows — `BG: ################ Bulgaria Channels`,
+ * `*** UK ***`, `—— SPORT ——` — that exist only to label the group around them. They are not streams:
+ * tuning one fails ("This device cannot play this stream").
  *
- * Pure and deliberately CONSERVATIVE: a real channel hidden by mistake is far worse than a divider
- * shown, so a name is a separator only when it is plainly decoration — nothing but punctuation, or a
- * banner (a run of decoration characters at its start or end, after an optional `XX:` country
- * prefix). Single `#`/`-` inside a real name (`#0 Sport`, `E! HD`, `Sky Sports - 1`) never matches,
- * and a row that carries an EPG id or a catch-up archive is a real channel whatever it is called.
+ * Pure and deliberately CONSERVATIVE: hiding a real channel is far worse than showing a divider, and
+ * providers ship REAL placeholder channels that look decorated (`NBA 01: ------`, `ESPN+ 01 : ----`,
+ * `PPV 3 | -----`, `EVENT 05 ━━`, `UK: Sky Sports ★★★`, `PPV: ****`, `📺📺📺`). So a name is a separator
+ * only in one of three unmistakable shapes, after an optional `XX:` / `[XX]` prefix:
+ *  1. decoration only: nothing but [DECOR_ONLY_MIN]+ decoration characters (`######`, `━━━━━━━━`);
+ *  2. a long leading rule: [LONG_RUN]+ decoration characters, then words (`################ Bulgaria Channels`);
+ *  3. a frame: a decoration run of [FRAME_RUN]+ ([LINE_FRAME_RUN]+ for rules) at BOTH ends around words
+ *     (`*** UK ***`, `—— SPORT ——`).
+ * A trailing-only run, a short run, or any digit/letter-bearing slot name never matches. A row that
+ * carries an EPG id or a catch-up archive is a real channel whatever it is called.
  *
- * Applied where lineups are written to the content DB and where Xtream lineups are read, so the hub,
- * guide, search and Sports matcher all see the same list and the counts agree. Twin: NuvioMobile
+ * This is a READ-time decision (what the hub, guide, search and Sports list). Nothing is deleted from
+ * storage, so a favourite or saved id pointing at a row keeps resolving. Twin: NuvioMobile
  * `features/iptv/ChannelSeparatorPolicy.kt` (same rules and tests).
  */
 object ChannelSeparatorPolicy {
 
-    /** Characters that, repeated, make a banner. ASCII needs [ASCII_RUN]; box/symbol art needs [SYMBOL_RUN]. */
     private const val ASCII_DECOR = "#=*~_-+"
-    /** Rules and dashes: two in a row at the edge is already a banner (`—— SPORT ——`). */
+    /** Rules and dashes. */
     private const val LINE_DECOR = "─━═▬—–"
-    /** Shapes: need three (`★★★ UK ★★★`), because one or two read as ordinary punctuation. */
+    /** Block shapes. Emoji are NOT decoration: `📺📺📺` is a name. */
     private const val SHAPE_DECOR = "▀▄■□▪▫●○◆◇★☆•·"
-    private const val ASCII_RUN = 4
+    private const val DECOR_ONLY_MIN = 6
+    private const val LONG_RUN = 8
     private const val FRAME_RUN = 3
-    private const val LINE_RUN = 2
-    private const val SHAPE_RUN = 3
-    /** Nothing but decoration needs at least this many visible characters (`--` alone is not enough). */
-    private const val MIN_DECOR_ONLY = 3
+    private const val LINE_FRAME_RUN = 2
 
-    /** `BG:`, `UK |`, `DE -`, `[BG]` — the country/label prefix a provider puts before the banner. */
+    /** `BG:`, `UK |`, `[BG]` — the country/label prefix a provider puts before the banner. */
     private val PREFIX = Regex("""^\s*(?:\[[A-Za-z]{2,4}\]\s*|[A-Za-z]{2,4}\s*[:|]\s*)""")
 
     fun isSeparator(name: String, epgChannelId: String? = null, hasArchive: Boolean = false): Boolean {
         if (!epgChannelId.isNullOrBlank() || hasArchive) return false
         val text = name.trim()
         if (text.isEmpty()) return false
-        if (isDecorOnly(text)) return true
-        val body = PREFIX.find(text)?.let { text.substring(it.range.last + 1) }?.trim() ?: text
-        if (body.isEmpty()) return false
-        return isDecorOnly(body) || startsOrEndsWithBanner(body)
+        return matches(text) || PREFIX.find(text)?.let { matches(text.substring(it.range.last + 1).trim()) } == true
     }
+
+    private fun matches(body: String): Boolean {
+        if (body.isEmpty()) return false
+        if (isDecorOnly(body)) return true
+        val lead = edgeRun(body, fromStart = true)
+        if (lead.length >= LONG_RUN) return true
+        val trail = edgeRun(body, fromStart = false)
+        return framesWords(lead) && framesWords(trail) && body.any { it.isLetterOrDigit() }
+    }
+
+    /** A frame edge: [FRAME_RUN] of anything, or [LINE_FRAME_RUN] when it is all rule/dash characters. */
+    private fun framesWords(run: String): Boolean =
+        run.length >= FRAME_RUN || (run.length >= LINE_FRAME_RUN && run.all { it in LINE_DECOR })
 
     private fun isDecor(c: Char) = c in ASCII_DECOR || c in LINE_DECOR || c in SHAPE_DECOR
 
-    /** Only decoration, spaces and stray punctuation: no letter or digit anywhere. */
+    /** Every visible character is decoration (so emoji, letters and digits all disqualify). */
     private fun isDecorOnly(s: String): Boolean {
         var visible = 0
         for (c in s) {
-            if (c.isLetterOrDigit()) return false
-            if (!c.isWhitespace()) visible++
+            if (c.isWhitespace()) continue
+            if (!isDecor(c)) return false
+            visible++
         }
-        return visible >= MIN_DECOR_ONLY
+        return visible >= DECOR_ONLY_MIN
     }
 
-    private fun startsOrEndsWithBanner(s: String): Boolean =
-        hasBannerRun(s, fromStart = true) || hasBannerRun(s, fromStart = false) || framedByShortRuns(s)
-
-    /** `*** UK ***`: a run of [FRAME_RUN] on BOTH ends is a frame even where one end alone would not be a banner. */
-    private fun framedByShortRuns(s: String): Boolean =
-        edgeDecor(s, fromStart = true) >= FRAME_RUN && edgeDecor(s, fromStart = false) >= FRAME_RUN && s.any { it.isLetterOrDigit() }
-
-    private fun edgeDecor(s: String, fromStart: Boolean): Int =
-        (if (fromStart) s else s.reversed()).takeWhile { isDecor(it) }.length
-
-    private fun hasBannerRun(s: String, fromStart: Boolean): Boolean {
-        val chars = if (fromStart) s else s.reversed()
-        var run = 0
-        var line = 0
-        var shape = 0
-        for (c in chars) {
-            if (!isDecor(c)) break
-            run++
-            if (c in LINE_DECOR) line++ else if (c in SHAPE_DECOR) shape++
-        }
-        // A run of only lines/shapes is a banner at its (lower) threshold; ASCII needs ASCII_RUN, mixed or not.
-        val symbolOnly = line + shape == run
-        return run >= ASCII_RUN || (symbolOnly && (line >= LINE_RUN || shape >= SHAPE_RUN))
-    }
+    private fun edgeRun(s: String, fromStart: Boolean): String =
+        (if (fromStart) s else s.reversed()).takeWhile { isDecor(it) }
 
     fun <T> withoutSeparators(
         rows: List<T>,

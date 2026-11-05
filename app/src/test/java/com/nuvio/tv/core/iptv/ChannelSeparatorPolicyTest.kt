@@ -19,9 +19,9 @@ class ChannelSeparatorPolicyTest {
     fun `real world divider rows are separators`() {
         listOf(
             "BG: ################ Bulgaria Channels ################",
-            "BG: #### Bulgaria Channels",
+            "BG: ################ Bulgaria Channels",
             "BG | ##### BULGARIA #####",
-            "[BG] ##### BULGARIA",
+            "[BG] ##### BULGARIA #####",
             "#### UK ####",
             "######",
             "*** UK ***",
@@ -49,6 +49,19 @@ class ChannelSeparatorPolicyTest {
             "#0 Sport",
             "Channel #5",
             "#1 Hits",
+            "BG: Bnt 2",
+            // Real placeholder / event channels that merely LOOK decorated (hiding one kills its favourites).
+            "NBA 01: ------",
+            "ESPN+ 01 : ----",
+            "PPV 3 | -----",
+            "EVENT 05 ━━",
+            "UK: Sky Sports ★★★",
+            "📺📺📺",
+            "PPV: ****",
+            // A short or one-sided rule is not conservative enough to hide.
+            "BG: #### Bulgaria Channels",
+            "[BG] ##### BULGARIA",
+            "-- Kids --",
             "BG: Bnt 2",
             "BG: Nova Tv",
             "UK: BBC One - HD",
@@ -82,7 +95,7 @@ class ChannelSeparatorPolicyTest {
     @Test
     fun `withoutSeparators keeps order and every real row`() {
         data class Row(val name: String, val epg: String? = null)
-        val rows = listOf(Row("BG: #### Bulgaria Channels"), Row("BG: Bnt 2"), Row("####"), Row("Nova Tv"), Row("*** x ***", "x.bg"))
+        val rows = listOf(Row("BG: ################ Bulgaria Channels"), Row("BG: Bnt 2"), Row("######"), Row("Nova Tv"), Row("*** x ***", "x.bg"))
         val kept = ChannelSeparatorPolicy.withoutSeparators(rows, { it.name }, { it.epg }, { false })
         assertEquals("order kept, every real row kept", listOf("BG: Bnt 2", "Nova Tv", "*** x ***"), kept.map { it.name })
     }

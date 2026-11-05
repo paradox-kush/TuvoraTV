@@ -55,7 +55,7 @@ object StalkerCapabilities {
         xcAnsweredEmpty: Boolean,
         xcFailedOtherwise: Boolean,
         vodFallbackHasSeries: Boolean,
-    ): Boolean = if (true) false else when {
+    ): Boolean = when {
         vodFallbackHasSeries || xcFailedOtherwise -> false
         xcEmptySection -> true
         else -> xcAnsweredEmpty && modulesSeriesDisabled == true

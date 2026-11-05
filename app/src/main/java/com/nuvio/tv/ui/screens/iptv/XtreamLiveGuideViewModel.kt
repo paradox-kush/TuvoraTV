@@ -759,7 +759,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 "This provider is blocking us (HTTP ${failure.status ?: 0}). This usually clears by itself."
             IptvLoadFailurePolicy.Kind.REFUSED -> failure.portalText ?: "Couldn't reach this playlist."
             IptvLoadFailurePolicy.Kind.UNREACHABLE -> "Couldn't reach this playlist. Check the portal is up and try again."
-            IptvLoadFailurePolicy.Kind.SECTION_UNAVAILABLE -> "This provider has no live channels."
+            IptvLoadFailurePolicy.Kind.SECTION_UNAVAILABLE -> "Couldn't reach this playlist."   // never produced here: only the Series list opts in
         }
         return if (IptvLoadFailurePolicy.showsBreadcrumb(failure.kind)) "$text\n\n${failure.detail}" else text
     }

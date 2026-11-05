@@ -67,8 +67,13 @@ object IptvLoadFailurePolicy {
         val detail: String = UNKNOWN_REASON,
     )
 
-    /** [host] is the playlist's panel origin, appended to [Failure.detail] so support knows which. */
-    fun classify(error: Throwable?, host: String? = null): Failure {
+    /**
+     * [host] is the playlist's panel origin, appended to [Failure.detail] so support knows which.
+     * [forSeriesSection]: the failed load was the SERIES category list. Only there is a portal's
+     * "nothing for this section" answer read as "this provider has no series" (UX164) — the same reply
+     * on Live, Movies, a single category or the playlist form stays a refusal with the portal's text.
+     */
+    fun classify(error: Throwable?, host: String? = null, forSeriesSection: Boolean = false): Failure {
         val detail = detailOf(error, host)
         return when {
             error is HttpStatusException && error.status in BLOCKING_STATUSES ->
@@ -79,7 +84,7 @@ object IptvLoadFailurePolicy {
             error is StalkerPortalRefusedException -> refusal(error, detail)
             error is StalkerAuthException -> refusal(error, detail)
             error is StalkerSessionUnavailableException ->
-                if (error.emptySection) Failure(Kind.SECTION_UNAVAILABLE, detail = host?.takeIf { it.isNotBlank() }.orEmpty()) else refusal(error, detail)
+                if (error.emptySection && forSeriesSection) Failure(Kind.SECTION_UNAVAILABLE, detail = host?.takeIf { it.isNotBlank() }.orEmpty()) else refusal(error, detail)
 
             else -> Failure(Kind.UNREACHABLE, detail = detail)
         }

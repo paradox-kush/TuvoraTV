@@ -3555,8 +3555,6 @@
     <string name="iptv_hub_error_load_failed">Failed to load</string>
     <string name="iptv_hub_error_unreachable">Couldn\'t reach this playlist. Check the portal is up and try again.</string>
     <string name="iptv_hub_no_series_title">This provider has no series</string>
-    <string name="iptv_hub_no_movies_title">This provider has no movies</string>
-    <string name="iptv_hub_no_live_title">This provider has no live channels</string>
     <string name="iptv_hub_no_section_message">Its portal says there is nothing in this section, so there is nothing to retry.</string>
     <string name="iptv_hub_error_blocked">This provider is blocking us. The portal is up — its firewall answered HTTP %1$d instead of letting us in. This usually clears by itself; a different network gets past it sooner.</string>
     <string name="iptv_guide_no_channels">No channels here</string>

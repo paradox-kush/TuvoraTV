@@ -1,7 +1,6 @@
 package com.nuvio.tv.core.iptv.content
 
 import android.content.Context
-import com.nuvio.tv.core.iptv.ChannelSeparatorPolicy
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -232,9 +231,9 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
 
         /** [categoryName] = the display name of [ContentChannel.categoryId] (defaults to the id itself). */
         fun addChannel(row: ContentChannel, categoryName: String? = row.categoryId) {
-            // B179: a provider's divider row ("BG: #### Bulgaria Channels") is not a stream.
-            if (ChannelSeparatorPolicy.isSeparator(row.name, row.tvgId, row.hasArchive)) return
-            channelBatch.add(row); channelOrd.add(nextOrd++); counts.live++
+            channelBatch.add(row); channelOrd.add(nextOrd++)
+            // B179: stored (a saved id must keep resolving), but not counted — the count is what the lists show.
+            if (!com.nuvio.tv.core.iptv.ChannelSeparatorPolicy.isSeparator(row.name, row.tvgId, row.hasArchive)) counts.live++
             categoryOf(TYPE_LIVE, row.categoryId, categoryName)
             if (channelBatch.size >= CHUNK) flushChannels()
         }
@@ -674,8 +673,8 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
         channels: List<ContentChannel>,
         categories: List<Pair<String, String>>, // (id, name), type = live
     ) = withContext(Dispatchers.IO) {
-        // B179: divider rows never become channels, so the stored count agrees with what every surface lists.
-        val kept = ChannelSeparatorPolicy.withoutSeparators(channels, { it.name }, { it.tvgId }, { it.hasArchive })
+        // B179: every row is stored (a saved id must keep resolving); the count is what the lists will SHOW.
+        val shownCount = channels.count { !com.nuvio.tv.core.iptv.ChannelSeparatorPolicy.isSeparator(it.name, it.tvgId, it.hasArchive) }
         inTx {
             // The Stalker lineup lives at the served generation and is replaced in place — this
             // transaction is already atomic, so no generation flip is needed here.
@@ -683,7 +682,7 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             db.delete("channels", "playlist_id = ? AND generation = ?", arrayOf(playlistId, g.toString()))
             db.delete("categories", "playlist_id = ? AND generation = ? AND type = ?", arrayOf(playlistId, g.toString(), TYPE_LIVE))
             val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-            for (r in kept) {
+            for (r in channels) {
                 s.clearBindings()
                 s.bindString(1, playlistId); s.bindLong(2, g); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
                 s.bindString(5, r.name); bindNullable(s, 6, r.logo); bindNullable(s, 7, r.tvgId); s.bindString(8, r.url)
@@ -701,13 +700,13 @@ class IptvContentDb @Inject constructor(@ApplicationContext context: Context) {
             cs.close()
             // Freshness LAST, in the same tx; UPDATE-then-INSERT keeps epg_built_at/tvg_url intact.
             val updated = db.compileStatement("UPDATE ingest_meta SET built_at = ?, live_count = ? WHERE playlist_id = ?").let { u ->
-                u.bindLong(1, System.currentTimeMillis()); u.bindLong(2, kept.size.toLong()); u.bindString(3, playlistId)
+                u.bindLong(1, System.currentTimeMillis()); u.bindLong(2, shownCount.toLong()); u.bindString(3, playlistId)
                 u.executeUpdateDelete().also { u.close() }
             }
             if (updated == 0) {
                 db.execSQL(
                     "INSERT INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, tvg_url, epg_built_at) VALUES(?,?,?,0,0,NULL,NULL)",
-                    arrayOf<Any?>(playlistId, System.currentTimeMillis(), kept.size)
+                    arrayOf<Any?>(playlistId, System.currentTimeMillis(), shownCount)
                 )
             }
         }
