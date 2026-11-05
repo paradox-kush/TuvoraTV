@@ -861,7 +861,8 @@ class SearchViewModel @Inject constructor(
         // flag could reach the screen while isSearching had already dropped, flashing "No IPTV matches" before the rows.
         iptvAnsweredQuery = query
         catalogRowsUpdateJob?.cancel()
-        hasRenderedFirstCatalog = true
+        // A zero-hit answer must not count as the first render: the first real catalog still renders immediately.
+        if (catalogsMap.isNotEmpty()) hasRenderedFirstCatalog = true
         updateCatalogRowsNow()
     }
 

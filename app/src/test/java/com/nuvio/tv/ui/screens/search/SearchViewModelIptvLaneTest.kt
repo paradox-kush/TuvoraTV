@@ -217,18 +217,20 @@ class SearchViewModelIptvLaneTest {
     fun `F85 the answered flag never reaches the screen ahead of the rows`() = runTest {
         val gate = CompletableDeferred<Unit>()
         val iptv = FakeIptvSearch(rowsFor = { listOf(moviesRow("xtream:acc:vod:7", "Matrix")) }, gateFor = { gate })
-        val viewModel = newViewModel(addons = emptyList(), iptv = iptv)
+        val viewModel = newViewModel(addons = listOf(searchableAddon()), iptv = iptv)
 
         viewModel.onEvent(SearchEvent.QueryChanged("Matrix"))
         viewModel.onEvent(SearchEvent.SubmitSearch)
         runCurrent()
+        // The add-on row has rendered (the first catalog renders at once), so any later update is debounced (90-220 ms).
+        assertEquals("add-on row shown, IPTV pending", listOf("addon"), viewModel.uiState.value.catalogRows.map { it.addonId })
         assertEquals("not answered while the lane is pending", null, viewModel.uiState.value.iptvAnsweredQuery)
 
         gate.complete(Unit)
         runCurrent() // no virtual time: the render debounce has NOT elapsed
         val state = viewModel.uiState.value
         assertEquals("answered", "Matrix", state.iptvAnsweredQuery)
-        assertEquals("rows landed in the same update", listOf("Matrix"), state.catalogRows.flatMap { r -> r.items.map { it.name } })
+        assertEquals("IPTV row landed in the same update", listOf("addon", "xtream"), state.catalogRows.map { it.addonId })
     }
 
     @Test
