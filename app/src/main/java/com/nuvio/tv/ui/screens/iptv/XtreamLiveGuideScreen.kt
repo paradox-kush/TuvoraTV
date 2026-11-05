@@ -414,7 +414,7 @@ fun LiveGuide(
     }
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
     val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected
-    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null
+    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null || uiState.replayRetry != null
     // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up.
     val liveTuning = playbackUi?.spinnerVisible == true ||
         (uiState.focusedChannel?.let { it.contentId != playingContentId } == true)
@@ -580,7 +580,7 @@ fun LiveGuide(
                         // channel name instead of over the channel grid, so the list stays visible.
                         previewError = (playbackError.takeIf {
                             GuidePlaybackInteractionPolicy.showFocusedError(uiState.focusedChannelId, errorChannelId)
-                        }) ?: uiState.actionError,
+                        }) ?: uiState.actionError.takeIf { uiState.replayRetry == null },
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
@@ -1019,6 +1019,31 @@ fun LiveGuide(
             viewModel.consumePendingTune()
             pendingRestoreEntityId = uiState.channels.firstOrNull { it.contentId == pending }?.entityId
             commitPreview(pending)
+        }
+
+        // A replay that failed to open (portal refusal, request failure) says why and offers Retry, which
+        // mints a fresh link for the same programme. Retry takes focus; BACK or any arrow dismisses it
+        // and puts focus back in the guide.
+        uiState.replayRetry?.let { retry ->
+            fun restoreAfterReplayNotice() {
+                if (!requestFocusedChannel() && !channelListFocus.requestFocusOrFalse()) {
+                    categoryListFocus.requestFocusOrFalse()
+                }
+            }
+            NuvioUndoToast(
+                message = uiState.actionError.orEmpty(),
+                actionLabel = stringResource(R.string.action_retry),
+                onAction = { viewModel.retryReplay() },
+                onDismiss = {
+                    restoreAfterReplayNotice()
+                    viewModel.dismissError()
+                },
+                durationMillis = GuideReplayNoticePolicy.RETRY_NOTICE_MS,
+                key = retry to uiState.actionError,
+                modifier = Modifier
+                    .align(if (fullscreen) Alignment.TopCenter else Alignment.BottomCenter)
+                    .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.xl),
+            )
         }
 
         // F03 (owner 2026-10-04): a favourite toggle is confirmed with Undo, like a hide.

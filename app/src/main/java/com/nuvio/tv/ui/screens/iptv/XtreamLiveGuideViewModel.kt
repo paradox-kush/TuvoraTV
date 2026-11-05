@@ -117,7 +117,7 @@ data class ReplayLaunch(
 /** The guide's replay notices. */
 internal object GuideReplayMessages {
     fun noRecording(title: String) = "This provider has no recording of \"$title\""
-    fun openFailed(title: String) = "Couldn't open \"$title\". Press OK to try again"
+    fun openFailed(title: String) = "Couldn't open \"$title\""
 }
 
 internal fun XtreamAccount.isM3uPlaylist(): Boolean = sourceType == XtreamAccount.SOURCE_URL || sourceType == XtreamAccount.SOURCE_FILE
@@ -140,6 +140,8 @@ data class LiveGuideUiState(
     val error: String? = null,
     /** Non-playback action notice, currently used by catch-up availability. */
     val actionError: String? = null,
+    /** The replay [actionError] can re-run (Retry); null when the notice has nothing to retry. */
+    val replayRetry: GuideReplayRetry? = null,
     /**
      * Start of the visible two hours. Travels backward with LEFT past the window's edge; the minute
      * tick only rolls it forward while it is still anchored at live, so a viewer reading yesterday
@@ -1579,17 +1581,17 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val session = when (outcome) {
             is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Opened -> outcome.session
             com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Unavailable -> {
-                _uiState.update { it.copy(actionError = GuideReplayMessages.noRecording(programme.title)) }
+                _uiState.update { GuideReplayNoticePolicy.noRecording(it, GuideReplayMessages.noRecording(programme.title)) }
                 return
             }
             is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Failed -> {
-                _uiState.update { it.copy(actionError = GuideReplayMessages.openFailed(programme.title)) }
+                _uiState.update { GuideReplayNoticePolicy.refused(it, GuideReplayMessages.openFailed(programme.title), channel, programme) }
                 return
             }
             // The portal said something specific (session cap, no recording, link fault): say exactly
-            // that. The programme stays pressable, so pressing OK again IS the Retry (a fresh create_link).
+            // that, with Retry: a fresh create_link for the same programme.
             is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Refused -> {
-                _uiState.update { it.copy(actionError = outcome.failure.message) }
+                _uiState.update { GuideReplayNoticePolicy.refused(it, outcome.failure.message, channel, programme) }
                 return
             }
         }
@@ -1611,7 +1613,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     /** OK on an aired programme the channel kept no recording of: say so instead of doing nothing. */
     fun explainNoRecording(programme: XtreamProgram) {
-        _uiState.update { it.copy(actionError = GuideReplayMessages.noRecording(programme.title)) }
+        _uiState.update { GuideReplayNoticePolicy.noRecording(it, GuideReplayMessages.noRecording(programme.title)) }
+    }
+
+    /** Retry on the replay notice: the same programme again, which mints a fresh link. */
+    fun retryReplay() {
+        val retry = _uiState.value.replayRetry ?: return
+        _uiState.update { GuideReplayNoticePolicy.dismiss(it) }
+        startReplay(retry.channel, retry.programme)
     }
 
     /** The screen navigated; drop the one-shot so a recomposition cannot launch it twice. */
@@ -1621,7 +1630,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     fun dismissError() {
         if (_uiState.value.error != null || _uiState.value.actionError != null) {
-            _uiState.update { it.copy(error = null, actionError = null) }
+            _uiState.update { GuideReplayNoticePolicy.dismiss(it).copy(error = null) }
         }
     }
 
