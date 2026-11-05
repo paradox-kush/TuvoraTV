@@ -337,7 +337,10 @@ class XtreamHubViewModel @Inject constructor(
 
     /** F9: a refreshed catalogue re-asks whether the portal has series, so a hidden Series tab can come back. */
     private fun forgetSeriesVerdict(accountId: String) {
-        clientFactory.stalker().forgetSeriesVerdict(accountId)
+        // Only a Stalker playlist has a series verdict (and only it needs the Stalker client).
+        if (_uiState.value.accounts.firstOrNull { it.id == accountId }?.sourceType == XtreamAccount.SOURCE_STALKER) {
+            clientFactory.stalker().forgetSeriesVerdict(accountId)
+        }
         _uiState.update { it.copy(seriesUnavailableIds = it.seriesUnavailableIds - accountId) }
     }
 
