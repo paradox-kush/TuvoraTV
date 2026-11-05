@@ -32,8 +32,8 @@ class RecordingActionsPolicyTest {
     @Test
     fun `a failed or cancelled row retries only when it can and always deletes`() {
         listOf(RecordingStatus.FAILED, RecordingStatus.CANCELLED).forEach { status ->
-            assertEquals(listOf(RecordingAction.RETRY, RecordingAction.DELETE), RecordingActionsPolicy.actionsFor(row(RecordingSection.FAILED, status, canRetry = true), false), "$status", )
-            assertEquals(listOf(RecordingAction.DELETE), RecordingActionsPolicy.actionsFor(row(RecordingSection.FAILED, status, canRetry = false), false), "$status", )
+            assertEquals("$status", listOf(RecordingAction.RETRY, RecordingAction.DELETE), RecordingActionsPolicy.actionsFor(row(RecordingSection.FAILED, status, canRetry = true), false))
+            assertEquals("$status", listOf(RecordingAction.DELETE), RecordingActionsPolicy.actionsFor(row(RecordingSection.FAILED, status, canRetry = false), false))
         }
     }
 }

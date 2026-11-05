@@ -50,8 +50,8 @@ class RecordingChannelFactoryTest {
     @Test
     fun `the playlist user agent becomes a request header and blank adds none`() {
         assertEquals(mapOf("User-Agent" to "Tuvora/1"), xtream(ua = " Tuvora/1 ").headers)
-        assertEquals(emptyMap(), xtream(ua = "  ").headers)
-        assertEquals(emptyMap(), xtream(ua = null).headers)
+        assertEquals(emptyMap<String, String>(), xtream(ua = "  ").headers)
+        assertEquals(emptyMap<String, String>(), xtream(ua = null).headers)
     }
 
     @Test
