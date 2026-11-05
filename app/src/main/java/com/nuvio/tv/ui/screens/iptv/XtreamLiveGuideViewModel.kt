@@ -343,8 +343,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
         )
         ids.forEach(::ensureEpg)
         // A travelled window reads its cells from the store, which just changed under it.
-        if (!GuideTimeTravel.isAtLiveEdge(state.windowStartMs, System.currentTimeMillis())) publishVisibleWindows()
+        if (readsStoredWindow(state.windowStartMs)) publishVisibleWindows()
     }
+
+    /** See [GuideWindowRows.readsStoredWindowOnFocus]; an M3U playlist's history is its stored XMLTV. */
+    private fun readsStoredWindow(windowStartMs: Long): Boolean = GuideWindowRows.readsStoredWindowOnFocus(
+        atLiveEdge = GuideTimeTravel.isAtLiveEdge(windowStartMs, System.currentTimeMillis()),
+        historyFromStore = account?.isM3uPlaylist() == true,
+    )
 
     /** Live channel ids currently in the platform Library (drives the ★ + add/remove). */
     val favoriteLiveIds: StateFlow<Set<String>> = libraryRepository.libraryItems
@@ -1024,9 +1030,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             ensureHistory(channel)
             // In a travelled window the rows scrolling into view follow it from disk as well
             // (UX54); the live window keeps its now/next first paint untouched.
-            if (!GuideTimeTravel.isAtLiveEdge(_uiState.value.windowStartMs, System.currentTimeMillis())) {
-                publishVisibleWindows()
-            }
+            if (readsStoredWindow(_uiState.value.windowStartMs)) publishVisibleWindows()
         }
     }
 
