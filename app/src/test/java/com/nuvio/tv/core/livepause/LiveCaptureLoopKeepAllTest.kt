@@ -63,8 +63,8 @@ class LiveCaptureLoopKeepAllTest {
     private fun hitsOf(path: String) = hits[path]?.get() ?: 0
 
     private fun playlist(from: Int, to: Int) = buildString {
-        append("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:$from\n")
-        for (i in from..to) append("#EXTINF:2.000,\nseg$i.ts\n")
+        append("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:30\n#EXT-X-MEDIA-SEQUENCE:$from\n")
+        for (i in from..to) append("#EXTINF:30.000,\nseg$i.ts\n")
     }
 
     private fun loop(retention: LiveRetention, free: () -> Long = { 10L * 1024 * 1024 * 1024 }) = LiveCaptureLoop(
@@ -105,7 +105,7 @@ class LiveCaptureLoopKeepAllTest {
 
     @Test
     fun `Trim with a short window drops what KeepAll keeps`() = runBlocking {
-        val trim = loop(LiveRetention.Trim(keepMs = 4_000))
+        val trim = loop(LiveRetention.Trim(keepMs = 60_000))
         trim.start()
         awaitAllSegments()
         delay(500)
