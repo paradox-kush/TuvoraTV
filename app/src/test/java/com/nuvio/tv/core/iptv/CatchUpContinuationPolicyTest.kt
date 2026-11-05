@@ -68,11 +68,12 @@ class CatchUpContinuationPolicyTest {
     }
 
     @Test
-    fun `never restarts into the live edge`() {
+    fun `rejoins live instead of restarting at the live edge`() {
         val windowEnd = a.endMs
         // playhead within a minute of now: nothing left to replay
-        assertEquals(Decision.Stay, decide(playhead = now - 30_000, windowEnd = windowEnd, next = Programme(now - h, now + h)))
-        assertEquals(Decision.Stay, decide(playhead = now - 60_000 + 1, windowEnd = windowEnd, next = Programme(now - h, now + h)))
+        assertEquals(Decision.GoLive, decide(playhead = now - 30_000, windowEnd = windowEnd, next = Programme(now - h, now + h)))
+        assertEquals(Decision.GoLive, decide(playhead = now - 60_000 + 1, windowEnd = windowEnd, next = Programme(now - h, now + h)))
+        assertEquals(Decision.GoLive, decide(playhead = now + 5_000, windowEnd = windowEnd, next = null))
         assertEquals(
             Decision.StartNewReplay(now - 60_000),
             decide(playhead = now - 60_000, windowEnd = windowEnd, next = Programme(now - h, now + h)),
@@ -80,8 +81,8 @@ class CatchUpContinuationPolicyTest {
     }
 
     @Test
-    fun `window end with no programme covering the playhead stays`() {
-        assertEquals(Decision.Stay, decide(next = null, playhead = a.endMs + m, windowEnd = a.endMs))
+    fun `window end with no programme covering the playhead ends`() {
+        assertEquals(Decision.Ended, decide(next = null, playhead = a.endMs + m, windowEnd = a.endMs))
     }
 
     @Test
@@ -100,5 +101,16 @@ class CatchUpContinuationPolicyTest {
     fun `replayWindowEnd is never before the show end`() {
         val show = Programme(t0, t0 + h)
         assertEquals(show.endMs, CatchUpContinuationPolicy.replayWindowEndMs(show, now = show.endMs + 10_000))
+    }
+
+    @Test
+    fun `window over in a gap far from live ends rather than waiting`() {
+        val windowEnd = a.endMs + 3 * h
+        assertEquals(Decision.Ended, decide(next = Programme(windowEnd + h, windowEnd + 2 * h), playhead = windowEnd + m, windowEnd = windowEnd))
+    }
+
+    @Test
+    fun `a window that has not run out never goes live or ends`() {
+        assertEquals(Decision.Stay, decide(playhead = a.startMs + m, windowEnd = a.endMs + 3 * h, nowMs = a.startMs + 2 * m))
     }
 }

@@ -101,6 +101,7 @@ object M3UParser {
         val tvgName = attrs["tvg-name"]?.takeIf { it.isNotBlank() }
         val name = displayName.ifBlank { tvgName.orEmpty() }
         val ext = extOf(url)
+        val kind = classify(url, ext)
         return M3UEntry(
             name = name,
             tvgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() },
@@ -108,9 +109,12 @@ object M3UParser {
             logo = attrs["tvg-logo"]?.takeIf { it.isNotBlank() && it != "https://image.tmdb.org/t/p/w600_and_h900_bestv2" },
             group = attrs["group-title"]?.takeIf { it.isNotBlank() },
             url = url,
-            kind = classify(url, ext),
+            kind = kind,
             ext = ext,
-            catchUp = catchUpOf(headerCatchUp + attrs.filterKeys { it in CATCHUP_KEYS && !attrs[it].isNullOrBlank() }),
+            // Catch-up is a live-channel feature: header defaults must not leak onto VOD/series rows.
+            catchUp = if (kind == M3UKind.LIVE) {
+                catchUpOf(headerCatchUp + attrs.filterKeys { it in CATCHUP_KEYS && !attrs[it].isNullOrBlank() })
+            } else null,
         )
     }
 

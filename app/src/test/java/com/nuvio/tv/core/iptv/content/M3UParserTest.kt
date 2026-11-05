@@ -245,4 +245,31 @@ class M3UParserCatchUpTest {
     fun `playlist without a header default leaves plain entries without catch-up`() {
         assertNull(parse("#EXTM3U\n#EXTINF:-1 tvg-id=\"x\",X\nhttp://h/x.ts").single().catchUp)
     }
+
+    @Test
+    fun `header defaults and entry attrs reach live entries only`() {
+        val es = parse(
+            """
+            #EXTM3U catchup="append" catchup-source="?utc={utc}" catchup-days="7"
+            #EXTINF:-1 tvg-id="l",Live
+            http://h/live/u/p/1.ts
+            #EXTINF:-1 catchup-days="3",Movie
+            http://h/movie/u/p/2.mp4
+            #EXTINF:-1,Ep
+            http://h/series/u/p/3.mkv
+            """.trimIndent(),
+        )
+        assertEquals(M3UKind.LIVE, es[0].kind)
+        assertEquals(M3uCatchUpType.APPEND, es[0].catchUp?.type)
+        assertNull("vod", es[1].catchUp)
+        assertNull("series", es[2].catchUp)
+    }
+
+    @Test
+    fun `attribute keys are case insensitive`() {
+        assertEquals(7, entry("""Catchup-Days="7"""").catchUp?.days)
+        assertEquals(M3uCatchUpType.SHIFT, entry("""CATCHUP="shift"""").catchUp?.type)
+        val e = parse("#EXTM3U Catchup=\"shift\" CATCHUP-DAYS=\"2\"\n#EXTINF:-1,A\nhttp://h/a.ts").single()
+        assertEquals(M3uCatchUpInfo(M3uCatchUpType.SHIFT, null, 2), e.catchUp)
+    }
 }
