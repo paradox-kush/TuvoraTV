@@ -3689,11 +3689,21 @@ private fun LibraryListPickerDialog(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = stringResource(R.string.calendar_bell_menu_row),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Column {
+                            Text(
+                                text = stringResource(R.string.calendar_bell_menu_row),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            // The reminder applies at once; Cancel on this picker does not undo it.
+                            Text(
+                                text = stringResource(R.string.calendar_bell_menu_row_hint),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NuvioTheme.colors.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
