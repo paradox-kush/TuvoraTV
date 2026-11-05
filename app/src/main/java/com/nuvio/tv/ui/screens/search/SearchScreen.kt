@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -361,11 +362,46 @@ fun SearchScreen(
     var scopeChipsHaveFocus by remember { mutableStateOf(false) }
     val scopeKeyOf: (com.nuvio.tv.domain.model.CatalogRow) -> String =
         { if (it.addonId == "xtream") it.catalogId else "" }
-    val showScopeChips = remember(visibleCatalogRows) {
-        IptvSearchScopePolicy.hasIptvRows(visibleCatalogRows, scopeKeyOf)
-    }
+    val iptvAnsweredForQuery = uiState.iptvAnsweredQuery != null && uiState.iptvAnsweredQuery == trimmedSubmittedQuery
+    val showScopeChips = IptvSearchScopePolicy.showChips(
+        hasIptvRows = remember(visibleCatalogRows) { IptvSearchScopePolicy.hasIptvRows(visibleCatalogRows, scopeKeyOf) },
+        iptvAnsweredForQuery = iptvAnsweredForQuery,
+    )
     val scopedCatalogRows = remember(visibleCatalogRows, iptvScopes) {
         IptvSearchScopePolicy.filter(visibleCatalogRows, iptvScopes, scopeKeyOf)
+    }
+    val showScopeEmptyNote = IptvSearchScopePolicy.showEmptyNote(
+        iptvScopes, scopedCatalogRows, iptvAnsweredForQuery, uiState.isSearching, scopeKeyOf
+    )
+    val scopeChipsItem: LazyListScope.() -> Unit = {
+        item(key = "search_iptv_scope_chips") {
+            IptvSearchScopeChips(
+                selected = iptvScopes,
+                onToggle = { scope ->
+                    // A pending auto-focus into row 1 must not steal focus back from the chips.
+                    focusResults = false
+                    pendingFocusMoveToResultsQuery = null
+                    iptvScopes = IptvSearchScopePolicy.toggle(iptvScopes, scope)
+                },
+                firstChipFocusRequester = scopeChipFocusRequester,
+                upTarget = searchFocusRequester,
+                downTarget = {
+                    scopedCatalogRows.firstOrNull()?.let { searchRowEntryFocusRequesters[it.stableKey()] }
+                },
+                onFocusChanged = { scopeChipsHaveFocus = it },
+                modifier = Modifier.padding(horizontal = NuvioTheme.spacing.xxxl),
+            )
+        }
+        if (showScopeEmptyNote) {
+            item(key = "search_iptv_scope_empty") {
+                Text(
+                    text = stringResource(R.string.search_iptv_scope_empty),
+                    style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
+                    color = NuvioTheme.colors.TextSecondary,
+                    modifier = Modifier.padding(horizontal = NuvioTheme.spacing.xxxl, vertical = 12.dp),
+                )
+            }
+        }
     }
     LaunchedEffect(visibleRowKeys) {
         searchRowStates.keys.retainAll(visibleRowKeys)
@@ -806,6 +842,8 @@ fun SearchScreen(
                     }
 
                     !uiState.isSearching && !hasPendingUnsubmittedQuery && visibleCatalogRows.isEmpty() -> {
+                        // F85: keep the scope chips when the IPTV lane answered with nothing, so the filters aren't lost.
+                        if (showScopeChips) scopeChipsItem()
                         item {
                             EmptyScreenState(
                                 title = stringResource(R.string.search_no_results_title),
@@ -816,36 +854,7 @@ fun SearchScreen(
                     }
 
                     else -> {
-                        if (showScopeChips) {
-                            item(key = "search_iptv_scope_chips") {
-                                IptvSearchScopeChips(
-                                    selected = iptvScopes,
-                                    onToggle = { scope ->
-                                        // A pending auto-focus into row 1 must not steal focus back from the chips.
-                                        focusResults = false
-                                        pendingFocusMoveToResultsQuery = null
-                                        iptvScopes = IptvSearchScopePolicy.toggle(iptvScopes, scope)
-                                    },
-                                    firstChipFocusRequester = scopeChipFocusRequester,
-                                    upTarget = searchFocusRequester,
-                                    downTarget = {
-                                        scopedCatalogRows.firstOrNull()?.let { searchRowEntryFocusRequesters[it.stableKey()] }
-                                    },
-                                    onFocusChanged = { scopeChipsHaveFocus = it },
-                                    modifier = Modifier.padding(horizontal = NuvioTheme.spacing.xxxl),
-                                )
-                            }
-                        }
-                        if (scopedCatalogRows.isEmpty()) {
-                            item(key = "search_iptv_scope_empty") {
-                                Text(
-                                    text = stringResource(R.string.search_iptv_scope_empty),
-                                    style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
-                                    color = NuvioTheme.colors.TextSecondary,
-                                    modifier = Modifier.padding(horizontal = NuvioTheme.spacing.xxxl, vertical = 12.dp),
-                                )
-                            }
-                        }
+                        if (showScopeChips) scopeChipsItem()
                         itemsIndexed(
                             items = scopedCatalogRows,
                             key = { index, item ->

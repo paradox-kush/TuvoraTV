@@ -841,6 +841,7 @@ class SearchViewModel @Inject constructor(
             return
         }
         if (!isCurrentSearch(generation, query)) return
+        _uiState.update { it.copy(iptvAnsweredQuery = query) }
         if (replace) {
             // UX15: the new source set answers for the whole IPTV lane — rows it no longer
             // returns must go, not linger from the old settings.

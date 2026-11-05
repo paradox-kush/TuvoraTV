@@ -28,6 +28,26 @@ internal object IptvSearchScopePolicy {
         return if (next.isEmpty()) ALL else next
     }
 
+    /**
+     * The chips stay up whenever the IPTV lane is relevant to this query: rows are on screen, or the lane
+     * already answered for the shown query (even with zero hits, or with every row filtered out) so the viewer
+     * never loses the filters they just set.
+     */
+    fun showChips(hasIptvRows: Boolean, iptvAnsweredForQuery: Boolean): Boolean = hasIptvRows || iptvAnsweredForQuery
+
+    /**
+     * True when the selection hides every IPTV row after loading finished: the lane answered, nothing is
+     * still loading, the selection is narrowed, and no IPTV row survives in [scopedRows].
+     */
+    fun <T> showEmptyNote(
+        selected: Set<IptvSearchScope>,
+        scopedRows: List<T>,
+        iptvAnsweredForQuery: Boolean,
+        isSearching: Boolean,
+        keyOf: (T) -> String,
+    ): Boolean = iptvAnsweredForQuery && !isSearching && selected.size != ALL.size &&
+        scopedRows.none { scopeOf(keyOf(it)) != null }
+
     /** Keeps every non-IPTV row, and an IPTV row only when its type is selected. Order is preserved. */
     fun <T> filter(rows: List<T>, selected: Set<IptvSearchScope>, keyOf: (T) -> String): List<T> {
         if (selected.isEmpty() || selected.size == ALL.size) return rows

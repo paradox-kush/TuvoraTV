@@ -24,6 +24,8 @@ internal fun shouldShowDiscoverInSearch(
 data class SearchUiState(
     val query: String = "",
     val submittedQuery: String = "",
+    /** F85: the query the IPTV lane last answered for (set even when it returned no rows); null = never ran. */
+    val iptvAnsweredQuery: String? = null,
     val isSearching: Boolean = false,
     val error: String? = null,
     val catalogRows: List<CatalogRow> = emptyList(),

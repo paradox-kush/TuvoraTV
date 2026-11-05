@@ -3,6 +3,15 @@ package com.nuvio.tv.ui.screens.search
 import android.view.KeyEvent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
+import androidx.tv.material3.Icon
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -66,29 +75,46 @@ internal fun IptvSearchScopeChips(
                 }
             )
             val shape = RoundedCornerShape(20.dp)
+            val isSelected = scope in selected
+            val chipModifier = (if (index == 0) Modifier.focusRequester(firstChipFocusRequester) else Modifier)
+                // Expose the multi-select state to accessibility services (the chip reported checked=false).
+                .semantics {
+                    role = Role.Checkbox
+                    toggleableState = if (isSelected) ToggleableState.On else ToggleableState.Off
+                }
+            // Selected = gold fill + check mark. Focus = thick ring, independent of selection, so a focused
+            // chip never reads as "selected" and a selected one never loses its ring when focused.
             FilterChip(
-                selected = scope in selected,
+                selected = isSelected,
                 onClick = { onToggle(scope) },
-                modifier = if (index == 0) Modifier.focusRequester(firstChipFocusRequester) else Modifier,
+                modifier = chipModifier,
                 colors = FilterChipDefaults.colors(
                     containerColor = NuvioTheme.colors.BackgroundCard,
-                    focusedContainerColor = NuvioTheme.colors.Secondary,
+                    focusedContainerColor = NuvioTheme.colors.BackgroundCard,
                     selectedContainerColor = NuvioTheme.colors.Secondary,
                     focusedSelectedContainerColor = NuvioTheme.colors.Secondary,
                     contentColor = NuvioTheme.colors.TextSecondary,
-                    focusedContentColor = NuvioTheme.colors.OnSecondary,
+                    focusedContentColor = NuvioTheme.colors.TextPrimary,
                     selectedContentColor = NuvioTheme.colors.OnSecondary,
                     focusedSelectedContentColor = NuvioTheme.colors.OnSecondary,
                 ),
                 border = FilterChipDefaults.border(
                     border = Border(BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border), shape = shape),
-                    focusedBorder = Border(BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing), shape = shape),
+                    focusedBorder = Border(NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs), shape = shape),
                     selectedBorder = Border(BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.Primary), shape = shape),
-                    focusedSelectedBorder = Border(BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing), shape = shape),
+                    focusedSelectedBorder = Border(NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs), shape = shape),
                 ),
                 shape = FilterChipDefaults.shape(shape = shape),
             ) {
-                Text(text = label, style = MaterialTheme.typography.labelLarge)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    if (isSelected) {
+                        Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                    Text(text = label, style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
     }

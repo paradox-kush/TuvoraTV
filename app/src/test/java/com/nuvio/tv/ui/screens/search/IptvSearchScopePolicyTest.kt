@@ -58,4 +58,23 @@ class IptvSearchScopePolicyTest {
             listOf("xtream_channels", "xtream_movies", "xtream_series"), IptvSearchScope.entries.map { it.catalogId })
         assertNull("unknown catalog", IptvSearchScopePolicy.scopeOf("addon_movies"))
     }
+
+    @Test
+    fun `chips stay up when the IPTV lane answered even with zero rows`() {
+        assertTrue("rows on screen", IptvSearchScopePolicy.showChips(hasIptvRows = true, iptvAnsweredForQuery = false))
+        assertTrue("answered with zero hits keeps the filters", IptvSearchScopePolicy.showChips(hasIptvRows = false, iptvAnsweredForQuery = true))
+        assertFalse("no IPTV at all (no sources, or not answered yet)", IptvSearchScopePolicy.showChips(hasIptvRows = false, iptvAnsweredForQuery = false))
+    }
+
+    @Test
+    fun `empty note shows only when the selection hides every IPTV row after loading`() {
+        val live = setOf(IptvSearchScope.LIVE)
+        val scoped = IptvSearchScopePolicy.filter(rows.filter { it != "xtream_channels" }, live) { it }
+        assertTrue("Live only, no channel hits, add-on rows remain", IptvSearchScopePolicy.showEmptyNote(live, scoped, true, false) { it })
+        assertFalse("still loading", IptvSearchScopePolicy.showEmptyNote(live, scoped, true, true) { it })
+        assertFalse("lane has not answered", IptvSearchScopePolicy.showEmptyNote(live, scoped, false, false) { it })
+        assertFalse("selection is all, nothing hidden", IptvSearchScopePolicy.showEmptyNote(IptvSearchScopePolicy.ALL, scoped, true, false) { it })
+        assertFalse("a surviving IPTV row", IptvSearchScopePolicy.showEmptyNote(live, rows, true, false) { it })
+        assertTrue("zero rows at all", IptvSearchScopePolicy.showEmptyNote(live, emptyList<String>(), true, false) { it })
+    }
 }
