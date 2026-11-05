@@ -277,6 +277,7 @@ class IptvProviderPlaybackResolver internal constructor(
                 applicationDnsKey = account.dnsProvider
                     .takeIf { dnsPolicy == DnsPolicy.SHARED_APPLICATION_RESOLVER }
                     ?.let(::ApplicationDnsKey),
+                network = ProviderLinkReusePolicy.network(selection.sourceType, selection.contentType),
                 contentType = selection.contentType,
                 contentKey = SecretValue(selection.contentKey.value),
                 providerConnectionLimit = selection.providerConnectionLimit,

@@ -1337,6 +1337,116 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    // Live pipeline audit 2026-11-04 §3c, fits B52 ("recovers after zapping and waiting 1-2 min"): the
+    // rolling reconnect window is session-scoped and cleared only by 30 s of stable playback, so it
+    // survived a user Retry and a channel change. A healthy stream after Retry/zap inherited the old
+    // channel's pressure and went straight to FAILED on its first blip.
+    private suspend fun TestScope.exhaustThenRestart(restart: PlaybackCommand): Pair<PlaybackSession, FakeEngine> {
+        val engine = FakeEngine { start, input, events ->
+            if (start > 1) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        repeat(7) {
+            engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+            advanceUntilIdle()
+        }
+        assertEquals(FailureCode.LIVE_RECONNECT_EXHAUSTED, session.snapshot.value.failure?.code)
+
+        session.dispatch(restart)
+        advanceUntilIdle()
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        return session to engine
+    }
+
+    private suspend fun TestScope.firstBlipReconnects(session: PlaybackSession, engine: FakeEngine) {
+        val generation = session.snapshot.value.generation
+        val starts = engine.startCalls
+        engine.emit(PlaybackEvent.PlaybackEnded(generation, PlaybackEndReason.EOF))
+        advanceUntilIdle()
+        val state = session.snapshot.value
+        assertEquals("the first blip gets a reconnect, not inherited exhaustion", starts + 1, engine.startCalls)
+        assertEquals(state.toString(), PlaybackState.PLAYING, state.state)
+    }
+
+    @Test
+    fun `user retry after exhaustion gives a healthy stream a fresh reconnect budget`() = runTest {
+        val (session, engine) = exhaustThenRestart(PlaybackCommand.Retry)
+        firstBlipReconnects(session, engine)
+        close(session)
+    }
+
+    @Test
+    fun `zap after exhaustion gives the new channel a fresh reconnect budget`() = runTest {
+        val (session, engine) = exhaustThenRestart(
+            PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN),
+        )
+        firstBlipReconnects(session, engine)
+        close(session)
+    }
+
+    // Live pipeline audit 2026-11-04 §3a inferred that a surface which never returns during a live
+    // reconnect leaves the LIVE_RECONNECTING spinner up forever (the loop's `delay(500); continue`).
+    // Pin of the real path: the reducer turns surface loss during a reconnect into a SURFACE_LOST
+    // barrier, so the session waits in ATTACHING_SURFACE under the production surface watchdog and
+    // ends in FAILED (error + Retry) - it never spins in the reconnect loop.
+    @Test
+    fun `a surface that never returns during live reconnect ends in failed`() = runTest {
+        val lifecycleEvents = MutableSharedFlow<PlaybackLifecycleEvent>(extraBufferCapacity = 4)
+        val engine = FakeEngine { start, input, events ->
+            if (start == 2) {
+                events.emit(
+                    PlaybackEvent.Failed(
+                        input.generation,
+                        PlaybackFailure(
+                            FailureCode.NETWORK_TIMEOUT,
+                            FailureDomain.NETWORK,
+                            FailurePhase.RECOVERY,
+                            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                        ),
+                    ),
+                )
+            }
+        }
+        val session = session(
+            engine,
+            lifecycle = PlaybackLifecyclePort { lifecycleEvents },
+            policy = PlaybackPolicy(),
+        )
+        runCurrent()
+        lifecycleEvents.emit(PlaybackLifecycleEvent.ACTIVE)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        runCurrent()
+        lifecycleEvents.emit(PlaybackLifecycleEvent.INACTIVE)
+        runCurrent()
+        session.dispatch(PlaybackCommand.SurfaceUnavailable)
+        runCurrent()
+        lifecycleEvents.emit(PlaybackLifecycleEvent.ACTIVE)
+        runCurrent()
+        // The surface never comes back while the screen is resumed. Step virtual time rather than
+        // advanceUntilIdle, which an unbounded wait would never let return.
+        repeat(20) {
+            advanceTimeBy(30_000L)
+            runCurrent()
+        }
+
+        val state = session.snapshot.value
+        assertEquals(state.toString(), PlaybackState.FAILED, state.state)
+        assertEquals(FailureCode.SURFACE_LOST, state.failure?.code)
+        close(session)
+    }
+
     @Test
     fun `live recovery joins default position while VOD restores its checkpoint`() = runTest {
         suspend fun TestScope.recoveredStart(request: PlaybackRequest): PlaybackEngineStart {
