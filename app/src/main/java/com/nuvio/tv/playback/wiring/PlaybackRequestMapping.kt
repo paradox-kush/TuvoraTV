@@ -10,6 +10,7 @@ import com.nuvio.tv.playback.core.DnsPolicy
 import com.nuvio.tv.playback.core.DrmRequest
 import com.nuvio.tv.playback.core.EvidenceFact
 import com.nuvio.tv.playback.core.EvidenceProvenance
+import com.nuvio.tv.playback.core.PlaybackNetworkRequest
 import com.nuvio.tv.playback.core.PlaybackRequest
 import com.nuvio.tv.playback.core.RedirectPolicy
 import com.nuvio.tv.playback.core.SecretValue
@@ -37,6 +38,8 @@ class NavigationPlaybackInput(
     val tlsPolicy: TlsPolicy = TlsPolicy.PLATFORM_DEFAULT,
     val dnsPolicy: DnsPolicy = DnsPolicy.SYSTEM,
     val applicationDnsKey: ApplicationDnsKey? = null,
+    /** Engine-neutral network intent, e.g. a single-use link's SESSION_ONLY retry policy. */
+    val network: PlaybackNetworkRequest = PlaybackNetworkRequest(),
     val drm: DrmRequest? = null,
     val contentType: ContentType,
     val contentKey: SecretValue? = null,
@@ -90,6 +93,7 @@ class PlaybackRequestMapper {
             tlsPolicy = input.tlsPolicy,
             dnsPolicy = input.dnsPolicy,
             applicationDnsKey = input.applicationDnsKey,
+            network = input.network,
             drm = input.drm?.sanitized(),
             contentType = input.contentType,
             contentKey = input.contentKey,

@@ -153,9 +153,9 @@ internal object MpvAdapterPlanFactory {
         // FFmpeg demuxer-level reconnect (the VLC/mpv approach to a transient live drop): re-open
         // the HTTP read underneath the running graph so the decoder + video output stay alive — the
         // last frame stays frozen under the buffering spinner and playback resumes without a black
-        // screen. Scoped to re-openable live: a single-use / SESSION_ONLY link (e.g. Stalker
-        // create_link) is dead after first use, so it must NOT be re-opened at the socket layer —
-        // only PlaybackSession may mint a fresh link. reconnect_delay_max bounds the socket-level
+        // screen. Scoped to re-openable live: a single-use / SESSION_ONLY link (every Stalker live
+        // link — ProviderLinkReusePolicy marks it in the IPTV resolver) is dead after first use, so
+        // it must NOT be re-opened at the socket layer — only PlaybackSession may mint a fresh link. reconnect_delay_max bounds the socket-level
         // retry; if FFmpeg still can't restore the read it emits end-file and PlaybackSession's
         // fresh-link reconnect loop takes over. VOD/catch-up keep FFmpeg's default (a legitimate
         // stream end must remain a clean EOF, never a reconnect).
