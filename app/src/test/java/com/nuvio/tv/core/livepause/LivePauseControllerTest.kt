@@ -232,13 +232,13 @@ class LivePauseControllerTest {
     }
 
     @Test
-    fun `a failure after the viewer is shifted also fails with its reason`() = runTest {
+    fun `a failure after the viewer is shifted keeps the saved buffer playing`() = runTest {
         val f = fixture()
         diskToShifted(f)
         f.capture.flow.emit(LiveCaptureEvent.Failed(LivePauseFailure.STALLED))
         runCurrent()
-        assertEquals(LivePauseState.Failed(LivePauseFailure.STALLED), f.state)
-        assertTrue(f.capture.disposed)
+        assertTrue("still shifted, not Failed", f.state is LivePauseState.Shifted)
+        assertFalse("the files stay while the viewer watches them", f.capture.disposed)
     }
 
     @Test

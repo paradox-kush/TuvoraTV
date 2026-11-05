@@ -74,6 +74,8 @@ class LivePauseController(
     private var disposed = false
     /** A capture failure that arrived after its first piece but before the Prepared result was handled. */
     private var captureFailure: LivePauseFailure? = null
+    /** The capture failed while the viewer was shifted: the saved buffer still plays, it just stops growing. */
+    private var captureEnded = false
     /** The last target actually sent to the engine: a held key clamped at an end must not re-seek it. */
     private var lastSeekTarget: Long? = null
     /** Links this pause episode may still mint (capture opens, reconnects and Retry share it). */
@@ -261,7 +263,11 @@ class LivePauseController(
                     // Ready already went out: remember it, onPrepared must not shift onto a dead capture.
                     captureFailure = event.reason
                 } else if (state.value is LivePauseState.Shifted) {
-                    fail(event.reason)
+                    // The viewer is watching what is already saved: stop growing it, keep it playable. The
+                    // files go when the viewer reaches the end of the window (tick), goes Live, or zaps.
+                    captureEnded = true
+                    eventsJob?.cancel()
+                    eventsJob = null
                 }
             }
         }
@@ -448,7 +454,8 @@ class LivePauseController(
         publishShifted(paused = current.paused)
         val updated = state.value as? LivePauseState.Shifted ?: return
         val canCatchUp = mechanism == LivePauseMechanism.ENGINE_BACK_BUFFER ||
-            (mechanism == LivePauseMechanism.PROVIDER_CATCHUP && catchUpBaseWall != null)
+            (mechanism == LivePauseMechanism.PROVIDER_CATCHUP && catchUpBaseWall != null) ||
+            captureEnded
         if (canCatchUp && !updated.paused && updated.behindLiveMs <= AUTO_LIVE_MS) goLive(failedFallsBackToPlay = false)
     }
 
@@ -498,6 +505,7 @@ class LivePauseController(
         prepareJob = null
         ready = null
         captureFailure = null
+        captureEnded = false
         capture?.dispose()
         capture = null
         generation++
