@@ -51,7 +51,22 @@ internal suspend fun PlayerRuntimeController.fetchAddonSubtitlesNow(
     _uiState.update { it.copy(installedSubtitleAddonOrder = installedAddonOrder) }
 
     // Compute hash lazily for providers that support OpenSubtitles-style matching.
-    if (currentVideoHash == null && currentStreamUrl.isNotBlank()) {
+    // Never for live, catch-up or provider-scoped streams: the range reads would spend a single-use link
+    // or a connection slot (SubtitleHashProbePolicy).
+    val mayProbeForHash = com.nuvio.tv.core.player.SubtitleHashProbePolicy.mayProbe(
+        url = currentStreamUrl,
+        contentId = contentId,
+        videoId = currentVideoId,
+        isLiveContent = com.nuvio.tv.core.player.SubtitleHashProbePolicy.isLivePlayback(
+            contentType,
+            navigationArgs.isCatchUp
+        ),
+        isPanelHost = { host ->
+            com.nuvio.tv.core.contracts.PlaybackTrustHosts.isPanelHost(host) ||
+                com.nuvio.tv.core.contracts.PlaybackTrustHosts.isMediaServerHost(host)
+        }
+    )
+    if (currentVideoHash == null && mayProbeForHash) {
         val result = OpenSubtitlesHasher.compute(currentStreamUrl, currentHeaders)
         if (result != null) {
             currentVideoHash = result.hash
