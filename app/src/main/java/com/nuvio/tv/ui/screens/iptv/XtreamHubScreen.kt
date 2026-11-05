@@ -103,6 +103,8 @@ fun XtreamHubScreen(
     onManagePlaylists: () -> Unit = {},
     onPairFromPhone: () -> Unit = {},
     onEnterSetupCode: () -> Unit = {},
+    /** The Recordings page (scheduled and saved catch-up recordings). */
+    onOpenRecordings: () -> Unit = {},
     /** Opens a catch-up replay in the full player — see LiveGuide's parameter of the same name. */
     onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit =
         { _, _, _, _, _ -> },
@@ -302,6 +304,11 @@ fun XtreamHubScreen(
                 selected = false,
                 focusRequester = searchChip,
                 onClick = { if (liveSearchApplies) liveSearchRequest++ else showSearchDialog = true }
+            )
+            HubChip(
+                label = stringResource(R.string.rec_hub_chip),
+                selected = false,
+                onClick = onOpenRecordings,
             )
             HubChip(
                 label = uiState.selectedAccount?.name?.let(com.nuvio.tv.core.iptv.PlaylistDisplayPolicy::displayName) ?: stringResource(R.string.iptv_hub_account_fallback),

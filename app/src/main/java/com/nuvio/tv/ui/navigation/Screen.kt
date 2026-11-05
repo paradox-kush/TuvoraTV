@@ -180,6 +180,7 @@ sealed class Screen(val route: String) {
     /** Step 2: type (or wait for a phone to redeem) a provider's setup code. Carries no argument: the code is never in a route. */
     data object IptvSetupCode : Screen("iptv_setup_code")
     data object SportsHub : Screen("sports_hub")
+    data object Recordings : Screen("recordings")
     data object CatalogOrder : Screen("catalog_order")
     data object Plugins : Screen("plugins")
     data object ExperienceModeSelection : Screen("experience_mode_selection")

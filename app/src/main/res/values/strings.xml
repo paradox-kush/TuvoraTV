@@ -3777,4 +3777,76 @@
     <string name="iptv_guide_size_compact">Compact</string>
     <string name="iptv_guide_size_standard">Standard</string>
     <string name="iptv_guide_size_large">Large</string>
+
+    <!-- Recordings (catch-up saves). Plain words; a problem never shows an exception message or a host. -->
+    <string name="rec_screen_title">Recordings</string>
+    <string name="rec_hub_chip">Recordings</string>
+    <string name="rec_hint_may_start_late">This device may start scheduled recordings a little late.</string>
+    <string name="rec_section_scheduled">Scheduled</string>
+    <string name="rec_section_recording">Recording</string>
+    <string name="rec_section_done">Done</string>
+    <string name="rec_section_failed">Failed</string>
+    <string name="rec_empty_title">No recordings yet</string>
+    <string name="rec_empty_body">Choose a programme in the Live TV guide and press Record, or Record series for every airing. Tuvora saves it from your provider’s catch-up archive once it has aired, so the channel needs catch-up. Your saves appear here.</string>
+    <string name="rec_empty_action">Back to Live TV</string>
+    <string name="rec_load_failed">Couldn’t read your recordings.</string>
+    <string name="rec_load_timed_out">Reading your recordings is taking too long.</string>
+    <string name="rec_action_failed">That didn’t work. Try again.</string>
+    <string name="rec_ok">OK</string>
+    <string name="rec_status_scheduled">Scheduled</string>
+    <string name="rec_status_retry_pending">Will try again</string>
+    <string name="rec_status_recording">Saving</string>
+    <string name="rec_status_recording_size">Saving  ·  %1$s</string>
+    <string name="rec_status_done">Saved</string>
+    <string name="rec_status_failed">Failed</string>
+    <string name="rec_status_cancelled">Cancelled</string>
+    <string name="rec_file_missing">The file is no longer on this device.</string>
+    <string name="rec_action_play">Play</string>
+    <string name="rec_action_retry">Try again</string>
+    <string name="rec_action_delete">Delete</string>
+    <string name="rec_delete_confirm">Delete this recording? The file is removed from this device.</string>
+    <string name="rec_delete_keep">Keep it</string>
+    <string name="rec_problem_no_space">There wasn’t enough free space on this device.</string>
+    <string name="rec_problem_no_catch_up">The provider no longer keeps this programme.</string>
+    <string name="rec_problem_provider_refused">The provider refused the download.</string>
+    <string name="rec_problem_network">The connection dropped before it finished.</string>
+    <string name="rec_problem_stalled">The download stopped getting data.</string>
+    <string name="rec_problem_missed">The programme ended before the recording could start.</string>
+    <string name="rec_problem_cancelled_by_user">You cancelled this recording.</string>
+    <string name="rec_problem_unsupported_format">The provider offers this in a format Tuvora can’t save yet.</string>
+    <string name="rec_problem_live_pending">Recording live TV isn’t available on this device yet.</string>
+    <string name="rec_problem_unknown">Something went wrong while saving it.</string>
+    <!-- Guide programme sheet -->
+    <string name="rec_sheet_record">Record</string>
+    <string name="rec_sheet_record_series">Record series</string>
+    <string name="rec_sheet_cancel">Cancel recording</string>
+    <string name="rec_sheet_stop">Stop recording</string>
+    <string name="rec_sheet_close">Close</string>
+    <string name="rec_note_already_saved">Already saved. Find it in Recordings.</string>
+    <string name="rec_note_series_active">Series recording is on for this show.</string>
+    <string name="rec_note_bad_times">The guide has no start and end time for this one, so it can’t be recorded.</string>
+    <string name="rec_note_needs_catch_up">Can’t record this: the channel keeps no catch-up, and recording live isn’t available on this device yet.</string>
+    <string name="rec_note_programme_over">Too late to record this: the provider no longer keeps it.</string>
+    <string name="rec_badge">REC</string>
+    <!-- Confirmations (they say what will really happen) -->
+    <string name="rec_notice_set">Recording set: %1$s</string>
+    <string name="rec_notice_late">Recording set: %1$s. It may start a little late. If it can’t start in the background, it saves the next time you open Tuvora.</string>
+    <string name="rec_notice_next_open">%1$s will be saved the next time you open Tuvora after it ends.</string>
+    <string name="rec_notice_already">Already scheduled: %1$s</string>
+    <string name="rec_notice_cannot">Can’t record %1$s on this device.</string>
+    <string name="rec_notice_series_none">Series recording is on for %1$s. New airings are added as the guide shows them.</string>
+    <string name="rec_notice_cancelled">Recording cancelled: %1$s</string>
+    <string name="rec_notice_failed">Couldn’t change the recording for %1$s. Try again.</string>
+    <string name="rec_notice_clash">%1$s Overlaps with %2$s.</string>
+    <string name="rec_notice_undo">Undo</string>
+    <string name="rec_notice_allow_exact">Allow exact times</string>
+    <plurals name="rec_notice_series_set">
+        <item quantity="one">Series recording set: %2$d airing of %1$s scheduled</item>
+        <item quantity="other">Series recording set: %2$d airings of %1$s scheduled</item>
+    </plurals>
+    <plurals name="rec_notice_series_late">
+        <item quantity="one">Series recording set: %2$d airing of %1$s. It may start a little late; if it can’t start in the background, it saves the next time you open Tuvora.</item>
+        <item quantity="other">Series recording set: %2$d airings of %1$s. They may start a little late; if they can’t start in the background, they save the next time you open Tuvora.</item>
+    </plurals>
+
 </resources>

@@ -1467,6 +1467,7 @@ private fun PlaybackNavHost(
                 onManagePlaylists = { navController.navigate(Screen.IptvSettings.route) },
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
                 onEnterSetupCode = { navController.navigate(Screen.IptvSetupCode.route) },
+                onOpenRecordings = { navController.navigate(Screen.Recordings.route) },
                 // Catch-up takes the same proven live route (contentType="live" keeps the live DoH
                 // and engine handling, and routes BACK to this hub), plus the isCatchUp flag that
                 // turns off the three behaviours a recording must not have.
@@ -1497,6 +1498,17 @@ private fun PlaybackNavHost(
                         launchSingleTop = true
                     }
                 }
+            )
+        }
+
+        composable(Screen.Recordings.route) {
+            com.nuvio.tv.ui.screens.iptv.recordings.RecordingsScreen(
+                onBack = { navController.popBackStack() },
+                // A finished recording is a file in the app's own storage: the player opens the file:// URI
+                // directly (DefaultDataSource / mpv), no loopback server. No contentId, so no watch-progress row.
+                onPlayFile = { uri, title ->
+                    navController.navigate(Screen.Player.createRoute(streamUrl = uri, title = title))
+                },
             )
         }
 
