@@ -78,13 +78,12 @@ class IptvSearchScopePolicyTest {
 
     @Test
     fun `body mirrors the screen's when order`() {
-        val b = IptvSearchScopePolicy.Body
-        assertEquals("loading with nothing yet", b.SKELETON, IptvSearchScopePolicy.bodyOf(true, true, false))
-        assertEquals("loading wins over a stale error", b.SKELETON, IptvSearchScopePolicy.bodyOf(true, true, true))
-        assertEquals("error with nothing", b.ERROR, IptvSearchScopePolicy.bodyOf(false, true, true))
-        assertEquals("idle and empty", b.NO_RESULTS, IptvSearchScopePolicy.bodyOf(false, true, false))
-        assertEquals("rows, even while more load", b.RESULTS, IptvSearchScopePolicy.bodyOf(true, false, false))
-        assertEquals("rows, idle", b.RESULTS, IptvSearchScopePolicy.bodyOf(false, false, false))
+        assertEquals("loading with nothing yet", IptvSearchScopePolicy.Body.SKELETON, IptvSearchScopePolicy.bodyOf(true, true, false))
+        assertEquals("loading wins over a stale error", IptvSearchScopePolicy.Body.SKELETON, IptvSearchScopePolicy.bodyOf(true, true, true))
+        assertEquals("error with nothing", IptvSearchScopePolicy.Body.ERROR, IptvSearchScopePolicy.bodyOf(false, true, true))
+        assertEquals("idle and empty", IptvSearchScopePolicy.Body.NO_RESULTS, IptvSearchScopePolicy.bodyOf(false, true, false))
+        assertEquals("rows, even while more load", IptvSearchScopePolicy.Body.RESULTS, IptvSearchScopePolicy.bodyOf(true, false, false))
+        assertEquals("rows, idle", IptvSearchScopePolicy.Body.RESULTS, IptvSearchScopePolicy.bodyOf(false, false, false))
     }
 
     @Test
