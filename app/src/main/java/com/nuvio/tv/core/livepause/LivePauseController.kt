@@ -148,7 +148,12 @@ class LivePauseController(
             throw cancelled
         } catch (_: Exception) {
             // An engine port failed under a command: never leave the viewer on a spinner.
-            if (state.value is LivePauseState.Preparing || state.value is LivePauseState.Shifted) {
+            val now = state.value
+            // After the live source was released the picture is frozen on nothing: that is a failure the
+            // viewer must see (and Retry), not a quiet Off.
+            if (now is LivePauseState.Preparing || now is LivePauseState.Shifted ||
+                (sourceReleased && now == LivePauseState.Off)
+            ) {
                 fail(LivePauseFailure.PROVIDER_REFUSED)
             }
         }
@@ -195,8 +200,8 @@ class LivePauseController(
             mutableState.value = LivePauseState.Failed(LivePauseFailure.NO_SPACE)
             return
         }
-        engine.releaseLiveSource()
         sourceReleased = true
+        engine.releaseLiveSource()
         captureWindow = LiveCaptureEvent.Window(0, 0, false)
         val gen = ++generation
         val readyForThis = CompletableDeferred<String>()
