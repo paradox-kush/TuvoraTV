@@ -152,6 +152,7 @@ fun SearchScreen(
     val strVoiceUnavailable = stringResource(R.string.search_voice_unavailable)
     val voiceFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
+    val scopeChipFocusRequester = remember { FocusRequester() }
     val discoverFirstItemFocusRequester = remember { FocusRequester() }
     val recentClearHistoryFocusRequester = remember { FocusRequester() }
     val discoverButtonFocusRequester = remember { FocusRequester() }
@@ -354,6 +355,17 @@ fun SearchScreen(
     // visibleHomeRows pattern so the LazyColumn receives a remember'd list.
     val visibleCatalogRows = remember(uiState.catalogRows) {
         uiState.catalogRows.filter { it.items.isNotEmpty() }
+    }
+    // F85: session-only scope chips (default all) narrow the IPTV rows already fetched; add-on rows are never filtered.
+    var iptvScopes by remember { mutableStateOf(IptvSearchScopePolicy.ALL) }
+    var scopeChipsHaveFocus by remember { mutableStateOf(false) }
+    val scopeKeyOf: (com.nuvio.tv.domain.model.CatalogRow) -> String =
+        { if (it.addonId == "xtream") it.catalogId else "" }
+    val showScopeChips = remember(visibleCatalogRows) {
+        IptvSearchScopePolicy.hasIptvRows(visibleCatalogRows, scopeKeyOf)
+    }
+    val scopedCatalogRows = remember(visibleCatalogRows, iptvScopes) {
+        IptvSearchScopePolicy.filter(visibleCatalogRows, iptvScopes, scopeKeyOf)
     }
     LaunchedEffect(visibleRowKeys) {
         searchRowStates.keys.retainAll(visibleRowKeys)
@@ -599,6 +611,16 @@ fun SearchScreen(
             }
         }
 
+        // F85: Back from the scope chips returns to the field; the row handler above would act on a row that may be filtered out.
+        BackHandler(enabled = scopeChipsHaveFocus) {
+            backToFieldLatched = true
+            coroutineScope.launch {
+                listState.scrollToItem(0)
+                runCatching { searchFocusRequester.requestFocus() }
+                keyboardController?.hide()
+            }
+        }
+
         // Skip the initial composition; there is nothing stale to reset yet.
         var lastScrollResetQuery by remember { mutableStateOf(uiState.query) }
         LaunchedEffect(uiState.query) {
@@ -646,7 +668,10 @@ fun SearchScreen(
                         // D-pad down from the text field is the user's confirmation that the
                         // live-search results are useful, even before a particular card opens.
                         viewModel.onEvent(SearchEvent.RememberSearchFromTextInput)
-                        focusResults = true
+                        // F85: with scope chips showing, Down lands on them; Down again enters row 1.
+                        val focusedChips = showScopeChips &&
+                            runCatching { scopeChipFocusRequester.requestFocus() }.getOrDefault(false)
+                        if (!focusedChips) focusResults = true
                     },
                     onOpenDiscover = {
                         // Arm the restore so coming back lands on this button rather than the
@@ -791,8 +816,38 @@ fun SearchScreen(
                     }
 
                     else -> {
+                        if (showScopeChips) {
+                            item(key = "search_iptv_scope_chips") {
+                                IptvSearchScopeChips(
+                                    selected = iptvScopes,
+                                    onToggle = { scope ->
+                                        // A pending auto-focus into row 1 must not steal focus back from the chips.
+                                        focusResults = false
+                                        pendingFocusMoveToResultsQuery = null
+                                        iptvScopes = IptvSearchScopePolicy.toggle(iptvScopes, scope)
+                                    },
+                                    firstChipFocusRequester = scopeChipFocusRequester,
+                                    upTarget = searchFocusRequester,
+                                    downTarget = {
+                                        scopedCatalogRows.firstOrNull()?.let { searchRowEntryFocusRequesters[it.stableKey()] }
+                                    },
+                                    onFocusChanged = { scopeChipsHaveFocus = it },
+                                    modifier = Modifier.padding(horizontal = NuvioTheme.spacing.xxxl),
+                                )
+                            }
+                        }
+                        if (scopedCatalogRows.isEmpty()) {
+                            item(key = "search_iptv_scope_empty") {
+                                Text(
+                                    text = stringResource(R.string.search_iptv_scope_empty),
+                                    style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
+                                    color = NuvioTheme.colors.TextSecondary,
+                                    modifier = Modifier.padding(horizontal = NuvioTheme.spacing.xxxl, vertical = 12.dp),
+                                )
+                            }
+                        }
                         itemsIndexed(
-                            items = visibleCatalogRows,
+                            items = scopedCatalogRows,
                             key = { index, item ->
                                 "${item.stableKey()}_$index"
                             },
@@ -826,7 +881,9 @@ fun SearchScreen(
                                 rowFocusRequester = rowFocusRequester,
                                 entryFocusRequester = entryFocusRequester,
                                 // Anchor Up to the field; geometric focus varies with the card.
-                                upFocusRequester = if (index == 0) searchFocusRequester else null,
+                                upFocusRequester = if (index == 0) {
+                                    if (showScopeChips) scopeChipFocusRequester else searchFocusRequester
+                                } else null,
                                 listState = listState,
                                 restorerFocusedIndex = if (restoringSearchFocus.value && catalogKey == viewModel.savedFocusRowKey) {
                                     viewModel.savedFocusItemIndex

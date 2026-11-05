@@ -2070,6 +2070,7 @@
     <string name="search_voice_failed">Voice recognition failed. Try again.</string>
     <string name="search_voice_unavailable">Voice search is unavailable on this device.</string>
     <string name="search_no_results_title">No Results</string>
+    <string name="search_iptv_scope_empty">No IPTV matches for the selected types.</string>
     <string name="search_no_results_subtitle">Try searching with different keywords</string>
     <string name="search_error_no_catalogs">No searchable catalogs found in installed addons</string>
 
