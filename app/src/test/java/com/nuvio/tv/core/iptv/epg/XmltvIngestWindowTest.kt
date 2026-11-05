@@ -127,4 +127,45 @@ class XmltvIngestWindowTest {
         )
         assertEquals(XmltvIngestWindow.backMsForCatchUpDays(2), back["itv.uk"])
     }
+
+    // The sid -> guide id mapping XmltvClient feeds backMsByGuide from the overlay's hand picks. The
+    // tests above pass pre-resolved sids, so a break in this mapping (the identity key, the guide id
+    // normalisation) would not have gone red.
+    private fun entity(playlist: String, name: String, epgId: String?) =
+        com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(playlist, name, epgId)
+
+    @Test
+    fun `an overlay pick resolves to its channel's stream id through the real identity key`() {
+        val lineup = listOf(
+            XmltvIngestWindow.LineupRef(name = "BBC One", epgId = "bbc1.uk", streamId = 7),
+            XmltvIngestWindow.LineupRef(name = "ITV", epgId = null, streamId = 9),
+        )
+        val picks = XmltvIngestWindow.manualPicks(
+            playlistId = "pl",
+            lineup = lineup,
+            overrides = listOf(entity("pl", "ITV", null) to " ITV.UK "),
+            normalize = ::normalizeChannelId,
+        )
+        assertEquals("the pick belongs to stream 9, guide id normalised", listOf(9 to normalizeChannelId(" ITV.UK ")), picks)
+    }
+
+    @Test
+    fun `a pick for a channel that left the lineup, or another playlist, is dropped`() {
+        val lineup = listOf(XmltvIngestWindow.LineupRef("BBC One", "bbc1.uk", 7))
+        val picks = XmltvIngestWindow.manualPicks(
+            playlistId = "pl", lineup = lineup,
+            overrides = listOf(entity("pl", "Gone", null) to "x.uk", entity("other", "BBC One", "bbc1.uk") to "y.uk"),
+            normalize = ::normalizeChannelId,
+        )
+        assertEquals("nothing to widen", emptyList<Pair<Int, String>>(), picks)
+    }
+
+    @Test
+    fun `a pick made through the real mapping widens the archive window end to end`() {
+        val lineup = listOf(XmltvIngestWindow.LineupRef("BBC One", "bbc1.uk", 7))
+        val manual = XmltvIngestWindow.manualPicks("pl", lineup, listOf(entity("pl", "BBC One", "bbc1.uk") to "BBC1.uk"), ::normalizeChannelId)
+        val back = XmltvIngestWindow.backMsByGuide(emptyList(), manual, mapOf(7 to 3))
+        assertEquals("3-day archive under the normalised guide id",
+            XmltvIngestWindow.backMsForCatchUpDays(3), back[normalizeChannelId("BBC1.uk")])
+    }
 }

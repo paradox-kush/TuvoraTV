@@ -345,12 +345,12 @@ class XmltvClient @Inject constructor(
             val backByGuide: Map<String, Long> = if (acc.isXtream()) emptyMap() else {
                 // A channel the user gave a guide channel by hand is not among the matcher's
                 // assignments; without it the pick fell back to the 6 h default.
-                val entityToSid = lineup.associate {
-                    com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(acc.id, it.name, it.epgId) to it.streamId
-                }
-                val manual = overlay?.epgOverrideEntries(acc.id).orEmpty().mapNotNull { (entity, gid) ->
-                    entityToSid[entity]?.let { sid -> sid to normalizeChannelId(gid) }
-                }
+                val manual = XmltvIngestWindow.manualPicks(
+                    playlistId = acc.id,
+                    lineup = lineup.map { XmltvIngestWindow.LineupRef(it.name, it.epgId, it.streamId) },
+                    overrides = overlay?.epgOverrideEntries(acc.id).orEmpty(),
+                    normalize = ::normalizeChannelId,
+                )
                 XmltvIngestWindow.backMsByGuide(
                     assigned = result.assignments.map { it.streamId to it.guideId },
                     manual = manual,
