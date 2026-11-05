@@ -1,5 +1,9 @@
 package com.nuvio.tv.core.iptv.content
 
+// Catch-up attribute parsing adapted from homelessbrian/NuvioPlusIPTV (GPL-3.0), livetv/data/M3uParser.kt.
+import com.nuvio.tv.core.iptv.M3uCatchUp
+import com.nuvio.tv.core.iptv.M3uCatchUpInfo
+
 /** What an #EXTINF+URL pair classifies as. */
 enum class M3UKind { LIVE, VOD, SERIES }
 
@@ -12,7 +16,8 @@ data class M3UEntry(
     val group: String?,        // group-title="" = category
     val url: String,
     val kind: M3UKind,
-    val ext: String?           // container extension from the URL tail (mp4/mkv/ts/...), null if none
+    val ext: String?,          // container extension from the URL tail (mp4/mkv/ts/...), null if none
+    val catchUp: M3uCatchUpInfo? = null, // catch-up attributes (entry over #EXTM3U header default), null = none
 )
 
 /**
@@ -80,7 +85,11 @@ object M3UParser {
      * Returns null only if the line isn't an EXTINF line. The URL + kind are supplied by the
      * caller (which reads the next line).
      */
-    fun parseExtInf(extInfLine: String, url: String): M3UEntry? {
+    fun parseExtInf(
+        extInfLine: String,
+        url: String,
+        headerCatchUp: Map<String, String> = emptyMap(),
+    ): M3UEntry? {
         if (!extInfLine.startsWith("#EXTINF")) return null
         // Display name = everything after the LAST comma that isn't inside a quoted attribute.
         val comma = lastUnquotedComma(extInfLine)
@@ -100,8 +109,39 @@ object M3UParser {
             group = attrs["group-title"]?.takeIf { it.isNotBlank() },
             url = url,
             kind = classify(url, ext),
-            ext = ext
+            ext = ext,
+            catchUp = catchUpOf(headerCatchUp + attrs.filterKeys { it in CATCHUP_KEYS && !attrs[it].isNullOrBlank() }),
         )
+    }
+
+    /** Attribute keys that carry catch-up settings, on an entry or as `#EXTM3U` header defaults. */
+    private val CATCHUP_KEYS = setOf("catchup", "catchup-type", "catchup-source", "catchup-days", "tvg-rec", "timeshift")
+
+    /**
+     * Catch-up attributes found on the `#EXTM3U` line (TiviMate lets a playlist set them once for
+     * every channel); an entry's own attributes override them key by key.
+     */
+    fun headerCatchUpOf(extM3ULine: String): Map<String, String> {
+        if (!extM3ULine.startsWith("#EXTM3U")) return emptyMap()
+        val out = HashMap<String, String>()
+        for (m in ATTR.findAll(extM3ULine)) {
+            val k = m.groupValues[1].lowercase()
+            if (k in CATCHUP_KEYS && m.groupValues[2].isNotBlank()) out[k] = m.groupValues[2]
+        }
+        return out
+    }
+
+    /**
+     * The catch-up settings in [attrs], or null when the entry has none: it needs a type, a source
+     * template or a positive day count. Type defaults to `default`, days to 1.
+     */
+    internal fun catchUpOf(attrs: Map<String, String>): M3uCatchUpInfo? {
+        val typeValue = (attrs["catchup"] ?: attrs["catchup-type"])?.takeIf { it.isNotBlank() }
+        val source = attrs["catchup-source"]?.takeIf { it.isNotBlank() }
+        val rawDays = (attrs["catchup-days"] ?: attrs["tvg-rec"] ?: attrs["timeshift"])?.trim()?.toIntOrNull()
+        if (typeValue == null && source == null && (rawDays ?: 0) <= 0) return null
+        val type = M3uCatchUp.catchUpType(typeValue, source) ?: return null
+        return M3uCatchUpInfo(type, source, rawDays?.takeIf { it > 0 } ?: 1)
     }
 
     /** Index of the comma that starts the display name, ignoring commas inside `attr="..."`. */
@@ -131,6 +171,7 @@ object M3UParser {
     ) {
         var pendingExtInf: String? = null
         var headerSeen = false
+        var headerCatchUp: Map<String, String> = emptyMap()
         var line = reader.readLine()
         while (line != null) {
             val trimmed = line.trim()
@@ -139,10 +180,11 @@ object M3UParser {
                 !headerSeen && trimmed.startsWith("#EXTM3U") -> {
                     headerSeen = true
                     tvgUrlOf(trimmed)?.let(onHeaderTvgUrl)
+                    headerCatchUp = headerCatchUpOf(trimmed)
                 }
                 trimmed.startsWith("#") || trimmed.isEmpty() -> { /* directive / blank */ }
                 pendingExtInf != null -> {
-                    val entry = parseExtInf(pendingExtInf, trimmed)
+                    val entry = parseExtInf(pendingExtInf, trimmed, headerCatchUp)
                     pendingExtInf = null
                     if (entry != null && entry.name.isNotBlank()) onEntry(entry)
                 }

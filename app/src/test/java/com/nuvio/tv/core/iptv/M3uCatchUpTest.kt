@@ -325,10 +325,12 @@ class M3uCatchUpTest {
 
     @Test
     fun `preferForm puts the remembered form first`() {
-        val alts = listOf(hls, "http://h:80/streaming/timeshift.php?username=u")
-        assertEquals(listOf(ts) + alts, M3uCatchUp.preferForm(ts, alts, null))
-        assertEquals(listOf(hls, ts, alts[1]), M3uCatchUp.preferForm(ts, alts, "hls"))
-        assertEquals(listOf(alts[1], ts, hls), M3uCatchUp.preferForm(ts, alts, "php"))
+        val php = "http://h:80/streaming/timeshift.php?username=u"
+        val alts = listOf(ts, php)
+        assertEquals(listOf(hls) + alts, M3uCatchUp.preferForm(hls, alts, null))
+        assertEquals(listOf(ts, hls, php), M3uCatchUp.preferForm(hls, alts, "ts"))
+        assertEquals(listOf(php, hls, ts), M3uCatchUp.preferForm(hls, alts, "php"))
+        assertEquals(listOf(hls, ts, php), M3uCatchUp.preferForm(hls, alts, "hls"))
     }
 
     @Test
