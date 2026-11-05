@@ -512,6 +512,7 @@ internal class CleanLivePlayerViewModel private constructor(
             presentationJob?.cancelAndJoin()
             presentationJob = null
             // The buffer belongs to the channel being left.
+            val hadBuffer = mutableLivePause.value.phase != LivePausePhase.OFF
             livePauseControl?.onChannelChanged()
             val nextDisplay = CleanLiveLaunchMetadata.sanitized(target.title)
             val nextLaunch = CleanLiveLaunchEntry(
@@ -531,6 +532,22 @@ internal class CleanLivePlayerViewModel private constructor(
                 publishReady(currentHost, basis.launch.metadata, basis.launch.origin)
                 throw cancelled
             } catch (_: Exception) {
+                if (hadBuffer) {
+                    // The host may still be on the buffer that was just deleted: put the channel being left
+                    // back on its live source, or fail visibly. Never leave a black screen.
+                    try {
+                        currentHost.tune(
+                            basis.launch.target.selection,
+                            SessionProfile.FULLSCREEN,
+                            mediaSessionMetadata(basis.launch),
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        rejectAfterRelease(currentHost, CleanLivePlayerRejection.TUNE_FAILED)
+                        return@withLock
+                    }
+                }
                 publishReady(currentHost, basis.launch.metadata, basis.launch.origin)
                 return@withLock
             }
