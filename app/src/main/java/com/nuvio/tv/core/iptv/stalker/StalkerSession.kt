@@ -139,7 +139,7 @@ class StalkerSession(
      * 401 / 403). Throws on a hard failure so callers' [runCatching] degrades to empty.
      */
     suspend fun request(params: Map<String, String>): JsonElement = withContext(Dispatchers.IO) {
-        com.nuvio.tv.core.sources.DeviceSources.guard("iptv",account.id)
+        com.nuvio.tv.core.sources.DeviceSources.checkAccess("iptv",account.id)
         ensureAuthenticated()
         val staleToken = token
         // ONLY an auth failure earns a re-handshake. A transport/HTTP throw (429/419/5xx/timeout) must
