@@ -355,4 +355,18 @@ class M3uCatchUpTest {
         assertTrue(M3uCatchUp.wholeMinutes("http://h/streaming/timeshift.php?a=1"))
         assertFalse(M3uCatchUp.wholeMinutes("http://h/x?utc=1"))
     }
+
+    @Test
+    fun `one pass leaves surrounding braces alone and fills each placeholder once`() {
+        // {utc:{d} formats the text "{d" (day 03); the closing brace stays literal and nothing is re-scanned.
+        val out = M3uCatchUp.fill("x{utc:{d}}y{duration}", start = 1_791_054_000L, end = 1_791_057_600L, now = 1_791_060_000L, duration = 3600L, offsetMs = 0L)
+        assertEquals("x{03}y3600", out)
+    }
+
+    @Test
+    fun `the dollar prefix is accepted on bare local-time placeholders`() {
+        // 2026-10-03 19:00:00 UTC
+        val out = M3uCatchUp.fill("\${Y}\${m}\${d}\${H}\${M}\${S}", start = 1_791_054_000L, end = 1_791_057_600L, now = 1_791_060_000L, duration = 3600L, offsetMs = 0L)
+        assertEquals("20261003190000", out)
+    }
 }

@@ -277,9 +277,6 @@ object M3uCatchUp {
 
     // --- placeholders -------------------------------------------------------------------------
 
-    private val FORMATTED = Regex("""\$?\{(utc|start|utcend|end|lutc|now|timestamp):([^}]+)\}""")
-    private val DURATION_DIV = Regex("""\$?\{duration:(\d+)\}""")
-    private val OFFSET_DIV = Regex("""\$?\{offset:(\d+)\}""")
 
     /**
      * Fills the template. Seconds-based values are epoch seconds. `{utc}`/`{start}` are the start,
@@ -289,38 +286,36 @@ object M3uCatchUp {
      * start's wall-clock fields at [offsetMs] from UTC. A leading `$` is optional throughout.
      */
     internal fun fill(template: String, start: Long, end: Long, now: Long, duration: Long, offsetMs: Long): String {
-        var out = FORMATTED.replace(template) { m ->
-            val epoch = when (m.groupValues[1]) {
-                "utcend", "end" -> end
-                "lutc", "now", "timestamp" -> now
-                else -> start
-            }
-            formatPattern(m.groupValues[2], epoch * 1000)
-        }
-        out = DURATION_DIV.replace(out) { m ->
-            (duration / (m.groupValues[1].toLongOrNull()?.coerceAtLeast(1) ?: 1)).toString()
-        }
-        out = OFFSET_DIV.replace(out) { m ->
-            ((now - start) / (m.groupValues[1].toLongOrNull()?.coerceAtLeast(1) ?: 1)).toString()
-        }
-        val simple = mapOf(
-            "utc" to start, "start" to start, "timestamp" to now,
-            "utcend" to end, "end" to end,
-            "lutc" to now, "now" to now,
-            "duration" to duration, "offset" to (now - start),
-        )
-        simple.forEach { (k, v) ->
-            out = out.replace("\${$k}", v.toString()).replace("{$k}", v.toString())
-        }
         val local = start * 1000 + offsetMs
-        return out
-            .replace("{Y}", formatPattern("Y", local))
-            .replace("{m}", formatPattern("m", local))
-            .replace("{d}", formatPattern("d", local))
-            .replace("{H}", formatPattern("H", local))
-            .replace("{M}", formatPattern("M", local))
-            .replace("{S}", formatPattern("S", local))
+        // One pass over the template: a value produced by one placeholder is never scanned for another.
+        return PLACEHOLDER.replace(template) { m ->
+            val g = m.groupValues
+            when {
+                g[1].isNotEmpty() -> {
+                    val epoch = when (g[1]) {
+                        "utcend", "end" -> end
+                        "lutc", "now", "timestamp" -> now
+                        else -> start
+                    }
+                    formatPattern(g[2], epoch * 1000)
+                }
+                g[3].isNotEmpty() -> (duration / (g[3].toLongOrNull()?.coerceAtLeast(1) ?: 1)).toString()
+                g[4].isNotEmpty() -> ((now - start) / (g[4].toLongOrNull()?.coerceAtLeast(1) ?: 1)).toString()
+                g[5].isNotEmpty() -> when (g[5]) {
+                    "utc", "start" -> start
+                    "timestamp", "lutc", "now" -> now
+                    "utcend", "end" -> end
+                    "duration" -> duration
+                    else -> now - start // offset
+                }.toString()
+                else -> formatPattern(g[6], local)
+            }
+        }
     }
+
+    private val PLACEHOLDER = Regex(
+        """\$?\{(?:(utc|start|utcend|end|lutc|now|timestamp):([^}]+)|duration:(\d+)|offset:(\d+)|(utc|start|timestamp|utcend|end|lutc|now|duration|offset)|([YmdHMS]))\}""",
+    )
 
     /** `Y m d H M S` pattern letters to a UTC-formatted instant; other letters stay literal. */
     private fun formatPattern(pattern: String, epochMs: Long): String {
