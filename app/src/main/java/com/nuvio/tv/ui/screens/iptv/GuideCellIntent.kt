@@ -35,6 +35,10 @@ internal object GuideCellIntent {
         ProgrammeAction.REPLAY -> Intent.REPLAY
     }
 
+    /** Stub (red). */
+    fun forProgramme(action: ProgrammeAction, programme: XtreamProgram, nowMs: Long, canRecordLive: Boolean): Intent =
+        forAction(action)
+
     /**
      * OK on a programme that already aired, on a channel with nothing kept for it, used to do
      * nothing at all. It now says so (the same notice a provider's refusal gives). The future and
