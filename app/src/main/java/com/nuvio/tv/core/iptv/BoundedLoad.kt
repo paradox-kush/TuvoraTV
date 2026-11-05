@@ -61,6 +61,8 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
      * STALL deadline fed by import progress; past it the screen stops waiting (the rebuild keeps going behind it).
      */
     PLAYLIST_REFRESH("playlist_refresh", 90_000L, reportsEveryOutcome = true),
+    /** Starting a live pause / rewind buffer: the first playable piece (or a Failed the viewer can Retry). */
+    LIVE_PAUSE("live_pause", 20_000L, reportsEveryOutcome = true),
 }
 
 sealed interface LoadStatus {

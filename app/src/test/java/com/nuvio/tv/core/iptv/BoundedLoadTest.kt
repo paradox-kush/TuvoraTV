@@ -52,6 +52,9 @@ class BoundedLoadTest {
         assertEquals("hub row", 20_000L, LoadSurface.HUB_ROW.stallMs)
         assertEquals("live resolve", 20_000L, LoadSurface.LIVE_RESOLVE.stallMs)
         assertEquals("settings", 25_000L, LoadSurface.SETTINGS.stallMs)
+        assertEquals("live pause buffer start", 20_000L, LoadSurface.LIVE_PAUSE.stallMs)
+        assertEquals("live pause key", "live_pause", LoadSurface.LIVE_PAUSE.key)
+        assertTrue("live pause reports every outcome", LoadSurface.LIVE_PAUSE.reportsEveryOutcome)
     }
 
     @Test
