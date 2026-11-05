@@ -84,6 +84,10 @@ data class XtreamHubUiState(
     val rowLoads: Map<String, LoadStatus> = emptyMap(),
     val catalogueGeneration: Long = 0L,
     val error: String? = null,
+    /** UX164: the section whose portal said it has nothing there — shown plainly, with no Retry. */
+    val unavailableSection: XtreamSection? = null,
+    /** UX147: playlists whose portal positively has no series section; their Series tab is hidden. */
+    val seriesUnavailableIds: Set<String> = emptySet(),
     // The user's poster-size preference (Layout settings) — the hub's rails derive their card
     // size from the SAME source as the Modern home rows so the two surfaces always match.
     val posterCardWidthDp: Int = 126,
@@ -379,7 +383,7 @@ class XtreamHubViewModel @Inject constructor(
             }
             return
         }
-        _uiState.update { it.copy(categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES), error = null) }
+        _uiState.update { it.copy(categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES), error = null, unavailableSection = null) }
         val epoch = catalogEpoch(acc.id)
         viewModelScope.launch {
             // Xtream reads its section rows from the local catalog once it's built (P7, item 4) —
@@ -422,6 +426,11 @@ class XtreamHubViewModel @Inject constructor(
             }
             // A slow answer for a section the viewer already left must not paint over the new one.
             if (catalogEpoch(acc.id) != epoch || !isCurrent(acc.id, section)) return@launch
+            if (section == XtreamSection.SERIES && acc.sourceType == XtreamAccount.SOURCE_STALKER) {
+                // UX147: the series probe has settled; a portal with positive "no series" evidence loses the tab.
+                val absent = clientFactory.stalker().seriesAbsent(acc)
+                _uiState.update { it.copy(seriesUnavailableIds = if (absent) it.seriesUnavailableIds + acc.id else it.seriesUnavailableIds - acc.id) }
+            }
             val cats = outcome.valueOrNull()
             if (cats != null) {
                 categoriesCache[catKey] = cats
@@ -446,6 +455,12 @@ class XtreamHubViewModel @Inject constructor(
                     failure.portalText ?: context.getString(R.string.iptv_hub_error_unreachable)
                 IptvLoadFailurePolicy.Kind.UNREACHABLE ->
                     context.getString(R.string.iptv_hub_error_unreachable)
+                IptvLoadFailurePolicy.Kind.SECTION_UNAVAILABLE -> ""
+            }
+            if (!IptvLoadFailurePolicy.offersRetry(failure.kind)) {
+                // UX164: the portal has no such section. A fact, not a failure: no Retry, no breadcrumb.
+                _uiState.update { it.copy(categoriesLoad = LoadStatus.Empty, error = null, unavailableSection = section) }
+                return@launch
             }
             _uiState.update { it.copy(categoriesLoad = outcome.status, error = "$text\n\n${failure.detail}") }
         }

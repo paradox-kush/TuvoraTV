@@ -91,6 +91,26 @@ class IptvLoadFailurePolicyTest {
         assertEquals("held by another device", failure.portalText)
     }
 
+    // --- UX164: the portal has no such section ---------------------------------
+
+    @Test
+    fun `a portal that answers nothing for a section is unavailable and not refused`() {
+        val failure = classify(StalkerSessionUnavailableException("nothing for series", emptySection = true), host = "http://p.example")
+        assertEquals("a section the portal does not have is not a refusal", IptvLoadFailurePolicy.Kind.SECTION_UNAVAILABLE, failure.kind)
+        assertNull("the screen words this itself", failure.portalText)
+    }
+
+    @Test
+    fun `an unavailable section offers no retry and no exception name`() {
+        val failure = classify(StalkerSessionUnavailableException("x", emptySection = true), host = "http://p.example")
+        assertTrue("asking again gets the same answer", !IptvLoadFailurePolicy.offersRetry(failure.kind))
+        assertTrue(!IptvLoadFailurePolicy.showsBreadcrumb(failure.kind))
+        assertTrue("no class name may leak onto the screen", "Exception" !in failure.detail)
+        assertTrue(IptvLoadFailurePolicy.offersRetry(IptvLoadFailurePolicy.Kind.REFUSED))
+        assertTrue(IptvLoadFailurePolicy.offersRetry(IptvLoadFailurePolicy.Kind.UNREACHABLE))
+        assertTrue(IptvLoadFailurePolicy.offersRetry(IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER))
+    }
+
     @Test
     fun `a refusal with no text still classifies and lets the card fall back`() {
         val failure = classify(StalkerPortalRefusedException("   "))

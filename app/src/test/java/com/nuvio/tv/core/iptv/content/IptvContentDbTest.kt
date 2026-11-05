@@ -398,4 +398,29 @@ class IptvContentDbTest {
         db.replaceLiveLineup(other, listOf(ContentChannel(9, "LB", null, null, "g", "http://h/9.ts", useLoadBalancing = true)), categories = listOf("g" to "Group"))
         assertEquals(true, db.channelsFor(other, null).single().useLoadBalancing)
     }
+
+    // --- B179: divider rows never become channels, on either write path -------------------------
+
+    private val b179Lineup = listOf(
+        ContentChannel(1, "BG: ################ Bulgaria Channels ################", null, null, "bg", "http://h/1.ts"),
+        ContentChannel(2, "BG: Bnt 2", null, null, "bg", "http://h/2.ts"),
+        ContentChannel(3, "*** UK ***", null, null, "bg", "http://h/3.ts"),
+        ContentChannel(4, "#0 Sport", null, null, "bg", "http://h/4.ts"),
+        ContentChannel(5, "*** PPV ***", null, "ppv.bg", "bg", "http://h/5.ts"),
+    )
+
+    @Test
+    fun `B179 M3U ingest drops separator rows and keeps real channels`() = runTest {
+        val id = "m3u:http://b179/ingest"
+        db.ingest(id) { w -> b179Lineup.forEach { w.addChannel(it) } }
+        assertEquals(listOf(2, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
+        assertEquals(listOf(2, 4, 5), db.pageChannels(id, null, 0, 50).map { it.sid }.sorted())
+    }
+
+    @Test
+    fun `B179 Stalker lineup replace drops separator rows`() = runTest {
+        val id = "m3u:http://b179/lineup"
+        db.replaceLiveLineup(id, b179Lineup, categories = listOf("bg" to "Bulgaria"))
+        assertEquals(listOf(2, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
+    }
 }

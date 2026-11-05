@@ -83,12 +83,15 @@ class StalkerClient @Inject constructor(
     private val seriesDialects = ConcurrentHashMap<String, StalkerSeriesDialect.Dialect>()
     private val ministraSeasons = ConcurrentHashMap<String, List<StalkerSeriesDialect.Node>>()
     private val ministraEpisodes = ConcurrentHashMap<String, List<MinistraEpisode>>()
+    // UX147/UX164: playlists whose series probe ended with positive evidence of "no series section".
+    private val seriesAbsentIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** Drop an account's cached lineup/rows (portal or MAC edited, playlist removed). */
     fun evictCaches(accountId: String) {
         epgUnsupported.remove(accountId)
         seasonCache.keys.removeAll { it.startsWith("$accountId:") }
         seriesDialects.remove(accountId)
+        seriesAbsentIds.remove(accountId)
         ministraSeasons.keys.removeAll { it.startsWith("$accountId:") }
         ministraEpisodes.keys.removeAll { it.startsWith("$accountId:") }
         rowCache.keys.removeAll { it.startsWith("$accountId:") }
@@ -154,22 +157,38 @@ class StalkerClient @Inject constructor(
         val xc = categories(acc, "series", "get_categories")
         if (xc.getOrNull()?.isNotEmpty() == true) {
             seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.XC
+            seriesAbsentIds.remove(acc.id)
             return xc
         }
         val failure = xc.exceptionOrNull()
         if (failure is kotlinx.coroutines.CancellationException) throw failure
+        val emptySection = (failure as? StalkerSessionUnavailableException)?.emptySection == true
         // An unavailable series module is capability evidence; a network/auth failure is not.
-        if (!StalkerSeriesDialect.allowsVodFallback(failure != null, (failure as? StalkerSessionUnavailableException)?.emptySection == true)) return xc
+        if (!StalkerSeriesDialect.allowsVodFallback(failure != null, emptySection)) return xc
         val vod = categories(acc, "vod", "get_categories")
-        return when (StalkerSeriesDialect.decide(false, vod.getOrNull()?.isNotEmpty() == true)) {
-            StalkerSeriesDialect.Dialect.MINISTRA -> {
-                Log.i(TAG, "stalker: no type=series module — using the Ministra vod series tree")
-                seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.MINISTRA
-                vod
-            }
-            else -> xc
+        val ministra = StalkerSeriesDialect.decide(false, vod.getOrNull()?.isNotEmpty() == true) ==
+            StalkerSeriesDialect.Dialect.MINISTRA
+        // UX147: "no series" is only claimed on positive evidence (see StalkerCapabilities); a failed vod
+        // probe proves nothing, and unknown keeps the Series tab.
+        val absent = vod.isSuccess && StalkerCapabilities.seriesAbsent(
+            modulesSeriesDisabled = runCatching { sessions.sessionFor(acc).seriesModuleDisabled }.getOrNull(),
+            xcEmptySection = emptySection,
+            xcAnsweredEmpty = failure == null,
+            xcFailedOtherwise = false,
+            vodFallbackHasSeries = ministra,
+        )
+        if (absent) seriesAbsentIds += acc.id else seriesAbsentIds -= acc.id
+        return if (ministra) {
+            Log.i(TAG, "stalker: no type=series module — using the Ministra vod series tree")
+            seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.MINISTRA
+            vod
+        } else {
+            xc
         }
     }
+
+    /** True once this session's series probe positively found the portal has no series section (UX147). */
+    fun seriesAbsent(acc: XtreamAccount): Boolean = acc.id in seriesAbsentIds
 
     /** The portal's series dialect, learned once per session through [seriesCategories]. */
     private suspend fun seriesDialect(acc: XtreamAccount): StalkerSeriesDialect.Dialect =

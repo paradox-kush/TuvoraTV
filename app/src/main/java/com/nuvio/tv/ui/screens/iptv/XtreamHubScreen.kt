@@ -139,7 +139,9 @@ fun XtreamHubScreen(
     val account = uiState.selectedAccount
     val showLive = account?.typeEnabled(XtreamAccount.TYPE_LIVE) != false
     val showMovies = account?.typeEnabled(XtreamAccount.TYPE_MOVIES) != false
-    val showSeries = account?.typeEnabled(XtreamAccount.TYPE_SERIES) != false
+    // UX147: ...and so does a portal that positively reported it has no series (unknown keeps the tab).
+    val showSeries = account?.typeEnabled(XtreamAccount.TYPE_SERIES) != false &&
+        (account == null || account.id !in uiState.seriesUnavailableIds)
     val anyTypeEnabled = showLive || showMovies || showSeries
     val selectedTabRequester = when (uiState.section) {
         XtreamSection.LIVE -> liveTab
@@ -407,6 +409,17 @@ private fun HubBrowseContent(
     val pageStatus = rememberEffectiveLoadStatus(uiState.categoriesLoad)
     when {
         uiState.error != null -> ErrorState(message = uiState.error, onRetry = onRetry)
+        // UX164: the portal answered that this section is empty on its side: plain words, no Retry.
+        uiState.unavailableSection == uiState.section -> EmptyScreenState(
+            title = stringResource(
+                when (uiState.section) {
+                    XtreamSection.SERIES -> R.string.iptv_hub_no_series_title
+                    XtreamSection.MOVIES -> R.string.iptv_hub_no_movies_title
+                    XtreamSection.LIVE -> R.string.iptv_hub_no_live_title
+                }
+            ),
+            subtitle = stringResource(R.string.iptv_hub_no_section_message)
+        )
         pageStatus is LoadStatus.Failed && uiState.categories.isEmpty() ->
             ErrorState(message = stringResource(R.string.iptv_hub_error_timeout), onRetry = onRetry)
         pageStatus is LoadStatus.Loading && uiState.categories.isEmpty() -> HubSkeletonRows(cardStyle = portraitStyle)

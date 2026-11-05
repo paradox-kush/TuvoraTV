@@ -759,8 +759,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 "This provider is blocking us (HTTP ${failure.status ?: 0}). This usually clears by itself."
             IptvLoadFailurePolicy.Kind.REFUSED -> failure.portalText ?: "Couldn't reach this playlist."
             IptvLoadFailurePolicy.Kind.UNREACHABLE -> "Couldn't reach this playlist. Check the portal is up and try again."
+            IptvLoadFailurePolicy.Kind.SECTION_UNAVAILABLE -> "This provider has no live channels."
         }
-        return "$text\n\n${failure.detail}"
+        return if (IptvLoadFailurePolicy.showsBreadcrumb(failure.kind)) "$text\n\n${failure.detail}" else text
     }
 
     /** The error card's Retry: the category column if that is what failed, else the selected category. */
