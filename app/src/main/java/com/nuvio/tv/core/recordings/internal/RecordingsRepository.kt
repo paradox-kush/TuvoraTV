@@ -219,6 +219,21 @@ class RecordingsRepository(
 
     private fun partPath(path: String) = "$path.part"
 
+    /** The partial and the sidecar naming the link it came from: they live and die together. */
+    private suspend fun deletePartial(target: String) {
+        files.delete(partPath(target))
+        files.delete(partPath(target) + ".meta")
+    }
+
+    /**
+     * A schedule that is leaving (cancelled, its series stopped) may hold a partial from an earlier
+     * attempt, with no row left to name it. The name is derived from the schedule, and only the
+     * extension depends on the link that was used, so both are cleared.
+     */
+    private suspend fun deletePartialsOf(schedule: RecordingSchedule) {
+        for (link in listOf(null, "x.mp4")) deletePartial(files.pathFor(fileNameFor(schedule, link)))
+    }
+
     // ---- alarms ---------------------------------------------------------------------------
 
     private fun armAt(s: RecordingSchedule, nowMs: Long): ArmKind {
@@ -307,7 +322,9 @@ class RecordingsRepository(
             running[scheduleId]?.let { return@withLock it }
             if (!loaded) loadLocked(clock())
             alarms.disarm(scheduleId)
-            if (doc.scheduleValues.any { it.id == scheduleId }) {
+            val leaving = doc.scheduleValues.firstOrNull { it.id == scheduleId }
+            if (leaving != null) {
+                deletePartialsOf(leaving)
                 edit(schedules = { list -> list.filterNot { it.id == scheduleId } })
                 ledger.forget(scheduleId)
                 commit()
@@ -325,7 +342,7 @@ class RecordingsRepository(
             if (cancelUpcoming) {
                 // A capture already running is the user's to stop (Stop recording); only waiting airings go.
                 val waiting = doc.scheduleValues.filter { it.seriesRuleId == ruleId && it.id !in running }
-                waiting.forEach { alarms.disarm(it.id); ledger.forget(it.id) }
+                waiting.forEach { alarms.disarm(it.id); ledger.forget(it.id); deletePartialsOf(it) }
                 val gone = waiting.mapTo(HashSet()) { it.id }
                 edit(schedules = { list -> list.filterNot { it.id in gone } })
             }
@@ -348,7 +365,7 @@ class RecordingsRepository(
     private suspend fun deleteFilesOf(row: Recording) {
         val path = files.pathFor(row.fileName)
         files.delete(path)
-        if (row.status != RecordingStatus.DONE) files.delete(partPath(path))
+        if (row.status != RecordingStatus.DONE) deletePartial(path)
     }
 
     override suspend fun retry(recordingId: String, nowMs: Long) {
@@ -357,7 +374,7 @@ class RecordingsRepository(
             val source = row.retrySource ?: return@locked
             if (row.status != RecordingStatus.FAILED && row.status != RecordingStatus.CANCELLED) return@locked
             if (doc.scheduleValues.any { it.id == source.id }) return@locked
-            files.delete(partPath(files.pathFor(row.fileName)))
+            deletePartial(files.pathFor(row.fileName))
             removeRecordingRow(recordingId)
             ledger.forget(source.id)
             val again = source.copy(attempts = 0, nextTryMs = nowMs)
@@ -513,6 +530,12 @@ class RecordingsRepository(
                 mutex.withLock {
                     running.remove(run.schedule.id)
                     val partial = files.sizeOf(partPath(run.targetPath))
+                    val finishedBytes = files.sizeOf(run.targetPath)
+                    if (partial == 0L && finishedBytes > 0L) {
+                        // The saver renamed the finished file just before the teardown: track it, do not orphan it.
+                        finishDone(run, SaveOutcome.Done(finishedBytes), nowMs + mark.elapsedNow().inWholeMilliseconds, 0L)
+                        return@withLock
+                    }
                     afterFailureLocked(
                         run.schedule, RecordingProblem.STALLED, offline = false,
                         nowMs = nowMs + mark.elapsedNow().inWholeMilliseconds, written = partial, rangeSupported = true, token = run.token,
@@ -571,7 +594,9 @@ class RecordingsRepository(
         running.remove(s.id)
         ledger.release(run.token, FireOutcome.FAILED, RecordingProblem.CANCELLED_BY_USER)
         val endedAt = clock()
-        files.delete(partPath(run.targetPath))
+        deletePartial(run.targetPath)
+        // The saver may have renamed the finished file just before the cancel landed: nothing tracks it now.
+        files.delete(run.targetPath)
         alarms.disarm(s.id)
         edit(
             schedules = { list -> list.filterNot { it.id == s.id } },
@@ -604,7 +629,7 @@ class RecordingsRepository(
                 removeRecordingRow(recordingId)
                 edit(schedules = { list -> list.map { if (it.id == schedule.id) d.schedule else it } })
                 // Resume only if the server will honour it; otherwise a stale partial would just be rewritten.
-                if (target != null && !(written > 0 && rangeSupported)) files.delete(partPath(target))
+                if (target != null && !(written > 0 && rangeSupported)) deletePartial(target)
                 armAt(d.schedule, nowMs)
                 commit()
                 FireResult.Retrying(d.schedule.nextTryMs)
@@ -631,7 +656,7 @@ class RecordingsRepository(
     private suspend fun terminalRow(schedule: RecordingSchedule, problem: RecordingProblem, nowMs: Long, target: String?) {
         val id = recordingIdFor(schedule.id)
         alarms.disarm(schedule.id)
-        if (target != null) files.delete(partPath(target))
+        if (target != null) deletePartial(target)
         val previous = doc.recordingValues.firstOrNull { it.id == id }
         val row = (previous ?: Recording(
             id = id, scheduleId = schedule.id, channelKey = schedule.channel.key, channelName = schedule.channel.name,

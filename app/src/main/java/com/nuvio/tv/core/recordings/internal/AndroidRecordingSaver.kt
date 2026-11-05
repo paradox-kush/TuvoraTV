@@ -167,7 +167,8 @@ internal class AndroidRecordingSaver(
                             }
                             when {
                                 written == 0L -> Attempt.Failure(SaveOutcome.Failed(RecordingProblem.PROVIDER_REFUSED, false, 0, rangeSupported))
-                                expected != null && written != expected -> {
+                                (expected != null && written != expected) ||
+                                    RecordingCompletenessPolicy.endedTooEarly(written, expected, req.estimatedBytes) -> {
                                     val kind = RecordingSaveClassifier.forIo(null, stalled = true, online = isOnline())
                                     Attempt.Failure(SaveOutcome.Failed(kind.problem, kind.offline, written, rangeSupported))
                                 }

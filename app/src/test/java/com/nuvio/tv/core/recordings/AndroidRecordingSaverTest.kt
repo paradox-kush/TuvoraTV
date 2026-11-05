@@ -42,10 +42,10 @@ class AndroidRecordingSaverTest {
         dir.deleteRecursively()
     }
 
-    private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), check: (suspend (Long) -> RecordingProblem?)? = null) =
+    private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), estimated: Long = 0, check: (suspend (Long) -> RecordingProblem?)? = null) =
         SaveRequest(
             candidates = paths.map { server.url(it).toString() }, headers = headers,
-            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = 0, spaceCheck = check,
+            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = estimated, spaceCheck = check,
         )
 
     /** A `.part` left by an earlier try of [path]: its bytes plus the sidecar naming the link and validators it came from. */
@@ -140,6 +140,15 @@ class AndroidRecordingSaverTest {
         assertEquals(false, got.offline)
         assertTrue(File(dir, "show.ts.part").exists())
         assertTrue(!File(dir, "show.ts").exists())
+    }
+
+    @Test
+    fun `an early clean end with no length and far below the estimate is a retryable stall not a finished save`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setChunkedBody("0123456789", 4))
+        val got = saver().save(req("/a.ts", estimated = 2_000_000_000L)) { } as SaveOutcome.Failed
+        assertEquals(RecordingProblem.STALLED, got.problem)
+        assertTrue("the partial is kept for a resume", File(dir, "show.ts.part").exists())
+        assertTrue("a truncated stream is never presented as the recording", !File(dir, "show.ts").exists())
     }
 
     @Test
