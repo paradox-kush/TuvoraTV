@@ -43,7 +43,37 @@ interface CatchUpPlaybackPort {
 
     /** Advance the dialect ladder on a failed replay; null when the walk is over / not catch-up. */
     fun onFailed(contentId: String?, errorCode: Int): CatchUpDialectRetry?
+
+    /**
+     * Present only for a replay that asked for a continuation window (an M3U replay): the player then
+     * follows the playhead into the shows after the one launched. Null = a plain replay that ends with its programme.
+     */
+    fun continuation(contentId: String?): CatchUpContinuation? = null
+
+    /** The programme covering [atMs] (else the next one) on this replay's channel; null when the guide has none. */
+    suspend fun programmeAt(contentId: String?, atMs: Long): CatchUpProgramme? = null
+
+    /** A new replay window starting at [atMs] for a replay whose window ran out; null when none can be built. */
+    fun restartAt(contentId: String?, atMs: Long): CatchUpRestart? = null
+
+    /**
+     * Ties this replay's continuation state to the caller: dispose the handle when the player goes away
+     * and the state is dropped with it (the port keeps a small bounded table only as a backstop).
+     */
+    fun hold(contentId: String?): com.nuvio.tv.core.lifecycle.Disposable = com.nuvio.tv.core.lifecycle.Disposable { }
+
+    /** The channel's live URL, to rejoin live when the replay reaches the live edge. */
+    fun liveUrl(contentId: String?): String? = null
 }
+
+/** A programme as the player titles it: [title] is ready to show. */
+data class CatchUpProgramme(val title: String, val startMs: Long, val endMs: Long)
+
+/** What a continuing replay starts from: the window it requested and the programme it opened on. */
+data class CatchUpContinuation(val windowEndMs: Long, val programme: CatchUpProgramme)
+
+/** A fresh replay window: the link, where it starts and where it ends (wall clock). */
+data class CatchUpRestart(val url: String, val startMs: Long, val windowEndMs: Long)
 
 /** One injected facade bundling the IPTV ports still used by finite catch-up playback. */
 interface LivePlayback {

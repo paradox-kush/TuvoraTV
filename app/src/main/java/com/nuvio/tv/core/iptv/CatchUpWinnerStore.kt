@@ -55,9 +55,29 @@ class CatchUpWinnerStore(private val persistence: Persistence) : CatchUpDialectW
         persistence.save(entries)
     }
 
+    /**
+     * The link form (see [M3uCatchUp.linkForm]) that last played for an M3U playlist, or null.
+     * Stored in the same map under an `m3u:` key with a two-part value, so it can never be read as
+     * an Xtream dialect record (those have three parts) and old builds ignore it.
+     */
+    fun recallM3uForm(playlistId: String): String? =
+        entries[M3U_KEY + playlistId]?.split('|')?.takeIf { it.size == 2 && it[0] == M3U_TAG }?.get(1)?.takeIf { it.isNotBlank() }
+
+    fun rememberM3uForm(playlistId: String, form: String) {
+        val value = "$M3U_TAG|$form"
+        if (entries.put(M3U_KEY + playlistId, value) != value) persistence.save(entries)
+    }
+
     /** Drops one account's proof — the playlist was removed, edited, or its preference changed. */
     fun forget(accountId: String) {
-        if (entries.remove(accountId) != null) persistence.save(entries)
+        val removedXtream = entries.remove(accountId) != null
+        val removedM3u = entries.remove(M3U_KEY + accountId) != null
+        if (removedXtream || removedM3u) persistence.save(entries)
+    }
+
+    private companion object {
+        const val M3U_KEY = "m3u:"
+        const val M3U_TAG = "m3u"
     }
 
     private data class Record(

@@ -46,7 +46,10 @@ object M3uIngestMapping {
         val cat = categoryId(entry.group)
         return when (entry.kind) {
             M3UKind.LIVE -> M3uIngestRow.Channel(
-                ContentChannel(M3uIdentity.itemSid(entry.url, login), entry.name, entry.logo, entry.tvgId, cat, entry.url),
+                ContentChannel(
+                    M3uIdentity.itemSid(entry.url, login), entry.name, entry.logo, entry.tvgId, cat, entry.url,
+                    hasArchive = entry.catchUp != null, catchUp = entry.catchUp,
+                ),
             )
             M3UKind.VOD -> {
                 val promoted = M3uSeriesGrouping.promotion(entry.name, entry.tvgName, entry.group)

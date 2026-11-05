@@ -359,7 +359,8 @@ class M3UClient @Inject constructor(
 
     private fun ContentChannel.toChannel() = XtreamChannel(
         streamId = sid, name = name, logo = logo, epgChannelId = tvgId, categoryId = categoryId,
-        hasArchive = false, streamUrl = url
+        hasArchive = hasArchive || catchUp != null, catchUpDays = catchUp?.days ?: 0, streamUrl = url,
+        m3uCatchUp = catchUp,
     )
 
     private fun ContentVod.toMovie() = XtreamMovie(

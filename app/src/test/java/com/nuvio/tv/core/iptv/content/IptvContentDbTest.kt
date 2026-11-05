@@ -426,4 +426,54 @@ class IptvContentDbTest {
         assertEquals("nothing deleted", listOf(1, 2, 3, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
         assertEquals(3, db.liveCount(id))
     }
+
+    @Test
+    fun `catch-up settings round-trip through the channel table`() = runTest {
+        val info = com.nuvio.tv.core.iptv.M3uCatchUpInfo(com.nuvio.tv.core.iptv.M3uCatchUpType.APPEND, "?start={utc}&end={utcend}", 5)
+        db.ingest(pid) { w ->
+            w.addChannel(ContentChannel(1, "With", null, null, "A", "http://h/1.ts", hasArchive = true, catchUp = info))
+            w.addChannel(ContentChannel(2, "Without", null, null, "A", "http://h/2.ts"))
+        }
+        assertEquals("channelsFor", info, db.channelsFor(pid, null).first { it.sid == 1 }.catchUp)
+        assertEquals("pageChannels", info, db.pageChannels(pid, null, 0, 10).first { it.sid == 1 }.catchUp)
+        assertEquals("channelRow", info, db.channelRow(pid, 1)?.catchUp)
+        assertNull("a channel without catch-up reads none", db.channelRow(pid, 2)?.catchUp)
+    }
+
+    @Test
+    fun `catch-up days are listed per channel for the guide history depth`() = runTest {
+        val info = com.nuvio.tv.core.iptv.M3uCatchUpInfo(com.nuvio.tv.core.iptv.M3uCatchUpType.SHIFT, null, 4)
+        db.ingest(pid) { w ->
+            w.addChannel(ContentChannel(1, "With", null, null, "A", "http://h/1.ts", hasArchive = true, catchUp = info))
+            w.addChannel(ContentChannel(2, "Without", null, null, "A", "http://h/2.ts"))
+        }
+        assertEquals(mapOf(1 to 4), db.liveCatchUpDays(pid))
+    }
+
+    @Test
+    fun `a Stalker lineup replace keeps catch-up too`() = runTest {
+        val info = com.nuvio.tv.core.iptv.M3uCatchUpInfo(com.nuvio.tv.core.iptv.M3uCatchUpType.SHIFT, null, 1)
+        db.replaceLiveLineup(pid, listOf(ContentChannel(9, "X", null, null, "A", "http://h/9.ts", catchUp = info)), emptyList())
+        assertEquals(info, db.channelRow(pid, 9)?.catchUp)
+    }
+
+    @Test
+    fun `a database written before the catch-up columns opens and reads old rows as no catch-up`() = runTest {
+        val path = RuntimeEnvironment.getApplication().getDatabasePath("iptv_content_old.db")
+        path.parentFile?.mkdirs()
+        path.delete()
+        // The v5 schema as shipped before catch-up: channels has no catchup_* columns.
+        android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(path, null).use { raw ->
+            raw.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, cmd TEXT, tv_archive INTEGER, use_http_tmp_link INTEGER, use_load_balancing INTEGER, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE vod(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, cmd TEXT, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE series(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL, tvg_url TEXT, epg_built_at INTEGER, active_generation INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID")
+            raw.execSQL("INSERT INTO channels(playlist_id, generation, category_id, sid, name, url, tv_archive) VALUES('$pid', 0, 'A', 1, 'Old', 'http://h/old.ts', 0)")
+            raw.version = 5
+        }
+        val old = IptvContentDb(RuntimeEnvironment.getApplication(), "iptv_content_old.db")
+        val row = old.channelRow(pid, 1)
+        assertNotNull("old row still readable", row)
+        assertNull("old row has no catch-up", row!!.catchUp)
+    }
 }

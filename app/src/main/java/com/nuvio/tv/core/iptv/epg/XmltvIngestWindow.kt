@@ -28,8 +28,19 @@ object XmltvIngestWindow {
     const val BACK_MS = 6L * 60 * 60 * 1000
     const val AHEAD_MS = 48L * 60 * 60 * 1000
 
+    /** The longest archive worth mirroring (the longest window seen in the field, see CatchUpEpgWindow). */
+    const val MAX_CATCHUP_BACK_MS = 7L * 24 * 60 * 60 * 1000
+
+    /**
+     * How far back to keep a channel that replays [catchUpDays] days (an M3U playlist's `catchup-days`):
+     * the whole archive, so the guide has something to replay, never more than [MAX_CATCHUP_BACK_MS] and
+     * never less than the default [BACK_MS]. Channels without an archive keep the default.
+     */
+    fun backMsForCatchUpDays(catchUpDays: Int): Long =
+        (catchUpDays.coerceAtLeast(0) * 24L * 60 * 60 * 1000).coerceIn(BACK_MS, MAX_CATCHUP_BACK_MS)
+
     /** Oldest instant worth keeping. */
-    fun windowStartMs(nowMs: Long): Long = nowMs - BACK_MS
+    fun windowStartMs(nowMs: Long, backMs: Long = BACK_MS): Long = nowMs - backMs
 
     /** Newest instant worth keeping. */
     fun windowEndMs(nowMs: Long): Long = nowMs + AHEAD_MS
@@ -42,9 +53,9 @@ object XmltvIngestWindow {
      * zero-length programme stored at epoch is returned by every window read that spans it, and a
      * feed with a broken date format produces thousands of them.
      */
-    fun keeps(programmeStartMs: Long, programmeEndMs: Long, nowMs: Long): Boolean {
+    fun keeps(programmeStartMs: Long, programmeEndMs: Long, nowMs: Long, backMs: Long = BACK_MS): Boolean {
         if (programmeEndMs <= programmeStartMs) return false
         if (programmeStartMs <= 0L) return false
-        return programmeEndMs > windowStartMs(nowMs) && programmeStartMs < windowEndMs(nowMs)
+        return programmeEndMs > windowStartMs(nowMs, backMs) && programmeStartMs < windowEndMs(nowMs)
     }
 }

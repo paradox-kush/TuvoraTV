@@ -85,6 +85,9 @@ class PlaybackSession(
     private var watchdogJob: Job? = null
     private var watchdogArm: WatchdogArm? = null
     private var nextWatchdogToken: Long = 1
+    private var stageJob: Job? = null
+    private var stageArm: StageArm? = null
+    private var nextStageToken: Long = 1
     private var engineAttempt: Long = 0
     private var engineAttemptGeneration: Long? = null
     private var runtimeMetricsUnavailableAttempt: Long? = null
@@ -231,6 +234,7 @@ class PlaybackSession(
             is LaneMessage.RequirementsApplied -> requirementsApplied(message)
             is LaneMessage.BarrierFinished -> barrierFinished(message)
             is LaneMessage.WatchdogExpired -> watchdogExpired(message)
+            is LaneMessage.StageDeadlineExpired -> stageDeadlineExpired(message)
             is LaneMessage.RuntimeWindowFinished -> runtimeWindowFinished(message)
             is LaneMessage.ReconnectFailureObserved -> {
                 applyReducer(PlaybackReducerInput.Event(message.event))
@@ -303,6 +307,7 @@ class PlaybackSession(
         _snapshot.value = transition.state.snapshot
         _surfaceAvailable.value = transition.state.surfaceAvailable
         reconcileWatchdog()
+        reconcileStageDeadline()
         recordCompatibilityOutcome(before, transition.state, input)
         transition.actions.forEach { execute(it) }
     }
@@ -1052,6 +1057,7 @@ class PlaybackSession(
 
     private fun releaseActiveWork(action: PlaybackAction.ReleaseActiveWork) {
         cancelWatchdog()
+        cancelStageDeadline()
         val workToCancel = generationJob
         workToCancel?.cancel()
         generationJob = null
@@ -1778,6 +1784,64 @@ class PlaybackSession(
         applyReducer(PlaybackReducerInput.Event(event))
     }
 
+    /** B178: pre-engine stages (resolve, graph selection) end in Failed instead of spinning forever. */
+    private fun reconcileStageDeadline() {
+        val snapshot = machine.snapshot
+        val deadline = if (policy.watchdogEnabled() && machine.sessionActive && machine.lifecycleActive) {
+            PlaybackStageDeadlinePolicy.deadlineMs(
+                snapshot.state,
+                engineAttemptStarted = engineAttemptGeneration == snapshot.generation,
+            )
+        } else {
+            null
+        }
+        val current = stageArm
+        if (deadline == null) {
+            cancelStageDeadline()
+            return
+        }
+        if (current?.generation == snapshot.generation && current.state == snapshot.state) return
+        cancelStageDeadline()
+        check(nextStageToken < Long.MAX_VALUE) { "Playback stage token exhausted" }
+        val arm = StageArm(nextStageToken++, snapshot.generation, snapshot.state)
+        stageArm = arm
+        stageJob = scope.launch {
+            clock.delayMs(deadline)
+            lane.send(LaneMessage.StageDeadlineExpired(arm.token, arm.generation, arm.state))
+        }
+    }
+
+    private suspend fun stageDeadlineExpired(message: LaneMessage.StageDeadlineExpired) {
+        val arm = stageArm
+        if (
+            arm?.token != message.token ||
+            machine.snapshot.generation != message.generation ||
+            machine.snapshot.state != message.state
+        ) {
+            return
+        }
+        stageArm = null
+        stageJob = null
+        val failure = PlaybackStageDeadlinePolicy.failure(message.state)
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = message.generation,
+                code = PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+                engine = activeGraph?.engine,
+                failure = failure,
+            ),
+        )
+        val event = PlaybackEvent.Failed(message.generation, failure)
+        engineEvents.emit(event)
+        applyReducer(PlaybackReducerInput.Event(event))
+    }
+
+    private fun cancelStageDeadline() {
+        stageJob?.cancel()
+        stageJob = null
+        stageArm = null
+    }
+
     private fun cancelWatchdog() {
         watchdogJob?.cancel()
         watchdogJob = null
@@ -2067,6 +2131,12 @@ class PlaybackSession(
         val candidates: PlaybackResult<List<PlaybackGraph>>,
     )
 
+    private data class StageArm(
+        val token: Long,
+        val generation: Long,
+        val state: PlaybackState,
+    )
+
     private data class WatchdogArm(
         val token: Long,
         val generation: Long,
@@ -2126,6 +2196,11 @@ class PlaybackSession(
             val releaseEpoch: Long,
             val reason: ActiveWorkReleaseReason,
             val failure: PlaybackFailure?,
+        ) : LaneMessage
+        data class StageDeadlineExpired(
+            val token: Long,
+            val generation: Long,
+            val state: PlaybackState,
         ) : LaneMessage
         data class WatchdogExpired(
             val token: Long,

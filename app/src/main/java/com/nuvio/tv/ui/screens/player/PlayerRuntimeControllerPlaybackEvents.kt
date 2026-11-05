@@ -404,6 +404,8 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     if (playerDuration > lastKnownDuration) {
                         lastKnownDuration = playerDuration
                     }
+                    // Before the timeline is published, so a re-based bar never shows one stale frame.
+                    followCatchUpPlayhead(pos)
                     val displayPosition = pendingPreviewSeekPosition ?: pos
                     val playingForWatchClock = playingNow && !cacheBuffering
                     mpvDurationGrowth = LivePlaybackUiPolicy.nextDurationGrowth(
@@ -475,6 +477,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                 if (playerDuration > lastKnownDuration) {
                     lastKnownDuration = playerDuration
                 }
+                followCatchUpPlayhead(pos)
                 val displayPosition = pendingPreviewSeekPosition ?: pos
                 publishPlaybackTimeline(
                     currentPosition = displayPosition,
@@ -1384,6 +1387,7 @@ fun PlayerRuntimeController.onEvent(
                 val playing = isPlaybackCurrentlyPlaying()
                 if (playing) {
                     userPausedManually = true
+                    userPauseSetByLifecycle = false
                     setPlaybackPaused(true)
                     stopProgressUpdates()
                     stopWatchProgressSaving()
@@ -1391,6 +1395,7 @@ fun PlayerRuntimeController.onEvent(
                     schedulePauseOverlay()
                 } else {
                     userPausedManually = false
+                    userPauseSetByLifecycle = false
                     cancelPauseOverlay()
                     setPlaybackPaused(false)
                     startProgressUpdates()
@@ -1403,10 +1408,12 @@ fun PlayerRuntimeController.onEvent(
                 _exoPlayer?.let { player ->
                     if (player.isPlaying) {
                         userPausedManually = true
+                        userPauseSetByLifecycle = false
                         player.pause()
                         schedulePauseOverlay()
                     } else {
                         userPausedManually = false
+                        userPauseSetByLifecycle = false
                         cancelPauseOverlay()
                         player.play()
                     }
@@ -1438,7 +1445,7 @@ fun PlayerRuntimeController.onEvent(
                 SeekParameters.NEXT_SYNC
             }
             seekPlaybackTo(target, seekParameters)
-            updatePlaybackTimeline(currentPosition = target)
+            updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(target))
             scheduleProgressSyncAfterSeek()
             publishPartyPlayback(positionMs = target)
             if (_uiState.value.showControls) {
@@ -1455,7 +1462,7 @@ fun PlayerRuntimeController.onEvent(
                 .coerceAtLeast(0L)
                 .coerceAtMost(maxDuration))
             pendingPreviewSeekPosition = target
-            updatePlaybackTimeline(currentPosition = target)
+            updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(target))
             if (_uiState.value.showControls) {
                 showControlsTemporarily()
             } else {
@@ -1469,11 +1476,11 @@ fun PlayerRuntimeController.onEvent(
                 val target = if (isPartyControlLocked) ownSeekTarget(requested) else requested
                 if (target == null) {
                     pendingPreviewSeekPosition = null
-                    updatePlaybackTimeline(currentPosition = currentPlaybackPositionMs() ?: 0L)
+                    updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(currentPlaybackPositionMs() ?: 0L))
                     return
                 }
                 seekPlaybackTo(target, SeekParameters.CLOSEST_SYNC)
-                updatePlaybackTimeline(currentPosition = target)
+                updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(target))
                 pendingPreviewSeekPosition = null
                 scheduleProgressSyncAfterSeek()
                 publishPartyPlayback(positionMs = target)
@@ -1487,10 +1494,10 @@ fun PlayerRuntimeController.onEvent(
         is PlayerEvent.OnSeekTo -> {
             if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
-            val requestedPosition = catchUpSeekTargetMs(event.position)
+            val requestedPosition = catchUpSeekTargetMs(catchUpPlayerPositionMs(event.position))
             val target = if (isPartyControlLocked) ownSeekTarget(requestedPosition) ?: return else requestedPosition
             seekPlaybackTo(target, SeekParameters.CLOSEST_SYNC)
-            updatePlaybackTimeline(currentPosition = target)
+            updatePlaybackTimeline(currentPosition = catchUpBarPositionMs(target))
             scheduleProgressSyncAfterSeek()
             publishPartyPlayback(positionMs = target)
             if (showPlaybackControls) {
@@ -1881,6 +1888,8 @@ fun PlayerRuntimeController.onEvent(
             scheduleHideControls()
         }
         PlayerEvent.OnRetry -> {
+            catchUpReplay.resetStartupBudget()
+            restartLoadDeadline()
             hasRenderedFirstFrame = false
             endDetectionArmed = false
             mpvEofSeenClear = false
@@ -1893,6 +1902,7 @@ fun PlayerRuntimeController.onEvent(
             _uiState.update { state ->
                 state.copy(
                     error = null,
+                    showRetryErrorAction = false,
                     playbackIssueReportStatus = PlaybackIssueReportStatus.Idle,
                     playbackIssueReportId = null,
                     playbackIssueReportError = null,
@@ -2072,6 +2082,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         PlayerEvent.OnSwitchInternalPlayerEngine -> {
+            restartLoadDeadline()
             logSwitchTrace(
                 stage = "event-switch-engine",
                 message = "requestedByUser=true"
@@ -2079,6 +2090,7 @@ fun PlayerRuntimeController.onEvent(
             switchInternalPlayerEngineManually()
         }
         PlayerEvent.OnSwitchToMpvPlayer -> {
+            restartLoadDeadline()
             logSwitchTrace(
                 stage = "event-switch-to-mpv",
                 message = "requestedByUser=true"

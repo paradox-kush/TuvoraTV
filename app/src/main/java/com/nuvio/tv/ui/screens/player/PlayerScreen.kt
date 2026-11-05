@@ -1431,6 +1431,9 @@ fun PlayerScreen(
                 showSwitchToMpvAction = uiState.showSwitchToMpvErrorAction &&
                     uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER,
                 onSwitchToMpv = { viewModel.onEvent(PlayerEvent.OnSwitchToMpvPlayer) },
+                onRetry = { viewModel.onEvent(PlayerEvent.OnRetry) }.takeIf {
+                    uiState.showRetryErrorAction || PlayerLoadDeadlinePolicy.showRetry(uiState.error != null, uiState.isLive)
+                },
                 showReportAction = uiState.playbackIssueReportsEnabled,
                 reportStatus = uiState.playbackIssueReportStatus,
                 reportId = uiState.playbackIssueReportId,
@@ -3628,7 +3631,8 @@ private fun PlayerClockOverlay(
     currentPosition: Long,
     duration: Long,
     playbackSpeed: Float,
-    isLive: Boolean = false
+    isLive: Boolean = false,
+    programmeLengthMs: Long? = null
 ) {
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     val context = LocalContext.current
@@ -3644,7 +3648,8 @@ private fun PlayerClockOverlay(
     }
 
     val effectiveSpeed = playbackSpeed.takeIf { it > 0f } ?: 1f
-    val remainingMediaMs = (duration - currentPosition).coerceAtLeast(0L)
+    // A re-based catch-up bar ends where the programme does, even when its seekable end stops short of live.
+    val remainingMediaMs = ((programmeLengthMs ?: duration) - currentPosition).coerceAtLeast(0L)
     val remainingMs = kotlin.math.ceil(remainingMediaMs.toDouble() / effectiveSpeed.toDouble()).toLong()
     val endTimeText = if (duration > 0L) {
         timeFormatter.format(Date(nowMs + remainingMs))
@@ -3683,7 +3688,8 @@ private fun PlayerClockOverlayHost(viewModel: PlayerViewModel, playbackSpeed: Fl
         currentPosition = playbackTimeline.currentPosition,
         duration = playbackTimeline.duration,
         playbackSpeed = playbackSpeed,
-        isLive = playbackTimeline.isLive
+        isLive = playbackTimeline.isLive,
+        programmeLengthMs = playbackTimeline.programmeLengthMs
     )
 }
 
@@ -4062,6 +4068,7 @@ private fun ErrorOverlay(
     message: String,
     showSwitchToMpvAction: Boolean = false,
     onSwitchToMpv: (() -> Unit)? = null,
+    onRetry: (() -> Unit)? = null,
     showReportAction: Boolean,
     reportStatus: PlaybackIssueReportStatus,
     reportId: String?,
@@ -4073,15 +4080,21 @@ private fun ErrorOverlay(
     val reportFocusRequester = remember { FocusRequester() }
     val mpvFocusRequester = remember { FocusRequester() }
     val onSwitchMpvAction = onSwitchToMpv.takeIf { showSwitchToMpvAction }
-    val targetFocusRequester = if (onSwitchMpvAction != null) mpvFocusRequester else exitFocusRequester
+    val retryFocusRequester = remember { FocusRequester() }
+    val targetFocusRequester = when {
+        onRetry != null -> retryFocusRequester
+        onSwitchMpvAction != null -> mpvFocusRequester
+        else -> exitFocusRequester
+    }
 
-    var targetButtonPlaced by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
+    var targetButtonPlaced by remember(onSwitchMpvAction != null, onRetry != null) { mutableStateOf(false) }
+    var retryFocused by remember { mutableStateOf(false) }
     var mpvFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
     var reportFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
     var exitFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
-    val hasOverlayFocus = mpvFocused || reportFocused || exitFocused
+    val hasOverlayFocus = retryFocused || mpvFocused || reportFocused || exitFocused
 
-    LaunchedEffect(targetButtonPlaced, onSwitchMpvAction != null) {
+    LaunchedEffect(targetButtonPlaced, onSwitchMpvAction != null, onRetry != null) {
         if (!targetButtonPlaced) return@LaunchedEffect
         val focused = targetFocusRequester.requestFocusAfterFrames(frames = 0)
         if (!focused) {
@@ -4157,6 +4170,24 @@ private fun ErrorOverlay(
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (onRetry != null) {
+                    PlayerOverlayButton(
+                        text = stringResource(R.string.action_retry),
+                        onClick = onRetry,
+                        primary = true,
+                        modifier = Modifier
+                            .focusRequester(retryFocusRequester)
+                            .onPlaced { targetButtonPlaced = true }
+                            .onFocusChanged { retryFocused = it.isFocused }
+                            .focusProperties {
+                                right = when {
+                                    onSwitchMpvAction != null -> mpvFocusRequester
+                                    showReportAction -> reportFocusRequester
+                                    else -> exitFocusRequester
+                                }
+                            }
+                    )
+                }
                 if (onSwitchMpvAction != null) {
                     PlayerOverlayButton(
                         text = stringResource(R.string.player_switch_to_mpv),
@@ -4194,7 +4225,7 @@ private fun ErrorOverlay(
                 PlayerOverlayButton(
                     text = stringResource(R.string.player_go_back),
                     onClick = onBack,
-                    primary = onSwitchMpvAction == null,
+                    primary = onSwitchMpvAction == null && onRetry == null,
                     modifier = Modifier
                         .focusRequester(exitFocusRequester)
                         .onPlaced {

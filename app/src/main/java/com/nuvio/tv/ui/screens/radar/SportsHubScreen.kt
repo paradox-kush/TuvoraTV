@@ -120,6 +120,11 @@ fun SportsHubScreen(
     val sheet by viewModel.sheet.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(Unit) { viewModel.ensureLoaded() }
+    // Calendar "Watch now": open that game's channel-matching sheet as soon as its fixture is held.
+    val pendingMatchId by viewModel.pendingMatchId.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingMatchId, state.fixturesByLeague, state.fixturesByTeam) {
+        if (pendingMatchId != null) viewModel.openPendingMatch()
+    }
     // The Sports destination can remain alive across kick-off. Refresh while it is VISIBLE so a
     // pre-game card gains its live score without a route change — but repeatOnLifecycle(RESUMED)
     // stops the poll the moment the screen is backgrounded or navigated away from, and restarts a

@@ -94,6 +94,8 @@ private const val HOME_STABLE_GATE_TIMEOUT_MS = 5_000L
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     announcementViewModel: HomeAnnouncementViewModel = hiltViewModel(),
+    calendarReminderViewModel: com.nuvio.tv.ui.screens.calendar.CalendarReminderViewModel = hiltViewModel(),
+    onNavigateToCalendar: () -> Unit = {},
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit = { item ->
         onNavigateToDetail(
@@ -127,6 +129,8 @@ fun HomeScreen(
                 viewModel.retryFailedHomeLoads()
                 // Lifecycle-bound, not a timer: the policy allows at most one request per 6 h.
                 announcementViewModel.onHomeResumed()
+                // Calendar reminders: reads stored data; a refresh only when CalendarRefreshGate allows (≤ 1 per 6 h).
+                calendarReminderViewModel.onHomeResumed()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -297,8 +301,10 @@ fun HomeScreen(
         )
     // One floating card at a time, in the announcement's slot; the failure is about the viewer's own
     // content, so it goes first and the announcement comes back once the rows load.
-    val announcementVisible = announcement != null && !showStartupLoader && !rowsFailedVisible
-    val noticeCardVisible = announcementVisible || rowsFailedVisible
+    val calendarReminderCard by calendarReminderViewModel.card.collectAsStateWithLifecycle()
+    val calendarReminderVisible = calendarReminderCard != null && !showStartupLoader && !rowsFailedVisible
+    val announcementVisible = announcement != null && !showStartupLoader && !rowsFailedVisible && !calendarReminderVisible
+    val noticeCardVisible = announcementVisible || rowsFailedVisible || calendarReminderVisible
     var announcementCardHasFocus by remember { mutableStateOf(false) }
     val homeFocusManager = LocalFocusManager.current
     val focusAnnouncementCard = remember(announcementCtaFocusRequester) {
@@ -529,6 +535,19 @@ fun HomeScreen(
                 onRetry = { viewModel.retryFailedHomeLoads() },
                 onDismiss = { dismissedRowsFailedSignature = rowsFailedSignature },
                 retryFocusRequester = announcementCtaFocusRequester,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl)
+                    .onFocusChanged { announcementCardHasFocus = it.hasFocus }
+            )
+        }
+        val currentReminderCard = calendarReminderCard
+        if (currentReminderCard != null && calendarReminderVisible) {
+            com.nuvio.tv.ui.screens.calendar.CalendarReminderHomeCard(
+                card = currentReminderCard,
+                onOpenCalendar = onNavigateToCalendar,
+                onDismiss = calendarReminderViewModel::dismissCard,
+                primaryFocusRequester = announcementCtaFocusRequester,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl)

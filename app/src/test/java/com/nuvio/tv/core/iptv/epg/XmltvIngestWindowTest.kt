@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.iptv.epg
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -67,5 +68,25 @@ class XmltvIngestWindowTest {
     @Test
     fun `an epoch-zero programme is refused`() {
         assertFalse(XmltvIngestWindow.keeps(0L, hour, now))
+    }
+
+    // M3U catch-up: a channel that replays N days needs N days of guide behind it, or the guide
+    // shows nothing to replay beyond the last six hours.
+    @Test
+    fun `a catch-up channel keeps as much history as its archive`() {
+        val back = XmltvIngestWindow.backMsForCatchUpDays(3)
+        assertTrue("a day ago is inside a 3-day archive",
+            XmltvIngestWindow.keeps(now - day, now - day + hour, now, back))
+        assertFalse("four days ago is outside it",
+            XmltvIngestWindow.keeps(now - 4 * day, now - 4 * day + hour, now, back))
+        assertFalse("and the default bound is unchanged for everything else", keeps(-day))
+    }
+
+    @Test
+    fun `history is capped no matter what a playlist claims`() {
+        assertEquals("a 400-day claim is held to the longest window seen in the field",
+            XmltvIngestWindow.MAX_CATCHUP_BACK_MS, XmltvIngestWindow.backMsForCatchUpDays(400))
+        assertEquals("no archive keeps the default", XmltvIngestWindow.BACK_MS, XmltvIngestWindow.backMsForCatchUpDays(0))
+        assertEquals("a short archive never goes below the default", XmltvIngestWindow.BACK_MS, XmltvIngestWindow.backMsForCatchUpDays(-1))
     }
 }

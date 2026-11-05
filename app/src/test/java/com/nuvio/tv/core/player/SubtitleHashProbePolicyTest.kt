@@ -63,4 +63,33 @@ class SubtitleHashProbePolicyTest {
         assertFalse("garbage", SubtitleHashProbePolicy.mayProbe("not a url", "tt1", "tt1", false, notPanel))
         assertFalse("blank", SubtitleHashProbePolicy.mayProbe("", "tt1", "tt1", false, notPanel))
     }
+
+    @Test
+    fun liveContentTypeIsLivePlayback() {
+        assertTrue("live type", SubtitleHashProbePolicy.isLivePlayback("live", false))
+        assertTrue("case-insensitive", SubtitleHashProbePolicy.isLivePlayback("LIVE", false))
+    }
+
+    @Test
+    fun catchUpReplayIsLivePlaybackEvenWhenTypeIsNotLive() {
+        assertTrue(
+            "a catch-up replay rides the live pipe and its link may be single-use",
+            SubtitleHashProbePolicy.isLivePlayback("movie", true)
+        )
+    }
+
+    @Test
+    fun vodIsNotLivePlayback() {
+        assertFalse("movie", SubtitleHashProbePolicy.isLivePlayback("movie", false))
+        assertFalse("null type", SubtitleHashProbePolicy.isLivePlayback(null, false))
+    }
+
+    @Test
+    fun catchUpReplayOfPlainHostIsNeverProbed() {
+        val live = SubtitleHashProbePolicy.isLivePlayback("live", true)
+        assertFalse(
+            "catch-up replay must not spend a request on a hash",
+            SubtitleHashProbePolicy.mayProbe("https://cdn.example/replay.ts", "m3u:abc", "m3u:abc", live, notPanel)
+        )
+    }
 }

@@ -1,5 +1,8 @@
 package com.nuvio.tv.core.iptv
 
+import com.nuvio.tv.core.contracts.CatchUpContinuationPolicy
+import com.nuvio.tv.core.lifecycle.Disposable
+
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -43,9 +46,74 @@ class CatchUpPlaybackCoordinator @Inject constructor(
         val token: Long,
         /** True when the programme is still airing — the case whose seek ceiling is clamped. */
         val isStartOver: Boolean,
+        /**
+         * End of the window the link asks for ([CatchUpContinuationPolicy.replayWindowEndMs] on M3U:
+         * the show plus what follows, so the next shows play on). Equals the programme's end otherwise.
+         */
+        val windowEndMs: Long = programme.endMs,
     )
 
+    /** How a bounded [open] ended. A failure is never "unavailable"; the viewer gets to retry it. */
+    sealed interface OpenOutcome {
+        data class Opened(val session: Session) : OpenOutcome
+
+        /** The provider has no link for this programme (nothing to build, or every shape exhausted). */
+        data object Unavailable : OpenOutcome
+
+        /** The open itself failed or hit its deadline ([timedOut]). */
+        data class Failed(val timedOut: Boolean) : OpenOutcome
+    }
+
+    /** One M3U replay's candidate links, best first, and where the walk is. */
+    private class M3uLadder(val primary: String, val urls: List<String>, var index: Int = 0)
+
+    /**
+     * ONE lock owns every map below and the token counters. `begin` runs detached under [open]'s
+     * [BoundedLoad] (the caller's dispatcher, but not its child) while the player reads and advances
+     * the same replay from `Player.Listener`, so "main-thread only" no longer holds. Held only for map
+     * operations, never across a suspend or a URL build.
+     */
+    private val lock = Any()
+
+    private val m3uLadders = HashMap<String, M3uLadder>()
+    private var m3uToken = 0L
+
+    /** [open] calls that are still waiting; a result for any other ticket is stale and must not be published. */
+    private val liveTickets = HashSet<Long>()
+    private var ticketSeq = 0L
+
+    /**
+     * What the player needs after the first frame, when [sessions] has already let go of the replay:
+     * the account/channel to look the next programme up for, and the live URL to rejoin. Bounded to
+     * the last few replays; nothing in the player's lifecycle calls back to drop it.
+     */
+    class M3uReplayContext(
+        val account: XtreamAccount,
+        val streamId: Int,
+        val channelName: String,
+        val liveUrl: String,
+        val info: M3uCatchUpInfo,
+        @Volatile var startMs: Long,
+        @Volatile var windowEndMs: Long,
+        val programmeEndMs: Long,
+        val programmeTitle: String,
+    )
+
+    private val m3uContexts = object : LinkedHashMap<String, M3uReplayContext>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, M3uReplayContext>?): Boolean = size > 8
+    }
+
     private val sessions = HashMap<String, Session>()
+
+    /** Publishes a built replay unless its [ticket] was abandoned (the open timed out); true when it did. */
+    private fun publish(ticket: Long?, session: Session, ladder: M3uLadder? = null, context: M3uReplayContext? = null): Boolean =
+        synchronized(lock) {
+            if (ticket != null && ticket !in liveTickets) return@synchronized false
+            sessions[session.contentId] = session
+            if (ladder != null) m3uLadders[session.contentId] = ladder
+            if (context != null) m3uContexts[session.contentId] = context
+            true
+        }
 
     /**
      * The replay's content id. Deliberately keeps the channel's `:live:` segment plus the start
@@ -68,7 +136,14 @@ class CatchUpPlaybackCoordinator @Inject constructor(
         programme: Programme,
         nowMs: Long,
         allowedOutputFormats: List<String>? = null,
+        /** An M3U channel's own live URL and catch-up settings — selects the M3U path over the Xtream dialects. */
+        liveUrl: String? = null,
+        m3uCatchUp: M3uCatchUpInfo? = null,
+        ticket: Long? = null,
     ): Session? {
+        if (m3uCatchUp != null) {
+            return beginM3u(account, channelContentId, channelName, streamId, liveUrl, m3uCatchUp, programme, nowMs, ticket)
+        }
         if (!supports(account)) return null
         if (streamId <= 0 || programme.startMs <= 0L || programme.endMs <= programme.startMs) return null
 
@@ -101,17 +176,147 @@ class CatchUpPlaybackCoordinator @Inject constructor(
             token = step.attempt.token,
             isStartOver = programme.endMs > nowMs,
         )
-        sessions[session.contentId] = session
-        return session
+        return session.takeIf { publish(ticket, it) }
     }
 
-    fun sessionFor(contentId: String?): Session? = contentId?.let { sessions[it] }
+    /**
+     * [begin] under the live-resolve deadline (20 s, [BoundedLoad]). The guide used to wait on it with
+     * no limit — a panel that never answers the clock-pair request held the replay press forever.
+     * Ends as [OpenOutcome.Opened], [OpenOutcome.Unavailable] or [OpenOutcome.Failed]; the work runs
+     * detached, so a call that ignores cancellation still cannot hold the screen.
+     */
+    suspend fun open(
+        account: XtreamAccount,
+        channelContentId: String,
+        channelName: String,
+        streamId: Int,
+        programme: Programme,
+        nowMs: Long,
+        allowedOutputFormats: List<String>? = null,
+        liveUrl: String? = null,
+        m3uCatchUp: M3uCatchUpInfo? = null,
+    ): OpenOutcome {
+        val ticket = synchronized(lock) { (++ticketSeq).also { liveTickets.add(it) } }
+        val outcome = BoundedLoad.run<Session?>(
+            surface = LoadSurface.LIVE_RESOLVE,
+            isEmpty = { it == null },
+            report = mapOf("source_type" to account.sourceType, "kind" to "catchup"),
+        ) {
+            begin(account, channelContentId, channelName, streamId, programme, nowMs, allowedOutputFormats, liveUrl, m3uCatchUp, ticket)
+        }
+        // Done or given up: either way a begin still running for this ticket must not publish any more.
+        synchronized(lock) { liveTickets.remove(ticket) }
+        return when (outcome) {
+            is LoadOutcome.Loaded -> outcome.value?.let { OpenOutcome.Opened(it) } ?: OpenOutcome.Unavailable
+            is LoadOutcome.Empty -> OpenOutcome.Unavailable
+            is LoadOutcome.Failed -> OpenOutcome.Failed(outcome.timedOut)
+        }
+    }
+
+    /**
+     * M3U path: the playlist's own style builds the first link, [M3uCatchUp.alternatives] are the
+     * fallbacks, and the form that played last time on this playlist leads. There is no panel to ask
+     * for a clock, so the playlist's correction minutes are the whole offset.
+     */
+    private fun beginM3u(
+        account: XtreamAccount,
+        channelContentId: String,
+        channelName: String,
+        streamId: Int,
+        liveUrl: String?,
+        info: M3uCatchUpInfo,
+        programme: Programme,
+        nowMs: Long,
+        ticket: Long?,
+    ): Session? {
+        if (!supports(account, info)) return null
+        val live = liveUrl?.takeIf { it.isNotBlank() } ?: return null
+        if (programme.startMs <= 0L || programme.endMs <= programme.startMs) return null
+        val windowEnd = CatchUpContinuationPolicy.replayWindowEndMs(
+            CatchUpContinuationPolicy.Programme(programme.startMs, programme.endMs), nowMs,
+        )
+        val offsetMs = account.catchUpOffsetMs ?: 0L
+        val primary = M3uCatchUp.build(info, live, programme.startMs, windowEnd, nowMs, offsetMs) ?: return null
+        val airing = programme.endMs > nowMs
+        val alternatives = M3uCatchUp.alternatives(
+            url = primary,
+            offsetMs = offsetMs,
+            showMinutes = (programme.endMs - programme.startMs) / 60_000L,
+            airedMinutes = if (airing) (nowMs - programme.startMs) / 60_000L else null,
+        )
+        val urls = M3uCatchUp.preferForm(primary, alternatives, winners.recallM3uForm(account.id))
+        val token = synchronized(lock) { ++m3uToken }
+        val session = Session(
+            contentId = contentIdFor(channelContentId, programme.startMs),
+            accountId = account.id,
+            channelName = channelName,
+            programme = programme,
+            url = urls.first(),
+            token = token,
+            isStartOver = airing,
+            windowEndMs = windowEnd,
+        )
+        val context = M3uReplayContext(
+            account, streamId, channelName, live, info, programme.startMs, windowEnd, programme.endMs, programme.title,
+        )
+        return session.takeIf { publish(ticket, it, M3uLadder(primary, urls), context) }
+    }
+
+    /** The context of an M3U replay (null for Xtream replays, which never continue past their programme). */
+    fun m3uContextFor(contentId: String?): M3uReplayContext? =
+        contentId?.let { synchronized(lock) { m3uContexts[it] } }
+
+    /**
+     * Ties the replay's context to its owner: the player adopts the handle into its scope and the
+     * context goes with it. The bounded table above stays only as a backstop for a player that never disposes.
+     */
+    fun hold(contentId: String?): Disposable {
+        var done = false
+        return Disposable {
+            val first = synchronized(lock) { !done.also { done = true } }
+            if (first) release(contentId)
+        }
+    }
+
+    /**
+     * The replay is past the end of its window: ask for a new one starting at [atMs] (the playhead).
+     * Same shape as [beginM3u], with the window [atMs, atMs + [CatchUpContinuationPolicy.CONTINUE_MS]]
+     * capped at what has aired. Answers the first link, or null when none can be built.
+     */
+    fun restartM3u(contentId: String?, atMs: Long, nowMs: Long): Restart? {
+        val ctx = m3uContextFor(contentId) ?: return null
+        val windowEnd = CatchUpContinuationPolicy.replayWindowEndMs(
+            CatchUpContinuationPolicy.Programme(atMs, atMs + 1L), nowMs,
+        )
+        val offsetMs = ctx.account.catchUpOffsetMs ?: 0L
+        val primary = M3uCatchUp.build(ctx.info, ctx.liveUrl, atMs, windowEnd, nowMs, offsetMs) ?: return null
+        val urls = M3uCatchUp.preferForm(
+            primary,
+            M3uCatchUp.alternatives(url = primary, offsetMs = offsetMs),
+            winners.recallM3uForm(ctx.account.id),
+        )
+        synchronized(lock) {
+            ctx.startMs = atMs
+            ctx.windowEndMs = windowEnd
+            m3uLadders[contentId!!] = M3uLadder(primary, urls)
+        }
+        return Restart(url = urls.first(), startMs = atMs, windowEndMs = windowEnd)
+    }
+
+    data class Restart(val url: String, val startMs: Long, val windowEndMs: Long)
+
+    fun sessionFor(contentId: String?): Session? = contentId?.let { synchronized(lock) { sessions[it] } }
 
     /** A frame reached the screen: the shape is proven and remembered for this account. */
     fun onPlayed(contentId: String?) {
         val session = sessionFor(contentId) ?: return
-        walk.onSuccess(session.token)
-        sessions.remove(session.contentId)
+        val ladder = synchronized(lock) { m3uLadders.remove(session.contentId) }
+        if (ladder != null) {
+            winners.rememberM3uForm(session.accountId, M3uCatchUp.linkForm(session.url, ladder.primary))
+        } else {
+            walk.onSuccess(session.token)
+        }
+        synchronized(lock) { sessions.remove(session.contentId) }
     }
 
     /**
@@ -123,27 +328,49 @@ class CatchUpPlaybackCoordinator @Inject constructor(
      */
     fun onFailed(contentId: String?, errorCode: Int): Session? {
         val session = sessionFor(contentId) ?: return null
+        synchronized(lock) { m3uLadders[session.contentId] }?.let { return onM3uFailed(session, it, errorCode) }
         val step = walk.onFailure(session.token, CatchUpFailure.kindFor(errorCode))
         if (step !is CatchUpDialectWalk.Step.Next) {
-            sessions.remove(session.contentId)
+            synchronized(lock) { sessions.remove(session.contentId) }
             return null
         }
         val next = session.copy(url = step.attempt.url, token = step.attempt.token)
-        sessions[next.contentId] = next
+        synchronized(lock) { sessions[next.contentId] = next }
         return next
+    }
+
+    private fun onM3uFailed(session: Session, ladder: M3uLadder, errorCode: Int): Session? = synchronized(lock) {
+        // Same rule as the Xtream walk: only a transport-shaped failure could be a wrong link shape.
+        val next = ladder.index + 1
+        if (CatchUpFailure.kindFor(errorCode) != CatchUpDialectWalk.FailureKind.TRANSPORT || next >= ladder.urls.size) {
+            sessions.remove(session.contentId)
+            m3uLadders.remove(session.contentId)
+            return@synchronized null
+        }
+        ladder.index = next
+        val moved = session.copy(url = ladder.urls[next], token = ++m3uToken)
+        sessions[moved.contentId] = moved
+        moved
     }
 
     /** Drops a finished replay's bookkeeping when the player leaves without succeeding or failing. */
     fun release(contentId: String?) {
-        contentId?.let { sessions.remove(it) }
+        contentId?.let { synchronized(lock) { sessions.remove(it); m3uLadders.remove(it); m3uContexts.remove(it) } }
     }
 
     /**
-     * Whether this playlist can build catch-up URLs at all.
+     * Whether an M3U playlist can replay a channel: only one that carries catch-up settings, because
+     * the playlist itself says how to build the link (there is no panel to ask).
+     */
+    fun supports(account: XtreamAccount, m3uCatchUp: M3uCatchUpInfo?): Boolean =
+        m3uCatchUp != null &&
+            (account.sourceType == XtreamAccount.SOURCE_URL || account.sourceType == XtreamAccount.SOURCE_FILE)
+
+    /**
+     * Whether this playlist can build Xtream catch-up URLs at all (credentials present).
      *
-     * Xtream only. A Stalker portal builds its own archive URL server-side from a `create_link`
-     * cmd, so none of these dialects apply to it — and an M3U playlist has no panel to ask. Both
-     * would otherwise offer a replay button that could never work, which is exactly the false
+     * A Stalker portal builds its own archive URL server-side from a `create_link` cmd, so none of
+     * the dialects apply to it. Offering a replay button that could never work is exactly the false
      * promise the four-state design exists to avoid.
      */
     fun supports(account: XtreamAccount): Boolean =

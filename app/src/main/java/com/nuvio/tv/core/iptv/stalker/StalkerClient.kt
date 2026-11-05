@@ -893,15 +893,7 @@ class StalkerClient @Inject constructor(
         cmd: String,
         extraParams: Map<String, String> = emptyMap()
     ): String? {
-        val params = buildMap {
-            put("type", type)
-            put("action", "create_link")
-            put("cmd", cmd)
-            put("forced_storage", "undefined")
-            put("disable_ad", "0")
-            put("JsHttpRequest", "1-xml")   // harmless dup; StalkerSession adds it too
-            putAll(extraParams)
-        }.filterKeys { it != "JsHttpRequest" }   // let the session own JsHttpRequest
+        val params = StalkerArchiveLink.createLinkParams(type, cmd, extraParams)
         val js = try { session.request(params) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (error: Exception) {
             val status = (error as? com.nuvio.tv.core.iptv.HttpStatusException)?.status
             Log.w(TAG, "create_link failed: ${error::class.simpleName}, HTTP=$status")
@@ -917,13 +909,32 @@ class StalkerClient @Inject constructor(
                 return null
             }
             com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.LINK_FAULT -> {
-                lastResolveErrorInternal = LINK_FAULT_MESSAGE
+                lastResolveErrorInternal =
+                    if (type == "tv_archive") StalkerArchiveLink.ARCHIVE_LINK_FAULT_MESSAGE else LINK_FAULT_MESSAGE
+                return null
+            }
+            com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NOTHING_TO_PLAY -> {
+                lastResolveErrorInternal = StalkerArchiveLink.NOTHING_TO_PLAY_MESSAGE
                 return null
             }
             com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NONE -> lastResolveErrorInternal = null
         }
         val rawCmd = obj.str("cmd") ?: return null
         return StalkerProtocol.extractStreamUrl(rawCmd)
+    }
+
+    /**
+     * The playback link of one archived programme, minted from the portal's own EPG [programmeId]
+     * (`type=tv_archive`). Null on any refusal, with [lastResolveError] naming it: the session cap,
+     * "nothing to play" (the portal has no recording) and a link fault read differently to the viewer.
+     * Like every create_link the result is single-use: never probe it.
+     */
+    suspend fun createArchiveLink(acc: XtreamAccount, programmeId: String): String? {
+        lastResolveErrorInternal = null
+        return createLink(
+            playbackSession(acc), "tv_archive", StalkerArchiveLink.cmd(programmeId),
+            extraParams = StalkerArchiveLink.ARCHIVE_EXTRA,
+        )
     }
 
     // --- cmd lookup (browse-time cmd needed for create_link) ------------------
