@@ -1087,7 +1087,10 @@ fun LiveGuide(
                 onUndo = { restoreRecordingFocus(); recordings.undo(it) },
                 onOpenExactSettings = {
                     recordings.exactAlarmSettingsIntent()?.let { intent ->
-                        runCatching { activityContext.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        if (com.nuvio.tv.core.recordings.internal.ExactAlarmSettingsLaunch.needsNewTask(activityContext is android.app.Activity)) {
+                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        runCatching { activityContext.startActivity(intent) }
                     }
                 },
                 onDismiss = { restoreRecordingFocus(); recordings.dismissNotice() },
