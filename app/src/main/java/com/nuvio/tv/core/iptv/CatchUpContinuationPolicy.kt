@@ -27,6 +27,12 @@ object CatchUpContinuationPolicy {
         data object Stay : Decision
         data class MoveToNext(val programme: Programme) : Decision
         data class StartNewReplay(val atMs: Long) : Decision
+
+        /** The window ran out at the live edge: rejoin the live stream. */
+        data object GoLive : Decision
+
+        /** The window ran out with nothing left to replay: stop waiting and say so. */
+        data object Ended : Decision
     }
 
     /** End of the window to request for [programme]: at least its end, up to [CONTINUE_MS] more, never past aired. */
@@ -47,11 +53,11 @@ object CatchUpContinuationPolicy {
         nowMs: Long,
     ): Decision {
         if (playheadMs >= windowEndMs) {
-            // The window ran out: start a new one right where we are, if there is a programme there
-            // and the spot is not at the live edge.
+            // The window ran out. Every outcome is terminal: rejoin live, replay on, or end.
+            if (playheadMs > nowMs - LIVE_EDGE_MS) return Decision.GoLive
             val covered = (playheadMs >= playing.startMs && playheadMs < playing.endMs) ||
                 (next != null && playheadMs >= next.startMs && playheadMs < next.endMs)
-            return if (covered && playheadMs <= nowMs - LIVE_EDGE_MS) Decision.StartNewReplay(playheadMs) else Decision.Stay
+            return if (covered) Decision.StartNewReplay(playheadMs) else Decision.Ended
         }
         if (playheadMs < playing.endMs) return Decision.Stay
         if (next == null || next.startMs == playing.startMs) return Decision.Stay
