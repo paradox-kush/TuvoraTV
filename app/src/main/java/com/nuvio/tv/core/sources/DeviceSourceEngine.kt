@@ -28,7 +28,7 @@ class SourceDisabledOnDeviceException(
 ) : CancellationException("Source disabled on this device")
 
 /** Who turned the source off: this device's own choice, or the account (the playlist is off for every device). */
-enum class RefusalScope { DEVICE, ACCOUNT }
+enum class RefusalScope { DEVICE, ACCOUNT, SIGNING_IN }
 
 /**
  * Why a request reaches a source. [DISCOVERY] (the default) is playback and catalog use: it needs the

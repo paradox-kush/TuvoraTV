@@ -309,7 +309,10 @@ class DeviceSourceEngineTest {
             onRefused = { kind, mode -> refusals += kind to mode })
         val failure = refusalOf(device, source.sourceRef)
         assertNotNull("typed refusal", failure)
-        assertTrue("existing cancellation semantics hold", failure is CancellationException)
+        // Existing cancellation handling keeps working: structured concurrency treats it as cancellation.
+        val scoped = async { device.guarded(1, "iptv", source.sourceRef) { "ran" } }
+        runCurrent()
+        assertTrue("cancelled, not failed", scoped.isCancelled)
         assertEquals("kind", "iptv", failure!!.kind)
         assertEquals("mode", "storage_error", failure.mode)
         assertEquals("exactly one line per refusal, no host or id", listOf("iptv" to "storage_error"), refusals)
@@ -367,5 +370,22 @@ class DeviceSourceEngineTest {
         assertEquals(RefusalScope.ACCOUNT, refusalOf(engine(memory), source.sourceRef, DeviceSourceAccess.VERIFY)!!.scope)
         val here = engine(cached(listOf(DevicePreferenceValue(1, source.sourceId, false, 1))))
         assertEquals(RefusalScope.DEVICE, refusalOf(here, source.sourceRef, DeviceSourceAccess.VERIFY)!!.scope)
+    }
+
+    @Test fun signInThatNeverSettlesRefusesAfterTheWaitAndASettledOneProceeds() = runTest {
+        val neverSettles = kotlinx.coroutines.flow.MutableStateFlow<com.nuvio.tv.domain.model.AuthState>(com.nuvio.tv.domain.model.AuthState.Loading)
+        val waiting = async { awaitAuthSettled(neverSettles) }
+        testScheduler.advanceTimeBy(AUTH_SETTLE_TIMEOUT_MS - 1)
+        runCurrent()
+        assertFalse("still waiting just inside the limit", waiting.isCompleted)
+        testScheduler.advanceTimeBy(2)
+        runCurrent()
+        assertFalse("refused once the wait is over", waiting.await())
+        val settlesLater = kotlinx.coroutines.flow.MutableStateFlow<com.nuvio.tv.domain.model.AuthState>(com.nuvio.tv.domain.model.AuthState.Loading)
+        val second = async { awaitAuthSettled(settlesLater) }
+        testScheduler.advanceTimeBy(3_000)
+        settlesLater.value = com.nuvio.tv.domain.model.AuthState.Unauthenticated
+        runCurrent()
+        assertTrue("proceeds as soon as sign-in settles", second.await())
     }
 }
