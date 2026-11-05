@@ -142,6 +142,14 @@ fun LiveGuide(
     viewModel: XtreamLiveGuideViewModel = hiltViewModel(),
 ) {
     val playbackViewModel: CleanLiveGuidePlaybackViewModel = hiltViewModel()
+    val recordings: GuideRecordingsViewModel = hiltViewModel()
+    // The REC set is derived once in the view model and read once here (it changes only when a recording
+    // is scheduled or finishes) - never a collection per cell, which would recompose the whole guide.
+    val recKeys by recordings.badgeKeys.collectAsStateWithLifecycle()
+    val recNotice by recordings.notice.collectAsStateWithLifecycle()
+    val activityContext = LocalContext.current
+    val sheetRestoreFocus = remember { FocusRequester() }
+    var sheetOriginStart by remember { mutableStateOf<Long?>(null) }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val favoriteIds by viewModel.favoriteLiveIds.collectAsStateWithLifecycle()
     val appContext = LocalContext.current.applicationContext
@@ -695,6 +703,9 @@ fun LiveGuide(
                                     channelMenuAsk = ch to menu
                                 },
                                 channel = ch,
+                                recStarts = recKeys[ch.contentId] ?: NO_REC_STARTS,
+                                restoreStart = sheetOriginStart,
+                                restoreFocus = sheetRestoreFocus,
                                 catchUpSupported = uiState.catchUpSupported,
                                 timelineActive = isTimelineRow,
                                 // LEFT off any channel returns to the category list. Wired
@@ -724,11 +735,15 @@ fun LiveGuide(
                                 onBackOutOfTimeline = { leaveTimelineToNow() },
                                 onProgrammeFocused = { inspectedProgramme = it },
                                 onProgrammeClick = { programme ->
-                                    when (GuideCellIntent.forAction(
-                                        guideActionFor(programme, ch, nowMs, uiState.catchUpSupported)
+                                    when (GuideCellIntent.forProgramme(
+                                        guideActionFor(programme, ch, nowMs, uiState.catchUpSupported),
+                                        programme, nowMs, recordings.capabilities.canRecordLive,
                                     )) {
                                         GuideCellIntent.Intent.REPLAY -> viewModel.startReplay(ch, programme)
-                                        GuideCellIntent.Intent.OPEN_SHEET -> sheetProgramme = programme
+                                        GuideCellIntent.Intent.OPEN_SHEET -> {
+                                            sheetOriginStart = programme.startMs
+                                            sheetProgramme = programme
+                                        }
                                         GuideCellIntent.Intent.PLAY_LIVE -> selectChannel(ch.contentId)
                                         GuideCellIntent.Intent.NONE ->
                                             if (GuideCellIntent.explainsNoRecording(
@@ -939,17 +954,53 @@ fun LiveGuide(
         val sheet = sheetProgramme
         val sheetChannel = uiState.focusedChannel
         if (sheet != null && sheetChannel != null && !fullscreen) {
+            val recState by recordings.state.collectAsStateWithLifecycle()
+            val sheetAction = guideActionFor(sheet, sheetChannel, nowMs, uiState.catchUpSupported)
+            val snapshot = remember(sheetChannel.contentId, account) { recordings.snapshot(account, sheetChannel) }
+            val plan = remember(snapshot, sheet, recState, nowMs) {
+                GuideRecordSheetPolicy.plan(
+                    com.nuvio.tv.core.recordings.api.ProgrammeRecordPolicy.offer(
+                        snapshot, sheet.startMs, sheet.endMs, nowMs, recordings.capabilities, recState,
+                    ),
+                    com.nuvio.tv.core.recordings.api.ProgrammeRecordPolicy.seriesOffer(
+                        snapshot, sheet.title, recordings.capabilities, recState,
+                    ),
+                )
+            }
+            // Closing hands the cursor back to the cell that opened the sheet.
+            fun closeSheet() {
+                sheetProgramme = null
+                if (!sheetRestoreFocus.requestFocusOrFalse()) requestFocusedChannel()
+            }
             GuideStartOverSheet(
                 channelName = sheetChannel.name,
                 programme = sheet,
-                onStartOver = {
-                    sheetProgramme = null
-                    viewModel.startReplay(sheetChannel, sheet)
+                plan = plan,
+                onStartOver = if (GuideRecordSheetPolicy.showsStartOver(sheetAction)) {
+                    {
+                        sheetProgramme = null
+                        viewModel.startReplay(sheetChannel, sheet)
+                    }
+                } else null,
+                onWatchLive = if (GuideRecordSheetPolicy.showsWatchLive(sheetAction)) {
+                    {
+                        sheetProgramme = null
+                        commitPreview(sheetChannel.contentId)
+                    }
+                } else null,
+                onRecord = {
+                    closeSheet()
+                    recordings.record(account, sheetChannel, sheet)
                 },
-                onWatchLive = {
-                    sheetProgramme = null
-                    commitPreview(sheetChannel.contentId)
+                onRecordSeries = {
+                    closeSheet()
+                    recordings.recordSeries(account, sheetChannel, sheet, uiState.epg[sheetChannel.streamId]?.programmes.orEmpty())
                 },
+                onCancelRecording = {
+                    closeSheet()
+                    plan.scheduleId?.let { recordings.cancel(it, sheet.title) }
+                },
+                onClose = ::closeSheet,
             )
         }
 
@@ -1017,6 +1068,36 @@ fun LiveGuide(
             viewModel.consumePendingTune()
             pendingRestoreEntityId = uiState.channels.firstOrNull { it.contentId == pending }?.entityId
             commitPreview(pending)
+        }
+
+        // Record / Record series / Cancel recording: the confirmation says what will really happen.
+        recNotice?.let { notice ->
+            fun restoreRecordingFocus() {
+                if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
+                else if (!sheetRestoreFocus.requestFocusOrFalse() && !requestFocusedChannel()) {
+                    channelListFocus.requestFocusOrFalse()
+                }
+            }
+            GuideRecordNoticeToast(
+                notice = notice,
+                onUndo = { restoreRecordingFocus(); recordings.undo(it) },
+                onOpenExactSettings = {
+                    recordings.exactAlarmSettingsIntent()?.let { intent ->
+                        runCatching { activityContext.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    }
+                },
+                onDismiss = { restoreRecordingFocus(); recordings.dismissNotice() },
+                modifier = Modifier
+                    .align(if (fullscreen) Alignment.TopCenter else Alignment.BottomCenter)
+                    .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.xl),
+            )
+        }
+
+        // Series rules grow as the guide shows more airings of a recorded show on this channel.
+        LaunchedEffect(uiState.focusedChannelId, uiState.epg[uiState.focusedChannel?.streamId ?: -1]?.programmes) {
+            val ch = uiState.focusedChannel ?: return@LaunchedEffect
+            val programmes = uiState.epg[ch.streamId]?.programmes ?: return@LaunchedEffect
+            recordings.expandSeriesFor(ch.contentId, programmes)
         }
 
         // F03 (owner 2026-10-04): a favourite toggle is confirmed with Undo, like a hide.
@@ -1296,6 +1377,9 @@ internal fun GuideChannelRow(
     onBackOutOfTimeline: () -> Unit,
     onProgrammeClick: (XtreamProgram) -> Unit,
     onProgrammeFocused: (XtreamProgram) -> Unit = {},
+    recStarts: Set<Long> = NO_REC_STARTS,
+    restoreStart: Long? = null,
+    restoreFocus: FocusRequester? = null,
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
     /** The timeline strip's requester — where entering lands when no cell is actionable (B114). */
@@ -1443,6 +1527,9 @@ internal fun GuideChannelRow(
             interactive = timelineActive,
             onProgrammeClick = onProgrammeClick,
             onProgrammeFocused = onProgrammeFocused,
+            recStarts = recStarts,
+            restoreStart = restoreStart,
+            restoreFocus = restoreFocus,
             onTravel = onTravel,
             leadingEdgeFocus = leadingEdgeFocus,
             trailingEdgeFocus = trailingEdgeFocus,

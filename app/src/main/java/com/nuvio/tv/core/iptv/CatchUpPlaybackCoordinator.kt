@@ -378,4 +378,18 @@ class CatchUpPlaybackCoordinator @Inject constructor(
             account.baseUrl.isNotBlank() &&
             account.username.isNotBlank() &&
             account.password.isNotBlank()
+
+    /**
+     * The clock offset a recording keeps with its channel, so the save later builds the same catch-up
+     * start times a replay from the guide would. Bounded: a panel that never answers its clock request
+     * falls back to the manual correction alone (UTC when unset) instead of holding the Record press.
+     */
+    suspend fun recordingServerOffsetMs(account: XtreamAccount): Long? =
+        kotlinx.coroutines.withTimeoutOrNull(RECORDING_CLOCK_TIMEOUT_MS) {
+            XtreamCatchUp.replayOffsetMs(panelClock.offsetMs(account), account.catchUpCorrectionMinutes)
+        } ?: XtreamCatchUp.replayOffsetMs(null, account.catchUpCorrectionMinutes)
+
+    private companion object {
+        const val RECORDING_CLOCK_TIMEOUT_MS = 8_000L
+    }
 }

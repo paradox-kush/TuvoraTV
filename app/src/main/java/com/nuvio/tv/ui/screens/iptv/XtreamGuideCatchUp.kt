@@ -102,6 +102,11 @@ internal fun RowScope.GuideProgrammeCells(
     interactive: Boolean,
     onProgrammeClick: (XtreamProgram) -> Unit,
     onProgrammeFocused: (XtreamProgram) -> Unit = {},
+    /** Start times of this channel's scheduled / recording programmes (REC badge). Derived once upstream. */
+    recStarts: Set<Long> = NO_REC_STARTS,
+    /** The cell that opened the programme sheet carries [restoreFocus], so closing the sheet puts the cursor back on it. */
+    restoreStart: Long? = null,
+    restoreFocus: FocusRequester? = null,
     onTravel: (Int) -> Boolean,
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
@@ -256,7 +261,9 @@ internal fun RowScope.GuideProgrammeCells(
                         focusRequesters = if (!focusable) emptyList() else listOfNotNull(
                             leadingEdgeFocus.takeIf { p.startMs == firstActionableStart },
                             trailingEdgeFocus.takeIf { p.startMs == lastActionableStart },
+                            restoreFocus.takeIf { restoreStart != null && p.startMs == restoreStart },
                         ),
+                        recording = p.startMs in recStarts,
                         onFocused = { focusedStart = p.startMs; onProgrammeFocused(p) },
                         identity = p.startMs,
                     )
@@ -304,6 +311,8 @@ private fun RowScope.GuideCell(
     onFocused: () -> Unit = {},
     /** The programme this cell shows (its start); the node outlives a change of programme. */
     identity: Long = 0L,
+    /** Scheduled or recording: draws the REC badge, styled like the catch-up glyph. */
+    recording: Boolean = false,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val latestOnClick by rememberUpdatedState(onClick)
@@ -347,6 +356,15 @@ private fun RowScope.GuideCell(
                     text = REPLAY_GLYPH,
                     style = MaterialTheme.typography.labelSmall,
                     color = if (isFocused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.Primary,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            if (recording) {
+                Text(
+                    text = stringResource(R.string.rec_badge),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isFocused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.Error,
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.width(4.dp))
@@ -453,18 +471,30 @@ internal fun guideHhMm(ms: Long): String {
 }
 
 /**
- * The two-button sheet — shown in exactly one situation, the airing programme on a channel with an
- * archive, because it is the only state with two reasonable destinations and no obvious default.
- * Every other state acts on one press.
+ * The programme sheet. Opens for the airing programme on an archive channel (Start over / Watch
+ * live, the one state with two reasonable destinations) and for a programme that has not started
+ * (nothing to play, but it can be recorded). Every other state acts on one press.
+ *
+ * Recording rows come from [GuideRecordSheetPolicy]: a row that cannot work is not drawn and a
+ * one-line reason takes its place, so the viewer is never offered a promise nothing can keep.
  */
 @Composable
 internal fun GuideStartOverSheet(
     channelName: String,
     programme: XtreamProgram,
-    onStartOver: () -> Unit,
-    onWatchLive: () -> Unit,
+    plan: GuideRecordSheetPolicy.Plan,
+    onStartOver: (() -> Unit)?,
+    onWatchLive: (() -> Unit)?,
+    onRecord: () -> Unit,
+    onRecordSeries: () -> Unit,
+    onCancelRecording: () -> Unit,
+    onClose: () -> Unit,
 ) {
-    val startOverFocus = remember { FocusRequester() }
+    val firstFocus = remember { FocusRequester() }
+    // BACK closes the sheet and hands the cursor back to the cell that opened it.
+    androidx.activity.compose.BackHandler(onBack = onClose)
+    val hasPlayback = onStartOver != null || onWatchLive != null
+    val hasRecordRow = plan.primary != null || plan.recordSeries
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -506,19 +536,89 @@ internal fun GuideStartOverSheet(
                 )
             }
             Spacer(Modifier.height(NuvioTheme.spacing.lg))
-            Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+            if (hasPlayback) {
+                Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+                    onStartOver?.let {
+                        GuideSheetButton(
+                            label = "$REPLAY_GLYPH  Start over",
+                            primary = true,
+                            focusRequester = firstFocus,
+                            onClick = it,
+                        )
+                    }
+                    onWatchLive?.let {
+                        GuideSheetButton(
+                            label = "▶  Watch live",
+                            primary = false,
+                            focusRequester = firstFocus.takeIf { onStartOver == null },
+                            onClick = it,
+                        )
+                    }
+                }
+            }
+            if (hasRecordRow) {
+                if (hasPlayback) Spacer(Modifier.height(NuvioTheme.spacing.md))
+                Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+                    val recordFocus = firstFocus.takeIf { !hasPlayback }
+                    when (plan.primary) {
+                        GuideRecordSheetPolicy.Primary.RECORD -> GuideSheetButton(
+                            label = "● " + stringResource(R.string.rec_sheet_record),
+                            primary = !hasPlayback,
+                            focusRequester = recordFocus,
+                            onClick = onRecord,
+                        )
+                        GuideRecordSheetPolicy.Primary.CANCEL -> GuideSheetButton(
+                            label = stringResource(R.string.rec_sheet_cancel),
+                            primary = !hasPlayback,
+                            focusRequester = recordFocus,
+                            onClick = onCancelRecording,
+                        )
+                        GuideRecordSheetPolicy.Primary.STOP -> GuideSheetButton(
+                            label = stringResource(R.string.rec_sheet_stop),
+                            primary = !hasPlayback,
+                            focusRequester = recordFocus,
+                            onClick = onCancelRecording,
+                        )
+                        null -> Unit
+                    }
+                    if (plan.recordSeries) {
+                        GuideSheetButton(
+                            label = stringResource(R.string.rec_sheet_record_series),
+                            primary = false,
+                            focusRequester = recordFocus.takeIf { plan.primary == null },
+                            onClick = onRecordSeries,
+                        )
+                    }
+                }
+            }
+            if (!hasPlayback && !hasRecordRow) {
                 GuideSheetButton(
-                    label = "$REPLAY_GLYPH  Start over",
+                    label = stringResource(R.string.rec_sheet_close),
                     primary = true,
-                    focusRequester = startOverFocus,
-                    onClick = onStartOver,
+                    focusRequester = firstFocus,
+                    onClick = onClose,
                 )
-                GuideSheetButton(label = "▶  Watch live", primary = false, onClick = onWatchLive)
+            }
+            plan.notes.forEach { note ->
+                Spacer(Modifier.height(NuvioTheme.spacing.sm))
+                Text(
+                    text = stringResource(
+                        when (note) {
+                            GuideRecordSheetPolicy.Note.ALREADY_SAVED -> R.string.rec_note_already_saved
+                            GuideRecordSheetPolicy.Note.SERIES_ACTIVE -> R.string.rec_note_series_active
+                            GuideRecordSheetPolicy.Note.BAD_TIMES -> R.string.rec_note_bad_times
+                            GuideRecordSheetPolicy.Note.NEEDS_CATCH_UP -> R.string.rec_note_needs_catch_up
+                            GuideRecordSheetPolicy.Note.PROGRAMME_OVER -> R.string.rec_note_programme_over
+                        }
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NuvioTheme.colors.TextSecondary,
+                )
             }
         }
     }
     androidx.compose.runtime.LaunchedEffect(programme.startMs) {
-        runCatching { startOverFocus.requestFocus() }
+        GuideFocusRequestLoop.requestUntilLanded { firstFocus.requestFocusOrFalse() }
     }
 }
 
@@ -566,6 +666,9 @@ private fun GuideSheetButton(
         )
     }
 }
+
+/** No programme of the channel is scheduled: one shared instance, so rows without a recording never differ by identity. */
+internal val NO_REC_STARTS: Set<Long> = emptySet()
 
 /** The ⟲ every broadcaster guide uses for "this one was kept". */
 private const val REPLAY_GLYPH = "⟲"
