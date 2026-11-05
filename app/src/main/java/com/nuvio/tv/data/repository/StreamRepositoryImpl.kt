@@ -42,6 +42,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -451,6 +453,7 @@ class StreamRepositoryImpl @Inject constructor(
             val sourceMatchGroups = if (type == "movie" || type == "series") sourceStreams.matchSourceGroups(type) else emptyList()
 
             attemptedAddonNames += xtreamMatchTargets.map { it.name } + sourceMatchGroups.map { it.addonName }
+            if (pluginRequest != null) attemptedAddonNames += context.getString(R.string.stream_plugins_lane_label)
             coroutineScope {
                 // Channel to receive results as they complete
                 val resultChannel = Channel<AddonStreams>(Channel.UNLIMITED)
@@ -477,6 +480,7 @@ class StreamRepositoryImpl @Inject constructor(
                 streamAddons.forEach { addon ->
                     launch {
                         try {
+                            SourceLaneGuard.bounded {
                             val streamsResult = getStreamsFromAddon(addon, type, videoId)
                             when (streamsResult) {
                                 is NetworkResult.Success -> {
@@ -515,13 +519,15 @@ class StreamRepositoryImpl @Inject constructor(
                                 }
                                 NetworkResult.Loading -> Unit
                             }
+                            }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             Log.e(TAG, "Addon ${addon.name} failed: ${LogRedaction.text(e.message)}")
                             attemptedFailures += StreamAttemptFailure(
                                 addonName = addon.displayName,
                                 kind = StreamFailureKind.REQUEST_FAILED,
-                                detail = e.message ?: context.getString(com.nuvio.tv.R.string.stream_error_detail_addon_request_failed)
+                                detail = if (e is SourceLaneTimeoutException) context.getString(R.string.stream_source_query_timed_out)
+                                    else e.message ?: context.getString(com.nuvio.tv.R.string.stream_error_detail_addon_request_failed)
                             )
                         } finally {
                             markNonIptvDone()
@@ -536,6 +542,7 @@ class StreamRepositoryImpl @Inject constructor(
                 serverSources.forEach { source ->
                     launch {
                         try {
+                            SourceLaneGuard.bounded {
                             val streams = source.load()
                             if (streams.isNotEmpty()) {
                                 resultChannel.send(AddonStreams(addonName = source.name, addonLogo = null, streams = streams))
@@ -546,12 +553,14 @@ class StreamRepositoryImpl @Inject constructor(
                                     detail = context.getString(com.nuvio.tv.R.string.stream_error_detail_no_streams_for_id)
                                 )
                             }
+                            }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             attemptedFailures += StreamAttemptFailure(
                                 addonName = source.name,
                                 kind = StreamFailureKind.REQUEST_FAILED,
-                                detail = context.getString(e.serverFailure().messageRes())
+                                detail = if (e is SourceLaneTimeoutException) context.getString(R.string.stream_source_query_timed_out)
+                                    else context.getString(e.serverFailure().messageRes())
                             )
                         } finally {
                             markNonIptvDone()
@@ -567,6 +576,7 @@ class StreamRepositoryImpl @Inject constructor(
                     launch {
                         val label = context.getString(R.string.stream_discovering_source)
                         try {
+                            SourceLaneGuard.bounded {
                             val ready = addonRepository.getAddonDiscoveryState().first {
                                 it.initialized && url !in it.pendingUrls
                             }
@@ -586,6 +596,7 @@ class StreamRepositoryImpl @Inject constructor(
                                     NetworkResult.Loading -> Unit
                                 }
                             }
+                            }
                         } catch (error: Exception) {
                             if (error is CancellationException) throw error
                             attemptedFailures += StreamAttemptFailure(label, StreamFailureKind.REQUEST_FAILED,
@@ -601,6 +612,9 @@ class StreamRepositoryImpl @Inject constructor(
                 xtreamMatchTargets.forEach { acc ->
                     launch {
                         try {
+                            // No lane deadline: IptvSourceWaitPolicy ends the wait once the other lanes settle (B63); a fixed
+                            // deadline would drop a panel that answers while add-ons/plugins are still running.
+                            SourceLaneGuard.bounded(deadlineMs = null) {
                             // B63: a dead playlist can no longer hold the whole list open for its
                             // connect timeout — it is cut at the budget once nothing else is loading.
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
@@ -628,11 +642,24 @@ class StreamRepositoryImpl @Inject constructor(
                                     )
                                 )
                             }
+                            }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             // Nothing to search yet is a pending catalog, not a failure and not "no streams".
-                            val detail = if (e is com.nuvio.tv.core.iptv.match.IptvCatalogPendingException)
-                                R.string.stream_source_catalog_loading else R.string.stream_error_fetch_failed
+                            // The lane deadline ending a playlist is the same outcome as a budget cut.
+                            val loading = e is com.nuvio.tv.core.iptv.match.IptvCatalogPendingException ||
+                                (e is SourceLaneTimeoutException && try {
+                                    xtreamStreamSource.catalogPending(acc, type)
+                                } catch (c: CancellationException) {
+                                    throw c
+                                } catch (x: Exception) {
+                                    false
+                                })
+                            val detail = when {
+                                loading -> R.string.stream_source_catalog_loading
+                                e is SourceLaneTimeoutException -> R.string.stream_source_query_timed_out
+                                else -> R.string.stream_error_fetch_failed
+                            }
                             attemptedFailures += StreamAttemptFailure(acc.name, StreamFailureKind.REQUEST_FAILED,
                                 context.getString(detail))
                             Log.e(TAG, "Xtream match failed for ${acc.name}: ${e.message}")
@@ -648,6 +675,7 @@ class StreamRepositoryImpl @Inject constructor(
                 sourceMatchGroups.forEach { group ->
                     launch {
                         try {
+                            SourceLaneGuard.bounded(deadlineMs = null) {
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
                                 sourceStreams.resolveMatchStreams(group.sourceId, type, videoId, season, episode)
                             } ?: emptyList<Stream>().also {
@@ -663,10 +691,12 @@ class StreamRepositoryImpl @Inject constructor(
                                     )
                                 )
                             }
+                            }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             attemptedFailures += StreamAttemptFailure(group.addonName, StreamFailureKind.REQUEST_FAILED,
-                                context.getString(R.string.stream_error_fetch_failed))
+                                context.getString(if (e is SourceLaneTimeoutException) R.string.stream_source_query_timed_out
+                                    else R.string.stream_error_fetch_failed))
                             Log.e(TAG, "Source match failed for ${group.addonName}: ${LogRedaction.text(e.message)}")
                         } finally {
                             if (completedJobs.incrementAndGet() >= totalJobs) {
@@ -678,9 +708,19 @@ class StreamRepositoryImpl @Inject constructor(
 
                 // Launch plugin jobs if we have a supported plugin id - each scraper sends its own result
                 if (pluginRequest != null) {
+                    // Counted exactly once however the lane ends (callback, catch, finally): a second count
+                    // would close the channel while another lane is still sending and settle othersSettled early.
+                    val pluginLane = OnceLane {
+                        markNonIptvDone()
+                        if (completedJobs.incrementAndGet() >= totalJobs) {
+                            resultChannel.close()
+                        }
+                    }
                     launch {
                         try {
-                            // Stream plugins individually
+                            // Stream plugins individually. NOT under a lane deadline: PluginManager owns the
+                            // per-scraper budget (120 s), the preferred-first stagger and the 10-slot queue, all
+                            // of which exceed any single lane deadline.
                             val (pluginSeason, pluginEpisode) = resolvePluginSeasonEpisode(
                                 videoId = videoId,
                                 season = season,
@@ -695,20 +735,18 @@ class StreamRepositoryImpl @Inject constructor(
                                 priorityBingeGroup = priorityBingeGroup,
                                 preferredPluginOnly = preferredPluginOnly,
                                 continuePluginOnly = continuePluginOnly,
-                                resultChannel = resultChannel
-                            ) {
-                                markNonIptvDone()
-                                if (completedJobs.incrementAndGet() >= totalJobs) {
-                                    resultChannel.close()
+                                resultChannel = resultChannel,
+                                onFailure = { detail ->
+                                    attemptedFailures += StreamAttemptFailure(context.getString(R.string.stream_plugins_lane_label), StreamFailureKind.REQUEST_FAILED, detail)
                                 }
-                            }
+                            ) { pluginLane.finish() }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             Log.e(TAG, "Plugin execution failed: ${e.message}")
-                            markNonIptvDone()
-                            if (completedJobs.incrementAndGet() >= totalJobs) {
-                                resultChannel.close()
-                            }
+                            attemptedFailures += StreamAttemptFailure(context.getString(R.string.stream_plugins_lane_label), StreamFailureKind.REQUEST_FAILED,
+                                e.message ?: context.getString(R.string.stream_error_fetch_failed))
+                        } finally {
+                            pluginLane.finish()
                         }
                     }
                 }
@@ -882,6 +920,7 @@ class StreamRepositoryImpl @Inject constructor(
         preferredPluginOnly: Boolean,
         continuePluginOnly: Boolean,
         resultChannel: Channel<AddonStreams>,
+        onFailure: (String) -> Unit,
         onComplete: () -> Unit
     ) {
         // Check if plugins are enabled
@@ -901,7 +940,11 @@ class StreamRepositoryImpl @Inject constructor(
 
         Log.d(TAG, "Streaming plugins for $pluginSource: $pluginId, type: $mediaType")
 
-        try {
+        runPluginLane(
+            fallbackDetail = context.getString(R.string.stream_error_fetch_failed),
+            onFailure = onFailure,
+            onComplete = onComplete
+        ) {
             val groupByRepository = pluginManager.groupStreamsByRepository.first()
             val repositoriesById = if (groupByRepository) {
                 pluginManager.repositories.first().associateBy { it.id }
@@ -929,11 +972,6 @@ class StreamRepositoryImpl @Inject constructor(
                     Log.d(TAG, "Streamed ${results.size} results from ${scraper.name}")
                 }
             }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.e(TAG, "Failed to stream plugins: ${e.message}", e)
-        } finally {
-            onComplete()
         }
     }
 
