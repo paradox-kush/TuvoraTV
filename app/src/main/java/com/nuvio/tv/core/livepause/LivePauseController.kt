@@ -276,6 +276,11 @@ class LivePauseController(
 
     private suspend fun play() {
         val current = state.value
+        if (current is LivePauseState.Failed) {
+            // Play on the Failed card is "get me the picture back".
+            goLive(failedFallsBackToPlay = true)
+            return
+        }
         if (current !is LivePauseState.Shifted) {
             if (current == LivePauseState.Off) engine.play()
             return
