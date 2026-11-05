@@ -100,4 +100,15 @@ class SingleUseReplayWiringTest {
         val retry = functionBody(source("PlayerRuntimeControllerCatchUp.kt"), "internal fun PlayerRuntimeController.retrySingleUseCatchUp(")
         assertTrue(retry.contains("SingleUseReplayPolicy.retryStep("))
     }
+
+    @Test
+    fun `every user seek event is gated by the single-use policy`() {
+        val events = source("PlayerRuntimeControllerPlaybackEvents.kt")
+        for (branch in listOf("is PlayerEvent.OnSeekBy ->", "is PlayerEvent.OnPreviewSeekBy ->", "PlayerEvent.OnCommitPreviewSeek ->", "is PlayerEvent.OnSeekTo ->")) {
+            val start = events.indexOf("        $branch")
+            assertTrue("missing $branch", start >= 0)
+            val end = Regex("\n        (is )?PlayerEvent\\.").find(events, start + branch.length)?.range?.first ?: events.length
+            assertTrue("$branch must check allowsSeek first", events.substring(start, end).contains("SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())"))
+        }
+    }
 }

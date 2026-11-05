@@ -25,6 +25,9 @@ internal object SingleUseReplayPolicy {
     /** The VOD disk cache re-reads ranges of the URL. */
     fun allowsVodCache(requested: Boolean, singleUse: Boolean): Boolean = requested && !singleUse
 
+    /** A seek re-requests the URL with a new Range, which a spent single-use link cannot serve. */
+    fun allowsSeek(singleUse: Boolean): Boolean = !singleUse
+
     /** A startup failover to the other engine re-initialises on the same URL. */
     fun allowsEngineFailover(singleUse: Boolean): Boolean = !singleUse
 

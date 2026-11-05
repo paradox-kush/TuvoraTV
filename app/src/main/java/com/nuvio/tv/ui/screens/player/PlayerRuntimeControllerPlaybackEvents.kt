@@ -1431,6 +1431,7 @@ fun PlayerRuntimeController.onEvent(
             onEvent(PlayerEvent.OnSeekBy(deltaMs = -PlayerScrubRates.STEP_SHORT_MS))
         }
         is PlayerEvent.OnSeekBy -> {
+            if (!SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())) return
             if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
             val current = currentPlaybackPositionMs() ?: 0L
@@ -1455,6 +1456,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         is PlayerEvent.OnPreviewSeekBy -> {
+            if (!SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())) return
             if (_playbackTimeline.value.isLive) return
             val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
             val basePosition = pendingPreviewSeekPosition ?: currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L
@@ -1470,6 +1472,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         PlayerEvent.OnCommitPreviewSeek -> {
+            if (!SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())) return
             if (_playbackTimeline.value.isLive) return
             val requested = pendingPreviewSeekPosition?.let(::catchUpSeekTargetMs)
             if (requested != null) {
@@ -1492,6 +1495,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         is PlayerEvent.OnSeekTo -> {
+            if (!SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())) return
             if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
             val requestedPosition = catchUpSeekTargetMs(catchUpPlayerPositionMs(event.position))

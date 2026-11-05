@@ -67,4 +67,10 @@ class SingleUseReplayPolicyTest {
         assertFalse("never twice", SingleUseReplayPolicy.holdAtStart(singleUse = true, alreadyHeld = true))
         assertFalse("an ordinary replay is held by its continuation check", SingleUseReplayPolicy.holdAtStart(false, false))
     }
+
+    @Test
+    fun `a seek never sends a new Range request on a single-use link`() {
+        assertFalse("single-use replay must not seek", SingleUseReplayPolicy.allowsSeek(singleUse = true))
+        assertTrue("an ordinary stream seeks", SingleUseReplayPolicy.allowsSeek(singleUse = false))
+    }
 }
