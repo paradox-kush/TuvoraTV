@@ -1337,6 +1337,58 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    // Live pipeline audit 2026-11-04 §3c, fits B52 ("recovers after zapping and waiting 1-2 min"): the
+    // rolling reconnect window is session-scoped and cleared only by 30 s of stable playback, so it
+    // survived a user Retry and a channel change. A healthy stream after Retry/zap inherited the old
+    // channel's pressure and went straight to FAILED on its first blip.
+    private suspend fun TestScope.exhaustThenRestart(restart: PlaybackCommand): Pair<PlaybackSession, FakeEngine> {
+        val engine = FakeEngine { start, input, events ->
+            if (start > 1) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        repeat(7) {
+            engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+            advanceUntilIdle()
+        }
+        assertEquals(FailureCode.LIVE_RECONNECT_EXHAUSTED, session.snapshot.value.failure?.code)
+
+        session.dispatch(restart)
+        advanceUntilIdle()
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        return session to engine
+    }
+
+    private suspend fun TestScope.firstBlipReconnects(session: PlaybackSession, engine: FakeEngine) {
+        val generation = session.snapshot.value.generation
+        val starts = engine.startCalls
+        engine.emit(PlaybackEvent.PlaybackEnded(generation, PlaybackEndReason.EOF))
+        advanceUntilIdle()
+        val state = session.snapshot.value
+        assertEquals("the first blip gets a reconnect, not inherited exhaustion", starts + 1, engine.startCalls)
+        assertEquals(state.toString(), PlaybackState.PLAYING, state.state)
+    }
+
+    @Test
+    fun `user retry after exhaustion gives a healthy stream a fresh reconnect budget`() = runTest {
+        val (session, engine) = exhaustThenRestart(PlaybackCommand.Retry)
+        firstBlipReconnects(session, engine)
+        close(session)
+    }
+
+    @Test
+    fun `zap after exhaustion gives the new channel a fresh reconnect budget`() = runTest {
+        val (session, engine) = exhaustThenRestart(
+            PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN),
+        )
+        firstBlipReconnects(session, engine)
+        close(session)
+    }
+
     @Test
     fun `live recovery joins default position while VOD restores its checkpoint`() = runTest {
         suspend fun TestScope.recoveredStart(request: PlaybackRequest): PlaybackEngineStart {

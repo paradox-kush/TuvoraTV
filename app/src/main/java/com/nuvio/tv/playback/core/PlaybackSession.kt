@@ -277,7 +277,17 @@ class PlaybackSession(
             reconnectPlaybackStableSinceEpochMs = clock.nowEpochMs()
         }
         observeCompatibilityFact(before, input)
+        val resetsReconnectPressure = input is PlaybackReducerInput.Command &&
+            LiveReconnectPressureResetPolicy.resetsOn(input.value, before.launch)
         val transition = PlaybackStateMachine.reduce(before, input)
+        if (resetsReconnectPressure &&
+            before.snapshot.generation != transition.state.snapshot.generation
+        ) {
+            // A viewer Retry or a new channel was accepted (it started a new generation): the
+            // previous stream's reconnect pressure must not decide this one's first blip.
+            liveReconnectAttempts.clear()
+            reconnectPlaybackStableSinceEpochMs = null
+        }
         if (engineStartAccepted) {
             check(engineAttempt < Long.MAX_VALUE) { "Playback engine attempt exhausted" }
             engineAttempt++
