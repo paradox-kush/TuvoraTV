@@ -61,4 +61,16 @@ class StartDeadlineClockTest {
         c.onAttempt("a", 50_000L)
         assertEquals(0L, c.activeMs)
     }
+
+    @Test
+    fun slow_ticks_of_three_seconds_still_reach_the_deadline() {
+        val c = StartDeadlineClock()
+        c.onAttempt("a", 0L)
+        var now = 0L
+        var ticks = 0
+        while (c.activeMs < PlayerLoadDeadlinePolicy.HARD_DEADLINE_MS && ticks < 100) {
+            now += 3_000L; c.tick(now, false); ticks++
+        }
+        assertEquals("3 s ticks count in full", 25, ticks)
+    }
 }

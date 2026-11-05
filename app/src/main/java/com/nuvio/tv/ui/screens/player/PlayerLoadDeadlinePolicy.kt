@@ -15,6 +15,15 @@ internal object PlayerLoadDeadlinePolicy {
 
     const val POLL_INTERVAL_MS = 1_000L
 
+    /**
+     * The clock parks only for a real background or a shown error. userPausedManually is NOT an input:
+     * the lifecycle pause sets it and a resume never clears it, which disabled the deadline for good.
+     */
+    fun clockSuspended(isInBackground: Boolean, hasError: Boolean): Boolean = isInBackground || hasError
+
+    /** Audio-only streams never render a video frame; actually playing counts as started. */
+    fun started(renderedFirstFrame: Boolean, enginePlaying: Boolean): Boolean = renderedFirstFrame || enginePlaying
+
     enum class Action { Wait, FailOffline, FailTimeout, RetryNetworkBack }
 
     fun decide(

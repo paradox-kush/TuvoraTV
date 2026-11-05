@@ -54,4 +54,18 @@ class PlayerLoadDeadlinePolicyTest {
         assertEquals(Action.Wait, decide(late, hasError = true))
         assertEquals(Action.Wait, decide(late, online = false, suspended = true))
     }
+
+    @Test
+    fun `only a real background or a shown error parks the clock`() {
+        assertEquals(true, PlayerLoadDeadlinePolicy.clockSuspended(isInBackground = true, hasError = false))
+        assertEquals(true, PlayerLoadDeadlinePolicy.clockSuspended(isInBackground = false, hasError = true))
+        assertEquals("a resumed load runs again", false, PlayerLoadDeadlinePolicy.clockSuspended(false, false))
+    }
+
+    @Test
+    fun `a healthy audio-only stream counts as started without a video frame`() {
+        assertEquals(true, PlayerLoadDeadlinePolicy.started(renderedFirstFrame = false, enginePlaying = true))
+        assertEquals(false, PlayerLoadDeadlinePolicy.started(renderedFirstFrame = false, enginePlaying = false))
+        assertEquals(true, PlayerLoadDeadlinePolicy.started(renderedFirstFrame = true, enginePlaying = false))
+    }
 }

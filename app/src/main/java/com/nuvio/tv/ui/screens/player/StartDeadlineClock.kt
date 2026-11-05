@@ -40,6 +40,6 @@ internal class StartDeadlineClock {
 
     companion object {
         /** A gap longer than this between ticks is not the viewer waiting (throttled or parked loop). */
-        const val MAX_COUNTED_GAP_MS = 2_500L
+        const val MAX_COUNTED_GAP_MS = 5_000L
     }
 }

@@ -23,6 +23,8 @@ internal fun PlayerRuntimeController.armLoadDeadline() {
         loadDeadlineFailed = false
         loadDeadlineFailedOffline = false
         loadDeadlineClock.onAttempt(null, now, force = true)
+        // The failure's Retry affordance goes with the failure (a source pick clears the error).
+        _uiState.update { if (it.showRetryErrorAction) it.copy(showRetryErrorAction = false) else it }
     } else {
         loadDeadlineClock.onAttempt(loadDeadlineKey(), now)
     }
@@ -34,11 +36,16 @@ internal fun PlayerRuntimeController.armLoadDeadline() {
             val tickNow = SystemClock.elapsedRealtime()
             // A different source than the one being timed (picked after the attempt began): new window.
             loadDeadlineClock.onAttempt(loadDeadlineKey(), tickNow)
-            val suspended = isInBackground || userPausedManually
+            // Only a real background parks the clock: userPausedManually is also set by the lifecycle
+            // pause (and never cleared by a resume), so it must not gate the deadline. Time with an
+            // error on screen is not the viewer waiting either.
+            val suspended = PlayerLoadDeadlinePolicy.clockSuspended(isInBackground, state.error != null)
+            // Audio-only streams never render a first video frame: actually playing is "started".
+            val started = PlayerLoadDeadlinePolicy.started(hasRenderedFirstFrame, _exoPlayer?.isPlaying == true)
             val action = PlayerLoadDeadlinePolicy.decide(
                 elapsedMs = loadDeadlineClock.tick(tickNow, suspended),
                 online = context.isNetworkOnline(),
-                firstFrameRendered = hasRenderedFirstFrame,
+                firstFrameRendered = started,
                 isLive = LivePlaybackUiPolicy.isLivePlayback(
                     playerReportsLive = state.isLive,
                     contentType = contentType,
@@ -57,7 +64,7 @@ internal fun PlayerRuntimeController.armLoadDeadline() {
                     failLoadDeadline(context.getString(R.string.player_error_start_timeout), offline = false)
                 PlayerLoadDeadlinePolicy.Action.RetryNetworkBack -> onEvent(PlayerEvent.OnRetry)
             }
-            if (hasRenderedFirstFrame) {
+            if (started) {
                 loadDeadlineClock.clear()
                 break
             }
