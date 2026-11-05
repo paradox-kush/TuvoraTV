@@ -41,10 +41,10 @@ data class RecordingCapabilities(
     val canWakeApp: Boolean = true,
 ) {
     companion object {
-        val IPHONE = RecordingCapabilities(canRecordLive = false, canSaveCatchUp = true)
+        val IPHONE = RecordingCapabilities(canRecordLive = false, canSaveCatchUp = true, canWakeApp = false)
         val ANDROID = RecordingCapabilities(canRecordLive = true, canSaveCatchUp = true)
         val DESKTOP = RecordingCapabilities(canRecordLive = true, canSaveCatchUp = true)
-        val APPLE_TV = RecordingCapabilities(canRecordLive = false, canSaveCatchUp = false)
+        val APPLE_TV = RecordingCapabilities(canRecordLive = false, canSaveCatchUp = false, canWakeApp = false)
     }
 }
 
