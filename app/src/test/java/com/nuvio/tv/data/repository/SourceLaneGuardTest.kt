@@ -169,4 +169,23 @@ class SourceLaneGuardTest {
         assertTrue(details.isEmpty())
         assertEquals(1, completed)
     }
+
+    @Test
+    fun theIptvSafetyDeadlineOutlastsThePluginScraperCapAndEndsAnOrphanedLane() = runTest {
+        assertTrue(SourceLaneGuard.IPTV_SAFETY_DEADLINE_MS > 120_000L)
+        try {
+            SourceLaneGuard.bounded<Unit>(SourceLaneGuard.IPTV_SAFETY_DEADLINE_MS) { delay(Long.MAX_VALUE) }
+            fail("expected SourceLaneTimeoutException")
+        } catch (_: SourceLaneTimeoutException) {
+            assertEquals(SourceLaneGuard.IPTV_SAFETY_DEADLINE_MS, currentTime)
+        }
+    }
+
+    @Test
+    fun aPluginLaneFailureIsLoggedWithItsCause() = runTest {
+        val logged = mutableListOf<Exception>()
+        runPluginLane("fallback", {}, {}, { logged += it }) { throw java.io.IOException("boom") }
+        assertEquals(1, logged.size)
+        assertEquals("boom", logged.single().message)
+    }
 }

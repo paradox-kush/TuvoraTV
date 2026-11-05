@@ -612,9 +612,9 @@ class StreamRepositoryImpl @Inject constructor(
                 xtreamMatchTargets.forEach { acc ->
                     launch {
                         try {
-                            // No lane deadline: IptvSourceWaitPolicy ends the wait once the other lanes settle (B63); a fixed
-                            // deadline would drop a panel that answers while add-ons/plugins are still running.
-                            SourceLaneGuard.bounded(deadlineMs = null) {
+                            // IptvSourceWaitPolicy ends the wait once the other lanes settle (B63); the safety deadline only
+                            // bounds the case where they never do (150 s, above the 120 s plugin scraper cap).
+                            SourceLaneGuard.bounded(deadlineMs = SourceLaneGuard.IPTV_SAFETY_DEADLINE_MS) {
                             // B63: a dead playlist can no longer hold the whole list open for its
                             // connect timeout — it is cut at the budget once nothing else is loading.
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
@@ -675,7 +675,7 @@ class StreamRepositoryImpl @Inject constructor(
                 sourceMatchGroups.forEach { group ->
                     launch {
                         try {
-                            SourceLaneGuard.bounded(deadlineMs = null) {
+                            SourceLaneGuard.bounded(deadlineMs = SourceLaneGuard.IPTV_SAFETY_DEADLINE_MS) {
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
                                 sourceStreams.resolveMatchStreams(group.sourceId, type, videoId, season, episode)
                             } ?: emptyList<Stream>().also {
@@ -943,7 +943,8 @@ class StreamRepositoryImpl @Inject constructor(
         runPluginLane(
             fallbackDetail = context.getString(R.string.stream_error_fetch_failed),
             onFailure = onFailure,
-            onComplete = onComplete
+            onComplete = onComplete,
+            logError = { Log.e(TAG, "Failed to stream plugins: ${it.message}", it) }
         ) {
             val groupByRepository = pluginManager.groupStreamsByRepository.first()
             val repositoriesById = if (groupByRepository) {
