@@ -250,6 +250,18 @@ class IptvContentDbTest {
     }
 
     @Test
+    fun `a whole-guide refresh keeps the per-channel catch-up history and its fetch stamp`() = runTest {
+        val xtream = "xtream-acc"
+        // Xtream per-channel history (get_simple_data_table), stored under the sid: namespace (B231).
+        db.refillChannelEpg(xtream, "sid:7", listOf(EpgProgramme("sid:7", 1_000L, 2_000L, "Yesterday", null, hasArchive = true)), fetchedAtMs = 500L)
+        // The XMLTV ingest owns only its own channel keys.
+        db.replaceEpg(xtream, builtAtMs = 9_000L) { w -> w.add(EpgProgramme("bbc.uk", 3_000L, 4_000L, "Xmltv", null)) }
+        assertEquals("xmltv rows landed", listOf("Xmltv"), db.epgWindow(xtream, "bbc.uk", 0L, 10_000L).map { it.title })
+        assertEquals("history rows survive the swap", listOf("Yesterday"), db.epgWindow(xtream, "sid:7", 0L, 10_000L).map { it.title })
+        assertEquals("history stamp survives so no re-download", 500L, db.epgChannelFetchedAt(xtream, "sid:7"))
+    }
+
+    @Test
     fun `an empty or truncated-to-nothing refresh keeps the prior generation but still throttles`() = runTest {
         ingestSample()
         db.replaceEpg(pid, builtAtMs = 1_000L) { w -> w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Prior", null)) }

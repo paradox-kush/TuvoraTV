@@ -884,13 +884,16 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
 
         inTx {
             if (writer.count > 0) {
-                // A wholesale refresh supersedes the per-channel fetch stamps too.
-                db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
-                db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
+                // B231: a channel with a fetch stamp owns its rows (Xtream per-channel catch-up history,
+                // written by refillChannelEpg). The whole-guide swap replaces everything else but leaves
+                // those rows AND their stamps alone: wiping them blanked the past cells until a re-focus
+                // re-downloaded what we already had.
+                db.delete("epg_programmes", "playlist_id = ? AND channel_id NOT IN ($STAMPED_CHANNELS)", arrayOf(playlistId, playlistId))
                 db.execSQL(
                     "INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive, programme_id) " +
-                        "SELECT playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive, programme_id FROM $EPG_SHADOW WHERE playlist_id = ?",
-                    arrayOf(playlistId),
+                        "SELECT playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive, programme_id FROM $EPG_SHADOW " +
+                        "WHERE playlist_id = ? AND channel_id NOT IN ($STAMPED_CHANNELS)",
+                    arrayOf(playlistId, playlistId),
                 )
                 mapping?.invoke()?.let { writeMapping(playlistId, it) }
             }
@@ -1202,6 +1205,8 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
         )
         /** Staging table for [replaceEpg]'s generation swap; holds only the in-flight refresh's rows. */
         private const val EPG_SHADOW = "epg_programmes_shadow"
+        /** Channels whose rows a per-channel refill owns (bind the playlist id once). */
+        private const val STAMPED_CHANNELS = "SELECT channel_id FROM epg_channel_fetch WHERE playlist_id = ?"
         /** Per-playlist guide freshness, for every source type (see [replaceEpg]). */
         private const val EPG_META_DDL =
             "CREATE TABLE IF NOT EXISTS epg_meta(playlist_id TEXT NOT NULL PRIMARY KEY, epg_built_at INTEGER NOT NULL) WITHOUT ROWID"
