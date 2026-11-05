@@ -29,6 +29,14 @@ class SourceLaneInterruptedException(cause: Throwable) :
 object SourceLaneGuard {
     const val LANE_DEADLINE_MS = 60_000L
 
+    /**
+     * Safety net for IPTV/source-match lanes, measured from when the lane starts. They deliberately
+     * outwait add-ons and plugins (B63), so they end when the other lanes settle; plugin lanes have no
+     * lane deadline (PluginManager owns the 120 s per-scraper budget) so the IPTV chip needs a bound that
+     * cannot depend on them. Above the longest legitimate plugin scraper.
+     */
+    const val IPTV_SAFETY_DEADLINE_MS = 150_000L
+
     private class Held<T>(val value: T)
 
     /**
@@ -71,6 +79,7 @@ suspend fun runPluginLane(
     fallbackDetail: String,
     onFailure: (String) -> Unit,
     onComplete: () -> Unit,
+    logError: (Exception) -> Unit = {},
     body: suspend () -> Unit
 ) {
     try {
@@ -78,6 +87,7 @@ suspend fun runPluginLane(
     } catch (e: Exception) {
         // Only the caller leaving propagates; a plugin-side cancellation is a failure of this lane.
         if (e is CancellationException) currentCoroutineContext().ensureActive()
+        logError(e)
         onFailure(e.message ?: fallbackDetail)
     } finally {
         onComplete()
