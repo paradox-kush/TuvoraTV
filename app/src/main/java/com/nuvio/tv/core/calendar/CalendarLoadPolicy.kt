@@ -9,16 +9,22 @@ import java.time.Duration
 data class CalendarRunResult(
     val finishedAtMs: Long,
     val attempted: Int,
-    val succeeded: Int
+    val succeeded: Int,
+    val carriedFailure: Boolean = false
 ) {
     /**
      * Fix 1 over Arc: a run that tried at least one fetch and got no answer at all FAILED. Arc read it as
      * "all quiet" and showed an empty Calendar to someone whose network was down.
      */
-    val failed: Boolean get() = calendarRunFailed(attempted, succeeded)
+    val failed: Boolean get() = calendarRunFailed(attempted, succeeded, carriedFailure)
 }
 
-fun calendarRunFailed(attempted: Int, succeeded: Int): Boolean = attempted > 0 && succeeded == 0
+/**
+ * [carriedFailure]: the run asked nothing while a followed title still waits out the last run's failure, so the
+ * failure stands (device finding: the next open's run, with nothing due, used to clear it to an all-quiet page).
+ */
+fun calendarRunFailed(attempted: Int, succeeded: Int, carriedFailure: Boolean = false): Boolean =
+    (attempted > 0 && succeeded == 0) || (attempted == 0 && carriedFailure)
 
 /**
  * Fix 3 over Arc: when opening the Calendar (or returning to Home) is worth a refresh. Arc refreshed on every

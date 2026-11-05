@@ -82,4 +82,18 @@ class CalendarRefreshPolicyTest {
         assertFalse("fetched 5 h ago", calendarTraktCalendarDue(now.minus(Duration.ofHours(5)).toEpochMilli(), now))
         assertTrue("fetched 6 h ago", calendarTraktCalendarDue(now.minus(Duration.ofHours(6)).toEpochMilli(), now))
     }
+
+    @Test fun retryAsksAFailedTitleInsideItsBackOffButOtherReasonsDoNot() {
+        val backingOff = record(Duration.ofDays(1), failures = 1).copy(nextRefreshAtMs = now.plus(Duration.ofHours(1)).toEpochMilli())
+        assertTrue("Retry", calendarDueForRun(backingOff, now, CalendarRefreshReason.RETRY))
+        listOf(CalendarRefreshReason.CALENDAR_OPENED, CalendarRefreshReason.HOME_RESUMED, CalendarRefreshReason.SETTINGS_CHANGED).forEach {
+            assertFalse("$it keeps the back-off", calendarDueForRun(backingOff, now, it))
+        }
+    }
+
+    @Test fun retryLeavesAHealthyTitleInsideItsWaitAlone() {
+        val resting = record(Duration.ofDays(1)).copy(nextRefreshAtMs = now.plus(Duration.ofHours(1)).toEpochMilli())
+        assertFalse("healthy, not due", calendarDueForRun(resting, now, CalendarRefreshReason.RETRY))
+        assertTrue("due is still due", calendarDueForRun(resting.copy(nextRefreshAtMs = now.toEpochMilli()), now, CalendarRefreshReason.CALENDAR_OPENED))
+    }
 }

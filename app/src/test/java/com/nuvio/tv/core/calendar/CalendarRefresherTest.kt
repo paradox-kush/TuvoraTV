@@ -42,7 +42,7 @@ class CalendarRefresherTest {
     }
 
     private class FakeInputs(
-        private val candidates: List<CalendarTitleCandidate>,
+        @Volatile var candidates: List<CalendarTitleCandidate>,
         private val signedIn: Boolean = false,
         private val zone: ZoneId = ZoneOffset.UTC
     ) : CalendarRefreshInputs {
@@ -56,7 +56,7 @@ class CalendarRefresherTest {
     }
 
     /** Counts every remote call; [fail] makes every call throw as an unreachable network would. */
-    private class FakeRemote(private val fail: Boolean) : CalendarRemoteSources {
+    private class FakeRemote(@Volatile var fail: Boolean) : CalendarRemoteSources {
         val calls = AtomicInteger(0)
         private fun tick() {
             calls.incrementAndGet()
@@ -142,5 +142,53 @@ class CalendarRefresherTest {
         val result = runOnce(CalendarRefresher(store, FakeInputs(listOf(show("tt1")), signedIn = true), remote, clock, scope))
         assertEquals("due but covered: zero calls", 0, remote.calls.get())
         assertEquals("not counted as a fetch", 0, result.attempted)
+    }
+
+    // ---- device finding: a failure survives a run that asks nothing; Retry re-asks the failed title ----
+
+    private fun runAgain(refresher: CalendarRefresher, reason: CalendarRefreshReason): CalendarRunResult = runBlocking {
+        val before = refresher.state.value.lastRun
+        refresher.requestRefresh(reason)
+        withTimeout(10_000) { refresher.state.first { it.lastRun !== before && !it.refreshing } }.lastRun!!
+    }
+
+    @Test fun openingTheCalendarWhileTheFailedTitleBacksOffKeepsTheFailureAndAsksNothing() {
+        val remote = FakeRemote(fail = true)
+        val refresher = CalendarRefresher(storage(), FakeInputs(listOf(show("tt1"))), remote, clock, scope)
+        assertTrue("the first run failed", runOnce(refresher).failed)
+        val calls = remote.calls.get()
+
+        val second = runAgain(refresher, CalendarRefreshReason.CALENDAR_OPENED)
+        assertEquals("the failed title is in its back-off: nothing asked", calls, remote.calls.get())
+        assertEquals("asked nothing", 0, second.attempted)
+        assertTrue("so the failure is kept, not replaced by an all-quiet page", second.failed)
+        assertTrue("published to the screen", refresher.state.value.lastRun?.failed == true)
+    }
+
+    @Test fun retryAsksTheBackedOffFailedTitleAndTheCalendarLoads() {
+        val remote = FakeRemote(fail = true)
+        val refresher = CalendarRefresher(storage(), FakeInputs(listOf(show("tt1"))), remote, clock, scope)
+        runOnce(refresher)
+        runAgain(refresher, CalendarRefreshReason.CALENDAR_OPENED)
+        val calls = remote.calls.get()
+
+        remote.fail = false
+        val retried = runAgain(refresher, CalendarRefreshReason.RETRY)
+        assertTrue("Retry fetched the failed title again", remote.calls.get() > calls)
+        assertFalse("the network is back: the run answered", retried.failed)
+        assertEquals("dates landed", 1, refresher.state.value.titles.single().entries.size)
+    }
+
+    @Test fun theCarriedFailureClearsWhenTheFailingTitleIsNoLongerFollowed() {
+        val remote = FakeRemote(fail = true)
+        val inputs = FakeInputs(listOf(show("tt1")))
+        val refresher = CalendarRefresher(storage(), inputs, remote, clock, scope)
+        assertTrue(runOnce(refresher).failed)
+        val calls = remote.calls.get()
+
+        inputs.candidates = emptyList()
+        val after = runAgain(refresher, CalendarRefreshReason.SETTINGS_CHANGED)
+        assertEquals("nothing left to ask", calls, remote.calls.get())
+        assertFalse("the bell is off, nothing is failing", after.failed)
     }
 }

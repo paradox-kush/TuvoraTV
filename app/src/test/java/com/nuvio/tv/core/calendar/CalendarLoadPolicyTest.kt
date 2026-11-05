@@ -21,6 +21,35 @@ class CalendarLoadPolicyTest {
         assertFalse("idle slate asked nothing", calendarRunFailed(attempted = 0, succeeded = 0))
     }
 
+    // ---- Device finding: a run that asks nothing keeps the failure of the run before it.
+
+    private fun failing() = CalendarTitleRecord(
+        key = "series:imdb:tt1", type = CalendarTitleType.SERIES, ids = CalendarIds(imdb = "tt1"), failures = 1
+    )
+
+    @Test fun aRunThatAskedNothingFailsOnlyWhenItCarriesAFailure() {
+        assertTrue("carried", calendarRunFailed(attempted = 0, succeeded = 0, carriedFailure = true))
+        assertTrue("result flag", CalendarRunResult(finishedAtMs = 0, attempted = 0, succeeded = 0, carriedFailure = true).failed)
+        assertFalse("not carried", calendarRunFailed(attempted = 0, succeeded = 0, carriedFailure = false))
+    }
+
+    @Test fun aCarriedFailureNeverOverridesARunThatGotAnAnswer() {
+        assertFalse("1 of 2 answered", calendarRunFailed(attempted = 2, succeeded = 1, carriedFailure = true))
+    }
+
+    @Test fun aFailureIsCarriedOnlyWhileAFollowedTitleIsStillFailing() {
+        val healthy = failing().copy(failures = 0)
+        assertTrue("still failing", calendarCarriesFailure(bad(0), listOf(healthy, failing())))
+        assertFalse("nothing failing any more", calendarCarriesFailure(bad(0), listOf(healthy)))
+        assertFalse("the bell was turned off", calendarCarriesFailure(bad(0), emptyList()))
+        assertFalse("the last run did not fail", calendarCarriesFailure(ok(0), listOf(failing())))
+        assertFalse("no last run", calendarCarriesFailure(null, listOf(failing())))
+        assertTrue(
+            "a kept failure keeps being carried",
+            calendarCarriesFailure(CalendarRunResult(0, attempted = 0, succeeded = 0, carriedFailure = true), listOf(failing()))
+        )
+    }
+
     // ---- Fix 3: opening the Calendar refreshes only when it is worth it.
 
     private val min = Duration.ofMinutes(1).toMillis()

@@ -268,7 +268,7 @@ class CalendarRefresher internal constructor(
                     }
                 )
                 publishLocked()
-                records.filter { it.isDue(now) }
+                records.filter { calendarDueForRun(it, now, reason) }
                     .sortedWith(compareByDescending<CalendarTitleRecord> { CalendarOrigin.BELL in it.origins }.thenBy { it.nextRefreshAtMs })
             } ?: return
             save(current, force = true)
@@ -301,9 +301,12 @@ class CalendarRefresher internal constructor(
         } finally {
             withContext(NonCancellable) {
                 if (finished) {
-                    val result = CalendarRunResult(clock.millis(), attempted.get(), succeeded.get())
-                    dataMutex.withLock { if (owner == current) lastRun = result }
-                    if (result.failed) Log.w(TAG, "run failed: ${result.attempted} fetches, none answered")
+                    dataMutex.withLock {
+                        val carried = attempted.get() == 0 && calendarCarriesFailure(lastRun, data.titles)
+                        val result = CalendarRunResult(clock.millis(), attempted.get(), succeeded.get(), carried)
+                        if (owner == current) lastRun = result
+                        if (result.failed) Log.w(TAG, "run failed: ${result.attempted} fetches, none answered, carried=$carried")
+                    }
                 }
                 save(current, force = true)
                 setRefreshing(current, me, refreshing = false, remaining = 0)

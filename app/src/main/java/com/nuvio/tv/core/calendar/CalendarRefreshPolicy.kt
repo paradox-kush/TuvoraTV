@@ -31,3 +31,15 @@ val CALENDAR_TRAKT_REFRESH: Duration = Duration.ofHours(6)
 
 fun calendarTraktCalendarDue(fetchedAtMs: Long, now: Instant): Boolean =
     now.toEpochMilli() - fetchedAtMs >= CALENDAR_TRAKT_REFRESH.toMillis()
+
+
+/**
+ * Retry re-asks a title whose last fetch failed even inside its back-off; every other reason keeps the back-off, so
+ * opening the Calendar or Home never hammers a failing source. Device finding: without this Retry asked nothing.
+ */
+fun calendarDueForRun(record: CalendarTitleRecord, now: Instant, reason: CalendarRefreshReason): Boolean =
+    record.isDue(now) || (reason == CalendarRefreshReason.RETRY && record.failures > 0)
+
+/** The last run failed and a followed title is still waiting out that failure; clears once nothing followed is failing. */
+fun calendarCarriesFailure(previous: CalendarRunResult?, followed: List<CalendarTitleRecord>): Boolean =
+    previous?.failed == true && followed.any { it.failures > 0 }
