@@ -17,10 +17,57 @@ sealed interface CaptureSpaceDecision {
     data class DeleteThenContinue(val ids: List<String>) : CaptureSpaceDecision
 }
 
+/**
+ * Whether there is room to record, and what may be deleted to make room. Pure. Asked on every
+ * path: before a start, and again while capturing. [MIN_FREE_BYTES] is never consumed, and a
+ * capture in progress is never deleted.
+ */
 object RecordingSpacePolicy {
     const val MIN_FREE_BYTES = 500L * 1024 * 1024
+
+    /** A typical HD IPTV stream, used when the stream's own bitrate is unknown. */
     const val DEFAULT_BITRATE_BPS = 8_000_000L
-    fun estimateBytes(durationMs: Long, bitrateBps: Long? = null): Long = TODO()
-    fun check(freeBytes: Long, needBytes: Long, policy: LowSpacePolicy, deletable: List<Recording>): SpaceDecision = TODO()
-    fun duringCapture(freeBytes: Long, expectedBytesUntilNextCheck: Long, policy: LowSpacePolicy, deletable: List<Recording>): CaptureSpaceDecision = TODO()
+
+    fun estimateBytes(durationMs: Long, bitrateBps: Long? = null): Long {
+        val bps = bitrateBps?.takeIf { it > 0 } ?: DEFAULT_BITRATE_BPS
+        return durationMs.coerceAtLeast(0) * bps / 8_000L
+    }
+
+    fun check(freeBytes: Long, needBytes: Long, policy: LowSpacePolicy, deletable: List<Recording>): SpaceDecision {
+        val usable = freeBytes - MIN_FREE_BYTES
+        if (needBytes <= usable) return SpaceDecision.Proceed
+        if (policy == LowSpacePolicy.STOP) return SpaceDecision.Refuse(RecordingProblem.NO_SPACE)
+        // The newest recording of each series is the one "keep last" counts on: it stays.
+        val protectedIds = deletable.filter { it.seriesRuleId != null }
+            .groupBy { it.seriesRuleId }
+            .values.mapNotNull { group -> group.maxWithOrNull(compareBy<Recording> { it.programmeStartMs }.thenBy { it.id })?.id }
+            .toSet()
+        val candidates = deletable
+            .filter { it.status == RecordingStatus.DONE && it.sizeBytes > 0 && it.id !in protectedIds }
+            .sortedWith(compareBy<Recording> { it.programmeStartMs }.thenBy { it.id })
+        val ids = ArrayList<String>()
+        var freed = 0L
+        for (r in candidates) {
+            if (usable + freed >= needBytes) break
+            ids += r.id
+            freed += r.sizeBytes
+        }
+        return if (usable + freed >= needBytes) SpaceDecision.DeleteThenProceed(ids)
+        else SpaceDecision.Refuse(RecordingProblem.NO_SPACE)
+    }
+
+    /**
+     * Periodic check while a capture runs. [freeBytes] is measured now; [expectedBytesUntilNextCheck]
+     * is what the capture will write before the next check.
+     */
+    fun duringCapture(
+        freeBytes: Long,
+        expectedBytesUntilNextCheck: Long,
+        policy: LowSpacePolicy,
+        deletable: List<Recording>,
+    ): CaptureSpaceDecision = when (val d = check(freeBytes, expectedBytesUntilNextCheck, policy, deletable)) {
+        SpaceDecision.Proceed -> CaptureSpaceDecision.Continue
+        is SpaceDecision.DeleteThenProceed -> CaptureSpaceDecision.DeleteThenContinue(d.ids)
+        is SpaceDecision.Refuse -> CaptureSpaceDecision.Stop(d.problem)
+    }
 }
