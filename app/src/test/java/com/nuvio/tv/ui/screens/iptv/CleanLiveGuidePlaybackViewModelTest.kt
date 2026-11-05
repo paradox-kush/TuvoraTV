@@ -663,6 +663,67 @@ class CleanLiveGuidePlaybackViewModelTest {
         assertEquals("release disposes the control", true, "dispose" in controls[1].calls)
     }
 
+    @Test
+    fun `collapse while shifted changes the profile to GUIDE before going live so the retune uses GUIDE`() = runTest {
+        val controls = mutableListOf<RecordingPauseControl>()
+        val fixture = fixture(
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                RecordingPauseControl(request.selection).also { controls += it }
+            },
+        )
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        fixture.viewModel.requestPromote()
+        advanceUntilIdle()
+        controls[0].state.value = com.nuvio.tv.core.contracts.LivePauseView(phase = com.nuvio.tv.core.contracts.LivePausePhase.SHIFTED)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        fixture.firstHost.profileGate = gate
+        fixture.viewModel.requestCollapse()
+        advanceUntilIdle()
+        assertEquals("the live retune must not start while the profile is still FULLSCREEN", false, "goLive" in controls[0].calls)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("going live happens once the profile is GUIDE", true, "goLive" in controls[0].calls)
+        assertEquals(listOf(SessionProfile.FULLSCREEN, SessionProfile.GUIDE), fixture.firstHost.profileChanges)
+    }
+
+    @Test
+    fun `a zap that fails after the buffer was dropped puts the old channel back on live`() = runTest {
+        val controls = mutableListOf<RecordingPauseControl>()
+        val fixture = fixture(
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                RecordingPauseControl(request.selection).also { controls += it }
+            },
+        )
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        controls[0].state.value = com.nuvio.tv.core.contracts.LivePauseView(phase = com.nuvio.tv.core.contracts.LivePausePhase.SHIFTED)
+        fixture.firstHost.zapFailures = 1
+        fixture.viewModel.requestTune(fixture.next.contentId)
+        advanceUntilIdle()
+        assertEquals("the channel left is tuned live again, not left on the deleted buffer", 2, fixture.firstHost.tuneTargets.size)
+        assertSame(fixture.initial.selection, fixture.firstHost.tuneTargets.last())
+        assertEquals("still showing the old channel", true, fixture.viewModel.state.value is CleanLiveGuidePlaybackState.Ready)
+    }
+
+    @Test
+    fun `a zap that fails after the buffer was dropped and cannot retune fails visibly`() = runTest {
+        val controls = mutableListOf<RecordingPauseControl>()
+        val fixture = fixture(
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                RecordingPauseControl(request.selection).also { controls += it }
+            },
+        )
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        controls[0].state.value = com.nuvio.tv.core.contracts.LivePauseView(phase = com.nuvio.tv.core.contracts.LivePausePhase.SHIFTED)
+        fixture.firstHost.zapFailures = 1
+        fixture.firstHost.tuneFailures = 1
+        fixture.viewModel.requestTune(fixture.next.contentId)
+        advanceUntilIdle()
+        assertEquals(
+            CleanLiveGuidePlaybackState.Rejected(CleanLiveGuideFailure.TUNE_FAILED),
+            fixture.viewModel.state.value,
+        )
+    }
+
     private fun fixture(
         profileSource: () -> Int = { 1 },
         relative: (suspend (LiveRelativeRequest, Int) -> LiveRelativeResult)? = null,
@@ -804,6 +865,10 @@ class CleanLiveGuidePlaybackViewModelTest {
         override suspend fun applyPicture(mode: AspectMode, zoom: VideoZoom) { pictures += mode to zoom }
         val tuneTargets = mutableListOf<ProviderPlaybackSelection>()
         val tuneProfiles = mutableListOf<SessionProfile>()
+        /** Number of upcoming zaps that throw. */
+        var zapFailures = 0
+        /** Number of upcoming tunes that throw. */
+        var tuneFailures = 0
         val zapSelections = mutableListOf<ProviderPlaybackSelection>()
         val zapProfiles = mutableListOf<SessionProfile>()
         val profileChanges = mutableListOf<SessionProfile>()
@@ -822,6 +887,7 @@ class CleanLiveGuidePlaybackViewModelTest {
             metadata: CleanMediaSessionMetadata,
         ): Long {
             operations += "tune"
+            if (tuneFailures > 0) { tuneFailures--; error("synthetic tune failure") }
             tuneTargets += selection
             tuneProfiles += profile
             return advance(profile)
@@ -833,6 +899,7 @@ class CleanLiveGuidePlaybackViewModelTest {
             metadata: CleanMediaSessionMetadata,
         ): Long {
             operations += "zap"
+            if (zapFailures > 0) { zapFailures--; error("synthetic zap failure") }
             zapSelections += selection
             zapProfiles += profile
             return advance(profile)
@@ -862,8 +929,12 @@ class CleanLiveGuidePlaybackViewModelTest {
             operations += "retry"
         }
 
+        /** When set, changeProfile suspends until it completes (models a slow surface/profile switch). */
+        var profileGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
         override suspend fun changeProfile(profile: SessionProfile) {
             operations += "changeProfile"
+            profileGate?.await()
             profileChanges += profile
             snapshotFlow.value = snapshotFlow.value.copy(profile = profile)
         }

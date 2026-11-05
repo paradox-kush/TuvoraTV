@@ -554,11 +554,11 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     fun requestCollapse() {
         if (!releaseCompleted && !clearedReleaseLoopStarted) {
             launchContained(CleanLiveGuideFailure.COMMAND_FAILED) {
-                // The docked preview has no controls to resume a saved part: it shows the live edge.
-                if (GuideLivePausePolicy.goLiveOnCollapse(mutableLivePause.value.phase)) {
-                    livePauseControl?.goLive()
-                }
+                // The profile first: the live retune reads sessionProfile, and must not tune FULLSCREEN.
+                val shifted = GuideLivePausePolicy.goLiveOnCollapse(mutableLivePause.value.phase)
                 changeSessionProfile(SessionProfile.GUIDE)
+                // The docked preview has no controls to resume a saved part: it shows the live edge.
+                if (shifted) livePauseControl?.goLive()
             }
         }
     }
@@ -726,6 +726,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         presentationJob?.cancelAndJoin()
         presentationJob = null
         // The buffer belongs to the channel being left.
+        val hadBuffer = mutableLivePause.value.phase != LivePausePhase.OFF
         livePauseControl?.onChannelChanged()
         val acceptedGeneration = try {
             currentHost.zap(target.selection, sessionProfile, mediaMetadata(target))
@@ -734,6 +735,19 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             throw cancelled
         } catch (_: Exception) {
             activeTarget = previous
+            if (hadBuffer) {
+                // The host may still be on the buffer that was just deleted: put the channel being left back
+                // on its live source, or fail visibly. Never leave a black screen.
+                try {
+                    currentHost.tune(previous.selection, sessionProfile, mediaMetadata(previous))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    mutableState.value =
+                        CleanLiveGuidePlaybackState.Rejected(CleanLiveGuideFailure.TUNE_FAILED)
+                    return
+                }
+            }
             publishReady(currentHost)
             return
         }
