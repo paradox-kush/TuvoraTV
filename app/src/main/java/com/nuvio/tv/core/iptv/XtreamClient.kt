@@ -322,7 +322,9 @@ data class XtreamProgram(
      * Per-programme `has_archive`: true/false = the panel spoke, null = it said nothing (every
      * get_short_epg row). Feeds [XtreamCatchUp.actionFor]'s positive override.
      */
-    val hasArchive: Boolean? = null
+    val hasArchive: Boolean? = null,
+    /** A Stalker portal's own EPG row id: the whole address of this programme's archive. Null elsewhere. */
+    val programmeId: String? = null,
 )
 
 /** Verify signals from get_vod_info during TMDB->stream matching. */

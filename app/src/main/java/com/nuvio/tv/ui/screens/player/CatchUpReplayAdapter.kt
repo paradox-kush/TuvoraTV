@@ -207,6 +207,15 @@ internal class CatchUpReplayAdapter(
         startupTimeouts = 0
     }
 
+    /**
+     * Retry of a single-use replay (a Stalker archive) opens a fresh link, which is a new attempt in
+     * every respect: it has not played, and it gets a fresh startup deadline and budget.
+     */
+    fun onRelinked() {
+        played = false
+        resetStartupBudget()
+    }
+
     /** True exactly once per replay, on its first rendered frame: report the proven shape then. */
     fun onFirstFrame(): Boolean {
         if (!isCatchUp || played) return false

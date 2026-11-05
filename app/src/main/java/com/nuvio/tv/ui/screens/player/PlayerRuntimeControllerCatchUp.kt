@@ -53,6 +53,7 @@ internal fun PlayerRuntimeController.armCatchUpStartupDeadline() {
 }
 
 private fun PlayerRuntimeController.onCatchUpStartupDeadline() {
+    if (failSingleUseCatchUp(startupHang = true)) return
     val decision = catchUpReplay.onStartupTimeout(System.currentTimeMillis())
     Log.w(PlayerRuntimeController.TAG, "CATCHUP_STARTUP_TIMEOUT: no frame from the replay link in time (decision=$decision)")
     if (decision == CatchUpStartupPolicy.Decision.ADVANCE) {
@@ -65,6 +66,13 @@ private fun PlayerRuntimeController.onCatchUpStartupDeadline() {
         }
     }
     // Ladder exhausted (or the total budget is spent): stop the player and say so.
+    endCatchUpWithError(context.getString(R.string.player_error_catchup_no_answer))
+}
+
+/** Stops the player and shows [message] with Retry: the terminal state of a replay that cannot start. */
+private fun PlayerRuntimeController.endCatchUpWithError(message: String) {
+    catchUpStartupJob?.cancel()
+    catchUpStartupJob = null
     cancelFirstFrameWatchdog()
     cancelStallWatchdog()
     errorRetryJob?.cancel()
@@ -72,7 +80,7 @@ private fun PlayerRuntimeController.onCatchUpStartupDeadline() {
     releasePlayer(flushPlaybackState = false)
     _uiState.update {
         it.copy(
-            error = context.getString(R.string.player_error_catchup_no_answer),
+            error = message,
             showRetryErrorAction = true,
             showSwitchToMpvErrorAction = false,
             isPlaying = false,
@@ -87,6 +95,56 @@ private fun PlayerRuntimeController.onCatchUpStartupDeadline() {
 }
 
 /**
+ * A failure of a replay whose link is spent by playing (a Stalker archive): no dialect walk, no engine
+ * retry, no failover, no probe - every one of those would re-open the spent URL and spend a request or
+ * a connection slot on a link that cannot play twice. The replay ends in its own message with Retry,
+ * and Retry mints a fresh link ([retrySingleUseCatchUp]). True when it was one and has been ended.
+ */
+internal fun PlayerRuntimeController.failSingleUseCatchUp(startupHang: Boolean): Boolean {
+    if (!catchUpReplay.isCatchUp) return false
+    val message = catchUpPort?.singleUseFailure(contentId, startupHang) ?: return false
+    Log.w(PlayerRuntimeController.TAG, "CATCHUP_SINGLE_USE: link failed (startupHang=$startupHang); ending with Retry, no re-open")
+    endCatchUpWithError(message)
+    return true
+}
+
+/**
+ * Retry on a single-use replay: ask the portal for a FRESH link and open that. Never the spent URL.
+ * False when this is not such a replay (the caller's ordinary retry runs).
+ */
+internal fun PlayerRuntimeController.retrySingleUseCatchUp(): Boolean {
+    if (!catchUpReplay.isCatchUp) return false
+    val port = catchUpPort ?: return false
+    if (port.singleUseFailure(contentId, false) == null) return false
+    catchUpReplay.onRelinked()
+    hasRenderedFirstFrame = false
+    resetErrorRetryState()
+    _uiState.update {
+        it.copy(
+            error = null,
+            showRetryErrorAction = false,
+            loadingIssueReportVisible = false,
+            loadingIssueElapsedMs = 0L,
+            showLoadingOverlay = it.loadingOverlayEnabled,
+        )
+    }
+    errorRetryJob?.cancel()
+    errorRetryJob = scope.launch {
+        when (val reopened = port.reopen(contentId)) {
+            is com.nuvio.tv.core.contracts.CatchUpReopen.Link -> {
+                currentStreamUrl = reopened.url
+                _uiState.update { it.copy(currentStreamUrl = reopened.url) }
+                releasePlayer()
+                reinitializeCurrentStream()
+            }
+            is com.nuvio.tv.core.contracts.CatchUpReopen.Refused -> endCatchUpWithError(reopened.message)
+            null -> endCatchUpWithError(context.getString(R.string.player_error_catchup_no_answer))
+        }
+    }
+    return true
+}
+
+/**
  * An ExoPlayer error during a replay that has not played yet. Asks the walk for the next URL shape
  * (it advances on transport-shaped failures only) and re-tunes in place; true when it did, so the
  * caller skips its own recovery. False hands the error to upstream's handling, which shows it.
@@ -95,6 +153,7 @@ private fun PlayerRuntimeController.onCatchUpStartupDeadline() {
  * CatchUpFailure to classify, so a replay on libmpv falls through to upstream's mpv error path.
  */
 internal fun PlayerRuntimeController.advanceCatchUpDialect(errorCode: Int): Boolean {
+    if (failSingleUseCatchUp(startupHang = false)) return true
     if (catchUpReplay.routeError() != CatchUpReplayAdapter.ErrorRoute.DIALECT_WALK_FIRST) return false
     val next = catchUpPort?.onFailed(contentId, errorCode) ?: return false
     Log.i(PlayerRuntimeController.TAG, "CATCHUP_DIALECT_WALK: attempt failed (code=$errorCode); trying the next URL shape")
@@ -118,9 +177,12 @@ internal fun PlayerRuntimeController.followCatchUpPlayhead(positionMs: Long) {
     val port = catchUpPort ?: return
     if (!catchUpContinuationChecked) {
         catchUpContinuationChecked = true
-        port.continuation(contentId)?.let {
+        val continuation = port.continuation(contentId)
+        continuation?.let {
             catchUpReplay.enableContinuation(it.programme.startMs, it.windowEndMs, it.programme.endMs)
-            // The continuation state lives exactly as long as this player.
+        }
+        // The continuation state (and a single-use replay's mint, which Retry needs) lives exactly as long as this player.
+        if (continuation != null || port.singleUseFailure(contentId, false) != null) {
             catchUpEffects.adopt(port.hold(contentId))
         }
     }

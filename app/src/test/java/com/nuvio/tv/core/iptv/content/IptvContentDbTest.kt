@@ -448,4 +448,45 @@ class IptvContentDbTest {
         assertNotNull("old row still readable", row)
         assertNull("old row has no catch-up", row!!.catchUp)
     }
+
+    @Test
+    fun `a stalker programme id round-trips through the writer every read and a per-channel refill`() = runTest {
+        db.replaceEpg(pid, builtAtMs = 0L) { w ->
+            w.add(EpgProgramme("12", 1_000L, 2_000L, "News", null, hasArchive = true, programmeId = "9001"))
+            w.add(EpgProgramme("12", 2_000L, 3_000L, "No id", null))
+        }
+        assertEquals(listOf("9001", null), db.epgWindow(pid, "12", 0L, 10_000L).map { it.programmeId })
+        assertEquals(listOf("9001", null), db.epgNowNext(pid, "12", nowMs = 1_500L).map { it.programmeId })
+
+        db.refillChannelEpg(pid, "12", listOf(EpgProgramme("12", 5_000L, 6_000L, "Later", null, programmeId = "9100")), fetchedAtMs = 1L)
+        assertEquals(listOf("9100"), db.epgWindow(pid, "12", 4_000L, 10_000L).map { it.programmeId })
+    }
+
+    @Test
+    fun `a database written before the programme id column opens and reads old rows as no id`() = runTest {
+        val path = RuntimeEnvironment.getApplication().getDatabasePath("iptv_content_old_epg.db")
+        path.parentFile?.mkdirs()
+        path.delete()
+        // epg_programmes and a leftover shadow table exactly as they shipped, with no programme_id.
+        android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(path, null).use { raw ->
+            raw.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, cmd TEXT, tv_archive INTEGER, use_http_tmp_link INTEGER, use_load_balancing INTEGER, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE vod(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, cmd TEXT, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE series(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL, tvg_url TEXT, epg_built_at INTEGER, active_generation INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, has_archive INTEGER NOT NULL DEFAULT 0)")
+            raw.execSQL("CREATE TABLE epg_programmes_shadow(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, has_archive INTEGER NOT NULL DEFAULT 0)")
+            raw.execSQL("CREATE TABLE epg_channel_fetch(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY(playlist_id, channel_id)) WITHOUT ROWID")
+            raw.execSQL("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES('$pid', '12', 1000, 2000, 'Old', NULL, 1)")
+            raw.version = 5
+        }
+        val old = IptvContentDb(RuntimeEnvironment.getApplication(), "iptv_content_old_epg.db")
+
+        val rows = old.epgWindow(pid, "12", 0L, 10_000L)
+        assertEquals("the old row is still readable", listOf("Old"), rows.map { it.title })
+        assertNull("and has no programme id", rows.single().programmeId)
+
+        // The next refresh writes through the (altered) shadow table and the new column.
+        old.replaceEpg(pid, builtAtMs = 1L) { w -> w.add(EpgProgramme("12", 1_000L, 2_000L, "New", null, programmeId = "9001")) }
+        assertEquals(listOf("9001"), old.epgWindow(pid, "12", 0L, 10_000L).map { it.programmeId })
+    }
 }

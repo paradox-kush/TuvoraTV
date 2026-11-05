@@ -465,6 +465,8 @@ class StalkerClient @Inject constructor(
                     startMs = it.startMs,
                     endMs = it.endMs,
                     nowPlaying = now in it.startMs until it.endMs,
+                    hasArchive = it.hasArchive.takeIf { marked -> marked },
+                    programmeId = it.programmeId,
                 )
             }
         }
@@ -512,14 +514,16 @@ class StalkerClient @Inject constructor(
             for (attempt in 1..2) {
                 val result = runCatching {
                     contentDb.replaceEpg(acc.id, now) { writer ->
-                        val parser = StalkerEpgStreamParser { chId, title, descr, startMs, endMs ->
+                        val parser = StalkerEpgStreamParser { row ->
                             writer.add(
                                 com.nuvio.tv.core.iptv.content.EpgProgramme(
-                                    channelId = chId.toString(),
-                                    startMs = startMs,
-                                    endMs = endMs,
-                                    title = title,
-                                    desc = descr.takeIf { it.isNotBlank() },
+                                    channelId = row.channelId.toString(),
+                                    startMs = row.startMs,
+                                    endMs = row.endMs,
+                                    title = row.title,
+                                    desc = row.descr.takeIf { it.isNotBlank() },
+                                    hasArchive = row.hasArchive,
+                                    programmeId = row.programmeId,
                                 )
                             )
                         }
@@ -865,7 +869,9 @@ class StalkerClient @Inject constructor(
         session: StalkerSession,
         type: String,
         cmd: String,
-        extraParams: Map<String, String> = emptyMap()
+        extraParams: Map<String, String> = emptyMap(),
+        /** Told the portal's refusal when it gave one (session cap, nothing to play, link fault). */
+        onRefusal: ((com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError) -> Unit)? = null,
     ): String? {
         val params = StalkerArchiveLink.createLinkParams(type, cmd, extraParams)
         val js = try { session.request(params) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (error: Exception) {
@@ -877,7 +883,9 @@ class StalkerClient @Inject constructor(
         // The portal's two documented refusals. `{error:'limit'}` is the account's session cap —
         // surfaced as its own message because "couldn't open this channel" sends the viewer to
         // Discord blaming the app when the fix is to close the other device.
-        when (com.nuvio.tv.core.iptv.CatchUpFailure.stalkerLinkErrorOf(obj.toString())) {
+        val refusal = com.nuvio.tv.core.iptv.CatchUpFailure.stalkerLinkErrorOf(obj.toString())
+        if (refusal != com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NONE) onRefusal?.invoke(refusal)
+        when (refusal) {
             com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.SESSION_LIMIT -> {
                 lastResolveErrorInternal = SESSION_LIMIT_MESSAGE
                 return null
@@ -909,6 +917,21 @@ class StalkerClient @Inject constructor(
             playbackSession(acc), "tv_archive", StalkerArchiveLink.cmd(programmeId),
             extraParams = StalkerArchiveLink.ARCHIVE_EXTRA,
         )
+    }
+
+    /**
+     * [createArchiveLink] with the portal's refusal kept as a TYPE instead of a message to be matched
+     * back: a fresh single-use mint for one archived programme. Never cached, never probed.
+     */
+    suspend fun mintArchiveLink(acc: XtreamAccount, programmeId: String): StalkerArchiveSource.Minted {
+        lastResolveErrorInternal = null
+        var refusal = com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NONE
+        val url = createLink(
+            playbackSession(acc), "tv_archive", StalkerArchiveLink.cmd(programmeId),
+            extraParams = StalkerArchiveLink.ARCHIVE_EXTRA,
+            onRefusal = { refusal = it },
+        )
+        return if (url != null) StalkerArchiveSource.Minted.Link(url) else StalkerArchiveSource.Minted.Refused(refusal)
     }
 
     // --- cmd lookup (browse-time cmd needed for create_link) ------------------

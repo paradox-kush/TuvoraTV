@@ -9,6 +9,8 @@ import com.nuvio.tv.core.contracts.PreparedLive
 import com.nuvio.tv.core.contracts.CatchUpContinuation
 import com.nuvio.tv.core.contracts.CatchUpProgramme
 import com.nuvio.tv.core.contracts.CatchUpRestart
+import com.nuvio.tv.core.contracts.CatchUpReopen
+import com.nuvio.tv.core.iptv.stalker.StalkerReplayOutcome
 import com.nuvio.tv.core.iptv.CatchUpNextProgramme
 import com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator
 import com.nuvio.tv.core.iptv.epg.XmltvClient
@@ -80,6 +82,17 @@ class IptvLivePlayback @Inject constructor(
         override fun hold(contentId: String?) = catchUpCoordinator.hold(contentId)
 
         override fun liveUrl(contentId: String?): String? = catchUpCoordinator.replayContextFor(contentId)?.liveUrl
+
+        override fun singleUseFailure(contentId: String?, startupHang: Boolean): String? =
+            if (!catchUpCoordinator.isSingleUse(contentId)) null
+            else (if (startupHang) StalkerReplayOutcome.forStartupHang() else StalkerReplayOutcome.forPlaybackError()).message
+
+        override suspend fun reopen(contentId: String?): CatchUpReopen? =
+            when (val reopened = catchUpCoordinator.reopenStalker(contentId)) {
+                null -> null
+                is CatchUpPlaybackCoordinator.Reopened.Link -> CatchUpReopen.Link(reopened.url)
+                is CatchUpPlaybackCoordinator.Reopened.Refused -> CatchUpReopen.Refused(reopened.failure.message)
+            }
     }
 
     private companion object {

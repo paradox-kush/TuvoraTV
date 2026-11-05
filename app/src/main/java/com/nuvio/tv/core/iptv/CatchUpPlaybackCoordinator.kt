@@ -1,6 +1,8 @@
 package com.nuvio.tv.core.iptv
 
 import com.nuvio.tv.core.contracts.CatchUpContinuationPolicy
+import com.nuvio.tv.core.iptv.stalker.StalkerArchiveSource
+import com.nuvio.tv.core.iptv.stalker.StalkerReplayOutcome
 import com.nuvio.tv.core.lifecycle.Disposable
 
 import javax.inject.Inject
@@ -26,6 +28,8 @@ class CatchUpPlaybackCoordinator @Inject constructor(
     private val serverFailover: PlaylistServerFailover = PlaylistServerFailover.detached(),
     /** B117: the panel's measured clock-pair offset — the replay `start` is panel-local time. */
     private val panelClock: PanelClockSource = PanelClockSource.NONE,
+    /** Mints a Stalker archive replay's single-use link (the portal's `create_link`); nothing by default. */
+    private val stalkerArchive: StalkerArchiveSource = StalkerArchiveSource.NONE,
 ) {
     private val walk = CatchUpDialectWalk(winners)
 
@@ -51,6 +55,11 @@ class CatchUpPlaybackCoordinator @Inject constructor(
          * the show plus what follows, so the next shows play on). Equals the programme's end otherwise.
          */
         val windowEndMs: Long = programme.endMs,
+        /**
+         * The link is spent by playing it (a Stalker archive `create_link`): the engine must not
+         * re-open it, nothing may probe it, and only a fresh mint ([reopenStalker]) recovers it.
+         */
+        val singleUse: Boolean = false,
     )
 
     /** How a bounded [open] ended. A failure is never "unavailable"; the viewer gets to retry it. */
@@ -62,7 +71,22 @@ class CatchUpPlaybackCoordinator @Inject constructor(
 
         /** The open itself failed or hit its deadline ([timedOut]). */
         data class Failed(val timedOut: Boolean) : OpenOutcome
+
+        /** The Stalker portal answered with something specific; [failure] has the words and carries Retry. */
+        data class Refused(val failure: StalkerReplayOutcome.Failure) : OpenOutcome
     }
+
+    /** How a fresh mint for a single-use replay ended. */
+    sealed interface Reopened {
+        data class Link(val url: String) : Reopened {
+            override fun toString(): String = "Reopened.Link(hasUrl=true)"
+        }
+
+        data class Refused(val failure: StalkerReplayOutcome.Failure) : Reopened
+    }
+
+    /** What a Stalker archive replay needs to be minted again: the portal account and the programme's own id. */
+    private class StalkerReplay(val account: XtreamAccount, val programmeId: String, val session: Session)
 
     /** One M3U replay's candidate links, best first, and where the walk is. */
     private class M3uLadder(val primary: String, val urls: List<String>, var index: Int = 0)
@@ -106,6 +130,10 @@ class CatchUpPlaybackCoordinator @Inject constructor(
 
     private val contexts = object : LinkedHashMap<String, ReplayContext>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReplayContext>?): Boolean = size > 8
+    }
+
+    private val stalkerReplays = object : LinkedHashMap<String, StalkerReplay>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StalkerReplay>?): Boolean = size > 8
     }
 
     private val sessions = HashMap<String, Session>()
@@ -209,7 +237,12 @@ class CatchUpPlaybackCoordinator @Inject constructor(
         allowedOutputFormats: List<String>? = null,
         liveUrl: String? = null,
         m3uCatchUp: M3uCatchUpInfo? = null,
+        /** A Stalker programme's own EPG id: the whole address of its recording (null = the portal named none). */
+        stalkerProgrammeId: String? = null,
     ): OpenOutcome {
+        if (account.sourceType == XtreamAccount.SOURCE_STALKER) {
+            return openStalker(account, channelContentId, channelName, programme, nowMs, stalkerProgrammeId)
+        }
         val ticket = synchronized(lock) { (++ticketSeq).also { liveTickets.add(it) } }
         val outcome = BoundedLoad.run<Session?>(
             surface = LoadSurface.LIVE_RESOLVE,
@@ -349,6 +382,11 @@ class CatchUpPlaybackCoordinator @Inject constructor(
     /** A frame reached the screen: the shape is proven and remembered for this account. */
     fun onPlayed(contentId: String?) {
         val session = sessionFor(contentId) ?: return
+        if (session.singleUse) {
+            // Nothing to remember: a Stalker archive has no URL shapes to learn. Its mint stays held for Retry.
+            synchronized(lock) { sessions.remove(session.contentId) }
+            return
+        }
         val ladder = synchronized(lock) { m3uLadders.remove(session.contentId) }
         if (ladder != null) {
             winners.rememberM3uForm(session.accountId, M3uCatchUp.linkForm(session.url, ladder.primary))
@@ -367,6 +405,8 @@ class CatchUpPlaybackCoordinator @Inject constructor(
      */
     fun onFailed(contentId: String?, errorCode: Int): Session? {
         val session = sessionFor(contentId) ?: return null
+        // A spent single-use link has no shape to walk to: only a fresh mint (reopenStalker) recovers it.
+        if (session.singleUse) return null
         synchronized(lock) { m3uLadders[session.contentId] }?.let { return onM3uFailed(session, it, errorCode) }
         val step = walk.onFailure(session.token, CatchUpFailure.kindFor(errorCode))
         if (step !is CatchUpDialectWalk.Step.Next) {
@@ -395,9 +435,91 @@ class CatchUpPlaybackCoordinator @Inject constructor(
     /** Drops a finished replay's bookkeeping when the player leaves without succeeding or failing. */
     fun release(contentId: String?) {
         contentId?.let {
-            synchronized(lock) { sessions.remove(it); m3uLadders.remove(it); contexts.remove(it) }
+            synchronized(lock) { sessions.remove(it); m3uLadders.remove(it); contexts.remove(it); stalkerReplays.remove(it) }
         }
     }
+
+    /**
+     * Opens a Stalker archive replay: ONE `create_link` (`type=tv_archive`) from the portal's own
+     * programme id, under the live-resolve deadline. The link is single-use, so the session is marked
+     * and the engine, the dialect walk and every probe leave it alone. No programme id is no recording.
+     */
+    private suspend fun openStalker(
+        account: XtreamAccount,
+        channelContentId: String,
+        channelName: String,
+        programme: Programme,
+        nowMs: Long,
+        programmeId: String?,
+    ): OpenOutcome {
+        if (!supportsStalkerArchive(account) || programmeId.isNullOrBlank()) return OpenOutcome.Unavailable
+        if (programme.startMs <= 0L || programme.endMs <= programme.startMs) return OpenOutcome.Unavailable
+        val outcome = BoundedLoad.run<StalkerArchiveSource.Minted>(
+            surface = LoadSurface.LIVE_RESOLVE,
+            report = mapOf("source_type" to account.sourceType, "kind" to "catchup"),
+        ) { stalkerArchive.mint(account, programmeId) }
+        return when (outcome) {
+            is LoadOutcome.Loaded -> when (val minted = outcome.value) {
+                is StalkerArchiveSource.Minted.Link -> {
+                    val session = Session(
+                        contentId = contentIdFor(channelContentId, programme.startMs),
+                        accountId = account.id,
+                        channelName = channelName,
+                        programme = programme,
+                        url = minted.url,
+                        token = synchronized(lock) { ++m3uToken },
+                        isStartOver = programme.endMs > nowMs,
+                        singleUse = true,
+                    )
+                    synchronized(lock) {
+                        sessions[session.contentId] = session
+                        stalkerReplays[session.contentId] = StalkerReplay(account, programmeId, session)
+                    }
+                    OpenOutcome.Opened(session)
+                }
+                is StalkerArchiveSource.Minted.Refused -> OpenOutcome.Refused(StalkerReplayOutcome.forOpen(minted.error))
+            }
+            is LoadOutcome.Empty -> OpenOutcome.Unavailable
+            is LoadOutcome.Failed ->
+                OpenOutcome.Refused(StalkerReplayOutcome.forOpen(CatchUpFailure.StalkerLinkError.NONE, outcome.timedOut))
+        }
+    }
+
+    /** True while [contentId] names a replay whose link is spent by playing (a Stalker archive). */
+    fun isSingleUse(contentId: String?): Boolean =
+        contentId != null && synchronized(lock) { contentId in stalkerReplays }
+
+    /**
+     * Retry of a single-use replay: a FRESH `create_link` for the same programme, never the spent URL.
+     * Null when [contentId] is not a held Stalker replay (not one, or the player already let go of it).
+     */
+    suspend fun reopenStalker(contentId: String?): Reopened? {
+        val held = contentId?.let { synchronized(lock) { stalkerReplays[it] } } ?: return null
+        val outcome = BoundedLoad.run<StalkerArchiveSource.Minted>(
+            surface = LoadSurface.LIVE_RESOLVE,
+            report = mapOf("source_type" to held.account.sourceType, "kind" to "catchup"),
+        ) { stalkerArchive.mint(held.account, held.programmeId) }
+        return when (outcome) {
+            is LoadOutcome.Loaded -> when (val minted = outcome.value) {
+                is StalkerArchiveSource.Minted.Link -> synchronized(lock) {
+                    // The player may have left while the portal answered: do not resurrect its replay.
+                    if (contentId !in stalkerReplays) return@synchronized null
+                    val next = held.session.copy(url = minted.url, token = ++m3uToken)
+                    sessions[contentId] = next
+                    stalkerReplays[contentId] = StalkerReplay(held.account, held.programmeId, next)
+                    Reopened.Link(minted.url)
+                }
+                is StalkerArchiveSource.Minted.Refused -> Reopened.Refused(StalkerReplayOutcome.forOpen(minted.error))
+            }
+            is LoadOutcome.Empty -> null
+            is LoadOutcome.Failed ->
+                Reopened.Refused(StalkerReplayOutcome.forOpen(CatchUpFailure.StalkerLinkError.NONE, outcome.timedOut))
+        }
+    }
+
+    /** Whether this playlist is a Stalker portal whose archive can be minted at all (no dialects apply). */
+    fun supportsStalkerArchive(account: XtreamAccount): Boolean =
+        account.sourceType == XtreamAccount.SOURCE_STALKER
 
     /**
      * Whether an M3U playlist can replay a channel: only one that carries catch-up settings, because

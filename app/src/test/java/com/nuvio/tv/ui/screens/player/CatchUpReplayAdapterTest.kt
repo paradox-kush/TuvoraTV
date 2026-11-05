@@ -75,4 +75,17 @@ class CatchUpReplayAdapterTest {
         assertFalse("a later first frame (seek, re-buffer) does not report again", adapter.onFirstFrame())
         assertFalse(vod.onFirstFrame())
     }
+
+    @Test
+    fun `a relinked replay is a fresh attempt with a fresh startup budget`() {
+        val adapter = replay(startMs = now - 3 * hour, endMs = now - 2 * hour)
+        assertTrue(adapter.onFirstFrame())
+        assertEquals("a replay that played no longer has a startup deadline", null, adapter.startupDeadlineMs(now))
+
+        adapter.onRelinked()
+
+        assertEquals("the walk is ours to route again", ErrorRoute.DIALECT_WALK_FIRST, adapter.routeError())
+        assertTrue("it has a deadline again", adapter.startupDeadlineMs(now + hour) != null)
+        assertTrue("and reports its first frame again", adapter.onFirstFrame())
+    }
 }

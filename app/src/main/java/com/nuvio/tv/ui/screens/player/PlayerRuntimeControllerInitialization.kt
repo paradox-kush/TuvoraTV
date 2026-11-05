@@ -1138,7 +1138,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     mimeTypeOverride = currentStreamMimeType,
                     audioDelayUsProvider = audioDelayUs::get,
                     mediaMetadata = buildMediaSessionMetadata(),
-                    cacheKey = currentStreamCacheKey
+                    cacheKey = currentStreamCacheKey,
+                    singleUseLink = navigationArgs.isCatchUp && catchUpPort?.singleUseFailure(contentId, false) != null,
                 )
 
                 if (initialResumePosition > 0L) {

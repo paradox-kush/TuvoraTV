@@ -4,6 +4,8 @@ import com.nuvio.tv.core.iptv.CatchUpWinnerPrefs
 import com.nuvio.tv.core.iptv.CatchUpWinnerStore
 import com.nuvio.tv.core.iptv.PanelClockSource
 import com.nuvio.tv.core.iptv.XtreamClient
+import com.nuvio.tv.core.iptv.stalker.StalkerArchiveSource
+import com.nuvio.tv.core.iptv.stalker.StalkerClient
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -29,4 +31,10 @@ object CatchUpModule {
     @Singleton
     fun providePanelClockSource(client: XtreamClient): PanelClockSource =
         PanelClockSource { account -> client.measuredClockOffsetMs(account) }
+
+    /** A Stalker archive replay's link: a fresh `create_link` per call, never cached. */
+    @Provides
+    @Singleton
+    fun provideStalkerArchiveSource(client: StalkerClient): StalkerArchiveSource =
+        StalkerArchiveSource { account, programmeId -> client.mintArchiveLink(account, programmeId) }
 }

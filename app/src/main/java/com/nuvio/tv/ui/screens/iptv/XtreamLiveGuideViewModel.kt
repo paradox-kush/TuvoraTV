@@ -62,6 +62,8 @@ data class GuideChannel(
     val catchUpDays: Int = 0,
     /** An M3U playlist's own catch-up settings for this channel; null on Xtream/Stalker and for channels without any. */
     val m3uCatchUp: com.nuvio.tv.core.iptv.M3uCatchUpInfo? = null,
+    /** A Stalker channel: a replay is addressed by the portal's own programme id, so a programme without one has none. */
+    val replayNeedsProgrammeId: Boolean = false,
     /** The channel's durable canon-v1 identity — the key the personalization overlay + D-pad toggle use. */
     val entityId: String = "",
     /** True when this channel is pinned in the personalization overlay — drives the guide's pin marker.
@@ -691,7 +693,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 channelsLoad = LoadStatus.Idle,
                 error = null,
                 actionError = null,
-                catchUpSupported = catchUp.supports(acc) || acc.isM3uPlaylist(),
+                catchUpSupported = catchUp.supports(acc) || acc.isM3uPlaylist() || catchUp.supportsStalkerArchive(acc),
                 windowStartMs = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis()),
             )
         }
@@ -1280,6 +1282,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     contentId = id, name = ch.name, logo = ch.logo, streamUrl = ch.streamUrl,
                     streamId = ch.streamId, categoryId = ch.categoryId,
                     hasArchive = ch.hasArchive, catchUpDays = ch.catchUpDays, m3uCatchUp = ch.m3uCatchUp,
+                    replayNeedsProgrammeId = acc.sourceType == XtreamAccount.SOURCE_STALKER,
                     entityId = com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(acc.id, ch.name, ch.epgChannelId)
                 )
             }
@@ -1437,7 +1440,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
             val store = if (table.isNotEmpty()) emptyList() else runCatching {
                 // B10/F14: the user's pick, else the ingest's match (provider id, then cleaned name).
                 xmltv.storedWindow(acc, channel.streamId, fromMs, toMs)
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).ifEmpty {
+                // A Stalker portal's own bulk guide (keyed by its channel id) is the only place its
+                // programme ids live - and what a replay of an aired programme is addressed by.
+                if (acc.sourceType != XtreamAccount.SOURCE_STALKER) emptyList() else runCatching {
+                    contentDb.epgWindow(acc.id, channel.streamId.toString(), fromMs, toMs)
+                }.getOrDefault(emptyList())
+            }
             val rows = GuideWindowRows.pick(table, store) ?: continue
             published[channel.streamId] = rows.map {
                 XtreamProgram(
@@ -1447,6 +1456,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     endMs = it.endMs,
                     nowPlaying = nowMs in it.startMs until it.endMs,
                     hasArchive = it.hasArchive.takeIf { marked -> marked },
+                    programmeId = it.programmeId,
                 )
             }
         }
@@ -1544,6 +1554,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             // The live URL is what a continuing replay rejoins at the live edge (M3U and Xtream alike).
             liveUrl = channel.streamUrl,
             m3uCatchUp = channel.m3uCatchUp,
+            stalkerProgrammeId = programme.programmeId,
         )
         val session = when (outcome) {
             is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Opened -> outcome.session
@@ -1553,6 +1564,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
             }
             is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Failed -> {
                 _uiState.update { it.copy(actionError = GuideReplayMessages.openFailed(programme.title)) }
+                return
+            }
+            // The portal said something specific (session cap, no recording, link fault): say exactly
+            // that. The programme stays pressable, so pressing OK again IS the Retry (a fresh create_link).
+            is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Refused -> {
+                _uiState.update { it.copy(actionError = outcome.failure.message) }
                 return
             }
         }

@@ -1884,6 +1884,8 @@ fun PlayerRuntimeController.onEvent(
             scheduleHideControls()
         }
         PlayerEvent.OnRetry -> {
+            // A single-use replay (Stalker archive) is never re-opened: Retry mints a fresh link.
+            if (retrySingleUseCatchUp()) return
             catchUpReplay.resetStartupBudget()
             hasRenderedFirstFrame = false
             endDetectionArmed = false

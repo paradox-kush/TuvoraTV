@@ -25,7 +25,9 @@ data class ContentCategory(val id: String, val name: String)
 /** One XMLTV programme spanning [startMs, endMs), keyed to a channel by its (normalized) EPG id.
  *  [hasArchive] = the programme is inside the provider's replay window (catch-up). Windowed
  *  reads truncate [desc] to 600 chars — [IptvContentDb.epgFullDesc] fetches the whole text. */
-data class EpgProgramme(val channelId: String, val startMs: Long, val endMs: Long, val title: String, val desc: String?, val hasArchive: Boolean = false)
+data class EpgProgramme(val channelId: String, val startMs: Long, val endMs: Long, val title: String, val desc: String?, val hasArchive: Boolean = false,
+    /** A Stalker portal's own EPG row id - the whole address of that programme's archive (null = none given). */
+    val programmeId: String? = null)
 
 /** One guide `<channel>` the playlist's sources offer — what the manual-assign picker lists (F14). */
 data class EpgGuideChannelRow(val guideKey: String, val guideId: String, val name: String, val sourceIndex: Int)
@@ -118,7 +120,7 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
 
         /** XMLTV now/next store: one row per programme, looked up by (playlist, channel, time). */
         private fun createEpgTable(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, has_archive INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("CREATE TABLE epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, has_archive INTEGER NOT NULL DEFAULT 0, programme_id TEXT)")
             db.execSQL("CREATE INDEX epg_lookup ON epg_programmes(playlist_id, channel_id, start_ms)")
             // Per-(playlist, channel) EPG fetch stamp — the guide's lazy-fetch gate.
             db.execSQL("CREATE TABLE epg_channel_fetch(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY(playlist_id, channel_id)) WITHOUT ROWID")
@@ -155,6 +157,18 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
             }
             for ((column, type) in CATCHUP_COLUMNS) {
                 if (column !in channelColumns) d.execSQL("ALTER TABLE channels ADD COLUMN $column $type")
+            }
+            // Stalker catch-up: the portal's EPG row id per programme. Added in place, nullable and
+            // additive (a version bump drops every cached catalog): old rows read null = no archive
+            // address, and the next EPG refresh writes it. The shadow table is created first so a
+            // leftover one from an older build gets the column too.
+            d.execSQL(EPG_SHADOW_DDL)
+            for (table in listOf("epg_programmes", EPG_SHADOW)) {
+                val columns = d.rawQuery("PRAGMA table_info($table)", null).use { c ->
+                    buildSet { while (c.moveToNext()) add(c.getString(1)) }
+                }
+                // An empty set is a table that does not exist (a stripped-down fixture): nothing to alter.
+                if (columns.isNotEmpty() && "programme_id" !in columns) d.execSQL("ALTER TABLE $table ADD COLUMN programme_id TEXT")
             }
         }
     }
@@ -872,8 +886,8 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
                 db.delete("epg_programmes", "playlist_id = ?", arrayOf(playlistId))
                 db.delete("epg_channel_fetch", "playlist_id = ?", arrayOf(playlistId))
                 db.execSQL(
-                    "INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) " +
-                        "SELECT playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive FROM $EPG_SHADOW WHERE playlist_id = ?",
+                    "INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive, programme_id) " +
+                        "SELECT playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive, programme_id FROM $EPG_SHADOW WHERE playlist_id = ?",
                     arrayOf(playlistId),
                 )
                 mapping?.invoke()?.let { writeMapping(playlistId, it) }
@@ -980,13 +994,14 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
             if (batch.isEmpty()) return
             inTx {
                 // Into the shadow: replaceEpg swaps it into the live table only once the fill completes.
-                val s = db.compileStatement("INSERT INTO $EPG_SHADOW(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES(?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT INTO $EPG_SHADOW(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive, programme_id) VALUES(?,?,?,?,?,?,?,?)")
                 for (p in batch) {
                     s.clearBindings()
                     s.bindString(1, playlistId); s.bindString(2, p.channelId)
                     s.bindLong(3, p.startMs); s.bindLong(4, p.endMs); s.bindString(5, p.title)
                     bindNullable(s, 6, p.desc)
                     s.bindLong(7, if (p.hasArchive) 1L else 0L)
+                    bindNullable(s, 8, p.programmeId)
                     s.executeInsert()
                 }
                 s.close()
@@ -1030,14 +1045,14 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
             add(limit.toString())
         }.toTypedArray()
         db.rawQuery(
-            "SELECT channel_id, start_ms, end_ms, title, desc, has_archive FROM epg_programmes " +
+            "SELECT channel_id, start_ms, end_ms, title, desc, has_archive, programme_id FROM epg_programmes " +
                 "WHERE playlist_id = ? AND start_ms < ? AND end_ms > ? AND ($where) " +
                 "ORDER BY start_ms LIMIT ?",
             args,
         ).use { c ->
             buildList {
                 while (c.moveToNext()) {
-                    add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0))
+                    add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0, c.getStringOrNull(6)))
                 }
             }
         }
@@ -1048,11 +1063,11 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
         // A single query: everything ending after now, ordered by start, take 2. The first is "now"
         // if it already started, else the schedule has a gap and it's the upcoming programme.
         db.rawQuery(
-            "SELECT channel_id, start_ms, end_ms, title, desc, has_archive FROM epg_programmes WHERE playlist_id = ? AND channel_id = ? AND end_ms > ? ORDER BY start_ms LIMIT 2",
+            "SELECT channel_id, start_ms, end_ms, title, desc, has_archive, programme_id FROM epg_programmes WHERE playlist_id = ? AND channel_id = ? AND end_ms > ? ORDER BY start_ms LIMIT 2",
             arrayOf(playlistId, channelId, nowMs.toString())
         ).use { c ->
             buildList {
-                while (c.moveToNext()) add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0))
+                while (c.moveToNext()) add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0, c.getStringOrNull(6)))
             }
         }
     }
@@ -1071,12 +1086,12 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
         limit: Int = 200,
     ): List<EpgProgramme> = withContext(Dispatchers.IO) {
         db.rawQuery(
-            "SELECT channel_id, start_ms, end_ms, title, SUBSTR(desc, 1, 600), has_archive FROM epg_programmes " +
+            "SELECT channel_id, start_ms, end_ms, title, SUBSTR(desc, 1, 600), has_archive, programme_id FROM epg_programmes " +
                 "WHERE playlist_id = ? AND channel_id = ? AND start_ms < ? AND end_ms > ? ORDER BY start_ms LIMIT ?",
             arrayOf(playlistId, channelId, toMs.toString(), fromMs.toString(), limit.toString())
         ).use { c ->
             buildList {
-                while (c.moveToNext()) add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0))
+                while (c.moveToNext()) add(EpgProgramme(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getStringOrNull(4), c.getInt(5) > 0, c.getStringOrNull(6)))
             }
         }
     }
@@ -1108,13 +1123,14 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
         inTx {
             db.delete("epg_programmes", "playlist_id = ? AND channel_id = ?", arrayOf(playlistId, channelId))
             if (programmes.isNotEmpty()) {
-                val s = db.compileStatement("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES(?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive, programme_id) VALUES(?,?,?,?,?,?,?,?)")
                 for (p in programmes) {
                     s.clearBindings()
                     s.bindString(1, playlistId); s.bindString(2, channelId)
                     s.bindLong(3, p.startMs); s.bindLong(4, p.endMs); s.bindString(5, p.title)
                     bindNullable(s, 6, p.desc)
                     s.bindLong(7, if (p.hasArchive) 1L else 0L)
+                    bindNullable(s, 8, p.programmeId)
                     s.executeInsert()
                 }
                 s.close()
@@ -1197,7 +1213,7 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
         private const val EPG_SHADOW_DDL =
             "CREATE TABLE IF NOT EXISTS $EPG_SHADOW(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, " +
                 "start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, " +
-                "has_archive INTEGER NOT NULL DEFAULT 0)"
+                "has_archive INTEGER NOT NULL DEFAULT 0, programme_id TEXT)"
     }
 }
 

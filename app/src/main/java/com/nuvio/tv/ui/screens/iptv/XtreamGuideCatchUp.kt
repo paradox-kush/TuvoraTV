@@ -78,7 +78,9 @@ internal fun guideActionFor(
     // A playlist that cannot build a catch-up URL must never show a replay affordance: a Stalker
     // portal builds its archive URLs server-side and an M3U playlist has no panel to ask, so
     // offering either a badge or a press there is a promise nothing can keep.
-    if (catchUpSupported) return action
+    // A Stalker archive is addressed by the portal's own programme id: a programme the portal gave none
+    // for cannot be replayed, so it reads like a playlist that cannot build a link at all.
+    if (catchUpSupported && !(channel.replayNeedsProgrammeId && programme.programmeId == null)) return action
     return when (action) {
         ProgrammeAction.START_OVER -> ProgrammeAction.PLAY_LIVE
         ProgrammeAction.REPLAY -> ProgrammeAction.NONE
