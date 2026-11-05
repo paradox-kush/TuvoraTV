@@ -28,7 +28,9 @@ internal class KitEngine : LivePauseEngine {
     override suspend fun seekTo(positionMs: Long) { calls += "seek:$positionMs" }
     override fun window(): LivePauseWindow? = window
     override suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) { calls += "budget" }
-    override suspend fun releaseLiveSource() { calls += "release" }
+    /** When set, releaseLiveSource suspends here (the actor is mid-command, before any capture exists). */
+    var releaseGate: CompletableDeferred<Unit>? = null
+    override suspend fun releaseLiveSource() { calls += "release"; releaseGate?.await() }
     override suspend fun playLocalBuffer(playlistUri: String): Boolean {
         calls += "local:$playlistUri"
         localGate?.await()

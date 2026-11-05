@@ -81,12 +81,22 @@ class LivePauseController(
     /** Links this pause episode may still mint (capture opens, reconnects and Retry share it). */
     private var linkBudget = LiveLinkBudget()
 
+    /** Bumped by every zap: user commands posted for the channel left are dropped, not run. */
+    @Volatile private var epoch = 0
+    /** The command the actor is inside right now, so a zap can cancel it (never a ChannelChanged/Dispose). */
+    @Volatile private var running: Job? = null
+
     init {
         scope.launch {
             try {
                 for (command in commands) {
                     if (disposed) break
-                    handle(command)
+                    if (command is Command.UserCommand && command.epoch != epoch) continue
+                    val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) { handle(command) }
+                    if (command is Command.UserCommand) running = job
+                    job.start()
+                    job.join()
+                    running = null
                 }
             } finally {
                 // Cancelled mid-command (the player was released while the actor was inside an engine call)
@@ -99,16 +109,24 @@ class LivePauseController(
 
     // ---- the UI's methods: post and return
 
-    fun onPause() = post(Command.Pause)
-    fun onPlay() = post(Command.Play)
-    fun seekInWindow(positionMs: Long) = post(Command.Seek(positionMs))
-    fun goLive() = post(Command.GoLive)
+    fun onPause() = post(Command.Pause(epoch))
+    fun onPlay() = post(Command.Play(epoch))
+    fun seekInWindow(positionMs: Long) = post(Command.Seek(positionMs, epoch))
+    fun goLive() = post(Command.GoLive(epoch))
 
     /** Failed -> Retry: go live, then pause again. */
-    fun retry() = post(Command.Retry)
+    fun retry() = post(Command.Retry(epoch))
 
-    /** The viewer zapped: the buffer belongs to the old channel; the zap itself retunes. */
-    fun onChannelChanged() = post(Command.ChannelChanged)
+    /**
+     * The viewer zapped: the buffer belongs to the old channel; the zap itself retunes. A command still
+     * running for the old channel (a mint, a tune of the old buffer) is cancelled now, and commands queued
+     * for it are dropped, so nothing for the old channel happens after the zap starts.
+     */
+    fun onChannelChanged() {
+        epoch++
+        running?.cancel()
+        post(Command.ChannelChanged)
+    }
 
     /** A live channel just started playing: mpv gets its live cache plan. */
     fun onLiveStarted() = post(Command.LiveStarted)
@@ -124,11 +142,12 @@ class LivePauseController(
     }
 
     private sealed interface Command {
-        data object Pause : Command
-        data object Play : Command
-        data class Seek(val positionMs: Long) : Command
-        data object GoLive : Command
-        data object Retry : Command
+        sealed interface UserCommand : Command { val epoch: Int }
+        data class Pause(override val epoch: Int) : UserCommand
+        data class Play(override val epoch: Int) : UserCommand
+        data class Seek(val positionMs: Long, override val epoch: Int) : UserCommand
+        data class GoLive(override val epoch: Int) : UserCommand
+        data class Retry(override val epoch: Int) : UserCommand
         data object ChannelChanged : Command
         data object LiveStarted : Command
         data object Dispose : Command
@@ -142,11 +161,11 @@ class LivePauseController(
     private suspend fun handle(command: Command) {
         try {
             when (command) {
-                Command.Pause -> pause()
-                Command.Play -> play()
+                is Command.Pause -> pause()
+                is Command.Play -> play()
                 is Command.Seek -> seek(command.positionMs)
-                Command.GoLive -> goLive(failedFallsBackToPlay = true)
-                Command.Retry -> retryNow()
+                is Command.GoLive -> goLive(failedFallsBackToPlay = true)
+                is Command.Retry -> retryNow()
                 Command.ChannelChanged -> reset()
                 Command.LiveStarted -> applyEnginePlan(paused = false)
                 Command.Dispose -> {
