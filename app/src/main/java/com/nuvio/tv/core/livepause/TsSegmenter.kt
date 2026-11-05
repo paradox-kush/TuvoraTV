@@ -186,8 +186,10 @@ class TsSegmenter(
     }
 
     private fun currentLengthMs(): Long {
-        if (pieceStartPcr >= 0 && lastPcr >= pieceStartPcr) {
-            val d = (lastPcr - pieceStartPcr) / 90 // 90 kHz ticks to ms
+        if (pieceStartPcr >= 0 && lastPcr >= 0) {
+            var ticks = lastPcr - pieceStartPcr
+            if (ticks < 0) ticks += PCR_WRAP // the 33-bit PCR base wrapped (about every 26.5 h)
+            val d = ticks / 90 // 90 kHz ticks to ms
             if (d < MAX_PCR_PIECE_MS) return d
         }
         return monotonicMs() - pieceStartMs
@@ -284,6 +286,7 @@ class TsSegmenter(
         const val PACKET = 188
         const val SYNC: Byte = 0x47
         const val MIN_TARGET_DURATION_SEC = 20
+        const val PCR_WRAP = 1L shl 33
         const val MAX_PCR_PIECE_MS = 120_000L
     }
 }

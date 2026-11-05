@@ -41,6 +41,14 @@ class TsSegmenterTest {
     }
 
     @Test
+    fun `a PCR that wraps past 33 bits mid-stream still cuts by stream time`() {
+        // 2^33 ticks of 90 kHz = 95_443_717 ms; start 3 s before the wrap so a piece straddles it.
+        val wrapMs = (1L shl 33) / 90
+        segmenter().feed(Ts.concat(Ts.tables(), Ts.stream(wrapMs - 3_000, wrapMs + 17_000)))
+        assertEquals("durations across the PCR wrap", listOf(2_000L, 6_000L, 6_000L, 6_000L), durations())
+    }
+
+    @Test
     fun `nothing is written before the program tables have been seen`() {
         segmenter().feed(Ts.stream(0, 5_000))
         assertTrue("no piece opened", store.opened.isEmpty())
