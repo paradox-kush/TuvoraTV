@@ -41,5 +41,51 @@ object RecordingsPagePolicy {
         RecordingSection.SCHEDULED, RecordingSection.RECORDING, RecordingSection.DONE, RecordingSection.FAILED,
     )
 
-    fun build(state: RecordingsState, progress: Map<String, Long>): RecordingsPageModel = TODO("wave 3")
+    fun build(state: RecordingsState, progress: Map<String, Long>): RecordingsPageModel {
+        // A schedule whose capture has started (or finished) is represented by its recording row.
+        val handled = state.recordings
+            .filter { it.status == RecordingStatus.RECORDING || it.status == RecordingStatus.DONE }
+            .mapNotNull { it.scheduleId }
+            .toSet()
+
+        val scheduled = state.schedules
+            .filterNot { it.id in handled }
+            .sortedBy { it.programmeStartMs }
+            .map { s ->
+                RecordingRow(
+                    id = "s:${s.id}", section = RecordingSection.SCHEDULED, title = s.title, episode = s.episode,
+                    channelName = s.channel.name, programmeStartMs = s.programmeStartMs, programmeEndMs = s.programmeEndMs,
+                    sizeBytes = 0L, status = RecordingStatus.SCHEDULED, mode = s.mode, problem = null,
+                    description = s.description, scheduleId = s.id, recordingId = null, canRetry = false,
+                    retryPending = s.attempts > 0 && s.nextTryMs > 0L,
+                )
+            }
+
+        fun row(r: Recording, section: RecordingSection, size: Long) = RecordingRow(
+            id = "r:${r.id}", section = section, title = r.title, episode = r.episode, channelName = r.channelName,
+            programmeStartMs = r.programmeStartMs, programmeEndMs = r.programmeEndMs, sizeBytes = size, status = r.status,
+            mode = r.mode, problem = r.problem, description = r.description, scheduleId = r.scheduleId, recordingId = r.id,
+            canRetry = (r.status == RecordingStatus.FAILED || r.status == RecordingStatus.CANCELLED) && r.retrySource != null,
+            retryPending = false,
+        )
+
+        val recording = state.recordings.filter { it.status == RecordingStatus.RECORDING }
+            .sortedBy { it.programmeStartMs }
+            .map { row(it, RecordingSection.RECORDING, maxOf(it.sizeBytes, progress[it.id] ?: 0L)) }
+        val done = state.recordings.filter { it.status == RecordingStatus.DONE }
+            .sortedByDescending { it.programmeStartMs }
+            .map { row(it, RecordingSection.DONE, it.sizeBytes) }
+        val failed = state.recordings.filter { it.status == RecordingStatus.FAILED || it.status == RecordingStatus.CANCELLED }
+            .sortedByDescending { it.programmeStartMs }
+            .map { row(it, RecordingSection.FAILED, 0L) }
+
+        return RecordingsPageModel(
+            mapOf(
+                RecordingSection.SCHEDULED to scheduled,
+                RecordingSection.RECORDING to recording,
+                RecordingSection.DONE to done,
+                RecordingSection.FAILED to failed,
+            ),
+        )
+    }
 }

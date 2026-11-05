@@ -6,5 +6,11 @@ package com.nuvio.tv.core.recordings.api
  */
 object RecordingGuideKeys {
     /** Scheduled and recording programmes; DONE / FAILED rows are not "upcoming". */
-    fun startsByChannel(state: RecordingsState): Map<String, Set<Long>> = TODO("wave 3")
+    fun startsByChannel(state: RecordingsState): Map<String, Set<Long>> {
+        val out = HashMap<String, MutableSet<Long>>()
+        state.schedules.forEach { out.getOrPut(it.channel.key) { HashSet() } += it.programmeStartMs }
+        state.recordings.filter { it.status == RecordingStatus.RECORDING }
+            .forEach { out.getOrPut(it.channelKey) { HashSet() } += it.programmeStartMs }
+        return out
+    }
 }

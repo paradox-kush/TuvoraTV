@@ -17,5 +17,10 @@ sealed interface RecordingsView {
 object RecordingsLoadPolicy {
     const val DEADLINE_MS = 10_000L
 
-    fun viewAt(loaded: Boolean, attempt: RecordingsLoadAttempt, nowMs: Long): RecordingsView = TODO("wave 3")
+    fun viewAt(loaded: Boolean, attempt: RecordingsLoadAttempt, nowMs: Long): RecordingsView {
+        if (loaded) return RecordingsView.Ready
+        if (attempt.failed) return RecordingsView.Failed(timedOut = false)
+        val deadline = attempt.startedAtMs + DEADLINE_MS
+        return if (nowMs >= deadline) RecordingsView.Failed(timedOut = true) else RecordingsView.Loading(deadline)
+    }
 }

@@ -1,5 +1,9 @@
 package com.nuvio.tv.core.recordings.api
 
+import com.nuvio.tv.core.recordings.internal.RecordingSchedulePolicy
+import com.nuvio.tv.core.recordings.internal.SeriesEpisodeKey
+import com.nuvio.tv.core.recordings.internal.SeriesExpansion
+
 /** Why a programme cannot be recorded here, so the sheet can say it in one line. */
 enum class RecordUnavailable {
     /** The guide row has no usable start / end. */
@@ -42,15 +46,34 @@ object ProgrammeRecordPolicy {
         nowMs: Long,
         capabilities: RecordingCapabilities,
         state: RecordingsState,
-    ): RecordOffer = TODO("wave 3")
+    ): RecordOffer {
+        if (startMs <= 0L || endMs <= startMs) return RecordOffer.Unavailable(RecordUnavailable.BAD_TIMES)
+        state.schedules.firstOrNull { it.channel.key == channel.key && it.programmeStartMs == startMs }?.let { s ->
+            val capturing = state.recordings.any { it.scheduleId == s.id && it.status == RecordingStatus.RECORDING }
+            return RecordOffer.Scheduled(s.id, capturing)
+        }
+        if (state.recordings.any { it.channelKey == channel.key && it.programmeStartMs == startMs && it.status == RecordingStatus.DONE }) {
+            return RecordOffer.AlreadySaved
+        }
+        RecordingSchedulePolicy.modeFor(channel, startMs, endMs, nowMs, capabilities)?.let { return RecordOffer.Record(it) }
+        return RecordOffer.Unavailable(if (endMs <= nowMs) RecordUnavailable.PROGRAMME_OVER else RecordUnavailable.NEEDS_CATCH_UP)
+    }
 
     fun seriesOffer(
         channel: RecordingChannel,
         title: String,
         capabilities: RecordingCapabilities,
         state: RecordingsState,
-    ): SeriesOffer = TODO("wave 3")
+    ): SeriesOffer {
+        if (title.isBlank()) return SeriesOffer.Unavailable
+        val wanted = SeriesExpansion.normalizeTitle(title)
+        state.series.firstOrNull { it.channel.key == channel.key && SeriesExpansion.normalizeTitle(it.title) == wanted }
+            ?.let { return SeriesOffer.Active(it.id) }
+        val possible = (channel.catchUp != null && capabilities.canSaveCatchUp) || capabilities.canRecordLive
+        return if (possible) SeriesOffer.Record else SeriesOffer.Unavailable
+    }
 
     /** "S02E05" / "E12" read from the guide text, or null. Shown with the recording and used to skip repeats. */
-    fun episodeLabel(title: String, description: String?): String? = TODO("wave 3")
+    fun episodeLabel(title: String, description: String?): String? =
+        SeriesEpisodeKey.fromProgramme(title, description)?.normalized
 }

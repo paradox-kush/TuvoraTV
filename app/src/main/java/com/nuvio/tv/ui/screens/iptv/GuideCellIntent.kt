@@ -35,9 +35,16 @@ internal object GuideCellIntent {
         ProgrammeAction.REPLAY -> Intent.REPLAY
     }
 
-    /** Stub (red). */
-    fun forProgramme(action: ProgrammeAction, programme: XtreamProgram, nowMs: Long, canRecordLive: Boolean): Intent =
-        forAction(action)
+    /**
+     * [forAction] plus the recording entry points: a programme that has not started has nothing to play
+     * but can be recorded, so OK opens the sheet; and where the device can record live, an airing
+     * programme with no archive asks too instead of tuning at once.
+     */
+    fun forProgramme(action: ProgrammeAction, programme: XtreamProgram, nowMs: Long, canRecordLive: Boolean): Intent = when {
+        action == ProgrammeAction.NONE && GuideRecordSheetPolicy.isUpcoming(programme, nowMs) -> Intent.OPEN_SHEET
+        action == ProgrammeAction.PLAY_LIVE && canRecordLive -> Intent.OPEN_SHEET
+        else -> forAction(action)
+    }
 
     /**
      * OK on a programme that already aired, on a channel with nothing kept for it, used to do
