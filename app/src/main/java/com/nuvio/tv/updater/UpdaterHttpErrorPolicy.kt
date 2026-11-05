@@ -30,6 +30,12 @@ object UpdaterHttpErrorPolicy {
     /** Never plan a retry sooner than this, even if the reset header is already in the past (clock skew). */
     const val MIN_BACKOFF_SECONDS = 60L
 
+    /**
+     * Never block longer than GitHub's own hourly window, whatever a header (or a device clock that
+     * is hours behind) claims: a garbage reset must not switch update checks off for days.
+     */
+    const val MAX_BACKOFF_SECONDS = 3600L
+
     fun classify(
         status: Int,
         headers: Map<String, String>,
@@ -50,7 +56,9 @@ object UpdaterHttpErrorPolicy {
             resetAt != null -> resetAt
             else -> nowEpochSeconds + UNKNOWN_RESET_BACKOFF_SECONDS
         }
-        return Outcome.RateLimited(resetAtEpoch.coerceAtLeast(nowEpochSeconds + MIN_BACKOFF_SECONDS))
+        return Outcome.RateLimited(
+            resetAtEpoch.coerceIn(nowEpochSeconds + MIN_BACKOFF_SECONDS, nowEpochSeconds + MAX_BACKOFF_SECONDS),
+        )
     }
 
     /** Whole minutes (rounded up, at least 1) from [nowEpochSeconds] until [resetAtEpochSeconds]. */
@@ -65,7 +73,16 @@ object UpdaterHttpErrorPolicy {
      * again and again.
      */
     fun mayCheck(blockedUntilEpochSeconds: Long?, nowEpochSeconds: Long): Boolean =
-        blockedUntilEpochSeconds == null || nowEpochSeconds >= blockedUntilEpochSeconds
+        blockedUntilEpochSeconds == null ||
+            nowEpochSeconds >= blockedUntilEpochSeconds ||
+            isStale(blockedUntilEpochSeconds, nowEpochSeconds)
+
+    /**
+     * A stored block further out than any block we would ever set was written under a wrong clock
+     * (or is garbage): treat it as lifted so it cannot outlive a restart.
+     */
+    fun isStale(blockedUntilEpochSeconds: Long, nowEpochSeconds: Long): Boolean =
+        blockedUntilEpochSeconds > nowEpochSeconds + MAX_BACKOFF_SECONDS
 
     private fun Map<String, String>.header(name: String): String? =
         entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
