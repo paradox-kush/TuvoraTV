@@ -88,4 +88,49 @@ class CatchUpReplayAdapterTest {
         assertTrue("it has a deadline again", adapter.startupDeadlineMs(now + hour) != null)
         assertTrue("and reports its first frame again", adapter.onFirstFrame())
     }
+
+    @Test
+    fun `a continuation restart after the replay played arms the startup deadline again`() {
+        val adapter = replay(startMs = now - 3 * hour, endMs = now - 2 * hour)
+        adapter.enableContinuation(sessionStartMs = now - 3 * hour, windowEndMs = now - 2 * hour, playingEndMs = now - 2 * hour)
+        assertTrue(adapter.onFirstFrame())
+        assertEquals("played: no deadline", null, adapter.startupDeadlineMs(now))
+
+        adapter.restarted(sessionStartMs = now - 2 * hour, windowEndMs = now - hour)
+
+        assertTrue("a stalled restart must be bounded", adapter.startupDeadlineMs(now + hour) != null)
+    }
+
+    @Test
+    fun `the restart's first frame ends the deadline without reporting the shape again`() {
+        val adapter = replay(startMs = now - 3 * hour, endMs = now - 2 * hour)
+        adapter.enableContinuation(sessionStartMs = now - 3 * hour, windowEndMs = now - 2 * hour, playingEndMs = now - 2 * hour)
+        assertTrue(adapter.onFirstFrame())
+        adapter.restarted(sessionStartMs = now - 2 * hour, windowEndMs = now - hour)
+        assertTrue(adapter.startupDeadlineMs(now) != null)
+
+        assertFalse("the proven shape is reported once", adapter.onFirstFrame())
+
+        assertEquals("the restart played: no deadline", null, adapter.startupDeadlineMs(now + hour))
+        assertEquals("errors still go to player recovery", ErrorRoute.PLAYER_RECOVERY, adapter.routeError())
+    }
+
+    @Test
+    fun `a restart gets a fresh startup budget`() {
+        val adapter = replay(startMs = now - 3 * hour, endMs = now - 2 * hour)
+        adapter.enableContinuation(sessionStartMs = now - 3 * hour, windowEndMs = now - 2 * hour, playingEndMs = now - 2 * hour)
+        assertTrue(adapter.onFirstFrame())
+        adapter.restarted(sessionStartMs = now - 2 * hour, windowEndMs = now - hour)
+        val first = adapter.startupDeadlineMs(now + hour)!!
+        assertEquals("the clock restarts at the restart, not at the original open", first, adapter.startupDeadlineMs(now + hour))
+    }
+
+    @Test
+    fun `Retry after the replay played re-arms the deadline`() {
+        val adapter = replay(startMs = now - 3 * hour, endMs = now - 2 * hour)
+        assertTrue(adapter.onFirstFrame())
+        adapter.resetStartupBudget()
+        assertTrue("a retried link is bounded again", adapter.startupDeadlineMs(now) != null)
+        assertFalse("and does not re-report the shape", adapter.onFirstFrame())
+    }
 }
