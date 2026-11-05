@@ -116,7 +116,21 @@ class SportsHubViewModel @Inject constructor(
     private val livePlaylist: com.nuvio.tv.core.iptv.XtreamLivePlaylist,
     private val profileManager: ProfileManager,
     accountStore: XtreamAccountStore,
+    private val pendingMatch: com.nuvio.tv.core.radar.RadarPendingMatch,
 ) : ViewModel() {
+
+    /** A game the Calendar's "Watch now" asked for; opened here once its fixture is in the held state. */
+    val pendingMatchId: StateFlow<String?> = pendingMatch.pending
+
+    fun openPendingMatch() {
+        val id = pendingMatch.pending.value ?: return
+        val state = repository.uiState.value
+        val fixture = (state.fixturesByLeague.values.asSequence() + state.fixturesByTeam.values.asSequence())
+            .flatten()
+            .firstOrNull { com.nuvio.tv.core.radar.RadarCalendarGames.gameId(it) == id } ?: return
+        pendingMatch.consume(id)
+        openMatch(fixture)
+    }
 
     val uiState: StateFlow<RadarUiState> = repository.uiState
 
