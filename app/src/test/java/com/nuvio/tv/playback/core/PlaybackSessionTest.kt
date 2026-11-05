@@ -1389,6 +1389,64 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    // Live pipeline audit 2026-11-04 §3a inferred that a surface which never returns during a live
+    // reconnect leaves the LIVE_RECONNECTING spinner up forever (the loop's `delay(500); continue`).
+    // Pin of the real path: the reducer turns surface loss during a reconnect into a SURFACE_LOST
+    // barrier, so the session waits in ATTACHING_SURFACE under the production surface watchdog and
+    // ends in FAILED (error + Retry) - it never spins in the reconnect loop.
+    @Test
+    fun `a surface that never returns during live reconnect ends in failed`() = runTest {
+        val lifecycleEvents = MutableSharedFlow<PlaybackLifecycleEvent>(extraBufferCapacity = 4)
+        val engine = FakeEngine { start, input, events ->
+            if (start == 2) {
+                events.emit(
+                    PlaybackEvent.Failed(
+                        input.generation,
+                        PlaybackFailure(
+                            FailureCode.NETWORK_TIMEOUT,
+                            FailureDomain.NETWORK,
+                            FailurePhase.RECOVERY,
+                            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                        ),
+                    ),
+                )
+            }
+        }
+        val session = session(
+            engine,
+            lifecycle = PlaybackLifecyclePort { lifecycleEvents },
+            policy = PlaybackPolicy(),
+        )
+        runCurrent()
+        lifecycleEvents.emit(PlaybackLifecycleEvent.ACTIVE)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        runCurrent()
+        lifecycleEvents.emit(PlaybackLifecycleEvent.INACTIVE)
+        runCurrent()
+        session.dispatch(PlaybackCommand.SurfaceUnavailable)
+        runCurrent()
+        lifecycleEvents.emit(PlaybackLifecycleEvent.ACTIVE)
+        runCurrent()
+        // The surface never comes back while the screen is resumed. Step virtual time rather than
+        // advanceUntilIdle, which an unbounded wait would never let return.
+        repeat(20) {
+            advanceTimeBy(30_000L)
+            runCurrent()
+        }
+
+        val state = session.snapshot.value
+        assertEquals(state.toString(), PlaybackState.FAILED, state.state)
+        assertEquals(FailureCode.SURFACE_LOST, state.failure?.code)
+        close(session)
+    }
+
     @Test
     fun `live recovery joins default position while VOD restores its checkpoint`() = runTest {
         suspend fun TestScope.recoveredStart(request: PlaybackRequest): PlaybackEngineStart {
