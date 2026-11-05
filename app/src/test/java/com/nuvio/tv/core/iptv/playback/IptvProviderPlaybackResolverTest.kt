@@ -22,6 +22,7 @@ import com.nuvio.tv.playback.core.ProviderResolutionTrigger
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.core.ProviderSourceType
 import com.nuvio.tv.playback.core.ResolvedPlaybackRequest
+import com.nuvio.tv.playback.core.TransientLoadRetryPolicy
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -128,6 +129,50 @@ class IptvProviderPlaybackResolverTest {
         assertEquals(FailureDomain.AUTHORIZATION_PROVIDER_LIMIT, result.failure.domain)
         assertEquals(FailurePhase.REQUEST_RESOLUTION, result.failure.phase)
         assertFalse(result.toString().contains(account.portalUrl))
+    }
+
+    /**
+     * Regression (live pipeline audit 2026-11-04, §3b): a Stalker create_link URL is spent by its first
+     * open, yet no production request was ever marked SESSION_ONLY. So after a drop libmpv re-opened the
+     * same dead URL with `reconnect=1,reconnect_streamed=1` and Media3/OkHttp retried it, burning
+     * requests and connection slots before the session re-minted. A Stalker live link must reach both
+     * engines as single-use: no connection retry, no in-stack load retry — only the session re-mints.
+     */
+    @Test
+    fun `Stalker live link is single-use so neither engine re-opens it after a drop`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val resolver = resolver(account) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid/ch/42?play_token=abc")
+        }
+        val selection = selection(account, ProviderSourceType.STALKER, ContentType.LIVE)
+
+        for (trigger in listOf(ProviderResolutionTrigger.INITIAL, ProviderResolutionTrigger.RECOVERY)) {
+            val resolved = resolver.resolve(selection, ProviderResolutionContext(trigger)).success()
+            assertEquals(
+                "$trigger: only the session may retry a spent link",
+                TransientLoadRetryPolicy.SESSION_ONLY,
+                resolved.request.network.transientLoadRetryPolicy,
+            )
+            assertFalse("$trigger: no connection-level replay", resolved.request.network.retryConnectionFailures)
+            assertEquals(TransientLoadRetryPolicy.SESSION_ONLY, resolved.summary.transientLoadRetryPolicy)
+        }
+    }
+
+    /** A reusable Xtream live URL keeps the engines' bounded in-stack recovery (frozen-frame reconnect). */
+    @Test
+    fun `Xtream live link stays re-openable by the engines`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_XTREAM)
+        val resolver = resolver(account) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("https://provider.invalid/live/user/password/42.ts")
+        }
+
+        val resolved = resolver.resolve(
+            selection(account, ProviderSourceType.XTREAM, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success()
+
+        assertEquals(TransientLoadRetryPolicy.ENGINE_DEFAULT, resolved.request.network.transientLoadRetryPolicy)
+        assertTrue(resolved.request.network.retryConnectionFailures)
     }
 
     /**
