@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -63,6 +64,36 @@ class RadarChannelMatcherReplayTest {
         assertNull(matcher.replayFor(match(hasArchive = false), STARTED_FIXTURE))
     }
 
+    /**
+     * A Sports replay of an M3U channel offered no Replay at all: replayFor asked the coordinator
+     * "can this playlist build Xtream dialect URLs?" and an M3U playlist cannot, even though the
+     * channel's own catch-up settings are everything the M3U walk needs. The launch also dropped the
+     * channel's live URL and settings, so the coordinator could never take its M3U path.
+     */
+    @Test
+    fun `replay is offered for an m3u channel that carries catch-up settings`() = runTest {
+        val registry = XtreamItemRegistry()
+        val matcher = matcher(m3uAccount(), registry)
+
+        val replay = matcher.replayFor(m3uMatch(), STARTED_FIXTURE)
+
+        assertNotNull("an M3U channel with catch-up settings must offer a replay", replay)
+        val session = matcher.beginReplay(replay!!)
+        assertNotNull("beginning the M3U replay must mint a session", session)
+        assertTrue(
+            "the first link is built from the playlist's own template",
+            session!!.url.startsWith("http://cdn.example/archive/$STREAM_ID?start="),
+        )
+        assertEquals("the registered item carries that link", session.url, registry.get(session.contentId)?.streamUrl)
+    }
+
+    @Test
+    fun `replay is refused for an m3u channel without catch-up settings`() = runTest {
+        val matcher = matcher(m3uAccount(), XtreamItemRegistry())
+
+        assertNull(matcher.replayFor(m3uMatch().copy(channel = m3uMatch().channel.copy(m3uCatchUp = null)), STARTED_FIXTURE))
+    }
+
     // --- helpers ---------------------------------------------------------------
 
     private fun matcher(account: XtreamAccount, registry: XtreamItemRegistry): RadarChannelMatcher {
@@ -100,6 +131,35 @@ class RadarChannelMatcherReplayTest {
         password = "pass",
     )
 
+    private fun m3uAccount() = XtreamAccount(
+        id = M3U_ACCOUNT_ID,
+        name = "Playlist",
+        baseUrl = "",
+        username = "",
+        password = "",
+        sourceType = XtreamAccount.SOURCE_URL,
+    )
+
+    private fun m3uMatch() = RadarChannelMatcher.ChannelMatch(
+        channel = RadarChannelMatcher.CandidateChannel(
+            playlistId = M3U_ACCOUNT_ID,
+            playlistName = "Playlist",
+            contentId = XtreamItemRegistry.liveId(M3U_ACCOUNT_ID, STREAM_ID),
+            name = "Sports 1",
+            logo = null,
+            streamId = STREAM_ID,
+            streamUrl = "http://cdn.example/live/$STREAM_ID",
+            hasArchive = true,
+            m3uCatchUp = com.nuvio.tv.core.iptv.M3uCatchUpInfo(
+                com.nuvio.tv.core.iptv.M3uCatchUpType.DEFAULT,
+                "http://cdn.example/archive/$STREAM_ID?start={utc}&end={utcend}",
+                days = 3,
+            ),
+        ),
+        programme = null,
+        score = 50,
+    )
+
     private fun stalkerAccount() = XtreamAccount(
         id = ACCOUNT_ID,
         name = "Portal",
@@ -134,6 +194,7 @@ class RadarChannelMatcherReplayTest {
 
     private companion object {
         const val ACCOUNT_ID = "http://panel.example:8080|user"
+        const val M3U_ACCOUNT_ID = "m3u-playlist-1"
         const val STREAM_ID = 4242
         val CONTENT_ID = XtreamItemRegistry.liveId(ACCOUNT_ID, STREAM_ID)
 
