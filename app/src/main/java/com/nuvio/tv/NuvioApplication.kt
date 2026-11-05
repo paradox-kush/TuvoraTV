@@ -85,6 +85,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var serverRepository: com.nuvio.tv.data.mediaserver.ServerRepository
     @Inject lateinit var xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore
     @Inject lateinit var deviceClaimCoordinator: com.nuvio.tv.core.iptv.DeviceClaimCoordinator
+    @Inject lateinit var recordingsPort: com.nuvio.tv.core.recordings.api.RecordingsPort
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -142,6 +143,10 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         }
         // B205: a setup code redeemed with no account is claimed when a real account signs in (and at app start).
         deviceClaimCoordinator.start(analyticsConsentScope)
+        // Recordings: alarm receivers and the foreground service are not injected, so they read the port here.
+        // Ledger recovery + handing overdue schedules to the service wait for the first visible Activity.
+        com.nuvio.tv.core.recordings.api.RecordingsAccess.register(recordingsPort)
+        com.nuvio.tv.core.recordings.api.RecordingsAndroid.installAppStartHook(this, recordingsPort)
         analyticsConsentScope.launch {
             xtreamAccountStore.accounts.collect { com.nuvio.tv.core.iptv.IptvPanelHosts.setAccounts(it) }
         }
