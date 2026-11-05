@@ -138,6 +138,13 @@ interface PlaybackEngine {
         unsupportedPlaybackControl()
     suspend fun setPlaybackRate(generation: Long, rate: Float): PlaybackResult<Unit> =
         unsupportedPlaybackControl()
+    /** Live pause / rewind: resize the demuxer caches at runtime. Only mpv has them; others decline. */
+    suspend fun setLiveCacheBudget(
+        generation: Long,
+        maxBytes: Long,
+        maxBackBytes: Long,
+        cacheSecs: Long,
+    ): PlaybackResult<Unit> = unsupportedPlaybackControl()
     suspend fun selectAudioTrack(generation: Long, trackId: PlaybackTrackId): PlaybackResult<Unit> =
         unsupportedPlaybackControl()
     suspend fun selectSubtitleTrack(generation: Long, trackId: PlaybackTrackId): PlaybackResult<Unit> =

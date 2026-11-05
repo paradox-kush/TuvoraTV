@@ -436,6 +436,9 @@ class PlaybackSession(
             is PlaybackAction.SetPaused -> setPaused(action)
             is PlaybackAction.SeekTo -> seekTo(action)
             is PlaybackAction.SetPlaybackRate -> setPlaybackRate(action)
+            is PlaybackAction.SetLiveCacheBudget -> engineControl(action.generation) { engine ->
+                engine.setLiveCacheBudget(action.generation, action.maxBytes, action.maxBackBytes, action.cacheSecs)
+            }
             is PlaybackAction.SelectAudioTrack -> selectAudioTrack(action)
             is PlaybackAction.SelectSubtitleTrack -> selectSubtitleTrack(action)
             is PlaybackAction.SetSubtitlesEnabled -> setSubtitlesEnabled(action)
