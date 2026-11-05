@@ -115,6 +115,12 @@ sealed interface FireResult {
 interface RecordingsPort {
     val state: kotlinx.coroutines.flow.StateFlow<RecordingsState>
 
+    /** What this platform can capture and whether it can wake the app: the UI hides what cannot happen here. */
+    val capabilities: RecordingCapabilities
+
+    /** `file://` URI of a finished recording's file, or null when it is not DONE or the file is gone. Never a loopback server. */
+    fun playableUri(recording: Recording): String?
+
     /** Bytes written so far by each running capture, keyed by recording id. */
     val progress: kotlinx.coroutines.flow.StateFlow<Map<String, Long>>
 

@@ -56,7 +56,7 @@ class RecordingsRepository(
     private val files: RecordingFiles,
     private val alarms: RecordingAlarms,
     private val saver: RecordingSaver,
-    private val capabilities: RecordingCapabilities,
+    override val capabilities: RecordingCapabilities,
     private val lowSpacePolicy: () -> LowSpacePolicy = { LowSpacePolicy.STOP },
     private val preMs: Long = RecordingSchedulePolicy.DEFAULT_PRE_MS,
     private val postMs: Long = RecordingSchedulePolicy.DEFAULT_POST_MS,
@@ -78,6 +78,8 @@ class RecordingsRepository(
     override val progress: StateFlow<Map<String, Long>> = _progress.asStateFlow()
 
     private val ledgerJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    override fun playableUri(recording: Recording): String? = null // TODO(wave 3)
 
     private fun elapsedMs(): Long = origin.elapsedNow().inWholeMilliseconds
 

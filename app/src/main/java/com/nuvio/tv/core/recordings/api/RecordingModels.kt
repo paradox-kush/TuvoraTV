@@ -34,7 +34,12 @@ enum class RecordingProblem {
 
 /** What a platform can do: iPhone (false, true), Android (true, true), Desktop (true, true), Apple TV (false, false). */
 @Serializable
-data class RecordingCapabilities(val canRecordLive: Boolean, val canSaveCatchUp: Boolean) {
+data class RecordingCapabilities(
+    val canRecordLive: Boolean,
+    val canSaveCatchUp: Boolean,
+    /** The platform can wake the app at a time (Android alarms). False where a schedule waits for the next foreground (iOS). */
+    val canWakeApp: Boolean = true,
+) {
     companion object {
         val IPHONE = RecordingCapabilities(canRecordLive = false, canSaveCatchUp = true)
         val ANDROID = RecordingCapabilities(canRecordLive = true, canSaveCatchUp = true)

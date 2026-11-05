@@ -473,4 +473,38 @@ class RecordingsRepositoryTest {
         rig.repo.rearmAll(NOW)
         assertEquals(1, rig.alarms.armed.size)
     }
+
+    // ---- wave 3: what the screens ask the port ----------------------------------------------
+
+    @Test
+    fun `the port reports the capabilities it was built with`() {
+        val caps = RecordingCapabilities(canRecordLive = false, canSaveCatchUp = true)
+        assertEquals(caps, Rig(capabilities = caps).repo.capabilities)
+    }
+
+    @Test
+    fun `a done recording with its file on disk has a playable file uri`() = runTest {
+        val rig = Rig()
+        rig.files.sizes["/rec/news-1.ts"] = 5_000L
+        val row = recording("rec:a", status = RecordingStatus.DONE).copy(fileName = "news-1.ts")
+        assertEquals("file:///rec/news-1.ts", rig.repo.playableUri(row))
+    }
+
+    @Test
+    fun `a missing or empty file is not playable`() = runTest {
+        val rig = Rig()
+        val row = recording("rec:a", status = RecordingStatus.DONE).copy(fileName = "gone.ts")
+        assertNull(rig.repo.playableUri(row))
+        rig.files.sizes["/rec/gone.ts"] = 0L
+        assertNull(rig.repo.playableUri(row))
+    }
+
+    @Test
+    fun `a recording that is not done is never playable even with a part file`() = runTest {
+        val rig = Rig()
+        rig.files.sizes["/rec/x.ts"] = 9_000L
+        for (status in listOf(RecordingStatus.RECORDING, RecordingStatus.FAILED, RecordingStatus.CANCELLED)) {
+            assertNull("$status", rig.repo.playableUri(recording("rec:x", status = status).copy(fileName = "x.ts")))
+        }
+    }
 }
