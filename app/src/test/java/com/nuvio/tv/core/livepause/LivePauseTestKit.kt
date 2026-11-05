@@ -91,6 +91,7 @@ internal class KitRig(parent: CoroutineScope, io: CoroutineDispatcher, probe: Pr
         ),
         monotonicMs = { 0L },
         wallMs = { 1_000_000L },
+        io = io,
     )
     val state get() = controller.state.value
     val capture get() = captures.last()

@@ -7,7 +7,10 @@ import com.nuvio.tv.core.iptv.LoadOutcome
 import com.nuvio.tv.core.iptv.LoadSurface
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
@@ -18,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // TV twin of NuvioMobile's commonMain features/livetv/pause/LivePauseController (same states, same
 // decisions). Every platform detail is behind a port (LivePausePorts.kt).
@@ -44,6 +48,8 @@ class LivePauseController(
     private val monotonicMs: () -> Long,
     private val wallMs: () -> Long,
     private val tickMs: Long = TICK_MS,
+    /** Where disk work runs (free-space probe, capture directory setup); never the actor's own (Main) dispatcher. */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val ownJob = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + ownJob)
@@ -195,7 +201,7 @@ class LivePauseController(
     }
 
     private suspend fun startDiskBuffer() {
-        val decision = LivePausePolicy.diskStart(env.freeBytes(), env.facts().bitrateBps, env.keepMs)
+        val decision = LivePausePolicy.diskStart(withContext(io) { env.freeBytes() }, env.facts().bitrateBps, env.keepMs)
         engine.pause()
         if (decision !is LivePausePolicy.StartDecision.Start) {
             // Refused before anything was touched: the live source is still open.
@@ -209,7 +215,7 @@ class LivePauseController(
         val readyForThis = CompletableDeferred<String>()
         ready = readyForThis
         captureFailure = null
-        val created = captureFactory.create(
+        val spec =
             LiveCaptureSpec(
                 instanceId = instanceId,
                 minter = minter,
@@ -217,9 +223,10 @@ class LivePauseController(
                 keepMs = decision.keepMs,
                 bitrateBps = env.facts().bitrateBps,
                 maxCaptureBitrateBps = LivePausePolicy.maxCaptureBitrateBps(env.lowMemoryTier()),
-            ),
-            scope,
-        )
+            )
+        // deleteRecursively + mkdirs: disk work, so off the actor's (Main) thread. Not cancellable: a capture
+        // that was created must reach `capture` so the teardown can delete it.
+        val created = withContext(NonCancellable + io) { captureFactory.create(spec, scope) }
         capture = created
         eventsJob = scope.launch { created.events.collect { post(Command.Capture(gen, it)) } }
         mutableState.value = LivePauseState.Preparing(BoundedLoad.begin(LoadSurface.LIVE_PAUSE))
