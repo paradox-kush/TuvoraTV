@@ -309,13 +309,14 @@ class DeviceSourceEngineTest {
             onRefused = { kind, mode -> refusals += kind to mode })
         val failure = refusalOf(device, source.sourceRef)
         assertNotNull("typed refusal", failure)
+        assertEquals("kind", "iptv", failure!!.kind)
+        assertEquals("mode", "storage_error", failure.mode)
+        assertEquals("exactly one line per refusal, no host or id", listOf("iptv" to "storage_error"), refusals)
+        // Only now a second, separate refusal: it must be a cancellation to structured concurrency, not a failure.
         // Existing cancellation handling keeps working: structured concurrency treats it as cancellation.
         val scoped = async { device.guarded(1, "iptv", source.sourceRef) { "ran" } }
         runCurrent()
         assertTrue("cancelled, not failed", scoped.isCancelled)
-        assertEquals("kind", "iptv", failure!!.kind)
-        assertEquals("mode", "storage_error", failure.mode)
-        assertEquals("exactly one line per refusal, no host or id", listOf("iptv" to "storage_error"), refusals)
     }
 
     @Test fun addTimeVerifyRunsForAnUnsavedPlaylistWhileTheEngineIsNotReady() = runTest {
