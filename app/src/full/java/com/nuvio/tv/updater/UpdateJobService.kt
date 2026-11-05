@@ -62,6 +62,9 @@ class UpdateJobService : JobService() {
                 throw e
             } catch (e: NoEligibleUpdateException) {
                 Log.d(TAG, e.message.orEmpty())
+            } catch (e: UpdateRateLimitedException) {
+                // B175: retrying a limited network only spends more of the quota; the next periodic run asks again.
+                Log.d(TAG, e.message.orEmpty())
             } catch (e: Exception) {
                 Log.w(TAG, "Update job ${params.jobId} failed", e)
                 retry = true

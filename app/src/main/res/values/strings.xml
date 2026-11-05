@@ -2476,6 +2476,8 @@
 
     <!-- Update flow errors -->
     <string name="update_error_check_failed">Update check failed</string>
+    <string name="update_error_rate_limited">GitHub is limiting update checks from your network. Try again in %1$d min.</string>
+    <string name="update_error_forbidden">GitHub refused the update check (HTTP 403). Try again later or switch networks.</string>
     <string name="update_error_download_failed">Download failed</string>
     <string name="update_error_apk_missing">Downloaded file is missing</string>
 
