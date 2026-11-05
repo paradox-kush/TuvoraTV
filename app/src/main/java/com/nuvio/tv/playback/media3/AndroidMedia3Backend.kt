@@ -36,7 +36,6 @@ import androidx.media3.exoplayer.drm.DefaultDrmSessionManagerProvider
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
@@ -259,9 +258,7 @@ internal class AndroidMedia3BackendFactory(
         }
         val sourceFactory = DefaultMediaSourceFactory(upstream, extractors).apply {
             setDrmSessionManagerProvider(drmProvider)
-            if (plan.request.transientLoadRetryPolicy == TransientLoadRetryPolicy.SESSION_ONLY) {
-                setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
-            }
+            media3LoadErrorPolicyFor(plan.request.transientLoadRetryPolicy)?.let(::setLoadErrorHandlingPolicy)
         }
         val loadControl = DefaultLoadControl.Builder()
             .setTargetBufferBytes(playerMemoryBudget.exoTargetBufferBytes(Runtime.getRuntime().maxMemory()))
