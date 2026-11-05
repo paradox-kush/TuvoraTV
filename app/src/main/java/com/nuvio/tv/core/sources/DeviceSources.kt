@@ -94,11 +94,8 @@ class DeviceSources @Inject constructor(
         }
         private suspend fun currentAccess() = currentCoroutineContext()[DeviceSourceAccessElement]?.access ?: DeviceSourceAccess.DISCOVERY
         /** The wrong profile must never be read: wait (bounded) for the sign-in state, else refuse. */
-        private suspend fun authSettled(owner: DeviceSources): Boolean {
-            val flow = owner.auth.get().authState
-            return flow.value != com.nuvio.tv.domain.model.AuthState.Loading ||
-                kotlinx.coroutines.withTimeoutOrNull(5_000) { flow.first { it != com.nuvio.tv.domain.model.AuthState.Loading } } != null
-        }
+        private suspend fun authSettled(owner: DeviceSources): Boolean = awaitAuthSettled(owner.auth.get().authState)
+        private fun refuseSigningIn(owner: DeviceSources, kind: String): Nothing = owner.engine().refuse(kind, RefusalScope.SIGNING_IN)
         fun guard(kind: String, ref: String) { if (!allows(kind,ref)) refuse(kind, ref) }
         /** [guard] for suspend callers: honours [verifying] / [inspecting] for the current request. */
         suspend fun checkAccess(kind: String, ref: String) {
@@ -106,13 +103,16 @@ class DeviceSources @Inject constructor(
             when (val access = currentAccess()) {
                 DeviceSourceAccess.INSPECT -> return
                 DeviceSourceAccess.DISCOVERY -> guard(kind, ref)
-                else -> if (!authSettled(owner) || !owner.engine().permits(access, owner.profile(), kind, ref)) refuse(kind, ref)
+                else -> {
+                    if (!authSettled(owner)) refuseSigningIn(owner, kind)
+                    if (!owner.engine().permits(access, owner.profile(), kind, ref)) refuse(kind, ref)
+                }
             }
         }
         suspend fun <T> guarded(kind: String, ref: String, block: suspend () -> T): T {
             val owner = instance ?: return block()
             val access = currentAccess()
-            if (access == DeviceSourceAccess.VERIFY && !authSettled(owner)) refuse(kind, ref)
+            if (access == DeviceSourceAccess.VERIFY && !authSettled(owner)) refuseSigningIn(owner, kind)
             return owner.engine().guarded(owner.profile(),kind,ref,access,block)
         }
         /** The add/edit form's live check of a playlist: allowed before the device has a choice for it. */
@@ -122,3 +122,11 @@ class DeviceSources @Inject constructor(
         fun guardAddon(url: String) { if (!addonAllowed(url)) refuse("addon", null) }
     }
 }
+
+/** How long a verify waits for sign-in to settle before it says "still signing in". */
+const val AUTH_SETTLE_TIMEOUT_MS = 5_000L
+
+/** True once [state] is no longer Loading, waiting at most [timeoutMs]. */
+suspend fun awaitAuthSettled(state: kotlinx.coroutines.flow.StateFlow<com.nuvio.tv.domain.model.AuthState>, timeoutMs: Long = AUTH_SETTLE_TIMEOUT_MS): Boolean =
+    state.value != com.nuvio.tv.domain.model.AuthState.Loading ||
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { state.first { it != com.nuvio.tv.domain.model.AuthState.Loading } } != null

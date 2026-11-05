@@ -32,6 +32,9 @@ enum class PlaylistSaveError {
 
     /** The account turned the playlist off (it is off for every device). */
     SOURCE_DISABLED_FOR_ACCOUNT,
+
+    /** Sign-in had not settled, so the device's choices could not be read: nothing is turned off. */
+    SIGNING_IN,
 }
 
 /** The panel answered `user_info.auth != 1`: it refused the username/password. */
@@ -63,6 +66,7 @@ object PlaylistSaveErrorPolicy {
     const val PROVIDER_BLOCKED_MESSAGE = "This provider is blocking us"
     const val SOURCE_DISABLED_MESSAGE = "This playlist is turned off on this device — turn it on under Sources on this device"
     const val SOURCE_DISABLED_ACCOUNT_MESSAGE = "This playlist is turned off on your account — turn it on in your playlist settings, then try again"
+    const val SIGNING_IN_MESSAGE = "Still signing in — try again in a moment"
     const val SECURE_CONNECTION_MESSAGE = "Secure connection failed — try http:// or check the certificate"
 
     /**
@@ -80,8 +84,11 @@ object PlaylistSaveErrorPolicy {
         val chain = generateSequence(error) { it.cause.takeIf { c -> c !== it } }.take(MAX_CAUSE_DEPTH).toList()
         // Typed refusal first: it is a CancellationException and would otherwise read as "unreachable" (B224).
         chain.filterIsInstance<com.nuvio.tv.core.sources.SourceDisabledOnDeviceException>().firstOrNull()?.let {
-            return if (it.scope == com.nuvio.tv.core.sources.RefusalScope.ACCOUNT) PlaylistSaveError.SOURCE_DISABLED_FOR_ACCOUNT
-            else PlaylistSaveError.SOURCE_DISABLED_ON_DEVICE
+            return when (it.scope) {
+                com.nuvio.tv.core.sources.RefusalScope.ACCOUNT -> PlaylistSaveError.SOURCE_DISABLED_FOR_ACCOUNT
+                com.nuvio.tv.core.sources.RefusalScope.SIGNING_IN -> PlaylistSaveError.SIGNING_IN
+                com.nuvio.tv.core.sources.RefusalScope.DEVICE -> PlaylistSaveError.SOURCE_DISABLED_ON_DEVICE
+            }
         }
         // Order matters: SSLException IS an IOException, and a 401 is not "unreachable".
         chain.firstOrNull { it is XtreamAuthRejectedException }?.let { return PlaylistSaveError.WRONG_CREDENTIALS }
@@ -110,6 +117,7 @@ object PlaylistSaveErrorPolicy {
         PlaylistSaveError.SECURE_CONNECTION_FAILED -> SECURE_CONNECTION_MESSAGE
         PlaylistSaveError.SOURCE_DISABLED_ON_DEVICE -> SOURCE_DISABLED_MESSAGE
         PlaylistSaveError.SOURCE_DISABLED_FOR_ACCOUNT -> SOURCE_DISABLED_ACCOUNT_MESSAGE
+        PlaylistSaveError.SIGNING_IN -> SIGNING_IN_MESSAGE
         PlaylistSaveError.ACCOUNT_INACTIVE -> {
             val status = generateSequence(cause) { it.cause.takeIf { c -> c !== it } }.take(MAX_CAUSE_DEPTH)
                 .filterIsInstance<XtreamAccountInactiveException>().firstOrNull()?.status?.trim()
