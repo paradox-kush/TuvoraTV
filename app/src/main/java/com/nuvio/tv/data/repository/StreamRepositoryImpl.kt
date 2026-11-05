@@ -477,6 +477,7 @@ class StreamRepositoryImpl @Inject constructor(
                 streamAddons.forEach { addon ->
                     launch {
                         try {
+                            SourceLaneGuard.bounded {
                             val streamsResult = getStreamsFromAddon(addon, type, videoId)
                             when (streamsResult) {
                                 is NetworkResult.Success -> {
@@ -515,6 +516,7 @@ class StreamRepositoryImpl @Inject constructor(
                                 }
                                 NetworkResult.Loading -> Unit
                             }
+                            }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             Log.e(TAG, "Addon ${addon.name} failed: ${LogRedaction.text(e.message)}")
@@ -536,6 +538,7 @@ class StreamRepositoryImpl @Inject constructor(
                 serverSources.forEach { source ->
                     launch {
                         try {
+                            SourceLaneGuard.bounded {
                             val streams = source.load()
                             if (streams.isNotEmpty()) {
                                 resultChannel.send(AddonStreams(addonName = source.name, addonLogo = null, streams = streams))
@@ -545,6 +548,7 @@ class StreamRepositoryImpl @Inject constructor(
                                     kind = StreamFailureKind.MISSING,
                                     detail = context.getString(com.nuvio.tv.R.string.stream_error_detail_no_streams_for_id)
                                 )
+                            }
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
@@ -567,6 +571,7 @@ class StreamRepositoryImpl @Inject constructor(
                     launch {
                         val label = context.getString(R.string.stream_discovering_source)
                         try {
+                            SourceLaneGuard.bounded {
                             val ready = addonRepository.getAddonDiscoveryState().first {
                                 it.initialized && url !in it.pendingUrls
                             }
@@ -586,6 +591,7 @@ class StreamRepositoryImpl @Inject constructor(
                                     NetworkResult.Loading -> Unit
                                 }
                             }
+                            }
                         } catch (error: Exception) {
                             if (error is CancellationException) throw error
                             attemptedFailures += StreamAttemptFailure(label, StreamFailureKind.REQUEST_FAILED,
@@ -601,6 +607,7 @@ class StreamRepositoryImpl @Inject constructor(
                 xtreamMatchTargets.forEach { acc ->
                     launch {
                         try {
+                            SourceLaneGuard.bounded {
                             // B63: a dead playlist can no longer hold the whole list open for its
                             // connect timeout — it is cut at the budget once nothing else is loading.
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
@@ -628,6 +635,7 @@ class StreamRepositoryImpl @Inject constructor(
                                     )
                                 )
                             }
+                            }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             // Nothing to search yet is a pending catalog, not a failure and not "no streams".
@@ -648,6 +656,7 @@ class StreamRepositoryImpl @Inject constructor(
                 sourceMatchGroups.forEach { group ->
                     launch {
                         try {
+                            SourceLaneGuard.bounded {
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
                                 sourceStreams.resolveMatchStreams(group.sourceId, type, videoId, season, episode)
                             } ?: emptyList<Stream>().also {
@@ -662,6 +671,7 @@ class StreamRepositoryImpl @Inject constructor(
                                         streams = streams.map { it.copy(addonName = group.addonName, sourceId = it.sourceId ?: group.sourceId) }
                                     )
                                 )
+                            }
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
@@ -680,6 +690,7 @@ class StreamRepositoryImpl @Inject constructor(
                 if (pluginRequest != null) {
                     launch {
                         try {
+                            SourceLaneGuard.bounded {
                             // Stream plugins individually
                             val (pluginSeason, pluginEpisode) = resolvePluginSeasonEpisode(
                                 videoId = videoId,
@@ -701,6 +712,7 @@ class StreamRepositoryImpl @Inject constructor(
                                 if (completedJobs.incrementAndGet() >= totalJobs) {
                                     resultChannel.close()
                                 }
+                            }
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
