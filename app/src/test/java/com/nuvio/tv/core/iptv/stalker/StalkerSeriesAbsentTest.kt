@@ -79,8 +79,10 @@ class StalkerSeriesAbsentTest {
         )
     }
 
+    private val sessions by lazy { StalkerSessionManager(OkHttpClient(), PlaylistDns()) }
+
     private fun client() = StalkerClient(
-        StalkerSessionManager(OkHttpClient(), PlaylistDns()),
+        sessions,
         mockk<IptvContentDb>(relaxed = true),
         PlaylistServerFailover.detached(),
     )
@@ -127,6 +129,7 @@ class StalkerSeriesAbsentTest {
         seriesReply = """{"js":[]}"""
         val c = client()
         c.seriesCategories(acc)
+        assertEquals("the payload was parsed: series is listed as disabled", true, sessions.sessionFor(acc).seriesModuleDisabled)
         assertTrue("module off + empty + no series vod = positive evidence", c.seriesAbsent(acc))
     }
 
@@ -137,6 +140,7 @@ class StalkerSeriesAbsentTest {
         seriesReply = """{"js":[]}"""
         val c = client()
         c.seriesCategories(acc)
+        assertEquals("parsed: series is understood as available (not merely unknown)", false, sessions.sessionFor(acc).seriesModuleDisabled)
         assertFalse(c.seriesAbsent(acc))
     }
 
@@ -147,6 +151,7 @@ class StalkerSeriesAbsentTest {
         seriesReply = """{"js":[]}"""
         val c = client()
         c.seriesCategories(acc)
+        assertEquals("an unrecognised payload stays unknown", null, sessions.sessionFor(acc).seriesModuleDisabled)
         assertFalse(c.seriesAbsent(acc))
     }
 

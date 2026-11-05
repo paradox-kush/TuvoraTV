@@ -279,14 +279,14 @@ class XtreamHubViewModel @Inject constructor(
         com.nuvio.tv.core.iptv.stalker.StalkerPlaybackTraffic.onProviderSwitched()
         posterEnricher.onProviderSwitched(accountId)
         val section = coerceSection(_uiState.value.section, _uiState.value.accounts.firstOrNull { it.id == accountId })
-        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap()) }
+        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null) }
         rememberSelection()
         loadCategories()
     }
 
     fun selectSection(section: XtreamSection) {
         if (section == _uiState.value.section) return
-        _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap()) }
+        _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null) }
         rememberSelection()
         loadCategories()
     }
@@ -350,6 +350,9 @@ class XtreamHubViewModel @Inject constructor(
     private fun loadCategories() {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
+        // Every exit below (file missing, disabled type, cache hit, new load) starts from "no verdict": a
+        // "no series" card from another playlist or section must never outlive the thing it described.
+        if (_uiState.value.unavailableSection != null) _uiState.update { it.copy(unavailableSection = null) }
         if (com.nuvio.tv.core.iptv.IptvCatalogFreshness.stale(cacheCheckedAt[acc.id], acc.autoRefreshHours, System.currentTimeMillis())) {
             catalogEpochs[acc.id] = catalogEpoch(acc.id) + 1L
             forgetSeriesVerdict(acc.id)
@@ -611,7 +614,7 @@ class XtreamHubViewModel @Inject constructor(
             val client = clientFactory.clientFor(acc) as com.nuvio.tv.core.iptv.XtreamClient
             val rows = matchIndex.itemsFor(acc.id, section.matchKind, categoryId, offset, PAGE_SIZE + 1)
             // B179: hasMore is judged on the RAW window; divider rows are dropped from what is shown
-            // (the next window starts at the shown count, so a few rows overlap and merge by id).
+            // (the next window starts at the RAW rows consumed, see RawWindow, so hidden rows never shift it).
             val page = rows.take(PAGE_SIZE).let { raw ->
                 if (section != XtreamSection.LIVE) raw
                 else ChannelSeparatorPolicy.withoutSeparators(raw, { it.name }, { it.epgId }, { it.hasArchive })
