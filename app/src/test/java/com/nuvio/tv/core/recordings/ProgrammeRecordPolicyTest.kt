@@ -48,7 +48,7 @@ class ProgrammeRecordPolicyTest {
 
     @Test
     fun `a finished programme on a channel with no archive is over`() {
-        assertEquals(, RecordOffer.Unavailable(RecordUnavailable.PROGRAMME_OVER), offer(noArchive, start = NOW - 3 * HOUR, end = NOW - 2 * HOUR, caps = RecordingCapabilities.ANDROID))
+        assertEquals(RecordOffer.Unavailable(RecordUnavailable.PROGRAMME_OVER), offer(noArchive, start = NOW - 3 * HOUR, end = NOW - 2 * HOUR, caps = RecordingCapabilities.ANDROID))
     }
 
     @Test
@@ -120,7 +120,7 @@ class ProgrammeRecordPolicyTest {
     fun `an existing rule for the same title folds NEW marks and shows as active`() {
         val rule = rule(id = "series:ch1:the show", title = "The Show", ch = withArchive)
         val state = RecordingsState(series = listOf(rule), loaded = true)
-        assertEquals(, SeriesOffer.Active("series:ch1:the show"), ProgrammeRecordPolicy.seriesOffer(withArchive, "The Show (NEW)", RecordingCapabilities.IPHONE, state))
+        assertEquals(SeriesOffer.Active("series:ch1:the show"), ProgrammeRecordPolicy.seriesOffer(withArchive, "The Show (NEW)", RecordingCapabilities.IPHONE, state))
     }
 
     @Test

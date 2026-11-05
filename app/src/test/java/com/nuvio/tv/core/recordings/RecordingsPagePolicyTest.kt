@@ -27,7 +27,7 @@ class RecordingsPagePolicyTest {
 
     @Test
     fun `sections are drawn scheduled then recording then done then failed`() {
-        assertEquals(, listOf(RecordingSection.SCHEDULED, RecordingSection.RECORDING, RecordingSection.DONE, RecordingSection.FAILED), RecordingsPagePolicy.ORDER)
+        assertEquals(listOf(RecordingSection.SCHEDULED, RecordingSection.RECORDING, RecordingSection.DONE, RecordingSection.FAILED), RecordingsPagePolicy.ORDER)
     }
 
     @Test

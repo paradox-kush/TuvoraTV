@@ -36,6 +36,6 @@ class RecordingsLoadPolicyTest {
     @Test
     fun `retry starts a new attempt with a fresh deadline`() {
         val retry = RecordingsLoadAttempt(startedAtMs = start + 50_000)
-        assertEquals(, RecordingsView.Loading(start + 50_000 + RecordingsLoadPolicy.DEADLINE_MS), RecordingsLoadPolicy.viewAt(false, retry, start + 50_001))
+        assertEquals(RecordingsView.Loading(start + 50_000 + RecordingsLoadPolicy.DEADLINE_MS), RecordingsLoadPolicy.viewAt(false, retry, start + 50_001))
     }
 }

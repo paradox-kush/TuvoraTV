@@ -18,7 +18,7 @@ class RecordingGuideKeysTest {
             ),
             loaded = true,
         )
-        assertEquals(, mapOf("c1" to setOf(NOW + HOUR, NOW + 2 * HOUR), "c2" to setOf(NOW + HOUR)), RecordingGuideKeys.startsByChannel(state))
+        assertEquals(mapOf("c1" to setOf(NOW + HOUR, NOW + 2 * HOUR), "c2" to setOf(NOW + HOUR)), RecordingGuideKeys.startsByChannel(state))
     }
 
     @Test
