@@ -1431,7 +1431,9 @@ fun PlayerScreen(
                 showSwitchToMpvAction = uiState.showSwitchToMpvErrorAction &&
                     uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER,
                 onSwitchToMpv = { viewModel.onEvent(PlayerEvent.OnSwitchToMpvPlayer) },
-                onRetry = { viewModel.onEvent(PlayerEvent.OnRetry) }.takeIf { uiState.showRetryErrorAction },
+                onRetry = { viewModel.onEvent(PlayerEvent.OnRetry) }.takeIf {
+                    uiState.showRetryErrorAction || PlayerLoadDeadlinePolicy.showRetry(uiState.error != null, uiState.isLive)
+                },
                 showReportAction = uiState.playbackIssueReportsEnabled,
                 reportStatus = uiState.playbackIssueReportStatus,
                 reportId = uiState.playbackIssueReportId,

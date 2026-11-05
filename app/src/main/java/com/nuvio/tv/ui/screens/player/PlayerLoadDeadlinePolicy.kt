@@ -29,6 +29,12 @@ internal object PlayerLoadDeadlinePolicy {
     fun viewerPaused(userPausedManually: Boolean, pauseSetByLifecycle: Boolean): Boolean =
         userPausedManually && !pauseSetByLifecycle
 
+    /**
+     * Every failed non-live load must be re-askable by the viewer. Live has its own Retry (the
+     * reconnector's), so it is not doubled up here.
+     */
+    fun showRetry(hasError: Boolean, isLive: Boolean): Boolean = hasError && !isLive
+
     /** Audio-only streams never render a video frame; actually playing counts as started. */
     fun started(renderedFirstFrame: Boolean, enginePlaying: Boolean): Boolean = renderedFirstFrame || enginePlaying
 

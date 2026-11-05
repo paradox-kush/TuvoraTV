@@ -77,4 +77,11 @@ class PlayerLoadDeadlinePolicyTest {
         assertEquals(false, PlayerLoadDeadlinePolicy.viewerPaused(userPausedManually = false, pauseSetByLifecycle = false))
         assertEquals(true, PlayerLoadDeadlinePolicy.clockSuspended(isInBackground = false, hasError = false, viewerPaused = true))
     }
+
+    @Test
+    fun `every failed non-live load offers Retry and live does not double up`() {
+        assertEquals("exhausted auto-retries on a connection failure", true, PlayerLoadDeadlinePolicy.showRetry(hasError = true, isLive = false))
+        assertEquals("live has the reconnector's own Retry", false, PlayerLoadDeadlinePolicy.showRetry(hasError = true, isLive = true))
+        assertEquals("no error, no dialog", false, PlayerLoadDeadlinePolicy.showRetry(hasError = false, isLive = false))
+    }
 }
