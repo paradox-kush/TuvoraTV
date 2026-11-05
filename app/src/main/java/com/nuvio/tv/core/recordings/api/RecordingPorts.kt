@@ -146,6 +146,12 @@ interface RecordingsPort {
     /** Removes a schedule, or stops the capture if it is running. */
     suspend fun cancel(scheduleId: String)
 
+    /**
+     * Stops a series rule: removes it and, when [cancelUpcoming], cancels its scheduled, not-yet-running
+     * airings. Finished recordings (and a capture already running) are kept.
+     */
+    suspend fun removeSeriesRule(ruleId: String, cancelUpcoming: Boolean = true)
+
     /** Removes a recording row and its file (stops it first if still capturing). */
     suspend fun deleteRecording(id: String)
 

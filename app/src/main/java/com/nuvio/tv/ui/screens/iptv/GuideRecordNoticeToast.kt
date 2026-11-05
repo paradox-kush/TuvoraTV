@@ -27,6 +27,7 @@ internal fun GuideRecordNoticeToast(
     var action = GuideRecordSheetPolicy.NoticeAction.DISMISS
     val message = when (notice) {
         is GuideRecordNotice.Cancelled -> stringResource(R.string.rec_notice_cancelled, title)
+        is GuideRecordNotice.SeriesStopped -> stringResource(R.string.rec_notice_series_stopped, title)
         is GuideRecordNotice.Failed -> stringResource(R.string.rec_notice_failed, title)
         is GuideRecordNotice.Scheduled -> {
             val c = notice.confirmation

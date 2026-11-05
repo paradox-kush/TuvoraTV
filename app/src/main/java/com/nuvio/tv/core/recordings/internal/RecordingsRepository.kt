@@ -318,6 +318,21 @@ class RecordingsRepository(
         job?.cancel(CancellationException("cancelled by user"))
     }
 
+    override suspend fun removeSeriesRule(ruleId: String, cancelUpcoming: Boolean) {
+        locked(0) {
+            if (doc.seriesValues.none { it.id == ruleId }) return@locked
+            edit(series = { list -> list.filterNot { it.id == ruleId } })
+            if (cancelUpcoming) {
+                // A capture already running is the user's to stop (Stop recording); only waiting airings go.
+                val waiting = doc.scheduleValues.filter { it.seriesRuleId == ruleId && it.id !in running }
+                waiting.forEach { alarms.disarm(it.id); ledger.forget(it.id) }
+                val gone = waiting.mapTo(HashSet()) { it.id }
+                edit(schedules = { list -> list.filterNot { it.id in gone } })
+            }
+            commit()
+        }
+    }
+
     override suspend fun deleteRecording(id: String) {
         val job = mutex.withLock { running[id.removePrefix("rec:")] }
         job?.cancel(CancellationException("cancelled by user"))

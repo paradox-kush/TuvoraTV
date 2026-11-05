@@ -554,6 +554,66 @@ class RecordingsRepositoryTest {
         assertEquals(2, rig.alarms.armed.size)
     }
 
+    private val showListings = listOf(
+        com.nuvio.tv.core.recordings.api.ListingInfo("Show", null, NOW + 3 * HOUR, NOW + 4 * HOUR, "S01E01"),
+        com.nuvio.tv.core.recordings.api.ListingInfo("Show", null, NOW + 1 * DAY, NOW + 1 * DAY + HOUR, "S01E02"),
+    )
+
+    @Test
+    fun `removing a series rule drops the rule and its upcoming schedules but keeps finished recordings`() = runTest {
+        val rig = Rig()
+        rig.repo.addSeriesRule(catchUpChannel, "Show", 0, showListings, NOW)
+        val ruleId = rig.repo.state.value.series.single().id
+        rig.repo.scheduleProgramme(catchUpChannel, "One-off", null, null, NOW + 5 * HOUR, NOW + 6 * HOUR, NOW)
+        assertEquals(3, rig.repo.state.value.schedules.size)
+        rig.repo.removeSeriesRule(ruleId)
+        val state = rig.repo.state.value
+        assertTrue("the rule is gone", state.series.isEmpty())
+        assertEquals("only the one-off is left", listOf("One-off"), state.schedules.map { it.title })
+        assertEquals("the one-off keeps its alarm, the series alarms are disarmed", 1, rig.alarms.armed.size)
+        val doc = RecordingsCodec.decode(rig.files.texts["recordings.json"])!!
+        assertTrue("and it is persisted", doc.seriesValues.isEmpty())
+        assertEquals(1, doc.scheduleValues.size)
+        assertTrue("a removed rule expands to nothing", rig.repo.expandSeries(ruleId, showListings, NOW).isEmpty())
+    }
+
+    @Test
+    fun `removing a series rule keeps finished recordings of that rule`() = runTest {
+        val files = FakeFiles()
+        val rule = rule(id = "r1", ch = catchUpChannel)
+        files.texts["recordings.json"] = RecordingsCodec.encode(
+            RecordingsDocument(
+                series = listOf(StoredRow.of(rule)),
+                recordings = listOf(StoredRow.of(recording("rec:old", seriesRuleId = "r1"))),
+            ),
+        )
+        val rig = Rig(files = files)
+        rig.repo.removeSeriesRule("r1")
+        assertTrue(rig.repo.state.value.series.isEmpty())
+        assertEquals("rec:old", rig.repo.state.value.recordings.single().id)
+        assertTrue("no file was deleted", files.deleted.isEmpty())
+    }
+
+    @Test
+    fun `removing a series rule with cancelUpcoming false keeps the schedules`() = runTest {
+        val rig = Rig()
+        rig.repo.addSeriesRule(catchUpChannel, "Show", 0, showListings, NOW)
+        val ruleId = rig.repo.state.value.series.single().id
+        rig.repo.removeSeriesRule(ruleId, cancelUpcoming = false)
+        assertTrue(rig.repo.state.value.series.isEmpty())
+        assertEquals(2, rig.repo.state.value.schedules.size)
+        assertEquals(2, rig.alarms.armed.size)
+    }
+
+    @Test
+    fun `removing a rule that does not exist changes nothing`() = runTest {
+        val rig = Rig()
+        rig.repo.addSeriesRule(catchUpChannel, "Show", 0, showListings, NOW)
+        rig.repo.removeSeriesRule("series:nope")
+        assertEquals(1, rig.repo.state.value.series.size)
+        assertEquals(2, rig.repo.state.value.schedules.size)
+    }
+
     @Test
     fun `the space check during a save asks the policy and can stop the capture`() = runTest {
         val rig = Rig()

@@ -19,13 +19,15 @@ internal object GuideRecordSheetPolicy {
     enum class Primary { RECORD, CANCEL, STOP }
 
     /** A one-line reason shown instead of a row that cannot work. */
-    enum class Note { ALREADY_SAVED, SERIES_ACTIVE, BAD_TIMES, NEEDS_CATCH_UP, PROGRAMME_OVER }
+    enum class Note { ALREADY_SAVED, BAD_TIMES, NEEDS_CATCH_UP, PROGRAMME_OVER }
 
     data class Plan(
         val primary: Primary?,
         val scheduleId: String?,
         val mode: CaptureMode?,
         val recordSeries: Boolean,
+        /** The rule behind "Stop series recording", when one exists for this title on this channel. */
+        val stopSeriesRuleId: String?,
         val notes: List<Note>,
     )
 
@@ -47,8 +49,12 @@ internal object GuideRecordSheetPolicy {
                 RecordUnavailable.PROGRAMME_OVER -> Note.PROGRAMME_OVER
             }
         }
-        if (series is SeriesOffer.Active) notes += Note.SERIES_ACTIVE
-        return Plan(primary, scheduleId, mode, recordSeries = series is SeriesOffer.Record, notes = notes)
+        return Plan(
+            primary, scheduleId, mode,
+            recordSeries = series is SeriesOffer.Record,
+            stopSeriesRuleId = (series as? SeriesOffer.Active)?.ruleId,
+            notes = notes,
+        )
     }
 
     /** "Start over" is only for the airing programme on a channel that kept its beginning. */

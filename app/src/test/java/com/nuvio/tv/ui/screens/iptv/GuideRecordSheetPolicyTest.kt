@@ -69,11 +69,13 @@ class GuideRecordSheetPolicyTest {
     }
 
     @Test
-    fun `Record series hides when the channel cannot be saved or the rule exists`() {
+    fun `Record series hides when the channel cannot be saved or the rule exists and an existing rule offers Stop`() {
         assertFalse(GuideRecordSheetPolicy.plan(RecordOffer.Record(CaptureMode.CATCH_UP), SeriesOffer.Unavailable).recordSeries)
         val active = GuideRecordSheetPolicy.plan(RecordOffer.Record(CaptureMode.CATCH_UP), SeriesOffer.Active("series:x"))
         assertFalse(active.recordSeries)
-        assertEquals(listOf(Note.SERIES_ACTIVE), active.notes)
+        assertEquals("series:x", active.stopSeriesRuleId)
+        assertTrue("no static note replaces the action", active.notes.isEmpty())
+        assertNull(GuideRecordSheetPolicy.plan(RecordOffer.Record(CaptureMode.CATCH_UP), SeriesOffer.Record).stopSeriesRuleId)
     }
 
     @Test

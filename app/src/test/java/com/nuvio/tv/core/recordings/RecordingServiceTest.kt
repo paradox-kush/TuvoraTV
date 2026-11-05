@@ -46,6 +46,7 @@ private class FakePort(
     override suspend fun addSeriesRule(channel: RecordingChannel, title: String, keepLast: Int, listings: List<ListingInfo>, nowMs: Long): List<RecordingSchedule> = emptyList()
     override suspend fun expandSeries(ruleId: String, listings: List<ListingInfo>, nowMs: Long): List<RecordingSchedule> = emptyList()
     override suspend fun cancel(scheduleId: String) { cancelled += scheduleId }
+    override suspend fun removeSeriesRule(ruleId: String, cancelUpcoming: Boolean) {}
     override suspend fun deleteRecording(id: String) {}
     override suspend fun retry(recordingId: String, nowMs: Long) {}
     override suspend fun rearmAll(nowMs: Long) = onRearm()

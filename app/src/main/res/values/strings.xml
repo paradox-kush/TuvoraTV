@@ -3821,9 +3821,9 @@
     <string name="rec_sheet_record_series">Record series</string>
     <string name="rec_sheet_cancel">Cancel recording</string>
     <string name="rec_sheet_stop">Stop recording</string>
+    <string name="rec_sheet_stop_series">Stop series recording</string>
     <string name="rec_sheet_close">Close</string>
     <string name="rec_note_already_saved">Already saved. Find it in Recordings.</string>
-    <string name="rec_note_series_active">Series recording is on for this show.</string>
     <string name="rec_note_bad_times">The guide has no start and end time for this one, so it can’t be recorded.</string>
     <string name="rec_note_needs_catch_up">Can’t record this: the channel keeps no catch-up, and recording live isn’t available on this device yet.</string>
     <string name="rec_note_programme_over">Too late to record this: the provider no longer keeps it.</string>
@@ -3835,6 +3835,7 @@
     <string name="rec_notice_already">Already scheduled: %1$s</string>
     <string name="rec_notice_cannot">Can’t record %1$s on this device.</string>
     <string name="rec_notice_series_none">Series recording is on for %1$s. New airings are added as the guide shows them.</string>
+    <string name="rec_notice_series_stopped">Series recording stopped: %1$s. Upcoming airings were cancelled; saved ones stay in Recordings.</string>
     <string name="rec_notice_cancelled">Recording cancelled: %1$s</string>
     <string name="rec_notice_failed">Couldn’t change the recording for %1$s. Try again.</string>
     <string name="rec_notice_clash">%1$s Overlaps with %2$s.</string>

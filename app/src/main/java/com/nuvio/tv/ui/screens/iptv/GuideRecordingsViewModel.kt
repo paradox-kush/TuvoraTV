@@ -46,6 +46,7 @@ sealed interface GuideRecordNotice {
     ) : GuideRecordNotice
 
     data class Cancelled(override val title: String) : GuideRecordNotice
+    data class SeriesStopped(override val title: String) : GuideRecordNotice
     data class Failed(override val title: String) : GuideRecordNotice
 }
 
@@ -157,6 +158,13 @@ class GuideRecordingsViewModel @Inject constructor(
     fun cancel(scheduleId: String, title: String) {
         viewModelScope.launch {
             _notice.value = if (guarded { port.cancel(scheduleId) } != null) GuideRecordNotice.Cancelled(title) else GuideRecordNotice.Failed(title)
+        }
+    }
+
+    /** Stops the series rule and drops its waiting airings; finished recordings stay. */
+    fun stopSeries(ruleId: String, title: String) {
+        viewModelScope.launch {
+            _notice.value = if (guarded { port.removeSeriesRule(ruleId) } != null) GuideRecordNotice.SeriesStopped(title) else GuideRecordNotice.Failed(title)
         }
     }
 

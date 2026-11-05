@@ -487,6 +487,7 @@ internal fun GuideStartOverSheet(
     onWatchLive: (() -> Unit)?,
     onRecord: () -> Unit,
     onRecordSeries: () -> Unit,
+    onStopSeries: () -> Unit,
     onCancelRecording: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -494,7 +495,7 @@ internal fun GuideStartOverSheet(
     // BACK closes the sheet and hands the cursor back to the cell that opened it.
     androidx.activity.compose.BackHandler(onBack = onClose)
     val hasPlayback = onStartOver != null || onWatchLive != null
-    val hasRecordRow = plan.primary != null || plan.recordSeries
+    val hasRecordRow = plan.primary != null || plan.recordSeries || plan.stopSeriesRuleId != null
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -589,6 +590,14 @@ internal fun GuideStartOverSheet(
                             onClick = onRecordSeries,
                         )
                     }
+                    if (plan.stopSeriesRuleId != null) {
+                        GuideSheetButton(
+                            label = stringResource(R.string.rec_sheet_stop_series),
+                            primary = false,
+                            focusRequester = recordFocus.takeIf { plan.primary == null },
+                            onClick = onStopSeries,
+                        )
+                    }
                 }
             }
             if (!hasPlayback && !hasRecordRow) {
@@ -605,7 +614,6 @@ internal fun GuideStartOverSheet(
                     text = stringResource(
                         when (note) {
                             GuideRecordSheetPolicy.Note.ALREADY_SAVED -> R.string.rec_note_already_saved
-                            GuideRecordSheetPolicy.Note.SERIES_ACTIVE -> R.string.rec_note_series_active
                             GuideRecordSheetPolicy.Note.BAD_TIMES -> R.string.rec_note_bad_times
                             GuideRecordSheetPolicy.Note.NEEDS_CATCH_UP -> R.string.rec_note_needs_catch_up
                             GuideRecordSheetPolicy.Note.PROGRAMME_OVER -> R.string.rec_note_programme_over

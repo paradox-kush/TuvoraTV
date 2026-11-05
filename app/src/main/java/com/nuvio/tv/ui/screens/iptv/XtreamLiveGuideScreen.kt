@@ -996,6 +996,10 @@ fun LiveGuide(
                     closeSheet()
                     recordings.recordSeries(account, sheetChannel, sheet, uiState.epg[sheetChannel.streamId]?.programmes.orEmpty())
                 },
+                onStopSeries = {
+                    closeSheet()
+                    plan.stopSeriesRuleId?.let { recordings.stopSeries(it, sheet.title) }
+                },
                 onCancelRecording = {
                     closeSheet()
                     plan.scheduleId?.let { recordings.cancel(it, sheet.title) }
