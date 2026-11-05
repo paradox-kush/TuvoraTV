@@ -61,20 +61,50 @@ class IptvSearchScopePolicyTest {
 
     @Test
     fun `chips stay up when the IPTV lane answered even with zero rows`() {
-        assertTrue("rows on screen", IptvSearchScopePolicy.showChips(hasIptvRows = true, iptvAnsweredForQuery = false))
-        assertTrue("answered with zero hits keeps the filters", IptvSearchScopePolicy.showChips(hasIptvRows = false, iptvAnsweredForQuery = true))
-        assertFalse("no IPTV at all (no sources, or not answered yet)", IptvSearchScopePolicy.showChips(hasIptvRows = false, iptvAnsweredForQuery = false))
+        val results = IptvSearchScopePolicy.Body.RESULTS
+        val noResults = IptvSearchScopePolicy.Body.NO_RESULTS
+        assertTrue("rows on screen", IptvSearchScopePolicy.chipsVisible(results, hasIptvRows = true, iptvAnsweredForQuery = false))
+        assertTrue("answered with zero hits keeps the filters on the No Results screen",
+            IptvSearchScopePolicy.chipsVisible(noResults, hasIptvRows = false, iptvAnsweredForQuery = true))
+        assertTrue("answered with zero hits but add-on rows", IptvSearchScopePolicy.chipsVisible(results, false, true))
+        assertFalse("no IPTV at all (no sources, or not answered yet)", IptvSearchScopePolicy.chipsVisible(noResults, false, false))
     }
 
     @Test
-    fun `empty note shows only when the selection hides every IPTV row after loading`() {
+    fun `chips never show over skeletons or an error`() {
+        assertFalse("skeleton", IptvSearchScopePolicy.chipsVisible(IptvSearchScopePolicy.Body.SKELETON, true, true))
+        assertFalse("error", IptvSearchScopePolicy.chipsVisible(IptvSearchScopePolicy.Body.ERROR, true, true))
+    }
+
+    @Test
+    fun `body mirrors the screen's when order`() {
+        val b = IptvSearchScopePolicy.Body
+        assertEquals("loading with nothing yet", b.SKELETON, IptvSearchScopePolicy.bodyOf(true, true, false))
+        assertEquals("loading wins over a stale error", b.SKELETON, IptvSearchScopePolicy.bodyOf(true, true, true))
+        assertEquals("error with nothing", b.ERROR, IptvSearchScopePolicy.bodyOf(false, true, true))
+        assertEquals("idle and empty", b.NO_RESULTS, IptvSearchScopePolicy.bodyOf(false, true, false))
+        assertEquals("rows, even while more load", b.RESULTS, IptvSearchScopePolicy.bodyOf(true, false, false))
+        assertEquals("rows, idle", b.RESULTS, IptvSearchScopePolicy.bodyOf(false, false, false))
+    }
+
+    @Test
+    fun `empty note shows only when the selection hides IPTV rows that came back`() {
         val live = setOf(IptvSearchScope.LIVE)
-        val scoped = IptvSearchScopePolicy.filter(rows.filter { it != "xtream_channels" }, live) { it }
-        assertTrue("Live only, no channel hits, add-on rows remain", IptvSearchScopePolicy.showEmptyNote(live, scoped, true, false) { it })
-        assertFalse("still loading", IptvSearchScopePolicy.showEmptyNote(live, scoped, true, true) { it })
-        assertFalse("lane has not answered", IptvSearchScopePolicy.showEmptyNote(live, scoped, false, false) { it })
-        assertFalse("selection is all, nothing hidden", IptvSearchScopePolicy.showEmptyNote(IptvSearchScopePolicy.ALL, scoped, true, false) { it })
+        val noChannels = rows.filter { it != "xtream_channels" }
+        assertTrue("Live only, movies+series came back", IptvSearchScopePolicy.showEmptyNote(live, noChannels, true, false) { it })
+        assertFalse("still loading", IptvSearchScopePolicy.showEmptyNote(live, noChannels, true, true) { it })
+        assertFalse("lane has not answered", IptvSearchScopePolicy.showEmptyNote(live, noChannels, false, false) { it })
+        assertFalse("selection is all, nothing hidden", IptvSearchScopePolicy.showEmptyNote(IptvSearchScopePolicy.ALL, noChannels, true, false) { it })
         assertFalse("a surviving IPTV row", IptvSearchScopePolicy.showEmptyNote(live, rows, true, false) { it })
-        assertTrue("zero rows at all", IptvSearchScopePolicy.showEmptyNote(live, emptyList<String>(), true, false) { it })
+        assertFalse("zero IPTV hits at all: the filter is not to blame", IptvSearchScopePolicy.showEmptyNote(live, emptyList<String>(), true, false) { it })
+        assertFalse("add-on rows only: the filter is not to blame", IptvSearchScopePolicy.showEmptyNote(live, listOf("addon_movies"), true, false) { it })
+    }
+
+    @Test
+    fun `saved state round-trips and junk or empty reads as all`() {
+        val two = setOf(IptvSearchScope.LIVE, IptvSearchScope.SERIES)
+        assertEquals("round trip", two, IptvSearchScopePolicy.decode(IptvSearchScopePolicy.encode(two)))
+        assertEquals("empty", IptvSearchScopePolicy.ALL, IptvSearchScopePolicy.decode(emptyList()))
+        assertEquals("junk", IptvSearchScopePolicy.ALL, IptvSearchScopePolicy.decode(listOf("BOGUS")))
     }
 }

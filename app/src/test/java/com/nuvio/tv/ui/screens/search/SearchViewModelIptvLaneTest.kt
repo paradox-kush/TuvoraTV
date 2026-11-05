@@ -201,6 +201,61 @@ class SearchViewModelIptvLaneTest {
     }
 
     @Test
+    fun `F85 a zero-hit IPTV answer is still recorded for the query`() = runTest {
+        val iptv = FakeIptvSearch(rowsFor = { emptyList() })
+        val viewModel = newViewModel(addons = emptyList(), iptv = iptv)
+
+        viewModel.onEvent(SearchEvent.QueryChanged("kapil"))
+        viewModel.onEvent(SearchEvent.SubmitSearch)
+        advanceUntilIdle()
+
+        assertEquals("the lane answered for this query with no rows", "kapil", viewModel.uiState.value.iptvAnsweredQuery)
+        assertTrue("no rows", viewModel.uiState.value.catalogRows.isEmpty())
+    }
+
+    @Test
+    fun `F85 the answered flag never reaches the screen ahead of the rows`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val iptv = FakeIptvSearch(rowsFor = { listOf(moviesRow("xtream:acc:vod:7", "Matrix")) }, gateFor = { gate })
+        val viewModel = newViewModel(addons = emptyList(), iptv = iptv)
+
+        viewModel.onEvent(SearchEvent.QueryChanged("Matrix"))
+        viewModel.onEvent(SearchEvent.SubmitSearch)
+        runCurrent()
+        assertEquals("not answered while the lane is pending", null, viewModel.uiState.value.iptvAnsweredQuery)
+
+        gate.complete(Unit)
+        runCurrent() // no virtual time: the render debounce has NOT elapsed
+        val state = viewModel.uiState.value
+        assertEquals("answered", "Matrix", state.iptvAnsweredQuery)
+        assertEquals("rows landed in the same update", listOf("Matrix"), state.catalogRows.flatMap { r -> r.items.map { it.name } })
+    }
+
+    @Test
+    fun `F85 no IPTV sources never marks the lane answered`() = runTest {
+        val iptv = FakeIptvSearch(hasSources = false, rowsFor = { emptyList() })
+        val viewModel = newViewModel(addons = emptyList(), iptv = iptv)
+
+        viewModel.onEvent(SearchEvent.QueryChanged("kapil"))
+        viewModel.onEvent(SearchEvent.SubmitSearch)
+        advanceUntilIdle()
+
+        assertEquals("IPTV off", null, viewModel.uiState.value.iptvAnsweredQuery)
+    }
+
+    @Test
+    fun `F85 a failing IPTV lane never marks the lane answered`() = runTest {
+        val iptv = FakeIptvSearch(rowsFor = { error("provider down") })
+        val viewModel = newViewModel(addons = emptyList(), iptv = iptv)
+
+        viewModel.onEvent(SearchEvent.QueryChanged("kapil"))
+        viewModel.onEvent(SearchEvent.SubmitSearch)
+        advanceUntilIdle()
+
+        assertEquals("a failure is not an answer of zero hits", null, viewModel.uiState.value.iptvAnsweredQuery)
+    }
+
+    @Test
     fun aMediaServerRowIsNotLabelledFromIptv() {
         val hit = IptvSearchHit(contentId = "ms:x", name = "n", poster = null, isLive = false)
         assertEquals("Jellyfin", IptvSearchRow("c", "Movies", "movie", listOf(hit), sourceLabel = "Jellyfin").searchRowSourceLabel())

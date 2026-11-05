@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -358,12 +359,46 @@ fun SearchScreen(
         uiState.catalogRows.filter { it.items.isNotEmpty() }
     }
     // F85: session-only scope chips (default all) narrow the IPTV rows already fetched; add-on rows are never filtered.
-    var iptvScopes by remember { mutableStateOf(IptvSearchScopePolicy.ALL) }
+    // Saved like the query: Search is a NavHost destination, so opening a result and pressing Back recreates this composition.
+    var iptvScopes by rememberSaveable(
+        stateSaver = listSaver(
+            save = { IptvSearchScopePolicy.encode(it) },
+            restore = { IptvSearchScopePolicy.decode(it) },
+        ),
+    ) { mutableStateOf(IptvSearchScopePolicy.ALL) }
     var scopeChipsHaveFocus by remember { mutableStateOf(false) }
     val scopeKeyOf: (com.nuvio.tv.domain.model.CatalogRow) -> String =
         { if (it.addonId == "xtream") it.catalogId else "" }
+    LaunchedEffect(visibleRowKeys) {
+        searchRowStates.keys.retainAll(visibleRowKeys)
+        searchRowFocusRequesters.keys.retainAll(visibleRowKeys)
+        searchRowEntryFocusRequesters.keys.retainAll(visibleRowKeys)
+        searchRowFocusedItemIndex.keys.retainAll(visibleRowKeys)
+    }
+
+    val isDiscoverMode = remember(uiState.discoverLocation, trimmedQuery, trimmedSubmittedQuery) {
+        shouldShowDiscoverInSearch(
+            discoverLocation = uiState.discoverLocation,
+            query = trimmedQuery,
+            submittedQuery = trimmedSubmittedQuery
+        )
+    }
+    LaunchedEffect(isDiscoverMode) {
+        if (isDiscoverMode) viewModel.ensureDiscoverLoaded()
+    }
+    val hasPendingUnsubmittedQuery = remember(isDiscoverMode, trimmedQuery, trimmedSubmittedQuery) {
+        !isDiscoverMode &&
+            trimmedQuery.length >= MIN_SEARCH_QUERY_LENGTH &&
+            trimmedQuery != trimmedSubmittedQuery
+    }
     val iptvAnsweredForQuery = uiState.iptvAnsweredQuery != null && uiState.iptvAnsweredQuery == trimmedSubmittedQuery
-    val showScopeChips = IptvSearchScopePolicy.showChips(
+    val searchBody = IptvSearchScopePolicy.bodyOf(
+        loadingOrPending = uiState.isSearching || hasPendingUnsubmittedQuery,
+        noRows = visibleCatalogRows.isEmpty(),
+        errorWithNoCatalogRows = uiState.error != null && uiState.catalogRows.isEmpty(),
+    )
+    val showScopeChips = IptvSearchScopePolicy.chipsVisible(
+        body = searchBody,
         hasIptvRows = remember(visibleCatalogRows) { IptvSearchScopePolicy.hasIptvRows(visibleCatalogRows, scopeKeyOf) },
         iptvAnsweredForQuery = iptvAnsweredForQuery,
     )
@@ -371,7 +406,7 @@ fun SearchScreen(
         IptvSearchScopePolicy.filter(visibleCatalogRows, iptvScopes, scopeKeyOf)
     }
     val showScopeEmptyNote = IptvSearchScopePolicy.showEmptyNote(
-        iptvScopes, scopedCatalogRows, iptvAnsweredForQuery, uiState.isSearching, scopeKeyOf
+        iptvScopes, visibleCatalogRows, iptvAnsweredForQuery, uiState.isSearching, scopeKeyOf
     )
     val scopeChipsItem: LazyListScope.() -> Unit = {
         item(key = "search_iptv_scope_chips") {
@@ -402,28 +437,6 @@ fun SearchScreen(
                 )
             }
         }
-    }
-    LaunchedEffect(visibleRowKeys) {
-        searchRowStates.keys.retainAll(visibleRowKeys)
-        searchRowFocusRequesters.keys.retainAll(visibleRowKeys)
-        searchRowEntryFocusRequesters.keys.retainAll(visibleRowKeys)
-        searchRowFocusedItemIndex.keys.retainAll(visibleRowKeys)
-    }
-
-    val isDiscoverMode = remember(uiState.discoverLocation, trimmedQuery, trimmedSubmittedQuery) {
-        shouldShowDiscoverInSearch(
-            discoverLocation = uiState.discoverLocation,
-            query = trimmedQuery,
-            submittedQuery = trimmedSubmittedQuery
-        )
-    }
-    LaunchedEffect(isDiscoverMode) {
-        if (isDiscoverMode) viewModel.ensureDiscoverLoaded()
-    }
-    val hasPendingUnsubmittedQuery = remember(isDiscoverMode, trimmedQuery, trimmedSubmittedQuery) {
-        !isDiscoverMode &&
-            trimmedQuery.length >= MIN_SEARCH_QUERY_LENGTH &&
-            trimmedQuery != trimmedSubmittedQuery
     }
     val showRecentSearches = remember(
         trimmedQuery,

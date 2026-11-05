@@ -15,6 +15,7 @@ import androidx.tv.material3.Icon
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -47,11 +48,21 @@ internal fun IptvSearchScopeChips(
     onFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The chips item can leave the list while focused (rows reload, query cleared): never leave "focused" stuck true,
+    // which would keep the chips' Back handler alive and eat every Back.
+    DisposableEffect(Unit) { onDispose { onFocusChanged(false) } }
     Row(
         modifier = modifier
             .onFocusChanged { onFocusChanged(it.hasFocus) }
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
+                // A held Down that began on the field repeats onto the chips; swallow repeats so it stops here
+                // instead of running on into row 1 (each chip move is one deliberate press).
+                if (native.repeatCount > 0 &&
+                    (native.keyCode == KeyEvent.KEYCODE_DPAD_UP || native.keyCode == KeyEvent.KEYCODE_DPAD_DOWN)
+                ) {
+                    return@onPreviewKeyEvent true
+                }
                 val target = when (native.keyCode) {
                     KeyEvent.KEYCODE_DPAD_UP -> upTarget
                     KeyEvent.KEYCODE_DPAD_DOWN -> downTarget()

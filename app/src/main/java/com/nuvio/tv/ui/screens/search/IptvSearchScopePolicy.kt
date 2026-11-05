@@ -28,25 +28,46 @@ internal object IptvSearchScopePolicy {
         return if (next.isEmpty()) ALL else next
     }
 
-    /**
-     * The chips stay up whenever the IPTV lane is relevant to this query: rows are on screen, or the lane
-     * already answered for the shown query (even with zero hits, or with every row filtered out) so the viewer
-     * never loses the filters they just set.
-     */
-    fun showChips(hasIptvRows: Boolean, iptvAnsweredForQuery: Boolean): Boolean = hasIptvRows || iptvAnsweredForQuery
+    /** Saved-state form: scope names. */
+    fun encode(selected: Set<IptvSearchScope>): List<String> = selected.map { it.name }
+
+    /** Unknown or empty saved state reads as all, never a throw or a blank screen. */
+    fun decode(saved: List<String>): Set<IptvSearchScope> =
+        saved.mapNotNull { name -> IptvSearchScope.entries.firstOrNull { it.name == name } }.toSet()
+            .ifEmpty { ALL }
+
+    /** What the results area of Search is showing; mirrors the `when` in SearchScreen (same order). */
+    enum class Body { SKELETON, ERROR, NO_RESULTS, RESULTS }
+
+    fun bodyOf(loadingOrPending: Boolean, noRows: Boolean, errorWithNoCatalogRows: Boolean): Body = when {
+        loadingOrPending && noRows -> Body.SKELETON
+        errorWithNoCatalogRows -> Body.ERROR
+        !loadingOrPending && noRows -> Body.NO_RESULTS
+        else -> Body.RESULTS
+    }
 
     /**
-     * True when the selection hides every IPTV row after loading finished: the lane answered, nothing is
-     * still loading, the selection is narrowed, and no IPTV row survives in [scopedRows].
+     * The chips are part of the results area only (rows, or the "No Results" state): never over skeletons or an
+     * error. There they stay up whenever the IPTV lane is relevant to this query: rows are on screen, or the lane
+     * already answered for the shown query (even with zero hits, or with every row filtered out) so the viewer never
+     * loses the filters they just set.
+     */
+    fun chipsVisible(body: Body, hasIptvRows: Boolean, iptvAnsweredForQuery: Boolean): Boolean =
+        (body == Body.RESULTS || body == Body.NO_RESULTS) && (hasIptvRows || iptvAnsweredForQuery)
+
+    /**
+     * True when the selection hides the IPTV rows that DID come back, after loading finished: [allRows] are the
+     * unfiltered rows, the lane answered, nothing is loading, the selection is narrowed, and no IPTV row survives it.
+     * When the search found no IPTV hits at all the filter is not to blame, so there is no note (just "No Results").
      */
     fun <T> showEmptyNote(
         selected: Set<IptvSearchScope>,
-        scopedRows: List<T>,
+        allRows: List<T>,
         iptvAnsweredForQuery: Boolean,
         isSearching: Boolean,
         keyOf: (T) -> String,
     ): Boolean = iptvAnsweredForQuery && !isSearching && selected.size != ALL.size &&
-        scopedRows.none { scopeOf(keyOf(it)) != null }
+        hasIptvRows(allRows, keyOf) && filter(allRows, selected, keyOf).none { scopeOf(keyOf(it)) != null }
 
     /** Keeps every non-IPTV row, and an IPTV row only when its type is selected. Order is preserved. */
     fun <T> filter(rows: List<T>, selected: Set<IptvSearchScope>, keyOf: (T) -> String): List<T> {

@@ -96,6 +96,9 @@ class SearchViewModel @Inject constructor(
     private var searchGeneration = 0L
     private var discoverJob: Job? = null
     private var catalogRowsUpdateJob: Job? = null
+
+    /** F85: the query the IPTV lane answered for; published with the rows in [updateCatalogRowsNow], never ahead of them. */
+    private var iptvAnsweredQuery: String? = null
     private var suggestionJob: Job? = null
     private var liveSearchJob: Job? = null
     private var lastRequestKey: String? = null
@@ -514,6 +517,7 @@ class SearchViewModel @Inject constructor(
         catalogOrder.clear()
         hasRenderedFirstCatalog = false
         pendingCatalogResponses = 0
+        iptvAnsweredQuery = null
     }
 
     private fun cancelSearchRun() {
@@ -841,7 +845,6 @@ class SearchViewModel @Inject constructor(
             return
         }
         if (!isCurrentSearch(generation, query)) return
-        _uiState.update { it.copy(iptvAnsweredQuery = query) }
         if (replace) {
             // UX15: the new source set answers for the whole IPTV lane — rows it no longer
             // returns must go, not linger from the old settings.
@@ -854,7 +857,12 @@ class SearchViewModel @Inject constructor(
             if (key !in catalogOrder) catalogOrder.add(key)
             catalogsMap[key] = row.toCatalogRow()
         }
-        scheduleCatalogRowsUpdate()
+        // F85: the rows and the "IPTV answered" flag land in ONE state update, immediately. Behind the render debounce the
+        // flag could reach the screen while isSearching had already dropped, flashing "No IPTV matches" before the rows.
+        iptvAnsweredQuery = query
+        catalogRowsUpdateJob?.cancel()
+        hasRenderedFirstCatalog = true
+        updateCatalogRowsNow()
     }
 
     /** UX15: the IPTV source set changed (a playlist's content settings, or one enabled/disabled). */
@@ -1029,7 +1037,8 @@ class SearchViewModel @Inject constructor(
                 orderedRows
             }
             state.copy(
-                catalogRows = filteredRows
+                catalogRows = filteredRows,
+                iptvAnsweredQuery = iptvAnsweredQuery
             )
         }
     }
