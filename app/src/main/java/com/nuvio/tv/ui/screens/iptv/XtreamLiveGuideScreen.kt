@@ -888,8 +888,8 @@ fun LiveGuide(
                         onToggleMore = { moreOpen = !moreOpen; controlsTick++ },
                         onKeepAlive = { controlsTick++ },
                         onHide = { hideControls() },
-                        onSeekWindow = { playbackViewModel.requestSeekInLivePause(it) }.takeIf { scrubbable },
-                        onGoLive = { playbackViewModel.requestGoLive(); controlsTick++ }
+                        onSeekWindow = { positionMs: Long -> playbackViewModel.requestSeekInLivePause(positionMs) }.takeIf { scrubbable },
+                        onGoLive = { playbackViewModel.requestGoLive(); controlsTick++; Unit }
                             .takeIf { livePause.phase != LivePausePhase.OFF },
                     ),
                     pause = livePause,
