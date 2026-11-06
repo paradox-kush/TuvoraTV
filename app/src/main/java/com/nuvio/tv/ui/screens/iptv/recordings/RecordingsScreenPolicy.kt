@@ -38,3 +38,14 @@ internal object RecordingRowFormat {
         else -> String.format(Locale.US, "%.1f GB", bytes.toDouble() / GB)
     }
 }
+
+/**
+ * When the "Allow exact times" offer is shown on the Recordings page. Pure, and a function of live
+ * state only: the confirmation sheet's once-only offer being spent or dismissed never hides it, so
+ * closing that sheet without choosing loses nothing.
+ */
+internal object ExactAlarmOfferPolicy {
+
+    fun showOnRecordingsScreen(exactAllowed: Boolean, scheduledCount: Int, settingsAvailable: Boolean): Boolean =
+        !exactAllowed && scheduledCount > 0 && settingsAvailable
+}
