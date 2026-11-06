@@ -51,6 +51,7 @@ internal fun MediaServerSettingsContent(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val managedNotice by viewModel.managedNotice.collectAsStateWithLifecycle()
     val connection = uiState.connections.firstOrNull { it.id == connectionId }
     if (connection == null) {
         LaunchedEffect(Unit) { onBack() }
@@ -151,7 +152,7 @@ internal fun MediaServerSettingsContent(
                         item(key = "server_sign_in") {
                             SettingsActionRow(
                                 title = stringResource(if (connection.managedBridgeId == null) R.string.servers_sign_in_again else R.string.servers_managed_reconnect),
-                                subtitle = null,
+                                subtitle = managedNotice?.takeIf { connection.managedBridgeId != null }?.let { stringResource(managedNoticeText(it)) },
                                 leadingIcon = Icons.Default.Lock,
                                 onClick = {
                                     if (connection.managedBridgeId != null) viewModel.reconnectManaged()
@@ -210,5 +211,14 @@ internal fun MediaServerSettingsContent(
                 )
             }
         }
+    }
+}
+
+private fun managedNoticeText(notice: com.nuvio.tv.data.mediaserver.ManagedBridgeNotice) = when (notice) {
+    com.nuvio.tv.data.mediaserver.ManagedBridgeNotice.Preparing -> R.string.servers_managed_preparing
+    is com.nuvio.tv.data.mediaserver.ManagedBridgeNotice.Failed -> when (notice.code) {
+        "provisioning_timeout" -> R.string.servers_managed_failed_slow
+        "no_supported_addons", "no_playback_addons" -> R.string.servers_managed_failed_none
+        else -> R.string.servers_managed_failed_generic
     }
 }

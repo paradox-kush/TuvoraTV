@@ -42,6 +42,10 @@ class ServerRepository(
     private val lock = Any()
     private val mutableState = MutableStateFlow(ServersUiState())
     val uiState: StateFlow<ServersUiState> = mutableState.asStateFlow()
+    private val mutableManagedNotice = MutableStateFlow<ManagedBridgeNotice?>(null)
+    /** Why the managed add-on connection is not usable right now; null when fine or absent. */
+    val managedNotice: StateFlow<ManagedBridgeNotice?> = mutableManagedNotice.asStateFlow()
+    internal fun setManagedNotice(value: ManagedBridgeNotice?) { mutableManagedNotice.value = value }
 
     @Volatile
     private var activeProfileId = initialProfileId

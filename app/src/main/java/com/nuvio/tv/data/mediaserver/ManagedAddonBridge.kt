@@ -50,9 +50,14 @@ class ManagedAddonBridge @Inject constructor(
                 .decodeAs<kotlinx.serialization.json.JsonElement>() as? JsonObject
             if (!current()) return@withContext
             repository.selectProfile(profileId)
-            if (status == null || status["state"]?.jsonPrimitive?.content != "ready") {
-                repository.forgetManaged(); return@withContext
+            when (val decision = ManagedBridgePolicy.decide(status)) {
+                ManagedBridgeDecision.Forget -> { repository.setManagedNotice(null); repository.forgetManaged(); return@withContext }
+                // Rebuilding or failed on the bridge: keep the user's connection and say why, never silently delete it.
+                ManagedBridgeDecision.Preparing -> { repository.setManagedNotice(ManagedBridgeNotice.Preparing); return@withContext }
+                is ManagedBridgeDecision.Failed -> { repository.setManagedNotice(ManagedBridgeNotice.Failed(decision.code)); return@withContext }
+                ManagedBridgeDecision.Ready -> Unit
             }
+            if (status == null) return@withContext
             val id = status["id"]?.jsonPrimitive?.content ?: return@withContext
             if (!ManagedBridgePolicy.validId(id)) return@withContext
             val revision = status["revision"]!!.jsonPrimitive.content.toLong()
@@ -68,23 +73,59 @@ class ManagedAddonBridge @Inject constructor(
             val request = Request.Builder().url("https://addon.thekush.dev/api/bridge?profile=$profileId")
                 .header("Authorization", "Bearer $bearer").post(body.toRequestBody("application/json".toMediaType())).build()
             val responseBody = http.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext
                 val source = response.body?.source() ?: return@withContext
                 if (source.request(32769)) return@withContext
-                source.readUtf8()
+                val text = source.readUtf8()
+                if (!response.isSuccessful) {
+                    repository.setManagedNotice(ManagedBridgePolicy.exchangeFailure(response.code, text))
+                    return@withContext
+                }
+                text
             }
             if (!current()) return@withContext
             val data = json.parseToJsonElement(responseBody) as? JsonObject ?: return@withContext
             fun field(name: String) = data[name]?.jsonPrimitive?.content.orEmpty()
             if (field("id") != id || !ManagedBridgePolicy.validAddress(id, field("address"))) return@withContext
+            repository.setManagedNotice(null)
             repository.connectManaged(ServerSignIn(field("address"), "Connected addons", field("server_id"), field("user_id"), field("user_name"), field("access_token")),
                 id, Instant.parse(field("expires_at")).toEpochMilli(), revision)
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { android.util.Log.w("ManagedAddonBridge", "Refresh unavailable: ${e.javaClass.simpleName}") }
+        catch (e: Exception) {
+            android.util.Log.w("ManagedAddonBridge", "Refresh unavailable: ${e.javaClass.simpleName}")
+            repository.setManagedNotice(ManagedBridgeNotice.Failed("unreachable"))
+        }
     }
 }
 
+internal sealed interface ManagedBridgeDecision {
+    data object Ready : ManagedBridgeDecision
+    data object Preparing : ManagedBridgeDecision
+    data object Forget : ManagedBridgeDecision
+    data class Failed(val code: String?) : ManagedBridgeDecision
+}
+
+sealed interface ManagedBridgeNotice {
+    data object Preparing : ManagedBridgeNotice
+    data class Failed(val code: String?) : ManagedBridgeNotice
+}
+
 internal object ManagedBridgePolicy {
+    /** Only a missing or disconnected connection is forgotten; a pending, working or failed one is kept and explained. */
+    fun decide(status: JsonObject?): ManagedBridgeDecision = when (status?.get("state")?.jsonPrimitive?.content) {
+        "ready" -> ManagedBridgeDecision.Ready
+        "pending", "working" -> ManagedBridgeDecision.Preparing
+        "failed" -> ManagedBridgeDecision.Failed((status["result"] as? JsonObject)?.get("error")?.jsonPrimitive?.content)
+        else -> ManagedBridgeDecision.Forget
+    }
+
+    fun exchangeFailure(status: Int, body: String): ManagedBridgeNotice {
+        val code = runCatching { (Json.parseToJsonElement(body) as? JsonObject)?.get("error")?.jsonPrimitive?.content }.getOrNull()
+        return when {
+            code == "connection_reprovisioning" || code == "connection_not_ready" || code == "connection_changed" || status == 410 -> ManagedBridgeNotice.Preparing
+            else -> ManagedBridgeNotice.Failed(code ?: "http_$status")
+        }
+    }
+
     fun validId(value: String): Boolean = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").matches(value)
     fun validAddress(id: String, address: String): Boolean = validId(id) && address == "https://addon.thekush.dev/jellyfin/$id"
 }

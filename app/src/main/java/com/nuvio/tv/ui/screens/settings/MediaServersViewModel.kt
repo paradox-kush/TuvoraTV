@@ -38,6 +38,7 @@ class MediaServersViewModel @Inject constructor(
     private val repository: ServerRepository
 ) : ViewModel() {
     val uiState: StateFlow<ServersUiState> = repository.uiState
+    val managedNotice: StateFlow<com.nuvio.tv.data.mediaserver.ManagedBridgeNotice?> = repository.managedNotice
 
     val providers: List<ServerProvider>
         get() = repository.providers

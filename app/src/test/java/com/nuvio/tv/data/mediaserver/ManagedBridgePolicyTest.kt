@@ -31,4 +31,27 @@ class ManagedBridgePolicyTest {
         val titles = listOf(title("bridge", "correct", 7), title("bridge", "conflict", 9), title("other", "foreign", 7))
         assertEquals(listOf("correct"), managedItemIds("bridge", titles, TrackingExternalIds(imdb = "tt1111111", tmdb = 7)))
     }
+
+    private fun status(state: String, error: String? = null) = kotlinx.serialization.json.Json.parseToJsonElement(
+        """{"id":"x","state":"$state","result":{${if (error != null) "\"error\":\"$error\"" else ""}}}""") as kotlinx.serialization.json.JsonObject
+
+    @Test fun aRebuildingOrFailedBridgeNeverDeletesTheUsersConnection() {
+        assertEquals(ManagedBridgeDecision.Ready, ManagedBridgePolicy.decide(status("ready")))
+        assertEquals(ManagedBridgeDecision.Preparing, ManagedBridgePolicy.decide(status("pending")))
+        assertEquals(ManagedBridgeDecision.Preparing, ManagedBridgePolicy.decide(status("working")))
+        assertEquals(ManagedBridgeDecision.Failed("provisioning_timeout"), ManagedBridgePolicy.decide(status("failed", "provisioning_timeout")))
+        assertEquals(ManagedBridgeDecision.Failed(null), ManagedBridgePolicy.decide(status("failed")))
+    }
+
+    @Test fun onlyAMissingOrDisconnectedConnectionIsForgotten() {
+        assertEquals(ManagedBridgeDecision.Forget, ManagedBridgePolicy.decide(null))
+        assertEquals(ManagedBridgeDecision.Forget, ManagedBridgePolicy.decide(status("disconnected")))
+    }
+
+    @Test fun exchangeRefusalsAreExplainedNotSwallowed() {
+        assertEquals(ManagedBridgeNotice.Preparing, ManagedBridgePolicy.exchangeFailure(409, """{"error":"connection_reprovisioning"}"""))
+        assertEquals(ManagedBridgeNotice.Preparing, ManagedBridgePolicy.exchangeFailure(410, ""))
+        assertEquals(ManagedBridgeNotice.Failed("addon_selection_changed"), ManagedBridgePolicy.exchangeFailure(409, """{"error":"addon_selection_changed"}"""))
+        assertEquals(ManagedBridgeNotice.Failed("http_503"), ManagedBridgePolicy.exchangeFailure(503, "<html>"))
+    }
 }

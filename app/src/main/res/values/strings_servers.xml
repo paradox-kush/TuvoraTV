@@ -87,5 +87,9 @@
     <string name="servers_qc_use_password">Use password instead</string>
     <string name="servers_mpv_unsupported">This server uses a certificate you trusted, which this player cannot use directly. Try the other player in the player settings.</string>
     <string name="servers_managed_reconnect">Reconnect this device</string>
+    <string name="servers_managed_preparing">Rebuilding your add-on connection. Sources will appear in a moment.</string>
+    <string name="servers_managed_failed_slow">Some add-ons did not answer in time. Open addon.thekush.dev to reconnect.</string>
+    <string name="servers_managed_failed_none">None of your add-ons can provide streams here. Check them at addon.thekush.dev.</string>
+    <string name="servers_managed_failed_generic">The add-on connection could not be set up. Open addon.thekush.dev to reconnect.</string>
     <string name="servers_managed_help">Manage this connection at addon.thekush.dev. To turn it off only on this device, use Settings → Content &amp; Discovery.</string>
 </resources>
