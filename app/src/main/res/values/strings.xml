@@ -3824,6 +3824,8 @@
     <string name="calendar_empty_all_quiet">All quiet on the TV front</string>
     <string name="calendar_empty_all_quiet_hint">Nothing you follow has a new episode or release in the next %1$d days.</string>
     <string name="calendar_bell_add">Remind me about new episodes</string>
+    <string name="calendar_bell_menu_row">Remind me of new episodes</string>
+    <string name="calendar_bell_menu_row_hint">Applies right away</string>
     <string name="calendar_bell_remove">Stop reminding me</string>
     <string name="calendar_hide">Hide from Calendar</string>
     <string name="calendar_settings_window">Days ahead</string>
