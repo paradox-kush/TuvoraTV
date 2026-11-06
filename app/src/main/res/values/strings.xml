@@ -3826,7 +3826,7 @@
     <string name="rec_problem_stalled">The download stopped getting data.</string>
     <string name="rec_problem_missed">The programme ended before the recording could start.</string>
     <string name="rec_problem_cancelled_by_user">You cancelled this recording.</string>
-    <string name="rec_problem_unsupported_format">The provider offers this in a format Tuvora can’t save yet.</string>
+    <string name="rec_problem_unsupported_format">This provider only offers HLS replay, which can’t be saved yet.</string>
     <string name="rec_problem_live_pending">Recording live TV isn’t available on this device yet.</string>
     <string name="rec_problem_unknown">Something went wrong while saving it.</string>
     <!-- Guide programme sheet -->

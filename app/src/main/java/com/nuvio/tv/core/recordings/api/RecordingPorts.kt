@@ -40,8 +40,11 @@ data class SaveRequest(
      * is never a reason to refuse.
      */
     val onKnownTotal: (suspend (totalBytes: Long, onDiskBytes: Long) -> KnownSizeDecision)? = null,
-    /** Length of the programme being saved; 0 when unknown. Lets the saver refuse a "finished" file far too small to be it. */
-    val programmeDurationMs: Long = 0L,
+    /**
+     * Length of the programme in ms (0 = unknown). A finished save of a programme of a minute or more
+     * that is only a few KiB is not a recording (an HLS playlist saved as a file): the saver refuses it.
+     */
+    val programmeMs: Long = 0L,
 )
 
 /** The repository's answer to [SaveRequest.onKnownTotal]. */

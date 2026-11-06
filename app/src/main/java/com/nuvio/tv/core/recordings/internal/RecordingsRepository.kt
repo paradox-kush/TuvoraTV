@@ -130,6 +130,7 @@ class RecordingsRepository(
             }
         }
         reconcileRecordingRowsLocked(nowMs)
+        failImplausiblyTinySavesLocked()
         if (persistState() && migrating) files.keepAside(LEDGER_FILE)
     }
 
@@ -158,6 +159,24 @@ class RecordingsRepository(
                 edit(recordings = { list -> list.map { if (it.id == row.id) it.copy(status = RecordingStatus.FAILED, problem = RecordingProblem.STALLED, endedAtMs = row.endedAtMs ?: nowMs) else it } })
             }
         }
+    }
+
+    /**
+     * A catch-up save marked DONE that is only a few KiB for a programme of a minute or more is not a
+     * recording (older builds saved a provider's HLS playlist text as the file). The row says so; the
+     * file is left alone and nothing is retried.
+     */
+    private fun failImplausiblyTinySavesLocked() {
+        val bad = doc.recordingValues.filter {
+            it.status == RecordingStatus.DONE && it.mode == CaptureMode.CATCH_UP &&
+                RecordingSanityGuard.implausiblyTiny(it.programmeEndMs - it.programmeStartMs, it.sizeBytes)
+        }.map { it.id }.toSet()
+        if (bad.isEmpty()) return
+        edit(recordings = { list ->
+            list.map {
+                if (it.id in bad) it.copy(status = RecordingStatus.FAILED, problem = RecordingProblem.UNSUPPORTED_FORMAT, retrySource = null, problemNeedBytes = null, problemFreeBytes = null) else it
+            }
+        })
     }
 
     private suspend fun readLegacyLedger(): FireLedgerState {
@@ -486,6 +505,7 @@ class RecordingsRepository(
             resumeFromBytes = resumeFrom, estimatedBytes = estimate,
             spaceCheck = { expected -> checkSpaceDuringCapture(expected) },
             onKnownTotal = { total, onDisk -> checkKnownSize(total, onDisk) },
+            programmeMs = schedule.programmeEndMs - schedule.programmeStartMs,
         )
         return Begin.Go(Run(schedule, token, request, target, d.fromMs, d.toMs, cancelJob, recordingId))
     }

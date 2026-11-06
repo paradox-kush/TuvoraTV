@@ -47,6 +47,7 @@ internal class AndroidRecordingSaver(
         val part = File(req.targetPath + ".part")
         part.parentFile?.mkdirs()
         var best: SaveOutcome.Failed? = null
+        var sawPlaylist = false
         for (url in req.candidates) {
             ensureActive()
             when (val r = attempt(url, req, part, progress)) {
@@ -71,6 +72,7 @@ internal class AndroidRecordingSaver(
                     }
                     return@withContext f
                 }
+                Attempt.Playlist -> sawPlaylist = true
                 is Attempt.Failure -> {
                     val f = r.failure
                     if (best == null || f.writtenBytes >= best.writtenBytes) best = f
@@ -79,11 +81,19 @@ internal class AndroidRecordingSaver(
                 }
             }
         }
+        // Every link that answered was a playlist (or refused): HLS is all this provider offers. A network fault
+        // or a partial file on another link is a different story and stays retryable.
+        if (sawPlaylist && (best == null || (!best.offline && best.writtenBytes == 0L && best.problem == RecordingProblem.PROVIDER_REFUSED))) {
+            part.delete(); ResumeMeta.delete(part)
+            return@withContext SaveOutcome.Failed(RecordingProblem.UNSUPPORTED_FORMAT, offline = false, writtenBytes = 0L, rangeSupported = false)
+        }
         best ?: SaveOutcome.Failed(RecordingProblem.NO_CATCH_UP, offline = false, writtenBytes = part.length(), rangeSupported = false)
     }
 
     private sealed interface Attempt {
         data object Finished : Attempt
+        /** The link answered with an HLS playlist, which is not a file: nothing was written. */
+        data object Playlist : Attempt
         data class Failure(val failure: SaveOutcome.Failed) : Attempt
         data class Stopped(val failure: SaveOutcome.Failed) : Attempt
     }
@@ -151,6 +161,17 @@ internal class AndroidRecordingSaver(
                             val body = resp.body ?: return@coroutineScope Attempt.Failure(
                                 SaveOutcome.Failed(RecordingProblem.PROVIDER_REFUSED, false, part.length(), rangeSupported),
                             )
+                            // Peek before a byte is written: a playlist is not a file, and must not become one.
+                            if (!resumed) {
+                                val src = body.source()
+                                // A body cut off inside the first bytes is read (and kept) by the copy loop below, not failed here.
+                                try { src.request(DownloadSniff.PEEK_BYTES.toLong()) } catch (_: IOException) { }
+                                val head = src.peek().readByteArray(minOf(src.buffer.size, DownloadSniff.PEEK_BYTES.toLong()))
+                                if (DownloadSniff.isHlsPlaylist(resp.header("Content-Type"), head)) {
+                                    part.delete(); ResumeMeta.delete(part)
+                                    return@coroutineScope Attempt.Playlist
+                                }
+                            }
                             val expected = body.contentLength().takeIf { it >= 0 }?.let { if (resumed) offset + it else it }
                             if (!resumed) ResumeMeta.write(part, url, resp.header("ETag"), resp.header("Last-Modified"))
                             // A declared size that will not fit is refused now, before a body byte is written.
@@ -199,7 +220,20 @@ internal class AndroidRecordingSaver(
                                     val kind = RecordingSaveClassifier.forIo(null, stalled = true, online = isOnline())
                                     Attempt.Failure(SaveOutcome.Failed(kind.problem, kind.offline, written, rangeSupported))
                                 }
-                                else -> { ResumeMeta.delete(part); Attempt.Finished }
+                                else -> {
+                                    val head = part.inputStream().use { input ->
+                                        val buf = ByteArray(DownloadSniff.PEEK_BYTES)
+                                        buf.copyOf(maxOf(input.read(buf), 0))
+                                    }
+                                    when (RecordingSanityGuard.verdict(req.programmeMs, written, head)) {
+                                        null -> { ResumeMeta.delete(part); Attempt.Finished }
+                                        RecordingProblem.UNSUPPORTED_FORMAT -> { part.delete(); ResumeMeta.delete(part); Attempt.Playlist }
+                                        else -> {
+                                            part.delete(); ResumeMeta.delete(part)
+                                            Attempt.Failure(SaveOutcome.Failed(RecordingProblem.NETWORK, !isOnline(), 0L, false))
+                                        }
+                                    }
+                                }
                             }
                         }
                     } finally {

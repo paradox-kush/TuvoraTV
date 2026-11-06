@@ -31,10 +31,14 @@ object CatchUpSaveLinks {
         }
         // Every HLS link also gets its TS twin (panels that do not offer HLS), then progressive goes first.
         val expanded = raw.flatMap { url ->
-            if (isProgressive(url)) listOf(url) else listOfNotNull(url, M3uCatchUp.tsFallback(url))
+            if (isProgressive(url) || isUnknownFormat(url)) listOf(url) else listOfNotNull(url, M3uCatchUp.tsFallback(url))
         }.distinct()
-        val (progressive, hls) = expanded.partition(::isProgressive)
-        return progressive + hls
+        // Known-progressive first, then links whose format the panel picks (may turn out to be a playlist),
+        // then the explicit playlists.
+        val progressive = expanded.filter(::isProgressive)
+        val unknown = expanded.filter(::isUnknownFormat)
+        val hls = expanded.filterNot { isProgressive(it) || isUnknownFormat(it) }
+        return progressive + unknown + hls
     }
 
     /** The rest of a save that was cut off after [doneMs] of footage: from a little before where it got to. */
@@ -43,21 +47,31 @@ object CatchUpSaveLinks {
         return candidates(channel, resumeFrom, toMs, nowMs)
     }
 
-    /** False for an HLS playlist (`.m3u8`, or an `extension=m3u8` query); true for a file that can be saved as it comes. */
+    /** False for an HLS playlist (`.m3u8`, or an `extension=m3u8` query) and for an [isUnknownFormat] link; true for a file that can be saved as it comes. */
     fun isProgressive(url: String): Boolean {
         val lower = url.lowercase()
         val path = lower.substringBefore('?')
         val query = lower.substringAfter('?', "")
-        return !path.endsWith(".m3u8") && "extension=m3u8" !in query
+        return !path.endsWith(".m3u8") && "extension=m3u8" !in query && !isUnknownFormat(url)
     }
 
-    /** A panel link that names no container (`timeshift.php` without `extension=`): the panel may answer with a file or a playlist. */
-    fun isUnknownFormat(url: String): Boolean = false
+    /**
+     * An Xtream `timeshift.php` link with no `extension=` parameter: the panel picks the format and many answer
+     * with an HLS VOD playlist, so it is neither known-progressive nor a known playlist. Tried after every
+     * known-progressive link; the saver sniffs what comes back.
+     */
+    fun isUnknownFormat(url: String): Boolean {
+        val lower = url.lowercase()
+        val path = lower.substringBefore('?')
+        val query = lower.substringAfter('?', "")
+        if (!path.endsWith("/timeshift.php")) return false
+        return query.split('&').none { it.startsWith("extension=") }
+    }
 
     /** Why [candidates] cannot be saved, or null when at least one link can: no catch-up at all, or HLS only. */
     fun problemFor(candidates: List<String>): RecordingProblem? = when {
         candidates.isEmpty() -> RecordingProblem.NO_CATCH_UP
-        candidates.none(::isProgressive) -> RecordingProblem.UNSUPPORTED_FORMAT
+        candidates.none { isProgressive(it) || isUnknownFormat(it) } -> RecordingProblem.UNSUPPORTED_FORMAT
         else -> null
     }
 

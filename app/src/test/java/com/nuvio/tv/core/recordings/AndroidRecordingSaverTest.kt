@@ -46,7 +46,7 @@ class AndroidRecordingSaverTest {
     private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), estimated: Long = 0, check: (suspend (Long) -> RecordingProblem?)? = null, known: (suspend (Long, Long) -> KnownSizeDecision)? = null, programmeMs: Long = 0) =
         SaveRequest(
             candidates = paths.map { server.url(it).toString() }, headers = headers,
-            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = estimated, spaceCheck = check, onKnownTotal = known, programmeDurationMs = programmeMs,
+            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = estimated, spaceCheck = check, onKnownTotal = known, programmeMs = programmeMs,
         )
 
     /** A `.part` left by an earlier try of [path]: its bytes plus the sidecar naming the link and validators it came from. */
