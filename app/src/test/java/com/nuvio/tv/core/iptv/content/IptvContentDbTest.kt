@@ -250,6 +250,35 @@ class IptvContentDbTest {
     }
 
     @Test
+    fun `a whole-guide refresh keeps the per-channel catch-up history and its fetch stamp`() = runTest {
+        val xtream = "xtream-acc"
+        // Xtream per-channel history (get_simple_data_table), stored under the sid: namespace (B231).
+        db.refillChannelEpg(xtream, "sid:7", listOf(EpgProgramme("sid:7", 1_000L, 2_000L, "Yesterday", null, hasArchive = true)), fetchedAtMs = 500L)
+        // The XMLTV ingest owns only its own channel keys.
+        db.replaceEpg(xtream, builtAtMs = 9_000L) { w -> w.add(EpgProgramme("bbc.uk", 3_000L, 4_000L, "Xmltv", null)) }
+        assertEquals("xmltv rows landed", listOf("Xmltv"), db.epgWindow(xtream, "bbc.uk", 0L, 10_000L).map { it.title })
+        assertEquals("history rows survive the swap", listOf("Yesterday"), db.epgWindow(xtream, "sid:7", 0L, 10_000L).map { it.title })
+        assertEquals("history stamp survives so no re-download", 500L, db.epgChannelFetchedAt(xtream, "sid:7"))
+    }
+
+    @Test
+    fun `another playlist's whole-guide swap and prune leave this playlist's catch-up history and stamps alone`() = runTest {
+        // Two Xtream panels (same code, different port) both use the sid:N namespace (B231 cross-playlist).
+        val a = "http://10.0.2.2:8932|user"
+        val b = "http://10.0.2.2:8933|user"
+        db.refillChannelEpg(a, "sid:7", listOf(EpgProgramme("sid:7", 1_000L, 2_000L, "A yesterday", null, hasArchive = true)), fetchedAtMs = 500L)
+        db.refillChannelEpg(b, "sid:7", listOf(EpgProgramme("sid:7", 1_000L, 2_000L, "B yesterday", null, hasArchive = true)), fetchedAtMs = 600L)
+        db.replaceEpg(b, builtAtMs = 9_000L) { w -> w.add(EpgProgramme("bbc.uk", 3_000L, 4_000L, "B xmltv", null)) }
+        db.pruneEpg(b, cutoffMs = 1_500L)
+        db.resetEpgFetchStamps(b)
+        assertEquals("A history rows intact", listOf("A yesterday"), db.epgWindow(a, "sid:7", 0L, 10_000L).map { it.title })
+        assertEquals("A history flag intact", true, db.epgWindow(a, "sid:7", 0L, 10_000L).single().hasArchive)
+        assertEquals("A stamp intact", 500L, db.epgChannelFetchedAt(a, "sid:7"))
+        assertEquals("A got none of B's xmltv rows", emptyList<String>(), db.epgWindow(a, "bbc.uk", 0L, 10_000L).map { it.title })
+        assertEquals("A's own guide was never built", null, db.epgBuiltAt(a))
+    }
+
+    @Test
     fun `an empty or truncated-to-nothing refresh keeps the prior generation but still throttles`() = runTest {
         ingestSample()
         db.replaceEpg(pid, builtAtMs = 1_000L) { w -> w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Prior", null)) }
@@ -346,11 +375,11 @@ class IptvContentDbTest {
     }
 
     @Test
-    fun `a wholesale epg replace supersedes the per-channel fetch stamps`() = runTest {
+    fun `a wholesale epg replace keeps the per-channel fetch stamps (B231)`() = runTest {
         db.refillChannelEpg(pid, "bbc.uk", emptyList(), fetchedAtMs = 5L)
         assertEquals(5L, db.epgChannelFetchedAt(pid, "bbc.uk"))
         db.replaceEpg(pid, builtAtMs = 10L) { w -> w.add(EpgProgramme("bbc.uk", 1L, 2L, "P", null)) }
-        assertNull(db.epgChannelFetchedAt(pid, "bbc.uk"))
+        assertEquals("B231: a stamped channel owns its rows, so its stamp survives the swap", 5L, db.epgChannelFetchedAt(pid, "bbc.uk"))
     }
 
     @Test
